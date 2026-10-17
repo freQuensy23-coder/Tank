@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "record_review",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "proposal_id": {
+      "type": "string"
+    },
+    "verdict": {
+      "type": "string"
+    },
+    "reason": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "proposal_id",
+    "verdict",
+    "reason",
+    "evidence"
+  ]
+}

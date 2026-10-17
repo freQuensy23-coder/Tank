@@ -1,0 +1,388 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1680" height="2191" viewBox="0 0 1680 2191" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
+<defs>
+<marker id="ah-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#52606D"/></marker>
+<marker id="as-g" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#52606D"/></marker>
+<marker id="ah-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#B7791F"/></marker>
+<marker id="as-a" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#B7791F"/></marker>
+<marker id="ah-gr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#2F855A"/></marker>
+<marker id="as-gr" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#2F855A"/></marker>
+<marker id="ah-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#2B6CB0"/></marker>
+<marker id="as-b" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#2B6CB0"/></marker>
+<marker id="ah-p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#6B46C1"/></marker>
+<marker id="as-p" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#6B46C1"/></marker>
+<marker id="ah-s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#334E68"/></marker>
+<marker id="as-s" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#334E68"/></marker>
+<marker id="ah-l" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#9AA5B1"/></marker>
+<marker id="as-l" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#9AA5B1"/></marker>
+</defs>
+<rect x="0" y="0" width="1680" height="2191" fill="#FFFFFF"/>
+<text x="32.0" y="46.0" font-size="22" fill="#1F2933" text-anchor="start" xml:space="preserve"><tspan font-weight="700">Tank V0 — how it works: product view</tspan></text>
+<text x="32.0" y="70.0" font-size="13" fill="#52606D" text-anchor="start" xml:space="preserve">What Tank watches, what it does with each new item, and what the operator receives. Tank only reads data and never trades; every decision stays with the operator.</text>
+<text x="32.0" y="92.0" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">Source: 01 PRD v2.3 (16 Oct 2026). Formulas and thresholds behind each step are in 03 TDD; processes and integrations in 02 HLD.</text>
+<rect x="1262.0" y="30.0" width="22.0" height="13.0" rx="3" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="1292.0" y="41.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">What Tank watches</text>
+<rect x="1262.0" y="49.0" width="22.0" height="13.0" rx="3" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
+<text x="1292.0" y="60.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Step of the main flow</text>
+<rect x="1262.0" y="68.0" width="22.0" height="13.0" rx="3" fill="#FFF8E6" stroke="#C99A2E" stroke-width="1.2"/>
+<text x="1292.0" y="79.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Tank stays silent (no card)</text>
+<rect x="1262.0" y="87.0" width="22.0" height="13.0" rx="3" fill="#EEF8F1" stroke="#38A169" stroke-width="1.5"/>
+<text x="1292.0" y="98.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">What the operator receives</text>
+<text x="32.0" y="140.0" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve" letter-spacing="1.2"><tspan font-weight="700">WHAT TANK WATCHES</tspan></text>
+<text x="470.0" y="140.0" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve" letter-spacing="1.2"><tspan font-weight="700">WHAT TANK DOES WITH EACH NEW ITEM</tspan></text>
+<text x="1262.0" y="140.0" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve" letter-spacing="1.2"><tspan font-weight="700">WHAT THE OPERATOR GETS</tspan></text>
+<rect x="470.0" y="154.0" width="490.0" height="112.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
+<circle cx="492.0" cy="174.0" r="11" fill="#334E68"/>
+<text x="492.0" y="178.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" xml:space="preserve"><tspan font-weight="700">1</tspan></text>
+<text x="512.0" y="178.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="436.0"><tspan font-weight="700">Watch</tspan></text>
+<text x="513.0" y="200.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="200.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Sees every new item within its source's max delay and records the moment</text>
+<text x="524.0" y="216.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Tank first knew</text>
+<text x="513.0" y="235.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="235.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Stores the original; an exact duplicate (same id or same text) is counted on the</text>
+<text x="524.0" y="251.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">item it repeats</text>
+<rect x="510.0" y="292.0" width="410.0" height="124.0" rx="14" fill="#FFF8E6" stroke="#C99A2E" stroke-width="1.2"/>
+<text x="520.0" y="314.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0"><tspan font-weight="700">Filter and route</tspan></text>
+<text x="520.0" y="336.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0">Checks news, GitHub commits and posts of founders, C-level and the</text>
+<text x="520.0" y="352.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0">other accounts: is it about crypto?</text>
+<text x="520.0" y="371.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0">Sends every item to its event: the same event as one with news in the</text>
+<text x="520.0" y="387.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0">last 3 days → it joins that event's analysis, even while it is running; a</text>
+<text x="520.0" y="403.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0">new event → a new analysis</text>
+<rect x="470.0" y="442.0" width="490.0" height="300.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
+<circle cx="492.0" cy="462.0" r="11" fill="#334E68"/>
+<text x="492.0" y="466.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" xml:space="preserve"><tspan font-weight="700">2</tspan></text>
+<text x="512.0" y="466.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="436.0"><tspan font-weight="700">Work out what happened</tspan></text>
+<text x="513.0" y="488.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="488.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">For this step Tank can read any site or API, search everything it has collected</text>
+<text x="524.0" y="504.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">and run its own calculations</text>
+<text x="513.0" y="523.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="523.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">One event per real-world fact: the press release, the X posts and the news</text>
+<text x="524.0" y="539.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">about it become one event</text>
+<text x="513.0" y="558.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="558.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Every fact carries a verbatim quote from its source</text>
+<text x="513.0" y="577.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="577.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Stage — how far the change has really gone: rumor → proposed → approved</text>
+<text x="524.0" y="593.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">→ signed → deployed → live → money flowing; Tank marks whether an official</text>
+<text x="524.0" y="609.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">source confirms that stage</text>
+<text x="513.0" y="628.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="628.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Freshness — Tank judges when the fact really became public: fresh ≤ 1 h ·</text>
+<text x="524.0" y="644.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">normal ≤ 4 h · medium ≤ 8 h · poor ≤ 24 h · old ≤ 48 h · stale beyond</text>
+<text x="513.0" y="663.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="663.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Certainty: <tspan font-weight="700">high</tspan> — official source: the organization's site or announcement, its</text>
+<text x="524.0" y="679.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">official X account, its founders or C-level team, or a fact Tank sees itself (the</text>
+<text x="524.0" y="695.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">market already trades) → goes on at once · <tspan font-weight="700">medium</tspan> — likely (e.g., a reliable</text>
+<text x="524.0" y="711.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">reporter) → Tank checks the official sources right away and goes on; the card</text>
+<text x="524.0" y="727.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">marks what is verified · <tspan font-weight="700">low</tspan> — implausible or an unknown author → recorded</text>
+<rect x="470.0" y="768.0" width="490.0" height="436.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
+<circle cx="492.0" cy="788.0" r="11" fill="#334E68"/>
+<text x="492.0" y="792.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" xml:space="preserve"><tspan font-weight="700">3</tspan></text>
+<text x="512.0" y="792.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="436.0"><tspan font-weight="700">Grade the event</tspan></text>
+<text x="513.0" y="814.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="814.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Tank can look up numbers and context on the web and in its own data, and</text>
+<text x="524.0" y="830.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">run its own calculations</text>
+<text x="513.0" y="849.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="849.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0"><tspan font-weight="700">Class by written criteria</tspan> (PRD §6.3); the card names the criterion met:</text>
+<text x="513.0" y="868.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="868.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0"><tspan font-weight="700">STRUCTURAL SHOCK</tspan> — verified and changes for good who can or must</text>
+<text x="524.0" y="884.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">hold the token, or its supply (e.g., The Clearing House picks Quant)</text>
+<text x="513.0" y="903.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="903.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0"><tspan font-weight="700">MAJOR</tspan> — verified new fact about a universe token: listing on a major</text>
+<text x="524.0" y="919.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">exchange, integration with a large company, launch, token-economics change,</text>
+<text x="524.0" y="935.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">regulator decision, hack, treasury sale (e.g., Altman: "We will integrate WLD</text>
+<text x="524.0" y="951.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">and OpenAI")</text>
+<text x="513.0" y="970.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="970.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0"><tspan font-weight="700">MATERIAL</tspan> — proposals, small partnerships, minor updates · <tspan font-weight="700">LOW</tspan> — no</text>
+<text x="524.0" y="986.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">universe token concerned</text>
+<text x="513.0" y="1005.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1005.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">The 7 scores below (0–10, each with a reason) explain the class on the card:</text>
+<text x="513.0" y="1024.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1024.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">1) <tspan font-weight="700">Direct economics</tspan> — does it create real fees, demand, burns, staking or</text>
+<text x="524.0" y="1040.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">collateral use?</text>
+<text x="513.0" y="1059.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1059.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">2) <tspan font-weight="700">Size</tspan> — how big is the effect for the project and the token?</text>
+<text x="513.0" y="1078.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1078.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">3) <tspan font-weight="700">Permanence</tspan> — one-off or lasting change?</text>
+<text x="513.0" y="1097.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1097.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">4) <tspan font-weight="700">New access</tspan> — can new capital or new users come in?</text>
+<text x="513.0" y="1116.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1116.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">5) <tspan font-weight="700">Forced flows</tspan> — buybacks, burns, mandated buying or collateral?</text>
+<text x="513.0" y="1135.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1135.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">6) <tspan font-weight="700">Surprise</tspan> — did the market expect it?</text>
+<text x="513.0" y="1154.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1154.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">7) <tspan font-weight="700">Stage</tspan> — rumor → proposed → approved → live → money flowing</text>
+<text x="513.0" y="1173.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1173.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Also: how much of the money reaches the token (direct · indirect · story only ·</text>
+<text x="524.0" y="1189.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">unknown) and when the effect starts</text>
+<rect x="565.0" y="1230.0" width="300.0" height="34.0" rx="18" fill="#FFF8E6" stroke="#C99A2E" stroke-width="1.2"/>
+<text x="575.0" y="1251.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="280.0"><tspan font-weight="700">MAJOR or STRUCTURAL SHOCK?</tspan></text>
+<rect x="470.0" y="1310.0" width="490.0" height="131.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
+<circle cx="492.0" cy="1330.0" r="11" fill="#334E68"/>
+<text x="492.0" y="1334.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" xml:space="preserve"><tspan font-weight="700">4</tspan></text>
+<text x="512.0" y="1334.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="436.0"><tspan font-weight="700">Map who benefits and who loses</tspan></text>
+<text x="513.0" y="1356.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1356.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Tank searches the web and its own history for each layer</text>
+<text x="513.0" y="1375.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1375.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">8 layers: issuer/product · trading venue · settlement chain · liquidity/execution ·</text>
+<text x="524.0" y="1391.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">lending/collateral · oracles/data · interoperability · custody/compliance</text>
+<text x="513.0" y="1410.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1410.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Primary tokens, up to 4 secondary beneficiaries, up to 2 losers; names the</text>
+<text x="524.0" y="1426.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">least-repriced beneficiary</text>
+<rect x="470.0" y="1467.0" width="490.0" height="268.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
+<circle cx="492.0" cy="1487.0" r="11" fill="#334E68"/>
+<text x="492.0" y="1491.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" xml:space="preserve"><tspan font-weight="700">5</tspan></text>
+<text x="512.0" y="1491.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="436.0"><tspan font-weight="700">Measure what the market is really doing</tspan></text>
+<text x="513.0" y="1513.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1513.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Windows 15 m · 1 h · 4 h · 24 h · since the event, all at one fixed cutoff</text>
+<text x="513.0" y="1532.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1532.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Spot buying/selling per venue and combined: how many venues agree and</text>
+<text x="524.0" y="1548.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">how much volume they carry</text>
+<text x="513.0" y="1567.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1567.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Open interest in token units (new positions vs price effect) · funding per venue ·</text>
+<text x="524.0" y="1583.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">liquidations: complete or sample · liquidity and price impact</text>
+<text x="513.0" y="1602.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1602.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">How much is already priced: moved against the event · not yet · early ·</text>
+<text x="524.0" y="1618.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">substantial · heavy</text>
+<text x="513.0" y="1637.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1637.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">What moves the price, one of: spot buyers leading · spot and moderate</text>
+<text x="524.0" y="1653.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">leverage together · perp traders chasing · short squeeze · buying absorbed by</text>
+<text x="524.0" y="1669.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">a seller · selling absorbed by resting buyers · holders selling into strength ·</text>
+<text x="524.0" y="1685.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">price markup without new positions · thin book, price jumps on little flow ·</text>
+<text x="524.0" y="1701.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">venues disagree · unknown</text>
+<text x="513.0" y="1720.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1720.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Data confidence high / medium / low and the weakest input named</text>
+<rect x="470.0" y="1761.0" width="490.0" height="77.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
+<circle cx="492.0" cy="1781.0" r="11" fill="#334E68"/>
+<text x="492.0" y="1785.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" xml:space="preserve"><tspan font-weight="700">6</tspan></text>
+<text x="512.0" y="1785.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="436.0"><tspan font-weight="700">Forecast movement</tspan></text>
+<text x="513.0" y="1807.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1807.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Direction · potential · best horizon (1 h … 7 d) · base, upside and failure</text>
+<text x="524.0" y="1823.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">scenarios, each in words</text>
+<rect x="470.0" y="1864.0" width="490.0" height="150.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
+<circle cx="492.0" cy="1884.0" r="11" fill="#334E68"/>
+<text x="492.0" y="1888.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" xml:space="preserve"><tspan font-weight="700">7</tspan></text>
+<text x="512.0" y="1888.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="436.0"><tspan font-weight="700">Decide</tspan></text>
+<text x="513.0" y="1910.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1910.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">No open call: <tspan font-weight="700">START · WATCH-TO-START · WAIT · DON'T CHASE</tspan></text>
+<text x="513.0" y="1929.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1929.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">On a call Tank started: <tspan font-weight="700">HOLD · ADD · REDUCE · EXIT</tspan>, for long positions; Tank</text>
+<text x="524.0" y="1945.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">follows a call for up to 7 days</text>
+<text x="513.0" y="1964.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1964.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">Two grades decide the action: <tspan font-weight="700">thesis</tspan> A–D (how strong the event is for this</text>
+<text x="524.0" y="1980.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">token) and <tspan font-weight="700">trade</tspan> A–D (how good the entry is right now)</text>
+<text x="513.0" y="1999.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="524.0" y="1999.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="424.0">START needs high data confidence and every key market metric verified</text>
+<rect x="510.0" y="2040.0" width="410.0" height="89.0" rx="14" fill="#FFF8E6" stroke="#C99A2E" stroke-width="1.2"/>
+<text x="520.0" y="2062.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0"><tspan font-weight="700">Card rules met?</tspan></text>
+<text x="520.0" y="2084.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0">Checks the card: MAJOR or STRUCTURAL SHOCK · certainty high or</text>
+<text x="520.0" y="2100.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0">medium · freshness FRESH to OLD · the event is open · the 18 hard</text>
+<text x="520.0" y="2116.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0">rules of PRD §8</text>
+<path d="M 715.0 266.0 L 715.0 292.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 715.0 416.0 L 715.0 442.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 715.0 742.0 L 715.0 768.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 715.0 1204.0 L 715.0 1230.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 715.0 1264.0 L 715.0 1310.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 715.0 1441.0 L 715.0 1467.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 715.0 1735.0 L 715.0 1761.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 715.0 1838.0 L 715.0 1864.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 715.0 2014.0 L 715.0 2040.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<text x="707.0" y="1280.0" font-size="11" fill="#52606D" text-anchor="end" xml:space="preserve">yes</text>
+<rect x="994.0" y="332.0" width="228.0" height="48.0" rx="8" fill="#FFF8E6" stroke="#C99A2E" stroke-width="1.2"/>
+<text x="1004.0" y="353.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="208.0"><tspan font-weight="700">Not about crypto</tspan> → stored with the</text>
+<text x="1004.0" y="368.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="208.0">reason</text>
+<path d="M 920.0 354.0 L 994.0 354.0" fill="none" stroke="#B7791F" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ah-a)" stroke-linejoin="round"/>
+<rect x="994.0" y="540.0" width="228.0" height="180.0" rx="8" fill="#FFF8E6" stroke="#C99A2E" stroke-width="1.2"/>
+<text x="1005.0" y="561.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1016.0" y="561.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="196.0"><tspan font-weight="700">No new fact</tspan> (opinion, price talk) →</text>
+<text x="1016.0" y="576.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="196.0">recorded</text>
+<text x="1005.0" y="594.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1016.0" y="594.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="196.0"><tspan font-weight="700">Repeat of a known event</tspan> → added</text>
+<text x="1016.0" y="609.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="196.0">to its event</text>
+<text x="1005.0" y="627.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1016.0" y="627.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="196.0"><tspan font-weight="700">Stale</tspan> (public &gt; 48 h before Tank saw</text>
+<text x="1016.0" y="642.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="196.0">it) → recorded as stale</text>
+<text x="1005.0" y="660.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1016.0" y="660.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="196.0"><tspan font-weight="700">Official denial</tspan> → event cancelled</text>
+<text x="1005.0" y="678.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1016.0" y="678.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="196.0"><tspan font-weight="700">Low certainty</tspan> (an unknown account:</text>
+<text x="1016.0" y="693.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="196.0">"Bybit pivots to making condoms") →</text>
+<text x="1016.0" y="708.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="196.0">recorded</text>
+<path d="M 960.0 592.0 L 994.0 592.0" fill="none" stroke="#B7791F" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ah-a)" stroke-linejoin="round"/>
+<rect x="994.0" y="1214.0" width="228.0" height="63.0" rx="8" fill="#FFF8E6" stroke="#C99A2E" stroke-width="1.2"/>
+<text x="1004.0" y="1235.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="208.0"><tspan font-weight="700">No (LOW, MATERIAL)</tspan> → tracked</text>
+<text x="1004.0" y="1250.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="208.0">silently; graded again when a new fact</text>
+<text x="1004.0" y="1265.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="208.0">arrives</text>
+<path d="M 865.0 1247.0 L 994.0 1247.0" fill="none" stroke="#B7791F" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#ah-a)" stroke-linejoin="round"/>
+<text x="929.5" y="1241.0" font-size="11" fill="#52606D" text-anchor="middle" xml:space="preserve">no</text>
+<rect x="994.0" y="1310.0" width="228.0" height="152.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
+<circle cx="1014.0" cy="1328.0" r="11" fill="#334E68"/>
+<text x="1014.0" y="1332.5" font-size="12.5" fill="#FFFFFF" text-anchor="middle" xml:space="preserve"><tspan font-weight="700">8</tspan></text>
+<text x="1034.0" y="1332.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="178.0"><tspan font-weight="700">Record the reaction</tspan></text>
+<text x="1035.0" y="1354.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1046.0" y="1354.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="166.0">−24 h, −4 h, −1 h and +15 m,</text>
+<text x="1046.0" y="1369.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="166.0">+1 h, +4 h, +24 h, +72 h around</text>
+<text x="1046.0" y="1384.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="166.0">the event</text>
+<text x="1035.0" y="1402.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1046.0" y="1402.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="166.0">Price (raw and net of BTC), spot</text>
+<text x="1046.0" y="1417.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="166.0">flow, open interest in tokens,</text>
+<text x="1046.0" y="1432.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="166.0">funding, liquidations</text>
+<text x="1035.0" y="1450.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1046.0" y="1450.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="166.0">Frozen once recorded</text>
+<path d="M 715.0 1296.0 L 1108.0 1296.0 L 1108.0 1310.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<rect x="1262.0" y="154.0" width="386.0" height="520.0" rx="8" fill="#EEF8F1" stroke="#38A169" stroke-width="1.5"/>
+<text x="1274.0" y="178.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">Telegram «Tank Alerts» — decision card</tspan></text>
+<rect x="1274.0" y="191.0" width="362.0" height="293.0" rx="6" fill="#FFFFFF" stroke="#CBD2D9" stroke-width="1.0"/>
+<text x="1284.0" y="212.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0"><tspan font-weight="700">&lt;STRUCTURAL SHOCK | MAJOR&gt;</tspan> (criterion met) — one neutral</text>
+<text x="1284.0" y="227.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0">sentence</text>
+<text x="1284.0" y="244.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0">Seven scores · stage · certainty · freshness (fresh … old) with</text>
+<text x="1284.0" y="259.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0">public and known times · data confidence high / medium / low</text>
+<text x="1284.0" y="276.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0"><tspan font-weight="700">VERIFIED / NOT VERIFIED</tspan> — what is confirmed and by which</text>
+<text x="1284.0" y="291.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0">source; what is not</text>
+<text x="1284.0" y="308.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0"><tspan font-weight="700">WHY IT MATTERS</tspan> — what changed · economic effect · how</text>
+<text x="1284.0" y="323.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0">much reaches the token</text>
+<text x="1284.0" y="340.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0"><tspan font-weight="700">WHO</tspan> — primary · secondary (layer, state) · loser</text>
+<text x="1284.0" y="357.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0"><tspan font-weight="700">For each token, up to 3:</tspan></text>
+<text x="1284.0" y="374.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0"><tspan font-weight="700">MARKET TRUTH</tspan> — what moves the price, 2–3 facts with window</text>
+<text x="1284.0" y="389.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0">and unit, how much is priced</text>
+<text x="1284.0" y="406.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0"><tspan font-weight="700">OUTLOOK</tspan> — bias · potential · best horizon · base / upside /</text>
+<text x="1284.0" y="421.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0">failure</text>
+<text x="1284.0" y="438.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0"><tspan font-weight="700">WHAT TO DO</tspan> — action · thesis grade · trade grade</text>
+<text x="1284.0" y="455.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0"><tspan font-weight="700">WHAT CHANGES THE ACTION</tspan> — one condition up, one down</text>
+<text x="1284.0" y="472.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="342.0"><tspan font-weight="700">CONFIDENCE</tspan> — low / medium / high and the main unknown</text>
+<rect x="1262.0" y="478.0" width="386.0" height="194.0" rx="8" fill="none" stroke="none" stroke-width="0"/>
+<text x="1275.0" y="501.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="501.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">≤ 3,500 characters, up to 3 tokens</text>
+<text x="1275.0" y="520.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="520.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">STRUCTURAL SHOCK: first card ≤ 3 min after Tank learns of it;</text>
+<text x="1286.0" y="536.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">the full card follows in the same thread</text>
+<text x="1275.0" y="555.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="555.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">MAJOR: full card ≤ 8 min</text>
+<text x="1275.0" y="574.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="574.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">Every card version is stored with its evidence — sources, quotes,</text>
+<text x="1286.0" y="590.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">market data, every analysis step — and can be reproduced</text>
+<text x="1275.0" y="609.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="609.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">Updates go as replies in the card's thread when an action, the</text>
+<text x="1286.0" y="625.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">grade, the stage or its verification, or a decisive condition</text>
+<text x="1286.0" y="641.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">changes, the event is denied or a call ends; at most 1 per 15 min</text>
+<text x="1286.0" y="657.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">— START, EXIT and broken theses at once</text>
+<rect x="1262.0" y="694.0" width="386.0" height="99.0" rx="8" fill="#F0F4F8" stroke="#627D98" stroke-width="1.2"/>
+<text x="1274.0" y="718.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">Telegram «Tank Ops»</tspan></text>
+<text x="1275.0" y="740.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="740.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">DELIVERY FAILED (5 attempts)</text>
+<text x="1275.0" y="759.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="759.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">LLM BUDGET at 80% and 100% of $30/day</text>
+<text x="1275.0" y="778.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="778.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">HEARTBEAT daily at 08:00 UTC</text>
+<rect x="1262.0" y="813.0" width="386.0" height="131.0" rx="8" fill="#F0F4F8" stroke="#627D98" stroke-width="1.2"/>
+<text x="1274.0" y="837.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">Review (operator, 14-day shadow mode)</tspan></text>
+<text x="1275.0" y="859.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="859.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">Every card with its versions, evidence, delivery status and the</text>
+<text x="1286.0" y="875.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">move that followed</text>
+<text x="1275.0" y="894.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="894.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">Labels for cards: CATCH · LATE · FALSE ALARM · NOISE; for</text>
+<text x="1286.0" y="910.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">events without a card: CORRECT SILENCE · MISS</text>
+<text x="1275.0" y="929.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1286.0" y="929.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="350.0">Scout proposals: approve for testing · test more · reject</text>
+<path d="M 960.0 1000.0 L 1243.0 1000.0" fill="none" stroke="#2F855A" stroke-width="1.5" stroke-linejoin="round"/>
+<rect x="996.2" y="983.0" width="218.6" height="15.0" fill="#FFFFFF" opacity="0.92"/>
+<text x="1105.5" y="993.0" font-size="11" fill="#2F855A" text-anchor="middle" xml:space="preserve"><tspan font-weight="700">STRUCTURAL SHOCK: first card ≤ 3 min</tspan></text>
+<path d="M 920.0 2084.5 L 1243.0 2084.5 L 1243.0 178.0 L 1262.0 178.0" fill="none" stroke="#2F855A" stroke-width="1.5" marker-end="url(#ah-gr)" stroke-linejoin="round"/>
+<rect x="1049.3" y="2067.5" width="64.5" height="15.0" fill="#FFFFFF" opacity="0.92"/>
+<text x="1081.5" y="2077.5" font-size="11" fill="#2F855A" text-anchor="middle" xml:space="preserve"><tspan font-weight="700">yes → card</tspan></text>
+<text x="715.0" y="2144.0" font-size="11" fill="#B7791F" text-anchor="middle" xml:space="preserve">no → the event stays monitored</text>
+<rect x="32.0" y="154.0" width="404.0" height="274.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="44.0" y="178.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="380.0"><tspan font-weight="700">34 information sources (S01–S34)</tspan></text>
+<text x="45.0" y="200.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="200.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">Regulators:</tspan> SEC, SEC EDGAR, Federal Register, CFTC, Federal</text>
+<text x="56.0" y="216.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">Reserve, OCC, Treasury + OFAC, DTCC</text>
+<text x="45.0" y="235.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="235.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">Exchanges:</tspan> Binance, OKX, Bybit, Kraken and Robinhood</text>
+<text x="56.0" y="251.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">announcements; new markets on all 6 venues</text>
+<text x="45.0" y="270.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="270.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">Issuers:</tspan> Uniswap, Ondo, LayerZero, BlackRock, Franklin Templeton,</text>
+<text x="56.0" y="286.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">Circle, Tether, Paxos</text>
+<text x="45.0" y="305.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="305.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">Governance:</tspan> 8 forums, 6 Snapshot spaces</text>
+<text x="45.0" y="324.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="324.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">GitHub:</tspan> releases of Uniswap, Aave, CoW, Hyperliquid, 1inch,</text>
+<text x="56.0" y="340.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">Lighter, Avalanche, NEAR, World Chain, Plasma; commits of</text>
+<text x="56.0" y="356.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">LayerZero, Morpho</text>
+<text x="45.0" y="375.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="375.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">Institutions:</tspan> BNY, The Clearing House, Anchorage Digital</text>
+<text x="45.0" y="394.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="394.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">News:</tspan> BBC, Bloomberg, Reuters, CoinDesk, The Block</text>
+<text x="45.0" y="413.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="413.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">Max delay: 30 s (Binance) to 10 min (blogs)</text>
+<rect x="32.0" y="444.0" width="404.0" height="278.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="44.0" y="468.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="380.0"><tspan font-weight="700">X: 86 accounts in one private list (S29)</tspan></text>
+<text x="45.0" y="490.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="490.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">Organizations (41):</tspan> project, company, foundation and chain</text>
+<text x="56.0" y="506.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">accounts of all 22 tokens</text>
+<text x="45.0" y="525.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="525.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">Founders and C-level (37):</tspan> ETH Buterin, Miyaguchi, Aue · UNI</text>
+<text x="56.0" y="541.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">Adams, Walsh · AERO Cutler, Boulos, Annis · CRV Egorov · 1INCH</text>
+<text x="56.0" y="557.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">Kunz · ZRX Bandeali, Warren · COW George, Leupold · HYPE Yan ·</text>
+<text x="56.0" y="573.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">LIT Novakovski · AAVE Kulechov · MORPHO Frambot, Egalité · EUL</text>
+<text x="56.0" y="589.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">Han, Bentley · ONDO De Bode · ZRO Pellegrino, Zarick, Banister ·</text>
+<text x="56.0" y="605.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">QNT Verdian · AVAX Gün Sirer, Cooper · NEAR Polosukhin,</text>
+<text x="56.0" y="621.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">Skidanov, Zeng · XPL Faecks, Angermayer · ENA Young · WLD</text>
+<text x="56.0" y="637.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">Blania, Altman, Sada</text>
+<text x="45.0" y="656.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="656.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">Other (8):</tspan> @CoinbaseMarkets, @Securitize; reporters</text>
+<text x="56.0" y="672.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">@EleanorTerrett, @WuBlockchain, @tier10k, @zachxbt,</text>
+<text x="56.0" y="688.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">@PeckShieldAlert, @lookonchain</text>
+<text x="45.0" y="707.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="707.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">Max delay: 1 min</text>
+<rect x="32.0" y="1531.0" width="404.0" height="150.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="44.0" y="1555.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="380.0"><tspan font-weight="700">Market data: 6 venues</tspan></text>
+<text x="45.0" y="1577.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="1577.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">Spot:</tspan> Binance, Coinbase, OKX, Bybit, Kraken</text>
+<text x="45.0" y="1596.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="1596.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">Perpetuals:</tspan> Binance, OKX, Bybit, Hyperliquid</text>
+<text x="45.0" y="1615.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="1615.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">Trades with aggressor side, order books, candles, open interest,</text>
+<text x="56.0" y="1631.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">funding, liquidations where published</text>
+<text x="45.0" y="1650.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="1650.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">Supply and fundamentals:</tspan> DefiLlama (fees, unlocks, lending,</text>
+<text x="56.0" y="1666.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">stablecoins); Binance and OKX wallet balances</text>
+<rect x="32.0" y="1697.0" width="404.0" height="156.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="44.0" y="1721.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="380.0"><tspan font-weight="700">Universe: 22 tokens</tspan></text>
+<text x="45.0" y="1743.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="1743.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">Benchmarks:</tspan> BTC, ETH</text>
+<text x="45.0" y="1762.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="1762.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">DEX &amp; execution:</tspan> UNI, CAKE, AERO, CRV, 1INCH, ZRX, COW</text>
+<text x="45.0" y="1781.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="1781.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">Perp DEX:</tspan> HYPE, LIT · <tspan font-weight="700">Lending:</tspan> AAVE, MORPHO, EUL</text>
+<text x="45.0" y="1800.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="1800.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">RWA:</tspan> ONDO · <tspan font-weight="700">Interoperability:</tspan> ZRO, QNT · <tspan font-weight="700">Synthetic dollar:</tspan> ENA</text>
+<text x="45.0" y="1819.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="1819.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0"><tspan font-weight="700">L1 / settlement:</tspan> AVAX, NEAR, XPL · <tspan font-weight="700">Identity / payments:</tspan> WLD</text>
+<text x="45.0" y="1838.5" font-size="12" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="56.0" y="1838.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="368.0">A token outside the list appears on the card by name</text>
+<path d="M 436.0 210.0 L 470.0 210.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 436.0 583.0 L 453.0 583.0 L 453.0 210.0" fill="none" stroke="#334E68" stroke-width="1.5" stroke-linejoin="round"/>
+<path d="M 436.0 1601.0 L 470.0 1601.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<text x="1262.0" y="980.0" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve" letter-spacing="1.2"><tspan font-weight="700">RUNS ALONGSIDE THE MAIN FLOW</tspan></text>
+<rect x="1262.0" y="992.0" width="386.0" height="125.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
+<text x="1274.0" y="1016.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">Closer watch after a MAJOR grade</tspan></text>
+<text x="1274.0" y="1038.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">Once step 3 grades an event MAJOR or higher, Tank checks the</text>
+<text x="1274.0" y="1054.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">official sources of its organizations every 15 s for 2 h, and around a</text>
+<text x="1274.0" y="1070.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">known milestone (vote end, effective date, launch) from 5 min</text>
+<text x="1274.0" y="1086.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">before until confirmed or 2 h after, to catch a confirmation, details</text>
+<text x="1274.0" y="1102.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">or a denial fast</text>
+<rect x="1262.0" y="1131.0" width="386.0" height="125.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.5"/>
+<text x="1274.0" y="1155.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">One analysis per event</tspan></text>
+<text x="1274.0" y="1177.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">Steps 2–7 are one continuous analysis. Later news about the event</text>
+<text x="1274.0" y="1193.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">(a repeat or a development within 3 days), an official denial, a</text>
+<text x="1274.0" y="1209.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">milestone or a fired condition is added to it, even while it runs →</text>
+<text x="1274.0" y="1225.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">the steps it affects run again → a threaded update when a decision</text>
+<text x="1274.0" y="1241.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">changes</text>
+<rect x="1262.0" y="1270.0" width="386.0" height="93.0" rx="8" fill="#FFF8E6" stroke="#C99A2E" stroke-width="1.2"/>
+<text x="1274.0" y="1294.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">Scout for unknown patterns</tspan></text>
+<text x="1274.0" y="1316.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">A beneficiary layer, market behavior or discovery path outside the</text>
+<text x="1274.0" y="1332.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">known patterns → a proposal to the operator, who approves</text>
+<text x="1274.0" y="1348.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">testing</text>
+<rect x="1262.0" y="1377.0" width="386.0" height="93.0" rx="8" fill="#F0F4F8" stroke="#627D98" stroke-width="1.2"/>
+<text x="1274.0" y="1401.0" font-size="13.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0"><tspan font-weight="700">LLM budget: $30 per day</tspan></text>
+<text x="1274.0" y="1423.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">When it is spent, news, GitHub commits and posts of the 8 other X</text>
+<text x="1274.0" y="1439.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">accounts wait until 00:00 UTC; official sources (founders and</text>
+<text x="1274.0" y="1455.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="362.0">C-level included) and major events continue</text>
+</svg>

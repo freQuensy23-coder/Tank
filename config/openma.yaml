@@ -1,0 +1,17 @@
+version: baseline-2.3
+agent_id: null
+scout_agent_id: null
+environment_id: null
+replay_environment_id: null
+release: 85d5361f535c7221de975838dc48444e468cc02e
+prompt_version: baseline-2.3
+model_id: gpt-6.1-sol
+reasoning_effort: medium
+model_prices:
+  gpt-6.1-sol:
+    input_per_million: 2
+    output_per_million: 10
+    cache_read_per_million: 0.1
+    cache_creation_per_million: null
+pricing_basis: Technical Design §3.2 estimate; verify actual Model Card prices at
+  deploy.

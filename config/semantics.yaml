@@ -1,0 +1,149 @@
+version: baseline-2.3
+self_test_policy: Each adapter must fetch a live sample, assert units, required fields
+  and ID behavior; failed semantics become UNKNOWN until fixed. Baseline VERIFIED
+  is source evidence, not proof of this installation.
+metrics:
+- metric_key: binance.spot.aggTrade
+  field: m
+  meaning: m = true → buyer was maker → aggressor SELL
+  units_time: q base units; T ms
+  dedup_key: a (agg ID; f–l trade range)
+  confidence: VERIFIED
+  evidence: VERIFIED (live sample "m":false on WLDUSDT)
+- metric_key: binance.usdm.aggTrade
+  field: m
+  meaning: m = true → buyer was maker → aggressor SELL
+  units_time: q base units; T ms
+  dedup_key: a (agg ID; f–l trade range)
+  confidence: VERIFIED
+  evidence: VERIFIED (live sample "m":false on WLDUSDT)
+- metric_key: coinbase.spot.matches
+  field: side
+  meaning: Maker order side → aggressor is the opposite side
+  units_time: size base; time ISO-8601 µs
+  dedup_key: trade_id
+  confidence: VERIFIED
+  evidence: VERIFIED (exchange documentation; live sample "side":"sell")
+- metric_key: coinbase.spot.trades
+  field: side
+  meaning: Maker order side → aggressor is the opposite side
+  units_time: size base; time ISO-8601 µs
+  dedup_key: trade_id
+  confidence: VERIFIED
+  evidence: VERIFIED (exchange documentation; live sample "side":"sell")
+- metric_key: okx.spot.trades
+  field: side
+  meaning: Taker side
+  units_time: sz base (spot) or contracts (swap, × ctVal); ts ms
+  dedup_key: tradeId
+  confidence: VERIFIED
+  evidence: VERIFIED
+- metric_key: okx.swap.trades
+  field: side
+  meaning: Taker side
+  units_time: sz base (spot) or contracts (swap, × ctVal); ts ms
+  dedup_key: tradeId
+  confidence: VERIFIED
+  evidence: VERIFIED
+- metric_key: bybit.spot.publicTrade
+  field: S (WS), side (REST)
+  meaning: Taker side
+  units_time: v/size base; T/time ms
+  dedup_key: i / execId
+  confidence: VERIFIED
+  evidence: VERIFIED
+- metric_key: bybit.linear.publicTrade
+  field: S (WS), side (REST)
+  meaning: Taker side
+  units_time: v/size base; T/time ms
+  dedup_key: i / execId
+  confidence: VERIFIED
+  evidence: VERIFIED
+- metric_key: kraken.spot.trade
+  field: side (WS v2), b/s (REST)
+  meaning: Taker side
+  units_time: qty base; REST time = seconds (float)
+  dedup_key: trade_id
+  confidence: VERIFIED
+  evidence: VERIFIED
+- metric_key: hyperliquid.perp.trades
+  field: side
+  meaning: B → aggressor BUY, A → aggressor SELL
+  units_time: sz coin; time ms
+  dedup_key: tid
+  confidence: VERIFIED
+  evidence: 'VERIFIED (16 Oct 2026, BTC/ETH/HYPE/SOL against the book: of trades printed
+    at the bid or ask, 104 of 115 B at the ask, 49 of 62 A at the bid)'
+- metric_key: binance.usdm.openInterest
+  field: openInterest
+  units_sidedness: 'Base units, single-sided (WLDUSDT 16 Oct 2026: 203,999,216 WLD)'
+  excluded: —
+  confidence: VERIFIED
+  evidence: VERIFIED
+- metric_key: binance.usdm.openInterestHist
+  field: sumOpenInterest; sumOpenInterestValue
+  units_sidedness: Base units, single-sided; USD notional (price-contaminated); 5m
+    buckets, 30-day history
+  excluded: CMCCirculatingSupply (not OI)
+  confidence: VERIFIED
+  evidence: VERIFIED
+- metric_key: okx.swap.open-interest
+  field: oiCcy
+  units_sidedness: Coin units, single-sided (oi = contracts; oi × ctVal = oiCcy; WLD
+    ctVal = 1)
+  excluded: oiUsd alone
+  confidence: VERIFIED
+  evidence: VERIFIED
+- metric_key: bybit.linear.open-interest
+  field: singleOpenInterest
+  units_sidedness: Base units, single-sided
+  excluded: openInterest = both sides counted (ratio 2.000 on BTCUSDT, ETHUSDT, WLDUSDT,
+    16 Oct 2026)
+  confidence: VERIFIED
+  evidence: VERIFIED
+- metric_key: hyperliquid.perp.ctx
+  field: openInterest
+  units_sidedness: Coin units; sidedness not published by Hyperliquid
+  excluded: Summing with other venues
+  confidence: VERIFIED
+  evidence: VERIFIED for per-venue % change only (a sidedness factor cancels in a
+    ratio)
+- metric_key: binance.usdm.funding
+  settled: /fapi/v1/fundingRate → fundingRate at fundingTime
+  estimate: /fapi/v1/premiumIndex → lastFundingRate (+ nextFundingTime); WS r
+  interval: fundingIntervalHours from /fapi/v1/fundingInfo, else 8 h
+  confidence: VERIFIED
+  evidence: VERIFIED
+- metric_key: okx.swap.funding
+  settled: settFundingRate (settState), history fundingRate
+  estimate: 'fundingRate (method: current_period) applying at fundingTime'
+  interval: spacing of prevFundingTime → fundingTime (8 h on WLD)
+  confidence: VERIFIED
+  evidence: VERIFIED
+- metric_key: bybit.linear.funding
+  settled: /v5/market/funding/history → fundingRate
+  estimate: tickers fundingRate (+ nextFundingTime)
+  interval: fundingIntervalHour (8 on WLD)
+  confidence: VERIFIED
+  evidence: VERIFIED
+- metric_key: hyperliquid.perp.funding
+  settled: fundingHistory
+  estimate: metaAndAssetCtxs → funding
+  interval: 1 h
+  confidence: VERIFIED
+  evidence: 'VERIFIED (WLD 16 Oct 2026: 0.0000125 per hour = 0.0100% per 8 h, equal
+    to Binance, OKX and Bybit)'
+- metric_key: '{s}@forceOrder'
+  coverage: SAMPLED
+  meaning: SAMPLED — at most the latest liquidation per symbol per 1,000 ms
+- metric_key: allLiquidation.{SYMBOL}
+  coverage: COMPLETE
+  meaning: 'COMPLETE — Bybit documentation: "push all liquidations that occur on Bybit"
+    (USDT, USDC and inverse contracts, every 500 ms)'
+- metric_key: liquidation-orders
+  coverage: SAMPLED
+  meaning: 'SAMPLED — OKX documentation: "This data doesn''t represent the total number
+    of liquidations on OKX"'
+- metric_key: Hyperliquid
+  coverage: NOT_SUPPORTED (no public stream)
+  meaning: NOT_SUPPORTED (no public stream)

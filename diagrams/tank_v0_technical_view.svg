@@ -1,0 +1,394 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1950" viewBox="0 0 1800 1950" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
+<defs>
+<marker id="ah-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#52606D"/></marker>
+<marker id="as-g" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#52606D"/></marker>
+<marker id="ah-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#B7791F"/></marker>
+<marker id="as-a" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#B7791F"/></marker>
+<marker id="ah-gr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#2F855A"/></marker>
+<marker id="as-gr" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#2F855A"/></marker>
+<marker id="ah-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#2B6CB0"/></marker>
+<marker id="as-b" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#2B6CB0"/></marker>
+<marker id="ah-p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#6B46C1"/></marker>
+<marker id="as-p" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#6B46C1"/></marker>
+<marker id="ah-s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#334E68"/></marker>
+<marker id="as-s" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#334E68"/></marker>
+<marker id="ah-l" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 z" fill="#9AA5B1"/></marker>
+<marker id="as-l" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M10 0 L0 5 L10 10 z" fill="#9AA5B1"/></marker>
+</defs>
+<rect x="0" y="0" width="1800" height="1950" fill="#FFFFFF"/>
+<rect x="378" y="150" width="1016" height="1770.0" rx="12" fill="#FBFCFD" stroke="#9FB3C8" stroke-width="1.2" stroke-dasharray="6 4"/>
+<text x="32.0" y="46.0" font-size="22" fill="#1F2933" text-anchor="start" xml:space="preserve"><tspan font-weight="700">Tank V0 — how it works: technical view</tspan></text>
+<text x="32.0" y="70.0" font-size="13" fill="#52606D" text-anchor="start" xml:space="preserve">One Tank service, PostgreSQL and OpenMA on one machine. The service only reads; the agent sandboxes have open internet. Tank holds no exchange keys and cannot trade.</text>
+<text x="32.0" y="92.0" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">Source: 02 HLD v2.2 and 03 TDD (16 Oct 2026). Tank is one asyncio process built from modules; durable work is a job in <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops.jobs</tspan>; only <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sessions</tspan> talks to OpenMA.</text>
+<rect x="1422.0" y="26.0" width="22.0" height="12.0" rx="3" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="1452.0" y="36.5" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">External source</text>
+<rect x="1422.0" y="44.0" width="22.0" height="12.0" rx="3" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
+<text x="1452.0" y="54.5" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Module of the Tank service · OpenMA</text>
+<rect x="1422.0" y="62.0" width="22.0" height="12.0" rx="3" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
+<text x="1452.0" y="72.5" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Storage</text>
+<rect x="1422.0" y="80.0" width="22.0" height="12.0" rx="3" fill="#EEF5FC" stroke="#3182CE" stroke-width="1.3"/>
+<text x="1452.0" y="90.5" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">External service / LLM call</text>
+<rect x="1422.0" y="98.0" width="22.0" height="12.0" rx="3" fill="#EEF8F1" stroke="#38A169" stroke-width="1.5"/>
+<text x="1452.0" y="108.5" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Telegram output</text>
+<text x="32.0" y="138.0" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve" letter-spacing="1.2"><tspan font-weight="700">EXTERNAL SOURCES</tspan></text>
+<text x="380.0" y="138.0" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve" letter-spacing="1.2"><tspan font-weight="700">TANK MACHINE</tspan></text>
+<text x="1422.0" y="138.0" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve" letter-spacing="1.2"><tspan font-weight="700">EXTERNAL SERVICES</tspan></text>
+<rect x="394" y="188" width="984" height="1109.0" rx="12" fill="#F3F6FA" stroke="#334E68" stroke-width="1.8"/>
+<rect x="410.0" y="250.0" width="404.0" height="124.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
+<text x="421.0" y="273.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="382.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sources</tspan></text>
+<text x="422.0" y="295.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="295.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">One polling loop per source: S01–S18, S20–S28, S30–S34 over plain</text>
+<text x="433.0" y="310.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">HTTP (conditional GET, 20 s timeout, 3 retries)</text>
+<text x="422.0" y="328.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="328.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Raw payload + SHA-256 → <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">raw/items</tspan>; new item → <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">source_items</tspan></text>
+<text x="433.0" y="343.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">+ FILTER_ITEM or ROUTE_ITEM job</text>
+<text x="422.0" y="361.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="361.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">S14: diff of the venues' instrument lists</text>
+<rect x="410.0" y="388.0" width="404.0" height="124.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
+<text x="421.0" y="411.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="382.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">xsensor</tspan></text>
+<text x="422.0" y="433.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="433.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">One loop: Playwright (async API), headless Chrome with the operator's</text>
+<text x="433.0" y="448.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">profile</text>
+<text x="422.0" y="466.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="466.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">X list (S29) read every 60 s; Franklin Templeton page (S19) rendered</text>
+<text x="433.0" y="481.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">every 600 s</text>
+<text x="422.0" y="499.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="499.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Raw capture → <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">source_items</tspan> + FILTER_ITEM or ROUTE_ITEM job</text>
+<rect x="410.0" y="526.0" width="404.0" height="202.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
+<text x="421.0" y="549.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="382.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">market</tspan></text>
+<text x="422.0" y="571.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="571.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Hot tier ≤ 15 tokens: one task per venue WebSocket, ≤ 135</text>
+<text x="433.0" y="586.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">subscriptions on ≈ 10 connections — trades, books, mark/funding,</text>
+<text x="433.0" y="601.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">liquidations; a trade-ID gap is backfilled over REST</text>
+<text x="422.0" y="619.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="619.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">In the same module: 1-min flow bars per venue (aggressor side, size</text>
+<text x="433.0" y="634.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">buckets, completeness), 10 s book summaries, hourly Parquet written</text>
+<text x="433.0" y="649.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">in a worker thread</text>
+<text x="422.0" y="667.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="667.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Base tier: 22 tokens, 181 series — klines every 60 s, OI + funding every</text>
+<text x="433.0" y="682.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">300 s</text>
+<text x="422.0" y="700.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="700.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">A token turns hot → subscribed on every venue + backfill −24 h, −4 h,</text>
+<text x="433.0" y="715.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">−1 h · Binance archive files · DefiLlama daily · Etherscan balances</text>
+<rect x="410.0" y="742.0" width="404.0" height="139.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
+<text x="421.0" y="765.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="382.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">scheduler</tspan></text>
+<text x="422.0" y="787.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="787.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">One loop: runs each source loop at its cadence, every 15 s while</text>
+<text x="433.0" y="802.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">escalated</text>
+<text x="422.0" y="820.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="820.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Creates jobs: EVAL_CONDITIONS every minute, MILESTONE_CHECK</text>
+<text x="433.0" y="835.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">at a milestone's time, REACTION_CAPTURE at each checkpoint</text>
+<text x="422.0" y="853.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="853.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Hot-set demotion · heartbeat 08:00 UTC · retention · nightly backup</text>
+<text x="433.0" y="868.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">(<tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">pg_dump</tspan> and <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">bundles/</tspan> to an external disk)</text>
+<rect x="410.0" y="895.0" width="404.0" height="386.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
+<text x="422.0" y="917.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">analysis</tspan><tspan font-weight="700"> — plain code, no LLM</tspan></text>
+<text x="422.0" y="935.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="380.0">The jobs below, and the code behind the agent's tools: outlook, thesis</text>
+<text x="422.0" y="950.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="380.0">and trade grades, action, alert gate, hard-rule linter</text>
+<rect x="422.0" y="965.0" width="380.0" height="91.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="430.0" y="985.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ESCALATE_TOKENS</tspan><tspan font-weight="700"> · </tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">RUN_MARKET_TRUTH</tspan></text>
+<text x="430.0" y="1005.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0">Jobs of the agent's <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">get_market_truth</tspan>: tokens to the hot tier, then spot</text>
+<text x="430.0" y="1019.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0">flow, open interest, funding and liquidity per venue at one fixed time →</text>
+<text x="430.0" y="1033.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0">what moves the price; data confidence. Computed in a worker thread; the</text>
+<text x="430.0" y="1047.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0">result goes back to the session</text>
+<rect x="422.0" y="1068.0" width="380.0" height="63.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="430.0" y="1088.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">EVAL_CONDITIONS</tspan></text>
+<text x="430.0" y="1108.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0">Checks the armed conditions on new bars; a fired one →</text>
+<text x="430.0" y="1122.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0">CONDITION_FIRED into the event's session</text>
+<rect x="422.0" y="1143.0" width="380.0" height="63.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="430.0" y="1163.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">MILESTONE_CHECK</tspan></text>
+<text x="430.0" y="1183.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0">At a vote end, effective date or launch time checks the official source →</text>
+<text x="430.0" y="1197.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0">MILESTONE into the session</text>
+<rect x="422.0" y="1218.0" width="380.0" height="49.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="430.0" y="1238.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">REACTION_CAPTURE</tspan></text>
+<text x="430.0" y="1258.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0">Records the market at +15 m, +1 h, +4 h, +24 h, +72 h</text>
+<rect x="830.0" y="250.0" width="532.0" height="91.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
+<text x="841.0" y="273.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="510.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">jobs</tspan><tspan font-weight="700"> — 8 async workers</tspan></text>
+<text x="842.0" y="295.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="295.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Take the next due job from <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops.jobs</tspan> (official items and MAJOR+ work first), run it under its</text>
+<text x="853.0" y="310.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">timeout, write the result and the next job</text>
+<text x="842.0" y="328.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="328.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">On start, jobs left RUNNING by a stopped service go back to the queue</text>
+<rect x="830.0" y="355.0" width="532.0" height="235.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
+<text x="842.0" y="377.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">pipeline</tspan></text>
+<text x="842.0" y="395.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="508.0">Jobs FILTER_ITEM and ROUTE_ITEM:</text>
+<rect x="842.0" y="410.0" width="508.0" height="77.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="850.0" y="430.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">FILTER_ITEM</tspan></text>
+<text x="850.0" y="450.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">Asks Jev one yes/no question about each news item, GitHub commit and post of founders, C-level</text>
+<text x="850.0" y="464.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">and other accounts: is it about crypto? Above the cutoff (set at V0-B) → ROUTE_ITEM; below →</text>
+<text x="850.0" y="478.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">SKIPPED with its score</text>
+<rect x="1312.7" y="416.0" width="29.3" height="17" rx="8.5" fill="#EEF5FC" stroke="#3182CE" stroke-width="1"/>
+<text x="1318.7" y="428.5" font-size="10.5" fill="#2B6CB0" text-anchor="start" xml:space="preserve"><tspan font-weight="700">Jev</tspan></text>
+<rect x="842.0" y="499.0" width="508.0" height="77.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="850.0" y="519.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ROUTE_ITEM</tspan></text>
+<text x="850.0" y="539.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">One event, one session. For each event with news in the last 3 days that shares an entity with the</text>
+<text x="850.0" y="553.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">item, Jev answers: the same event or a development of it? Best match above the cutoff →</text>
+<text x="850.0" y="567.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">ITEM_ADDED into that session; none → NEW_ITEM opens a new one (AGENT_MESSAGE job)</text>
+<rect x="1312.7" y="505.0" width="29.3" height="17" rx="8.5" fill="#EEF5FC" stroke="#3182CE" stroke-width="1"/>
+<text x="1318.7" y="517.5" font-size="10.5" fill="#2B6CB0" text-anchor="start" xml:space="preserve"><tspan font-weight="700">Jev</tspan></text>
+<path d="M 882.0 488.0 L 882.0 498.0" fill="none" stroke="#334E68" stroke-width="1.2" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<rect x="830.0" y="604.0" width="532.0" height="91.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
+<text x="841.0" y="627.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="510.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">delivery</tspan></text>
+<text x="842.0" y="649.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="649.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">DELIVER jobs: Telegram <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sendMessage</tspan> (HTML); updates as replies to the first card</text>
+<text x="842.0" y="667.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="667.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Ledger <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">out.deliveries</tspan>: one row per transition; 5 attempts (1–16 s backoff), then FAILED +</text>
+<text x="853.0" y="682.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">DELIVERY_FAILED notice</text>
+<rect x="830.0" y="709.0" width="532.0" height="532.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
+<text x="842.0" y="731.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sessions</tspan></text>
+<text x="842.0" y="749.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="508.0">The only module that talks to OpenMA. AGENT_MESSAGE jobs: NEW_ITEM opens a session;</text>
+<text x="842.0" y="764.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="508.0">ITEM_ADDED, CONDITION_FIRED, MILESTONE and CALL_EXPIRED go into the event's session.</text>
+<text x="842.0" y="779.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="508.0">While the agent works, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sessions</tspan> follows the session's stream and runs the tools it calls,</text>
+<text x="842.0" y="794.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="508.0">answering with <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">user.custom_tool_result</tspan>:</text>
+<rect x="842.0" y="809.0" width="508.0" height="63.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="850.0" y="829.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0"><tspan font-weight="700">Read</tspan></text>
+<text x="850.0" y="849.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">get_item</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">search_tank_items</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">list_open_events</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">get_event</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">get_registry</tspan> ·</text>
+<text x="850.0" y="863.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">get_token_facts</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">web_search</tspan> (Tavily) · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">fetch_page</tspan>; pages and results stored as evidence</text>
+<rect x="842.0" y="884.0" width="508.0" height="77.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="850.0" y="904.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0"><tspan font-weight="700">Write — validated</tspan></text>
+<text x="850.0" y="924.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">record_event</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">add_observation</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">merge_into</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">set_assessment</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">set_beneficiaries</tspan></text>
+<text x="850.0" y="938.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">· <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">schedule_milestone</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">propose_pattern</tspan>. Quotes, stages, class checks and caps are code; a</text>
+<text x="850.0" y="952.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">bad input is refused with the reason</text>
+<rect x="842.0" y="973.0" width="508.0" height="63.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="850.0" y="993.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">get_market_truth</tspan></text>
+<text x="850.0" y="1013.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">ESCALATE_TOKENS + RUN_MARKET_TRUTH jobs; the session waits and gets the result when the</text>
+<text x="850.0" y="1027.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">job is done</text>
+<rect x="1292.5" y="979.0" width="49.5" height="17" rx="8.5" fill="#FFFFFF" stroke="#9AA5B1" stroke-width="1"/>
+<text x="1298.5" y="991.5" font-size="10.5" fill="#52606D" text-anchor="start" xml:space="preserve"><tspan font-weight="700">no LLM</tspan></text>
+<rect x="842.0" y="1048.0" width="508.0" height="49.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="850.0" y="1068.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">get_decision</tspan></text>
+<text x="850.0" y="1088.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">Outlook, thesis and trade grades, action, watch conditions — code (TDD §4.8–§7)</text>
+<rect x="1292.5" y="1054.0" width="49.5" height="17" rx="8.5" fill="#FFFFFF" stroke="#9AA5B1" stroke-width="1"/>
+<text x="1298.5" y="1066.5" font-size="10.5" fill="#52606D" text-anchor="start" xml:space="preserve"><tspan font-weight="700">no LLM</tspan></text>
+<rect x="842.0" y="1109.0" width="508.0" height="63.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="850.0" y="1129.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">publish_card</tspan></text>
+<text x="850.0" y="1149.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">Alert gate and update policy, hard-rule linter on the agent's wording, template, evidence bundle</text>
+<text x="850.0" y="1163.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">(SHA-256) → DELIVER job; one lock per event</text>
+<rect x="1292.5" y="1115.0" width="49.5" height="17" rx="8.5" fill="#FFFFFF" stroke="#9AA5B1" stroke-width="1"/>
+<text x="1298.5" y="1127.5" font-size="10.5" fill="#52606D" text-anchor="start" xml:space="preserve"><tspan font-weight="700">no LLM</tspan></text>
+<text x="842.0" y="1194.0" font-size="11" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="508.0">Before each message: the day's LLM spend against $30 — LLM_BUDGET notice at 80% and 100%; at</text>
+<text x="842.0" y="1208.0" font-size="11" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="508.0">100% news, GitHub commits and posts of the 8 other X accounts wait until 00:00 UTC</text>
+<text x="842.0" y="1222.0" font-size="11" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="508.0">On start: replays each open session from its last event; a tool call left without a result runs again</text>
+<text x="410.0" y="213.0" font-size="14.5" fill="#1F2933" text-anchor="start" xml:space="preserve"><tspan font-weight="700">Tank service — one Python 3.12 asyncio process (</tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank serve</tspan><tspan font-weight="700">), a modular monolith</tspan></text>
+<text x="410.0" y="233.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Modules call each other directly · loops and stream tasks keep sources and markets read · work that must survive a restart is a job in <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops.jobs</tspan>, run by the service's own workers</text>
+<rect x="410.0" y="1337.0" width="340.0" height="363.0" rx="8" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
+<text x="421.0" y="1360.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="318.0"><tspan font-weight="700">PostgreSQL 16 — database </tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan></text>
+<text x="422.0" y="1382.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1382.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops.jobs</tspan> — the service's job queue: <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">FOR</tspan> <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">UPDATE</tspan> <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">SKIP</tspan></text>
+<text x="433.0" y="1397.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">LOCKED</tspan>, by priority</text>
+<text x="422.0" y="1417.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1417.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">reg</tspan> — sources, tokens, instruments, aliases, metric</text>
+<text x="433.0" y="1432.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">semantics, dependency map</text>
+<text x="422.0" y="1452.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1452.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ingest</tspan> — source_items</text>
+<text x="422.0" y="1472.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1472.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">evt</tspan> — events, claims, state changes, EMS, beneficiary</text>
+<text x="433.0" y="1487.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">maps</text>
+<text x="422.0" y="1507.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1507.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mkt</tspan> — klines, flow bars, book summaries, OI, funding,</text>
+<text x="433.0" y="1522.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">liquidations, unlocks, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">hot_tokens</tspan></text>
+<text x="422.0" y="1542.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1542.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ana</tspan> — market truth, outlooks, decisions, open calls</text>
+<text x="422.0" y="1562.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1562.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">out</tspan> — alerts, deliveries, ops notices, evidence bundles,</text>
+<text x="433.0" y="1577.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">reaction checkpoints (append-only)</text>
+<text x="422.0" y="1597.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1597.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops</tspan> — agent sessions, tool calls, llm_usage, budget state</text>
+<text x="422.0" y="1617.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1617.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">scout</tspan> — proposals · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">qa</tspan> — reviews, fixtures, replays</text>
+<text x="422.0" y="1637.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1637.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">Base-tier market data 90 days; event windows and audit</text>
+<text x="433.0" y="1652.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">tables permanent; local socket</text>
+<text x="422.0" y="1672.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="433.0" y="1672.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">Also hosts OpenMA's own database <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">oma</tspan>: agents, skills,</text>
+<text x="433.0" y="1687.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">sessions, event logs</text>
+<rect x="830.0" y="1337.0" width="532.0" height="190.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
+<text x="841.0" y="1360.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="510.0"><tspan font-weight="700">OpenMA server — its own process (Node)</tspan></text>
+<text x="842.0" y="1382.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="1382.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">open-managed-agents</tspan>, native Node · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">127.0.0.1:8787</tspan> · its own database <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">oma</tspan> on the same</text>
+<text x="853.0" y="1397.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">PostgreSQL</text>
+<text x="842.0" y="1415.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="1415.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Agent <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-event-analyst</tspan>: <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">gpt-6.1-sol</tspan> through a Model Card · skills</text>
+<text x="853.0" y="1430.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-event-analyst</tspan> (playbook, class criteria, hard rules, card template) and <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-data</tspan></text>
+<text x="853.0" y="1445.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">(schema, APIs, rules) · Tank's custom tools + built-in <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">bash</tspan>, files, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">browser</tspan></text>
+<text x="842.0" y="1463.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="1463.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">One session per event, kept until the event closes; append-only log of every message and tool</text>
+<text x="853.0" y="1478.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">call</text>
+<text x="842.0" y="1496.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="1496.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">A message sent while the agent works is queued and handed over when its current turn ends</text>
+<text x="842.0" y="1514.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="1514.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Second agent <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-scout-reviewer</tspan> reviews scout proposals</text>
+<rect x="830.0" y="1561.0" width="532.0" height="130.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3" stroke-dasharray="5 3"/>
+<text x="841.0" y="1584.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="510.0"><tspan font-weight="700">Agent sandboxes (litebox)</tspan></text>
+<text x="842.0" y="1606.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="1606.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">One microVM per session: the agent creates files and runs any command and script</text>
+<text x="842.0" y="1624.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="1624.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Python 3.12 · pandas, numpy, scipy, statsmodels, pyarrow, duckdb, psycopg, httpx</text>
+<text x="842.0" y="1642.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="1642.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Internet: unrestricted</text>
+<text x="842.0" y="1660.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="1660.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Database <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan>: read-only role <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank_agent</tspan></text>
+<text x="842.0" y="1678.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="853.0" y="1678.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Etherscan, Tavily and TypeSafe keys in the environment; the skill forbids printing or sending them</text>
+<rect x="32.0" y="250.0" width="318.0" height="235.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="43.0" y="273.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="296.0"><tspan font-weight="700">Event sources S01–S28, S30–S34</tspan></text>
+<text x="44.0" y="295.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="55.0" y="295.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0"><tspan font-weight="700">RSS / Atom:</tspan> SEC, CFTC, Fed, OCC, OFAC, Kraken,</text>
+<text x="55.0" y="310.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Tether, 8 Discourse forums, 6 GitHub feeds, BBC,</text>
+<text x="55.0" y="325.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Bloomberg, Google News (Reuters), CoinDesk, The</text>
+<text x="55.0" y="340.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Block</text>
+<text x="44.0" y="358.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="55.0" y="358.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0"><tspan font-weight="700">JSON:</tspan> Federal Register API; Binance, OKX, Bybit</text>
+<text x="55.0" y="373.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">announcement APIs; instrument lists of the 6 venues</text>
+<text x="44.0" y="391.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="55.0" y="391.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0"><tspan font-weight="700">GraphQL:</tspan> Snapshot hub, 6 spaces</text>
+<text x="44.0" y="409.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="55.0" y="409.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0"><tspan font-weight="700">HTML + article pattern:</tspan> Treasury, DTCC, Robinhood,</text>
+<text x="55.0" y="424.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Uniswap, Ondo, LayerZero, BlackRock, Circle, Paxos,</text>
+<text x="55.0" y="439.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">BNY, The Clearing House, Anchorage; Franklin</text>
+<text x="55.0" y="454.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Templeton (S19) needs a browser</text>
+<text x="44.0" y="472.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="55.0" y="472.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Every 30–600 s; 15 s while escalated</text>
+<rect x="32.0" y="499.0" width="318.0" height="73.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="43.0" y="522.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="296.0"><tspan font-weight="700">x.com — private list «tank-v0» (S29)</tspan></text>
+<text x="44.0" y="544.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="55.0" y="544.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">86 accounts; the operator's X session; page read every</text>
+<text x="55.0" y="559.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">60 s</text>
+<rect x="32.0" y="586.0" width="318.0" height="73.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="43.0" y="609.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="296.0"><tspan font-weight="700">Venue WebSockets — hot tier</tspan></text>
+<text x="44.0" y="631.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="55.0" y="631.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Binance spot + USDⓈ-M · Coinbase · OKX · Bybit spot</text>
+<text x="55.0" y="646.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">+ linear · Kraken v2 · Hyperliquid</text>
+<rect x="32.0" y="673.0" width="318.0" height="142.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="43.0" y="696.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="296.0"><tspan font-weight="700">Venue REST, history, fundamentals</tspan></text>
+<text x="44.0" y="718.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="55.0" y="718.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Same 6 venues: klines, OI, funding, 24 h tickers, trade</text>
+<text x="55.0" y="733.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">history</text>
+<text x="44.0" y="751.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="55.0" y="751.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">data.binance.vision</tspan> archive, checked against</text>
+<text x="55.0" y="766.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">.CHECKSUM</tspan></text>
+<text x="44.0" y="784.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="55.0" y="784.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">DefiLlama API + unlock datasets</text>
+<text x="44.0" y="802.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="55.0" y="802.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Etherscan API v2: 17 Binance and 323 OKX wallets</text>
+<text x="394.0" y="174.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Apple Silicon Mac mini · macOS · 32 GB RAM · 1 TB SSD · launchd keeps <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank serve</tspan> and OpenMA running (KeepAlive) · Python 3.12 venv · PostgreSQL 16</text>
+<rect x="394.0" y="1728.0" width="235.5" height="176.0" rx="8" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
+<text x="404.0" y="1750.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">/opt/tank/data</tspan></text>
+<text x="405.0" y="1772.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="416.0" y="1772.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">raw/items</tspan> — raw payloads from</text>
+<text x="416.0" y="1786.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sources</tspan> and <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">xsensor</tspan>; permanent</text>
+<text x="405.0" y="1803.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="416.0" y="1803.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">raw/trades</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">raw/books</tspan> — Parquet</text>
+<text x="416.0" y="1817.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">from <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">market</tspan>; 30 days, event windows</text>
+<text x="416.0" y="1831.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">permanent</text>
+<text x="405.0" y="1848.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="416.0" y="1848.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">archive/binance</tspan> — from <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">market</tspan>;</text>
+<text x="416.0" y="1862.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">180 days</text>
+<text x="405.0" y="1879.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="416.0" y="1879.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">bundles/{sha256}</tspan> — evidence from</text>
+<text x="416.0" y="1893.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">publish_card</tspan>; permanent</text>
+<rect x="643.5" y="1728.0" width="235.5" height="97.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
+<text x="653.5" y="1750.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan><tspan font-weight="700"> CLI</tspan></text>
+<text x="654.5" y="1772.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="665.5" y="1772.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">Short commands of the same program:</text>
+<text x="665.5" y="1786.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">review list / show / label · reaction · scout</text>
+<text x="665.5" y="1800.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">list / decide · sources check · coverage ·</text>
+<text x="665.5" y="1814.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">archive fetch · replay · bundle reproduce</text>
+<rect x="893.0" y="1728.0" width="235.5" height="114.0" rx="8" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
+<text x="903.0" y="1750.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">/opt/tank/config</tspan><tspan font-weight="700"> (git)</tspan></text>
+<text x="904.0" y="1772.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="915.0" y="1772.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">sources · registry · semantics ·</text>
+<text x="915.0" y="1786.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">dependency_map · exchange_addresses</text>
+<text x="915.0" y="1800.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">· thresholds (<tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">.yaml</tspan>) · skills/ · templates/</text>
+<text x="904.0" y="1817.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="915.0" y="1817.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">Commit hash = <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">config_version</tspan> on</text>
+<text x="915.0" y="1831.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">every output; reload on SIGHUP</text>
+<rect x="1142.5" y="1728.0" width="235.5" height="128.0" rx="8" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
+<text x="1152.5" y="1750.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700">macOS Keychain</tspan></text>
+<text x="1153.5" y="1772.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1164.5" y="1772.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-oma</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-oma-root</tspan> ·</text>
+<text x="1164.5" y="1786.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-tavily</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-typesafe</tspan> ·</text>
+<text x="1164.5" y="1800.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-telegram</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-etherscan</tspan> ·</text>
+<text x="1164.5" y="1814.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-agent-db</tspan></text>
+<text x="1153.5" y="1831.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1164.5" y="1831.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">The OpenAI key sits in OpenMA's Model</text>
+<text x="1164.5" y="1845.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">Card</text>
+<rect x="1422.0" y="410.0" width="346.0" height="124.0" rx="8" fill="#EEF5FC" stroke="#3182CE" stroke-width="1.3"/>
+<text x="1433.0" y="433.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">TypeSafe Jev API</tspan></text>
+<text x="1434.0" y="455.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="455.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">POST</tspan> <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">https://api.typesafe.ai/v1/systemone</tspan> ·</text>
+<text x="1445.0" y="470.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">model <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">jev-1.13.0</tspan></text>
+<text x="1434.0" y="488.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="488.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">FILTER_ITEM: one yes/no question per item · ROUTE_ITEM:</text>
+<text x="1445.0" y="503.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">one per item and candidate event; answer = probability</text>
+<text x="1434.0" y="521.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="521.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">≈ 1,890 calls/day, ≈ $0.07/day</text>
+<rect x="1422.0" y="604.0" width="346.0" height="124.0" rx="8" fill="#EEF8F1" stroke="#38A169" stroke-width="1.5"/>
+<text x="1433.0" y="627.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Telegram Bot API</tspan></text>
+<text x="1434.0" y="649.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="649.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">«Tank Alerts» — cards and threaded updates</text>
+<text x="1445.0" y="664.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">(<tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">reply_parameters.message_id</tspan>)</text>
+<text x="1434.0" y="682.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="682.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">«Tank Ops» — failed deliveries, LLM budget, the 08:00 UTC</text>
+<text x="1445.0" y="697.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">heartbeat</text>
+<text x="1434.0" y="715.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="715.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Card ≤ 3,500 characters (API limit 4,096)</text>
+<rect x="1422.0" y="758.0" width="346.0" height="88.0" rx="8" fill="#FFFFFF" stroke="#CBD2D9" stroke-width="1.0"/>
+<text x="1433.0" y="781.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Operator</tspan></text>
+<text x="1434.0" y="803.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="803.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Reads «Tank Alerts» and «Tank Ops»; reviews cards and</text>
+<text x="1445.0" y="818.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">decides on scout proposals with the <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan> CLI on the Tank</text>
+<text x="1445.0" y="833.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">machine</text>
+<rect x="1422.0" y="870.0" width="346.0" height="88.0" rx="8" fill="#EEF5FC" stroke="#3182CE" stroke-width="1.3"/>
+<text x="1433.0" y="893.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Tavily Search API</tspan></text>
+<text x="1434.0" y="915.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="915.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">The <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">web_search</tspan> tool: <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">POST</tspan></text>
+<text x="1445.0" y="930.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">https://api.tavily.com/search</tspan>, basic depth, $0.008</text>
+<text x="1445.0" y="945.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">per search; results stored as evidence</text>
+<rect x="1422.0" y="972.0" width="346.0" height="73.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="1433.0" y="995.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Public web pages</tspan></text>
+<text x="1434.0" y="1017.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="1017.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Read by the <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">fetch_page</tspan> tool: HTTPS GET, 20 s timeout,</text>
+<text x="1445.0" y="1032.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">≤ 2 MB; stored as evidence</text>
+<rect x="1422.0" y="1337.0" width="346.0" height="124.0" rx="8" fill="#EEF5FC" stroke="#3182CE" stroke-width="1.3"/>
+<text x="1433.0" y="1360.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">OpenAI API</tspan></text>
+<text x="1434.0" y="1382.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="1382.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Model <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">gpt-6.1-sol</tspan>, called by OpenMA through its Model</text>
+<text x="1445.0" y="1397.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Card</text>
+<text x="1434.0" y="1415.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="1415.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0"><tspan font-weight="700">Per day (est.):</tspan> ≈ 385 new sessions · ≈ 255 added items · ≈ 5</text>
+<text x="1445.0" y="1430.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">full MAJOR+ analyses</text>
+<text x="1434.0" y="1448.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="1448.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">≈ $17 per day with web search; cap $30 per day</text>
+<rect x="1422.0" y="1561.0" width="346.0" height="91.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
+<text x="1433.0" y="1584.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="324.0"><tspan font-weight="700">Internet — unrestricted</tspan></text>
+<text x="1434.0" y="1606.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="1606.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Any site and API, read by the agents from their sandboxes</text>
+<text x="1434.0" y="1624.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
+<text x="1445.0" y="1624.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">Our data APIs included: the 6 venues, Binance archive,</text>
+<text x="1445.0" y="1639.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="312.0">DefiLlama, Etherscan, Tavily, TypeSafe</text>
+<path d="M 350.0 312.0 L 410.0 312.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 350.0 505.5 L 410.0 505.5" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 350.0 622.5 L 410.0 622.5" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 350.0 700.5 L 410.0 700.5" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 350.0 418.0 L 410.0 418.0" fill="none" stroke="#334E68" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<rect x="353.0" y="402.0" width="23.6" height="14.0" fill="#FFFFFF" opacity="0.92"/>
+<text x="356.0" y="411.0" font-size="10" fill="#52606D" text-anchor="start" xml:space="preserve">S19</text>
+<path d="M 1595.0 728.0 L 1595.0 758.0" fill="none" stroke="#2F855A" stroke-width="1.5" marker-end="url(#ah-gr)" stroke-linejoin="round"/>
+<path d="M 1362.0 472.0 L 1422.0 472.0" fill="none" stroke="#2B6CB0" stroke-width="1.5" marker-end="url(#ah-b)" marker-start="url(#as-b)" stroke-linejoin="round"/>
+<path d="M 1362.0 666.0 L 1422.0 666.0" fill="none" stroke="#2F855A" stroke-width="1.5" marker-end="url(#ah-gr)" stroke-linejoin="round"/>
+<path d="M 1362.0 914.0 L 1422.0 914.0" fill="none" stroke="#2B6CB0" stroke-width="1.5" marker-end="url(#ah-b)" marker-start="url(#as-b)" stroke-linejoin="round"/>
+<path d="M 1362.0 1008.5 L 1422.0 1008.5" fill="none" stroke="#334E68" stroke-width="1.3" marker-end="url(#ah-s)" stroke-linejoin="round"/>
+<path d="M 1362.0 1399.0 L 1422.0 1399.0" fill="none" stroke="#2B6CB0" stroke-width="1.5" marker-end="url(#ah-b)" marker-start="url(#as-b)" stroke-linejoin="round"/>
+<path d="M 480.0 1297.0 L 480.0 1337.0" fill="none" stroke="#6B46C1" stroke-width="2" marker-end="url(#ah-p)" marker-start="url(#as-p)" stroke-linejoin="round"/>
+<text x="490.0" y="1321.0" font-size="10.5" fill="#52606D" text-anchor="start" xml:space="preserve">all state and the job queue</text>
+<path d="M 900.0 1241.0 L 900.0 1337.0" fill="none" stroke="#2B6CB0" stroke-width="1.5" marker-end="url(#ah-b)" marker-start="url(#as-b)" stroke-linejoin="round"/>
+<text x="910.0" y="1321.0" font-size="10.5" fill="#52606D" text-anchor="start" xml:space="preserve">messages · tool calls ⇄ results</text>
+<path d="M 900.0 1527.0 L 900.0 1561.0" fill="none" stroke="#334E68" stroke-width="1.3" marker-end="url(#ah-s)" marker-start="url(#as-s)" stroke-linejoin="round"/>
+<text x="910.0" y="1548.0" font-size="10.5" fill="#52606D" text-anchor="start" xml:space="preserve">bash, files and browser run here</text>
+<path d="M 830.0 1626.0 L 750.0 1626.0" fill="none" stroke="#6B46C1" stroke-width="1.3" marker-end="url(#ah-p)" stroke-linejoin="round"/>
+<rect x="765.9" y="1610.0" width="48.2" height="14.0" fill="#FFFFFF" opacity="0.92"/>
+<text x="790.0" y="1619.0" font-size="10" fill="#52606D" text-anchor="middle" xml:space="preserve">read-only</text>
+<path d="M 1362.0 1606.5 L 1422.0 1606.5" fill="none" stroke="#334E68" stroke-width="1.3" marker-end="url(#ah-s)" marker-start="url(#as-s)" stroke-linejoin="round"/>
+<path d="M 673.5 1728.0 L 673.5 1700.0" fill="none" stroke="#6B46C1" stroke-width="1.3" marker-end="url(#ah-p)" marker-start="url(#as-p)" stroke-linejoin="round"/>
+</svg>

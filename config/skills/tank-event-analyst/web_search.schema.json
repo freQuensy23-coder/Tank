@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "web_search",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "query": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "query"
+  ]
+}

@@ -1,0 +1,666 @@
+[
+  {
+    "name": "get_item",
+    "description": "Tank get item",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "item_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "item_id"
+      ]
+    }
+  },
+  {
+    "name": "search_tank_items",
+    "description": "Tank search tank items",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "list_open_events",
+    "description": "Tank list open events",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "entity_or_token": {
+          "type": "string"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "get_event",
+    "description": "Tank get event",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id"
+      ]
+    }
+  },
+  {
+    "name": "get_registry",
+    "description": "Tank get registry",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "entity_or_token": {
+          "type": "string"
+        }
+      },
+      "required": []
+    }
+  },
+  {
+    "name": "get_token_facts",
+    "description": "Tank get token facts",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "token"
+      ]
+    }
+  },
+  {
+    "name": "web_search",
+    "description": "Tank web search",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "query": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "fetch_page",
+    "description": "Tank fetch page",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string",
+          "format": "uri"
+        }
+      },
+      "required": [
+        "url"
+      ]
+    }
+  },
+  {
+    "name": "record_event",
+    "description": "Tank record event",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "extraction": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "item_id",
+            "is_event",
+            "statement",
+            "certainty",
+            "certainty_reason",
+            "entities",
+            "tokens",
+            "event_time",
+            "public_at",
+            "freshness",
+            "claims",
+            "next_milestone",
+            "checked_sources"
+          ],
+          "properties": {
+            "item_id": {
+              "type": "string"
+            },
+            "is_event": {
+              "type": "boolean"
+            },
+            "statement": {
+              "type": "string"
+            },
+            "certainty": {
+              "enum": [
+                "HIGH",
+                "MEDIUM",
+                "LOW"
+              ]
+            },
+            "certainty_reason": {
+              "type": "string"
+            },
+            "entities": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "entity_id",
+                  "role"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "entity_id": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "role": {
+                    "enum": [
+                      "ACTOR",
+                      "COUNTERPARTY",
+                      "SUBJECT",
+                      "REGULATOR"
+                    ]
+                  }
+                }
+              }
+            },
+            "tokens": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "event_time": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "value",
+                "precision",
+                "quote"
+              ],
+              "properties": {
+                "value": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "precision": {
+                  "enum": [
+                    "EXACT",
+                    "BUCKET_1H",
+                    "BUCKET_1D",
+                    "UNKNOWN"
+                  ]
+                },
+                "quote": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "public_at": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "value",
+                "precision",
+                "basis",
+                "quote"
+              ],
+              "properties": {
+                "value": {
+                  "type": "string"
+                },
+                "precision": {
+                  "enum": [
+                    "EXACT",
+                    "HOUR",
+                    "DAY"
+                  ]
+                },
+                "basis": {
+                  "type": "string"
+                },
+                "quote": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "freshness": {
+              "enum": [
+                "FRESH",
+                "NORMAL",
+                "MEDIUM",
+                "POOR",
+                "OLD",
+                "STALE"
+              ]
+            },
+            "claims": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "subject",
+                  "predicate",
+                  "object",
+                  "state_claim",
+                  "directionality",
+                  "evidence_class",
+                  "quote"
+                ],
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "FACT",
+                      "STATE",
+                      "NUMBER",
+                      "RELATION",
+                      "TIMESTAMP",
+                      "MECHANISM",
+                      "MILESTONE"
+                    ]
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "predicate": {
+                    "type": "string"
+                  },
+                  "object": {
+                    "type": "string"
+                  },
+                  "state_claim": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "directionality": {
+                    "enum": [
+                      "SOURCE_SIDE_SUPPORT",
+                      "COUNTERPARTY_ADOPTION",
+                      "BOTH",
+                      "NONE"
+                    ]
+                  },
+                  "evidence_class": {
+                    "enum": [
+                      "PRIMARY_FACT",
+                      "SECONDARY_REPORT",
+                      "SOCIAL_LEAD",
+                      "RUMOR",
+                      "TECHNICAL"
+                    ]
+                  },
+                  "quote": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "next_milestone": {
+              "type": [
+                "object",
+                "null"
+              ]
+            },
+            "checked_sources": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "required": [
+        "extraction"
+      ]
+    }
+  },
+  {
+    "name": "add_observation",
+    "description": "Tank add observation",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "link": {
+          "enum": [
+            "CORROBORATION",
+            "STATE_UPDATE",
+            "DENIAL",
+            "CONTRADICTION"
+          ]
+        },
+        "claims": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "subject",
+              "predicate",
+              "object",
+              "state_claim",
+              "directionality",
+              "evidence_class",
+              "quote"
+            ],
+            "properties": {
+              "type": {
+                "enum": [
+                  "FACT",
+                  "STATE",
+                  "NUMBER",
+                  "RELATION",
+                  "TIMESTAMP",
+                  "MECHANISM",
+                  "MILESTONE"
+                ]
+              },
+              "subject": {
+                "type": "string"
+              },
+              "predicate": {
+                "type": "string"
+              },
+              "object": {
+                "type": "string"
+              },
+              "state_claim": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "directionality": {
+                "enum": [
+                  "SOURCE_SIDE_SUPPORT",
+                  "COUNTERPARTY_ADOPTION",
+                  "BOTH",
+                  "NONE"
+                ]
+              },
+              "evidence_class": {
+                "enum": [
+                  "PRIMARY_FACT",
+                  "SECONDARY_REPORT",
+                  "SOCIAL_LEAD",
+                  "RUMOR",
+                  "TECHNICAL"
+                ]
+              },
+              "quote": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "required": [
+        "event_id",
+        "item_id",
+        "link",
+        "claims"
+      ]
+    }
+  },
+  {
+    "name": "merge_into",
+    "description": "Tank merge into",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id"
+      ]
+    }
+  },
+  {
+    "name": "set_assessment",
+    "description": "Tank set assessment",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "assessment": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "event_id",
+        "assessment"
+      ]
+    }
+  },
+  {
+    "name": "set_beneficiaries",
+    "description": "Tank set beneficiaries",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "edges": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "event_id",
+        "edges"
+      ]
+    }
+  },
+  {
+    "name": "get_market_truth",
+    "description": "Tank get market truth",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "tokens": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "event_id",
+        "tokens"
+      ]
+    }
+  },
+  {
+    "name": "get_decision",
+    "description": "Tank get decision",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "token"
+      ]
+    }
+  },
+  {
+    "name": "publish_card",
+    "description": "Tank publish card",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "PARTIAL",
+            "FULL",
+            "UPDATE"
+          ]
+        },
+        "verdict": {
+          "type": "string"
+        },
+        "why": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 3
+        }
+      },
+      "required": [
+        "event_id",
+        "kind",
+        "verdict",
+        "why"
+      ]
+    }
+  },
+  {
+    "name": "schedule_milestone",
+    "description": "Tank schedule milestone",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "milestone": {
+          "type": "string"
+        },
+        "due_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "event_id",
+        "milestone",
+        "due_at",
+        "source"
+      ]
+    }
+  },
+  {
+    "name": "propose_pattern",
+    "description": "Tank propose pattern",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "hook": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "hook",
+        "subject",
+        "evidence"
+      ]
+    }
+  }
+]

@@ -1,0 +1,394 @@
+version: baseline-2.3
+edges:
+- entity_id: uniswap
+  name: Uniswap
+  token_id: uniswap:UNI
+  layers_served:
+  - VENUE_DEX
+  - LIQUIDITY_EXECUTION
+  description: VENUE_DEX, LIQUIDITY_EXECUTION
+  competes_with:
+  - PancakeSwap
+  - Aerodrome
+  - Curve
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: pancakeswap
+  name: PancakeSwap
+  token_id: pancakeswap:CAKE
+  layers_served:
+  - VENUE_DEX
+  description: VENUE_DEX (BNB Chain)
+  competes_with:
+  - Uniswap
+  - Aerodrome
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: aerodrome
+  name: Aerodrome
+  token_id: aerodrome:AERO
+  layers_served:
+  - VENUE_DEX
+  description: VENUE_DEX (Base)
+  competes_with:
+  - Uniswap
+  - PancakeSwap
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: curve
+  name: Curve
+  token_id: curve:CRV
+  layers_served:
+  - VENUE_DEX
+  description: VENUE_DEX (stable and pegged assets)
+  competes_with:
+  - Uniswap
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: 1inch
+  name: 1inch
+  token_id: 1inch:1INCH
+  layers_served:
+  - LIQUIDITY_EXECUTION
+  description: LIQUIDITY_EXECUTION (aggregation)
+  competes_with:
+  - 0x
+  - CoW Protocol
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: 0x
+  name: 0x
+  token_id: 0x:ZRX
+  layers_served:
+  - LIQUIDITY_EXECUTION
+  description: LIQUIDITY_EXECUTION (aggregation API)
+  competes_with:
+  - 1inch
+  - CoW Protocol
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: cow
+  name: CoW Protocol
+  token_id: cow:COW
+  layers_served:
+  - LIQUIDITY_EXECUTION
+  description: LIQUIDITY_EXECUTION (batch auctions, solvers)
+  competes_with:
+  - 1inch
+  - 0x
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: hyperliquid
+  name: Hyperliquid
+  token_id: hyperliquid:HYPE
+  layers_served:
+  - VENUE_DEX
+  - SETTLEMENT_L1_L2
+  description: VENUE_DEX (perps, spot), SETTLEMENT_L1_L2 (HyperEVM)
+  competes_with:
+  - Lighter; centralized perp venues
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: lighter
+  name: Lighter
+  token_id: lighter:LIT
+  layers_served:
+  - VENUE_DEX
+  description: VENUE_DEX (perps)
+  competes_with:
+  - Hyperliquid
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: aave
+  name: Aave
+  token_id: aave:AAVE
+  layers_served:
+  - LENDING_COLLATERAL
+  description: LENDING_COLLATERAL
+  competes_with:
+  - Morpho
+  - Euler
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: morpho
+  name: Morpho
+  token_id: morpho:MORPHO
+  layers_served:
+  - LENDING_COLLATERAL
+  description: LENDING_COLLATERAL
+  competes_with:
+  - Aave
+  - Euler
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: euler
+  name: Euler
+  token_id: euler:EUL
+  layers_served:
+  - LENDING_COLLATERAL
+  description: LENDING_COLLATERAL
+  competes_with:
+  - Aave
+  - Morpho
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: ondo
+  name: Ondo
+  token_id: ondo:ONDO
+  layers_served:
+  - ISSUER_PRODUCT
+  description: ISSUER_PRODUCT (tokenized treasuries and stocks)
+  competes_with:
+  - BlackRock
+  - Franklin Templeton
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: layerzero
+  name: LayerZero
+  token_id: layerzero:ZRO
+  layers_served:
+  - INTEROPERABILITY
+  description: INTEROPERABILITY
+  competes_with:
+  - Quant
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: quant
+  name: Quant
+  token_id: quant:QNT
+  layers_served:
+  - INTEROPERABILITY
+  description: INTEROPERABILITY (bank and enterprise networks)
+  competes_with:
+  - LayerZero
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: avalanche
+  name: Avalanche
+  token_id: avalanche:AVAX
+  layers_served:
+  - SETTLEMENT_L1_L2
+  description: SETTLEMENT_L1_L2
+  competes_with:
+  - NEAR
+  - Plasma
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: near
+  name: NEAR
+  token_id: near:NEAR
+  layers_served:
+  - SETTLEMENT_L1_L2
+  description: SETTLEMENT_L1_L2
+  competes_with:
+  - Avalanche
+  - Plasma
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: plasma
+  name: Plasma
+  token_id: plasma:XPL
+  layers_served:
+  - SETTLEMENT_L1_L2
+  description: SETTLEMENT_L1_L2 (stablecoin payments chain)
+  competes_with:
+  - Avalanche
+  - NEAR
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: ethena
+  name: Ethena
+  token_id: ethena:ENA
+  layers_served:
+  - ISSUER_PRODUCT
+  description: ISSUER_PRODUCT (USDe synthetic dollar)
+  competes_with:
+  - Circle
+  - Tether
+  - Paxos
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: world
+  name: World
+  token_id: world:WLD
+  layers_served:
+  - ISSUER_PRODUCT
+  description: ISSUER_PRODUCT (identity, World App payments)
+  competes_with: []
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: blackrock
+  name: BlackRock
+  token_id: null
+  layers_served:
+  - ISSUER_PRODUCT
+  description: ISSUER_PRODUCT (tokenized funds)
+  competes_with:
+  - Franklin Templeton
+  - Ondo
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: franklin-templeton
+  name: Franklin Templeton
+  token_id: null
+  layers_served:
+  - ISSUER_PRODUCT
+  description: ISSUER_PRODUCT (tokenized funds)
+  competes_with:
+  - BlackRock
+  - Ondo
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: securitize
+  name: Securitize
+  token_id: null
+  layers_served:
+  - ISSUER_PRODUCT
+  - CUSTODY_COMPLIANCE
+  description: ISSUER_PRODUCT, CUSTODY_COMPLIANCE (transfer agent)
+  competes_with: []
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: circle
+  name: Circle
+  token_id: null
+  layers_served:
+  - ISSUER_PRODUCT
+  description: ISSUER_PRODUCT (USDC, EURC)
+  competes_with:
+  - Tether
+  - Paxos
+  - Ethena
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: tether
+  name: Tether
+  token_id: null
+  layers_served:
+  - ISSUER_PRODUCT
+  description: ISSUER_PRODUCT (USDT)
+  competes_with:
+  - Circle
+  - Paxos
+  - Ethena
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: paxos
+  name: Paxos
+  token_id: null
+  layers_served:
+  - ISSUER_PRODUCT
+  - CUSTODY_COMPLIANCE
+  description: ISSUER_PRODUCT (stablecoin issuance), CUSTODY_COMPLIANCE
+  competes_with:
+  - Circle
+  - Tether
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: dtcc
+  name: DTCC
+  token_id: null
+  layers_served:
+  - CUSTODY_COMPLIANCE
+  description: CUSTODY_COMPLIANCE (clearing, settlement)
+  competes_with: []
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: the-clearing-house
+  name: The Clearing House
+  token_id: null
+  layers_served:
+  - SETTLEMENT_L1_L2
+  description: SETTLEMENT_L1_L2 (bank payment networks); Quant partner (24 Sep 2026)
+  competes_with: []
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: bny
+  name: BNY
+  token_id: null
+  layers_served:
+  - CUSTODY_COMPLIANCE
+  description: CUSTODY_COMPLIANCE
+  competes_with:
+  - Anchorage Digital
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: anchorage-digital
+  name: Anchorage Digital
+  token_id: null
+  layers_served:
+  - CUSTODY_COMPLIANCE
+  description: CUSTODY_COMPLIANCE
+  competes_with:
+  - BNY
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: binance
+  name: Binance
+  token_id: null
+  layers_served:
+  - VENUE_DEX
+  description: VENUE_DEX (centralized venues)
+  competes_with:
+  - each other
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: coinbase
+  name: Coinbase
+  token_id: null
+  layers_served:
+  - VENUE_DEX
+  description: VENUE_DEX (centralized venues)
+  competes_with:
+  - each other
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: okx
+  name: OKX
+  token_id: null
+  layers_served:
+  - VENUE_DEX
+  description: VENUE_DEX (centralized venues)
+  competes_with:
+  - each other
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: bybit
+  name: Bybit
+  token_id: null
+  layers_served:
+  - VENUE_DEX
+  description: VENUE_DEX (centralized venues)
+  competes_with:
+  - each other
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: kraken
+  name: Kraken
+  token_id: null
+  layers_served:
+  - VENUE_DEX
+  description: VENUE_DEX (centralized venues)
+  competes_with:
+  - each other
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: robinhood
+  name: Robinhood
+  token_id: null
+  layers_served:
+  - VENUE_DEX
+  description: VENUE_DEX (centralized venues)
+  competes_with:
+  - each other
+  state: COMPATIBLE
+  evidence_required_for_promotion: true
+- entity_id: chainlink
+  name: Chainlink
+  token_id: null
+  layers_served:
+  - ORACLE_DATA
+  description: ORACLE_DATA
+  competes_with: []
+  state: COMPATIBLE
+  evidence_required_for_promotion: true

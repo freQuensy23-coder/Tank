@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "search_tank_items",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "query": {
+      "type": "string"
+    },
+    "days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 90
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "query"
+  ]
+}

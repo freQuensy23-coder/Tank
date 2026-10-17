@@ -1,0 +1,5 @@
+alerts_chat_id: null
+ops_chat_id: null
+parse_mode: HTML
+max_attempts: 5
+secrets: macOS Keychain tank-telegram

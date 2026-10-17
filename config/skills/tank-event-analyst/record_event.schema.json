@@ -1,0 +1,226 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "item_id",
+    "is_event",
+    "statement",
+    "certainty",
+    "certainty_reason",
+    "entities",
+    "tokens",
+    "event_time",
+    "public_at",
+    "freshness",
+    "claims",
+    "next_milestone",
+    "checked_sources"
+  ],
+  "properties": {
+    "item_id": {
+      "type": "string"
+    },
+    "is_event": {
+      "type": "boolean"
+    },
+    "statement": {
+      "type": "string"
+    },
+    "certainty": {
+      "enum": [
+        "HIGH",
+        "MEDIUM",
+        "LOW"
+      ]
+    },
+    "certainty_reason": {
+      "type": "string"
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "entity_id",
+          "role"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "entity_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "role": {
+            "enum": [
+              "ACTOR",
+              "COUNTERPARTY",
+              "SUBJECT",
+              "REGULATOR"
+            ]
+          }
+        }
+      }
+    },
+    "tokens": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "event_time": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "precision",
+        "quote"
+      ],
+      "properties": {
+        "value": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "precision": {
+          "enum": [
+            "EXACT",
+            "BUCKET_1H",
+            "BUCKET_1D",
+            "UNKNOWN"
+          ]
+        },
+        "quote": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "public_at": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "value",
+        "precision",
+        "basis",
+        "quote"
+      ],
+      "properties": {
+        "value": {
+          "type": "string"
+        },
+        "precision": {
+          "enum": [
+            "EXACT",
+            "HOUR",
+            "DAY"
+          ]
+        },
+        "basis": {
+          "type": "string"
+        },
+        "quote": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "freshness": {
+      "enum": [
+        "FRESH",
+        "NORMAL",
+        "MEDIUM",
+        "POOR",
+        "OLD",
+        "STALE"
+      ]
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "subject",
+          "predicate",
+          "object",
+          "state_claim",
+          "directionality",
+          "evidence_class",
+          "quote"
+        ],
+        "properties": {
+          "type": {
+            "enum": [
+              "FACT",
+              "STATE",
+              "NUMBER",
+              "RELATION",
+              "TIMESTAMP",
+              "MECHANISM",
+              "MILESTONE"
+            ]
+          },
+          "subject": {
+            "type": "string"
+          },
+          "predicate": {
+            "type": "string"
+          },
+          "object": {
+            "type": "string"
+          },
+          "state_claim": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "directionality": {
+            "enum": [
+              "SOURCE_SIDE_SUPPORT",
+              "COUNTERPARTY_ADOPTION",
+              "BOTH",
+              "NONE"
+            ]
+          },
+          "evidence_class": {
+            "enum": [
+              "PRIMARY_FACT",
+              "SECONDARY_REPORT",
+              "SOCIAL_LEAD",
+              "RUMOR",
+              "TECHNICAL"
+            ]
+          },
+          "quote": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "next_milestone": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "checked_sources": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  }
+}

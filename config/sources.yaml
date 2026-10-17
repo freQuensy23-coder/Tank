@@ -1,0 +1,702 @@
+version: baseline-2.3
+user_agent: null
+sources:
+- source_id: S01
+  name: SEC
+  mode: REST
+  interval_s: 60
+  feeds:
+  - url: https://www.sec.gov/news/pressreleases.rss
+    kind: rss
+    interval_s: 60
+  - url: https://www.sec.gov/news/speeches-statements.rss
+    kind: rss
+    interval_s: 120
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S02
+  name: SEC EDGAR
+  mode: REST
+  interval_s: 120
+  feeds:
+  - url: https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=S-1&owner=include&count=40&output=atom
+    kind: atom
+    interval_s: 120
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S03
+  name: Federal Register
+  mode: REST
+  interval_s: 300
+  feeds:
+  - url: https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=crypto&order=newest&per_page=20
+    kind: json
+    interval_s: 300
+  - url: https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=%22digital%20asset%22&order=newest&per_page=20
+    kind: json
+    interval_s: 300
+  - url: https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=bitcoin&order=newest&per_page=20
+    kind: json
+    interval_s: 300
+  - url: https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=ether&order=newest&per_page=20
+    kind: json
+    interval_s: 300
+  - url: https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=stablecoin&order=newest&per_page=20
+    kind: json
+    interval_s: 300
+  - url: https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=tokenized&order=newest&per_page=20
+    kind: json
+    interval_s: 300
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S04
+  name: CFTC
+  mode: REST
+  interval_s: 120
+  feeds:
+  - url: https://www.cftc.gov/RSS/RSSGP/rssgp.xml
+    kind: rss
+    interval_s: 120
+  - url: https://www.cftc.gov/RSS/RSSENF/rssenf.xml
+    kind: rss
+    interval_s: 300
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S05
+  name: Federal Reserve
+  mode: REST
+  interval_s: 120
+  feeds:
+  - url: https://www.federalreserve.gov/feeds/press_all.xml
+    kind: rss
+    interval_s: 120
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S06
+  name: OCC
+  mode: REST
+  interval_s: 300
+  feeds:
+  - url: https://www.occ.gov/rss/occ_news.xml
+    kind: rss
+    interval_s: 300
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S07
+  name: US Treasury + OFAC
+  mode: REST
+  interval_s: 300
+  feeds:
+  - url: https://home.treasury.gov/news/press-releases
+    kind: html
+    interval_s: 300
+    article_pattern: ^/news/press-releases/[a-z]{2}\d{4}/?$
+  - url: https://ofac.treasury.gov/rss.xml
+    kind: rss
+    interval_s: 300
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S08
+  name: DTCC
+  mode: REST
+  interval_s: 300
+  feeds:
+  - url: https://www.dtcc.com/news
+    kind: html
+    interval_s: 300
+    article_pattern: https://www.dtcc.com/press-releases/\d{4}/[a-z0-9-]+
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S09
+  name: Binance
+  mode: REST
+  interval_s: 30
+  feeds:
+  - url: https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=48&pageNo=1&pageSize=20
+    kind: json
+    interval_s: 30
+  - url: https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=161&pageNo=1&pageSize=20
+    kind: json
+    interval_s: 30
+  - url: https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=49&pageNo=1&pageSize=20
+    kind: json
+    interval_s: 30
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+  detail_url: https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode={code}
+- source_id: S10
+  name: OKX
+  mode: REST
+  interval_s: 60
+  feeds:
+  - url: https://www.okx.com/api/v5/support/announcements?annType=announcements-new-listings
+    kind: json
+    interval_s: 60
+  - url: https://www.okx.com/api/v5/support/announcements?annType=announcements-delistings
+    kind: json
+    interval_s: 60
+  - url: https://www.okx.com/api/v5/support/announcements?annType=announcements-trading-updates
+    kind: json
+    interval_s: 60
+  - url: https://www.okx.com/api/v5/support/announcements?annType=latest-events
+    kind: json
+    interval_s: 60
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S11
+  name: Bybit
+  mode: REST
+  interval_s: 60
+  feeds:
+  - url: https://api.bybit.com/v5/announcements/index?locale=en-US&type=new_crypto&limit=20
+    kind: json
+    interval_s: 60
+  - url: https://api.bybit.com/v5/announcements/index?locale=en-US&type=delistings&limit=20
+    kind: json
+    interval_s: 60
+  - url: https://api.bybit.com/v5/announcements/index?locale=en-US&type=latest_bybit_news&limit=20
+    kind: json
+    interval_s: 60
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S12
+  name: Kraken
+  mode: REST
+  interval_s: 120
+  feeds:
+  - url: https://blog.kraken.com/feed
+    kind: rss
+    interval_s: 120
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S13
+  name: Robinhood
+  mode: REST
+  interval_s: 300
+  feeds:
+  - url: https://newsroom.aboutrobinhood.com/
+    kind: html
+    interval_s: 300
+    article_pattern: /newsroom/(?!category/)[A-Za-z0-9-]+/?
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S14
+  name: Venue instrument lists
+  mode: REST
+  interval_s: 60
+  feeds:
+  - url: https://api.binance.com/api/v3/exchangeInfo
+    kind: instruments
+    venue: binance
+    market_type: SPOT
+    interval_s: 60
+    method: GET
+  - url: https://fapi.binance.com/fapi/v1/exchangeInfo
+    kind: instruments
+    venue: binance
+    market_type: PERP_LINEAR
+    interval_s: 60
+    method: GET
+  - url: https://api.exchange.coinbase.com/products
+    kind: instruments
+    venue: coinbase
+    market_type: SPOT
+    interval_s: 60
+    method: GET
+  - url: https://api.kraken.com/0/public/AssetPairs
+    kind: instruments
+    venue: kraken
+    market_type: SPOT
+    interval_s: 120
+    method: GET
+  - url: https://www.okx.com/api/v5/public/instruments?instType=SPOT
+    kind: instruments
+    venue: okx
+    market_type: SPOT
+    interval_s: 60
+    method: GET
+  - url: https://www.okx.com/api/v5/public/instruments?instType=SWAP
+    kind: instruments
+    venue: okx
+    market_type: PERP_LINEAR
+    interval_s: 60
+    method: GET
+  - url: https://api.bybit.com/v5/market/instruments-info?category=spot&limit=1000
+    kind: instruments
+    venue: bybit
+    market_type: SPOT
+    interval_s: 60
+    method: GET
+  - url: https://api.bybit.com/v5/market/instruments-info?category=linear&limit=1000
+    kind: instruments
+    venue: bybit
+    market_type: PERP_LINEAR
+    interval_s: 60
+    method: GET
+  - url: https://api.hyperliquid.xyz/info
+    kind: instruments
+    venue: hyperliquid
+    market_type: PERP_LINEAR
+    interval_s: 60
+    method: POST
+    body:
+      type: meta
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S15
+  name: Uniswap
+  mode: REST
+  interval_s: 600
+  feeds:
+  - url: https://blog.uniswap.org/
+    kind: html
+    interval_s: 600
+    article_pattern: ^/(?!category/)[a-z0-9-]{8,}$
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S16
+  name: Ondo Finance
+  mode: REST
+  interval_s: 600
+  feeds:
+  - url: https://ondo.finance/blog
+    kind: html
+    interval_s: 600
+    article_pattern: ^/blog/[a-z0-9-]+$
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S17
+  name: LayerZero
+  mode: REST
+  interval_s: 600
+  feeds:
+  - url: https://layerzero.network/blog
+    kind: html
+    interval_s: 600
+    article_pattern: ^/blog/[a-z0-9-]+$
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S18
+  name: BlackRock
+  mode: REST
+  interval_s: 600
+  feeds:
+  - url: https://www.blackrock.com/corporate/newsroom/media/press-releases
+    kind: html
+    interval_s: 600
+    article_pattern: /corporate/newsroom/media/press-releases/[a-z0-9-]+
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S19
+  name: Franklin Templeton
+  mode: BROWSER
+  interval_s: 600
+  feeds:
+  - url: https://www.franklintempleton.com/press-releases
+    kind: html
+    interval_s: 600
+    article_pattern: /press-releases/news-room/\d{4}/[a-z0-9.-]+
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+  browser: true
+- source_id: S20
+  name: Circle
+  mode: REST
+  interval_s: 600
+  feeds:
+  - url: https://www.circle.com/pressroom
+    kind: html
+    interval_s: 600
+    article_pattern: ^/pressroom/[a-z0-9-]+$
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S21
+  name: Tether
+  mode: REST
+  interval_s: 300
+  feeds:
+  - url: https://tether.io/feed/
+    kind: rss
+    interval_s: 300
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S22
+  name: Paxos
+  mode: REST
+  interval_s: 600
+  feeds:
+  - url: https://www.paxos.com/newsroom
+    kind: html
+    interval_s: 600
+    article_pattern: ^/newsroom/[a-z0-9-]+$
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S23
+  name: Governance forums
+  mode: REST
+  interval_s: 600
+  feeds:
+  - url: https://gov.uniswap.org/latest.rss
+    kind: rss
+    interval_s: 600
+  - url: https://governance.aave.com/latest.rss
+    kind: rss
+    interval_s: 600
+  - url: https://gov.ethenafoundation.com/latest.rss
+    kind: rss
+    interval_s: 600
+  - url: https://forum.cow.fi/latest.rss
+    kind: rss
+    interval_s: 600
+  - url: https://forum.morpho.org/latest.rss
+    kind: rss
+    interval_s: 600
+  - url: https://forum.euler.finance/latest.rss
+    kind: rss
+    interval_s: 600
+  - url: https://gov.1inch.io/latest.rss
+    kind: rss
+    interval_s: 600
+  - url: https://gov.near.org/latest.rss
+    kind: rss
+    interval_s: 600
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S24
+  name: Snapshot
+  mode: REST
+  interval_s: 120
+  feeds:
+  - url: https://hub.snapshot.org/graphql
+    kind: graphql
+    method: POST
+    interval_s: 120
+    body:
+      query: 'query { proposals(first: 20, where: {space_in: ["uniswapgovernance.eth","aavedao.eth","cakevote.eth","cow.eth","morpho.eth","1inch.eth"]},
+        orderBy: "created", orderDirection: desc) { id title body created state start
+        end scores scores_total space { id } } }'
+  priority: CORE
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S25
+  name: GitHub
+  mode: REST
+  interval_s: 600
+  feeds:
+  - url: https://github.com/Uniswap/v4-core/releases.atom
+    kind: atom
+    interval_s: 600
+    subtype: releases
+  - url: https://github.com/aave-dao/aave-v3-origin/releases.atom
+    kind: atom
+    interval_s: 600
+    subtype: releases
+  - url: https://github.com/cowprotocol/services/releases.atom
+    kind: atom
+    interval_s: 600
+    subtype: releases
+  - url: https://github.com/hyperliquid-dex/hyperliquid-python-sdk/releases.atom
+    kind: atom
+    interval_s: 600
+    subtype: releases
+  - url: https://github.com/1inch/swap-vm/releases.atom
+    kind: atom
+    interval_s: 600
+    subtype: releases
+  - url: https://github.com/elliottech/lighter-python/releases.atom
+    kind: atom
+    interval_s: 600
+    subtype: releases
+  - url: https://github.com/ava-labs/avalanchego/releases.atom
+    kind: atom
+    interval_s: 600
+    subtype: releases
+  - url: https://github.com/near/nearcore/releases.atom
+    kind: atom
+    interval_s: 600
+    subtype: releases
+  - url: https://github.com/worldcoin/world-chain/releases.atom
+    kind: atom
+    interval_s: 600
+    subtype: releases
+  - url: https://github.com/PlasmaLaboratories/node-templates/releases.atom
+    kind: atom
+    interval_s: 600
+    subtype: releases
+  - url: https://github.com/LayerZero-Labs/LayerZero-v2/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+  - url: https://github.com/morpho-org/morpho-blue/commits/main.atom
+    kind: atom
+    interval_s: 600
+    subtype: commits
+  priority: SECONDARY
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S26
+  name: BNY
+  mode: REST
+  interval_s: 600
+  feeds:
+  - url: https://www.bny.com/corporate/global/en/about-us/newsroom.html
+    kind: html
+    interval_s: 600
+    article_pattern: /corporate/global/en/about-us/newsroom/press-release/[a-z0-9-]+\.html
+  priority: SECONDARY
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S27
+  name: The Clearing House
+  mode: REST
+  interval_s: 600
+  feeds:
+  - url: https://www.theclearinghouse.org/About/Media/press-releases
+    kind: html
+    interval_s: 600
+    article_pattern: /payment-systems/Articles/\d{4}/\d{2}/[A-Za-z0-9-]+
+  priority: SECONDARY
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S28
+  name: Anchorage Digital
+  mode: REST
+  interval_s: 600
+  feeds:
+  - url: https://www.anchorage.com/insights
+    kind: html
+    interval_s: 600
+    article_pattern: ^/press-room/[a-z0-9-]+$
+  priority: SECONDARY
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S29
+  name: X
+  mode: BROWSER
+  interval_s: 60
+  feeds:
+  - url: https://x.com/i/lists/{list_id}
+    kind: x
+    interval_s: 60
+  priority: SECONDARY
+  terms_notes: Read-only public content; honor publisher terms and Retry-After. X
+    automated UI reading carries terms-of-service risk.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+  list_id: null
+- source_id: S30
+  name: BBC News
+  mode: REST
+  interval_s: 120
+  feeds:
+  - url: https://feeds.bbci.co.uk/news/business/rss.xml
+    kind: rss
+    interval_s: 120
+  - url: https://feeds.bbci.co.uk/news/technology/rss.xml
+    kind: rss
+    interval_s: 300
+  priority: SECONDARY
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S31
+  name: Bloomberg
+  mode: REST
+  interval_s: 120
+  feeds:
+  - url: https://feeds.bloomberg.com/markets/news.rss
+    kind: rss
+    interval_s: 120
+  priority: SECONDARY
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S32
+  name: Reuters
+  mode: REST
+  interval_s: 300
+  feeds:
+  - url: https://news.google.com/rss/search?q=site:reuters.com+crypto&hl=en-US&gl=US&ceid=US:en
+    kind: rss
+    interval_s: 300
+  priority: SECONDARY
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S33
+  name: CoinDesk
+  mode: REST
+  interval_s: 120
+  feeds:
+  - url: https://www.coindesk.com/arc/outboundfeeds/rss/
+    kind: rss
+    interval_s: 120
+  priority: SECONDARY
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+- source_id: S34
+  name: The Block
+  mode: REST
+  interval_s: 120
+  feeds:
+  - url: https://www.theblock.co/rss.xml
+    kind: rss
+    interval_s: 120
+  priority: SECONDARY
+  terms_notes: Read-only public content; honor publisher terms and Retry-After.
+  limits:
+    rate_per_min: null
+    budget_fraction: 0.5
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.

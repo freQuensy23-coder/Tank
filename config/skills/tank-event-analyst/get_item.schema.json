@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "get_item",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "item_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "item_id"
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "add_observation",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "item_id": {
+      "type": "string"
+    },
+    "link": {
+      "enum": [
+        "CORROBORATION",
+        "STATE_UPDATE",
+        "DENIAL",
+        "CONTRADICTION"
+      ]
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "subject",
+          "predicate",
+          "object",
+          "state_claim",
+          "directionality",
+          "evidence_class",
+          "quote"
+        ],
+        "properties": {
+          "type": {
+            "enum": [
+              "FACT",
+              "STATE",
+              "NUMBER",
+              "RELATION",
+              "TIMESTAMP",
+              "MECHANISM",
+              "MILESTONE"
+            ]
+          },
+          "subject": {
+            "type": "string"
+          },
+          "predicate": {
+            "type": "string"
+          },
+          "object": {
+            "type": "string"
+          },
+          "state_claim": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "directionality": {
+            "enum": [
+              "SOURCE_SIDE_SUPPORT",
+              "COUNTERPARTY_ADOPTION",
+              "BOTH",
+              "NONE"
+            ]
+          },
+          "evidence_class": {
+            "enum": [
+              "PRIMARY_FACT",
+              "SECONDARY_REPORT",
+              "SOCIAL_LEAD",
+              "RUMOR",
+              "TECHNICAL"
+            ]
+          },
+          "quote": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "event_id",
+    "item_id",
+    "link",
+    "claims"
+  ]
+}

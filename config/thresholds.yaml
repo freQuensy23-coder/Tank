@@ -1,0 +1,62 @@
+version: baseline-2.3
+filter_cutoff: null
+routing_cutoff: null
+filter_model: jev-1.13.0
+calibration_required:
+- 'filter_cutoff: V0-B highest cutoff retaining >=95% relevant items'
+- 'routing_cutoff: V0-B precision and recall >=0.90'
+- 'tank_agent_statement_timeout_ms: V0-G'
+- 'tank_agent_connection_limit: V0-G'
+tank_agent_statement_timeout_ms: null
+tank_agent_connection_limit: null
+normal_range_quantiles:
+- 0.025
+- 0.975
+significant_flow_sigma: 2
+freshness_hours:
+  FRESH: 1
+  NORMAL: 4
+  MEDIUM: 8
+  POOR: 24
+  OLD: 48
+min_spot_venues: 2
+large_ticket_usd: 100000
+size_buckets_usd:
+- 1000
+- 10000
+- 100000
+- 1000000
+oi_sync_tolerance_s: 60
+book_interval_s: 10
+impact_tiers_usd:
+- 100000
+- 1000000
+- 5000000
+depth_band_pct: 1
+refill_window_s: 60
+resilience_window_min: 15
+absorption_min_bursts: 2
+history_min_days: 7
+beta_blume_weight: 0.6666666666666666
+event_close_days: 7
+call_expiry_days: 7
+update_rate_limit_s: 900
+card_max_chars: 3500
+heartbeat_utc: 08:00
+escalated_interval_s: 15
+escalation_expiry_s: 7200
+hot_token_cap: 15
+base_kline_interval_s: 60
+base_oi_funding_interval_s: 300
+hot_oi_funding_interval_s: 60
+base_retention_days: 90
+hot_raw_retention_days: 30
+routing_window_days: 3
+daily_budget_usd: 30
+budget_notice_fraction: 0.8
+budget_pause_fraction: 1
+market_context_rule: normal_range
+known_f16_conflict: Baseline §5.7 fails F-16; record-extreme proposal is unapproved
+  and not enabled.
+budget_policy: 'SOFT: defer non-official and non-MAJOR+ messages to next 00:00 UTC;
+  official/MAJOR+ processing continues per FR-P-03.'

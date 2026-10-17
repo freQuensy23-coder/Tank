@@ -1,0 +1,1238 @@
+# Tank data guide — baseline-2.3
+
+
+
+| Topic | Rule |
+|---|---|
+| IDs | ULID-based, typed prefixes: `ITM-` item, `EVT-` event, `OBS-` observation, `CLM-` claim, `EMS-`, `EDG-` beneficiary edge, `MTA-` Market Truth assessment, `OUT-` outlook, `DEC-` decision, `CND-` watch condition, `CAL-` call, `ALR-` alert (+ integer version), `RWP-` reaction pack, `JOB-`, `PRP-` proposal, `FIX-` fixture. `source_id`, `entity_id`, `token_id`, `instrument_id` are readable slugs (e.g. `binance:spot:UNIUSDT`). Evidence bundles are content-addressed: `EVB-<sha256>`. |
+| Time | UTC everywhere; stored with microsecond resolution. Every timestamp field has a sibling precision: `EXACT`, `BUCKET(<size>)`, `COLLECTION_ONLY`. |
+| Units | Native token quantity and USD notional are separate decimal fields. Returns are decimal fractions. Funding is stored as rate per interval + `interval_h`, with derived `rate_8h_eq`. Basis in bps. |
+| Missing data | Never 0. Every measurable is `Measured{value, unit, window, observed_at, precision, coverage, reason}`; when `value = null`, `reason ∈ {NOT_SUPPORTED, SOURCE_FAILED, INCOMPLETE, UNVERIFIED_SEMANTICS, NOT_APPLICABLE, NOT_ESTIMABLE, PENDING}`. |
+| Scores | 0–10 rubric levels (§4.1–4.2, §4.5, §4.7), or `null` with a reason. Scores are never averaged into one number. |
+| Normal range | For a per-token measure with base-tier history — BTC-adjusted return, volume, native and USD open-interest change, funding, exchange-inventory change, BTC realized volatility — the normal range is the middle 95% of the token's own values for the same window length over its stored history (up to 90 days, 01 §9; at least 7 days, one weekly cycle, else n/a). "Beyond normal" means outside it. Each token is judged against itself; 95% is the usual significance level. |
+| Majority | "Most" means more than half — of volume, of net flow, of a USD change. |
+| Significant flow | A net flow counts as BUY or SELL only when `\|CVD\| ≥ 2·√Σq²` over its trades (q = native size of each trade): with random aggressor sides this happens in only 5% of windows. Otherwise it is NEUTRAL. |
+| Versioning | Every derived record stores `config_version` and `code_version`; every agent-derived record also stores `model_id`, `prompt_version` (the agent and skill version in OpenMA) and the OpenMA session id, whose log holds the raw responses. |
+
+---
+
+
+
+
+Notation: `field: type` · `?` = nullable · `[T]` = list · comments after `#`.
+
+### 2.1 Registries
+
+```
+SourceRegistryEntry
+  source_id: str                     # slug, e.g. "sec_press"
+  name, provider, endpoint: str
+  bucket: SourceBucket
+  priority: SourcePriority
+  capabilities: [str]                # announcements, filings, governance, trades, oi, funding, ...
+  mode: RSS | ATOM | REST | WS | GRAPHQL | HTML_DIFF | SOCIAL_API | BROWSER | FILE | RPC
+  latency_class: REALTIME | NEAR_REALTIME | DELAYED | HISTORICAL
+  historical_depth: str
+  cost_class: FREE_OPEN | FREE_ACCOUNT | FREE_TIER | PAID
+  paid_gap_ref: str?                 # required when cost_class = PAID
+  auth: NONE | API_KEY | OAUTH | BROWSER_SESSION
+  limits: {rate_per_min: int?, burst: int?, pagination: str?, retention: str?}
+  source_class: SourceClass
+  redundancy_tier: 0 | 1 | 2
+  headless_ok: bool
+  terms_notes: str
+  expected_cadence_s: int
+  adapter_status: AdapterStatus
+
+Entity
+  entity_id: str
+  kind: COMPANY | PROTOCOL | REGULATOR | ISSUER | EXCHANGE | CUSTODIAN | CHAIN | DAO | OTHER
+  names: [str]; aliases: [str]
+  tokens: [token_id]
+  official_sources: [source_id]      # where the Verifier looks first
+  layers_served: [StackLayer]        # dependency map
+  competes_with: [entity_id]
+  chains: [str]
+
+Token
+  token_id: str                      # e.g. "uniswap:UNI"
+  symbol, name: str
+  entity_id: str?
+  sector: str?
+  chains: [str]
+
+Instrument
+  instrument_id: str                 # e.g. "okx:perp_linear:UNI-USDT-SWAP"
+  token_id, venue: str
+  market_type: MarketType
+  venue_symbol, quote_asset: str
+  contract_multiplier: decimal?      # base units per contract (perps)
+  funding_interval_h: decimal?
+  tick_size, lot_size: decimal
+  active: bool; resolved_at: ts
+
+SectorBasket
+  sector: str; constituents: [token_id]; weighting: EQUAL
+```
+
+### 2.2 Ingestion
+
+```
+SourceItem
+  item_id
+  source_id
+  external_id: str?                  # GUID, post ID, filing accession, commit SHA
+  raw_ref: str; raw_sha256: str
+  content_hash: str                  # hash of normalized text, for exact-duplicate detection
+  url: str?
+  title, text: str                   # normalized
+  published_at: ts? (+precision)
+  observed_at: ts
+  source_class: SourceClass
+  relevance: {decision: ALWAYS | SEND | SKIP, p_relevant: 0..1?, model: str?}   # §3.1
+  route: {decision: NEW_SESSION | ADDED, event_id: str?, p_same: 0..1?}?        # §3.1
+  extraction_status: PENDING | DONE | SKIPPED | FAILED
+```
+
+### 2.3 Events
+
+```
+Event
+  event_id
+  statement: str                     # one neutral factual sentence
+  theme_tags: [str]                  # obvious themes only; never scored
+  entities: [{entity_id | "UNRESOLVED:<name>", role: ACTOR | COUNTERPARTY | SUBJECT | REGULATOR}]
+  tokens_mentioned: [token_id]
+  event_time: ts? (+precision)       # T0
+  public_at: ts (+precision, basis)  # T1: when the event really became public (model estimate, §3.4)
+  known_to_us_at: ts                 # permanent; only ever moves earlier (merge)
+  verified_at: ts?
+  freshness: Freshness
+  event_state: EventState            # highest stage stated by a HIGH or MEDIUM claim
+  state_verified: bool               # true when that stage rests on a HIGH-certainty claim
+  negative_marker: NegativeMarker?
+  certainty: Certainty               # facts
+  timing_confidence: Certainty
+  best_source_class: SourceClass
+  next_milestone: {kind: str, due_at: ts, source_id: str}?
+  lifecycle: EventLifecycle
+  merged_into: event_id?
+  current_ems_id: str?
+
+EventObservation
+  obs_id, event_id, item_id
+  link_type: ORIGIN | CORROBORATION | STATE_UPDATE | CONTRADICTION | DENIAL
+  public_at: ts; freshness: Freshness   # model estimate for this item (§3.4)
+  match_method: EXTERNAL_ID | EXACT_HASH | AGENT
+  observed_at: ts
+
+Claim
+  claim_id, obs_id
+  type: FACT | STATE | NUMBER | RELATION | TIMESTAMP | MECHANISM | MILESTONE
+  subject: entity_id | str; predicate: str; object: str
+  value: {number: decimal, unit: str}?
+  state_claim: EventState | IntegrationState | NegativeMarker | null
+  directionality: Directionality
+  evidence: [{item_id, quote: str}]  # quote must be a verbatim substring of the item text
+  evidence_class: EvidenceClass
+  verified: bool                     # rests on a HIGH-certainty source (§4.4)
+  accepted: bool; rejection_reason: str?
+
+StateChange                          # append-only
+  event_id, edge_id?
+  ladder: EVENT | INTEGRATION
+  from_state, to_state
+  evidence: [claim_id]
+  changed_at: ts
+
+ImpactHorizon
+  impact_start: ImpactStart
+  ramp_shape: RampShape
+  dependencies: [str]
+  time_to_materiality: str
+  timing_confidence: Certainty
+
+EMSAssessment
+  ems_id, event_id, version, cutoff
+  dims: {
+    economic_directness, magnitude, permanence, distribution_expansion,
+    mechanical_flows, surprise, implementation : DimScore }
+  structural_gates: [{gate: G1..G6, satisfied: bool, evidence: [claim_id]}]
+  class: EMSClass
+  criterion: G1..G6 | M1..M7 | MATERIAL | LOW; criterion_quote: str   # 01 §6.3
+  class_reasons: [str]               # e.g. "M2", "cap: LOW certainty"
+  impact_horizon: ImpactHorizon
+
+DimScore
+  value: 0..10?; reason: str?
+  rationale: str
+  evidence: [claim_id]
+  proposed_by: LLM | RULE
+  caps_applied: [rule_id]
+
+CaptureChain                         # per event × token
+  event_id, token_id, version
+  headline_activity: Measured        # what is advertised/reported
+  eligible_activity: Measured        # portion actually subject to fees/mechanism
+  effective_fees: Measured           # after discounts, rebates, incentives, exemptions
+  protocol_capture: Measured; capture_recipient: str?
+  token_mechanism: {
+    type: BUYBACK | BURN | STAKING_REWARD | FEE_SHARE | GAS | COLLATERAL | REQUIRED_LOCK | NONE | UNKNOWN,
+    active: bool, conditional_on: str?, evidence: [claim_id] }
+  token_flow_annual_usd: Measured
+  token_flow_pct_mcap: Measured
+  capture_score: 0..10?
+  capture_class: CaptureClass
+  conditional: bool
+  caps_applied: [rule_id]
+```
+
+### 2.4 Beneficiaries
+
+```
+BeneficiaryEdge
+  edge_id, event_id, map_version
+  entity_id, token_id?
+  role: BeneficiaryRole
+  layer: StackLayer
+  direction: POSITIVE | NEGATIVE
+  causal_chain: str
+  integration_state: IntegrationState?   # highest verified; null for PRIMARY (event state applies)
+  directionality: Directionality
+  exposure_score: 0..10
+  capture_ref: (event_id, token_id, version)
+  tradable: bool                     # instruments on covered venues
+  edge_certainty: Certainty
+  credible: bool; credibility_reasons: [str]
+  evidence: [claim_id]
+
+BeneficiaryMap
+  event_id, map_version, cutoff
+  layers: {StackLayer: {status: FOUND | NONE | UNKNOWN, edges: [edge_id], note: str}}
+  least_repriced_edge: edge_id?; least_repriced_reason: str?
+  no_credible_secondary_reason: str?
+  analysis_set: [token_id]           # tokens sent to Market Truth
+```
+
+### 2.5 Market data
+
+```
+MetricSemantics
+  metric_key: str                    # "<venue>.<market_type>.<field>"
+  venue, market_type, endpoint_or_stream: str
+  meaning: str
+  unit: BASE_QTY | CONTRACTS | QUOTE_NOTIONAL | USD_NOTIONAL | RATE_PER_INTERVAL | PRICE | BPS | COUNT
+  contract_multiplier_ref: instrument_id?
+  sidedness: SINGLE_SIDED | BOTH_SIDES | N_A | UNKNOWN
+  side_semantics: TAKER_SIDE | MAKER_SIDE | BUYER_IS_MAKER_FLAG | N_A
+  trade_aggregation: PER_FILL | PER_TAKER_ORDER_SAME_PRICE | N_A
+  scope: str                         # per instrument / per venue / provider aggregate
+  calc_method: str                   # snapshot, bucket sum, settled value, estimate, ...
+  timestamp_semantics: EXCHANGE_EVENT_TIME | BUCKET_START | BUCKET_END | SETTLEMENT_TIME | COLLECTION_TIME
+  timestamp_unit: S | MS | US
+  timestamp_precision: EXACT | BUCKET | COLLECTION_ONLY
+  price_contaminated: bool
+  requires_native_normalization: bool
+  aggregation_class: str             # only identical classes may be combined
+  inference_limits: [str]            # what this metric cannot prove
+  semantic_confidence: SemanticConfidence
+  verified_at: ts?; verified_by: str?; doc_ref: str?
+  critical: bool
+
+FlowBar1m                            # per instrument per minute (hot tier, from trades)
+  instrument_id, minute_start
+  buy_qty, sell_qty                  # native, aggressor side
+  buy_notional, sell_notional        # quote → USD
+  n_buy, n_sell
+  sum_sq_qty                         # Σ q² of the minute's trades (§0 significant flow)
+  open, high, low, close, vwap       # trade-based
+  size_buckets: {B1..B5: {buy_qty, sell_qty, buy_notional, sell_notional, n}}
+  first_trade_id, last_trade_id
+  complete: bool; gap_reason: str?
+
+Kline1m                              # base tier
+  instrument_id, open_time, o, h, l, c
+  volume_native, quote_volume, n_trades
+  taker_buy_native?, taker_buy_quote?
+  complete: bool
+
+BookSummary                          # hot tier, every ⚙10 s per venue
+  instrument_id, exchange_ts, received_ts
+  mid, best_bid, best_ask, spread_bps
+  depth: {bid|ask: {p0_5|p1|p2: {native, usd}?}}   # null when the band is not covered
+  range_covered_pct: {bid, ask}
+  levels_received: int
+  integrity_ok: bool                 # sequence/checksum where the venue provides it
+
+OIObservation
+  instrument_id, ts (+precision), received_ts
+  raw_value, raw_unit, sidedness, metric_key
+  oi_native: decimal?                # normalized via semantics (contracts × multiplier)
+  oi_usd: decimal?                   # reported, or oi_native × mark
+
+FundingObservation
+  instrument_id
+  kind: SETTLED | CURRENT_ESTIMATE
+  rate, interval_h, rate_8h_eq
+  settlement_time | as_of: ts
+  metric_key
+
+LiquidationObservation
+  instrument_id, ts, side: LONG_LIQ | SHORT_LIQ
+  qty_native, notional_usd, price
+  coverage: LiqCoverage
+```
+
+### 2.6 Analysis outputs
+
+```
+SpotTruth                            # per token × window × cutoff
+  window: W15M | W1H | W4H | W24H | EVENT
+  venues: [{venue, complete: bool, excluded_reason: str?, volume_native, buy_qty, sell_qty,
+            cvd, buy_share, bs_ratio, volume_share, sign: -1|0|+1}]
+  composite_max: {cvd, buy_share, bs_ratio, volume, venues: [str]}
+  composite_cohort: {cohort: [str], cvd, buy_share, volume, velocity, share_of_max}?
+  breadth: {n_pos, n_neg, n_neutral, pct_pos, pct_neg}
+  cw_breadth: {buy, sell, neutral}
+  topn: {n, venues: [str], agreement}
+  concentration: {hhi, top_volume_venue, top_volume_share, top_contrib_venue, top_contrib_share, others_cwb_dir}
+  direction: SpotDirection
+  classification: SpotClass
+  coverage: {covered_share_est, n_complete, excluded: [{venue, reason}]}
+  size_profile: {large_ticket_buy_share, large_ticket_sell_share, compatible_venues: [str]}?
+  cohort_consistent: {<other window>: bool}
+
+DerivativesTruth
+  per_venue: [{venue, oi_native_start, oi_native_end, oi_native_chg_pct, oi_usd_chg_pct,
+               decomposition: {position, markup, interaction, pos_share}, oi_class,
+               funding_settled_last, funding_estimate, interval_h, funding_8h_eq, funding_vs_normal,
+               basis_bps, perp_volume_usd, perp_taker_buy_share,
+               liq_long_usd, liq_short_usd, liq_coverage}]
+  synchronized: {venues: [str], oi_native_chg_pct, oi_usd_chg_pct, oi_class, decomposition}?
+  funding_dispersion_8h: decimal?
+  liquidations: {complete_venues_total: {long, short}, sampled_venues_min: {long, short}}
+  incremental_share: {perp, spot}?
+  lead_lag: {first_mover: SPOT | PERP | SIMULTANEOUS | UNKNOWN, spot_confirmed: bool?, sequence: [{venue, market, t_first}]}
+
+LiquidityTruth
+  per_venue: [{venue, spread_bps, depth_p1_usd, depth_p2_usd?, range_covered_pct,
+               slippage_bps: {T1, T2, T3}, tier_notional: {T1, T2, T3}}]
+  aggregate_depth_p1_usd, pre_event_depth_p1_usd?
+  depth_drop: decimal?; spread_ratio: decimal?
+  replenishment: {available: bool, bursts, replenished, median_recovery_s, resilient_bursts}
+  elasticity: {bps_per_depth_unit, weak_response: bool, excess_response: bool}
+  vol_compression: {rv24, normal_range, state: COMPRESSED | NORMAL | EXPANDED}
+  liquidity_state: LiquidityState
+
+SupplyContext
+  exchange_inventory: {chg_native_24h, chg_pct, coverage}?   # null + reason when unavailable
+  flows: [{class: FRESH_ACCUMULATION | TREASURY_INTERNAL | MM_INVENTORY | CEX_CUSTODY_MIGRATION |
+           UNLOCK_DISTRIBUTION | OTC_SETTLEMENT | AMBIGUOUS, qty, ts, evidence}]
+  unlocks_next_14d: [{date, qty, pct_circulating, recipient_class, transferable: bool?}]
+  lending: {utilization, borrow_apr, chg_24h}?
+  stablecoin_chain: {chain, supply_chg_24h, supply_chg_7d}?
+  supply_in_evidence: TRUE | FALSE | UNKNOWN
+
+RelativePrice
+  ref_venue: str
+  anchor: {type: T0 | T1 | KNOWN_TO_US_AT, ts, ref_price}
+  windows: {W15M|W1H|W4H|W24H|EVENT: {r_raw, r_btc_adj, r_eth_adj, r_sector_adj, pctile}}
+  beta_btc, beta_eth: decimal?
+  pre_event_runup: {ar, pctile, flag: bool}
+  repricing_band: RepricingBand
+  market_context: MarketContext; context_inputs: {...}
+
+DataConfidence
+  class: LOW | MEDIUM | HIGH          # §5.10 conditions
+  failed: [{condition, reason}]      # conditions that keep it from HIGH
+  limiting: {condition, reason}      # printed as the card's "main unknown"
+  critical_semantics_verified: bool
+
+MarketTruthAssessment
+  mta_id, token_id, event_id?, cutoff, primary_window
+  spot: {window: SpotTruth}
+  derivatives: DerivativesTruth | NOT_APPLICABLE
+  liquidity: LiquidityTruth
+  supply: SupplyContext
+  relative: RelativePrice
+  move_class: MoveClass; support: int; alternatives: [MoveClass]
+  divergence: {state: DivergenceState,
+               candidates: [{state, eligible, refuted, testable, support}],
+               unresolved: [DivergenceState]}
+  flags: [PRICE_MARKUP_OI | NOT_COHORT_CONSISTENT | PRE_EVENT_RUNUP | FRAGMENTATION_INVESTIGATE | ...]
+  decisive_facts: [str]              # 2–3 facts selected for the card
+  data_confidence: DataConfidence
+  class_confidence: Certainty
+
+MovementOutlook
+  out_id, token_id, event_id, cutoff
+  direction: DirectionBias; direction_rule: str      # §6.1 row matched
+  potential: MovePotential; potential_rule: str      # §6.2 row matched
+  best_horizon: Horizon; horizon_reason: str
+  scenarios: {base, upside, failure}                 # sentences, no numbers
+  confidence: Certainty; caps: {data, event, market_truth}
+  tactical: bool
+  conditions: {upgrade: [cond_id], downgrade: [cond_id]}
+```
+
+### 2.7 Decision, alert and audit
+
+```
+Contradiction
+  contradiction_id, event_id, token_id?
+  type: ContradictionType
+  description: str; evidence: [claim_id | metric ref]
+  detected_at; resolved_at?; resolution: str?
+
+WatchCondition
+  cond_id, event_id, token_id
+  role: UPGRADE | DOWNGRADE | INVALIDATION | MILESTONE
+  expr: {metric: str, window: str, op: str, value: any, persist: {count: int, unit: str}}
+     | {milestone: str, due_at: ts}
+  human_text: str
+  created_by: dec_id
+  expires_at: ts
+  status: ARMED | FIRED | EXPIRED | CANCELLED; fired_at: ts?
+
+Decision
+  dec_id, event_id, token_id, cutoff
+  thesis_grade: Grade; thesis_rule: str             # §4.8 row matched
+  trade_grade: Grade; trade_reasons: [rule_id]
+  action: Action; action_rule: rule_id; tactical: bool; investigate: bool
+  call_id: str?
+  contradictions: [contradiction_id]
+  conditions_shown: [cond_id]        # at most 2
+
+Call                                 # open-call store
+  call_id, event_id, token_id
+  opened_by: (alert_id, version); opened_at
+  entry_ref_price: decimal           # reference-venue price at card generation
+  invalidation_price: decimal
+  status: OPEN | CLOSED; closed_by: EXIT | EXPIRED; closed_at?
+
+Alert                                # append-only; one row per version
+  alert_id, version, kind: AlertKind
+  event_id, generated_at
+  card_text: str; card_struct: {section: content}
+  decisions: [dec_id]
+  evidence_bundle_id: str
+  linter: {passed: bool, violations: [rule_id], regenerations: int}
+  supersedes_version: int?
+
+DeliveryRecord                       # append-only ledger; one row per transition
+  subject: (alert_id, version) | notice_id    # exactly one of the two
+  channel, status: DeliveryStatus
+  message_ref: str?; attempt: int; at: ts; error: str?
+
+OpsNotice                            # append-only; one "Tank Ops" message
+  notice_id, kind: OpsNoticeKind
+  subject_id: str?                   # alert_id of a DELIVERY_FAILED
+  text: str; created_at
+  created_by: sessions (LLM_BUDGET) | scheduler (HEARTBEAT) | delivery (DELIVERY_FAILED)
+
+EvidenceBundle                       # content-addressed JSON
+  bundle_id = sha256(canonical_json)
+  cutoff, request_log, source_items, observations, claims, state_changes,
+  ems, capture_chains, beneficiary_map, market_truth[], outlooks[], decisions[],
+  contradictions[], data_confidence[], unresolved_fields[],
+  config_hash, code_version, model_ids, agent_version, skill_version, session_id, tool_call_ids
+
+ReactionWindowPack
+  rwp_id, event_id, token_id
+  anchor: {type: T0 | T1 | KNOWN_TO_US_AT, ts}
+  checkpoints: [{label: PRE_24H | PRE_4H | PRE_1H | POST_15M | POST_1H | POST_4H | POST_24H | POST_72H,
+                 captured_at, retro: bool, revision: int,
+                 r_raw, r_btc_adj, pctile,
+                 spot_cvd, spot_method: TRADES | NONE, spot_coverage,
+                 oi_native_chg_pct, oi_class,
+                 funding: [{venue, settled, estimate}],
+                 liquidations: {long, short, coverage}}]
+```
+
+### 2.8 Control, sidecar, QA
+
+```
+Job
+  job_id, type, priority: 0..4 (0 highest)
+  idem_key: str (unique)
+  payload: json
+  status: QUEUED | RUNNING | DONE | FAILED | EXPIRED
+  attempts, max_attempts
+  run_after, expires_at: ts
+  last_error: str?
+
+HotToken                             # hot-set membership (§9)
+  token_id, event_id
+  priority: int                      # EMS class rank
+  since: ts; expires_at: ts?         # null while an open call or armed condition exists
+
+ExpansionProposal
+  prp_id, hook: ScoutHook
+  concept_name, definition, why_existing_fails, mechanism: str
+  evidence: [ref]; overlap: str
+  recommendation: ScoutRecommendation; confidence: Certainty
+  occurrences: int
+  adversarial_review: {overlap, observability, reusability, decision_value, verdict}
+  human_action: HumanScoutAction?; decided_at?
+
+ReviewRecord
+  review_id, subject: alert_id | event_id
+  label: CATCH | LATE | FALSE_ALARM | NOISE | CORRECT_SILENCE | MISS
+  miss_reason: LATE | WRONG_BENEFICIARY | BAD_DATA | OLD_NEWS | STATE_ERROR |
+               MARKET_TRUTH_ERROR | DELIVERY_FAILURE | SOURCE_NOT_COVERED ?
+  notes; reviewer; at
+
+Fixture
+  fixture_id, name, cutoff
+  anonymized: bool; name_map_ref: str?
+  source_items: [ref]; market_data: [ref]; registry_snapshot: ref; config_version
+  assertions: [{id, target, op, expected}]
+  sealed_outcome_ref: str            # not readable by the pipeline
+```
+
+### 2.9 Storage mapping (PostgreSQL)
+
+| Table | Key | Notes |
+|---|---|---|
+| `sources`, `entities`, `entity_aliases`, `tokens`, `instruments`, `sector_baskets`, `metric_semantics` | natural slugs | Loaded from the config repository; version stamped. |
+| `source_items` | `item_id`; unique (`source_id`, `external_id`) | Index `content_hash`, `observed_at`. |
+| `events` | `event_id` | Index `known_to_us_at`, `lifecycle`; GIN on entities. |
+| `event_observations`, `claims` | `obs_id`, `claim_id` | FK to events/items. |
+| `state_changes` | serial | Append-only. |
+| `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | id + version | Versioned rows. |
+| `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | Time-partitioned; base tier 90 days ⚙. |
+| `book_summaries`, `oi_obs`, `funding_obs`, `liq_obs` | (`instrument_id`, ts) | Time-partitioned. |
+| `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`). |
+| `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). |
+| `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
+| `jobs` | `job_id`; unique `idem_key` | The service's job queue (§3.8). |
+| `agent_sessions`, `tool_calls` | `session_id`, `call_id` | The OpenMA session of each event, and every tool call with its input, result and timing (§3.2). |
+| `budget_state` | `day` | Day's LLM spend and the pause time (§3.8). |
+| `expansion_proposals` | `prp_id` | Only table the scout role may write, together with its own logs. |
+| `fixtures`, `replay_runs` | ids | Sealed outcomes stored outside the DB path the pipeline reads. |
+
+Core DDL: §14.
+
+### 2.10 Metric Semantics registry — initial content (`semantics.yaml`)
+
+Trade aggressor side, units and IDs:
+
+| `metric_key` | Field | Meaning in Tank | Unit / time | Dedup key | Confidence |
+|---|---|---|---|---|---|
+| `binance.spot.aggTrade` / `binance.usdm.aggTrade` | `m` | `m = true` → buyer was maker → aggressor SELL | `q` base units; `T` ms | `a` (agg ID; `f`–`l` trade range) | VERIFIED (live sample `"m":false` on WLDUSDT) |
+| `coinbase.spot.matches` / REST `trades` | `side` | Maker order side → aggressor is the opposite side | `size` base; `time` ISO-8601 µs | `trade_id` | VERIFIED (exchange documentation; live sample `"side":"sell"`) |
+| `okx.spot.trades` / `okx.swap.trades` | `side` | Taker side | `sz` base (spot) or contracts (swap, × `ctVal`); `ts` ms | `tradeId` | VERIFIED |
+| `bybit.spot.publicTrade` / `bybit.linear.publicTrade` | `S` (WS), `side` (REST) | Taker side | `v`/`size` base; `T`/`time` ms | `i` / `execId` | VERIFIED |
+| `kraken.spot.trade` | `side` (WS v2), `b`/`s` (REST) | Taker side | `qty` base; REST time = seconds (float) | `trade_id` | VERIFIED |
+| `hyperliquid.perp.trades` | `side` | `B` → aggressor BUY, `A` → aggressor SELL | `sz` coin; `time` ms | `tid` | VERIFIED (16 Oct 2026, BTC/ETH/HYPE/SOL against the book: of trades printed at the bid or ask, 104 of 115 `B` at the ask, 49 of 62 `A` at the bid) |
+
+Open interest:
+
+| `metric_key` | Field used | Unit / sidedness | Not to be used | Confidence |
+|---|---|---|---|---|
+| `binance.usdm.openInterest` | `openInterest` | Base units, single-sided (WLDUSDT 16 Oct 2026: 203,999,216 WLD) | — | VERIFIED |
+| `binance.usdm.openInterestHist` | `sumOpenInterest`; `sumOpenInterestValue` | Base units, single-sided; USD notional (price-contaminated); 5m buckets, 30-day history | `CMCCirculatingSupply` (not OI) | VERIFIED |
+| `okx.swap.open-interest` | `oiCcy` | Coin units, single-sided (`oi` = contracts; `oi × ctVal` = `oiCcy`; WLD `ctVal` = 1) | `oiUsd` alone | VERIFIED |
+| `bybit.linear.open-interest` | `singleOpenInterest` | Base units, single-sided | `openInterest` = both sides counted (ratio 2.000 on BTCUSDT, ETHUSDT, WLDUSDT, 16 Oct 2026) | VERIFIED |
+| `hyperliquid.perp.ctx` | `openInterest` | Coin units; sidedness not published by Hyperliquid | Summing with other venues | VERIFIED for per-venue % change only (a sidedness factor cancels in a ratio) |
+
+Funding:
+
+| `metric_key` | Settled value | Current estimate | Interval | Confidence |
+|---|---|---|---|---|
+| Binance USDⓈ-M | `/fapi/v1/fundingRate` → `fundingRate` at `fundingTime` | `/fapi/v1/premiumIndex` → `lastFundingRate` (+ `nextFundingTime`); WS `r` | `fundingIntervalHours` from `/fapi/v1/fundingInfo`, else 8 h | VERIFIED |
+| OKX SWAP | `settFundingRate` (`settState`), history `fundingRate` | `fundingRate` (`method: current_period`) applying at `fundingTime` | spacing of `prevFundingTime` → `fundingTime` (8 h on WLD) | VERIFIED |
+| Bybit linear | `/v5/market/funding/history` → `fundingRate` | tickers `fundingRate` (+ `nextFundingTime`) | `fundingIntervalHour` (8 on WLD) | VERIFIED |
+| Hyperliquid | `fundingHistory` | `metaAndAssetCtxs` → `funding` | 1 h | VERIFIED (WLD 16 Oct 2026: 0.0000125 per hour = 0.0100% per 8 h, equal to Binance, OKX and Bybit) |
+
+Liquidations:
+
+| Feed | Coverage class |
+|---|---|
+| Binance `{s}@forceOrder` | SAMPLED — at most the latest liquidation per symbol per 1,000 ms |
+| Bybit `allLiquidation.{SYMBOL}` | COMPLETE — Bybit documentation: "push all liquidations that occur on Bybit" (USDT, USDC and inverse contracts, every 500 ms) |
+| OKX `liquidation-orders` | SAMPLED — OKX documentation: "This data doesn't represent the total number of liquidations on OKX" |
+| Hyperliquid | NOT_SUPPORTED (no public stream) |
+
+Every row above ships with an adapter self-test that fetches a live sample and asserts unit, field presence and ID behavior; a failed self-test downgrades the row to UNKNOWN until fixed.
+
+
+### 2.11 Registry — initial content (`registry.yaml`)
+
+Token identities were verified on 16 Oct 2026 by matching the CoinGecko price with the venue price (LIT 3.17 vs OKX 3.1733; XPL 0.0832 vs 0.0834; WLD 0.516 vs 0.519). Project accounts come from each project's website, CoinGecko or DefiLlama and exist on X (oEmbed HTTP 200).
+
+| `token_id` | Identity (chain: contract) | CoinGecko id | Unlock dataset slug | Organization X accounts (01 §4.3) |
+|---|---|---|---|---|
+| `bitcoin:BTC` | native | `bitcoin` | — | @bitcoincoreorg |
+| `ethereum:ETH` | native | `ethereum` | — | @ethereum, @ethereumfndn |
+| `uniswap:UNI` | Ethereum `0x1f9840a85d5af5bf1d1762f925bdaddc4201f984` | `uniswap` | `uniswap` | @Uniswap, @UniswapFND, @unichain |
+| `pancakeswap:CAKE` | BNB Chain `0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82` | `pancakeswap-token` | `pancakeswap` | @PancakeSwap |
+| `aerodrome:AERO` | Base `0x940181a94a35a4569e4529a3cdfb74e38fd98631` | `aerodrome-finance` | `aerodrome` | @aeroxyz, @dromoslabs, @VelodromeFi |
+| `curve:CRV` | Ethereum `0xd533a949740bb3306d119cc777fa900ba034cd52` | `curve-dao-token` | `curve-finance` | @CurveFinance |
+| `1inch:1INCH` | Ethereum `0x111111111117dc0aa78b770fa6a738034120c302` | `1inch` | — (none published) | @1inch |
+| `0x:ZRX` | Ethereum `0xe41d2489571d322189246dafa5ebde1f4699f498` | `0x` | — (none published) | @0xProject, @zeroexprotocol, @matchaxyz |
+| `cow:COW` | Ethereum `0xdef1ca1fb7fbcdc777520aa7f396b4e015f497ab` | `cow-protocol` | `cowswap` | @CoWSwap |
+| `hyperliquid:HYPE` | Hyperliquid L1, HyperCore token `0x0d01dc56dcaaca66ad901c959b4011ec` | `hyperliquid` | `hyperliquid` | @HyperliquidX, @HyperFND |
+| `lighter:LIT` | Ethereum `0x232ce3bd40fcd6f80f3d55a522d03f25df784ee2` | `lighter` | `lighter` | @Lighter_xyz |
+| `aave:AAVE` | Ethereum `0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9` | `aave` | `aave` | @aave |
+| `morpho:MORPHO` | Ethereum `0x58d97b57bb95320f9a05dc918aef65434969c2b2` | `morpho` | `morpho` | @Morpho |
+| `euler:EUL` | Ethereum `0xd9fcd98c322942075a5c3860693e9f4f03aae07b` | `euler` | `euler` | @eulerfinance |
+| `ondo:ONDO` | Ethereum `0xfaba6f8e4a5e8ab82f62fe7c39859fa577269be3` | `ondo-finance` | `ondo-finance` | @Ondo, @OndoFoundation, @OndoPerps |
+| `layerzero:ZRO` | Ethereum `0x6985884c4392d348587b19cb9eaaf157f13271cd` (same address on Base, Arbitrum, Optimism, BNB Chain, Polygon, Avalanche) | `layerzero` | `layerzero` | @LayerZero_Core, @LayerZero_Labs, @LayerZero_Fndn, @StargateFinance |
+| `quant:QNT` | Ethereum `0x4a220e6096b25eadb88358cb44068a3248254675` | `quant-network` | — (none published) | @quantnetwork |
+| `avalanche:AVAX` | native (C-Chain) | `avalanche-2` | `avalanche` | @avax, @AvaLabs, @AvalancheFDN |
+| `near:NEAR` | native | `near` | `near-protocol` | @NEARProtocol, @near_ai |
+| `plasma:XPL` | native (Plasma chain) | `plasma` | `plasma` | @Plasma |
+| `ethena:ENA` | Ethereum `0x57e114b691db790c35207b2e685d4a43181e6061` | `ethena` | `ethena` | @ethena |
+| `world:WLD` | Ethereum `0x163f8c2467924be0ae7b5347228cabf260318753`; World Chain `0x2cfc85d8e48f8eab294be644d9e25c3030863003`; Optimism `0xdc6ff44d5d932cbd77b52e5612ba0529dc6226f1` | `worldcoin-wld` | `worldcoin` | @worldnetwork, @tfh_technology, @worldcoinfnd, @world_chain_ |
+
+Instrument symbols: Binance `{T}USDT` (spot and USDⓈ-M), Coinbase `{T}-USD`, Kraken `{T}/USD` (BTC is `XBT/USD`), OKX `{T}-USDT` and `{T}-USDT-SWAP`, Bybit `{T}USDT` (spot and linear), Hyperliquid `{T}`. Only markets marked Y in 02 §4.10 are subscribed. Binance spot `LITUSDT` returns 2025 history of Litentry, a different and delisted token, and is never used.
+
+Aliases used to resolve entity names to the registry (V3; whole words, case-insensitive; `$TICKER` always resolves; generic words need the qualifier shown):
+
+| Token | Aliases |
+|---|---|
+| UNI | Uniswap, Uniswap Labs, Uniswap Foundation, Unichain |
+| CAKE | PancakeSwap |
+| AERO | Aerodrome |
+| CRV | Curve Finance, Curve DAO, crvUSD |
+| 1INCH | 1inch, 1inch Network |
+| ZRX | 0x Protocol, 0x Labs, Matcha |
+| COW | CoW Protocol, CoW Swap, CoW DAO |
+| HYPE | Hyperliquid, HyperEVM, HyperCore |
+| LIT | Lighter only with "LIT", "Lighter.xyz", "Lighter DEX" or "Lighter exchange" |
+| AAVE | Aave, Aave Labs, Aave DAO, GHO |
+| MORPHO | Morpho, Morpho Blue |
+| EUL | Euler Finance, Euler v2 |
+| ONDO | Ondo, Ondo Finance, Ondo Global Markets, USDY, OUSG |
+| ZRO | LayerZero, LayerZero Labs |
+| QNT | Quant Network, Overledger |
+| AVAX | Ava Labs, Avalanche network, Avalanche C-Chain |
+| NEAR | NEAR Protocol, NEAR Foundation |
+| XPL | Plasma only with "XPL", "Plasma chain" or "Plasma network" |
+| ENA | Ethena, Ethena Labs, USDe, sUSDe |
+| WLD | Worldcoin, World Network, World App, World Chain, World ID, Tools for Humanity |
+
+### 2.12 Dependency map — initial content (`dependency_map.yaml`)
+
+Seed for the beneficiary walk (§4.7). An edge supported only by this map starts at COMPATIBLE; higher states need quoted evidence.
+
+| Entity | Token | Layers served | Competes with |
+|---|---|---|---|
+| Uniswap | UNI | VENUE_DEX, LIQUIDITY_EXECUTION | PancakeSwap, Aerodrome, Curve |
+| PancakeSwap | CAKE | VENUE_DEX (BNB Chain) | Uniswap, Aerodrome |
+| Aerodrome | AERO | VENUE_DEX (Base) | Uniswap, PancakeSwap |
+| Curve | CRV | VENUE_DEX (stable and pegged assets) | Uniswap |
+| 1inch | 1INCH | LIQUIDITY_EXECUTION (aggregation) | 0x, CoW Protocol |
+| 0x | ZRX | LIQUIDITY_EXECUTION (aggregation API) | 1inch, CoW Protocol |
+| CoW Protocol | COW | LIQUIDITY_EXECUTION (batch auctions, solvers) | 1inch, 0x |
+| Hyperliquid | HYPE | VENUE_DEX (perps, spot), SETTLEMENT_L1_L2 (HyperEVM) | Lighter; centralized perp venues |
+| Lighter | LIT | VENUE_DEX (perps) | Hyperliquid |
+| Aave | AAVE | LENDING_COLLATERAL | Morpho, Euler |
+| Morpho | MORPHO | LENDING_COLLATERAL | Aave, Euler |
+| Euler | EUL | LENDING_COLLATERAL | Aave, Morpho |
+| Ondo | ONDO | ISSUER_PRODUCT (tokenized treasuries and stocks) | BlackRock, Franklin Templeton |
+| LayerZero | ZRO | INTEROPERABILITY | Quant |
+| Quant | QNT | INTEROPERABILITY (bank and enterprise networks) | LayerZero |
+| Avalanche | AVAX | SETTLEMENT_L1_L2 | NEAR, Plasma |
+| NEAR | NEAR | SETTLEMENT_L1_L2 | Avalanche, Plasma |
+| Plasma | XPL | SETTLEMENT_L1_L2 (stablecoin payments chain) | Avalanche, NEAR |
+| Ethena | ENA | ISSUER_PRODUCT (USDe synthetic dollar) | Circle, Tether, Paxos |
+| World | WLD | ISSUER_PRODUCT (identity, World App payments) | — |
+| BlackRock | — | ISSUER_PRODUCT (tokenized funds) | Franklin Templeton, Ondo |
+| Franklin Templeton | — | ISSUER_PRODUCT (tokenized funds) | BlackRock, Ondo |
+| Securitize | — | ISSUER_PRODUCT, CUSTODY_COMPLIANCE (transfer agent) | — |
+| Circle | — | ISSUER_PRODUCT (USDC, EURC) | Tether, Paxos, Ethena |
+| Tether | — | ISSUER_PRODUCT (USDT) | Circle, Paxos, Ethena |
+| Paxos | — | ISSUER_PRODUCT (stablecoin issuance), CUSTODY_COMPLIANCE | Circle, Tether |
+| DTCC | — | CUSTODY_COMPLIANCE (clearing, settlement) | — |
+| The Clearing House | — | SETTLEMENT_L1_L2 (bank payment networks); Quant partner (24 Sep 2026) | — |
+| BNY | — | CUSTODY_COMPLIANCE | Anchorage Digital |
+| Anchorage Digital | — | CUSTODY_COMPLIANCE | BNY |
+| Binance, Coinbase, OKX, Bybit, Kraken, Robinhood | — | VENUE_DEX (centralized venues) | each other |
+| Chainlink | (LINK, outside the universe) | ORACLE_DATA | — |
+
+---
+
+
+# Source and market APIs, shared limits
+ (S01–S34)
+
+Common to all HTTP sources: header `User-Agent: TankV0/1.0 (<operator contact e-mail>)`; conditional GET (`If-None-Match` / `If-Modified-Since`) where the server returns `ETag` / `Last-Modified`; timeout 20 s; 3 retries with 2/4/8 s backoff; escalated interval 15 s (01 FR-D-02). Each payload is stored raw with SHA-256 before parsing; items are deduplicated by the item key in the tables below.
+
+HTML page sources: Tank collects every link on the page that matches the source's article pattern below, resolves it to an absolute URL, and treats each URL not seen before as a new item; the article page is then fetched for its full text. Zero matches on a successful fetch marks the source DEGRADED (layout change). S19 is the only page that needs rendering in headless Chrome, so `tank-xsensor` polls it; all others work from plain HTTP in `tank-ingest`.
+
+### 3.1 Regulators and market structure (CORE)
+
+| ID | Endpoint(s) | Format | Item key | Fields parsed | Interval |
+|---|---|---|---|---|---|
+| S01 | `https://www.sec.gov/news/pressreleases.rss` · `https://www.sec.gov/news/speeches-statements.rss` | RSS | `guid` | title, link, pubDate, description; full text fetched from `link` | 60 s · 120 s |
+| S02 | `https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=S-1&owner=include&count=40&output=atom` | Atom | entry `id` (accession) | title, updated, link, summary; kept only when the filer name or title matches the registry, or contains "Trust"/"ETF" together with a crypto term | 120 s |
+| S03 | `https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]={term}&order=newest&per_page=20` — one request per term: `crypto`, `"digital asset"`, `bitcoin`, `ether`, `stablecoin`, `tokenized` | JSON | `document_number` | title, type (Rule / Proposed Rule / Notice), abstract, html_url, pdf_url, publication_date, agencies, excerpts | 300 s |
+| S04 | `https://www.cftc.gov/RSS/RSSGP/rssgp.xml` · `https://www.cftc.gov/RSS/RSSENF/rssenf.xml` | RSS | `guid` | title, link, pubDate | 120 s · 300 s |
+| S05 | `https://www.federalreserve.gov/feeds/press_all.xml` | RSS | `guid` | title, link, pubDate, description | 120 s |
+| S06 | `https://www.occ.gov/rss/occ_news.xml` | RSS | `guid` | title, link, pubDate | 300 s |
+| S07 | `https://home.treasury.gov/news/press-releases` (response ≈ 8 s) · `https://ofac.treasury.gov/rss.xml` (≈ 11 s) | HTML page · RSS | article URL · `guid` | Article pattern `^/news/press-releases/[a-z]{2}\d{4}/?$` (e.g. `/news/press-releases/sb0661`) · title, link, pubDate, description | 300 s |
+| S08 | `https://www.dtcc.com/news` | HTML page | article URL | Article pattern `https://www.dtcc.com/press-releases/\d{4}/[a-z0-9-]+` (e.g. `/press-releases/2026/dtcc-turns-tokenization-into-reality`) | 300 s |
+
+### 3.2 Exchanges and brokers (CORE)
+
+| ID | Endpoint(s) | Format | Item key | Fields parsed | Interval |
+|---|---|---|---|---|---|
+| S09 | List: `https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId={48,161,49}&pageNo=1&pageSize=20` (48 New Cryptocurrency Listing, 161 Delisting, 49 Latest Binance News). Detail: `https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode={code}` | JSON | `code` | list: `id`, `code`, `title`, `releaseDate` (ms); detail: `title`, `body`, `publishDate`, catalog names | 30 s |
+| S10 | `https://www.okx.com/api/v5/support/announcements?annType={type}` for `announcements-new-listings`, `announcements-delistings`, `announcements-trading-updates`, `latest-events` | JSON | `url` + `pTime` | `annType`, `title`, `url`, `pTime`, `businessPTime` (ms) | 60 s |
+| S11 | `https://api.bybit.com/v5/announcements/index?locale=en-US&type={type}&limit=20` for `new_crypto`, `delistings`, `latest_bybit_news` | JSON | `url` | `title`, `description`, `type.key`, `tags`, `url`, `dateTimestamp`, `publishTime` (ms) | 60 s |
+| S12 | `https://blog.kraken.com/feed` | RSS | `guid` | title, link, pubDate, categories, content | 120 s |
+| S13 | `https://newsroom.aboutrobinhood.com/` | HTML page | article URL | Article pattern `/newsroom/(?!category/)[A-Za-z0-9-]+/?` (e.g. `/newsroom/robinhood-cryptocom`) | 300 s |
+| S14 | Binance `https://api.binance.com/api/v3/exchangeInfo` + `https://fapi.binance.com/fapi/v1/exchangeInfo`; Coinbase `https://api.exchange.coinbase.com/products`; Kraken `https://api.kraken.com/0/public/AssetPairs`; OKX `https://www.okx.com/api/v5/public/instruments?instType=SPOT` and `instType=SWAP`; Bybit `https://api.bybit.com/v5/market/instruments-info?category=spot` and `category=linear` (`limit=1000`); Hyperliquid `POST https://api.hyperliquid.xyz/info` body `{"type":"meta"}` | JSON | venue + symbol + status | symbol, base, quote, status / state, contract type; diff against the previous snapshot | 60 s (Kraken 120 s) |
+
+### 3.3 Protocols and issuers (CORE)
+
+| ID | Page | Article pattern (example match on 16 Oct 2026) | Interval |
+|---|---|---|---|
+| S15 | `https://blog.uniswap.org/` | `^/(?!category/)[a-z0-9-]{8,}$` (`/uniswap-is-live-on-arc`) | 600 s |
+| S16 | `https://ondo.finance/blog` | `^/blog/[a-z0-9-]+$` (`/blog/introducing-ondo-private-markets`) | 600 s |
+| S17 | `https://layerzero.network/blog` | `^/blog/[a-z0-9-]+$` (`/blog/introducing-atlas`) | 600 s |
+| S18 | `https://www.blackrock.com/corporate/newsroom/media/press-releases` | `/corporate/newsroom/media/press-releases/[a-z0-9-]+` (`…/blackrock-reports-third-quarter-2026`) | 600 s |
+| S19 | `https://www.franklintempleton.com/press-releases` — rendered in headless Chrome | `/press-releases/news-room/\d{4}/[a-z0-9.-]+` (`/press-releases/news-room/2026/franklin-templeton-completes-acquisition-of-250-digital`) | 600 s |
+| S20 | `https://www.circle.com/pressroom` | `^/pressroom/[a-z0-9-]+$` (`/pressroom/circle-to-announce-q3-2026-financial-results-on-november-4-2026`) | 600 s |
+| S21 | `https://tether.io/feed/` — RSS, item key `guid` | — | 300 s |
+| S22 | `https://www.paxos.com/newsroom` | `^/newsroom/[a-z0-9-]+$` (`/newsroom/paxos-joins-solana-developer-platform`) | 600 s |
+
+### 3.4 Governance (CORE)
+
+| ID | Endpoint(s) | Format | Item key | Fields parsed | Interval |
+|---|---|---|---|---|---|
+| S23 | `https://gov.uniswap.org/latest.rss`, `https://governance.aave.com/latest.rss`, `https://gov.ethenafoundation.com/latest.rss`, `https://forum.cow.fi/latest.rss`, `https://forum.morpho.org/latest.rss`, `https://forum.euler.finance/latest.rss`, `https://gov.1inch.io/latest.rss`, `https://gov.near.org/latest.rss` | RSS (Discourse) | topic URL | title, link, pubDate, category, first-post text; only topics not seen before | 300 s (Euler, 1inch, NEAR: 600 s) |
+| S24 | `POST https://hub.snapshot.org/graphql` — `proposals(first: 20, where: {space_in: ["uniswapgovernance.eth","aavedao.eth","cakevote.eth","cow.eth","morpho.eth","1inch.eth"]}, orderBy: "created", orderDirection: desc) { id title body state start end scores scores_total space { id } }` | GraphQL | `id` (+ `state`) | new proposals; state changes (`active` → `closed`) and final scores become STATE_UPDATE items; `end` schedules a milestone check | 120 s |
+
+### 3.5 Technical artifacts (SECONDARY)
+
+| ID | Endpoint(s) | Format | Item key | Interval |
+|---|---|---|---|---|
+| S25 | Releases: `https://github.com/Uniswap/v4-core/releases.atom`, `https://github.com/aave-dao/aave-v3-origin/releases.atom`, `https://github.com/cowprotocol/services/releases.atom`, `https://github.com/hyperliquid-dex/hyperliquid-python-sdk/releases.atom`, `https://github.com/1inch/swap-vm/releases.atom`, `https://github.com/elliottech/lighter-python/releases.atom`, `https://github.com/ava-labs/avalanchego/releases.atom`, `https://github.com/near/nearcore/releases.atom`, `https://github.com/worldcoin/world-chain/releases.atom`, `https://github.com/PlasmaLaboratories/node-templates/releases.atom`. Commits: `https://github.com/LayerZero-Labs/LayerZero-v2/commits/main.atom`, `https://github.com/morpho-org/morpho-blue/commits/main.atom` | Atom | entry `id` | 600 s |
+
+Feeds checked on 16 Oct 2026: every release feed above except Uniswap v4-core (last release Jan 2025, kept for the next protocol version) had releases in 2026; Morpho Blue commits are active (latest 16 Oct 2026), LayerZero v2 commits are quiet (latest Feb 2026). Repositories checked and left out because they had no release in 2026: PancakeSwap `infinity-core`, Aerodrome `slipstream` and `contracts`, Curve `curve-stablecoin`, 0x `0x-settler`, Euler `evk-periphery` and `euler-vault-kit`, Ondo `rwa-contracts`, Ethena `ethena-minting-client`; Quant's public repositories are forks and tools.
+
+GitHub evidence is SOURCE_SIDE_SUPPORT: it can raise an integration claim to BUILT at most (03 §3.6).
+
+### 3.6 Institutional and custody (SECONDARY)
+
+| ID | Page | Article pattern (example match on 16 Oct 2026) | Interval |
+|---|---|---|---|
+| S26 | `https://www.bny.com/corporate/global/en/about-us/newsroom.html` | `/corporate/global/en/about-us/newsroom/press-release/[a-z0-9-]+\.html` (`…/bny-reports-third-quarter-2026-results-130478.html`) | 600 s |
+| S27 | `https://www.theclearinghouse.org/About/Media/press-releases` | `/payment-systems/Articles/\d{4}/\d{2}/[A-Za-z0-9-]+` (`/payment-systems/Articles/2026/09/The-Clearing-House-Partners-with-Quant-to-Advance-the--On-Chain-Money-Initiative`) | 600 s |
+| S28 | `https://www.anchorage.com/insights` | `^/press-room/[a-z0-9-]+$` (`/press-room/the-lifecycle-of-staked-eth`) | 600 s |
+
+### 3.7 X (S29, SECONDARY)
+
+- Account set: the 86 handles in 01 §4.3, held in one private X List "tank-v0" on the operator's X account; the list ID is stored in `sources.yaml`.
+- Reader: the `xsensor` module, Playwright (async API) persistent context on a dedicated Chrome profile directory (`/opt/tank/chrome-profile`), headless (`--headless=new`). If X blocks headless mode, running the sensor headed in a separate macOS login session is the operator's decision. The same browser renders S19.
+- Every 60 s: open `https://x.com/i/lists/{list_id}`, read `article` elements top-down until the last stored status ID; per post store status ID (from the `/status/{id}` link), author handle, text, `time[datetime]`, quoted/reposted status IDs, and the full post URL.
+- Handle check: `tank sources check` calls `https://publish.twitter.com/oembed?url=https://x.com/{handle}` for each handle (follows the redirect to `publish.x.com`; HTTP 200 = exists) and confirms the owner from the profile bio (`https://syndication.twitter.com/srv/timeline-profile/screen-name/{handle}`, rate-limited to a few requests per minute) or from the person's IQ.wiki, Wikidata or GitHub profile; all 86 passed on 16–17 Oct 2026 (e.g. @el33th4xor bio: "Founder and CEO @avalabs"; @vnovakovski: IQ.wiki "founder and CEO of Lighter"; @fleupold_: Devcon speaker page and GitHub bio "Technical lead at CowProtocol"). Organization handles were taken from the project's own website, docs or GitHub organization; people's handles from the official team page, IQ.wiki, Wikidata, GitHub or reputable news. Handles that must not be used: wrong person — @nathanallman (an unrelated account; Ondo's founder Nathan Allman used @nathanlallman and died on 25 May 2026); unconfirmed or squatted — @fleupold (Felix Leupold is @fleupold_), @CoWDAO, @HyperFoundation, @HyperliquidLabs, @worldcoin (re-registered in Mar 2026); HTTP 404 — @aerodromefi, @OndoFinance, @quant_network, @ethena_labs, @eulerlabs. Left out because no official source confirms the owner: @iliensinc (Hyperliquid co-founder), @MathisGD_ (Morpho co-founder), @chef_mochi (PancakeSwap). Left out as dormant or no longer at the project: @nearfoundation, @k06a, @PaoloTasca, @kevinsekniqi, @Tederminant, @John1wu.
+- Terms: automated reading of the X web UI carries terms-of-service risk (recorded in `terms_notes`).
+
+### 3.8 News (SECONDARY)
+
+| ID | Endpoint(s) | Interval |
+|---|---|---|
+| S30 | `https://feeds.bbci.co.uk/news/business/rss.xml` · `https://feeds.bbci.co.uk/news/technology/rss.xml` | 120 s · 300 s |
+| S31 | `https://feeds.bloomberg.com/markets/news.rss` | 120 s |
+| S32 | `https://news.google.com/rss/search?q=site:reuters.com+crypto&hl=en-US&gl=US&ceid=US:en` | 300 s |
+| S33 | `https://www.coindesk.com/arc/outboundfeeds/rss/` | 120 s |
+| S34 | `https://www.theblock.co/rss.xml` | 120 s |
+
+All RSS; item key `guid` (else `link`); fields title, link, pubDate, description. Bloomberg headlines (paywalled) are used for discovery; facts are confirmed from primary sources.
+
+---
+
+## 4. Market data catalog
+
+Tank-side request budgets are set at ≤ 50% of each venue's documented limit. Binance limits below were read from `exchangeInfo.rateLimits`. Instrument symbols per venue are listed in 03 §2.11.
+
+### 4.1 Binance Spot
+
+| Purpose | Endpoint | Key fields |
+|---|---|---|
+| Hot trades | WSS `wss://data-stream.binance.vision/stream?streams={s}@aggTrade` | `a` agg ID, `p`, `q`, `f`/`l` first/last trade ID, `T` ms, `m` buyer-is-maker (`true` → aggressive SELL) |
+| Hot book | WSS `{s}@depth@100ms` + snapshot `GET https://api.binance.com/api/v3/depth?symbol={S}&limit=1000` (sync by `lastUpdateId`) | bids/asks |
+| Base klines | `GET https://api.binance.com/api/v3/klines?symbol={S}&interval=1m` | row: openTime, o, h, l, c, volume, closeTime, quoteVolume, trades, takerBuyBase, takerBuyQuote |
+| Backfill | `GET /api/v3/aggTrades?symbol={S}&fromId=` or `startTime`/`endTime` (≤ 1 h window) | as WS |
+| 24h volume | `GET /api/v3/ticker/24hr?symbol={S}` | volume, quoteVolume |
+| Limits | 6,000 request weight / min / IP; Tank budget ≤ 3,000; header `X-MBX-USED-WEIGHT-1M` read on every response | — |
+| Exclusion | `LITUSDT` spot history belongs to Litentry (delisted, different token): never used for LIT | — |
+
+### 4.2 Binance USDⓈ-M Futures
+
+| Purpose | Endpoint | Key fields |
+|---|---|---|
+| Hot trades | WSS `wss://fstream.binance.com/market/stream?streams={s}@aggTrade` — the market path; the old `/stream` and `/ws` paths accept connections but push no market data (checked 17 Oct 2026) | as spot |
+| Mark / funding estimate | WSS `{s}@markPrice@1s` on the same `/market/stream` connection | `p` mark, `i` index, `r` current funding estimate, `T` next funding time |
+| Liquidations | WSS `{s}@forceOrder` on the same `/market/stream` connection | `o.S` side, `o.q` qty, `o.ap` avg price, `o.T` — **SAMPLED**: at most the latest liquidation per symbol per 1,000 ms |
+| OI now | `GET https://fapi.binance.com/fapi/v1/openInterest?symbol={S}` | `openInterest` (base units, single-sided), `time` |
+| OI history | `GET /futures/data/openInterestHist?symbol={S}&period=5m` | `sumOpenInterest` (base), `sumOpenInterestValue` (USD), `timestamp`; last 30 days only |
+| Funding estimate | `GET /fapi/v1/premiumIndex?symbol={S}` | `markPrice`, `indexPrice`, `lastFundingRate` (current estimate), `nextFundingTime`, `interestRate` |
+| Funding settled | `GET /fapi/v1/fundingRate?symbol={S}` | `fundingTime`, `fundingRate`, `markPrice` |
+| Funding interval | `GET /fapi/v1/fundingInfo` | `fundingIntervalHours` for symbols with non-default interval (default 8 h) |
+| Taker volume | `GET /futures/data/takerlongshortRatio?symbol={S}&period=5m` | `buyVol`, `sellVol`, `buySellRatio` |
+| Limits | 2,400 request weight / min / IP; Tank budget ≤ 1,200 | — |
+
+### 4.3 Coinbase Exchange
+
+| Purpose | Endpoint | Key fields |
+|---|---|---|
+| Hot trades | WSS `wss://ws-feed.exchange.coinbase.com` channel `matches` | `trade_id`, `side` = **maker** side (aggressor is the opposite), `size`, `price`, `time` |
+| Hot book | same socket, channel `level2_batch`; `heartbeat` for sequence checks | — |
+| Backfill | `GET https://api.exchange.coinbase.com/products/{id}/trades` (paginate with `after`) | `trade_id`, `side` (maker), `size`, `price`, `time` |
+| Book snapshot | `GET /products/{id}/book?level=2` | — |
+| 24h volume | `GET /products/{id}/stats` | — |
+| Limits | Tank budget ≤ 5 requests/s | — |
+
+### 4.4 OKX
+
+| Purpose | Endpoint | Key fields |
+|---|---|---|
+| Hot trades | WSS `wss://ws.okx.com:8443/ws/v5/public` channel `trades` | `tradeId`, `px`, `sz`, `side` (taker), `ts`, `count` (pushes may aggregate one taker order) |
+| Hot book | channel `books` (400 levels, CRC32 checksum) | — |
+| OI | channel `open-interest`; `GET https://www.okx.com/api/v5/public/open-interest?instType=SWAP&instId={X}-USDT-SWAP` | `oi` (contracts), `oiCcy` (coin), `oiUsd`, `ts` |
+| Contract size | `GET /api/v5/public/instruments?instType=SWAP&instId=` | `ctVal`, `ctMult`, `ctValCcy` (WLD-USDT-SWAP: `ctVal` = 1 WLD) |
+| Funding | channel `funding-rate`; `GET /api/v5/public/funding-rate?instId=` | `fundingRate` (current period), `settFundingRate` (last settled), `settState`, `fundingTime`, `nextFundingTime`, `prevFundingTime`, `premium` |
+| Funding history | `GET /api/v5/public/funding-rate-history?instId=` | `fundingRate`, `realizedRate`, `fundingTime` |
+| Mark / index | channels `mark-price`, `index-tickers` | — |
+| Liquidations | channel `liquidation-orders` (`instType` SWAP) | **SAMPLED** — OKX documentation: "This data doesn't represent the total number of liquidations on OKX" |
+| Backfill | `GET /api/v5/market/history-trades?instId=` | as WS |
+
+### 4.5 Bybit
+
+| Purpose | Endpoint | Key fields |
+|---|---|---|
+| Hot trades | WSS `wss://stream.bybit.com/v5/public/spot` and `/v5/public/linear`, topic `publicTrade.{SYMBOL}` | `i` trade ID, `T` ms, `S` taker side, `v`, `p`, `BT` block trade |
+| Hot book | topic `orderbook.200.{SYMBOL}` (spot) | — |
+| Linear ticker | topic `tickers.{SYMBOL}`; `GET https://api.bybit.com/v5/market/tickers?category=linear&symbol=` | `openInterest` (**double-sided**), `openInterestValue`, `fundingRate`, `nextFundingTime`, `fundingIntervalHour`, `markPrice`, `indexPrice` |
+| OI | `GET /v5/market/open-interest?category=linear&symbol={S}&intervalTime=5min` | `openInterest` and `singleOpenInterest`; observed 16 Oct 2026: `openInterest` / `singleOpenInterest` = 2.000 for BTCUSDT, ETHUSDT, WLDUSDT → Tank uses `singleOpenInterest` |
+| Funding settled | `GET /v5/market/funding/history?category=linear&symbol=` | `fundingRate`, `fundingRateTimestamp` |
+| Liquidations | topic `allLiquidation.{SYMBOL}` | **COMPLETE** — Bybit documentation: "push all liquidations that occur on Bybit", USDT/USDC/inverse contracts, every 500 ms |
+| Backfill | `GET /v5/market/recent-trade?category=spot&symbol=` | `execId`, `price`, `size`, `side`, `time`, `seq`; last 1,000 trades only |
+
+### 4.6 Kraken
+
+| Purpose | Endpoint | Key fields |
+|---|---|---|
+| Hot trades | WSS `wss://ws.kraken.com/v2` channel `trade` | `trade_id`, `side` (taker), `qty`, `price`, `timestamp` |
+| Hot book | channel `book` (depth 1000, CRC32 checksum) | — |
+| Backfill | `GET https://api.kraken.com/0/public/Trades?pair={P}&since=` | row: price, volume, time (seconds, float), `b`/`s` (taker side), `l`/`m`, misc, trade_id |
+| Limits | Tank budget ≤ 1 request/s | — |
+
+### 4.7 Hyperliquid (perpetuals)
+
+| Purpose | Endpoint | Key fields |
+|---|---|---|
+| Hot trades | WSS `wss://api.hyperliquid.xyz/ws` subscription `trades` | `coin`, `side` (`B` = aggressive buy, `A` = aggressive sell — measured 16 Oct 2026 on BTC, ETH, HYPE, SOL: 90% of `B` trades printed at the ask, 79% of `A` trades at the bid), `px`, `sz`, `time`, `tid` |
+| Context | subscription `activeAssetCtx`; `POST https://api.hyperliquid.xyz/info` `{"type":"metaAndAssetCtxs"}` | `funding` (hourly), `openInterest` (coin units; sidedness not published → used only as per-venue % change, never summed), `markPx`, `oraclePx`, `premium`, `dayNtlVlm` |
+| Funding history | `{"type":"fundingHistory","coin":"{X}","startTime":…}` | — |
+| Liquidations | no public stream | NOT_SUPPORTED |
+
+### 4.8 History, fundamentals, supply
+
+| Source | Endpoint | Use |
+|---|---|---|
+| Binance public data archive | `https://data.binance.vision/data/spot/daily/klines/{S}/1m/{S}-1m-{YYYY-MM-DD}.zip`, `…/spot/daily/aggTrades/{S}/{S}-aggTrades-{date}.zip`, `…/futures/um/daily/klines/{S}/1m/…`, `…/futures/um/daily/metrics/{S}/{S}-metrics-{date}.zip` (5m OI), `…/futures/um/monthly/fundingRate/{S}/{S}-fundingRate-{YYYY-MM}.zip`; each with `.CHECKSUM` = `"<sha256>  <file name>"` | Pre-event windows older than REST retention, retro reaction checkpoints, fixture replay (03 §5.2) |
+| DefiLlama API | `https://api.llama.fi/summary/fees/{protocol}?dataType=dailyFees` / `dailyRevenue` / `dailyHoldersRevenue` (`total24h`, `total30d`, `totalDataChart`); `https://stablecoins.llama.fi/stablecoincharts/{chain}`; `https://yields.llama.fi/lendBorrow` | Capture chain, stablecoin supply of the settlement chain, lending utilization |
+| DefiLlama unlock datasets | `https://defillama-datasets.llama.fi/emissions/{slug}` (list: `…/emissionsProtocolsList`, 371 protocols on 16 Oct 2026); slugs per token in 03 §2.11; none published for 1INCH, ZRX, QNT | `unlocks` for supply context, refreshed daily |
+| Exchange wallets | DefiLlama-Adapters `projects/binance/index.js` at commit `4a6ef31a4eed4f24882a7d82bff50306b40b6d6c` (17 EVM addresses) and `projects/okex/index.js` at commit `b70f0fb4dc9ff463866d676c14d21b0ed0930d76` (323 EVM addresses) → `exchange_addresses.yaml` | Exchange inventory and wallet flows (Bybit, Coinbase, Kraken: no public list → n/a) |
+| Etherscan API v2 (free key) | `https://api.etherscan.io/v2/api?chainid={id}&module=account&action=tokenbalance&contractaddress={token}&address={wallet}&apikey={key}`; `action=tokentx` for transfers | Balances and transfers of the wallets above for EVM tokens of the universe |
+
+### 4.9 Capture tiers
+
+| Tier | Universe | What runs | Cadence |
+|---|---|---|---|
+| Base (always) | 22 tokens (01 §4.1) on every covered market (§4.10) | REST 1m klines; 24h tickers; OI and funding | Klines every 60 s; OI + funding every 300 s |
+| Hot (escalated, max 15 tokens) | Tokens in an event's analysis set | WebSocket trades and books on every covered venue; OI + funding every 60 s; liquidations; mark/index | Streaming; book summaries every 10 s |
+
+Load check: base tier = 181 market series (22 tokens over the venues of the coverage matrix in §4.10) → ≈ 181 kline requests/min (Binance: 43 series, ≈ 86 weight/min of a 3,000 budget); hot tier ≤ 15 tokens × 9 markets = 135 WebSocket subscriptions on ≈ 10 connections.
+
+### 4.10 Universe coverage (16 Oct 2026)
+
+Y = active USDT/USDC/USD market for spot, USDT-margined perpetual for perp. Regenerated by `tank coverage` at V0-A and weekly.
+
+| Token | BN spot | CB spot | OKX spot | BY spot | KR spot | BN perp | OKX perp | BY perp | HL perp |
+|---|---|---|---|---|---|---|---|---|---|
+| BTC, ETH, UNI, ONDO, ZRO, CRV, AAVE, NEAR, HYPE, ENA, MORPHO, AVAX, XPL, WLD | Y | Y | Y | Y | Y | Y | Y | Y | Y |
+| ZRX, 1INCH | Y | Y | Y | Y | Y | Y | Y | Y | — |
+| AERO | Y | Y | — | Y | Y | Y | Y | Y | Y |
+| CAKE | Y | Y | — | Y | Y | Y | — | Y | Y |
+| QNT | Y | Y | — | Y | Y | Y | Y | Y | — |
+| COW | Y | Y | — | — | Y | Y | — | Y | — |
+| EUL | Y | Y | — | — | Y | Y | — | Y | — |
+| LIT | — | — | Y | Y | Y | Y | Y | Y | Y |
+
+Every token has at least three spot venues and two perpetual venues. Binance spot `LITUSDT` is excluded (Litentry history, §4.1).
+
+---
+
+
+# Complete production DDL
+ (PostgreSQL 16)
+
+Analysis objects of §2.6 are stored as `jsonb` inside the rows below; the columns that queries filter or join on are typed.
+
+```sql
+CREATE SCHEMA reg; CREATE SCHEMA ingest; CREATE SCHEMA evt; CREATE SCHEMA mkt;
+CREATE SCHEMA ana; CREATE SCHEMA out; CREATE SCHEMA ops; CREATE SCHEMA scout; CREATE SCHEMA qa;
+
+CREATE TABLE ingest.source_items (
+  item_id            text PRIMARY KEY,                 -- ITM-<ulid>
+  source_id          text NOT NULL,                    -- S01..S34
+  feed               text NOT NULL,                    -- e.g. 'binance:catalog48', 'sec:press', 'x:list'
+  external_id        text NOT NULL,                    -- guid / code / document_number / status id / block sha
+  url                text,
+  title              text,
+  body               text,
+  published_at       timestamptz,
+  published_prec     text NOT NULL CHECK (published_prec IN ('EXACT','BUCKET','COLLECTION_ONLY')),
+  observed_at        timestamptz NOT NULL,
+  raw_path           text NOT NULL,
+  raw_sha256         char(64) NOT NULL,
+  content_hash       char(64) NOT NULL,
+  source_class       text NOT NULL,
+  relevance_decision text NOT NULL CHECK (relevance_decision IN ('ALWAYS','SEND','SKIP')),
+  relevance_p        real,
+  route_decision     text CHECK (route_decision IN ('NEW_SESSION','ADDED')),
+  route_event_id     text,
+  route_p            real,
+  extraction_status  text NOT NULL DEFAULT 'PENDING',
+  UNIQUE (source_id, feed, external_id)
+);
+CREATE INDEX ON ingest.source_items (content_hash);
+CREATE INDEX ON ingest.source_items (observed_at);
+
+CREATE TABLE evt.events (
+  event_id           text PRIMARY KEY,                 -- EVT-<ulid>
+  statement          text NOT NULL,
+  theme_tags         text[] NOT NULL DEFAULT '{}',
+  event_time         timestamptz,
+  event_time_prec    text,
+  public_at          timestamptz NOT NULL,
+  public_at_prec     text NOT NULL,
+  public_at_basis    text NOT NULL,
+  known_to_us_at     timestamptz NOT NULL,
+  verified_at        timestamptz,
+  freshness          text NOT NULL CHECK (freshness IN ('FRESH','NORMAL','MEDIUM','POOR','OLD','STALE')),
+  event_state        text NOT NULL,
+  state_verified     boolean NOT NULL,
+  negative_marker    text,
+  certainty          text NOT NULL,
+  timing_confidence  text NOT NULL,
+  best_source_class  text NOT NULL,
+  next_milestone     jsonb,
+  lifecycle          text NOT NULL,
+  merged_into        text REFERENCES evt.events(event_id),
+  current_ems_id     text
+);
+CREATE INDEX ON evt.events (known_to_us_at);
+CREATE INDEX ON evt.events (lifecycle);
+
+CREATE TABLE evt.event_entities (
+  event_id  text NOT NULL REFERENCES evt.events(event_id),
+  entity_id text NOT NULL,
+  role      text NOT NULL,
+  PRIMARY KEY (event_id, entity_id, role)
+);
+CREATE INDEX ON evt.event_entities (entity_id);
+
+CREATE TABLE evt.event_observations (
+  obs_id        text PRIMARY KEY,
+  event_id      text NOT NULL REFERENCES evt.events(event_id),
+  item_id       text NOT NULL REFERENCES ingest.source_items(item_id),
+  link_type     text NOT NULL,
+  public_at     timestamptz NOT NULL,
+  freshness     text NOT NULL,
+  match_method  text NOT NULL,
+  observed_at   timestamptz NOT NULL
+);
+
+CREATE TABLE evt.claims (
+  claim_id          text PRIMARY KEY,
+  obs_id            text NOT NULL REFERENCES evt.event_observations(obs_id),
+  claim_type        text NOT NULL,
+  subject           text, predicate text, object text,
+  value_num         numeric, value_unit text,
+  state_claim       text,
+  directionality    text NOT NULL,
+  evidence_class    text NOT NULL,
+  verified          boolean NOT NULL,
+  quote             text NOT NULL,
+  accepted          boolean NOT NULL,
+  rejection_reason  text
+);
+
+CREATE TABLE evt.state_changes (                       -- append-only
+  id          bigserial PRIMARY KEY,
+  event_id    text NOT NULL REFERENCES evt.events(event_id),
+  edge_id     text,
+  ladder      text NOT NULL CHECK (ladder IN ('EVENT','INTEGRATION')),
+  from_state  text,
+  to_state    text NOT NULL,
+  evidence    text[] NOT NULL,                         -- claim_ids
+  changed_at  timestamptz NOT NULL
+);
+
+CREATE TABLE evt.ems_assessments (
+  ems_id          text PRIMARY KEY,
+  event_id        text NOT NULL REFERENCES evt.events(event_id),
+  version         int  NOT NULL,
+  cutoff          timestamptz NOT NULL,
+  dims            jsonb NOT NULL,                      -- 7 × DimScore
+  gates           jsonb NOT NULL,
+  class           text NOT NULL,
+  criterion       text NOT NULL,
+  class_reasons   text[] NOT NULL,
+  impact_horizon  jsonb NOT NULL,
+  config_version  text NOT NULL,
+  model_id        text NOT NULL,
+  prompt_version  text NOT NULL,
+  UNIQUE (event_id, version)
+);
+
+CREATE TABLE mkt.flow_bars_1m (
+  instrument_id  text NOT NULL,
+  minute_start   timestamptz NOT NULL,
+  buy_qty        numeric NOT NULL,  sell_qty  numeric NOT NULL,   -- native, aggressor side
+  buy_usd        numeric NOT NULL,  sell_usd  numeric NOT NULL,
+  n_buy          int NOT NULL,      n_sell    int NOT NULL,
+  sum_sq_qty     numeric NOT NULL,                     -- Σ q² of the minute's trades (§0)
+  o numeric, h numeric, l numeric, c numeric, vwap numeric,
+  size_buckets   jsonb NOT NULL,                       -- B1..B5 × {buy_qty, sell_qty, buy_usd, sell_usd, n}
+  first_trade_id text, last_trade_id text,
+  complete       boolean NOT NULL,
+  gap_reason     text,
+  PRIMARY KEY (instrument_id, minute_start)
+) PARTITION BY RANGE (minute_start);                   -- daily partitions
+
+CREATE TABLE mkt.oi_obs (
+  instrument_id  text NOT NULL,
+  metric_key     text NOT NULL,                        -- e.g. 'bybit.linear.open-interest'
+  ts             timestamptz NOT NULL,
+  ts_prec        text NOT NULL,
+  received_ts    timestamptz NOT NULL,
+  raw_value      numeric NOT NULL,
+  raw_unit       text NOT NULL,
+  sidedness      text NOT NULL,
+  oi_native      numeric,                              -- single-sided base units (null if unverified)
+  oi_usd         numeric,
+  PRIMARY KEY (instrument_id, metric_key, ts)
+) PARTITION BY RANGE (ts);
+
+CREATE TABLE mkt.funding_obs (
+  instrument_id  text NOT NULL,
+  kind           text NOT NULL CHECK (kind IN ('SETTLED','CURRENT_ESTIMATE')),
+  rate           numeric NOT NULL,
+  interval_h     numeric NOT NULL,
+  rate_8h_eq     numeric NOT NULL,
+  funding_time   timestamptz,
+  as_of          timestamptz NOT NULL,
+  metric_key     text NOT NULL,
+  PRIMARY KEY (instrument_id, kind, as_of)
+);
+
+CREATE TABLE mkt.liq_obs (
+  id             bigserial,
+  instrument_id  text NOT NULL,
+  ts             timestamptz NOT NULL,
+  side           text NOT NULL CHECK (side IN ('LONG_LIQ','SHORT_LIQ')),
+  qty_native     numeric NOT NULL,
+  notional_usd   numeric NOT NULL,
+  price          numeric,
+  coverage       text NOT NULL CHECK (coverage IN ('COMPLETE','SAMPLED','UNKNOWN')),
+  PRIMARY KEY (id, ts)
+) PARTITION BY RANGE (ts);
+
+CREATE TABLE mkt.hot_tokens (                          -- hot set; read on start to subscribe again
+  token_id    text NOT NULL,
+  event_id    text NOT NULL,
+  priority    smallint NOT NULL,                       -- EMS class rank
+  since       timestamptz NOT NULL,
+  expires_at  timestamptz,                             -- null while an open call or armed condition exists
+  PRIMARY KEY (token_id, event_id)
+);
+
+CREATE TABLE ana.market_truth (
+  mta_id            text PRIMARY KEY,
+  token_id          text NOT NULL,
+  event_id          text REFERENCES evt.events(event_id),
+  cutoff            timestamptz NOT NULL,
+  primary_window    text NOT NULL,
+  move_class        text NOT NULL,
+  support           int,
+  alternatives      text[] NOT NULL,                  -- other eligible move classes (§5.8)
+  divergence        jsonb NOT NULL,
+  flags             text[] NOT NULL,
+  decisive_facts    text[] NOT NULL,
+  data_confidence   jsonb NOT NULL,
+  class_confidence  text NOT NULL,
+  detail            jsonb NOT NULL,                    -- SpotTruth per window, Derivatives, Liquidity, Supply, RelativePrice
+  config_version    text NOT NULL,
+  code_version      text NOT NULL
+);
+CREATE INDEX ON ana.market_truth (token_id, cutoff);
+
+CREATE TABLE ana.decisions (
+  dec_id        text PRIMARY KEY,
+  event_id      text NOT NULL REFERENCES evt.events(event_id),
+  token_id      text NOT NULL,
+  mta_id        text NOT NULL REFERENCES ana.market_truth(mta_id),
+  cutoff        timestamptz NOT NULL,
+  thesis_grade  char(1) NOT NULL, thesis_rule text NOT NULL,
+  trade_grade   char(1) NOT NULL, trade_reasons text[] NOT NULL,
+  action        text NOT NULL,
+  action_rule   text NOT NULL,                         -- A0..A12, B1..B4
+  tactical      boolean NOT NULL,
+  investigate   boolean NOT NULL,
+  call_id       text,
+  outlook       jsonb NOT NULL,
+  conditions    text[] NOT NULL                        -- cond_ids shown on the card (≤ 2)
+);
+
+CREATE TABLE ana.calls (
+  call_id             text PRIMARY KEY,
+  event_id            text NOT NULL REFERENCES evt.events(event_id),
+  token_id            text NOT NULL,
+  opened_by_alert     text NOT NULL,
+  opened_by_version   int  NOT NULL,
+  opened_at           timestamptz NOT NULL,
+  entry_ref_price     numeric NOT NULL,
+  invalidation_price  numeric NOT NULL,
+  status              text NOT NULL CHECK (status IN ('OPEN','CLOSED')),
+  closed_by           text CHECK (closed_by IN ('EXIT','EXPIRED')),
+  closed_at           timestamptz
+);
+
+CREATE TABLE out.alerts (                              -- append-only, one row per version
+  alert_id            text NOT NULL,
+  version             int  NOT NULL,
+  kind                text NOT NULL CHECK (kind IN ('PARTIAL','FULL','UPDATE')),
+  event_id            text NOT NULL REFERENCES evt.events(event_id),
+  generated_at        timestamptz NOT NULL,
+  card_text           text NOT NULL,
+  card_struct         jsonb NOT NULL,
+  decisions           text[] NOT NULL,
+  evidence_bundle_id  char(64) NOT NULL,
+  linter              jsonb NOT NULL,
+  supersedes_version  int,
+  config_version      text NOT NULL,
+  code_version        text NOT NULL,
+  model_id            text,
+  prompt_version      text,
+  PRIMARY KEY (alert_id, version)
+);
+
+CREATE TABLE out.ops_notices (                         -- append-only
+  notice_id   text PRIMARY KEY,
+  kind        text NOT NULL CHECK (kind IN ('DELIVERY_FAILED','LLM_BUDGET','HEARTBEAT')),
+  subject_id  text,
+  text        text NOT NULL,
+  created_at  timestamptz NOT NULL,
+  created_by  text NOT NULL
+);
+
+CREATE TABLE out.deliveries (                          -- append-only ledger, one row per transition
+  id           bigserial PRIMARY KEY,
+  alert_id     text,
+  version      int,
+  notice_id    text REFERENCES out.ops_notices(notice_id),
+  channel      text NOT NULL,                          -- 'telegram:alerts' | 'telegram:ops'
+  status       text NOT NULL CHECK (status IN ('GENERATED','SENT','FAILED')),
+  message_ref  text,                                   -- Telegram message_id
+  attempt      int  NOT NULL,
+  at           timestamptz NOT NULL,
+  error        text,
+  FOREIGN KEY (alert_id, version) REFERENCES out.alerts(alert_id, version),
+  CHECK ((alert_id IS NOT NULL AND version IS NOT NULL AND notice_id IS NULL)
+      OR (alert_id IS NULL AND version IS NULL AND notice_id IS NOT NULL))
+);
+
+CREATE TABLE ops.jobs (
+  job_id        text PRIMARY KEY,
+  type          text NOT NULL,
+  priority      smallint NOT NULL,
+  idem_key      text NOT NULL UNIQUE,
+  payload       jsonb NOT NULL,
+  status        text NOT NULL DEFAULT 'QUEUED'
+                CHECK (status IN ('QUEUED','RUNNING','DONE','FAILED','EXPIRED')),
+  attempts      int NOT NULL DEFAULT 0,
+  max_attempts  int NOT NULL,
+  run_after     timestamptz NOT NULL DEFAULT now(),
+  expires_at    timestamptz NOT NULL,
+  last_error    text
+);
+CREATE INDEX ON ops.jobs (status, priority, run_after);
+
+CREATE TABLE ops.llm_usage (
+  id                  bigserial PRIMARY KEY,
+  at                  timestamptz NOT NULL,
+  call                text NOT NULL,                   -- FILTER | ROUTE (Jev) | SESSION | SCOUT
+  subject_id          text NOT NULL,                   -- item_id / event_id / alert_id / prp_id
+  model               text NOT NULL,
+  effort              text NOT NULL,
+  input_tokens        int NOT NULL,
+  cache_read_tokens   int NOT NULL,
+  cache_write_tokens  int NOT NULL,
+  output_tokens       int NOT NULL,
+  cost_usd            numeric(10,6) NOT NULL,
+  web_searches        int NOT NULL DEFAULT 0,
+  stop_reason         text NOT NULL
+);
+
+CREATE TABLE ops.budget_state (
+  day           date PRIMARY KEY,
+  spent_usd     numeric(10,4) NOT NULL,
+  paused_until  timestamptz                         -- set at 100% of the daily cap; 00:00 UTC next day
+);
+
+CREATE TABLE ops.agent_sessions (
+  session_id      text PRIMARY KEY,                    -- OpenMA session id
+  event_id        text UNIQUE REFERENCES evt.events(event_id),   -- set by record_event
+  opened_by_item  text NOT NULL REFERENCES ingest.source_items(item_id),
+  agent_version   text NOT NULL,                       -- tank-event-analyst@<version>
+  status          text NOT NULL CHECK (status IN ('OPEN','ENDED','FAILED')),
+  opened_at       timestamptz NOT NULL,
+  last_item_at    timestamptz NOT NULL,                -- routing window, §3.1
+  last_event_seq  bigint NOT NULL DEFAULT 0            -- stream resume point
+);
+
+CREATE TABLE ops.tool_calls (
+  call_id         text PRIMARY KEY,                    -- OpenMA custom tool_use id
+  session_id      text NOT NULL REFERENCES ops.agent_sessions(session_id),
+  tool            text NOT NULL,
+  input           jsonb NOT NULL,
+  result          jsonb,
+  status          text NOT NULL CHECK (status IN ('PENDING','DONE','REFUSED','ERROR')),
+  requested_at    timestamptz NOT NULL,
+  answered_at     timestamptz
+);
+
+-- Append-only enforcement
+CREATE FUNCTION ops.forbid_change() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'append-only table: %', TG_TABLE_NAME; END $$;
+CREATE TRIGGER alerts_ro        BEFORE UPDATE OR DELETE ON out.alerts        FOR EACH ROW EXECUTE FUNCTION ops.forbid_change();
+CREATE TRIGGER deliveries_ro    BEFORE UPDATE OR DELETE ON out.deliveries    FOR EACH ROW EXECUTE FUNCTION ops.forbid_change();
+CREATE TRIGGER state_changes_ro BEFORE UPDATE OR DELETE ON evt.state_changes FOR EACH ROW EXECUTE FUNCTION ops.forbid_change();
+-- same trigger on out.ops_notices, out.evidence_bundles, out.reaction_checkpoints, qa.reviews
+
+-- Read-only role for the agents' sandboxes (02 §8, §11); password: §13; statement timeout and connection limit: §12
+CREATE ROLE tank_agent LOGIN;
+GRANT USAGE ON SCHEMA reg, ingest, evt, mkt, ana, out, ops, scout, qa TO tank_agent;
+GRANT SELECT ON ALL TABLES IN SCHEMA reg, ingest, evt, mkt, ana, out, ops, scout, qa TO tank_agent;
+ALTER DEFAULT PRIVILEGES IN SCHEMA reg, ingest, evt, mkt, ana, out, ops, scout, qa GRANT SELECT ON TABLES TO tank_agent;
+ALTER ROLE tank_agent SET default_transaction_read_only = on;
+
+-- Job claim by one of the service's workers (§3.8); on start: UPDATE ops.jobs SET status = 'QUEUED' WHERE status = 'RUNNING';
+UPDATE ops.jobs
+   SET status = 'RUNNING', attempts = attempts + 1
+ WHERE job_id = (SELECT job_id FROM ops.jobs
+                  WHERE status = 'QUEUED' AND run_after <= now() AND expires_at > now()
+                  ORDER BY priority, run_after
+                  FOR UPDATE SKIP LOCKED
+                  LIMIT 1)
+RETURNING *;
+```

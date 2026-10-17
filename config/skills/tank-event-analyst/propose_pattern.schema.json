@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "propose_pattern",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "hook": {
+      "type": "string"
+    },
+    "subject": {
+      "type": "string"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "hook",
+    "subject",
+    "evidence"
+  ]
+}
