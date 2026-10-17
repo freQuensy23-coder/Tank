@@ -14,7 +14,7 @@
 
 ## 1. Topology
 
-One machine runs the Tank service — one asynchronous Python process built from modules (§5) — next to the OpenMA server that hosts the agent sessions and their sandboxes, PostgreSQL and the local data directory. The service only reads (HTTPS/WSS); the agents' sandboxes have unrestricted internet access (§11).
+One Linux host runs everything in Docker Compose: the Tank service — one asynchronous Python process built from modules (§5) — in the container `tank`, the OpenMA server that hosts the agent sessions and their sandboxes in `openma`, and PostgreSQL in `postgres`; data lives in Docker volumes. Nothing depends on the host beyond Docker and KVM for the sandboxes (§8). The service only reads (HTTPS/WSS); the agents' sandboxes have unrestricted internet access (§11).
 
 ![Tank V0 — technical view](diagrams/tank_v0_technical_view.svg)
 
@@ -35,7 +35,7 @@ One machine runs the Tank service — one asynchronous Python process built from
 9. Every escalation, retry and scheduled capture has an expiry.
 10. Tokens are identified by contract (03 §2.11), never by ticker.
 11. No silent fallbacks: when a dependency fails, the step waits and retries, and missing data shows as n/a with the reason. Tank never switches on its own to a broader, cheaper or proxy path (01 §9, Failures).
-12. One service: Tank is a single asyncio process built from modules; only PostgreSQL and OpenMA run beside it, and every piece of work that must survive a restart is a job in PostgreSQL (§5).
+12. One service: Tank is a single asyncio process built from modules; only PostgreSQL and OpenMA run beside it, each in its own container, and every piece of work that must survive a restart is a job in PostgreSQL (§5).
 
 ---
 
@@ -110,7 +110,7 @@ GitHub evidence is SOURCE_SIDE_SUPPORT: it can raise an integration claim to BUI
 ### 3.7 X (S29, SECONDARY)
 
 - Account set: the 86 handles in 01 §4.3, held in one private X List "tank-v0" on the operator's X account; the list ID is stored in `sources.yaml`.
-- Reader: the `xsensor` module, Playwright (async API) persistent context on a dedicated Chrome profile directory (`/opt/tank/chrome-profile`), headless (`--headless=new`). If X blocks headless mode, running the sensor headed in a separate macOS login session is the operator's decision. The same browser renders S19.
+- Reader: the `xsensor` module, Playwright (async API) persistent context with Chromium inside the `tank` container; the profile lives in the volume `tank-browser` and is signed in to X once from the operator's session (a Playwright storage-state file exported on the operator's own computer and supplied as the Docker secret `x_session`); headless (`--headless=new`). If X blocks headless mode, running it headed under a virtual display (Xvfb) in the same container is the operator's decision. The same browser renders S19.
 - Every 60 s: open `https://x.com/i/lists/{list_id}`, read `article` elements top-down until the last stored status ID; per post store status ID (from the `/status/{id}` link), author handle, text, `time[datetime]`, quoted/reposted status IDs, and the full post URL.
 - Handle check: `tank sources check` calls `https://publish.twitter.com/oembed?url=https://x.com/{handle}` for each handle (follows the redirect to `publish.x.com`; HTTP 200 = exists) and confirms the owner from the profile bio (`https://syndication.twitter.com/srv/timeline-profile/screen-name/{handle}`, rate-limited to a few requests per minute) or from the person's IQ.wiki, Wikidata or GitHub profile; all 86 passed on 16–17 Oct 2026 (e.g. @el33th4xor bio: "Founder and CEO @avalabs"; @vnovakovski: IQ.wiki "founder and CEO of Lighter"; @fleupold_: Devcon speaker page and GitHub bio "Technical lead at CowProtocol"). Organization handles were taken from the project's own website, docs or GitHub organization; people's handles from the official team page, IQ.wiki, Wikidata, GitHub or reputable news. Handles that must not be used: wrong person — @nathanallman (an unrelated account; Ondo's founder Nathan Allman used @nathanlallman and died on 25 May 2026); unconfirmed or squatted — @fleupold (Felix Leupold is @fleupold_), @CoWDAO, @HyperFoundation, @HyperliquidLabs, @worldcoin (re-registered in Mar 2026); HTTP 404 — @aerodromefi, @OndoFinance, @quant_network, @ethena_labs, @eulerlabs. Left out because no official source confirms the owner: @iliensinc (Hyperliquid co-founder), @MathisGD_ (Morpho co-founder), @chef_mochi (PancakeSwap). Left out as dormant or no longer at the project: @nearfoundation, @k06a, @PaoloTasca, @kevinsekniqi, @Tederminant, @John1wu.
 - Terms: automated reading of the X web UI carries terms-of-service risk (recorded in `terms_notes`).
@@ -264,13 +264,14 @@ Tank is one service: a single Python 3.12 asyncio process, `tank serve`, built a
 | `market` | `websockets`, `httpx`, `orjson`, `numpy`, `pyarrow` | One task per venue WebSocket connection; base-tier pollers | Hot tier: trades, books, liquidations and mark/funding streams of the hot set; REST backfill of trade-ID gaps after a reconnect; 1m per-venue flow bars, size buckets, 10 s book summaries, completeness flags, hourly Parquet. Base tier: klines, tickers, OI, funding. A token that turns hot is subscribed on every covered market and gets the pre-event backfill. Archive downloads; DefiLlama (unlock datasets daily); Etherscan |
 | `jobs` | `psycopg` | 8 async workers | Claim the next due job from `ops.jobs` by priority, run it under its timeout, write the result and the next job; on start, return jobs left RUNNING to the queue |
 | `pipeline` | `typesafe-sdk` | FILTER_ITEM and ROUTE_ITEM jobs | Jev filter and routing (03 §3.1); a routed item becomes an AGENT_MESSAGE job |
-| `sessions` | `httpx`, `httpx-sse` | AGENT_MESSAGE and SCOUT_REVIEW jobs; one stream task per working session | The only module that talks to OpenMA: opens one session per event and posts its messages (03 §3.2); follows a session's stream while the agent works; runs each custom tool the agent calls against PostgreSQL, Tavily and the web, and answers with `user.custom_tool_result`; a slow tool (`get_market_truth`) is answered when its job finishes; once the day's LLM budget is spent, holds the messages of deferrable items until 00:00 UTC (03 §3.8) |
+| `sessions` | `httpx`, `httpx-sse` | AGENT_MESSAGE and SCOUT_REVIEW jobs; one stream task per working session | The only module that talks to OpenMA: opens one session per event and posts its messages (03 §3.2); follows a session's stream while the agent works; runs each custom tool the agent calls against PostgreSQL, Tavily and the web, and answers with `user.custom_tool_result`; a slow tool (`get_market_truth`) is answered when its job finishes |
+| `codex_gateway` | `httpx` | An HTTP endpoint on the Compose network (`http://tank:8790/v1`) | The model endpoint behind OpenMA's Model Card for `gpt-6.1-sol` (OpenAI Responses API): checks the internal key, adds the operator's ChatGPT (Codex) OAuth token and account id from the volume `codex-auth`, and forwards the call to the endpoint the Codex CLI uses; when the token expires it refreshes it with the refresh token and writes the new tokens back; a usage-limit answer goes back to OpenMA with its reset time |
 | `analysis` | `numpy`, `pandas` | ESCALATE_TOKENS, RUN_MARKET_TRUTH, EVAL_CONDITIONS, MILESTONE_CHECK and REACTION_CAPTURE jobs; the code behind the tools | State Tracker, EMS checks, Beneficiary rules, Market Truth, Outlook, Decision Engine, Alert Composer + Linter, evidence bundles; no LLM |
 | `delivery` | `httpx` | DELIVER jobs | Telegram send, threading, ledger; ops notices |
 | `scheduler` | — | One loop | Runs each source loop at its cadence (normal or 15 s escalated); creates EVAL_CONDITIONS every minute, MILESTONE_CHECK at a milestone's time and REACTION_CAPTURE at each checkpoint; hot-set demotion; heartbeat notice; retention; nightly backup (`pg_dump` and `bundles/` to an external disk) |
 | CLI | `click` | Short commands of the same program | Review, scout decisions, replay, archive fetch, bundle reproduction, source and handle checks |
 
-Next to the service run only PostgreSQL 16 (database `tank`, plus OpenMA's database `oma`) and the OpenMA server: `open-managed-agents` at a pinned release, Node.js, listening on 127.0.0.1:8787. It hosts the agents `tank-event-analyst` and `tank-scout-reviewer` and their sessions, makes the model calls to OpenAI through its Model Card, inlines the skills and keeps the append-only session logs. Each session gets its own litebox sandbox, a microVM with unrestricted internet access and read-only access to the database `tank` (§8).
+Next to the service run only two containers: `postgres` (PostgreSQL 16; database `tank`, plus OpenMA's database `oma`) and `openma`, the OpenMA server (`open-managed-agents` at a pinned release, Node.js), listening on port 8787 of the Compose network. It hosts the agents `tank-event-analyst` and `tank-scout-reviewer` and their sessions, makes the model calls through Tank's `codex_gateway`, which signs them with the operator's ChatGPT subscription (Codex sign-in, §8), inlines the skills and keeps the append-only session logs. Each session gets its own litebox sandbox, a microVM with unrestricted internet access and read-only access to the database `tank` (§8).
 
 On start, the service returns jobs left RUNNING to the queue, subscribes the tokens in `mkt.hot_tokens`, replays each open session's stream from its last stored event and keeps following the sessions still at work. A tool call left without a result runs again; a write tool that already ran returns its stored result (03 §3.2), so a restart loses nothing and writes nothing twice.
 
@@ -351,14 +352,14 @@ A MAJOR+ class from the agent's `set_assessment` → pre-event windows computed 
 | `mkt` | `klines_1m`, `flow_bars_1m`, `book_summaries`, `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `unlocks`, `hot_tokens` | Daily partitions; base tier 90 days; partitions overlapping a MAJOR+ event window kept permanently |
 | `ana` | `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | Permanent |
 | `out` | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints` | Permanent, append-only |
-| `ops` | `jobs`, `agent_sessions`, `tool_calls`, `budget_state`, `llm_usage` | Jobs 30 days; LLM usage permanent |
+| `ops` | `jobs`, `agent_sessions`, `tool_calls`, `llm_usage` | Jobs 30 days; LLM usage permanent |
 | `scout` | `expansion_proposals` | Permanent |
 | `qa` | `reviews`, `fixtures`, `replay_runs` | Permanent |
 | `oma` (OpenMA's own database) | Agents, skills, sessions and their append-only event logs | Permanent |
 
 DDL for the core tables is in 03 §14.
 
-### 7.2 Files (`/opt/tank/data`)
+### 7.2 Files (volume `tank-data`, mounted at `/data`)
 
 | Path | Content | Retention |
 |---|---|---|
@@ -376,16 +377,16 @@ Sizing estimate: raw trades ≈ 0.5 GB/day compressed at 15 hot tokens; books �
 
 | Item | V0 setting |
 |---|---|
-| Host | Apple Silicon Mac mini, macOS, 32 GB RAM, 1 TB SSD, wired Ethernet; Chrome profile for S29 and S19 |
-| Services | launchd agents with `KeepAlive = true`: `com.tank.service` runs `tank serve`, `com.openma.server` runs OpenMA; logs in `/opt/tank/logs/` |
-| Database | PostgreSQL 16 (Homebrew service `postgresql@16`): the service connects over the local socket; the read-only role `tank_agent` connects from the sandboxes over the host's sandbox network address (`pg_hba.conf`: that role, that subnet, SCRAM) |
-| OpenMA | `open-managed-agents` at a pinned release tag, native Node (`apps/main-node`) under launchd; `DATABASE_URL` = database `oma` on the local PostgreSQL; `SANDBOX_PROVIDER=litebox` (one libkrun microVM per session on Apple Silicon); bound to 127.0.0.1:8787; agents and skills uploaded from `/opt/tank/config` on deploy |
+| Host | Any Linux server (x86-64 or arm64) with Docker Engine, Compose v2 and KVM (`/dev/kvm`) for OpenMA's sandboxes; 32 GB RAM, 1 TB SSD, wired network |
+| Services | `compose.yaml` with three services, each `restart: unless-stopped`: `tank` runs `tank serve`, `openma` runs the OpenMA server, `postgres` runs PostgreSQL; logs through Docker's logging driver with rotation |
+| Database | Image `postgres:16`, data in the volume `pg-data`: the service and OpenMA connect over the Compose network; the read-only role `tank_agent` connects from the sandboxes on the address they reach (`pg_hba.conf`: that role, that subnet, SCRAM); no port is published outside the host |
+| OpenMA | Container `openma` from OpenMA's image at a pinned release tag (`apps/main-node`); `DATABASE_URL` = database `oma` on `postgres`; `SANDBOX_PROVIDER=litebox` with `/dev/kvm` passed into the container (one libkrun microVM per session); the Model Card for `gpt-6.1-sol` is a custom provider (`pi_config.api: openai-responses`) whose `base_url` is Tank's `codex_gateway` (`http://tank:8790/v1`), called with the internal key `codex_gateway_key`; OpenMA never holds the ChatGPT sign-in; port 8787 on the Compose network only; agents and skills uploaded from the config repository on deploy |
 | Agent sandbox | Environment `tank-analysis`: image `openma/sandbox-base:python-3.12`; pip `pandas`, `numpy`, `scipy`, `statsmodels`, `pyarrow`, `duckdb`, `psycopg[binary]`, `httpx`, `websockets`; apt `postgresql-client`; no network allowlist or denylist; env `TANK_DB_URL` (role `tank_agent`), `ETHERSCAN_API_KEY`, `TAVILY_API_KEY` and `TYPESAFE_API_KEY` — in V0 the keys sit in the environment and the skill forbids printing them or sending them anywhere but their own API; a credential vault comes with production. Environment `tank-replay` for fixture replays: the same image, no outbound network, `TANK_DB_URL` pointing at the replay database (03 §11.1) |
-| Python | 3.12 virtualenv `/opt/tank/venv`, `asyncio`; dependencies pinned in `requirements.lock`; Playwright Chromium installed into the venv |
-| Configuration | Git repository `/opt/tank/config`: `sources.yaml` (incl. article patterns of §3), `semantics.yaml`, `registry.yaml` (tokens, identities, aliases, instruments, sector baskets), `dependency_map.yaml`, `exchange_addresses.yaml`, `thresholds.yaml`, `skills/` (the agents' skills and tool schemas), `templates/`; loaded on start and on `SIGHUP`; commit hash stored as `config_version` on every output |
-| Secrets | macOS Keychain items `tank-oma`, `tank-oma-root`, `tank-tavily`, `tank-typesafe`, `tank-telegram`, `tank-etherscan`, `tank-agent-db`; the OpenAI key is held by OpenMA's Model Card, the Etherscan, Tavily and TypeSafe keys and the `tank_agent` password also by the environment `tank-analysis`; never written to logs or bundles |
-| Time | macOS `timed` (network time) |
-| Backups | Nightly `pg_dump` + `bundles/` copy to an external disk |
+| Image | `tank`, built from the repository's `Dockerfile`: Python 3.12, `asyncio`, dependencies pinned in `uv.lock`, Playwright Chromium; volumes `tank-data` (`/data`), `tank-browser` (the X profile), `codex-auth` (the ChatGPT sign-in) and `backup` (an external disk on the host) |
+| Configuration | Git repository on the host, mounted read-only at `/config`: `sources.yaml` (incl. article patterns of §3), `semantics.yaml`, `registry.yaml` (tokens, identities, aliases, instruments, sector baskets), `dependency_map.yaml`, `exchange_addresses.yaml`, `thresholds.yaml`, `skills/` (the agents' skills and tool schemas), `templates/`; loaded on start and on `SIGHUP` (`docker compose kill -s HUP tank`); commit hash stored as `config_version` on every output |
+| Secrets | Docker Compose secrets — files outside the repository, readable only by the operator, mounted read-only into the containers that use them: `oma_api_key`, `oma_root_secret`, `tavily_api_key`, `typesafe_api_key`, `telegram_bot_token`, `etherscan_api_key`, `tank_agent_db_password`, `x_session`, `codex_gateway_key`; the ChatGPT sign-in sits in the `tank` volume `codex-auth` (writable: the gateway saves refreshed tokens there), the Etherscan, Tavily and TypeSafe keys and the `tank_agent` password also by the environment `tank-analysis`; never written to logs or bundles |
+| Time | The host's NTP client (e.g. `chrony`); containers use the host clock |
+| Backups | Nightly `pg_dump` + `bundles/` copy to the volume `backup` (an external disk on the host) |
 
 Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a thread pool; sessions run in parallel inside OpenMA, one per event; `publish_card` takes one lock per event.
 
@@ -395,12 +396,12 @@ Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a
 
 | Interface | Contract |
 |---|---|
-| External services | OpenAI API (`gpt-6.1-sol`, called by OpenMA through its Model Card; 03 §3.2); Tavily Search API (the `web_search` tool, API key); TypeSafe Jev API (FILTER_ITEM and ROUTE_ITEM, API key; 03 §3.1); Telegram Bot API (bot token); headless Chrome via Playwright with the operator's X session (S29) and for S19 rendering; Etherscan API v2 (free key); DefiLlama API and datasets (no key); venue public APIs (no keys). The agents' sandboxes reach any public site and API, these included, with neither the Telegram bot token nor the X session (§11). |
+| External services | OpenAI (`gpt-6.1-sol`) on the operator's ChatGPT subscription — Codex sign-in, no API key — called by OpenMA through Tank's `codex_gateway` (03 §3.2); Tavily Search API (the `web_search` tool, API key); TypeSafe Jev API (FILTER_ITEM and ROUTE_ITEM, API key; 03 §3.1); Telegram Bot API (bot token); headless Chrome via Playwright with the operator's X session (S29) and for S19 rendering; Etherscan API v2 (free key); DefiLlama API and datasets (no key); venue public APIs (no keys). The agents' sandboxes reach any public site and API, these included, with neither the Telegram bot token nor the X session (§11). |
 | Telegram Bot API | `sendMessage` with `parse_mode=HTML` to chat "Tank Alerts" (cards) or "Tank Ops" (notices); updates use `reply_parameters.message_id` of the first card; message length ≤ 4,096 characters (cards capped at 3,500); the returned `message_id` is stored in the ledger. |
 | TypeSafe Jev API | `POST https://api.typesafe.ai/v1/systemone`, header `Authorization: Bearer <key>`, model `jev-1.13.0`; one `noul` question per item (FILTER_ITEM) and per item and candidate event (ROUTE_ITEM); answers stored on the item; usage logged to `ops.llm_usage` (03 §3.1). Access is early-access: the operator applies on typesafe.ai. |
-| OpenMA API | `http://127.0.0.1:8787/v1/*` with header `x-api-key`: `POST /v1/sessions`; `POST /v1/sessions/{id}/events` with `user.message` or `user.custom_tool_result`; `GET /v1/sessions/{id}/events/stream` (SSE, `Last-Event-ID` resume); `/v1/agents` and `/v1/skills` to deploy agent and skill versions (03 §3.2). OpenMA calls OpenAI (`gpt-6.1-sol`) through its Model Card; token usage from the sessions' model-request spans goes to `ops.llm_usage`. |
+| OpenMA API | `http://openma:8787/v1/*` on the Compose network, with header `x-api-key`: `POST /v1/sessions`; `POST /v1/sessions/{id}/events` with `user.message` or `user.custom_tool_result`; `GET /v1/sessions/{id}/events/stream` (SSE, `Last-Event-ID` resume); `/v1/agents` and `/v1/skills` to deploy agent and skill versions (03 §3.2). OpenMA calls `gpt-6.1-sol` through Tank's `codex_gateway`; token usage from the sessions' model-request spans goes to `ops.llm_usage`. |
 | Tavily Search API | `POST https://api.tavily.com/search` with `search_depth: "basic"`; results stored as evidence; usage logged to `ops.llm_usage`. |
-| CLI | `tank review list`, `tank review show`, `tank review label`, `tank reaction`, `tank scout list`, `tank scout decide`, `tank sources check` (feeds, article patterns, X handles), `tank coverage`, `tank archive fetch {symbol} {date}`, `tank replay {fixture_id}`, `tank bundle reproduce {sha}` (01 §7.4). |
+| CLI | Inside the `tank` container (`docker compose exec tank tank …`): `tank review list`, `tank review show`, `tank review label`, `tank reaction`, `tank scout list`, `tank scout decide`, `tank sources check` (feeds, article patterns, X handles), `tank coverage`, `tank archive fetch {symbol} {date}`, `tank replay {fixture_id}`, `tank bundle reproduce {sha}` (01 §7.4). |
 
 ---
 
@@ -418,8 +419,8 @@ Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a
 
 ## 11. Security
 
-- No exchange API keys exist in V0; every market endpoint used is public. Etherscan, OpenAI, Tavily and TypeSafe keys are service keys; the OpenAI key is held by OpenMA's Model Card, encrypted with its root secret.
-- Secrets live in the macOS Keychain; PostgreSQL accepts the service on the local socket and only the read-only role `tank_agent` from the sandboxes; OpenMA listens only on 127.0.0.1.
+- No exchange API keys exist in V0; every market endpoint used is public. Etherscan, Tavily and TypeSafe keys are service keys. OpenAI is reached with the operator's ChatGPT sign-in, which stays in the `tank` container (volume `codex-auth`): OpenMA and the sandboxes never see it, and `codex_gateway` answers only on the Compose network, to OpenMA's internal key.
+- Secrets are Docker secrets, mounted read-only only into the containers that use them. PostgreSQL and OpenMA are reachable only on the Compose network — PostgreSQL also from the sandboxes, for `tank_agent` only — and no port is published outside the host.
 - Agent sandboxes: one microVM per session with unrestricted internet. Whatever the agent reads there is data, not instructions (skill `tank-data`, 03 §3.2). It reads Tank's data only as `tank_agent`, has the Etherscan, Tavily and TypeSafe keys in its environment and is forbidden by the skill to print them or send them anywhere but their own API (a vault replaces this in production), holds neither the Telegram bot token nor the operator's X session, and changes Tank's state only through Tank's tools; cards leave only through `publish_card`.
-- The Chrome profile and the X session belong to the operator; the sensor only reads the list page.
+- The X session (secret `x_session`, profile volume `tank-browser`) belongs to the operator; the sensor only reads the list page.
 - Each source's terms and rate limits are recorded in `sources.yaml`; request budgets stay ≤ 50% of documented limits; sec.gov ≤ 10 requests/s with a declared User-Agent.

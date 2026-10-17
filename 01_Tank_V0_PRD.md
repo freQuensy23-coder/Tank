@@ -355,9 +355,8 @@ Each requirement describes behavior the operator can observe or a test can check
 
 | ID | Requirement |
 |---|---|
-| FR-P-01 | Tank MUST notify "Tank Ops" when a card cannot be delivered and when LLM spending reaches 80% and 100% of the daily budget (§7.2). |
+| FR-P-01 | Tank MUST notify "Tank Ops" when a card cannot be delivered (§7.2). |
 | FR-P-02 | Tank MUST send a daily heartbeat to "Tank Ops" at 08:00 UTC: cards sent in 24 h, tokens under active analysis, analysis backlog, LLM spending. |
-| FR-P-03 | When the daily LLM budget is spent, Tank MUST hold the analysis of news, GitHub commits and posts of the other X accounts of §4.3 until 00:00 UTC and analyze them then; official sources — founders and C-level included — and work on MAJOR+ events continue. |
 
 ---
 
@@ -400,7 +399,6 @@ WHAT TO DO: DON'T CHASE
 | Notice | When |
 |---|---|
 | DELIVERY FAILED | A card could not be delivered after 5 attempts |
-| LLM BUDGET | 80% and 100% of the daily budget spent |
 | HEARTBEAT | Daily at 08:00 UTC |
 
 ### 7.3 Evidence
@@ -443,7 +441,7 @@ The reviewer can: list cards and updates for a period; open a card with its vers
 | Availability | Tank runs continuously, ≥ 99% of each month; nothing it has read is lost on restart. |
 | Speed | New item → event within 90 s (95% of items); STRUCTURAL SHOCK first card ≤ 3 min after Tank learns of it; MAJOR full card ≤ 8 min; update ≤ 60 s after a decisive condition fires (after the event's current analysis step, if one is running); delivery ≤ 10 s. When analysis falls behind, official sources and work on MAJOR+ events go first; news, GitHub commits and posts of the other X accounts wait. |
 | Time | All times in UTC. |
-| Cost | Data sources free; LLM spending ≤ $30 per day. |
+| Cost | Data sources free; the analysis model runs on the operator's ChatGPT subscription; the other paid calls (web search, the filter model) cost about $1 a day (03 §3.2). Token and spending limits are out of V0 scope. |
 | Safety | Tank only reads data; it holds no exchange credentials and cannot trade or move funds. |
 | History kept | Events, cards, delivery records and evidence: permanently. Detailed market data around major events: permanently. Other detailed market data: 30 days. Minute-level market history of the universe: 90 days. |
 | Auditability | Cards, delivery records, evidence, state changes, reaction records and reviews are never edited, only appended. |
@@ -496,5 +494,5 @@ Social/narrative scoring (virality, community spread); persistent narrative trac
 | D4 | Actions are for long positions only. |
 | D5 | The universe is the 22 tokens of §4.1; it changes only by explicit decision. |
 | D6 | Rule settings in 03 §12 change only at a checkpoint, as a recorded configuration change, and are re-tested on cases that did not motivate the change. |
-| D7 | LLM spending is capped at $30 per day. |
+| D7 | The analysis model runs on the operator's ChatGPT subscription (Codex sign-in, no API key). Token and spending limits are out of V0 scope. |
 | D8 | One event, one analysis: the first item starts it, and every later item that repeats or develops the event within 3 days, every fired condition and every milestone joins it, even while it is running. |

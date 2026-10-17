@@ -70,7 +70,7 @@ Values marked ⚙ are collected in §12 with their basis: a PRD requirement, an 
 | `ContradictionType` | FATAL, UNRESOLVED, DIAGNOSTIC, EXPLAINABLE |
 | `AlertKind` | PARTIAL, FULL, UPDATE |
 | `DeliveryStatus` | GENERATED, SENT, FAILED |
-| `OpsNoticeKind` | DELIVERY_FAILED, LLM_BUDGET, HEARTBEAT |
+| `OpsNoticeKind` | DELIVERY_FAILED, HEARTBEAT |
 | `EventLifecycle` | DETECTED, SCORED, TRACKED, ANALYZING, ALERTED, MONITORING, COOLDOWN, CLOSED, MERGED, INVALIDATED |
 | `ScoutHook` | BENEFICIARY_LAYER, MARKET_TRUTH_STATE, SOURCE_OPPORTUNITY, ALTERNATIVE_EXPLANATION |
 | `ScoutRecommendation` | SUBCATEGORY, TEST_MORE, NEW_CATEGORY, REJECT |
@@ -489,7 +489,7 @@ OpsNotice                            # append-only; one "Tank Ops" message
   notice_id, kind: OpsNoticeKind
   subject_id: str?                   # alert_id of a DELIVERY_FAILED
   text: str; created_at
-  created_by: sessions (LLM_BUDGET) | scheduler (HEARTBEAT) | delivery (DELIVERY_FAILED)
+  created_by: scheduler (HEARTBEAT) | delivery (DELIVERY_FAILED)
 
 EvidenceBundle                       # content-addressed JSON
   bundle_id = sha256(canonical_json)
@@ -568,7 +568,6 @@ Fixture
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
 | `jobs` | `job_id`; unique `idem_key` | The service's job queue (§3.8). |
 | `agent_sessions`, `tool_calls` | `session_id`, `call_id` | The OpenMA session of each event, and every tool call with its input, result and timing (§3.2). |
-| `budget_state` | `day` | Day's LLM spend and the pause time (§3.8). |
 | `expansion_proposals` | `prp_id` | Only table the scout role may write, together with its own logs. |
 | `fixtures`, `replay_runs` | ids | Sealed outcomes stored outside the DB path the pipeline reads. |
 
@@ -731,7 +730,7 @@ Seed for the beneficiary walk (§4.7). An edge supported only by this map starts
 
 **FILTER_ITEM (Jev).** TypeSafe's classification model answers one yes/no question per item with a probability; it does not generate text. The filter asks whether the item is about crypto. An item about crypto gets a ROUTE_ITEM job; any other item is stored with its score and marked SKIPPED.
 
-- Endpoint: `POST https://api.typesafe.ai/v1/systemone`, header `Authorization: Bearer <key>` (Keychain `tank-typesafe`), Python SDK `typesafe-sdk`; model pinned to `jev-1.13.0`.
+- Endpoint: `POST https://api.typesafe.ai/v1/systemone`, header `Authorization: Bearer <key>` (Docker secret `typesafe_api_key`), Python SDK `typesafe-sdk`; model pinned to `jev-1.13.0`.
 - `state`: the item only — `{"source": "<source name>", "author": "<handle or outlet>", "text": "<item text>", "quoted": "<quoted or reposted text, or null>"}`. Nothing else goes into `state`: Jev answers worse when the state carries unrelated material.
 - `questions`:
 
@@ -766,13 +765,13 @@ One event, one agent session. The first item of an event opens a session on Tank
 
 | Setting | Value |
 |---|---|
-| Platform | OpenMA, self-hosted (02 §5), through its Managed Agents API `/v1/*` at `http://127.0.0.1:8787`; API key in Keychain `tank-oma` |
-| Agent | `tank-event-analyst`, versioned in OpenMA: `model` = the OpenMA Model Card for `gpt-6.1-sol` (the OpenAI key is stored in the card), `model.effort` per §12, `harness: "pi"`, the skills `tank-event-analyst` and `tank-data`, Tank's custom tools below and OpenMA's built-in sandbox tools; no MCP servers |
+| Platform | OpenMA, self-hosted (02 §5), through its Managed Agents API `/v1/*` at `http://openma:8787` on the Compose network; API key in the Docker secret `oma_api_key` |
+| Agent | `tank-event-analyst`, versioned in OpenMA: `model` = the OpenMA Model Card for `gpt-6.1-sol`: a custom provider (`pi_config.api: openai-responses`) whose `base_url` is Tank's `codex_gateway`, which signs each call with the operator's ChatGPT subscription (Codex sign-in, no API key; 02 §5), `model.effort` per §12, `harness: "pi"`, the skills `tank-event-analyst` and `tank-data`, Tank's custom tools below and OpenMA's built-in sandbox tools; no MCP servers |
 | Session | `POST /v1/sessions` per event in the environment `tank-analysis` (02 §8): the session's own litebox sandbox, a microVM where the agent creates and edits files and runs any command or script; Python 3.12 with `pandas`, `numpy`, `scipy`, `statsmodels`, `pyarrow`, `duckdb`, `psycopg`, `httpx`; unrestricted internet; read-only access to the database `tank` as `tank_agent` (`TANK_DB_URL`). OpenMA keeps an append-only log of every message, tool call, command and output |
 | Messages | `POST /v1/sessions/{id}/events` with a `user.message`. OpenMA accepts a message while the agent is working, queues it and hands it over as soon as the current turn ends, so Tank never waits for a session to be free |
 | Tool calls | Tank's tools are OpenMA custom tools that Tank executes: the session emits `agent.custom_tool_use` and pauses (`requires_action`); `sessions` runs the tool and answers with `user.custom_tool_result`. A slow tool (`get_market_truth`) answers when its job finishes |
 | Streams | `sessions` follows a session's stream (`GET /v1/sessions/{id}/events/stream`) while the agent works. On start it replays each open session from `last_event_seq` (`Last-Event-ID`) and keeps following the ones still at work; a tool call left without a result runs again, and a write tool that already ran returns its stored result (`ops.tool_calls`, keyed by the call id) |
-| Failures | A turn that ends in `session.error` or a refusal is sent again once; then the event is marked FAILED |
+| Failures | A turn that ends in `session.error` or a refusal is sent again once; then the event is marked FAILED. |
 | Record and replay | Every tool call and result is also stored in `ops.tool_calls`; pages and search results are stored as evidence. A replay runs a fresh session on the same messages and answers the tools from the stored results instead of live sources; the verdicts come from the tools' code, so they reproduce. Commands in the sandbox run again in a replay, without internet and against the replay database (§11.1), so the agent's own analysis may differ |
 
 Messages into a session:
@@ -785,7 +784,7 @@ Messages into a session:
 | MILESTONE | MILESTONE_CHECK resolved or missed a milestone | The milestone, the outcome and the quote from the official source |
 | CALL_EXPIRED | An open call reached its 7-day limit (§7.2) | The call |
 
-**Skill `tank-event-analyst`.** A `SKILL.md` kept in `/opt/tank/config/skills/tank-event-analyst/` and uploaded to OpenMA on deploy; OpenMA inlines it into the system prompt at session start. It carries the class criteria, certainty rules, freshness grades, stage ladder, hard rules and card template verbatim from 01 §1.1, §6.2–6.3, §7.1 and §8, and this playbook:
+**Skill `tank-event-analyst`.** A `SKILL.md` kept in the config repository under `skills/tank-event-analyst/` and uploaded to OpenMA on deploy; OpenMA inlines it into the system prompt at session start. It carries the class criteria, certainty rules, freshness grades, stage ladder, hard rules and card template verbatim from 01 §1.1, §6.2–6.3, §7.1 and §8, and this playbook:
 
 1. **NEW_ITEM.** Read the item and check what Tank already knows (`list_open_events`, `search_tank_items`). For a MEDIUM fact, check the official sources first (`fetch_page`, `search_tank_items`, `web_search`). Then `record_event`: facts with verbatim quotes, certainty with its reason, when the event really became public, freshness, stage. If the item reports no new fact, `record_event` with `is_event = false`, and stop. If the event is already open in another session, `merge_into` it, and stop.
 2. **Class.** `set_assessment`: the criterion of 01 §6.3 with its quote, the seven scores with reasons, token capture, impact horizon. The tool applies §4.3 and returns the final class. LOW or MATERIAL → stop; the event stays TRACKED.
@@ -875,17 +874,17 @@ Validators inside `record_event` and `add_observation`:
 
 A second agent, `tank-scout-reviewer`, reviews scout proposals (§10) in one session per proposal, with `web_search`, `search_tank_items` and `record_review`.
 
-Cost (estimate; `gpt-6.1-sol` costs $2 per million input tokens, $0.10 cached, $10 output; a Tavily basic search costs $0.008):
+Load and cost (estimate). `gpt-6.1-sol` runs on the operator's ChatGPT subscription: its tokens carry no per-token charge (on the API the same load would cost ≈ $16 a day at $2 per million input tokens, $0.10 cached, $10 output). The paid calls are Tavily ($0.008 per basic search) and Jev:
 
-| Work | Per day | Per unit: input / cached / output tokens; web searches | Cost/day |
+| Work | Per day | Per unit: input / cached / output tokens; web searches | Paid calls/day |
 |---|---|---|---|
-| Sessions that end with no new fact, LOW or MATERIAL | ≈ 380 | 6,000 / 6,000 / 1,200; 0.2 | ≈ $10.0 |
-| MAJOR+ sessions (full analysis) | ≈ 5 | 60,000 / 300,000 / 15,000; 6 | ≈ $1.7 |
-| Added items (a turn in an open session) | ≈ 255 | 4,000 / 12,000 / 800; 0.1 | ≈ $4.6 |
-| Condition, milestone and call messages | ≈ 20 | 4,000 / 30,000 / 1,000 | ≈ $0.4 |
-| Scout reviews | 2 | 20,000 / 4,000 / 4,000; 2 | ≈ $0.2 |
+| Sessions that end with no new fact, LOW or MATERIAL | ≈ 380 | 6,000 / 6,000 / 1,200; 0.2 | ≈ $0.61 |
+| MAJOR+ sessions (full analysis) | ≈ 5 | 60,000 / 300,000 / 15,000; 6 | ≈ $0.24 |
+| Added items (a turn in an open session) | ≈ 255 | 4,000 / 12,000 / 800; 0.1 | ≈ $0.20 |
+| Condition, milestone and call messages | ≈ 20 | 4,000 / 30,000 / 1,000 | — |
+| Scout reviews | 2 | 20,000 / 4,000 / 4,000; 2 | ≈ $0.03 |
 | Jev, filter and routing (§3.1) | ≈ 1,890 calls | 700–1,000 / — / — | ≈ $0.07 |
-| **Total** | | | **≈ $17/day** (budget cap ⚙ $30/day, 01 D7 / FR-P-03) |
+| **Total** | | ≈ 3.7 M input, 7.4 M cached and 0.8 M output tokens a day on the subscription, before the agents' own scripts | **≈ $1.2/day** |
 
 ### 3.3 Event identity
 
@@ -973,7 +972,6 @@ STRUCTURAL_SHOCK sends a PARTIAL card from SCORED (as soon as the class and cert
 - **Idempotency.** `idem_key` is unique; a DONE job with the same key is never re-run. Re-evaluations include the cutoff bucket in the key.
 - **Serialization.** One session per event serializes the agent's work on it; `publish_card` also takes a per-event lock, so one event never produces two concurrent alert versions.
 - **Deferrable items.** S25 commits, S29 posts of the 8 other accounts of 01 §4.3, and S30–S34 news. Everything else is an official item, founder and C-level posts included. Deferrable items get priority 2, so official items and MAJOR+ work always go first.
-- **Budget pause.** Before it sends an AGENT_MESSAGE, `sessions` sums the day's cost from `ops.llm_usage` into `ops.budget_state` and sends LLM_BUDGET the first time the sum reaches 80% and 100% of the daily cap. From 100% until 00:00 UTC (`paused_until`), AGENT_MESSAGE jobs carrying deferrable items get `run_after = paused_until` and are sent then; official items and MAJOR+ work continue.
 - **Self-termination.** Every job has `expires_at`; expired jobs become EXPIRED and never run.
 - **Who creates jobs.** Source loops and the X sensor create FILTER_ITEM or ROUTE_ITEM, and FILTER_ITEM creates ROUTE_ITEM for an item about crypto. ROUTE_ITEM, EVAL_CONDITIONS and MILESTONE_CHECK create AGENT_MESSAGE. `get_market_truth` creates ESCALATE_TOKENS and RUN_MARKET_TRUTH; `publish_card` and ops notices create DELIVER; a scout proposal creates SCOUT_REVIEW. The scheduler creates EVAL_CONDITIONS every minute, MILESTONE_CHECK at a milestone's time, REACTION_CAPTURE at each checkpoint, and AGENT_MESSAGE CALL_EXPIRED when an open call reaches its limit.
 
@@ -981,7 +979,7 @@ STRUCTURAL_SHOCK sends a PARTIAL card from SCORED (as soon as the class and cert
 |---|---|---|---|---|---|---|
 | FILTER_ITEM | New item of a filtered source (§3.1) | 1 (deferrable: 2) | `item_id` | 10 s | 2 | 6 h |
 | ROUTE_ITEM | New item of another source, or FILTER_ITEM found it relevant | 1 (deferrable: 2) | `item_id` | 20 s | 2 | 6 h |
-| AGENT_MESSAGE | ROUTE_ITEM, EVAL_CONDITIONS, MILESTONE_CHECK, call expiry | 1 (deferrable: 2) | `session_or_item:message` | 10 s | 3 | 24 h (covers the budget pause) |
+| AGENT_MESSAGE | ROUTE_ITEM, EVAL_CONDITIONS, MILESTONE_CHECK, call expiry | 1 (deferrable: 2) | `session_or_item:message` | 10 s | 3 | 24 h |
 | ESCALATE_TOKENS | `get_market_truth` | 0 | `token:event_id` | 10 s | 3 | — |
 | RUN_MARKET_TRUTH | `get_market_truth` | 1 | `event:token:cutoff_minute` | 90 s | 2 | 30 min |
 | DELIVER | `publish_card` or ops notice | 0 | `alert:version:channel` or `notice:notice_id` | 10 s | 5 | 24 h |
@@ -1536,8 +1534,8 @@ On a prose violation `publish_card` refuses with the rule and the sentence; the 
 - Telegram Bot API `sendMessage`, `parse_mode=HTML`, chat "Tank Alerts" for cards and "Tank Ops" for notices. Updates set `reply_parameters.message_id` to the first card's message.
 - Before sending, the ledger is checked for (`alert_id`, `version`, `channel`) = SENT; if present, nothing is re-sent.
 - Retries with exponential backoff (1, 2, 4, 8, 16 s), honoring rate-limit `retry_after`. After the last attempt the status is FAILED and Tank Ops gets DELIVERY_FAILED.
-- Operator chat: delivery failure, LLM_BUDGET; daily heartbeat at ⚙08:00 UTC (alerts in 24 h, hot-set size, queue lag, LLM spending).
-- Each ops notice is an `out.ops_notices` row plus a DELIVER job, written by `sessions` (LLM_BUDGET), the scheduler (HEARTBEAT) or `delivery` (DELIVERY_FAILED); its delivery transitions go to the same ledger with `notice_id` set.
+- Operator chat: delivery failure; daily heartbeat at ⚙08:00 UTC (alerts in 24 h, hot-set size, queue lag, LLM spending).
+- Each ops notice is an `out.ops_notices` row plus a DELIVER job, written by the scheduler (HEARTBEAT) or `delivery` (DELIVERY_FAILED); its delivery transitions go to the same ledger with `notice_id` set.
 
 ---
 
@@ -1636,9 +1634,9 @@ Cases as recorded in the September 2026 call log and in Addendum 002-B. Cutoff =
 | F-11 | WLD — Market Truth validation case (Addendum 002-B) | 16 Oct 2026 12:30 UTC | 1h and 4h spot direction SELL; capital-weighted breadth on the sell side, Kraken shown as a small (~2.5%) buying venue; 4h native OI +8.18% → REAL_NATIVE with the markup component reported; divergence PERP_LED_MARKUP with ABSORPTION_CANDIDATE unresolved; venues with incomplete data in the window (in the Addendum case: Bybit spot current-day history) listed as excluded with reasons; action ∈ {DONT_CHASE, WAIT}. |
 | F-12 | QNT — Binance perp, 26 Sep 2026 19:00–23:00 UTC: native OI +0.42%, USD OI +19.98%, price +23.43% | 26 Sep 2026 23:00 | `oi_class` PRICE_MARKUP on Binance; flag PRICE_MARKUP_OI; linter L2 blocks any "new positions / leverage" wording. |
 | F-13 | ONDO — 24 Sep 2026 12:00–16:00 UTC: Binance native OI +57.32%, USD OI +88.53%, price +13.56%, Binance spot taker-buy share 48.3% | 24 Sep 2026 16:00 | `oi_class` REAL_NATIVE; move class PERP_LED_CHASE (directly or through the divergence discriminator), never SPOT_LED_ACCUMULATION; action ∈ {DONT_CHASE, WAIT}. |
-| F-14 | QNT — 27 Sep 2026 19:00–23:00 UTC: native OI −30.36%, price +54.09% (+50.78% in the 22:00 hour) | 27 Sep 2026 23:00 | Native OI change reported as positions closing during the rise; move class ∈ {SHORT_SQUEEZE, LIQUIDITY_VACUUM, UNKNOWN}; direction TWO_SIDED or UNKNOWN; never SPOT_LED_ACCUMULATION. |
+| F-14 | QNT — 27 Sep 2026 19:00–23:00 UTC: native OI −30.36%, price +54.09% between the closes of the 19:00 and 23:00 hourly bars (+50.78% in the 22:00 hour) | 27 Sep 2026 23:00 | Native OI change reported as positions closing during the rise; move class ∈ {SHORT_SQUEEZE, LIQUIDITY_VACUUM, UNKNOWN}; direction TWO_SIDED or UNKNOWN; never SPOT_LED_ACCUMULATION. |
 | F-15 | EUL — Binance spot, 23 Sep 2026 06:00–07:00 UTC: volume 46.9 × the 7-day hourly median, taker-buy share 63.1%, price +0.27% | 23 Sep 2026 07:00 | No order-book depth in the archive, so weak_response is n/a and SELL_SIDE_ABSORPTION cannot be chosen; move class UNKNOWN; never SPOT_LED_ACCUMULATION; the card never says "accumulation". |
-| F-16 | 15 Sep 2026 UTC day: BTC −3.25% (worst BTC day between 4 Sep and 16 Oct 2026) | 15 Sep 2026 23:59 | Market context HEADWIND (not STRESS); Trade Grade one notch lower for non-STRUCTURAL events; no veto of any action. |
+| F-16 | 15 Sep 2026 UTC day: BTC −3.25% (worst BTC day between 4 Sep and 16 Oct 2026) | 15 Sep 2026 23:59 | Market context STRESS: the day's −3.25% is below BTC's 24h normal range (lower edge −3.01% over the 90 days before); Trade Grade one notch lower for non-STRUCTURAL events; a non-STRUCTURAL beneficiary is never BULLISH; no veto of any action. |
 | F-17 | Snapshot `aavedao.eth`: "[ARFC] Onboard USAT to Aave V3 Core Instance and Aave V4 Core Hub on Ethereum", voting 15 Oct 2026 17:52 → 18 Oct 2026 17:52 UTC | 15 Oct 2026 18:00 | State PROPOSED; class MATERIAL (a proposal); no card; milestone check scheduled for 18 Oct 2026 17:52 UTC. |
 | F-18 | Federal Register 2026-20888 (CFTC), Proposed Rule "Regulation Crypto Asset Transactions and Regulation Crypto Asset Markets", published 13 Oct 2026 | 13 Oct 2026 | State PROPOSED; never STRUCTURAL_SHOCK; linter L3 blocks "approved" or "in force" wording. |
 | F-19 | Federal Register 2026-20466 (SEC), Proposed Rule "Adviser and Regulated Fund Custody Rules; Crypto Custody Rules", published 6 Oct 2026 | 6 Oct 2026 | State PROPOSED; custody/compliance layer named if MAJOR; never STRUCTURAL_SHOCK. |
@@ -1652,6 +1650,8 @@ Cases as recorded in the September 2026 call log and in Addendum 002-B. Cutoff =
 | F-27 | Synthetic: an S29 account quotes an unknown account: "Bybit pivots to making condoms" | quote + 1 min | Certainty LOW; recorded; no card. |
 
 Fixture data capture: Sep 2026 fixtures use Binance archive files (spot and USD-M klines, aggTrades, 5m metrics, funding) plus REST history from OKX, Coinbase and Kraken. F-12–F-16 windows were found on 16 Oct 2026 by scanning Binance futures `openInterestHist` (1 h) and spot/futures klines of the 22 tokens over the preceding 30 days; their replay packets use the same archive and REST sources. F-11 trades for 16 Oct 2026 08:30–12:30 UTC MUST be pulled within days of the case, because Bybit `recent-trade` returns only the last 1,000 trades; Binance, OKX, Coinbase and Kraken trade history can still be paged later.
+
+The open-interest figures of F-11–F-14 come from Binance `openInterestHist` (F-11: 5 m, with Bybit `open-interest` 5 m; F-12–F-14: 1 h). REST keeps only 30 days, so the values are stored with the packets (`fixture_check/data/rest_openInterestHist_fixtures.json`, pulled 17 Oct 2026). Normal ranges come from the 5-minute archive history. The window values are not taken from the archive, because its snapshots differ inside fast moves: for ONDO on 24 Sep at 12:00 the archive shows 159.0 M against 138.6 M from REST, which turns +57.32% into +38.39%.
 
 ### 11.4 Formula test vectors
 
@@ -1709,12 +1709,12 @@ Every number the rules use, with its basis. A number without a basis is not used
 | Retention | Base-tier 1m series; hot raw | 90 d; 30 d (event windows permanent) | 01 §9 |
 | Validation | Test cases for V0-C | F-01–F-27 | §11.3 |
 | Agents | Model | `gpt-6.1-sol` | Operator's decision |
+| | Model access | ChatGPT subscription (Codex sign-in), no API key | Operator's decision |
 | | Platform | OpenMA, pinned release (02 §8) | Operator's decision |
 | | Reasoning effort of `tank-event-analyst` | Medium until calibrated | Calibrated: the lowest effort at which the agent passes V0-B, V0-C and V0-D within the speed limits of 01 §9 |
 | | Sandbox | litebox microVM per session (environment `tank-analysis`); internet unrestricted; database read-only as `tank_agent` | Operator's decision |
 | | Statement timeout and connection limit of `tank_agent` | Set at V0-G | Calibrated: agent queries never push the service past the speed limits of 01 §9 |
 | Routing | Window; cutoff | 3 d; set at V0-B | 01 FR-E-02; calibrated (§3.1) |
-| | Daily budget; notice; hold of deferrable items | $30; at 80%; at 100% until 00:00 UTC | 01 D7, FR-P-01, FR-P-03 |
 
 ---
 
@@ -1736,14 +1736,15 @@ Values the operator provides at installation (kept outside the repository):
 | Value | Where it is stored |
 |---|---|
 | Contact e-mail for the User-Agent header | `sources.yaml` |
-| Telegram bot token; chat IDs of "Tank Alerts" and "Tank Ops" | Keychain `tank-telegram`; `delivery.yaml` |
-| X List "tank-v0" with the 86 handles of 01 §4.3, and its list ID | operator's X account; `sources.yaml` |
-| OpenAI API key | OpenMA Model Card (encrypted at rest with OpenMA's root secret) |
-| OpenMA root and auth secrets; OpenMA API key | Keychain `tank-oma-root`; Keychain `tank-oma` |
-| Tavily API key (`web_search`) | Keychain `tank-tavily`; environment `tank-analysis` (`TAVILY_API_KEY`) |
-| TypeSafe API key (early-access account for Jev) | Keychain `tank-typesafe`; environment `tank-analysis` (`TYPESAFE_API_KEY`) |
-| Etherscan API key | Keychain `tank-etherscan`; environment `tank-analysis` (`ETHERSCAN_API_KEY`) |
-| Password of the read-only database role `tank_agent` | Keychain `tank-agent-db`; environment `tank-analysis` (`TANK_DB_URL`) |
+| Telegram bot token; chat IDs of "Tank Alerts" and "Tank Ops" | Docker secret `telegram_bot_token`; `delivery.yaml` |
+| X List "tank-v0" with the 86 handles of 01 §4.3, and its list ID | operator's X account; `sources.yaml`; the signed-in session as the Docker secret `x_session` (Playwright storage state) |
+| ChatGPT sign-in for `gpt-6.1-sol` (the operator's subscription) | `auth.json` written by `codex login` on the operator's computer, copied once into the `tank` volume `codex-auth`; `codex_gateway` keeps it refreshed |
+| Internal key between OpenMA's Model Card and `codex_gateway` | Docker secret `codex_gateway_key` |
+| OpenMA root and auth secrets; OpenMA API key | Docker secrets `oma_root_secret` and `oma_api_key` |
+| Tavily API key (`web_search`) | Docker secret `tavily_api_key`; environment `tank-analysis` (`TAVILY_API_KEY`) |
+| TypeSafe API key (early-access account for Jev) | Docker secret `typesafe_api_key`; environment `tank-analysis` (`TYPESAFE_API_KEY`) |
+| Etherscan API key | Docker secret `etherscan_api_key`; environment `tank-analysis` (`ETHERSCAN_API_KEY`) |
+| Password of the read-only database role `tank_agent` | Docker secret `tank_agent_db_password`; environment `tank-analysis` (`TANK_DB_URL`) |
 
 ---
 
@@ -2003,7 +2004,7 @@ CREATE TABLE out.alerts (                              -- append-only, one row p
 
 CREATE TABLE out.ops_notices (                         -- append-only
   notice_id   text PRIMARY KEY,
-  kind        text NOT NULL CHECK (kind IN ('DELIVERY_FAILED','LLM_BUDGET','HEARTBEAT')),
+  kind        text NOT NULL CHECK (kind IN ('DELIVERY_FAILED','HEARTBEAT')),
   subject_id  text,
   text        text NOT NULL,
   created_at  timestamptz NOT NULL,
@@ -2056,12 +2057,6 @@ CREATE TABLE ops.llm_usage (
   cost_usd            numeric(10,6) NOT NULL,
   web_searches        int NOT NULL DEFAULT 0,
   stop_reason         text NOT NULL
-);
-
-CREATE TABLE ops.budget_state (
-  day           date PRIMARY KEY,
-  spent_usd     numeric(10,4) NOT NULL,
-  paused_until  timestamptz                         -- set at 100% of the daily cap; 00:00 UTC next day
 );
 
 CREATE TABLE ops.agent_sessions (
