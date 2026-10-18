@@ -1710,7 +1710,7 @@ Every number the rules use, with its basis. A number without a basis is not used
 | Validation | Test cases for V0-C | F-01–F-27 | §11.3 |
 | Agents | Model | `gpt-6.1-sol` | Operator's decision |
 | | Model access | ChatGPT subscription (Codex sign-in), no API key | Operator's decision |
-| | Platform | OpenMA, pinned release (02 §8) | Operator's decision |
+| | Platform | OpenMA at a pinned upstream commit with Tank's overlay (02 §8) | Operator's decision |
 | | Reasoning effort of `tank-event-analyst` | Medium until calibrated | Calibrated: the lowest effort at which the agent passes V0-B, V0-C and V0-D within the speed limits of 01 §9 |
 | | Sandbox | litebox microVM per session (environment `tank-analysis`); internet unrestricted; database read-only as `tank_agent` | Operator's decision |
 | | Statement timeout and connection limit of `tank_agent` | Set at V0-G | Calibrated: agent queries never push the service past the speed limits of 01 §9 |
