@@ -1752,6 +1752,12 @@ Values the operator provides at installation (kept outside the repository):
 
 Analysis objects of §2.6 are stored as `jsonb` inside the rows below; the columns that queries filter or join on are typed.
 
+Storage rules:
+
+- **Domain tables** (`reg`, `ingest`, `evt`, `ana`, `out`, `ops`, `scout`, `qa`; tens of thousands of rows a day): each row has the typed columns below plus `document jsonb` with the full §2 record. Code reads the document; every write fills the typed columns from it, so indexes, constraints and the agents' read-only SQL work on columns. All writes go through one function that takes a per-record lock and enforces immutability and idempotency.
+- **Market tables** (`mkt.*`; millions of rows a day): typed columns only, no document. They are written in batches — one multi-row `INSERT` per flush of the stream or poller — with no per-row lock or read; a late row replaces its bar with `ON CONFLICT DO UPDATE` inside the same batch.
+- **Individual trades are not stored in PostgreSQL.** They go to the hourly Parquet files `raw/trades/…` (02 §7.2); the 1m flow bars hold everything Market Truth reads (§5.2), and a window is rebuilt from Parquet only for replay or audit.
+
 ```sql
 CREATE SCHEMA reg; CREATE SCHEMA ingest; CREATE SCHEMA evt; CREATE SCHEMA mkt;
 CREATE SCHEMA ana; CREATE SCHEMA out; CREATE SCHEMA ops; CREATE SCHEMA scout; CREATE SCHEMA qa;
