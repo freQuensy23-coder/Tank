@@ -730,7 +730,7 @@ Seed for the beneficiary walk (§4.7). An edge supported only by this map starts
 
 **FILTER_ITEM (Jev).** TypeSafe's classification model, called through OpenRouter, answers one yes/no question per item with a probability; it does not generate text. The filter asks whether the item is about crypto. An item about crypto gets a ROUTE_ITEM job; any other item is stored with its score and marked SKIPPED.
 
-- Endpoint: `POST https://openrouter.ai/api/v1/chat/completions`, header `Authorization: Bearer <key>` (Docker secret `openrouter_api_key`), plain `httpx`; model pinned to `typesafe/jev-1.13` ($0.042 per million input tokens, output free).
+- Endpoint: `POST https://openrouter.ai/api/v1/systemone` (OpenRouter serves Jev's own System One API: the same `state` and `questions` as below, answers as `noul`), header `Authorization: Bearer <key>` (Docker secret `openrouter_api_key`), plain `httpx`; model pinned to `typesafe/jev-1.13` ($0.042 per million input tokens, output free).
 - `state`: the item only — `{"source": "<source name>", "author": "<handle or outlet>", "text": "<item text>", "quoted": "<quoted or reposted text, or null>"}`. Nothing else goes into `state`: Jev answers worse when the state carries unrelated material.
 - `questions`:
 
