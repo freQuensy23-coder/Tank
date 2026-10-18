@@ -441,7 +441,7 @@ The reviewer can: list cards and updates for a period; open a card with its vers
 | Availability | Tank runs continuously, ≥ 99% of each month; nothing it has read is lost on restart. |
 | Speed | New item → event within 90 s (95% of items); STRUCTURAL SHOCK first card ≤ 3 min after Tank learns of it; MAJOR full card ≤ 8 min; update ≤ 60 s after a decisive condition fires (after the event's current analysis step, if one is running); delivery ≤ 10 s. When analysis falls behind, official sources and work on MAJOR+ events go first; news, GitHub commits and posts of the other X accounts wait. |
 | Time | All times in UTC. |
-| Cost | Data sources free; the analysis model runs on the operator's ChatGPT subscription; the other paid calls (web search, the filter model) cost about $1 a day (03 §3.2). Token and spending limits are out of V0 scope. |
+| Cost | Data sources free; the analysis model runs on the operator's ChatGPT subscription; web search (DuckDuckGo, D9) is free; the only other paid call is the filter model, Jev through OpenRouter, billed at the price of the model OpenRouter's router picks (≈ $0.07 a day at Jev's own price, 03 §3.2). Token and spending limits are out of V0 scope. |
 | Safety | Tank only reads data; it holds no exchange credentials and cannot trade or move funds. |
 | History kept | Events, cards, delivery records and evidence: permanently. Detailed market data around major events: permanently. Other detailed market data: 30 days. Minute-level market history of the universe: 90 days. |
 | Auditability | Cards, delivery records, evidence, state changes, reaction records and reviews are never edited, only appended. |
@@ -496,3 +496,4 @@ Social/narrative scoring (virality, community spread); persistent narrative trac
 | D6 | Rule settings in 03 §12 change only at a checkpoint, as a recorded configuration change, and are re-tested on cases that did not motivate the change. |
 | D7 | The analysis model runs on the operator's ChatGPT subscription (Codex sign-in, no API key). Token and spending limits are out of V0 scope. |
 | D8 | One event, one analysis: the first item starts it, and every later item that repeats or develops the event within 3 days, every fired condition and every milestone joins it, even while it is running. |
+| D9 | The agents' web search uses DuckDuckGo, with no key and no cost. DuckDuckGo has no official search API, so Tank reads its results page; the terms-of-service and blocking risk is accepted. |
