@@ -441,7 +441,7 @@ The reviewer can: list cards and updates for a period; open a card with its vers
 | Availability | Tank runs continuously, ≥ 99% of each month; nothing it has read is lost on restart. |
 | Speed | New item → event within 90 s (95% of items); STRUCTURAL SHOCK first card ≤ 3 min after Tank learns of it; MAJOR full card ≤ 8 min; update ≤ 60 s after a decisive condition fires (after the event's current analysis step, if one is running); delivery ≤ 10 s. When analysis falls behind, official sources and work on MAJOR+ events go first; news, GitHub commits and posts of the other X accounts wait. |
 | Time | All times in UTC. |
-| Cost | Data sources free; the analysis model runs on the operator's ChatGPT subscription; web search (DuckDuckGo, D9) is free; the only other paid call is the filter model, Jev through OpenRouter, billed at the price of the model OpenRouter's router picks (≈ $0.07 a day at Jev's own price, 03 §3.2). Token and spending limits are out of V0 scope. |
+| Cost | Data sources free; the analysis model runs on the operator's ChatGPT subscription; web search (DuckDuckGo, D9) is free; the only other paid call, the filter model, costs about $0.07 a day (03 §3.2). Token and spending limits are out of V0 scope. |
 | Safety | Tank only reads data; it holds no exchange credentials and cannot trade or move funds. |
 | History kept | Events, cards, delivery records and evidence: permanently. Detailed market data around major events: permanently. Other detailed market data: 30 days. Minute-level market history of the universe: 90 days. |
 | Auditability | Cards, delivery records, evidence, state changes, reaction records and reviews are never edited, only appended. |

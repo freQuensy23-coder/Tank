@@ -728,20 +728,19 @@ Seed for the beneficiary walk (§4.7). An edge supported only by this map starts
 | S29 posts of the 41 organization accounts of 01 §4.3 | ROUTE_ITEM |
 | S29 posts of founders, C-level and the other accounts of 01 §4.3; S25 commits; S30–S34 news | FILTER_ITEM (Jev), then ROUTE_ITEM if relevant |
 
-**FILTER_ITEM (Jev).** Jev, TypeSafe's model, is called through OpenRouter as `typesafe/jev-router`; OpenRouter offers Jev only through this router, which picks the model and reasoning effort for each request. Jev answers one yes/no question per item, and the score is the probability of «yes». The filter asks whether the item is about crypto. An item about crypto gets a ROUTE_ITEM job; any other item is stored with its score and marked SKIPPED.
+**FILTER_ITEM (Jev).** TypeSafe's classification model, called through OpenRouter, answers one yes/no question per item with a probability; it does not generate text. The filter asks whether the item is about crypto. An item about crypto gets a ROUTE_ITEM job; any other item is stored with its score and marked SKIPPED.
 
-- Endpoint: `POST https://openrouter.ai/api/v1/chat/completions`, header `Authorization: Bearer <key>` (Docker secret `openrouter_api_key`), `model: "typesafe/jev-router"`, plain `httpx`.
-- Each question is one request: its instructions and criteria (below) as the system message, `state` as the user message, a JSON-schema response `{"answer": boolean}`, `temperature: 0`, `logprobs: true`, `top_logprobs: 5`. The score is the probability of `true` from the logprobs of the answer token; an answer without logprobs is retried once, then scored 1 or 0 from the answer and flagged. The model OpenRouter actually used (`model` in the response) is stored with every score.
+- Endpoint: `POST https://openrouter.ai/api/v1/chat/completions`, header `Authorization: Bearer <key>` (Docker secret `openrouter_api_key`), plain `httpx`; model pinned to `typesafe/jev-1.13` ($0.042 per million input tokens, output free).
 - `state`: the item only — `{"source": "<source name>", "author": "<handle or outlet>", "text": "<item text>", "quoted": "<quoted or reposted text, or null>"}`. Nothing else goes into `state`: Jev answers worse when the state carries unrelated material.
-- Question:
+- `questions`:
 
 ```json
-{"relevant": {
+{"relevant": {"type": "noul",
   "instructions": "Is this text about crypto - crypto assets, crypto exchanges, crypto regulation or enforcement, blockchain networks, or one of these projects: Bitcoin, Ethereum, Uniswap, PancakeSwap, Aerodrome, Curve, 1inch, 0x, CoW Protocol, Hyperliquid, Lighter, Aave, Morpho, Euler, Ondo, LayerZero, Quant, Avalanche, NEAR, Plasma, Ethena, World (Worldcoin)? Whether it reports anything new or important does not matter here. General finance, technology or politics that does not touch crypto does not count.",
   "criteria": {"true": "About crypto", "false": "Not about crypto"}}}
 ```
 
-- Decision: `score ≥ cutoff` → relevant. The cutoff is not chosen in advance: at V0-B Jev scores the labeled items, and the cutoff is set to the highest value at which ≥ 95% of the items labeled relevant pass (01 V0-B). The value is then recorded in the configuration (01 D6).
+- Decision: `noul ≥ cutoff` → relevant. The cutoff is not chosen in advance: at V0-B Jev scores the labeled items, and the cutoff is set to the highest value at which ≥ 95% of the items labeled relevant pass (01 V0-B). The value is then recorded in the configuration (01 D6).
 - Every call is logged in `ops.llm_usage` (call `FILTER`); the score is stored on the item for audit and for setting the cutoff.
 
 **ROUTE_ITEM (Jev): one event, one session.** Decides whether the item opens a new agent session or joins the session of an event that received news in the last ⚙3 days (01 FR-E-02).
@@ -750,15 +749,15 @@ Seed for the beneficiary walk (§4.7). An edge supported only by this map starts
 - One Jev question per candidate; `state` = the item as in FILTER_ITEM plus `{"event": {"statement": "...", "entities": [...], "tokens": [...], "stage": "...", "known_to_us_at": "..."}}`:
 
 ```json
-{"same_event": {
+{"same_event": {"type": "noul",
   "instructions": "Does the item report the same real-world event as the event described, or a new development of it - a confirmation, denial, stage change, new detail or new party? Another event about the same project does not count.",
   "criteria": {"true": "Same event or a development of it", "false": "A different event"}}}
 ```
 
-- Decision: the candidate with the highest score at or above the routing cutoff gets the item as ITEM_ADDED (§3.2), even while its agent is still working; with no candidate at or above it, NEW_ITEM opens a session. The routing cutoff is calibrated at V0-B on the labeled repeats and developments: the highest value at which routing precision and recall both reach 0.90 (01 V0-B). The value is recorded in the configuration (01 D6).
+- Decision: the candidate with the highest `noul` at or above the routing cutoff gets the item as ITEM_ADDED (§3.2), even while its agent is still working; with no candidate at or above it, NEW_ITEM opens a session. The routing cutoff is calibrated at V0-B on the labeled repeats and developments: the highest value at which routing precision and recall both reach 0.90 (01 V0-B). The value is recorded in the configuration (01 D6).
 - Every call is logged in `ops.llm_usage` (call `ROUTE`); the decision, the event and the score are stored on the item.
 
-Expected load (estimate from feed sizes on 16 Oct 2026): ≈ 230 items/day go straight to ROUTE_ITEM (CORE ≈ 180, organization accounts ≈ 50); ≈ 610 items/day go through FILTER_ITEM (news ≈ 250, other X accounts ≈ 330, GitHub commits ≈ 30), of which ≈ 410 are assumed to be about crypto (nearly all of CoinDesk, The Block, the X accounts and the commits; few BBC and Bloomberg items). About 40% of the ≈ 640 routed items are assumed to join an existing session, because outlets and accounts repeat the same news: ≈ 385 new sessions and ≈ 255 added items a day. Jev: ≈ 610 filter calls × ≈ 700 tokens plus ≈ 1,280 routing calls (≈ 2 candidates per item) × ≈ 1,000 tokens ≈ 1.7 M tokens/day ≈ $0.07/day at Jev's own price ($0.042 per million input tokens); through OpenRouter each call is billed at the price of the model the router picks.
+Expected load (estimate from feed sizes on 16 Oct 2026): ≈ 230 items/day go straight to ROUTE_ITEM (CORE ≈ 180, organization accounts ≈ 50); ≈ 610 items/day go through FILTER_ITEM (news ≈ 250, other X accounts ≈ 330, GitHub commits ≈ 30), of which ≈ 410 are assumed to be about crypto (nearly all of CoinDesk, The Block, the X accounts and the commits; few BBC and Bloomberg items). About 40% of the ≈ 640 routed items are assumed to join an existing session, because outlets and accounts repeat the same news: ≈ 385 new sessions and ≈ 255 added items a day. Jev: ≈ 610 filter calls × ≈ 700 tokens plus ≈ 1,280 routing calls (≈ 2 candidates per item) × ≈ 1,000 tokens ≈ 1.7 M tokens/day ≈ $0.07/day at $0.042 per million input tokens (output free).
 
 ### 3.2 Agent sessions (OpenMA)
 
@@ -884,7 +883,7 @@ Load and cost (estimate). `gpt-6.1-sol` runs on the operator's ChatGPT subscript
 | Added items (a turn in an open session) | ≈ 255 | 4,000 / 12,000 / 800; 0.1 | — |
 | Condition, milestone and call messages | ≈ 20 | 4,000 / 30,000 / 1,000 | — |
 | Scout reviews | 2 | 20,000 / 4,000 / 4,000; 2 | — |
-| Jev, filter and routing (§3.1) | ≈ 1,890 calls | 700–1,000 / — / — | ≈ $0.07 (router price varies) |
+| Jev, filter and routing (§3.1) | ≈ 1,890 calls | 700–1,000 / — / — | ≈ $0.07 |
 | **Total** | | ≈ 3.7 M input, 7.4 M cached and 0.8 M output tokens a day on the subscription, before the agents' own scripts | **≈ $0.07/day** |
 
 ### 3.3 Event identity
@@ -1685,7 +1684,7 @@ Every number the rules use, with its basis. A number without a basis is not used
 | Area | Parameter | Value | Basis |
 |---|---|---|---|
 | Conventions | Normal range; majority; significant flow | Middle 95% of the token's own history; more than half; `\|CVD\| ≥ 2·√Σq²` | Definitions in §0; 95% is the usual significance level |
-| Filter | Jev model | `typesafe/jev-router` on OpenRouter | The only Jev offered there; it has no version pin, so the answering model is stored with every score and the cutoffs are re-checked on the V0-B set when it changes (01 D6) |
+| Filter | Jev model | `typesafe/jev-1.13` (OpenRouter) | Version pin, so results are reproducible (01 D6) |
 | | Cutoff | Set at V0-B | Calibrated: the highest value at which ≥ 95% of the items labeled relevant pass (01 V0-B, §3.1) |
 | Freshness | FRESH / NORMAL / MEDIUM / POOR / OLD upper bounds (STALE beyond) | 1 h / 4 h / 8 h / 24 h / 48 h | 01 FR-E-03 |
 | Grading | STRUCTURAL SHOCK minimum stage | APPROVED, verified | 01 §6.3 |
