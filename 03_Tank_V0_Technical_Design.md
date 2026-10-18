@@ -740,7 +740,7 @@ Seed for the beneficiary walk (§4.7). An edge supported only by this map starts
   "criteria": {"true": "About crypto", "false": "Not about crypto"}}}
 ```
 
-- Decision: `noul ≥ cutoff` → relevant. The cutoff is not chosen in advance: at V0-B Jev scores the labeled items, and the cutoff is set to the highest value at which ≥ 95% of the items labeled relevant pass (01 V0-B). The value is then recorded in the configuration (01 D6).
+- Decision: `noul ≥ cutoff` → relevant. The cutoff is not chosen in advance. Both cutoffs are calibrated offline, before the service first starts: the 200 labeled items of V0-B are historical items collected from the sources' archives and feeds, `tank calibrate` scores them with Jev outside the service, and the cutoff is set to the highest value at which ≥ 95% of the items labeled relevant pass (01 V0-B). The value is then recorded in the configuration (01 D6).
 - Every call is logged in `ops.llm_usage` (call `FILTER`); the score is stored on the item for audit and for setting the cutoff.
 
 **ROUTE_ITEM (Jev): one event, one session.** Decides whether the item opens a new agent session or joins the session of an event that received news in the last ⚙3 days (01 FR-E-02).
@@ -1715,7 +1715,7 @@ Every number the rules use, with its basis. A number without a basis is not used
 | | Sandbox | litebox microVM per session (environment `tank-analysis`); internet unrestricted; database read-only as `tank_agent` | Operator's decision |
 | | Statement timeout and connection limit of `tank_agent` | Set at V0-G | Calibrated: agent queries never push the service past the speed limits of 01 §9 |
 | | Web search | DuckDuckGo through `ddgs` 9.16.0; ≥ 2 s between searches; retries after 5, 15 and 45 s | No key, no cost (01 D9); DuckDuckGo publishes no rate limit, so searches are spaced and retried |
-| Routing | Window; cutoff | 3 d; set at V0-B | 01 FR-E-02; calibrated (§3.1) |
+| Routing | Window; cutoff | 3 d; calibrated offline before the first start (V0-B set) | 01 FR-E-02; calibrated (§3.1) |
 
 ---
 
