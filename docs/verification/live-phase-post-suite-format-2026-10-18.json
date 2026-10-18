@@ -1,0 +1,11 @@
+{
+  "file": "tests/test_codex_gateway.py",
+  "change": "Ruff whitespace and line wrapping only after full suite; production files unchanged",
+  "before_sha256": "e4c70cfdfb582bdbcf96b560f4c1a8e8fd80a2fd3f4d438f983915944a4bd753",
+  "after_sha256": "1cb70b99019858bfb8c1fa7512980358095f6368208327c2f0eb3d95b6265040",
+  "normalized_python_ast_unchanged": true,
+  "focused_command": "uv run pytest -q tests/test_codex_gateway.py tests/test_gateway_audit.py",
+  "focused_tests_passed": 70,
+  "format_check": "All 96 Python files formatted",
+  "ruff": "E4,E7,E9,F,I PASS"
+}

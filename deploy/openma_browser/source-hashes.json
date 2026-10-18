@@ -1,0 +1,6 @@
+{
+  "apps/agent/src/harness/tools.ts": "313c95b191a36d19d39d226667f13be5a36ae78824066d393efa312b0c04d579",
+  "packages/control-plane-node/src/modules/node-managed.ts": "61dee1b2fb58ae245c1032003f003f513ecfbfbdb03025dc16d334beb5c6929b",
+  "packages/browser-harness/src/index.ts": "a6b8f640744563b61563b63b0fcf4a6fa1e4ccb4345ddf382382d4ab465b9213",
+  "packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts": "6110e8c3ebec6d9beb9690910a19d55d4e81bbd70b6e695f76d444d093f037ac"
+}

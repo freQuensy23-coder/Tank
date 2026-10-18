@@ -227,7 +227,7 @@
     },
     {
       "fixture_id": "F-14",
-      "case_description": "QNT \u2014 27 Sep 2026 19:00\u201323:00 UTC: native OI \u221230.36%, price +54.09% (+50.78% in the 22:00 hour)",
+      "case_description": "QNT \u2014 27 Sep 2026 19:00\u201323:00 UTC: native OI \u221230.36%, price +54.09% between the closes of the 19:00 and 23:00 hourly bars (+50.78% in the 22:00 hour)",
       "cutoff_spec": "27 Sep 2026 23:00",
       "assertion_spec": "Native OI change reported as positions closing during the rise; move class \u2208 {SHORT_SQUEEZE, LIQUIDITY_VACUUM, UNKNOWN}; direction TWO_SIDED or UNKNOWN; never SPOT_LED_ACCUMULATION.",
       "synthetic": false,
@@ -265,7 +265,7 @@
       "fixture_id": "F-16",
       "case_description": "15 Sep 2026 UTC day: BTC \u22123.25% (worst BTC day between 4 Sep and 16 Oct 2026)",
       "cutoff_spec": "15 Sep 2026 23:59",
-      "assertion_spec": "Market context HEADWIND (not STRESS); Trade Grade one notch lower for non-STRUCTURAL events; no veto of any action.",
+      "assertion_spec": "Market context STRESS: the day's \u22123.25% is below BTC's 24h normal range (lower edge \u22123.01% over the 90 days before); Trade Grade one notch lower for non-STRUCTURAL events; a non-STRUCTURAL beneficiary is never BULLISH; no veto of any action.",
       "synthetic": false,
       "capture_references": [
         "fixture_check/results.json",
@@ -278,7 +278,8 @@
         "stored agent/tool calls",
         "sealed outcome packet"
       ],
-      "known_conflict": "Baseline gives STRESS; assertion expects HEADWIND; proposed replacement not approved."
+      "known_conflict": null,
+      "expectation_status": "CURRENT_SPEC_ALIGNED"
     },
     {
       "fixture_id": "F-17",

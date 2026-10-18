@@ -10,5 +10,6 @@
   },
   "required": [
     "event_id"
-  ]
+  ],
+  "description": "Reads the event. Returns: Claims, quotes, stages, sources, assessment."
 }

@@ -222,5 +222,6 @@
         "type": "string"
       }
     }
-  }
+  },
+  "description": "Validators below; writes the event, its ORIGIN observation and the claims. Returns: event_id; accepted and dropped claims with reasons."
 }

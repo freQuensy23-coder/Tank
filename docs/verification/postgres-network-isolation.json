@@ -1,0 +1,22 @@
+{
+  "result": "passed",
+  "postgres": "16",
+  "synthetic_networks": [
+    "172.29.231.0/24",
+    "172.29.232.0/24"
+  ],
+  "checks": {
+    "tank_agent_select_readonly": true,
+    "tank_agent_write_denied": true,
+    "tank_agent_cross_database_denied": true,
+    "tank_agent_service_network_denied": true,
+    "tank_replay_agent_select_readonly": true,
+    "tank_replay_agent_write_denied": true,
+    "tank_replay_agent_cross_database_denied": true,
+    "tank_replay_agent_service_network_denied": true,
+    "local_admin_peer": true,
+    "hba_rules_valid": true
+  },
+  "actual_kvm_source_cidr": "UNVERIFIED_HARDWARE_GATE",
+  "no_production_credentials": true
+}

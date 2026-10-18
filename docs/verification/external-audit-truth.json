@@ -1,0 +1,515 @@
+{
+  "owner": "truth",
+  "source_audit": "audit/2026-10-17_code_vs_plan.md",
+  "source_commit": "8513aa3",
+  "scope": "Truth-owned clauses of external audit, not a certificate for all144 clauses. No source audit/spec/user fixtures edited.",
+  "evidence_run": {
+    "combined_command": ".venv/bin/python -m pytest tests/test_truth.py tests/test_truth_start_fixture.py tests/test_decisions.py -q --tb=short",
+    "combined_result": "82 passed before final cohort regression; final cohort regression separately1 passed",
+    "integration_test": "tests/test_review.py::test_real_truth_decision_publication_bundle_to_completed_review",
+    "integration_result": "1 passed"
+  },
+  "measurement_contract_interpretation": {
+    "authority": "TDD §0 measured conventions and literal §2 data schemas",
+    "implementation": "Literal schema leaves stay bare. measurement_metadata companion indexes actual numeric/null measurable leaves and inherits nearest actual window/cutoff/provenance. Native and USD arithmetic is Decimal; JSON exact quantities are decimal strings; dimensionless statistics may be float with representation metadata.",
+    "unknown_policy": "Observation precision/coverage unavailable stays unknown with reason; semantic market time governs cutoff, receipt is assembly availability only. No EXACT precision invented.",
+    "code": [
+      {
+        "path": "src/tank/analysis/truth.py",
+        "line": 1039,
+        "symbol": "measurement_metadata"
+      },
+      {
+        "path": "src/tank/analysis/truth.py",
+        "line": 28,
+        "symbol": "decimal"
+      },
+      {
+        "path": "src/tank/analysis/truth.py",
+        "line": 151,
+        "symbol": "_available"
+      }
+    ],
+    "tests": [
+      {
+        "path": "tests/test_truth.py",
+        "line": 681,
+        "test": "test_successful_measurements_have_unit_precision_coverage_and_exact_json_values"
+      },
+      {
+        "path": "tests/test_truth.py",
+        "line": 646,
+        "test": "test_native_sums_preserve_large_and_tiny_quantities_without_float_roundtrip"
+      },
+      {
+        "path": "tests/test_truth.py",
+        "line": 665,
+        "test": "test_exact_usd_decomposition_and_funding_interval_conversion"
+      },
+      {
+        "path": "tests/test_truth.py",
+        "line": 489,
+        "test": "test_closed_bar_collection_latency_is_not_future_market_data"
+      }
+    ]
+  },
+  "findings": [
+    {
+      "finding_id": "B14",
+      "status": "consumer_verified_producer_owner_evidence",
+      "current_verification": "Instrument-scoped canonical semantic families are required. No textual family heuristic; DOCUMENTED_UNTESTED gives MEDIUM, UNKNOWN/INFERRED LOW. Market owner reports 623 scoped public smoke checks and current proof invalidation; that producer/live result is not independently rerun by truth owner.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 804,
+          "symbol": "data_confidence"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth_start_fixture.py",
+          "line": 71,
+          "test": "test_documented_semantics_differs_from_unknown_and_failures_keep_spec_order"
+        },
+        {
+          "path": "tests/test_truth.py",
+          "line": 202,
+          "test": "test_confidence_rejects_descriptive_fake_semantics_without_actual_data"
+        }
+      ],
+      "residual_limits": "Live semantics proof completeness belongs to market owner; no blanket production HIGH certificate."
+    },
+    {
+      "finding_id": "MKT-01",
+      "status": "consumer_verified_producer_owner_evidence",
+      "current_verification": "Instrument-scoped canonical semantic families are required. No textual family heuristic; DOCUMENTED_UNTESTED gives MEDIUM, UNKNOWN/INFERRED LOW. Market owner reports 623 scoped public smoke checks and current proof invalidation; that producer/live result is not independently rerun by truth owner.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 804,
+          "symbol": "data_confidence"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth_start_fixture.py",
+          "line": 71,
+          "test": "test_documented_semantics_differs_from_unknown_and_failures_keep_spec_order"
+        },
+        {
+          "path": "tests/test_truth.py",
+          "line": 202,
+          "test": "test_confidence_rejects_descriptive_fake_semantics_without_actual_data"
+        }
+      ],
+      "residual_limits": "Live semantics proof completeness belongs to market owner; no blanket production HIGH certificate."
+    },
+    {
+      "finding_id": "B15",
+      "status": "fixed_verified",
+      "current_verification": "Only TDD5.10 first-match LOW/HIGH/MEDIUM and ordered semantics/spot coverage/derivatives coverage/freshness failures grade DC. USD-decomposition readiness, missing anchor trade and asynchronous capture readiness remain diagnostics, not additional grade gates. Actual missing/stale critical price/book data remain freshness failures.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 804,
+          "symbol": "data_confidence"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth_start_fixture.py",
+          "line": 48,
+          "test": "test_confidence_diagnostics_do_not_add_unlisted_grade_conditions"
+        },
+        {
+          "path": "tests/test_truth_start_fixture.py",
+          "line": 71,
+          "test": "test_documented_semantics_differs_from_unknown_and_failures_keep_spec_order"
+        },
+        {
+          "path": "tests/test_truth.py",
+          "line": 210,
+          "test": "test_confidence_requires_present_fresh_reference_and_books"
+        }
+      ],
+      "residual_limits": "No completeness claim for omitted raw data; normal-range/class readiness can remain unavailable with HIGH source confidence."
+    },
+    {
+      "finding_id": "MKT-02",
+      "status": "fixed_verified",
+      "current_verification": "Only TDD5.10 first-match LOW/HIGH/MEDIUM and ordered semantics/spot coverage/derivatives coverage/freshness failures grade DC. USD-decomposition readiness, missing anchor trade and asynchronous capture readiness remain diagnostics, not additional grade gates. Actual missing/stale critical price/book data remain freshness failures.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 804,
+          "symbol": "data_confidence"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth_start_fixture.py",
+          "line": 48,
+          "test": "test_confidence_diagnostics_do_not_add_unlisted_grade_conditions"
+        },
+        {
+          "path": "tests/test_truth_start_fixture.py",
+          "line": 71,
+          "test": "test_documented_semantics_differs_from_unknown_and_failures_keep_spec_order"
+        },
+        {
+          "path": "tests/test_truth.py",
+          "line": 210,
+          "test": "test_confidence_requires_present_fresh_reference_and_books"
+        }
+      ],
+      "residual_limits": "No completeness claim for omitted raw data; normal-range/class readiness can remain unavailable with HIGH source confidence."
+    },
+    {
+      "finding_id": "MKT-06",
+      "status": "consumer_verified_producer_owner_evidence",
+      "current_verification": "Documented critical metric without successful current proof is MEDIUM rather than LOW; UNKNOWN remains LOW.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 804,
+          "symbol": "data_confidence"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth_start_fixture.py",
+          "line": 71,
+          "test": "test_documented_semantics_differs_from_unknown_and_failures_keep_spec_order"
+        }
+      ],
+      "residual_limits": "Snapshot producer default and invalidation owned by market."
+    },
+    {
+      "finding_id": "MKT-07",
+      "status": "fixed_consumer_verified",
+      "current_verification": "Incremental spot/perp volume uses observed quote_volume_usd or complete flow buy/sell USD; never mixes raw USDT/native quote with USD and never estimates volume using candle close. Missing conversion remains null.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 252,
+          "symbol": "window_usd_volume"
+        },
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 268,
+          "symbol": "derivatives_truth"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth_start_fixture.py",
+          "line": 40,
+          "test": "test_synthetic_start_truth_positive_path"
+        }
+      ],
+      "residual_limits": "Coinbase/Kraken USD source normalization and FX evidence supplied by market owner; missing coverage makes share unavailable."
+    },
+    {
+      "finding_id": "MKT-08",
+      "status": "diagnostic_contract_verified",
+      "current_verification": "Capture status is surfaced in detail/data confidence and incomplete windows excluded by actual row completeness; no fabricated backfilled readiness.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 1105,
+          "symbol": "_compute_market_truth"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth.py",
+          "line": 429,
+          "test": "test_supported_move_has_decisive_measured_facts_and_capture_readiness"
+        }
+      ],
+      "residual_limits": "ESCALATE/backfill orchestration is event-tools/runtime ownership; this evidence does not certify its scheduling."
+    },
+    {
+      "finding_id": "MKT-09",
+      "status": "fixed_verified",
+      "current_verification": "Assessment loads latest durable event-token beneficiary edge and supplies LOSER expected_direction; event and day history returns are mirrored with the same sign.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 1169,
+          "symbol": "assess"
+        },
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 338,
+          "symbol": "relative_truth"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth_start_fixture.py",
+          "line": 94,
+          "test": "test_latest_durable_beneficiary_role_sets_loser_repricing_direction"
+        }
+      ],
+      "residual_limits": "No role inference if durable beneficiary mapping absent."
+    },
+    {
+      "finding_id": "MKT-10",
+      "status": "truth_fixed_verified_cross_owner",
+      "current_verification": "MarketTruthService loads thresholds; ContextVar isolates pure-call parameters. Significant flow, min venues, quantiles, history/lookback, beta, sync tolerance, book/depth/refill/resilience/ticket/impact parameters are consumed.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 1160,
+          "symbol": "compute_market_truth"
+        },
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 1169,
+          "symbol": "assess"
+        },
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 81,
+          "symbol": "normal"
+        },
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 156,
+          "symbol": "spot_truth"
+        },
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 451,
+          "symbol": "liquidity_truth"
+        },
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 858,
+          "symbol": "support_features"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth_start_fixture.py",
+          "line": 59,
+          "test": "test_threshold_configuration_is_consumed_and_isolated_between_calls"
+        }
+      ],
+      "residual_limits": "Decisions/cards/demotion consumption belongs to decisions/runtime owners; no claim that user changes may override literal fixed business rules without configuration validation."
+    },
+    {
+      "finding_id": "MKT-12",
+      "status": "fixed_price_route_verified_funding_route_implemented",
+      "current_verification": "Persistent gap uses actual as-of states within cadence and complete15m venue flow, not an exact every10s bucket grid. Independent REST price confirmation is measured. Funding dispersion uses own-history normal range plus distinct-path matched confirmations and complete perp flow.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 529,
+          "symbol": "enrich_evidence"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth.py",
+          "line": 245,
+          "test": "test_fragmentation_needs_actual_cutoff_safe_independent_rest_gap"
+        }
+      ],
+      "residual_limits": "Price confirmation regression exercises real-shaped raw data. Dedicated funding-dispersion route regression not added in this owner pass; independent integration audit must test that path before certifying it."
+    },
+    {
+      "finding_id": "MKT-20",
+      "status": "fixed_verified",
+      "current_verification": "Class confidence is HIGH when selected with no alternatives/unresolved, MEDIUM when alternatives/unresolved, LOW when UNKNOWN, independent of DC. NOT_COHORT_CONSISTENT/PRE_EVENT_RUNUP/FRAGMENTATION_INVESTIGATE flags produced from measured predicates.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 950,
+          "symbol": "select_move"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth.py",
+          "line": 766,
+          "test": "test_distribution_cohort_buy_to_sell_does_not_require_current_selling_majority"
+        },
+        {
+          "path": "tests/test_truth.py",
+          "line": 154,
+          "test": "test_t5_pairwise_constant_cohort"
+        }
+      ],
+      "residual_limits": "Flags and class-confidence lack a dedicated all-combinations regression; integration auditor should retain that test-coverage limit."
+    },
+    {
+      "finding_id": "MKT-M01",
+      "status": "consumer_implemented_producer_owner_evidence",
+      "current_verification": "Basis reads synchronized mark/index observations; historical same-source basis normal ranges and widening feed support.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 858,
+          "symbol": "support_features"
+        },
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 268,
+          "symbol": "derivatives_truth"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth_start_fixture.py",
+          "line": 40,
+          "test": "test_synthetic_start_truth_positive_path"
+        }
+      ],
+      "residual_limits": "Missing index remains null; source acquisition and basis-specific integration regression owned by market/integration audit."
+    },
+    {
+      "finding_id": "MKT-M02",
+      "status": "consumer_implemented",
+      "current_verification": "Complete PERP aggressor bars produce taker buying, per-venue USD volume and buy share; unavailable histories cannot increment support.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 858,
+          "symbol": "support_features"
+        },
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 252,
+          "symbol": "window_usd_volume"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth_start_fixture.py",
+          "line": 40,
+          "test": "test_synthetic_start_truth_positive_path"
+        }
+      ],
+      "residual_limits": "Dedicated complete/raw PERP BUY support-vector regression not added in this pass."
+    },
+    {
+      "finding_id": "MKT-M05",
+      "status": "implemented_not_independently_path_tested",
+      "current_verification": "Top venues constant-cohort signs over15m subwindows can trigger fragmentation discriminator after more than one sign flip; unconfirmed state produces FRAGMENTATION_INVESTIGATE rather than independent confirmed real fragmentation.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 529,
+          "symbol": "enrich_evidence"
+        },
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 950,
+          "symbol": "select_move"
+        }
+      ],
+      "tests": [],
+      "residual_limits": "Dedicated alternating-top-venue regression remains integration-audit coverage requirement."
+    },
+    {
+      "finding_id": "MKT-M06",
+      "status": "consumer_verified_registry_external",
+      "current_verification": "Wrapped classified wallet flows and exchange inventory can supply TRUE evidence; unlock potential alone is not sale evidence. CEX_CUSTODY_MIGRATION feeds localized transfer support.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 681,
+          "symbol": "supply_truth"
+        },
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 858,
+          "symbol": "support_features"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth.py",
+          "line": 314,
+          "test": "test_supply_wrappers_preserve_unavailable_and_do_not_treat_unlock_as_sale"
+        },
+        {
+          "path": "tests/test_truth.py",
+          "line": 326,
+          "test": "test_supply_inventory_own_history_wrapped_flows_chain_and_lending"
+        }
+      ],
+      "residual_limits": "Production labeled-wallet registry correctness/source coverage belongs to market/configuration owner; no fabricated labels."
+    },
+    {
+      "finding_id": "MKT-M07",
+      "status": "implemented_partial_path_test_coverage",
+      "current_verification": "Support terms now cover native-volume anomalies, large ticket fractions/trend, spot/perp lead and incremental USD share, basis/funding, perp taker buying, first-half liquidations, ask refill/building, exchange inflows and localized custody transfers. Distribution accepts BUY→SELL constant cohort or exact selling majority.",
+      "code": [
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 858,
+          "symbol": "support_features"
+        },
+        {
+          "path": "src/tank/analysis/truth.py",
+          "line": 950,
+          "symbol": "select_move"
+        }
+      ],
+      "tests": [
+        {
+          "path": "tests/test_truth.py",
+          "line": 766,
+          "test": "test_distribution_cohort_buy_to_sell_does_not_require_current_selling_majority"
+        },
+        {
+          "path": "tests/test_truth.py",
+          "line": 730,
+          "test": "test_exact_capital_majority_drives_distribution_without_rounded_display_rule"
+        }
+      ],
+      "residual_limits": "Every support term does not yet have an independent per-term raw-input regression; unavailable raw evidence explicitly None and never counts."
+    }
+  ],
+  "delegated_ids": {
+    "market": [
+      "MKT-11",
+      "MKT-14",
+      "MKT-15",
+      "MKT-16",
+      "MKT-17",
+      "MKT-18",
+      "MKT-M03",
+      "MKT-M04"
+    ],
+    "decisions_cards": [
+      "MKT-03",
+      "MKT-04",
+      "MKT-05",
+      "MKT-19",
+      "MKT-21"
+    ],
+    "configuration": [
+      "MKT-13"
+    ],
+    "replay_qa": [
+      "MKT-M08",
+      "MKT-M10"
+    ],
+    "coverage_owner": [
+      "MKT-M09"
+    ]
+  },
+  "freeze": "Truth implementation/test files frozen after artifact; only new concrete reproductions justify changes.",
+  "anchor_followup": {
+    "finding_id": "MKT-17",
+    "status": "shared_resolver_used_by_truth",
+    "code": "src/tank/analysis/truth.py:MarketTruthService.assess imports tank.market.capture.event_anchor",
+    "test": "tests/test_truth.py::test_assessment_calls_snapshot_with_shared_canonical_anchor",
+    "proof": "Actual assess→snapshot call matches shared resolver for exact verified string and dict T0, unverified T0 falls back T1, date-only T0 falls back T1. Existing persist regression updated to canonical state_verified field.",
+    "cross_owner": "Market already uses resolver; scheduler runtime owner notified to remove duplicate logic."
+  }
+}

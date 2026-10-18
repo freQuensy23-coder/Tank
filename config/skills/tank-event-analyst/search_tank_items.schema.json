@@ -21,5 +21,6 @@
   },
   "required": [
     "query"
-  ]
+  ],
+  "description": "Full-text search over everything collected (\u2264 90 days, \u2264 20 hits). Returns: Hits with item ids."
 }

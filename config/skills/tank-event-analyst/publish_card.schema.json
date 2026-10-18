@@ -30,5 +30,6 @@
     "kind",
     "verdict",
     "why"
-  ]
+  ],
+  "description": "Alert gate and update policy (\u00a77.4), linter (\u00a77.5), template, evidence bundle, DELIVER job. Returns: Alert id and version, or the refusal with reasons."
 }

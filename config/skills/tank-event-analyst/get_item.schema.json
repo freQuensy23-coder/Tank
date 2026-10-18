@@ -10,5 +10,6 @@
   },
   "required": [
     "item_id"
-  ]
+  ],
+  "description": "Reads the item. Returns: Text, quoted text, source, author, times."
 }

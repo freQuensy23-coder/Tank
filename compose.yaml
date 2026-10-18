@@ -1,0 +1,193 @@
+name: tank-v0
+x-logging: &id001
+  driver: json-file
+  options:
+    max-size: 20m
+    max-file: '5'
+services:
+  tank:
+    image: tank-v0:openrouter-live
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    command:
+    - tank
+    - serve
+    environment:
+      TANK_DATA_DIR: /data
+      TANK_CONFIG_DIR: /config
+      TANK_OPENMA_URL: http://openma:8787
+      TANK_OPENMA_API_KEY_FILE: /run/secrets/oma_api_key
+      TANK_JEV_PROVIDER: openrouter
+      TANK_OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
+      TANK_TELEGRAM_TOKEN_FILE: /run/secrets/telegram_bot_token
+      TANK_ETHERSCAN_API_KEY_FILE: /run/secrets/etherscan_api_key
+      TANK_CODEX_GATEWAY_KEY_FILE: /run/secrets/codex_gateway_key
+      TANK_CODEX_GATEWAY_HOST: 0.0.0.0
+      TANK_CODEX_GATEWAY_PORT: '8790'
+      TANK_CODEX_AUTH_PATH: /codex-auth/auth.json
+      TANK_X_PROFILE_DIR: /browser
+      TANK_X_STORAGE_STATE_PATH: /run/secrets/x_session
+      TANK_BACKUP_DIR: /backup
+      TANK_USER_AGENT: ${TANK_USER_AGENT:?Set declared contact User-Agent}
+      TANK_X_ENABLED: ${TANK_X_ENABLED:-true}
+      TANK_X_LIST_ID: ${TANK_X_LIST_ID:-}
+      TANK_TELEGRAM_ALERTS_CHAT: ${TANK_TELEGRAM_ALERTS_CHAT:-}
+      TANK_TELEGRAM_OPS_CHAT: ${TANK_TELEGRAM_OPS_CHAT:-}
+    secrets:
+    - oma_api_key
+    - openrouter_api_key
+    - telegram_bot_token
+    - etherscan_api_key
+    - codex_gateway_key
+    - tank_db_password
+    - oma_db_password
+    volumes:
+    - tank-data:/data
+    - tank-browser:/browser
+    - codex-auth:/codex-auth
+    - backup:/backup
+    - type: bind
+      source: ${TANK_CONFIG_PATH:-./config}
+      target: /config
+      read_only: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+      openma:
+        condition: service_healthy
+    logging: *id001
+    networks:
+    - tank-net
+  openma:
+    image: tank-openma:85d5361f535c7221de975838dc48444e468cc02e-tank2-openrouter
+    build:
+      context: ${OPENMA_SOURCE_PATH:?Set pinned prepared OpenMA checkout path}
+      dockerfile: apps/main-node/Dockerfile.tank
+      args:
+        SKIP_CONSOLE: '1'
+    restart: unless-stopped
+    entrypoint:
+    - node
+    - /app/tank-deploy/openma_entrypoint.mjs
+    environment:
+      HOST: 0.0.0.0
+      PORT: '8787'
+      SANDBOX_PROVIDER: litebox
+      SANDBOX_IMAGE: ${TANK_SANDBOX_IMAGE:-tank-analysis:python3.12-local}
+      SANDBOX_ROOTFS_PATH: /opt/tank-sandbox-oci
+      SANDBOX_WORKDIR: /app/data/sandboxes
+      MEMORY_BLOB_DIR: /app/data/memory-blobs
+      SESSION_OUTPUTS_DIR: /app/data/session-outputs
+      FILES_BLOB_DIR: /app/data/files
+      AUTH_DISABLED: '0'
+    devices:
+    - /dev/kvm:/dev/kvm
+    group_add:
+    - ${KVM_GID:?Set host KVM group id}
+    secrets:
+    - oma_api_key
+    - oma_root_secret
+    - oma_auth_secret
+    - oma_db_password
+    - tank_agent_db_password
+    - tank_replay_agent_db_password
+    - openrouter_api_key
+    - etherscan_api_key
+    volumes:
+    - openma-data:/app/data
+    - ${TANK_SANDBOX_OCI_PATH:?Set verified local OCI layout directory}:/opt/tank-sandbox-oci:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - node
+      - -e
+      - fetch('http://localhost:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    logging: *id001
+    networks:
+    - tank-net
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    command:
+    - postgres
+    - -c
+    - password_encryption=scram-sha-256
+    - -c
+    - hba_file=/etc/postgresql/tank-pg_hba.conf
+    secrets:
+    - postgres_password
+    - tank_db_password
+    - oma_db_password
+    - tank_agent_db_password
+    - tank_replay_agent_db_password
+    volumes:
+    - pg-data:/var/lib/postgresql/data
+    - ${TANK_PG_HBA_PATH:?Generate explicit network HBA file}:/etc/postgresql/tank-pg_hba.conf:ro
+    - ./deploy/postgres-init.sh:/docker-entrypoint-initdb.d/10-tank.sh:ro
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - pg_isready -U postgres -d postgres
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging: *id001
+    networks:
+    - tank-net
+volumes:
+  tank-data: {}
+  tank-browser: {}
+  codex-auth: {}
+  pg-data: {}
+  openma-data: {}
+  backup:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${TANK_BACKUP_PATH:?Set existing external disk backup path}
+networks:
+  tank-net:
+    driver: bridge
+    ipam:
+      config:
+      - subnet: ${TANK_COMPOSE_CIDR:?Set explicitly selected nonoverlapping Compose CIDR}
+secrets:
+  postgres_password:
+    file: ${TANK_SECRETS_DIR:?Set secret directory outside repository}/postgres_password
+  tank_db_password:
+    file: ${TANK_SECRETS_DIR}/tank_db_password
+  oma_db_password:
+    file: ${TANK_SECRETS_DIR}/oma_db_password
+  oma_api_key:
+    file: ${TANK_SECRETS_DIR}/oma_api_key
+  oma_root_secret:
+    file: ${TANK_SECRETS_DIR}/oma_root_secret
+  oma_auth_secret:
+    file: ${TANK_SECRETS_DIR}/oma_auth_secret
+  openrouter_api_key:
+    file: ${TANK_SECRETS_DIR}/openrouter_api_key
+  telegram_bot_token:
+    file: ${TANK_SECRETS_DIR}/telegram_bot_token
+  etherscan_api_key:
+    file: ${TANK_SECRETS_DIR}/etherscan_api_key
+  tank_replay_agent_db_password:
+    file: ${TANK_SECRETS_DIR}/tank_replay_agent_db_password
+  tank_agent_db_password:
+    file: ${TANK_SECRETS_DIR}/tank_agent_db_password
+  codex_gateway_key:
+    file: ${TANK_SECRETS_DIR}/codex_gateway_key

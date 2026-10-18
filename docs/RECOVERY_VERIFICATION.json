@@ -1,0 +1,30 @@
+{
+  "all_checks_passed": true,
+  "backup_path": "/var/folders/g5/3f78vbqd25g8khzxg9xhsjj40000gn/T/tank-real-recovery-73ptze39/relocated",
+  "dump_sha256": {
+    "oma.dump": "93cd7c5d7013fe7f4a667dc688f078965c6d5ebce314f2c56ae7b45140479ed6",
+    "tank.dump": "d8fe123323fa2028756d61e4f4fef2f7a25d8dfc29b7e9edac2584ff110e287b"
+  },
+  "isolated_databases_dropped_on_exit": true,
+  "manifest_files": 9,
+  "manual_before_backup_hour": true,
+  "openma_transcript_rows": 1,
+  "original_live_tree_removed": true,
+  "pg_dump_version": "pg_dump (PostgreSQL) 16.10",
+  "pg_restore_version": "pg_restore (PostgreSQL) 16.10",
+  "recovered_fixture_files": 4,
+  "relocated_snapshot_verified": true,
+  "restore_exit_codes": [
+    0,
+    0
+  ],
+  "retention": false,
+  "server_version": "16.10",
+  "snapshot_status": "created",
+  "tank_checks": {
+    "events": 1,
+    "immutable_evidence_bundles": 1,
+    "queued_jobs": 1,
+    "source_items": 1
+  }
+}

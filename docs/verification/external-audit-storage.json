@@ -1,0 +1,203 @@
+{
+  "recorded_at": "2026-10-17T19:00:54.053363+00:00",
+  "audit_source": "audit/2026-10-17_code_vs_plan.md",
+  "scope": "Storage owner current-code evidence; independent auditor merges canonical144clause disposition.",
+  "environment": {
+    "postgresql": "16.10 built from official source in isolated /tmp installation",
+    "production": "No production deployment, credentials, external messages, or unattended acceptance claimed."
+  },
+  "id_mapping_note": "Canonical audit SVC-07 is B6; raw-storage finding B7 is SVC-08. Both IDs retained so parent shorthand cannot silently overwrite unrelated runtime evidence.",
+  "executed_evidence": [
+    {
+      "command": "TANK_TEST_DATABASE_URL=<isolated PG16 tank_test> uv run pytest tests/test_storage.py -q --tb=short",
+      "result": "36 passed,6 intentional MemoryRepository-only skips",
+      "scope": "Real PostgreSQL constraints, role login, crash queue behavior, retention, migration upgrade and physical DEFAULT relocation."
+    },
+    {
+      "command": "TANK_TEST_DATABASE_URL=<isolated PG16 tank_storage_fresh> uv run pytest tests/test_storage.py tests/test_review.py -q --tb=short",
+      "result": "44 passed,6 intentional MemoryRepository-only skips",
+      "scope": "Fresh/upgrade schema plus review; exact named role default-privilege probe was strengthened afterward and reverified in the36-test storage run."
+    },
+    {
+      "command": "TANK_TEST_DATABASE_URL=<isolated PostgreSQL16 database named tank> uv run pytest tests/test_storage.py -q --tb=short",
+      "result": "40 passed,6 intentional MemoryRepository-only skips",
+      "scope": "Latest storage with recorded_at/dual-timestamp late-arrival paging and metadata projection; exact deployment role SQL is intentionally guarded to actual tank/tank_replay database names."
+    },
+    {
+      "command": "TANK_TEST_DATABASE_URL=<isolated PostgreSQL16 tank> uv run pytest tests/test_storage.py::test_late_arrivals_use_availability_not_original_receipt tests/test_storage.py::test_metadata_pages_omit_large_document_payload -q --tb=short",
+      "result": "4 passed",
+      "scope": "Both repositories;7 same-arrival-time records paged by2, retry by3 returns same stable ordered trade IDs; frozen semantic cutoff inclusive; arrival end exclusive; legacy unknown availability and future semantic rows excluded. Lightweight metadata excludes giant nested payload."
+    }
+  ],
+  "items": [
+    {
+      "finding_id": "SVC-07",
+      "status": "see_related",
+      "owner": "runtime",
+      "disposition": "Canonical disposition IDs map SVC-07 to B6 (Market Truth event-loop work), not raw retention. The parent shorthand SVC07/raw retention is covered under SVC-08/B7 below. Runtime owns B6; this report makes no independent certification of that unrelated clause.",
+      "related": [
+        "SVC-08",
+        "B7"
+      ],
+      "test_evidence": []
+    },
+    {
+      "finding_id": "SVC-08",
+      "status": "resolved_current_code",
+      "owner": "storage+market",
+      "related": [
+        "B7"
+      ],
+      "disposition": "Raw mkt.trades rows now age out after30days through an explicit maintenance-only immutable purge. Ordinary repository and SQL immutable mutations remain blocked. Whole protected UTC days survive across all instruments. Market owner separately replaced per-frame files with hourly fsynced journals and sealed Parquet manifests.",
+      "code": [
+        "src/tank/storage.py::_prune_market",
+        "src/tank/migrations/019_controlled_raw_retention.sql",
+        "src/tank/migrations/022_safe_partition_relocation.sql",
+        "src/tank/market/archive.py"
+      ],
+      "test_evidence": [
+        "tests/test_storage.py::test_raw_retention_maintenance_keeps_whole_event_day[postgres]",
+        "tests/test_storage.py::test_default_legacy_partition_drain_preserves_exact_row[postgres]",
+        "tests/test_market_archive.py::test_hourly_segments_seal_and_prefix_survives_later_frames"
+      ],
+      "limitation": "Hourly archive test pointer belongs to market owner; this storage run directly verifies PostgreSQL raw retention and partition relocation only. Retention is called after verified backup by runtime."
+    },
+    {
+      "finding_id": "SVC-09",
+      "status": "resolved_current_code",
+      "owner": "storage+configuration",
+      "disposition": "Exact deploy/read_only_role.sql now sets tank_agent default_transaction_read_only=on. Existing SELECT grants and FOR ROLE tank future-table privileges were exercised. New role login starts read-only; SQL SELECT works and writes fail.",
+      "code": [
+        "deploy/read_only_role.sql"
+      ],
+      "test_evidence": [
+        "tests/test_storage.py::test_deployed_agent_role_select_only[postgres]",
+        "tests/test_storage.py::test_agent_new_connection_defaults_read_only[postgres]"
+      ],
+      "limitation": "Executed only on isolated PostgreSQL16 local trust cluster. No production credentials or deployment claim."
+    },
+    {
+      "finding_id": "SVC-11",
+      "status": "resolved_current_code",
+      "owner": "storage",
+      "disposition": "Unexpired RUNNING jobs recover to QUEUED even at their final attempt. A recovery_reclaim marker reuses the interrupted attempt slot rather than consuming another one; genuine failure after reclaim still reaches FAILED at the configured limit. Expired work remains EXPIRED. Recovery count/time are retained.",
+      "code": [
+        "src/tank/storage.py::MemoryRepository.recover_jobs",
+        "src/tank/storage.py::PostgresRepository.recover_jobs",
+        "src/tank/storage.py::PostgresRepository.claim_job"
+      ],
+      "test_evidence": [
+        "tests/test_storage.py::test_queue_expiry_retry_recovery[postgres]",
+        "tests/test_storage.py::test_postgres_reopen_keeps_jobs_and_typed_columns[postgres]"
+      ]
+    },
+    {
+      "finding_id": "SVC-16",
+      "status": "resolved_current_code",
+      "owner": "storage+runtime",
+      "disposition": "maintain_partitions() is independent of backup/retention. It provisions15 future UTC days, drains occupied historical DEFAULT days atomically, and is called independently by startup/background runtime. Partitioned writes preflight their actual requested day before insertion, preventing fresh historical spill.",
+      "code": [
+        "src/tank/storage.py::_maintain_partitions",
+        "src/tank/storage.py::PostgresRepository.put",
+        "src/tank/scheduler.py"
+      ],
+      "test_evidence": [
+        "tests/test_storage.py::test_sql_typed_completeness_serials_and_independent_partitions[postgres]",
+        "tests/test_storage.py::test_default_legacy_partition_drain_preserves_exact_row[postgres]",
+        "tests/test_scheduler.py::test_tick_does_not_wait_for_backup_and_partitions_run_independently"
+      ],
+      "limitation": "Scheduler test is runtime-owner evidence pointer. Storage proof exercises the independent method with no backup configuration or file access."
+    },
+    {
+      "finding_id": "SVC-21",
+      "status": "resolved_current_code",
+      "owner": "storage",
+      "disposition": "Named domain tables now enforce real typed required values for new writes, domain/natural uniqueness, deferred foreign keys, enum checks, immutable SQL triggers and generated physical bigint sequence IDs. Migration020 adds every core §14 required-field check, with explicit evidence-backed unknown/scout exceptions; no implicit numericzero is inserted. Typed timestamp queries and compound indexes power range/latest APIs; record JSON preserves §2 nested structures and analysis details while SQL projections expose canonical typed query fields. Direct SQL incomplete event insertion is rejected.",
+      "code": [
+        "src/tank/models.py::REQUIRED_FIELDS",
+        "src/tank/migrations/006_required_identity.sql",
+        "src/tank/migrations/008_references.sql",
+        "src/tank/migrations/020_typed_completeness.sql",
+        "src/tank/storage.py::_projection"
+      ],
+      "test_evidence": [
+        "tests/test_storage.py::test_sql_typed_completeness_serials_and_independent_partitions[postgres]",
+        "tests/test_storage.py::test_budget_retirement_upgrade_preserves_historical_data",
+        "tests/test_storage.py::test_decision_structured_condition_projection[postgres]",
+        "tests/test_storage.py::test_indexed_range_pages_equal_timestamps_exclusive_end[postgres]"
+      ],
+      "legacy_truth": {
+        "new_writes": "Forward-only CHECK(column IS NOT NULL OR documented permitted uncertainty) constraints reject new invalid rows even though catalog convalidated=false. Required identity fields additionally use native NOT NULL.",
+        "existing_rows": "Historical incomplete records remain unchanged; the migration does not invent evidence, replace nulls with zero, or falsely mark those checks validated. Physical sequence defaults apply to new append records; old nullable legacy serial projections are retained.",
+        "keys": "The JSON-record interface retains a stable storage_key primary key, supplemented by required domain identity unique indexes and compound natural uniqueness. Partitioned key uniqueness includes time, as PostgreSQL requires.",
+        "record_interface": "Repository reads retain the original lossless §2 JSON record, rather than rewriting nested representations into flattened §14 names. Typed columns are enforced projections and SQL query/join fields; unrestricted third-party SQL writers that desynchronize document/projection are outside the supported write interface. Agent SQL roles are SELECT-only.",
+        "not_claimed": "No blanket certification that previously incomplete legacy rows satisfy every §14 requirement, and no claim that all legacy serial columns were backfilled."
+      }
+    },
+    {
+      "finding_id": "SVC-29",
+      "status": "resolved_current_code",
+      "owner": "storage+runtime",
+      "disposition": "Every UTC daily partition overlapping any MAJOR+ reaction window is preserved across all instruments, rather than retaining only matching token rows. Historical DEFAULT data is split into actual dated children first. Unprotected expired raw/normalized rows are removed; the unbounded DEFAULT partition is not declared permanently retained as a workaround.",
+      "code": [
+        "src/tank/storage.py::_preserved_windows",
+        "src/tank/storage.py::_prune_market",
+        "src/tank/storage.py::_maintain_partitions",
+        "src/tank/migrations/022_safe_partition_relocation.sql"
+      ],
+      "test_evidence": [
+        "tests/test_storage.py::test_raw_retention_maintenance_keeps_whole_event_day[postgres]",
+        "tests/test_storage.py::test_market_projection_partition_update_and_retention[postgres]",
+        "tests/test_storage.py::test_default_legacy_partition_drain_preserves_exact_row[postgres]"
+      ],
+      "limitation": "PostgreSQL owner verification covers database capture. Runtime is responsible for matching whole-day policy in filesystem raw/archive retention."
+    },
+    {
+      "finding_id": "M01-storage-late-arrival-support",
+      "status": "resolved_current_code",
+      "owner": "storage",
+      "disposition": "iter_late_arrivals uses indexed actual normalized recorded_at arrival range independently of original received_ts and frozen inclusive semantic market cutoff; keyset pagination orders arrival/storage_key without a capped history load. Ten market families gain typed recorded_at/received_ts and partial availability/semantic/identity compound indexes. No extra per-trade change feed. iter_metadata returns selected checkpoint fields without returning nested Market Truth payloads.",
+      "code": [
+        "src/tank/storage.py::_iter_late_arrivals",
+        "src/tank/storage.py::_iter_metadata",
+        "src/tank/migrations/023_market_recorded_availability.sql"
+      ],
+      "test_evidence": [
+        "tests/test_storage.py::test_late_arrivals_use_availability_not_original_receipt[postgres]",
+        "tests/test_storage.py::test_metadata_pages_omit_large_document_payload[postgres]"
+      ],
+      "limitation": "Market producers own actual recorded_at stamping and semantic deduplication; runtime owns mapping affected persisted arrivals to automatic immutable reaction revisions. Legacy availability remains NULL and is excluded rather than backdated. Storage-level evidence alone does not certify the combined automatic revision pipeline."
+    }
+  ],
+  "upgrade_controls": [
+    {
+      "migration": "014_retire_daily_budget.sql",
+      "behavior": "Archive historical budget state; preserve legacy LLM_BUDGET notices but reject new ones."
+    },
+    {
+      "migration": "015_release_retired_budget_jobs.sql",
+      "behavior": "Release only explicitly budget-paused queued work, retaining original TTL/schedule audit; suppress only pending deliveries referencing historical budget notices."
+    },
+    {
+      "migration": "021_retire_host_partial_and_repair_reaction_expiry.sql",
+      "behavior": "Expire pending retired PUBLISH_PARTIAL jobs. Repair only never-attempted known-bug reaction schedules with expiry before run_after; revive only if corrected checkpoint+6h window remains alive. Historical DONE and unrelated attempted/expired work remain unchanged."
+    },
+    {
+      "migration": "022_safe_partition_relocation.sql",
+      "behavior": "Transaction-only relocation permission. Parent ACCESS EXCLUSIVE lock protects copy/delete/attach; all columns copied verbatim, rowcounts checked, original legacy CHECK validation states retained."
+    }
+  ],
+  "upgrade_test_evidence": [
+    "tests/test_storage.py::test_budget_retirement_upgrade_preserves_historical_data",
+    "tests/test_storage.py::test_default_legacy_partition_drain_preserves_exact_row[postgres]"
+  ],
+  "source_hashes": {
+    "src/tank/storage.py": "5a6f4101b932bb657af632868f9de6b004c3fe7a16b2fbfbc8d1fb6f60225494",
+    "src/tank/models.py": "88a5f2f9b8f7f817dcef2660322224c376d58cc425249b81957fb7cb8680d760",
+    "tests/test_storage.py": "dcbc6042d73f421f09ef37e3f3fed7155d18a8176f7fe04989a4e083d1ceabcf"
+  },
+  "remaining_acceptance": [
+    "Combined final independent suite and final tree hash belong to parent/auditor.",
+    "Production role/Compose deployment, actual provider credentials, and72hour/14day unattended acceptance are not established by these tests."
+  ]
+}

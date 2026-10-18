@@ -1,0 +1,1098 @@
+{
+  "audited_at_utc": "2026-10-17T19:17:12.806889+00:00",
+  "scope": "PRD FR-T01..13, FR-O01..03, FR-R01; TDD0/5/6/8; read-only code audit, owned report only",
+  "authority": [
+    "01_Tank_V0_PRD.md",
+    "02_Tank_V0_HLD.md section4",
+    "03_Tank_V0_Technical_Design.md"
+  ],
+  "status_meanings": {
+    "proven": "Inspected implementation plus meaningful named regression evidence; strictly not a claim of sustained live/full-universe acceptance.",
+    "partial": "Implementation exists but requirement not fully evidenced or display/capture omissions remain",
+    "missing": "No implementation found",
+    "conflict": "Observed implementation contradicts written requirement"
+  },
+  "evidence_policy": "Tests exercise behavior; specifications remain authority. Existing live reports are narrow public samples. PostgreSQL smoke uses explicitly simulated packets against real PostgreSQL16 and is persistence evidence, not production capture. No75feed/15hot-token/72h/14d acceptance inferred. User explicitly identified F16 expected HEADWIND as bad test; section5.7 unchanged, so STRESS rule remains authoritative. Read-only source audit with only owned report edits.",
+  "requirements": [
+    {
+      "requirement": "FR-T-01",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/market/service.py:_verify_semantic",
+        "src/tank/market/service.py:snapshot",
+        "src/tank/analysis/truth.py:data_confidence",
+        "config/semantics.yaml"
+      ],
+      "evidence": [
+        "test_semantic_proof_scope_cannot_certify_another_instrument_and_anchor_is_actual_trade",
+        "docs/verification/market-smoke.json: nine BTC adapter paths; narrow public samples"
+      ],
+      "limitations": [
+        "Per-instrument durable proof records now prevent one instrument certifying another; actual instrument verification and field checks implemented. Narrow BTC/ETH live samples cannot establish every registered instrument semantic correctness."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-T-02",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:compute_market_truth"
+      ],
+      "evidence": [
+        "test_fractional_window_boundary_trades_need_continuity_proof_and_are_exact",
+        "test_nonminute_event_anchor_uses_true_asof_bounds_and_reports_precision",
+        "test_derivative_windows_keep_one_hour_watch_separate_from_four_hour_crowding",
+        "test_fractional_boundary_actual_trades_and_proven_range_never_include_future"
+      ],
+      "limitations": [
+        "All five named windows now materialized at one semantic cutoff. Fractional spot boundaries use raw trades only with explicit continuity coverage. Same target duration historical returns expose endpoint staleness/actual-duration bounds; historical minute granularity remains an explicitly recorded precision limitation, not exact trade-time equivalence."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-T-03",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:spot_truth",
+        "src/tank/analysis/cards.py:compose_card"
+      ],
+      "evidence": [
+        "test_t3_capital_weighted_broad_sell",
+        "test_t4_single_venue_spike",
+        "test_real_truth_decision_publication_bundle_to_completed_review",
+        "Combined-run S9 failure followed by immediate single-test passing rerun; see targeted_check_run."
+      ],
+      "limitations": [
+        "Deterministic per-venue/composite/count/capital-weighted calculations exercised by specification vectors. Compact card follows TDD7.5; full figures remain available in persisted review evidence bundle, so no invented requirement to print every figure in Telegram card."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-T-04",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:enrich_evidence",
+        "src/tank/analysis/truth.py:compute_market_truth",
+        "src/tank/analysis/cards.py:lint_card"
+      ],
+      "evidence": [
+        "test_t5_pairwise_constant_cohort"
+      ],
+      "limitations": [
+        "Proven for deterministic comparison algorithm and diagnostic suppression; live trend display not demonstrated."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-T-05",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:_oi_stats",
+        "src/tank/analysis/truth.py:decomposition",
+        "src/tank/analysis/truth.py:derivatives_truth"
+      ],
+      "evidence": [
+        "test_oi_formula_vectors",
+        "test_real_rest_fixture_endpoints",
+        "test_real_archive_oi_regressions",
+        "test_native_only_oi_preserves_native_and_sync_without_inventing_usd",
+        "test_real_truth_decision_publication_bundle_to_completed_review",
+        "Combined-run S9 failure followed by immediate single-test passing rerun; see targeted_check_run."
+      ],
+      "limitations": [
+        "Native changes and USD position/markup decomposition remain separate in persisted market truth/review bundle; absent USD cannot invent classification. Compact alert is not required to print every per-venue field."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-T-06",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:derivatives_truth",
+        "src/tank/market/normalize.py:funding"
+      ],
+      "evidence": [
+        "test_t6_funding_and_t8_semantics",
+        "test_real_truth_decision_publication_bundle_to_completed_review",
+        "Combined-run S9 failure followed by immediate single-test passing rerun; see targeted_check_run."
+      ],
+      "limitations": [
+        "Settled and estimate remain separate per venue in persisted review evidence; no cross-venue funding average."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-T-07",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:derivatives_truth",
+        "src/tank/market/normalize.py:liquidation"
+      ],
+      "evidence": [
+        "test_complete_liquidation_total_requires_whole_window_capture_not_recent_connection",
+        "test_liquidation_coverage_uses_processed_socket_watermark_not_last_liquidation_or_future_funding",
+        "test_liquidations_position_side_and_sampled_limits"
+      ],
+      "limitations": [
+        "Coverage records now distinguish source COMPLETE from full analyzed-window capture. Connected empty liquidation windows become legitimate zero only with coverage_start and processed observed_through proof; recent connection alone cannot certify total."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-T-08",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:liquidity_truth",
+        "src/tank/analysis/truth.py:enrich_evidence",
+        "src/tank/market/books.py:OrderBook.summary"
+      ],
+      "evidence": [
+        "test_asymmetric_depth_uses_actual_hit_side_and_excludes_perps",
+        "test_vacuum_detects_loss_on_sell_side_despite_deep_asks",
+        "test_walk_book_requires_actual_fill",
+        "test_fragmentation_needs_actual_cutoff_safe_independent_rest_gap"
+      ],
+      "limitations": [
+        "Required spread/depth/scaled walk/replenishment/elasticity/vacuum/compression fields are in persisted truth/review bundle. Earlier hit-side and spot/perp mixing bugs resolved. Missing data remains unavailable; compact-card omission is not treated as a separate specification defect."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-T-09",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:relative_truth",
+        "src/tank/market/service.py:snapshot",
+        "src/tank/market/service.py:_boundary_capture"
+      ],
+      "evidence": [
+        "test_reference_requires_complete_24h_flow_and_last_actual_trade",
+        "test_slug_identity_wld_sector_is_not_applicable_and_self_is_excluded",
+        "test_dense_minute_btc_context_matches_saved_hourly_downsample",
+        "test_nonminute_event_anchor_uses_true_asof_bounds_and_reports_precision",
+        "test_real_f16_baseline_stress_is_exposed",
+        "test_real_truth_decision_publication_bundle_to_completed_review",
+        "Combined-run S9 failure followed by immediate single-test passing rerun; see targeted_check_run."
+      ],
+      "limitations": [
+        "Actual trade anchor and complete trailing24h reference enforced. Canonical slug symbols/WLD exception, DeFi peer loading and dense-minute hourly RV fixed. Same-target-duration historical as-of prices expose endpoint staleness and observed-duration bounds; no interpolation or exact trade-price claim. Relative figures are inspectable in frozen review bundle. F16 fixture is now corrected to STRESS; section5.7 remained authoritative."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-T-10",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:repricing",
+        "src/tank/analysis/truth.py:relative_truth"
+      ],
+      "evidence": [
+        "test_repricing_and_baseline_context",
+        "test_reference_requires_complete_24h_flow_and_last_actual_trade",
+        "test_real_f08_does_not_invent_anchor_trades_or_spot_coverage"
+      ],
+      "limitations": [
+        "Written band precedence and actual-trade reference input covered; unavailable historical evidence remains unavailable rather than creating price certainty."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-T-11",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:select_move",
+        "src/tank/analysis/truth.py:decisive_facts",
+        "src/tank/analysis/truth.py:canonical_fact_text",
+        "src/tank/analysis/cards.py:compose_card"
+      ],
+      "evidence": [
+        "test_supported_move_has_decisive_measured_facts_and_capture_readiness",
+        "test_canonical_text_facts_print_units_windows_and_preserve_audit_companion",
+        "test_fragmentation_needs_actual_cutoff_safe_independent_rest_gap",
+        "test_risk_classes_and_absorption"
+      ],
+      "limitations": [
+        "Current producer emits up to3 real decisive text facts and separate measured audit details; absent facts remain explicitly incomplete. Classification/discriminator paths and independent REST confirmation tested, but all11 move classes over every live market/regime are not established."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-T-12",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:data_confidence",
+        "src/tank/analysis/decisions.py:DecisionEngine.evaluate"
+      ],
+      "evidence": [
+        "test_actual_producer_tier_metadata_controls_90second_oi_and_funding_freshness",
+        "test_hot_derivative_cadence_is_60s_and_base_is_300s",
+        "test_freshness_uses_semantic_point_time_and_snapshot_assembly_availability",
+        "test_confidence_requires_present_fresh_reference_and_books",
+        "test_start_blocker_combinations_and_secondary_requirements"
+      ],
+      "limitations": [
+        "Producer supplies capture_metadata tier and collection cadences; truth uses actual HOT60s/BASE300s OI/funding freshness and latest available source-field checks, including settlement interval and liquidation socket watermark semantics. Absent required critical feeds/proof/reference block HIGH/START."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-T-13",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/market/supply.py",
+        "src/tank/analysis/truth.py:supply_truth",
+        "config/exchange_addresses.yaml"
+      ],
+      "evidence": [
+        "test_supply_wrappers_preserve_unavailable_and_do_not_treat_unlock_as_sale",
+        "test_supply_inventory_own_history_wrapped_flows_chain_and_lending",
+        "test_real_truth_decision_publication_bundle_to_completed_review",
+        "Combined-run S9 failure followed by immediate single-test passing rerun; see targeted_check_run."
+      ],
+      "limitations": [
+        "Supply wrappers preserve unsupported/failed reasons, labeled-flow classes, inventory own-history changes, unlock potential-supply distinction, lending and chain context. Full structured measurements are inspectable in review bundle. API-key-dependent inputs can remain unavailable with explicit reasons."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-O-01",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/decisions.py:DecisionEngine.evaluate",
+        "src/tank/analysis/decisions.py:DecisionEngine._conditions",
+        "src/tank/analysis/cards.py:compose_card"
+      ],
+      "evidence": [
+        "test_crowding_uses_fixed_four_hour_window",
+        "test_horizons_and_scenarios_no_probabilities",
+        "test_real_generated_conditions_use_two_closed_nonoverlapping_hours"
+      ],
+      "limitations": [
+        "Written direction/potential/horizon/minimum-confidence rules, fixed4h crowding input, class-conditioned scenarios and at most two displayed view conditions implemented."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-O-02",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/decisions.py:DecisionEngine.evaluate",
+        "src/tank/analysis/cards.py:lint_card"
+      ],
+      "evidence": [
+        "test_horizons_and_scenarios_no_probabilities",
+        "test_card_diagnostics_and_probability"
+      ],
+      "limitations": [
+        "Class-conditioned base/upside/failure sentences now name market path conditions; template and linter prohibit probabilities/price ranges. Unknown evidence remains explicitly unknown."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-O-03",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/decisions.py:DecisionEngine.evaluate",
+        "src/tank/analysis/cards.py:compose_card"
+      ],
+      "evidence": [
+        "test_all_no_call_action_rows; code tactical=thesis C and card tactical rendering"
+      ],
+      "limitations": [
+        "Deterministic weak-capture labeling present; no live alert acceptance claim."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "FR-R-01",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/scheduler.py:reaction_capture",
+        "src/tank/event_tools.py:set_assessment"
+      ],
+      "evidence": [
+        "test_post72_reaction_uses_cumulative_event_derivatives",
+        "test_pre_event_capture_uses_pre_window_and_is_immutable",
+        "test_reaction_revision_appends_reasoned_frozen_history_without_duplicate_storm",
+        "test_cooldown_requires_all_analysis_and_benchmark_checkpoints"
+      ],
+      "limitations": [
+        "Requested schedules and immutable checkpoints implemented; reaction uses cumulative EVENT derivative values even at72h. Reason-required sequential late-data revisions append and preserve original frozen capture; repeats are idempotent. No claim that a real72h production pack has already completed."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-0",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:decimal",
+        "src/tank/analysis/truth.py:precise",
+        "src/tank/analysis/truth.py:measurement_metadata",
+        "src/tank/analysis/truth.py:_composite",
+        "src/tank/analysis/truth.py:select_move",
+        "src/tank/analysis/decisions.py:DecisionEngine.evaluate"
+      ],
+      "evidence": [
+        "test_native_sums_preserve_large_and_tiny_quantities_without_float_roundtrip",
+        "test_decimal_significance_does_not_round_a_subthreshold_flow_into_buy",
+        "test_exact_usd_decomposition_and_funding_interval_conversion",
+        "test_successful_measurements_have_unit_precision_coverage_and_exact_json_values",
+        "test_market_truth_json_preserves_exact_large_plus_tiny_native_volume",
+        "test_position_majority_rule_uses_exact_dollar_terms_not_rounded_display_share",
+        "Independent START snapshot inspection:1410 companion measurement leaves; all required metadata keys present; unknown precision reasoned; native CVD/USD position serialized as exact decimal strings.",
+        "Independent4venue majority-edge check: exact BUY majority2 versus total(4-1E-40) correctly yieldsBROAD while presentation ratio0.5.",
+        "tests/test_market_audit_paths.py::test_exact_majority_flags_survive_float_presentation_rounding",
+        "tests/test_truth.py::test_exact_capital_majority_drives_distribution_without_rounded_display_rule"
+      ],
+      "limitations": [
+        "Native quantities/USD/rates use adaptive Decimal with exact significance and dollar-majority predicates; downstream strict-majority flags/cohort checks now compare exact sums. Dimensionless statistical presentation remains FLOAT64.",
+        "Companion semantic interpretation is explicit: section0 measurement context is path-keyed measurement_metadata, preserving literal section2 bare scalar shapes. This does not claim physical inline wrapping or universal inline timestamp sibling fields. Unknown observation/precision/coverage has reasons."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-5.3",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:spot_truth",
+        "src/tank/analysis/cards.py:compose_card"
+      ],
+      "evidence": [
+        "test_t3_capital_weighted_broad_sell",
+        "test_t4_single_venue_spike",
+        "test_real_truth_decision_publication_bundle_to_completed_review",
+        "Combined-run S9 failure followed by immediate single-test passing rerun; see targeted_check_run."
+      ],
+      "limitations": [
+        "Deterministic per-venue/composite/count/capital-weighted calculations exercised by specification vectors. Compact card follows TDD7.5; full figures remain available in persisted review evidence bundle, so no invented requirement to print every figure in Telegram card."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-5.4",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:_oi_stats",
+        "src/tank/analysis/truth.py:decomposition",
+        "src/tank/analysis/truth.py:derivatives_truth"
+      ],
+      "evidence": [
+        "test_oi_formula_vectors",
+        "test_real_rest_fixture_endpoints",
+        "test_real_archive_oi_regressions",
+        "test_native_only_oi_preserves_native_and_sync_without_inventing_usd",
+        "test_real_truth_decision_publication_bundle_to_completed_review",
+        "Combined-run S9 failure followed by immediate single-test passing rerun; see targeted_check_run."
+      ],
+      "limitations": [
+        "Native changes and USD position/markup decomposition remain separate in persisted market truth/review bundle; absent USD cannot invent classification. Compact alert is not required to print every per-venue field."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-5.5",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:liquidity_truth",
+        "src/tank/analysis/truth.py:enrich_evidence",
+        "src/tank/market/books.py:OrderBook.summary"
+      ],
+      "evidence": [
+        "test_asymmetric_depth_uses_actual_hit_side_and_excludes_perps",
+        "test_vacuum_detects_loss_on_sell_side_despite_deep_asks",
+        "test_walk_book_requires_actual_fill",
+        "test_fragmentation_needs_actual_cutoff_safe_independent_rest_gap"
+      ],
+      "limitations": [
+        "Required spread/depth/scaled walk/replenishment/elasticity/vacuum/compression fields are in persisted truth/review bundle. Earlier hit-side and spot/perp mixing bugs resolved. Missing data remains unavailable; compact-card omission is not treated as a separate specification defect."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-5.6",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/market/supply.py",
+        "src/tank/analysis/truth.py:supply_truth",
+        "config/exchange_addresses.yaml"
+      ],
+      "evidence": [
+        "test_supply_wrappers_preserve_unavailable_and_do_not_treat_unlock_as_sale",
+        "test_supply_inventory_own_history_wrapped_flows_chain_and_lending",
+        "test_real_truth_decision_publication_bundle_to_completed_review",
+        "Combined-run S9 failure followed by immediate single-test passing rerun; see targeted_check_run."
+      ],
+      "limitations": [
+        "Supply wrappers preserve unsupported/failed reasons, labeled-flow classes, inventory own-history changes, unlock potential-supply distinction, lending and chain context. Full structured measurements are inspectable in review bundle. API-key-dependent inputs can remain unavailable with explicit reasons."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-5.7",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:relative_truth",
+        "src/tank/market/service.py:snapshot",
+        "src/tank/market/service.py:_boundary_capture"
+      ],
+      "evidence": [
+        "test_reference_requires_complete_24h_flow_and_last_actual_trade",
+        "test_slug_identity_wld_sector_is_not_applicable_and_self_is_excluded",
+        "test_dense_minute_btc_context_matches_saved_hourly_downsample",
+        "test_nonminute_event_anchor_uses_true_asof_bounds_and_reports_precision",
+        "test_real_f16_baseline_stress_is_exposed",
+        "test_real_truth_decision_publication_bundle_to_completed_review",
+        "Combined-run S9 failure followed by immediate single-test passing rerun; see targeted_check_run."
+      ],
+      "limitations": [
+        "Actual trade anchor and complete trailing24h reference enforced. Canonical slug symbols/WLD exception, DeFi peer loading and dense-minute hourly RV fixed. Same-target-duration historical as-of prices expose endpoint staleness and observed-duration bounds; no interpolation or exact trade-price claim. Relative figures are inspectable in frozen review bundle. F16 fixture is now corrected to STRESS; section5.7 remained authoritative."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-5.8",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:select_move",
+        "src/tank/analysis/truth.py:decisive_facts",
+        "src/tank/analysis/truth.py:canonical_fact_text",
+        "src/tank/analysis/cards.py:compose_card"
+      ],
+      "evidence": [
+        "test_supported_move_has_decisive_measured_facts_and_capture_readiness",
+        "test_canonical_text_facts_print_units_windows_and_preserve_audit_companion",
+        "test_fragmentation_needs_actual_cutoff_safe_independent_rest_gap",
+        "test_risk_classes_and_absorption"
+      ],
+      "limitations": [
+        "Current producer emits up to3 real decisive text facts and separate measured audit details; absent facts remain explicitly incomplete. Classification/discriminator paths and independent REST confirmation tested, but all11 move classes over every live market/regime are not established."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-5.9",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:select_move",
+        "src/tank/analysis/truth.py:decisive_facts",
+        "src/tank/analysis/truth.py:canonical_fact_text",
+        "src/tank/analysis/cards.py:compose_card"
+      ],
+      "evidence": [
+        "test_supported_move_has_decisive_measured_facts_and_capture_readiness",
+        "test_canonical_text_facts_print_units_windows_and_preserve_audit_companion",
+        "test_fragmentation_needs_actual_cutoff_safe_independent_rest_gap",
+        "test_risk_classes_and_absorption"
+      ],
+      "limitations": [
+        "Current producer emits up to3 real decisive text facts and separate measured audit details; absent facts remain explicitly incomplete. Classification/discriminator paths and independent REST confirmation tested, but all11 move classes over every live market/regime are not established."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-5.10",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/truth.py:data_confidence",
+        "src/tank/analysis/decisions.py:DecisionEngine.evaluate"
+      ],
+      "evidence": [
+        "test_actual_producer_tier_metadata_controls_90second_oi_and_funding_freshness",
+        "test_hot_derivative_cadence_is_60s_and_base_is_300s",
+        "test_freshness_uses_semantic_point_time_and_snapshot_assembly_availability",
+        "test_confidence_requires_present_fresh_reference_and_books",
+        "test_start_blocker_combinations_and_secondary_requirements"
+      ],
+      "limitations": [
+        "Producer supplies capture_metadata tier and collection cadences; truth uses actual HOT60s/BASE300s OI/funding freshness and latest available source-field checks, including settlement interval and liquidation socket watermark semantics. Absent required critical feeds/proof/reference block HIGH/START."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-5.1",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/market/service.py:run",
+        "src/tank/market/service.py:poll_once",
+        "src/tank/market/service.py:backfill",
+        "src/tank/market/service.py:bootstrap_history",
+        "src/tank/market/streams.py"
+      ],
+      "evidence": [
+        "docs/verification/market-smoke.json",
+        "docs/verification/market-ws-multiplex-smoke.json",
+        "test_nine_paths_group_into_eight_public_endpoints_and_global_liquidation_is_singleton",
+        "test_multimarket_frames_route_by_exact_instrument_identity",
+        "test_multiplexed_endpoint_incremental_hot_membership_without_reconnect",
+        "test_backfill_prerequisite_is_durable_pending_and_refreshes_analysis_and_conditions"
+      ],
+      "limitations": [
+        "Eight endpoint groups and exact instrument routing implemented, with durable PENDING/RUNNING/completion capture prerequisite state and reevaluation on completion. Live endpoint smoke covers BTC/ETH only; nine adapter paths and ~75feed registry coverage are not sustained75feed or15hot-token acceptance. No full-universe reconnect/completeness or unattended72h/14d proof."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-5.2",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/market/normalize.py",
+        "src/tank/market/flow.py",
+        "src/tank/market/service.py:_flush_flow",
+        "src/tank/market/service.py:backfill",
+        "src/tank/market/archive.py"
+      ],
+      "evidence": [
+        "test_connected_empty_minute_zero_and_disconnected_absence",
+        "test_backfill_complete_survives_flush_without_live_connection",
+        "test_exhausted_bounded_rest_proves_first_last_and_empty_minutes_despite_live_flush",
+        "test_fractional_boundary_actual_trades_and_proven_range_never_include_future",
+        "docs/verification/market-pg-smoke.json"
+      ],
+      "limitations": [
+        "Zero-minute omission/backfill overwrite corrected. Exhausted bounded REST ranges explicitly prove empty/edge minutes and survive live flush. Durable capture and exact fractional-boundary proof exercised offline, plus simulated packets persisted through real PostgreSQL restart. Continuous production loss/reconnect recovery and every archive/venue retention edge not independently proven."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-6.1",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/decisions.py:DecisionEngine.evaluate",
+        "src/tank/scheduler.py:eval_conditions"
+      ],
+      "evidence": [
+        "tests/test_decisions.py; test_real_generated_conditions_use_two_closed_nonoverlapping_hours"
+      ],
+      "limitations": [
+        "Written precedence implemented; production input gaps may yield neutral/bullish when repricing/context unknown."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-6.2",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/decisions.py:DecisionEngine.evaluate"
+      ],
+      "evidence": [
+        "test_crowding_uses_fixed_four_hour_window"
+      ],
+      "limitations": [
+        "Written4h crowding input now explicit and covered by deterministic regression; this status covers rule implementation, not empirical forecast accuracy."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-6.3",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/decisions.py:DecisionEngine.evaluate",
+        "src/tank/scheduler.py:eval_conditions"
+      ],
+      "evidence": [
+        "tests/test_decisions.py; test_real_generated_conditions_use_two_closed_nonoverlapping_hours"
+      ],
+      "limitations": [
+        "Written horizon map and overrides present; no unsupported forecast validation claimed."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-6.4",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/decisions.py:DecisionEngine.evaluate",
+        "src/tank/scheduler.py:eval_conditions"
+      ],
+      "evidence": [
+        "test_horizons_and_scenarios_no_probabilities",
+        "test_card_diagnostics_and_probability"
+      ],
+      "limitations": [
+        "Class-conditioned base/upside/failure sentences now name market path conditions; template and linter prohibit probabilities/price ranges. Unknown evidence remains explicitly unknown."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-6.5",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/decisions.py:DecisionEngine.evaluate",
+        "src/tank/scheduler.py:eval_conditions"
+      ],
+      "evidence": [
+        "tests/test_decisions.py; test_real_generated_conditions_use_two_closed_nonoverlapping_hours"
+      ],
+      "limitations": [
+        "min(data,event,class confidence) implemented."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-6.6",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/analysis/decisions.py:DecisionEngine.evaluate",
+        "src/tank/scheduler.py:eval_conditions"
+      ],
+      "evidence": [
+        "tests/test_decisions.py; test_real_generated_conditions_use_two_closed_nonoverlapping_hours"
+      ],
+      "limitations": [
+        "Machine-checkable catalog and closed nonoverlapping-hour counters tested; card shows one upgrade and one downgrade."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    },
+    {
+      "requirement": "TDD-8",
+      "status": "proven",
+      "implementation_pointers": [
+        "src/tank/scheduler.py:reaction_capture",
+        "src/tank/event_tools.py:set_assessment"
+      ],
+      "evidence": [
+        "test_post72_reaction_uses_cumulative_event_derivatives",
+        "test_pre_event_capture_uses_pre_window_and_is_immutable",
+        "test_reaction_revision_appends_reasoned_frozen_history_without_duplicate_storm",
+        "test_cooldown_requires_all_analysis_and_benchmark_checkpoints"
+      ],
+      "limitations": [
+        "Requested schedules and immutable checkpoints implemented; reaction uses cumulative EVENT derivative values even at72h. Reason-required sequential late-data revisions append and preserve original frozen capture; repeats are idempotent. No claim that a real72h production pack has already completed."
+      ],
+      "implementation_scope": "Inspected deterministic implementation and named exercised behavior only; operational acceptance is recorded separately."
+    }
+  ],
+  "targeted_check_run": {
+    "command": ".venv/bin/pytest -q tests/test_truth.py tests/test_market_service.py tests/test_market_streams.py tests/test_decisions.py tests/test_scheduler.py tests/test_review.py --disable-warnings",
+    "result": "1 failed,106 passed,1 skipped in17.95s",
+    "failure": "tests/test_review.py::test_real_truth_decision_publication_bundle_to_completed_review S9 pending-delivery status assertion at line323; frozen evidence hash and completed outcome assertions before it passed.",
+    "interpretation": "Concurrent review code/test edits may affect expectation; failure is not suppressed and does not prove market-math failure. Real PostgreSQL optional outcome test skipped in this invocation; separate explicitly simulated-packet PG smoke remains scoped evidence.",
+    "follow_up": {
+      "command": ".venv/bin/pytest -q tests/test_review.py::test_real_truth_decision_publication_bundle_to_completed_review --disable-warnings",
+      "result": "1 passed in9.86s",
+      "interpretation": "Latest single regression passes; previous mixed-run S9 failure retained as observed concurrent-edit history."
+    }
+  },
+  "resolution_history": [
+    {
+      "finding": "Missing actual last-trade anchor and incomplete reference ranking",
+      "resolution": "Current relative_truth requires complete trailing24h spot flow reference, actual raw pre-anchor trade, and strict boundary proof",
+      "remaining": "Insufficient history remains unavailable"
+    },
+    {
+      "finding": "Token slug/sector/WLD and dense-minute BTC RV defects",
+      "resolution": "Canonical symbol map/DeFi peer loading and hourly BTC RV sampler implemented",
+      "remaining": "Live all-token context not proven"
+    },
+    {
+      "finding": "Rounded historical duration and fractional flow boundaries",
+      "resolution": "Exact target durations with as-of endpoint precision diagnostics; raw partial-minute trades need coverage proof",
+      "remaining": "Stored minute precision is disclosed, not exact trade-time equivalence"
+    },
+    {
+      "finding": "Future receipt versus closed market observations",
+      "resolution": "Semantic market time bounded by cutoff; receipt availability bounded by assembly time",
+      "remaining": "Assembly provenance must remain recorded in replay artifacts"
+    },
+    {
+      "finding": "Primary-window derivatives reused for reaction/crowding",
+      "resolution": "Reaction reads EVENT and crowding reads W4H",
+      "remaining": "Late-data reaction revisions absent"
+    },
+    {
+      "finding": "No decisive facts producer",
+      "resolution": "text[] decisive_facts and structured decisive_fact_details implemented",
+      "remaining": "Incomplete market evidence yields incomplete facts"
+    },
+    {
+      "finding": "Global first-instrument proof",
+      "resolution": "Per-instrument durable proof keys and snapshot semantic lookup implemented",
+      "remaining": "Narrow live scope"
+    },
+    {
+      "finding": "Empty minutes and verified backfill overwritten",
+      "resolution": "Zero-minute emission plus preserved/proven bounded backfill and durable capture readiness implemented",
+      "remaining": "Continuous loss-recovery acceptance unproven"
+    },
+    {
+      "finding": "Per-instrument sockets inflated public connections",
+      "resolution": "Eight endpoint multiplex groups, exact routing and incremental memberships implemented",
+      "remaining": "BTC/ETH smoke only"
+    },
+    {
+      "finding": "Fixed300s confidence freshness and omitted latest-field checks",
+      "resolution": "Actual producer tier/cadence metadata now consumed by truth, latest source-field checks include collection/settlement/coverage semantics",
+      "remaining": "Operational sustained-feed freshness remains acceptance scope"
+    },
+    {
+      "finding": "Connected empty liquidation windows remained unknown",
+      "resolution": "Whole-window processed socket coverage now permits legitimate0 while incomplete connection stays unavailable",
+      "remaining": "Live uninterrupted whole-window capture not inferred"
+    },
+    {
+      "finding": "Late-data reaction revisions absent",
+      "resolution": "Sequential immutable reasoned revisions implemented and idempotence tested",
+      "remaining": "None identified in inspected revision implementation"
+    },
+    {
+      "finding": "Generic scenarios and compact-card figures treated as omissions",
+      "resolution": "Scenarios are class-conditioned; full metrics exposed via frozen review bundle, compact card follows TDD7.5",
+      "remaining": "No invented demand to print every field in card"
+    },
+    {
+      "finding": "F16 historical expectation conflict",
+      "resolution": "User identified bad test; current TDD F16 now STRESS, consistent with unchanged section5.7",
+      "remaining": "None"
+    },
+    {
+      "finding": "Exact native/USD/rate arithmetic and successful/null measurement metadata",
+      "resolution": "Adaptive Decimal exact monetary/native arithmetic, CVD squared significance, exact dollar-term majority, JSON decimal strings and path-keyed measured context implemented and independently checked",
+      "remaining": "Downstream FLOAT64 majority predicates edge under coordination; companion-vs-inline shape explicitly qualified"
+    },
+    {
+      "finding": "Three explicitly offline-testable external paths and per-term support coverage",
+      "resolution": "New independent raw-input suite40cases; funding-dispersion route, actual alternating topvenue discriminator candidate and all23\u00a75.8supportterms positive/exact-minus1 contrasts",
+      "remaining": "Operational credential/universe/time-window acceptance remains separate; no known implementation discrepancy found in these final inspected paths."
+    }
+  ],
+  "remaining_implementation_gaps": [],
+  "live_acceptance": {
+    "status": "partial",
+    "established": [
+      "Nine public BTC REST adapter path samples",
+      "Eight public endpoint multiplex subscription groups with BTC/ETH",
+      "Explicit simulated packets persisted/reopened against isolated real PostgreSQL16; Decimal native quantities and dedup verified"
+    ],
+    "not_established": [
+      "Sustained full registered-feed universe capture",
+      "15 simultaneous hot-token load and all exchange retention/reconnect edges",
+      "72h unattended completed production reaction pack",
+      "14d unattended shadow acceptance"
+    ],
+    "note": "No scope expansion from adapter tests, endpoint subscription PASS, or synthetic packets."
+  },
+  "review_evidence": {
+    "implementation": [
+      "src/tank/review.py:evidence",
+      "src/tank/review.py:show",
+      "src/tank/review.py:outcome",
+      "src/tank/review.py:report"
+    ],
+    "tests": [
+      "test_real_truth_decision_publication_bundle_to_completed_review",
+      "test_outcome_immutable_revision_and_frozen_beta",
+      "test_hash_corruption_and_pending",
+      "test_subminute_boundaries_require_enumeration_and_exclude_outside_prices"
+    ],
+    "scope": "Frozen alert market truth/decision baseline with hash verification and immutable outcome records. Compact Telegram template need not duplicate every persisted per-venue metric.",
+    "check_limit": "Full combined run had one S9 failure during concurrent edits. Immediate focused rerun of that same end-to-end review test passed1/1 in9.86s; preserve both observations."
+  },
+  "measurement_shape_interpretation": {
+    "section0": "Measured semantics include unit/window/observed_at/precision/coverage/reason for successful and absent numeric leaves.",
+    "section2": "Literal structures retain bare scalar fields.",
+    "implementation": "Path-keyed measurement_metadata companions plus measurement_context document values, actual scope, null precision and reason. Exact quantities/USD/rates serialized as decimal strings; statistical dimensionless results FLOAT64.",
+    "qualification": "Do not describe companion metadata as physical universal inline wrapping or universal inline timestamp sibling shape."
+  },
+  "precision_check_run": {
+    "command": ".venv/bin/pytest -q tests/test_truth.py tests/test_market_normalize.py tests/test_market_service.py tests/test_market_streams.py tests/test_decisions.py tests/test_scheduler.py tests/test_review.py --disable-warnings",
+    "result": "142 passed,1 skipped in13.63s",
+    "scope": "Offline deterministic and integration regressions; optional PostgreSQL outcome test skipped, separate existing simulated-packet real PostgreSQL smoke remains distinct."
+  },
+  "section58_support_term_proofs": [
+    {
+      "class": "SPOT_LED_ACCUMULATION",
+      "term": "Spot volume up beyond normal against previous window",
+      "term_id": "spot_volume_beyond",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Nine-day native kline history; current volume300 versus previous/history150; negative current150",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[SPOT_LED_ACCUMULATION-spot_volume_beyond]",
+      "positive_support_total": 5,
+      "negative_support_total": 4,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "SPOT_LED_ACCUMULATION",
+      "term": "Spot leads",
+      "term_id": "spot_leads",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Minute candle cumulative crossing at spot minute0 vs perp minute1; negative raw spot crossing postponed to minute3",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[SPOT_LED_ACCUMULATION-spot_leads]",
+      "positive_support_total": 5,
+      "negative_support_total": 4,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "SPOT_LED_ACCUMULATION",
+      "term": "Spot carries most new volume",
+      "term_id": "spot_increment_majority",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Current raw spot/perp quote_volume_usd; negative perp4000 overwhelms spot3000",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[SPOT_LED_ACCUMULATION-spot_increment_majority]",
+      "positive_support_total": 5,
+      "negative_support_total": 4,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "SPOT_LED_ACCUMULATION",
+      "term": "Most large-ticket volume buys",
+      "term_id": "large_ticket_buy_majority",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "B4/B5 raw USD side buckets; negative current buy20000=sell20000",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[SPOT_LED_ACCUMULATION-large_ticket_buy_majority]",
+      "positive_support_total": 5,
+      "negative_support_total": 4,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "SPOT_LED_ACCUMULATION",
+      "term": "Depth not down",
+      "term_id": "depth_not_down",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Pre-anchor/current ask-depth raw samples; negative current900m versus pre1b",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[SPOT_LED_ACCUMULATION-depth_not_down]",
+      "positive_support_total": 5,
+      "negative_support_total": 4,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "ORGANIC_MIXED",
+      "term": "Spot and perp volume both up beyond normal",
+      "term_id": "both_volumes_beyond",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Both raw market native histories with current300 vs150; negative spot150",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[ORGANIC_MIXED-both_volumes_beyond]",
+      "positive_support_total": 2,
+      "negative_support_total": 1,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "ORGANIC_MIXED",
+      "term": "Basis within its normal range",
+      "term_id": "basis_within",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Nine-day mark100.1/index100 unchanged exact10bps; negative current mark100.2",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[ORGANIC_MIXED-basis_within]",
+      "positive_support_total": 2,
+      "negative_support_total": 1,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "PERP_LED_CHASE",
+      "term": "Funding above normal",
+      "term_id": "funding_above",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Raw settled funding baseline.0001/current.01; negative current.0001",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[PERP_LED_CHASE-funding_above]",
+      "positive_support_total": 4,
+      "negative_support_total": 3,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "PERP_LED_CHASE",
+      "term": "Basis widening",
+      "term_id": "basis_widening",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Raw start mark100.1/end100.2,index100; negative unchanged100.1",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[PERP_LED_CHASE-basis_widening]",
+      "positive_support_total": 4,
+      "negative_support_total": 3,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "PERP_LED_CHASE",
+      "term": "Spot SELL or NEUTRAL",
+      "term_id": "spot_sell_or_neutral",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Raw balanced native spot prints NEUTRAL; negative BUY but CONCENTRATED to preserve required eligibility",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[PERP_LED_CHASE-spot_sell_or_neutral]",
+      "positive_support_total": 4,
+      "negative_support_total": 3,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "PERP_LED_CHASE",
+      "term": "Perp taker flow BUY by \u00a70 significance test",
+      "term_id": "perp_taker_buy",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Every raw complete perp minute buy20/sell10/sum_sq1; negative buy=sell10",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[PERP_LED_CHASE-perp_taker_buy]",
+      "positive_support_total": 4,
+      "negative_support_total": 3,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "SHORT_SQUEEZE",
+      "term": "Most liquidation USD in first half",
+      "term_id": "first_half_liquidation_majority",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Raw60USD early/40USD late; negative40early/60late, explicit COMPLETE source/capture prerequisite",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[SHORT_SQUEEZE-first_half_liquidation_majority]",
+      "positive_support_total": 2,
+      "negative_support_total": 1,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "SHORT_SQUEEZE",
+      "term": "Perp taker flow BUY by \u00a70 significance test",
+      "term_id": "perp_taker_buy",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Every raw complete perp minute buy20/sell10/sum_sq1; negative buy=sell10",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[SHORT_SQUEEZE-perp_taker_buy]",
+      "positive_support_total": 2,
+      "negative_support_total": 1,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "SELL_SIDE_ABSORPTION",
+      "term": "Ask replenishment",
+      "term_id": "ask_replenishment",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Raw BUY notional burst against100USD preask and refill within60s; negative postask1 with later balanced flows",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[SELL_SIDE_ABSORPTION-ask_replenishment]",
+      "positive_support_total": 3,
+      "negative_support_total": 2,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "SELL_SIDE_ABSORPTION",
+      "term": "supply_in_evidence TRUE",
+      "term_id": "supply_evidence",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Raw classified treasury transfer to exchange; negative no supply rows",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[SELL_SIDE_ABSORPTION-supply_evidence]",
+      "positive_support_total": 3,
+      "negative_support_total": 2,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "SELL_SIDE_ABSORPTION",
+      "term": "Native OI not up beyond normal",
+      "term_id": "native_not_up",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Raw OI110\u2192111 versus nine-day same-duration normal history; negative current1000",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[SELL_SIDE_ABSORPTION-native_not_up]",
+      "positive_support_total": 3,
+      "negative_support_total": 2,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "DISTRIBUTION",
+      "term": "Large-ticket sell share rising",
+      "term_id": "large_ticket_sell_rising",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Raw current large sell20% vs previous10%; negative current10%",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[DISTRIBUTION-large_ticket_sell_rising]",
+      "positive_support_total": 3,
+      "negative_support_total": 2,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "DISTRIBUTION",
+      "term": "Ask depth building",
+      "term_id": "ask_depth_building",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Raw current ask1.1b vs pre1b; negative current1b",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[DISTRIBUTION-ask_depth_building]",
+      "positive_support_total": 3,
+      "negative_support_total": 2,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "DISTRIBUTION",
+      "term": "Exchange inflows",
+      "term_id": "exchange_inflows",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Raw classified transfer reaches exchange; negative no raw supply rows while required supply qualifier explicitly held",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[DISTRIBUTION-exchange_inflows]",
+      "positive_support_total": 3,
+      "negative_support_total": 2,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "LIQUIDITY_VACUUM",
+      "term": "Large tickets minority of volume",
+      "term_id": "large_tickets_minority",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Raw large2000 of total150000 versus negative100000 of150000",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[LIQUIDITY_VACUUM-large_tickets_minority]",
+      "positive_support_total": 2,
+      "negative_support_total": 1,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "LIQUIDITY_VACUUM",
+      "term": "Spot volume within normal range",
+      "term_id": "spot_volume_within",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Raw current native150 within historical150; negative1500 beyond",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[LIQUIDITY_VACUUM-spot_volume_within]",
+      "positive_support_total": 2,
+      "negative_support_total": 1,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "REAL_MARKET_FRAGMENTATION",
+      "term": "Venue signs disagree",
+      "term_id": "venue_signs_disagree",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Raw A BUY/B SELL native bars; negative both BUY while independent price-gap eligibility remains",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[REAL_MARKET_FRAGMENTATION-venue_signs_disagree]",
+      "positive_support_total": 2,
+      "negative_support_total": 1,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    },
+    {
+      "class": "REAL_MARKET_FRAGMENTATION",
+      "term": "Gap closes quickly",
+      "term_id": "gap_closes_quickly",
+      "status": "offline_raw_positive_and_one_term_negative_verified",
+      "raw_input_contrast": "Raw continuous A100/B105 gap, B100 at cutoff; negative B105 stays open",
+      "test": "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed[REAL_MARKET_FRAGMENTATION-gap_closes_quickly]",
+      "positive_support_total": 2,
+      "negative_support_total": 1,
+      "scope": "Raw support producers and exact one-point counting delta. Required-rule eligibility qualifiers held explicitly in scoring_qualifiers; no support feature, funding/basis/flow/lead/depth evidence boolean injected. Synthetic P/Q labels do not claim real exchange synchronization."
+    }
+  ],
+  "external_audit_independent_path_dispositions": [
+    {
+      "finding_id": "MKT-12",
+      "status": "resolved_offline_regression_verified",
+      "test": "tests/test_market_audit_paths.py::test_raw_funding_dispersion_fragmentation_needs_independent_complete_path",
+      "evidence": "Two-venue nine-day settled history normal dispersion0; current second-venue.01 vs.0001; distinct-path exact confirmations and complete15m perp flow validate funding route and REAL_MARKET_FRAGMENTATION without price-gap route. Same-source confirmations and one incomplete perp minute independently prevent funding validation.",
+      "acceptance_limit": "Synthetic raw data only; no live complete-market funding-fragmentation event claimed."
+    },
+    {
+      "finding_id": "MKT-M05",
+      "status": "resolved_offline_regression_verified",
+      "test": "tests/test_market_audit_paths.py::test_raw_alternating_top_venue_signs_do_not_invent_second_path",
+      "evidence": "Three-venue45minute native raw flows produce actual SELL/DIVERGENT composite; two largest venues flip twice across15minute subwindows. FRAGMENTATION candidate eligible/unrefuted without inventing independent validation or REAL class. Missing one minute from each venue removes complete flip evidence.",
+      "acceptance_limit": "Sign-flip candidate path only; independent validation remains separately required as current TDD states."
+    },
+    {
+      "finding_id": "MKT-M07",
+      "status": "resolved_offline_per_term_verified",
+      "tests": [
+        "tests/test_market_audit_paths.py::test_each_section58_class_counts_all_raw_derived_support_terms",
+        "tests/test_market_audit_paths.py::test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed"
+      ],
+      "evidence": "23 explicit support terms in current \u00a75.8 table each mapped to one positive raw contrast and a one-at-a-time raw evidence change giving exact minus1 support; eight class max-score checks plus producer negative/missing controls. PRICE_MARKUP_FAKE_OI has no support terms.",
+      "acceptance_limit": "Required-rule eligibility is explicit scoped setup, not a new all-market/class qualification proof or empirical forecasting acceptance."
+    }
+  ],
+  "independent_path_findings": [
+    {
+      "finding": "Unchanged basis raw100.1/index100 misclassified versus same own history because current float and historical Decimal diverged",
+      "status": "fixed_verified_by_truth_owner_and_independent_raw_regression",
+      "test": "tests/test_market_audit_paths.py::test_raw_native_volume_and_basis_support_require_complete_own_history",
+      "source_change_owner": "truth",
+      "scope": "Owner made Decimal current/historical basis and interval arithmetic consistent; auditor did not change production rules."
+    }
+  ],
+  "independent_paths_test_run": {
+    "command": ".venv/bin/pytest -q tests/test_market_audit_paths.py --disable-warnings",
+    "result": "40 passed in9.27s",
+    "lint": "ruff E4/E7/E9/F/I passes after formatting",
+    "test_file_sha256": "cad566fcc6e788fff400fecff41d4242c5300757000fde27fe7689428e658c18",
+    "authority": "Current03_Tank_V0_Technical_Design.md\u00a75.8/5.9; tests never authority over written formulas."
+  }
+}

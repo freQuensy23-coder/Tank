@@ -1,0 +1,19 @@
+{
+  "current_authority": "03_Tank_V0_Technical_Design.md \u00a711.3",
+  "history": [
+    {
+      "fixture_id": "F-14",
+      "superseded_fields": {
+        "case_description": "QNT \u2014 27 Sep 2026 19:00\u201323:00 UTC: native OI \u221230.36%, price +54.09% (+50.78% in the 22:00 hour)"
+      },
+      "reason": "Authoritative Technical Design fixture updates supplied by user on 2026-10-17; preserve history only, current spec governs."
+    },
+    {
+      "fixture_id": "F-16",
+      "superseded_fields": {
+        "assertion_spec": "Market context HEADWIND (not STRESS); Trade Grade one notch lower for non-STRUCTURAL events; no veto of any action."
+      },
+      "reason": "Authoritative Technical Design fixture updates supplied by user on 2026-10-17; preserve history only, current spec governs."
+    }
+  ]
+}

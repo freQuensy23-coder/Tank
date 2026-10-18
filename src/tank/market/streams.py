@@ -1,0 +1,625 @@
+"""Public WebSocket subscriptions; all received frames are archived before parsing."""
+
+import asyncio
+import json
+import time
+from decimal import Decimal
+
+from tank.util import iso, parse_time, sha256, utcnow
+
+from .books import OrderBook
+from .normalize import SemanticError, liquidation, oi, venue_key
+
+STREAM_PING_INTERVAL_S = 20
+STREAM_PING_TIMEOUT_S = 20
+
+
+def connection(instrument):
+    key = venue_key(instrument)
+    s = instrument["venue_symbol"]
+    perp = not key.endswith("spot")
+    if key.startswith("binance"):
+        channels = [s.lower() + "@aggTrade", s.lower() + "@depth@100ms"]
+        if perp:
+            channels.extend([s.lower() + "@markPrice@1s", s.lower() + "@forceOrder"])
+        root = (
+            "wss://fstream.binance.com/market/stream" if perp else "wss://data-stream.binance.vision/stream"
+        )
+        return root + "?streams=" + ("/".join(channels)), []
+    if key.startswith("coinbase"):
+        return "wss://ws-feed.exchange.coinbase.com", [
+            {"type": "subscribe", "product_ids": [s], "channels": ["matches", "level2_batch", "heartbeat"]}
+        ]
+    if key.startswith("okx"):
+        args = [{"channel": c, "instId": s} for c in ("trades", "books")]
+        if perp:
+            args.extend(
+                [{"channel": c, "instId": s} for c in ("open-interest", "funding-rate", "mark-price")]
+            )
+            args.append({"channel": "index-tickers", "instId": s.removesuffix("-SWAP")})
+            args.append({"channel": "liquidation-orders", "instType": "SWAP"})
+        return "wss://ws.okx.com/ws/v5/public", [{"op": "subscribe", "args": args}]
+    if key.startswith("bybit"):
+        args = ["publicTrade." + s, "orderbook.200." + s]
+        if perp:
+            args.extend(["tickers." + s, "allLiquidation." + s])
+        return "wss://stream.bybit.com/v5/public/" + key.split(".")[1], [{"op": "subscribe", "args": args}]
+    if key.startswith("kraken"):
+        symbol = instrument.get("ws_symbol", s.replace("XBT", "BTC"))
+        return "wss://ws.kraken.com/v2", [
+            {"method": "subscribe", "params": {"channel": "trade", "symbol": [symbol], "snapshot": False}},
+            {
+                "method": "subscribe",
+                "params": {"channel": "book", "symbol": [symbol], "depth": 1000, "snapshot": True},
+            },
+        ]
+    return "wss://api.hyperliquid.xyz/ws", [
+        {"method": "subscribe", "subscription": {"type": c, "coin": s}}
+        for c in ("trades", "l2Book", "activeAssetCtx")
+    ]
+
+
+async def process_frame(self, instrument, raw):
+    iid = instrument["instrument_id"]
+    key = venue_key(instrument)
+    book = self.books[iid]
+    data = raw.get("data", raw)
+    if key.startswith("binance"):
+        event = data.get("e")
+        if event == "aggTrade":
+            await self.ingest_trade(instrument, data)
+        elif event == "depthUpdate":
+            if int(data["u"]) <= int(book.sequence):
+                return
+            if self._book_initial_bridge.get(iid, True):
+                # Futures initial bridge includes lastUpdateId (spot lastUpdateId+1).
+                target = int(book.sequence) + (1 if key.endswith("spot") else 0)
+                if not int(data["U"]) <= target <= int(data["u"]):
+                    raise SemanticError("initial Binance snapshot bridge missing")
+                self._book_initial_bridge[iid] = False
+                book._levels("bid", data["b"])
+                book._levels("ask", data["a"])
+                book.sequence = data["u"]
+                book.exchange_ts = iso(data["E"])
+            else:
+                book.update(
+                    data["b"],
+                    data["a"],
+                    sequence=data["u"],
+                    previous=data.get("pu"),
+                    first=data["U"],
+                    ts=data["E"],
+                )
+            await self._save_book(instrument)
+        elif event == "forceOrder":
+            await save_liquidation(self, instrument, data)
+        elif event == "markPriceUpdate":
+            await save_mark(self, instrument, data["p"], data["E"], index=data.get("i"), index_ts=data["E"])
+            if instrument.get("funding_interval_h"):
+                await save_funding(
+                    self,
+                    instrument,
+                    {"lastFundingRate": data["r"], "time": data["E"]},
+                    "CURRENT_ESTIMATE",
+                    instrument["funding_interval_h"],
+                )
+    elif key.startswith("coinbase"):
+        event = raw.get("type")
+        if event in ("match", "last_match"):
+            if event == "match":
+                await self.ingest_trade(instrument, raw)
+        elif event == "snapshot":
+            book.snapshot(raw["bids"], raw["asks"], sequence=0, ts=iso())
+            await self._save_book(instrument)
+        elif event == "l2update":
+            bids = [r[1:] for r in raw["changes"] if r[0] == "buy"]
+            asks = [r[1:] for r in raw["changes"] if r[0] == "sell"]
+            book.update(bids, asks, sequence=int(book.sequence) + 1, ts=raw["time"])
+            await self._save_book(instrument)
+    elif key.startswith("okx"):
+        channel = raw.get("arg", {}).get("channel")
+        rows = data if isinstance(data, list) else []
+        for item in rows:
+            expected_symbol = (
+                instrument["venue_symbol"].removesuffix("-SWAP")
+                if channel == "index-tickers"
+                else instrument["venue_symbol"]
+            )
+            if item.get("instId", expected_symbol) != expected_symbol:
+                continue
+            if channel == "trades":
+                await self.ingest_trade(instrument, item)
+            elif channel == "books":
+                if raw.get("action") == "snapshot":
+                    book.snapshot(
+                        item["bids"],
+                        item["asks"],
+                        sequence=item["seqId"],
+                        ts=item["ts"],
+                        checksum=item.get("checksum"),
+                    )
+                else:
+                    book.update(
+                        item["bids"],
+                        item["asks"],
+                        sequence=item["seqId"],
+                        previous=item["prevSeqId"],
+                        ts=item["ts"],
+                        checksum=item.get("checksum"),
+                    )
+                await self._save_book(instrument)
+            elif channel == "open-interest":
+                await self._verify_semantic(instrument, self._oi_key(instrument, item), item)
+                row = oi(instrument, item)
+                await self._put("mkt.oi_obs", iid + ":" + row["metric_key"] + ":" + row["ts"], row)
+            elif channel == "funding-rate":
+                prev = item.get("prevFundingTime")
+                cur = item.get("fundingTime")
+                if prev and cur:
+                    await save_funding(
+                        self,
+                        instrument,
+                        item,
+                        "CURRENT_ESTIMATE",
+                        (Decimal(cur) - Decimal(prev)) / 3600000,
+                    )
+            elif channel == "mark-price":
+                await save_mark(self, instrument, item["markPx"], item["ts"])
+            elif channel == "index-tickers":
+                context = self._price_contexts.setdefault(iid, {})
+                context.update(index_price=item["idxPx"], index_ts=iso(item["ts"]))
+                if context.get("mark_price") is not None:
+                    await save_mark(
+                        self,
+                        instrument,
+                        context["mark_price"],
+                        context["mark_ts"],
+                        index=item["idxPx"],
+                        index_ts=item["ts"],
+                    )
+            elif channel == "liquidation-orders":
+                for detail in item.get("details", []):
+                    await save_liquidation(self, instrument, detail)
+    elif key.startswith("bybit"):
+        topic = raw.get("topic", "")
+        if topic.startswith("publicTrade."):
+            for item in data:
+                if raw.get("cs") is not None:
+                    item = dict(item, _stream_sequence=raw["cs"])
+                await self.ingest_trade(instrument, item)
+        elif topic.startswith("orderbook."):
+            if raw.get("type") == "snapshot" or data.get("u") == 1:
+                book.snapshot(data["b"], data["a"], sequence=data["u"], ts=raw.get("cts", raw.get("ts")))
+            else:
+                book.update(data["b"], data["a"], sequence=data["u"], ts=raw.get("cts", raw.get("ts")))
+            await self._save_book(instrument)
+        elif topic.startswith("allLiquidation."):
+            for item in data:
+                await save_liquidation(self, instrument, item)
+        elif topic.startswith("tickers."):
+            context = self._ticker_contexts.setdefault(iid, {})
+            if raw.get("type") == "snapshot":
+                context.clear()
+            context.update(data)
+            if (data.get("markPrice") or data.get("indexPrice")) and context.get("markPrice") is not None:
+                await save_mark(
+                    self,
+                    instrument,
+                    context["markPrice"],
+                    raw["ts"],
+                    index=context.get("indexPrice"),
+                    index_ts=raw["ts"],
+                )
+            if data.get("fundingRate") and instrument.get("funding_interval_h"):
+                await save_funding(
+                    self, instrument, data, "CURRENT_ESTIMATE", instrument["funding_interval_h"]
+                )
+    elif key.startswith("kraken"):
+        channel = raw.get("channel")
+        for item in data if isinstance(data, list) else []:
+            if channel == "trade":
+                await self.ingest_trade(instrument, item)
+            elif channel == "book":
+                if raw.get("type") == "snapshot":
+                    book.snapshot(
+                        item["bids"],
+                        item["asks"],
+                        sequence=0,
+                        ts=item.get("timestamp"),
+                        checksum=item.get("checksum"),
+                    )
+                else:
+                    book.update(
+                        item.get("bids", []),
+                        item.get("asks", []),
+                        sequence=int(book.sequence) + 1,
+                        ts=item["timestamp"],
+                        checksum=item.get("checksum"),
+                    )
+                # Kraken depth is maintained at subscribed depth before checksum.
+                await self._save_book(instrument)
+    else:
+        channel = raw.get("channel")
+        if channel == "trades":
+            for item in data:
+                await self.ingest_trade(instrument, item)
+        elif channel == "l2Book":
+            bids, asks = data["levels"]
+            book.snapshot(
+                [[r["px"], r["sz"]] for r in bids],
+                [[r["px"], r["sz"]] for r in asks],
+                sequence=data["time"],
+                ts=data["time"],
+            )
+            await self._save_book(instrument)
+        elif channel == "activeAssetCtx":
+            ctx = data["ctx"]
+            await self._verify_semantic(instrument, self._oi_key(instrument, ctx), ctx)
+            row = oi(instrument, ctx)
+            await self._put("mkt.oi_obs", iid + ":" + row["metric_key"] + ":" + row["ts"], row)
+            await save_funding(self, instrument, ctx, "CURRENT_ESTIMATE", "1")
+            await save_mark(self, instrument, ctx["markPx"], iso(), index=ctx.get("oraclePx"), index_ts=iso())
+
+    record_stream_watermark(self, instrument, raw)
+
+
+def record_stream_watermark(self, instrument, raw):
+    """Track observed publicsocket progress, never nextfunding/event timestamps."""
+    key = venue_key(instrument)
+    data = raw.get("data", raw)
+    stamps = []
+    if key.startswith("binance"):
+        stamp = data.get("E")
+        if stamp is not None:
+            stamps.append(stamp)
+    elif key.startswith("bybit"):
+        stamp = raw.get("cts", raw.get("ts"))
+        if stamp is not None:
+            stamps.append(stamp)
+    elif key.startswith("okx"):
+        for item in data if isinstance(data, list) else []:
+            if item.get("ts") is not None:
+                stamps.append(item["ts"])
+            for detail in item.get("details", []):
+                if detail.get("ts") is not None:
+                    stamps.append(detail["ts"])
+    elif key.startswith("coinbase"):
+        if raw.get("time"):
+            stamps.append(raw["time"])
+    elif key.startswith("kraken"):
+        stamps.extend(
+            r["timestamp"] for r in data if isinstance(r, dict) and r.get("timestamp")
+        ) if isinstance(data, list) else None
+    elif isinstance(data, dict):
+        if data.get("time") is not None:
+            stamps.append(data["time"])
+    elif isinstance(data, list):
+        stamps.extend(r["time"] for r in data if r.get("time") is not None)
+    if not stamps:
+        return
+    stamp = max(parse_time(t) for t in stamps)
+    iid = instrument["instrument_id"]
+    previous = self._stream_watermarks.get(iid)
+    if previous is None or stamp >= parse_time(previous["ts"]):
+        self._stream_watermarks[iid] = {
+            "ts": iso(stamp),
+            "received_ts": iso(),
+            "source": "OBSERVED_SHARED_PUBLIC_SOCKET_EXCHANGE_TIME",
+        }
+
+
+def endpoint_key(instrument):
+    return connection(instrument)[0].split("?", 1)[0]
+
+
+def subscription_messages(instruments, *, subscribe=True):
+    if not instruments:
+        return []
+    venue = venue_key(instruments[0])
+    action = "subscribe" if subscribe else "unsubscribe"
+    if venue.startswith("binance"):
+        channels = []
+        for instrument in instruments:
+            channels.extend(connection(instrument)[0].split("?streams=", 1)[1].split("/"))
+        return [{"method": action.upper(), "params": sorted(set(channels)), "id": 1}]
+    messages = []
+    for instrument in instruments:
+        _, items = connection(instrument)
+        for item in items:
+            item = dict(item)
+            if "op" in item:
+                item["op"] = action
+            elif "method" in item:
+                item["method"] = action
+            elif "type" in item:
+                item["type"] = action
+            # OKX liquidation-orders is global and subscribed once per connection.
+            if venue.startswith("okx"):
+                item["args"] = [a for a in item["args"] if a["channel"] != "liquidation-orders"]
+            messages.append(item)
+    if venue.startswith(("okx", "bybit")):
+        args = {json.dumps(arg, sort_keys=True): arg for item in messages for arg in item["args"]}
+        return [{"op": action, "args": list(args.values())}] if args else []
+    if venue.startswith("coinbase"):
+        return [
+            {
+                "type": action,
+                "product_ids": [i["venue_symbol"] for i in instruments],
+                "channels": ["matches", "level2_batch", "heartbeat"],
+            }
+        ]
+    if venue.startswith("kraken"):
+        symbols = [i.get("ws_symbol", i["venue_symbol"].replace("XBT", "BTC")) for i in instruments]
+        return [{"method": action, "params": dict(item["params"], symbol=symbols)} for item in messages[:2]]
+    return messages
+
+
+def route_frame(instruments, raw):
+    """Route only exact product identities; split multi-product data arrays."""
+    for instrument in instruments:
+        key = venue_key(instrument)
+        symbol = instrument["venue_symbol"]
+        data = raw.get("data", raw)
+        if key.startswith("binance"):
+            if data.get("s", data.get("o", {}).get("s")) == symbol:
+                yield instrument, raw
+        elif key.startswith("coinbase"):
+            if raw.get("product_id") == symbol:
+                yield instrument, raw
+        elif key.startswith("bybit"):
+            if raw.get("topic", "").endswith("." + symbol):
+                yield instrument, raw
+        elif key.startswith("okx"):
+            rows = (
+                [r for r in data if r.get("instId", raw.get("arg", {}).get("instId")) == symbol]
+                if isinstance(data, list)
+                else []
+            )
+            if rows:
+                yield instrument, dict(raw, data=rows)
+        elif key.startswith("kraken"):
+            ws_symbol = instrument.get("ws_symbol", symbol.replace("XBT", "BTC"))
+            rows = [r for r in data if r.get("symbol") == ws_symbol] if isinstance(data, list) else []
+            if rows:
+                yield instrument, dict(raw, data=rows)
+        else:
+            if isinstance(data, list):
+                rows = [r for r in data if r.get("coin") == symbol]
+                if rows:
+                    yield instrument, dict(raw, data=rows)
+            elif isinstance(data, dict) and data.get("coin") == symbol:
+                yield instrument, raw
+
+
+async def prepare_member(self, instrument):
+    iid = instrument["instrument_id"]
+    key = venue_key(instrument)
+    if iid not in self._metadata:
+        await self.discover(instrument)
+    book = OrderBook(instrument)
+    self.books[iid] = book
+    self._book_initial_bridge[iid] = True
+    if key.startswith("binance"):
+        root = "https://api.binance.com" if key.endswith("spot") else "https://fapi.binance.com"
+        path = "/api/v3/depth" if key.endswith("spot") else "/fapi/v1/depth"
+        snap = await self._request(
+            "GET", root + path, params={"symbol": instrument["venue_symbol"], "limit": 1000}
+        )
+        await self._raw(instrument, "book_snapshot", snap)
+        book.snapshot(snap["bids"], snap["asks"], sequence=snap["lastUpdateId"], ts=snap.get("E", iso()))
+    self._connected_since[iid] = utcnow()
+    previous = await self.repo.get("mkt.capture_state", iid)
+    if previous:
+        await self._gap(
+            instrument, "RECONNECT", "REST reconciliation pending", start=previous["last_ts"], end=iso()
+        )
+    # First escalation also needs the post-event interval before socket establishment.
+    task = asyncio.create_task(self.backfill(instrument, iso(), checkpoint=previous))
+    self._background.add(task)
+    task.add_done_callback(self._background.discard)
+
+
+async def stream_group_loop(self, endpoint):
+    import websockets
+
+    retry = 1
+    control = self._stream_controls[endpoint]
+    while self._stop is not None and not self._stop.is_set() and self._stream_groups.get(endpoint):
+        opened = utcnow()
+        last_observed = opened
+        active = set()
+        preparing = {}
+        pending = {}
+        recv = None
+        change = None
+        stop_task = None
+        try:
+            url = endpoint
+            async with websockets.connect(
+                url,
+                ping_interval=STREAM_PING_INTERVAL_S,
+                ping_timeout=STREAM_PING_TIMEOUT_S,
+                max_queue=256,
+                max_size=32 * 1024 * 1024,
+                close_timeout=5,
+            ) as socket:
+                global_liqs = False
+
+                async def membership(desired, active=active, preparing=preparing, pending=pending):
+                    nonlocal global_liqs
+                    removed = active - set(desired)
+                    added = set(desired) - active
+                    for message in subscription_messages(
+                        [self.instruments[i] for i in removed], subscribe=False
+                    ):
+                        await socket.send(json.dumps(message))
+                    for iid in removed:
+                        if iid in preparing:
+                            old_task = preparing.pop(iid)
+                            old_task.cancel()
+                            await asyncio.gather(old_task, return_exceptions=True)
+                        self._connected_since.pop(iid, None)
+                        self._stream_watermarks.pop(iid, None)
+                        pending.pop(iid, None)
+                        self.books.pop(iid, None)
+                    for message in subscription_messages([self.instruments[i] for i in added]):
+                        await socket.send(json.dumps(message))
+                    for iid in added:
+                        pending[iid] = []
+                        preparing[iid] = asyncio.create_task(prepare_member(self, self.instruments[iid]))
+                    active.difference_update(removed)
+                    active.update(added)
+                    want_liqs = endpoint.startswith("wss://ws.okx.com/") and any(
+                        venue_key(self.instruments[i]) == "okx.swap" for i in active
+                    )
+                    if want_liqs != global_liqs:
+                        await socket.send(
+                            json.dumps(
+                                {
+                                    "op": "subscribe" if want_liqs else "unsubscribe",
+                                    "args": [{"channel": "liquidation-orders", "instType": "SWAP"}],
+                                }
+                            )
+                        )
+                        global_liqs = want_liqs
+
+                async def reset_member(iid, reason, preparing=preparing, pending=pending, opened=opened):
+                    inst = self.instruments[iid]
+                    since = self._connected_since.pop(iid, None) or opened
+                    await self.mark_capture_gap(inst, since, iso(), "STREAM_MEMBER_GAP: " + str(reason))
+                    old = preparing.pop(iid, None)
+                    if old is not None:
+                        old.cancel()
+                        await asyncio.gather(old, return_exceptions=True)
+                    for message in subscription_messages([inst], subscribe=False):
+                        await socket.send(json.dumps(message))
+                    for message in subscription_messages([inst]):
+                        await socket.send(json.dumps(message))
+                    pending[iid] = []
+
+                    async def delayed_prepare():
+                        await asyncio.sleep(1)
+                        await prepare_member(self, inst)
+
+                    preparing[iid] = asyncio.create_task(delayed_prepare())
+
+                await membership(self._stream_groups[endpoint])
+                retry = 1
+                stop_task = asyncio.create_task(self._stop.wait())
+                last_message = time.monotonic()
+                while active and not self._stop.is_set():
+                    if time.monotonic() - last_message > float(self.thresholds.get("quiet_socket_s", 30)):
+                        raise TimeoutError("NO_MESSAGE_FOR_30_SECONDS")
+                    for iid, task in list(preparing.items()):
+                        if task.done():
+                            preparing.pop(iid)
+                            try:
+                                task.result()
+                                for queued in pending.pop(iid, []):
+                                    await process_frame(self, self.instruments[iid], queued)
+                            except Exception as exc:  # noqa: BLE001 - isolate one instrument's metadata/book failure
+                                await reset_member(iid, exc)
+                    if recv is None:
+                        recv = asyncio.create_task(socket.recv())
+                    if change is None:
+                        change = asyncio.create_task(control.get())
+                    done, _ = await asyncio.wait(
+                        [recv, change, stop_task], timeout=0.1, return_when=asyncio.FIRST_COMPLETED
+                    )
+                    if stop_task in done:
+                        break
+                    if change in done:
+                        desired = change.result()
+                        change = None
+                        await membership(desired)
+                    if recv in done:
+                        frame = recv.result()
+                        last_message = time.monotonic()
+                        last_observed = utcnow()
+                        recv = None
+                        if frame == "pong":
+                            continue
+                        raw = json.loads(frame, parse_float=Decimal)
+                        if (
+                            raw.get("event") == "error"
+                            or raw.get("success") is False
+                            or raw.get("type") == "error"
+                        ):
+                            raise SemanticError("subscription rejected " + str(raw))
+                        for instrument, payload in route_frame([self.instruments[i] for i in active], raw):
+                            iid = instrument["instrument_id"]
+                            await self._raw(instrument, "websocket", raw)
+                            if iid in preparing:
+                                pending[iid].append(payload)
+                                if len(pending[iid]) > 1024:
+                                    await reset_member(iid, "initial book buffer exhausted")
+                            else:
+                                try:
+                                    await process_frame(self, instrument, payload)
+                                except Exception as exc:  # noqa: BLE001 - bad product book must not disconnect unrelated products
+                                    await reset_member(iid, exc)
+                    await self._flush_flow()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - one connection failure preserves per-member gaps and reconnects
+            for iid in active:
+                await self.mark_capture_gap(
+                    self.instruments[iid], last_observed, iso(), "STREAM_DISCONNECTED: " + str(exc)
+                )
+        finally:
+            for task in [*preparing.values(), recv, change, stop_task]:
+                if task is not None:
+                    task.cancel()
+            await asyncio.gather(
+                *(t for t in [*preparing.values(), recv, change, stop_task] if t is not None),
+                return_exceptions=True,
+            )
+            for iid in active:
+                self._connected_since.pop(iid, None)
+        if self._stop is not None:
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=retry)
+            except TimeoutError:
+                pass
+        retry = min(retry * 2, 60)
+
+
+async def save_liquidation(self, instrument, raw):
+    row = liquidation(instrument, raw)
+    await self._verify_semantic(instrument, venue_key(instrument) + ".liquidations", raw)
+    await self._put("mkt.liq_obs", instrument["instrument_id"] + ":" + sha256(row), row)
+
+
+async def save_mark(self, instrument, price, ts, *, index=None, index_ts=None, source="WEBSOCKET"):
+    await self._verify_semantic(
+        instrument, venue_key(instrument) + ".reference_price", {"price": str(price), "ts": iso(ts)}
+    )
+    iid = instrument["instrument_id"]
+    context = self._price_contexts.setdefault(iid, {})
+    context.update(mark_price=str(price), mark_ts=iso(ts))
+    if index is not None:
+        context.update(index_price=str(index), index_ts=iso(index_ts or ts))
+    aligned = (
+        context.get("index_price") is not None
+        and abs((parse_time(context["index_ts"]) - parse_time(ts)).total_seconds()) <= 60
+    )
+    observed = max(parse_time(ts), parse_time(context["index_ts"])) if aligned else parse_time(ts)
+    row = {
+        "instrument_id": iid,
+        "token_id": instrument["token_id"],
+        "ts": iso(observed),
+        "received_ts": iso(),
+        "kind": "MARK_PRICE",
+        "mark_price": str(price),
+        "mark_as_of": iso(ts),
+        "index_price": context["index_price"] if aligned else None,
+        "index_as_of": context.get("index_ts") if aligned else None,
+        "index_reason": None if aligned else "ALIGNED_INDEX_PRICE_UNAVAILABLE",
+        "capture_source": source,
+        "quote_asset": instrument.get("quote_asset"),
+    }
+    await self._put("mkt.tickers_24h", iid + ":mark:" + row["ts"], row)
+
+
+async def save_funding(self, instrument, raw, kind, interval):
+    await self._funding(instrument, raw, kind, interval, source="WEBSOCKET")

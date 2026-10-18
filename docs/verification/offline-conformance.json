@@ -1,0 +1,67 @@
+{
+  "recorded_at": "2026-10-17T19:22:18.851798+00:00",
+  "conclusion": "OFFLINE_IMPLEMENTATION_AND_VALIDATION_COMPLETE_FOR_CURRENT_REVIEWED_SCOPE",
+  "meaning": "All47currentPRDFRs mapped; all144externalfindings dispositioned; identified implementation defects and offlinevalidation gaps repaired and tested. This is maximum available current offline evidence, not a guarantee or production/live acceptance.",
+  "known_remaining_implementation_gaps": [],
+  "known_remaining_offline_validation_gaps": [],
+  "specification_ambiguities": [
+    {
+      "id": "AGT-24",
+      "description": "FAILED omitted by lifecycle enum but explicitly required by failure prose; implementation follows failure prose."
+    }
+  ],
+  "final_suite": {
+    "report": "docs/verification/final-suite.json",
+    "junit": "docs/verification/tests.xml",
+    "counts": {
+      "tests": 671,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 6,
+      "passed": 665
+    },
+    "pytest_duration_seconds": 95.45,
+    "junit_sha256": "1dc6dd38fc90ab06580327345f5f17d77f8d90bb740fc861a89cbcc84eb69d79",
+    "current_suite_source_hashes_independently_rechecked": true,
+    "source_tree_sha256": "b024a85fd1b4344c251705aa1c75d4d307b1d5c201ee2e622824d5b52f369693",
+    "skips": "Six intentional Memory-only cases; real PG replacements ran."
+  },
+  "final_tank_image": {
+    "image_id": "sha256:03b3631a45f800d879935a622a13481ae4e30a9c1df62a63ed975cec34b5e91c",
+    "platform": "linux/arm64",
+    "package_files": 68,
+    "package_sha256": "1bccfbf35246d714a7e6216515504c7af6d204ad93cfcc91b0b6416b47fb851d",
+    "independent_verification": "Actual isolated network-none docker run hashes equal currentworkspace;25deployfiles ownerverified;uvlockimage/workspace match."
+  },
+  "build_static": "Root final wheel+sdist, diffcheck, all94formatted, selectedRuffE4/E7/E9/F/I passed; unrestrictedRuffclean is not claimed.",
+  "separate_acceptance_gates": [
+    "Actual LinuxKVM microVM boot/browser/internalPG connectivity/replaynetwork isolation",
+    "RealChatGPTsubscriptionOAuth/refresh/modeltoolflow and judged outputquality",
+    "RealJevaccount/calibration200labeleditems and lowestpassingeffort/DBlimits",
+    "Authenticated86accountX ownership/coverage",
+    "Telegramdelivery onlyafteruserauthorizesthatstage",
+    "All27completecapturedhistoricalpackets andactualfixtureoutputs",
+    "72hourpathcoverage/failure/latency gates",
+    "14daydailyreview/missaudits/S1-S9 gates"
+  ],
+  "secret_boundary": "No realcredentials mounted in auditDocker checks; no externalmessages sent. Rootlocalignored0600.envcanonicalization is not authenticatedintegrationacceptance.",
+  "evidence": [
+    "docs/verification/external-audit-disposition.json",
+    "docs/verification/requirements-delta.json",
+    "docs/verification/spec-audit-core.json",
+    "docs/verification/audit-current-code-manifest.json",
+    "docs/verification/spec-audit-market.json",
+    "docs/verification/docker-offline.json",
+    "docs/RECOVERY_VERIFICATION.json"
+  ],
+  "final_artifact_integrity": {
+    "versionable_JSON_files_parsed": 68,
+    "external_unique_findings": 144,
+    "current_PRD_FRs": 47,
+    "suite_source_hashes_match_current": true,
+    "audit_manifest_hashes_match_current": true,
+    "authority_hashes_match_current": true,
+    "junit_sha256": "1dc6dd38fc90ab06580327345f5f17d77f8d90bb740fc861a89cbcc84eb69d79"
+  },
+  "cleanup": "OnlyownedprobeDockerproject containers/6volumes/network/syntheticsecrets removed; rootownedlocalPG stoppedcleanly; images+OCI/evidence retained. Noexternalmessages sent."
+}

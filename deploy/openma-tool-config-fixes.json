@@ -1,0 +1,72 @@
+[
+  {
+    "path": "packages/managed-agents-api/src/contracts/agent-input-components.ts",
+    "sha256": "fd0e517cdbfc6e1f054af6a5ab99b248a4d14df07ec84e3ac1e1c13976d48b8f",
+    "old": "\"bash\" | \"edit\" | \"read\" | \"write\" | \"glob\" | \"grep\"",
+    "new": "\"bash\" | \"edit\" | \"read\" | \"write\" | \"glob\" | \"grep\" | \"browser\" | \"schedule\" | \"cancel_schedule\" | \"list_schedules\"",
+    "count": 1
+  },
+  {
+    "path": "packages/managed-agents-api/src/contracts/agent-input-components.ts",
+    "sha256": "fd0e517cdbfc6e1f054af6a5ab99b248a4d14df07ec84e3ac1e1c13976d48b8f",
+    "old": "  simpleToolConfigInputSchema(\"grep\"),",
+    "new": "  simpleToolConfigInputSchema(\"grep\"),\n  simpleToolConfigInputSchema(\"browser\"),\n  simpleToolConfigInputSchema(\"schedule\"),\n  simpleToolConfigInputSchema(\"cancel_schedule\"),\n  simpleToolConfigInputSchema(\"list_schedules\"),",
+    "count": 1
+  },
+  {
+    "path": "packages/managed-agents-api/src/contracts/agent-response-components.ts",
+    "sha256": "ae31b0aaa81f325f6d0443b85f84c539ca42622b1345f431b1f43b197c5c4388",
+    "old": "\"bash\" | \"edit\" | \"read\" | \"write\" | \"glob\" | \"grep\"",
+    "new": "\"bash\" | \"edit\" | \"read\" | \"write\" | \"glob\" | \"grep\" | \"browser\" | \"schedule\" | \"cancel_schedule\" | \"list_schedules\"",
+    "count": 1
+  },
+  {
+    "path": "packages/managed-agents-api/src/contracts/agent-response-components.ts",
+    "sha256": "ae31b0aaa81f325f6d0443b85f84c539ca42622b1345f431b1f43b197c5c4388",
+    "old": "  resolvedSimpleToolSchema(\"grep\"),",
+    "new": "  resolvedSimpleToolSchema(\"grep\"),\n  resolvedSimpleToolSchema(\"browser\"),\n  resolvedSimpleToolSchema(\"schedule\"),\n  resolvedSimpleToolSchema(\"cancel_schedule\"),\n  resolvedSimpleToolSchema(\"list_schedules\"),",
+    "count": 1
+  },
+  {
+    "path": "packages/managed-agents-domain/src/agents/definition.ts",
+    "sha256": "005d3866b816197efe251ef8b41f5d0ab3c7c51081dd47675a868d96d0f18726",
+    "old": "  | AgentSimpleToolConfigInput<\"grep\">",
+    "new": "  | AgentSimpleToolConfigInput<\"grep\">\n  | AgentSimpleToolConfigInput<\"browser\">\n  | AgentSimpleToolConfigInput<\"schedule\">\n  | AgentSimpleToolConfigInput<\"cancel_schedule\">\n  | AgentSimpleToolConfigInput<\"list_schedules\">",
+    "count": 1
+  },
+  {
+    "path": "packages/managed-agents-domain/src/agents/definition.ts",
+    "sha256": "005d3866b816197efe251ef8b41f5d0ab3c7c51081dd47675a868d96d0f18726",
+    "old": "  | AgentSimpleToolConfig<\"grep\">",
+    "new": "  | AgentSimpleToolConfig<\"grep\">\n  | AgentSimpleToolConfig<\"browser\">\n  | AgentSimpleToolConfig<\"schedule\">\n  | AgentSimpleToolConfig<\"cancel_schedule\">\n  | AgentSimpleToolConfig<\"list_schedules\">",
+    "count": 1
+  },
+  {
+    "path": "packages/managed-agents-application/src/agents/definition-resolution.ts",
+    "sha256": "3d74b9bbd25502ea7998f59d4375bc533527dcce37fde6cc10e6b8bcb891ec64",
+    "old": "    case \"grep\":\n      return { ...common, name: input.name, type: input.name };",
+    "new": "    case \"browser\":\n    case \"schedule\":\n    case \"cancel_schedule\":\n    case \"list_schedules\":\n    case \"grep\":\n      return { ...common, name: input.name, type: input.name };",
+    "count": 1
+  },
+  {
+    "path": "packages/managed-agents-api/src/mappers/agent-definition.ts",
+    "sha256": "2dbcd6f11e016d1d17ca40c43949bda9bda63369d8feaf2b7c4197cb7867123b",
+    "old": "    case \"grep\":\n      return {\n        ...common,\n        name: config.name,\n        ...(config.type !== undefined && { type: config.type }),\n      };",
+    "new": "    case \"browser\":\n    case \"schedule\":\n    case \"cancel_schedule\":\n    case \"list_schedules\":\n    case \"grep\":\n      return {\n        ...common,\n        name: config.name,\n        ...(config.type !== undefined && { type: config.type }),\n      };",
+    "count": 1
+  },
+  {
+    "path": "packages/managed-agents-api/src/contracts/agents.ts",
+    "sha256": "7725cfd0b0a12ae04e7518a90dd86422d26004ac003e9d8437b1526992086a7a",
+    "old": "export type AgentCreateBody = Omit<OfficialAgentCreateBody, \"model\" | \"mcp_servers\"> & {",
+    "new": "export type AgentCreateBody = Omit<OfficialAgentCreateBody, \"model\" | \"mcp_servers\" | \"tools\"> & {\n  tools?: z.infer<typeof agentToolInputSchema>[];",
+    "count": 1
+  },
+  {
+    "path": "packages/managed-agents-api/src/contracts/agents.ts",
+    "sha256": "7725cfd0b0a12ae04e7518a90dd86422d26004ac003e9d8437b1526992086a7a",
+    "old": "export type AgentUpdateBody = Omit<OfficialAgentUpdateBody, \"model\" | \"mcp_servers\"> & {",
+    "new": "export type AgentUpdateBody = Omit<OfficialAgentUpdateBody, \"model\" | \"mcp_servers\" | \"tools\"> & {\n  tools?: z.infer<typeof agentToolInputSchema>[] | null;",
+    "count": 1
+  }
+]

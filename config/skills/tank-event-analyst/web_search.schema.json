@@ -10,5 +10,6 @@
   },
   "required": [
     "query"
-  ]
+  ],
+  "description": "DuckDuckGo text search through the ddgs library (02 \u00a79): 10 results, DuckDuckGo only; results stored as evidence. Returns: Titles, URLs and snippets."
 }

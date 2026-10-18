@@ -1,0 +1,188 @@
+{
+  "recorded_at": "2026-10-17T17:43:18.848920Z",
+  "scope": "Read-only public BTC REST samples and WebSocket subscriptions; no external messages or orders. Does not establish 72h/14d unattended acceptance.",
+  "rest_adapter_self_tests": [
+    {
+      "path": "binance.spot",
+      "status": "PASS",
+      "assertions": [
+        "live instrument metadata discovered",
+        "required trade fields normalize without synthetic values",
+        "at least two distinct trade IDs",
+        "documented native quantity and aggressor field mapping"
+      ]
+    },
+    {
+      "path": "binance.usdm",
+      "status": "PASS",
+      "assertions": [
+        "live instrument metadata discovered",
+        "required trade fields normalize without synthetic values",
+        "at least two distinct trade IDs",
+        "documented native quantity and aggressor field mapping"
+      ]
+    },
+    {
+      "path": "coinbase.spot",
+      "status": "PASS",
+      "assertions": [
+        "live instrument metadata discovered",
+        "required trade fields normalize without synthetic values",
+        "at least two distinct trade IDs",
+        "documented native quantity and aggressor field mapping"
+      ]
+    },
+    {
+      "path": "okx.spot",
+      "status": "PASS",
+      "assertions": [
+        "live instrument metadata discovered",
+        "required trade fields normalize without synthetic values",
+        "at least two distinct trade IDs",
+        "documented native quantity and aggressor field mapping"
+      ]
+    },
+    {
+      "path": "okx.swap",
+      "status": "PASS",
+      "assertions": [
+        "live instrument metadata discovered",
+        "required trade fields normalize without synthetic values",
+        "at least two distinct trade IDs",
+        "documented native quantity and aggressor field mapping"
+      ]
+    },
+    {
+      "path": "bybit.spot",
+      "status": "PASS",
+      "assertions": [
+        "live instrument metadata discovered",
+        "required trade fields normalize without synthetic values",
+        "at least two distinct trade IDs",
+        "documented native quantity and aggressor field mapping"
+      ]
+    },
+    {
+      "path": "bybit.linear",
+      "status": "PASS",
+      "assertions": [
+        "live instrument metadata discovered",
+        "required trade fields normalize without synthetic values",
+        "at least two distinct trade IDs",
+        "documented native quantity and aggressor field mapping"
+      ]
+    },
+    {
+      "path": "kraken.spot",
+      "status": "PASS",
+      "assertions": [
+        "live instrument metadata discovered",
+        "required trade fields normalize without synthetic values",
+        "at least two distinct trade IDs",
+        "documented native quantity and aggressor field mapping"
+      ]
+    },
+    {
+      "path": "hyperliquid.perp",
+      "status": "PASS",
+      "assertions": [
+        "live instrument metadata discovered",
+        "required trade fields normalize without synthetic values",
+        "at least two distinct trade IDs",
+        "documented native quantity and aggressor field mapping"
+      ]
+    }
+  ],
+  "derivative_public_samples": [
+    {
+      "path": "binance.usdm",
+      "status": "PASS",
+      "observed_native_oi": "94272.373",
+      "observed_funding_interval_h": "8",
+      "settled_rows": 500
+    },
+    {
+      "path": "okx.swap",
+      "status": "PASS",
+      "observed_native_oi": "30658.2959000000914",
+      "observed_funding_interval_h": "8",
+      "settled_rows": 100
+    },
+    {
+      "path": "bybit.linear",
+      "status": "PASS",
+      "observed_native_oi": "29657.941",
+      "observed_funding_interval_h": "8",
+      "settled_rows": 200
+    },
+    {
+      "path": "hyperliquid.perp",
+      "status": "PASS",
+      "observed_native_oi": "40924.6585399999",
+      "observed_funding_interval_h": "1",
+      "settled_rows": 168
+    }
+  ],
+  "websocket_checks_file": "market-ws-smoke.json",
+  "implementation_deviations": [
+    {
+      "venue": "okx",
+      "source_spec": "02 \u00a74.4 and03 \u00a72.10/5.5 describe CRC32 on books",
+      "official_source": "https://www.okx.com/docs-v5/log_en/#2026-06-23",
+      "official_effective_date": "2026-06-23",
+      "observed_contract": "checksum remains present but fixed0; seqId/prevSeqId are the current integrity mechanism",
+      "implementation": "A0 checksum is not accepted as a computed CRC. Current streams explicitly label SEQ_ID_PREV_SEQ_ID_CHECKSUM_DEPRECATED_20260623; seq gaps fail integrity and reconnect; valid documented sequence resets are accepted only when prevSeqId links to current state. Nonzero legacy CRCs are checked.",
+      "regression_test": "tests/test_market_normalize.py::test_current_okx_zero_checksum_uses_sequences_and_handles_sequence_reset"
+    },
+    {
+      "venue": "okx",
+      "source_spec": "02 \u00a74.4 uses :8443",
+      "official_source": "https://www.okx.com/docs-v5/log_en/#upcoming-changes",
+      "official_last_update": "2026-10-16",
+      "official_public_cutoff": "2026-10-31",
+      "implementation": "Use wss://ws.okx.com/ws/v5/public on443 now; port443 already works.",
+      "live_websocket_status": "PASS"
+    },
+    {
+      "venue": "kraken",
+      "source_spec": "Registry carries WS-style pair XBT/USD",
+      "official_source": "https://docs.kraken.com/api/docs/rest-api/get-tradable-asset-pairs/",
+      "initial_sample_error": "EQuery:Unknown asset pair for XBT/USD",
+      "implementation": "Serialize slashless REST pair XBTUSD, retain BTC/USD WSv2 symbol resolved from live AssetPairs metadata.",
+      "live_rest_and_websocket_status": "PASS"
+    },
+    {
+      "venue": "coinbase",
+      "observed_contract": "BTC level2 snapshot exceeded default WebSocket1MiB frame limit; actual successful sample1,074,592bytes with20,532bids/20,346asks",
+      "implementation": "Explicit32MiB frame limit and bounded256message queue.",
+      "live_websocket_status": "PASS"
+    }
+  ],
+  "tests": {
+    "command": ".venv/bin/pytest -q tests/test_market*.py",
+    "passed": 52,
+    "lint": ".venv/bin/ruff check src/tank/market tests/test_market*.py: PASS",
+    "producer_truth_freshness_regression": "tests/test_market_service.py::test_actual_producer_tier_metadata_controls_90second_oi_and_funding_freshness",
+    "liquidation_socket_coverage_regression": "tests/test_market_service.py::test_liquidation_coverage_uses_processed_socket_watermark_not_last_liquidation_or_future_funding"
+  },
+  "limitations": [
+    "Credentials still required for Etherscan inventory. Native and non-EVM unsupported inventories remain explicit.",
+    "Historical USD values require synchronized mark and observed quote/USD rate, or provider-reported historical USD; no current-mark multiplication across old OI.",
+    "Historical backfill and90day archive bootstrap progress require production database and elapsed network/runtime; missing windows remain explicit.",
+    "Capture tests and publicsmokes do not establish unattended72h/14d acceptance, calibratedmodelcutoffs, fullhistoricalbootstrap completion, orproductionthroughput."
+  ],
+  "websocket_multiplex_checks_file": "market-ws-multiplex-smoke.json",
+  "postgres_checks_file": "market-pg-smoke.json",
+  "capture_architecture": {
+    "public_endpoint_connections": 8,
+    "logical_venue_market_paths": 9,
+    "multiplexing": "Incremental subscribe/unsubscribe by hot membership; OKXspot/swap share endpoint; per-member book repair and REST backfill do not block shared readers.",
+    "semantic_proof_scope": "Perinstrument/metric inqa.reviews; no BTC-to-othercontract certification.",
+    "capture_prerequisite": "Durable mkt.backfill_runs PENDING/RUNNING/COMPLETE/PARTIAL/FAILED, actual1h/4h/24h window counts. Snapshot exposesbounded incomplete status. Completion uses existing RUN_MARKET_TRUTH and EVAL_CONDITIONS pathways.",
+    "fractional_boundaries": "Actual normalized raw prints bounded bymetric time; exhaustiveREST range continuity proofs retain perminute expectedcounts; completebars/streamwatermarks additionally require raw enumeration counts. Missing/purged raw boundary prints remain INCOMPLETE.",
+    "market_cutoff": "Semantic event/observation timestamps; receipt latency separate. assembled_at freezesactual availability. Exact reference uses real lasttrade beforeanchor via indexedlatest_before; no candle anchor substitute.",
+    "native_precision": "Task-local Decimal100digits; Fractionregression rejectsdefault28digit product/squared-size rounding.",
+    "normal_history": "Indexed90dayrange reads and newest-first Binance90day archive bootstrap; unavailable histories explicit.",
+    "freshness_metadata": "Snapshottier comes from persistedhotmembership; OI/funding60s HOT vs300s BASE use same configurable periods as loops, and supplykindperiods sharepollerimplementation. Liquidation freshness uses actuallyobserved socketexchange-time coverage with actualconnectedstart and20s configuredsockethealthinterval, separatelypublished feedpushperiods. No fabricatedevent/watermark; historicalcutoffs predatingconnection lackcoverage."
+  }
+}

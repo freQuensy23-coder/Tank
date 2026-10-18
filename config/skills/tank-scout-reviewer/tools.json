@@ -1,7 +1,7 @@
 [
   {
     "name": "search_tank_items",
-    "description": "Tank search tank items",
+    "description": "Full-text search over everything collected (\u2264 90 days, \u2264 20 hits). Returns: Hits with item ids.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -28,7 +28,7 @@
   },
   {
     "name": "web_search",
-    "description": "Tank web search",
+    "description": "DuckDuckGo text search through the ddgs library (02 \u00a79): 10 results, DuckDuckGo only; results stored as evidence. Returns: Titles, URLs and snippets.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -44,8 +44,10 @@
   },
   {
     "name": "record_review",
-    "description": "Tank record review",
+    "description": "Record this proposal session's final adversarial review: all four rubric scores, recommendation, cited evidence and reason; optionally merge a semantic duplicate into an existing open proposal. Returns the persisted review/proposal. This never approves production categories or expands the token universe.",
     "input_schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "record_review",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -63,13 +65,61 @@
           "items": {
             "type": "string"
           }
+        },
+        "scores": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "overlap": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 10
+            },
+            "observability": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 10
+            },
+            "reusability": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 10
+            },
+            "decision_value": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 10
+            }
+          },
+          "required": [
+            "overlap",
+            "observability",
+            "reusability",
+            "decision_value"
+          ]
+        },
+        "recommendation": {
+          "enum": [
+            "SUBCATEGORY",
+            "TEST_MORE",
+            "NEW_CATEGORY",
+            "REJECT"
+          ]
+        },
+        "duplicate_of": {
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "required": [
         "proposal_id",
         "verdict",
         "reason",
-        "evidence"
+        "evidence",
+        "scores",
+        "recommendation"
       ]
     }
   }

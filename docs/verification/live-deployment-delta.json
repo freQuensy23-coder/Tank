@@ -1,0 +1,108 @@
+{
+  "phase": "explicit-user-authorized-openrouter-jev-and-codex-subscription-2026-10-18",
+  "recorded_at": "2026-10-18T06:59:46.639162+00:00",
+  "status": "FINAL_LIVE_PHASE_IMAGES_ALIGNED_HOST_PROBES_LINKED_SYNTHETIC_STACK_CLEANED",
+  "historical_offline_evidence": [
+    "docker-offline.json",
+    "tank-image-source-alignment.json",
+    "sandbox-oci-artifact.json"
+  ],
+  "provider": {
+    "jev_provider": "openrouter",
+    "sdk": "typesafe-sdk==0.7.5",
+    "sdk_base_url": "https://openrouter.ai/api",
+    "endpoint": "/v1/systemone",
+    "request_model": "jev-1.13",
+    "allowed_resolved_model": "typesafe/jev-1.13-20260917",
+    "secret_file": "openrouter_api_key",
+    "analyst": "unchanged ChatGPT Codex subscription gateway",
+    "fallback": "none",
+    "direct_typesafe": "retained explicitly selected local alternative; not required by current Compose"
+  },
+  "sandbox_environment": {
+    "production": [
+      "TANK_DB_URL",
+      "OPENROUTER_API_KEY",
+      "TANK_JEV_PROVIDER=openrouter",
+      "ETHERSCAN_API_KEY"
+    ],
+    "replay": [
+      "TANK_DB_URL"
+    ],
+    "replay_has_provider_keys": false
+  },
+  "deployment_tests": {
+    "python_config_deploy_calibration": "33 passed after final OpenRouter calibration provenance fix",
+    "synthetic_entrypoint": "passed in built image; only OR/Etherscan selected and no TypeSafe/Codex auth reads",
+    "factory_tests": "17 passed in built OpenMA image, including OR selection/replay exclusion",
+    "browser_tests": "24 passed in built OpenMA image"
+  },
+  "host_live_probe_evidence": [
+    "live-openrouter-jev-2026-10-18.json",
+    "live-codex-gateway-2026-10-18.json",
+    "live-integrations-2026-10-18.json"
+  ],
+  "docker_credentials": "synthetic only; operator .env/auth never mounted or loaded for builds/tests",
+  "openma_upstream_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+  "overlay": "tank2-openrouter",
+  "image_tags": {
+    "tank": "tank-v0:openrouter-live",
+    "openma": "tank-openma:85d5361f535c7221de975838dc48444e468cc02e-tank2-openrouter"
+  },
+  "remaining_gates": [
+    "Linux KVM VM execution/network/checkpoint acceptance",
+    "Production Jev calibration using labeled source corpus",
+    "Authenticated host probe results are separate from fake-key Docker resource tests"
+  ],
+  "image_proof": "live-image-source-alignment-2026-10-18.json",
+  "control_plane_proof": "live-control-plane-2026-10-18.json",
+  "openma_image_verification": {
+    "status": "passed",
+    "verified_source_files": 30,
+    "entrypoint_sha256": "5321569bef23dba6eecb98c7dee5713b0ea331cae574e272d99c9c71b8c9492c",
+    "node": "v24.22.0",
+    "local_oci_loader": true,
+    "replay_role_separated": true,
+    "kvm": "UNVERIFIED"
+  },
+  "images": {
+    "tank-v0:openrouter-live": {
+      "id": "sha256:d591b9e137e3ddc806a934e204aa6d68895f397ca0a22c79ff5ea44ee06eaf95",
+      "platform": "linux/arm64"
+    },
+    "tank-openma:85d5361f535c7221de975838dc48444e468cc02e-tank2-openrouter": {
+      "id": "sha256:be93fba061f8b76a28f0d6c8134f554523b53e9720d139358df7bf4f609d2269",
+      "platform": "linux/arm64"
+    },
+    "tank-analysis:python3.12-local": {
+      "id": "sha256:31eb6e80fc7a4f3dacdb209fe5684033a61bc0bee8d4cda983e56ce6c8bc2eae",
+      "platform": "linux/arm64"
+    }
+  },
+  "sandbox_oci": "Existing verified OCI layout retained; worker/assets unchanged, see sandbox-oci-artifact.json and live-phase-artifact-cleanup.json",
+  "cleanup": {
+    "completed_at": "2026-10-18T07:04:34.219038+00:00",
+    "project": "tank-openrouter-20261018",
+    "remaining_project_resources": {
+      "containers": [],
+      "volumes": [],
+      "networks": []
+    },
+    "synthetic_secret_fixture_removed": true,
+    "images_and_retained_oci_layout_preserved": true,
+    "other_projects_and_root_native_postgres_untouched": true
+  },
+  "tank_image_provider_probe": {
+    "sdk": "0.7.5",
+    "provider": "openrouter",
+    "base_url": "https://openrouter.ai/api",
+    "request_model": "jev-1.13",
+    "resolved_models": [
+      "typesafe/jev-1.13-20260917"
+    ],
+    "image_dotenv_absent": true,
+    "image_provider_secret_absent": true,
+    "image_codex_auth_absent": true
+  },
+  "final_qa": "700 passed, 6 intentional Memory-only skips; all20 actual pinned OpenMA SQL/Node probes passed"
+}

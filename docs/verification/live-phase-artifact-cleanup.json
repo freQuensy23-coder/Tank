@@ -1,0 +1,10 @@
+{
+  "recorded_at": "2026-10-18T06:52:58.378706+00:00",
+  "removed_redundant_own_archive": "/tmp/tank-analysis-final.oci.tar",
+  "bytes_removed": 1091913728,
+  "retained_layout": "/tmp/tank-analysis-final-oci",
+  "retained_index_sha256": "38869edeae501cabe54d9a3cc763b9bbde715749d85df72b57821efe48078bac",
+  "verified_descriptors": 15,
+  "historical_oci_proof": "sandbox-oci-artifact.json",
+  "other_images_projects_untouched": true
+}

@@ -8,5 +8,6 @@
       "type": "string"
     }
   },
-  "required": []
+  "required": [],
+  "description": "Registry and dependency map. Returns: Identity, aliases, official accounts and sources."
 }

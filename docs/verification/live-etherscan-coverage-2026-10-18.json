@@ -1,0 +1,317 @@
+{
+  "started_at": "2026-10-18T06:40:29.417802Z",
+  "contract_checks": [
+    {
+      "token_id": "uniswap:UNI",
+      "chain": "Ethereum",
+      "chain_id": 1,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "pancakeswap:CAKE",
+      "chain": "BNB Chain",
+      "chain_id": 56,
+      "status": "UNAVAILABLE",
+      "error_type": "SemanticError",
+      "reason": "Etherscan request failed: Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis"
+    },
+    {
+      "token_id": "aerodrome:AERO",
+      "chain": "Base",
+      "chain_id": 8453,
+      "status": "UNAVAILABLE",
+      "error_type": "SemanticError",
+      "reason": "Etherscan request failed: Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis"
+    },
+    {
+      "token_id": "curve:CRV",
+      "chain": "Ethereum",
+      "chain_id": 1,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "1inch:1INCH",
+      "chain": "Ethereum",
+      "chain_id": 1,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "0x:ZRX",
+      "chain": "Ethereum",
+      "chain_id": 1,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "cow:COW",
+      "chain": "Ethereum",
+      "chain_id": 1,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "hyperliquid:HYPE",
+      "chain": "Hyperliquid L1, HyperCore token",
+      "chain_id": null,
+      "status": "NOT_APPLICABLE_NON_EVM",
+      "reason": "No configured EVM chain ID"
+    },
+    {
+      "token_id": "lighter:LIT",
+      "chain": "Ethereum",
+      "chain_id": 1,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "aave:AAVE",
+      "chain": "Ethereum",
+      "chain_id": 1,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "morpho:MORPHO",
+      "chain": "Ethereum",
+      "chain_id": 1,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "euler:EUL",
+      "chain": "Ethereum",
+      "chain_id": 1,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "ondo:ONDO",
+      "chain": "Ethereum",
+      "chain_id": 1,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "layerzero:ZRO",
+      "chain": "Ethereum",
+      "chain_id": 1,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "layerzero:ZRO",
+      "chain": "Base",
+      "chain_id": 8453,
+      "status": "UNAVAILABLE",
+      "error_type": "SemanticError",
+      "reason": "Etherscan request failed: Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis"
+    },
+    {
+      "token_id": "layerzero:ZRO",
+      "chain": "Arbitrum",
+      "chain_id": 42161,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "layerzero:ZRO",
+      "chain": "Optimism",
+      "chain_id": 10,
+      "status": "UNAVAILABLE",
+      "error_type": "SemanticError",
+      "reason": "Etherscan request failed: Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis"
+    },
+    {
+      "token_id": "layerzero:ZRO",
+      "chain": "BNB Chain",
+      "chain_id": 56,
+      "status": "UNAVAILABLE",
+      "error_type": "SemanticError",
+      "reason": "Etherscan request failed: Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis"
+    },
+    {
+      "token_id": "layerzero:ZRO",
+      "chain": "Polygon",
+      "chain_id": 137,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "layerzero:ZRO",
+      "chain": "Avalanche",
+      "chain_id": 43114,
+      "status": "UNAVAILABLE",
+      "error_type": "SemanticError",
+      "reason": "Etherscan request failed: Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis"
+    },
+    {
+      "token_id": "quant:QNT",
+      "chain": "Ethereum",
+      "chain_id": 1,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "ethena:ENA",
+      "chain": "Ethereum",
+      "chain_id": 1,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "world:WLD",
+      "chain": "Ethereum",
+      "chain_id": 1,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "world:WLD",
+      "chain": "World Chain",
+      "chain_id": 480,
+      "status": "PASS",
+      "decimals": 18
+    },
+    {
+      "token_id": "world:WLD",
+      "chain": "Optimism",
+      "chain_id": 10,
+      "status": "UNAVAILABLE",
+      "error_type": "SemanticError",
+      "reason": "Etherscan request failed: Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis"
+    }
+  ],
+  "scope": "All configured EVM contract decimals; inventory samples only one configured Binance wallet",
+  "inventory_checks": [
+    {
+      "token_id": "uniswap:UNI",
+      "status": "RETURNED",
+      "available": true,
+      "balances": [
+        {
+          "venue": "binance",
+          "chainid": 1,
+          "contract": "0x1f9840a85d5af5bf1d1762f925bdaddc4201f984",
+          "qty_native": "0",
+          "observed_wallets": 1,
+          "expected_wallets": 1,
+          "complete": true,
+          "wallet_list_commit": "4a6ef31a4eed4f24882a7d82bff50306b40b6d6c"
+        }
+      ],
+      "coverage_errors": []
+    },
+    {
+      "token_id": "layerzero:ZRO",
+      "status": "RETURNED",
+      "available": true,
+      "balances": [
+        {
+          "venue": "binance",
+          "chainid": 1,
+          "contract": "0x6985884c4392d348587b19cb9eaaf157f13271cd",
+          "qty_native": "0",
+          "observed_wallets": 1,
+          "expected_wallets": 1,
+          "complete": true,
+          "wallet_list_commit": "4a6ef31a4eed4f24882a7d82bff50306b40b6d6c"
+        },
+        {
+          "venue": "binance",
+          "chainid": 42161,
+          "contract": "0x6985884c4392d348587b19cb9eaaf157f13271cd",
+          "qty_native": "0",
+          "observed_wallets": 1,
+          "expected_wallets": 1,
+          "complete": true,
+          "wallet_list_commit": "4a6ef31a4eed4f24882a7d82bff50306b40b6d6c"
+        },
+        {
+          "venue": "binance",
+          "chainid": 137,
+          "contract": "0x6985884c4392d348587b19cb9eaaf157f13271cd",
+          "qty_native": "0",
+          "observed_wallets": 1,
+          "expected_wallets": 1,
+          "complete": true,
+          "wallet_list_commit": "4a6ef31a4eed4f24882a7d82bff50306b40b6d6c"
+        }
+      ],
+      "coverage_errors": [
+        {
+          "chain": "Base",
+          "chainid": 8453,
+          "contract": "0x6985884c4392d348587b19cb9eaaf157f13271cd",
+          "operation": "decimals",
+          "reason": "Etherscan request failed: Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis"
+        },
+        {
+          "chain": "Optimism",
+          "chainid": 10,
+          "contract": "0x6985884c4392d348587b19cb9eaaf157f13271cd",
+          "operation": "decimals",
+          "reason": "Etherscan request failed: Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis"
+        },
+        {
+          "chain": "BNB Chain",
+          "chainid": 56,
+          "contract": "0x6985884c4392d348587b19cb9eaaf157f13271cd",
+          "operation": "decimals",
+          "reason": "Etherscan request failed: Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis"
+        },
+        {
+          "chain": "Avalanche",
+          "chainid": 43114,
+          "contract": "0x6985884c4392d348587b19cb9eaaf157f13271cd",
+          "operation": "decimals",
+          "reason": "Etherscan request failed: Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis"
+        }
+      ]
+    },
+    {
+      "token_id": "world:WLD",
+      "status": "RETURNED",
+      "available": true,
+      "balances": [
+        {
+          "venue": "binance",
+          "chainid": 1,
+          "contract": "0x163f8c2467924be0ae7b5347228cabf260318753",
+          "qty_native": "0",
+          "observed_wallets": 1,
+          "expected_wallets": 1,
+          "complete": true,
+          "wallet_list_commit": "4a6ef31a4eed4f24882a7d82bff50306b40b6d6c"
+        },
+        {
+          "venue": "binance",
+          "chainid": 480,
+          "contract": "0x2cfc85d8e48f8eab294be644d9e25c3030863003",
+          "qty_native": "0",
+          "observed_wallets": 1,
+          "expected_wallets": 1,
+          "complete": true,
+          "wallet_list_commit": "4a6ef31a4eed4f24882a7d82bff50306b40b6d6c"
+        }
+      ],
+      "coverage_errors": [
+        {
+          "chain": "Optimism",
+          "chainid": 10,
+          "contract": "0xdc6ff44d5d932cbd77b52e5612ba0529dc6226f1",
+          "operation": "decimals",
+          "reason": "Etherscan request failed: Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis"
+        }
+      ]
+    }
+  ],
+  "contract_transfer_sample": {
+    "rows": 2,
+    "required_fields_present": true
+  },
+  "completed_at": "2026-10-18T06:42:47.954467Z",
+  "unavailable_is_not_zero": true
+}

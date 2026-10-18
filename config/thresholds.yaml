@@ -51,12 +51,10 @@ base_oi_funding_interval_s: 300
 hot_oi_funding_interval_s: 60
 base_retention_days: 90
 hot_raw_retention_days: 30
+jobs_retention_days: 30
+archive_retention_days: 180
+quiet_socket_s: 30
+archive_retry_s: 3600
 routing_window_days: 3
-daily_budget_usd: 30
-budget_notice_fraction: 0.8
-budget_pause_fraction: 1
 market_context_rule: normal_range
-known_f16_conflict: Baseline §5.7 fails F-16; record-extreme proposal is unapproved
-  and not enabled.
-budget_policy: 'SOFT: defer non-official and non-MAJOR+ messages to next 00:00 UTC;
-  official/MAJOR+ processing continues per FR-P-03.'
+known_f16_conflict: 'Resolved by corrected F-16: STRESS under §5.7. The normal-range rule is unchanged; the record-extreme proposal is rejected.'

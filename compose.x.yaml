@@ -1,0 +1,8 @@
+# Explicit X opt-in: add this file only with authorized real X storage state/list.
+services:
+  tank:
+    secrets:
+    - x_session
+secrets:
+  x_session:
+    file: ${TANK_SECRETS_DIR:?Set secret directory outside repository}/x_session

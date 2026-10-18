@@ -1,0 +1,86 @@
+[
+  {
+    "path": "apps/agent/src/harness/tools.ts",
+    "old": "import { dynamicTool, generateText, jsonSchema, tool } from \"ai\";",
+    "new": "export { createSandboxBrowserHarness } from \"./sandbox-browser\";\nimport { dynamicTool, generateText, jsonSchema, tool } from \"ai\";",
+    "count": 1
+  },
+  {
+    "path": "packages/control-plane-node/src/modules/node-managed.ts",
+    "old": "import { buildTools, disposeTools } from \"@open-managed-agents/agent/harness/tools\";",
+    "new": "import { buildTools, disposeTools, createSandboxBrowserHarness } from \"@open-managed-agents/agent/harness/tools\";",
+    "count": 1
+  },
+  {
+    "path": "packages/control-plane-node/src/modules/node-managed.ts",
+    "old": "          sessionId: session.id,\n          mcpBinding: nodeMcpProxyBinding,",
+    "new": "          sessionId: session.id,\n          browser: createSandboxBrowserHarness(sandbox, session.id),\n          mcpBinding: nodeMcpProxyBinding,",
+    "count": 1
+  },
+  {
+    "path": "packages/control-plane-node/src/modules/node-managed.ts",
+    "old": "        sessionId: session.id,\n        mcpBinding: nodeMcpProxyBinding,",
+    "new": "        sessionId: session.id,\n        browser: createSandboxBrowserHarness(sandbox, session.id),\n        mcpBinding: nodeMcpProxyBinding,",
+    "count": 1
+  },
+  {
+    "path": "packages/browser-harness/src/index.ts",
+    "old": "browser_* calls will spin up a fresh session (loses cookies/state).",
+    "new": "browser_* calls reopen the configured backend; persistent profiles retain cookies/state.",
+    "count": 1
+  },
+  {
+    "path": "packages/browser-harness/src/index.ts",
+    "old": "type ToolSet = Record<string, any>;",
+    "new": "type ToolSet = Record<string, any>;\nconst browserDisposers = new WeakMap<ToolSet, () => Promise<void>>();\n\n/** Flush browser state before the runtime checkpoints the session workspace. */\nexport async function disposeBrowserTools(tools: ToolSet): Promise<void> {\n  const dispose = browserDisposers.get(tools);\n  if (!dispose) return;\n  await dispose();\n  browserDisposers.delete(tools);\n}",
+    "count": 1
+  },
+  {
+    "path": "packages/browser-harness/src/index.ts",
+    "old": "  const tools: ToolSet = {};",
+    "new": "  const tools: ToolSet = {};\n  browserDisposers.set(tools, async () => {\n    if (session) await session.close();\n    session = null;\n  });",
+    "count": 1
+  },
+  {
+    "path": "apps/agent/src/harness/tools.ts",
+    "old": "const mcpClientsByToolSet = new WeakMap<Record<string, unknown>, McpClientPort[]>();",
+    "new": "const mcpClientsByToolSet = new WeakMap<Record<string, unknown>, McpClientPort[]>();\nconst browserDisposersByToolSet = new WeakMap<Record<string, unknown>, () => Promise<void>>();",
+    "count": 1
+  },
+  {
+    "path": "apps/agent/src/harness/tools.ts",
+    "old": "  const clients = mcpClientsByToolSet.get(tools);\n  if (!clients) return;\n  mcpClientsByToolSet.delete(tools);\n  await Promise.allSettled(clients.map((client) => client.close()));",
+    "new": "  const clients = mcpClientsByToolSet.get(tools) ?? [];\n  const browserDispose = browserDisposersByToolSet.get(tools);\n  mcpClientsByToolSet.delete(tools);\n  try {\n    await browserDispose?.();\n    browserDisposersByToolSet.delete(tools);\n  } finally {\n    await Promise.allSettled(clients.map((client) => client.close()));\n  }",
+    "count": 1
+  },
+  {
+    "path": "apps/agent/src/harness/tools.ts",
+    "old": "    const { buildBrowserTools } = await import(\"@open-managed-agents/browser-harness\");\n    Object.assign(tools, buildBrowserTools(env.browser, env.browserBillingHook ?? null));",
+    "new": "    const { buildBrowserTools, disposeBrowserTools } = await import(\"@open-managed-agents/browser-harness\");\n    const browserTools = buildBrowserTools(env.browser, env.browserBillingHook ?? null);\n    browserDisposersByToolSet.set(tools, () => disposeBrowserTools(browserTools));\n    Object.assign(tools, browserTools);",
+    "count": 1
+  },
+  {
+    "path": "packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts",
+    "old": "export interface NodeManagedConfirmedToolExecutorDependencies {\n  buildExecutableTools(",
+    "new": "export interface NodeManagedConfirmedToolExecutorDependencies {\n  disposeTools?(tools: Record<string, unknown>): Promise<void>;\n  buildExecutableTools(",
+    "count": 1
+  },
+  {
+    "path": "packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts",
+    "old": "    if (tool?.execute === undefined) {\n      return textResult(",
+    "new": "    if (tool?.execute === undefined) {\n      await this.dependencies.disposeTools?.(tools);\n      return textResult(",
+    "count": 1
+  },
+  {
+    "path": "packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts",
+    "old": "        true,\n      );\n    }\n  }\n}",
+    "new": "        true,\n      );\n    } finally {\n      await this.dependencies.disposeTools?.(tools);\n    }\n  }\n}",
+    "count": 1
+  },
+  {
+    "path": "packages/control-plane-node/src/modules/node-managed.ts",
+    "old": "    confirmedTools: new NodeManagedConfirmedToolExecutor({\n      buildExecutableTools:",
+    "new": "    confirmedTools: new NodeManagedConfirmedToolExecutor({\n      disposeTools,\n      buildExecutableTools:",
+    "count": 1
+  }
+]

@@ -9,9 +9,14 @@ model_id: gpt-6.1-sol
 reasoning_effort: medium
 model_prices:
   gpt-6.1-sol:
-    input_per_million: 2
-    output_per_million: 10
-    cache_read_per_million: 0.1
-    cache_creation_per_million: null
-pricing_basis: Technical Design §3.2 estimate; verify actual Model Card prices at
-  deploy.
+    input_per_million: 0
+    output_per_million: 0
+    cache_read_per_million: 0
+    cache_creation_per_million: 0
+pricing_basis: Analysis uses operator ChatGPT subscription; no per-token charge and
+  no V0 token/spending caps. DuckDuckGo web search is free; Jev paid usage remains
+  recorded.
+model_access: CHATGPT_SUBSCRIPTION_CODEX_OAUTH
+gateway_base_url: http://tank:8790/v1
+model_card_provider: tank-codex
+openma_overlay: tank2-openrouter

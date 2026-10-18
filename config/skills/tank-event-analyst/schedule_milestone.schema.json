@@ -23,5 +23,6 @@
     "milestone",
     "due_at",
     "source"
-  ]
+  ],
+  "description": "MILESTONE_CHECK job. Returns: \u2014."
 }

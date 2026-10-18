@@ -11,5 +11,6 @@
   },
   "required": [
     "url"
-  ]
+  ],
+  "description": "HTTPS GET (20 s, \u2264 2 MB); page stored as evidence. Returns: Readable text."
 }

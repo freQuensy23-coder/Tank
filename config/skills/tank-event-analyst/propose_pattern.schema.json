@@ -21,5 +21,6 @@
     "hook",
     "subject",
     "evidence"
-  ]
+  ],
+  "description": "Scout proposal (\u00a710). Returns: Proposal id."
 }

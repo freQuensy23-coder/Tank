@@ -12,10 +12,15 @@
       "items": {
         "type": "string"
       }
+    },
+    "cutoff": {
+      "type": "string",
+      "format": "date-time"
     }
   },
   "required": [
     "event_id",
     "tokens"
-  ]
+  ],
+  "description": "ESCALATE_TOKENS, backfill, RUN_MARKET_TRUTH (\u00a75). Returns: Market Truth and Data Confidence per token."
 }

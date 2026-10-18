@@ -1,0 +1,129 @@
+{
+  "recorded_at": "2026-10-17T19:18:04.099851+00:00",
+  "status": "FINAL_IMAGES_OFFLINE_VERIFIED_KVM_AND_AUTH_ACCEPTANCE_REQUIRED",
+  "images": {
+    "tank-v0:local": {
+      "id": "sha256:03b3631a45f800d879935a622a13481ae4e30a9c1df62a63ed975cec34b5e91c",
+      "platform": "linux/arm64"
+    },
+    "tank-openma:85d5361f535c7221de975838dc48444e468cc02e-tank1": {
+      "id": "sha256:1975703df1ab5d0aefc704d27f85d6d03a6da33ade5a303c87c07716612e1850",
+      "platform": "linux/arm64"
+    },
+    "tank-analysis:python3.12-local": {
+      "id": "sha256:31eb6e80fc7a4f3dacdb209fe5684033a61bc0bee8d4cda983e56ce6c8bc2eae",
+      "platform": "linux/arm64"
+    }
+  },
+  "deployment_topology": {
+    "services": [
+      "tank",
+      "openma",
+      "postgres"
+    ],
+    "published_ports": [],
+    "config_read_only": true,
+    "codex_auth_mounted_into_openma": false
+  },
+  "openma_upstream_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+  "openma_overlay": "tank1",
+  "openma_patched_files_verified_against_built_image": 30,
+  "actual_control_plane": {
+    "health": 200,
+    "model_card": 200,
+    "canonical_agent": 200,
+    "skills": 200,
+    "environment": 200,
+    "new_analyst_session": 201,
+    "model_messages_sent": 0,
+    "fresh_replay_resource": {
+      "create_http_status": 201,
+      "session_id": "session_UYMZhNTif_kwMFY8TaQnQ",
+      "environment_id": "env_jSPbs4NI59LeQqMBYm0nN",
+      "run_marker": "offline-replay-fresh-20261017",
+      "status": "running",
+      "events_http_status": 200,
+      "events_count": 0,
+      "model_messages_sent": 0,
+      "microvm_or_model_replay_proven": false,
+      "limitation": "Docker daemon has no /dev/kvm; this proves fresh canonical replay session API allocation only."
+    }
+  },
+  "offline_tests": {
+    "deployment_config_calibration": "24 passed",
+    "actual_pg16_and_node_overlay_regressions": "20 passed; explicitly selected isolated Docker test endpoint",
+    "actual_pinned_boxlite_adapter_with_sdk_mock": "17 passed with network disabled; includes localOCI rootfsPath option",
+    "sandbox_python": "3.12.15; pandas/numpy/scipy/statsmodels/pyarrow/duckdb/psycopg/httpx/websockets imports passed",
+    "pg_client": "pg_dump16.15",
+    "node": "24.22.0",
+    "pnpm": "11.0.8",
+    "boxlite": "0.9.0 import passed",
+    "ddgs": "9.16.0; isolated container public DuckDuckGo smoke returned10results, source hash matched; see docs/SEARCH.md",
+    "actual_pinned_browser_harness": "24 passed with network disabled; includes6Tanktransport/lifecycle cases",
+    "sandbox_browser": "Actual Playwright1.64.0/Chromium navigation,input,click,text,PNG,evaluate,isolation,persistence passed",
+    "postgres_network_isolation": "Two explicit synthetic subnets and overlapping Compose/32 each passed10read-only/ACL/HBA checks",
+    "nonroot_offline_corepack": "pnpm11.0.8 resolves with network disabled using shared build-time COREPACK_HOME",
+    "postgres_acl_beyond_readonly_guc": "Additional two-network and NAT/32 probes override default_transaction_read_only=off at startup; both agent roles still reject INSERT with permission denied, proving SELECT-only ACL enforcement independently of the default GUC.",
+    "final_frozen_full_suite": "665 passed, 6 intentional Memory-only skips; all20 actual OpenMA Node/SQL probes passed"
+  },
+  "guarded_upstream_repairs": [
+    "Typed10nullable SQL guards for PostgreSQL parameter inference",
+    "Normalized13epoch conversions across12SQLadapter/runtime files",
+    "Extended canonical browser/schedulingtool codecs through6source files",
+    "Passed selected replay network restrictions and curated credential environment to BoxLite",
+    "Configured actual Python3.12 sandbox image through provider SANDBOX_IMAGE",
+    "Selected Node24 for pinned pnpm11",
+    "Bound browser tools to exact session SandboxPort/VM Unix-socket worker with cleanup before checkpoints",
+    "Passed verified local OCI layout to actual BoxLite0.9.0 rootfsPath option; no Docker-cache assumption",
+    "Prepared pnpm cache in shared runtime path for nonroot offline startup"
+  ],
+  "limitations": [
+    "Docker daemon cannot provide /dev/kvm: actual --device probe returned no such file or directory.",
+    "Actual microVM creation, internal database reachability and replay outbound deny remain Linux KVM acceptance tasks.",
+    "No ChatGPT sign-in, real API token, model message, Telegram message, account file, or private browser profile was used.",
+    "No claim of real model/SSE or OAuth refresh acceptance follows from resource API creation."
+  ],
+  "cleanup_status": {
+    "completed_at": "2026-10-17T19:22:29.181124+00:00",
+    "project": "tank-offline-20261017",
+    "remaining_project_resources": {
+      "containers": [],
+      "volumes": [],
+      "networks": []
+    },
+    "synthetic_secret_fixture_removed": true,
+    "images_and_oci_artifacts_preserved": true,
+    "other_projects_and_root_local_postgres_untouched": true
+  },
+  "openma_image_verification": {
+    "status": "passed",
+    "verified_source_files": 30,
+    "entrypoint_sha256": "d735f93e2acf9450471e6430e0fe50a2b6437a506af5ca14d43e6987b18412d9",
+    "node": "v24.22.0",
+    "local_oci_loader": true,
+    "replay_role_separated": true,
+    "kvm": "UNVERIFIED"
+  },
+  "sandbox_oci_artifact": "docs/verification/sandbox-oci-artifact.json",
+  "capability_readback": "docs/verification/openma-agent-capability-proof.json",
+  "final_openma_health_http_status": 200,
+  "test_overrides": [
+    "Removed /dev/kvm mapping because local daemon lacks KVM",
+    "Retained existing test-network allocation while concurrent QA used its PostgreSQL container; strict generated HBA/network rules separately tested in fresh isolated PG16 containers"
+  ],
+  "final_openma_local_oci_mount": {
+    "SANDBOX_ROOTFS_PATH": "/opt/tank-sandbox-oci",
+    "index_json_visible_inside_running_container": true,
+    "read_only": true,
+    "actual_microvm_loader_execution": "UNVERIFIED_KVM_REQUIRED"
+  },
+  "tank_source_alignment": "docs/verification/tank-image-source-alignment.json",
+  "final_tank_versions": {
+    "python": "3.12.15",
+    "chromium": "156.0.8078.4",
+    "ddgs": "9.16.0",
+    "typesafe_sdk": "0.7.5",
+    "postgres_client": "pg_dump (PostgreSQL) 16.15 (Debian 16.15-1.pgdg12+2)",
+    "gateway_import": true
+  }
+}

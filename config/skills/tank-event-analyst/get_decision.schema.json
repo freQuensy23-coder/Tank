@@ -14,5 +14,6 @@
   "required": [
     "event_id",
     "token"
-  ]
+  ],
+  "description": "Outlook (\u00a76), grades (\u00a74.8\u20134.9), action (\u00a77.1\u20137.2), conditions (\u00a76.6). Returns: Action, grades, outlook, conditions, decisive facts."
 }

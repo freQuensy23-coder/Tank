@@ -1,4 +1,4 @@
-# Tank data guide — baseline-2.3
+# Tank data guide — current subscription/Compose/DuckDuckGo baseline
 
 
 
@@ -428,7 +428,7 @@ OpsNotice                            # append-only; one "Tank Ops" message
   notice_id, kind: OpsNoticeKind
   subject_id: str?                   # alert_id of a DELIVERY_FAILED
   text: str; created_at
-  created_by: sessions (LLM_BUDGET) | scheduler (HEARTBEAT) | delivery (DELIVERY_FAILED)
+  created_by: scheduler (HEARTBEAT) | delivery (DELIVERY_FAILED)
 
 EvidenceBundle                       # content-addressed JSON
   bundle_id = sha256(canonical_json)
@@ -507,7 +507,6 @@ Fixture
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
 | `jobs` | `job_id`; unique `idem_key` | The service's job queue (§3.8). |
 | `agent_sessions`, `tool_calls` | `session_id`, `call_id` | The OpenMA session of each event, and every tool call with its input, result and timing (§3.2). |
-| `budget_state` | `day` | Day's LLM spend and the pause time (§3.8). |
 | `expansion_proposals` | `prp_id` | Only table the scout role may write, together with its own logs. |
 | `fixtures`, `replay_runs` | ids | Sealed outcomes stored outside the DB path the pipeline reads. |
 
@@ -727,7 +726,7 @@ GitHub evidence is SOURCE_SIDE_SUPPORT: it can raise an integration claim to BUI
 ### 3.7 X (S29, SECONDARY)
 
 - Account set: the 86 handles in 01 §4.3, held in one private X List "tank-v0" on the operator's X account; the list ID is stored in `sources.yaml`.
-- Reader: the `xsensor` module, Playwright (async API) persistent context on a dedicated Chrome profile directory (`/opt/tank/chrome-profile`), headless (`--headless=new`). If X blocks headless mode, running the sensor headed in a separate macOS login session is the operator's decision. The same browser renders S19.
+- Reader: the `xsensor` module, Playwright (async API) persistent context with Chromium inside the `tank` container; the profile lives in the volume `tank-browser` and is signed in to X once from the operator's session (a Playwright storage-state file exported on the operator's own computer and supplied as the Docker secret `x_session`); headless (`--headless=new`). If X blocks headless mode, running it headed under a virtual display (Xvfb) in the same container is the operator's decision. The same browser renders S19.
 - Every 60 s: open `https://x.com/i/lists/{list_id}`, read `article` elements top-down until the last stored status ID; per post store status ID (from the `/status/{id}` link), author handle, text, `time[datetime]`, quoted/reposted status IDs, and the full post URL.
 - Handle check: `tank sources check` calls `https://publish.twitter.com/oembed?url=https://x.com/{handle}` for each handle (follows the redirect to `publish.x.com`; HTTP 200 = exists) and confirms the owner from the profile bio (`https://syndication.twitter.com/srv/timeline-profile/screen-name/{handle}`, rate-limited to a few requests per minute) or from the person's IQ.wiki, Wikidata or GitHub profile; all 86 passed on 16–17 Oct 2026 (e.g. @el33th4xor bio: "Founder and CEO @avalabs"; @vnovakovski: IQ.wiki "founder and CEO of Lighter"; @fleupold_: Devcon speaker page and GitHub bio "Technical lead at CowProtocol"). Organization handles were taken from the project's own website, docs or GitHub organization; people's handles from the official team page, IQ.wiki, Wikidata, GitHub or reputable news. Handles that must not be used: wrong person — @nathanallman (an unrelated account; Ondo's founder Nathan Allman used @nathanlallman and died on 25 May 2026); unconfirmed or squatted — @fleupold (Felix Leupold is @fleupold_), @CoWDAO, @HyperFoundation, @HyperliquidLabs, @worldcoin (re-registered in Mar 2026); HTTP 404 — @aerodromefi, @OndoFinance, @quant_network, @ethena_labs, @eulerlabs. Left out because no official source confirms the owner: @iliensinc (Hyperliquid co-founder), @MathisGD_ (Morpho co-founder), @chef_mochi (PancakeSwap). Left out as dormant or no longer at the project: @nearfoundation, @k06a, @PaoloTasca, @kevinsekniqi, @Tederminant, @John1wu.
 - Terms: automated reading of the X web UI carries terms-of-service risk (recorded in `terms_notes`).
@@ -871,7 +870,7 @@ Every token has at least three spot venues and two perpetual venues. Binance spo
 ---
 
 
-# Complete production DDL
+# Production DDL
  (PostgreSQL 16)
 
 Analysis objects of §2.6 are stored as `jsonb` inside the rows below; the columns that queries filter or join on are typed.
@@ -1128,7 +1127,7 @@ CREATE TABLE out.alerts (                              -- append-only, one row p
 
 CREATE TABLE out.ops_notices (                         -- append-only
   notice_id   text PRIMARY KEY,
-  kind        text NOT NULL CHECK (kind IN ('DELIVERY_FAILED','LLM_BUDGET','HEARTBEAT')),
+  kind        text NOT NULL CHECK (kind IN ('DELIVERY_FAILED','HEARTBEAT')),
   subject_id  text,
   text        text NOT NULL,
   created_at  timestamptz NOT NULL,
@@ -1183,12 +1182,6 @@ CREATE TABLE ops.llm_usage (
   stop_reason         text NOT NULL
 );
 
-CREATE TABLE ops.budget_state (
-  day           date PRIMARY KEY,
-  spent_usd     numeric(10,4) NOT NULL,
-  paused_until  timestamptz                         -- set at 100% of the daily cap; 00:00 UTC next day
-);
-
 CREATE TABLE ops.agent_sessions (
   session_id      text PRIMARY KEY,                    -- OpenMA session id
   event_id        text UNIQUE REFERENCES evt.events(event_id),   -- set by record_event
@@ -1236,3 +1229,155 @@ UPDATE ops.jobs
                   LIMIT 1)
 RETURNING *;
 ```
+
+Initial semantic rows remain DOCUMENTED_UNTESTED until current-run adapter checks pass.
+
+
+# Executable sandbox access and shared API limits
+
+Connect only through the injected read-only `TANK_DB_URL`; never print that URL. PostgreSQL access is read-only as `tank_agent`. The following examples perform reads; results from own scripts inform analysis and are not card numbers. Facts still require quotes stored through Tank tools.
+
+```python
+import os
+import psycopg
+import pandas as pd
+with psycopg.connect(os.environ["TANK_DB_URL"]) as connection:
+    recent = pd.read_sql_query("SELECT item_id,source_id,observed_at FROM ingest.source_items ORDER BY observed_at DESC LIMIT 20", connection)
+```
+
+The current deployment explicitly routes Jev through OpenRouter: `POST https://openrouter.ai/api/v1/systemone`, `Authorization: Bearer` with `OPENROUTER_API_KEY`, and pinned request model `jev-1.13`. `TANK_JEV_PROVIDER=openrouter` selects this route; the official TypeSafe SDK remains pinned at `typesafe-sdk==0.7.5` with base URL `https://openrouter.ai/api`. This does not route the analyst through OpenRouter: analyst/scout models continue through the Codex subscription gateway. Calibration must use Pipeline's exact versioned filter/routing questions and state, not a paraphrase. A read-only research call can use HTTP directly without printing the key:
+
+```python
+import os
+import httpx
+payload = {
+    "model": "jev-1.13",
+    "state": {"text": "the source text being assessed"},
+    "questions": {"relevant": {"type": "noul", "instructions": "Is this text about crypto?", "criteria": {"true": "About crypto", "false": "Not about crypto"}}}
+}
+with httpx.Client(timeout=20, trust_env=False) as client:
+    response = client.post("https://openrouter.ai/api/v1/systemone", headers={"Authorization": "Bearer " + os.environ["OPENROUTER_API_KEY"]}, json=payload)
+    response.raise_for_status()
+    result = response.json()
+    if result.get("model") != "typesafe/jev-1.13-20260917":
+        raise ValueError("Unverified Jev model revision")
+```
+
+The observed and accepted OpenRouter revision is `typesafe/jev-1.13-20260917`; preserve returned request/model/usage provenance and reject an unverified revision. This illustrative research question is not a replacement for Pipeline's calibration prompts. Honor the configured OpenRouter account's actual rate limits and retry metadata; no universal free quota is assumed. Do not change provider or select `latest`/another model as a fallback. Direct TypeSafe compatibility remains an explicit alternative (`TANK_JEV_PROVIDER=typesafe`, separate `TYPESAFE_API_KEY`, `jev-1.13.0`); the current Compose deployment does not require that account or mount that key. Production sandbox scripts receive only OPENROUTER_API_KEY and TANK_JEV_PROVIDER=openrouter for this route. Replay receives neither provider key nor provider-routing environment.
+
+DuckDuckGo search needs **no API key** and costs zero. Use Tank's custom `web_search(query)` for facts: it stores titles, URLs and snippets as durable evidence. It uses pinned `ddgs==9.16.0`, exact DuckDuckGo backend only, 10 results, declared source User-Agent, at least 2 seconds between requests, and retry delays 5/15/45 seconds for the specified rate-limit/block/timeout failures. Its audited transport permits one `POST https://html.duckduckgo.com/html/` per attempt, does not follow redirects and does not load ambient proxies/credentials. It prevents DDGS metasearch fallback; a generic `DDGS().text(backend="duckduckgo")` is not a safe substitute because the library can substitute engines internally. Empty/failure results return explicit errors, never a paid or alternate-engine search. Search has no credential secret.
+
+Etherscan reads use `GET https://api.etherscan.io/v2/api` with `chainid`, `module=account`, `action=tokenbalance` or `tokentx`, token contract/wallet and `apikey=os.environ["ETHERSCAN_API_KEY"]`. Use the verified token contract and chain ID; no ticker guessing. Do not print a request URL containing its API key. DefiLlama uses key-free `https://api.llama.fi/summary/fees/{verified_slug}?dataType=dailyFees|dailyRevenue|dailyHoldersRevenue`, `https://api.llama.fi/protocols`, `https://api.llama.fi/v2/chains`, `https://defillama-datasets.llama.fi/emissions/{unlock_slug}`, `https://stablecoins.llama.fi/stablecoincharts/{chain}`, and `https://yields.llama.fi/lendBorrow`. Fee protocol slugs and unlock slugs are different namespaces. Do not sum parent rollups and children twice. Missing provider metrics remain unavailable, never zero.
+
+The sandbox and Tank service **share the same venue/IP limits**. The combined service plus sandbox budget must remain at most one half of every documented limit. Own scripts may use only the remaining measured budget within that half, never assume an independent quota. If you cannot establish remaining shared capacity, use cached database data or Tank custom tools and defer direct provider calls; a separate local sleep loop does not establish global capacity. Consult cached Tank data first. Known baseline ceilings for the service are Binance spot 3,000 request-weight/minute (documented 6,000), Binance USD-M 1,200/minute (documented 2,400), Coinbase 5 requests/second, Kraken 1 request/second, and SEC 5 requests/second (half of documented 10). Respect endpoint weights and independent endpoint buckets, not just request counts. Read Binance used-weight headers. For endpoint-specific undocumented quotas, record UNKNOWN and honor actual Retry-After rather than fabricate a universal cap. Agents must never print keys, persist them to files, or send them to endpoints other than their own API. Replay receives only its read-only database URL and no external API credentials.
+
+# Current executable information-source manifest
+
+This manifest is generated from current `sources.yaml` and takes precedence for endpoints that moved after the HLD verification snapshot (notably DTCC and Robinhood). Source identity is unchanged. X list ID and session are operator-private; only the URL template is shown. The DTCC public query credential is extracted at runtime from the official bootstrap script and is not written here.
+
+| Source | Name | Poll seconds | Adapter | Request |
+|---|---|---|---|---|
+| S01 | SEC | 60 | rss | GET https://www.sec.gov/news/pressreleases.rss |
+| S01 | SEC | 120 | rss | GET https://www.sec.gov/news/speeches-statements.rss |
+| S02 | SEC EDGAR | 120 | atom | GET https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=S-1&owner=include&count=40&output=atom |
+| S03 | Federal Register | 300 | json | GET https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=crypto&order=newest&per_page=20 |
+| S03 | Federal Register | 300 | json | GET https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=%22digital%20asset%22&order=newest&per_page=20 |
+| S03 | Federal Register | 300 | json | GET https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=bitcoin&order=newest&per_page=20 |
+| S03 | Federal Register | 300 | json | GET https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=ether&order=newest&per_page=20 |
+| S03 | Federal Register | 300 | json | GET https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=stablecoin&order=newest&per_page=20 |
+| S03 | Federal Register | 300 | json | GET https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=tokenized&order=newest&per_page=20 |
+| S04 | CFTC | 120 | rss | GET https://www.cftc.gov/RSS/RSSGP/rssgp.xml |
+| S04 | CFTC | 300 | rss | GET https://www.cftc.gov/RSS/RSSENF/rssenf.xml |
+| S05 | Federal Reserve | 120 | rss | GET https://www.federalreserve.gov/feeds/press_all.xml |
+| S06 | OCC | 300 | rss | GET https://www.occ.gov/rss/occ_news.xml |
+| S07 | US Treasury + OFAC | 300 | html | GET https://home.treasury.gov/news/press-releases |
+| S07 | US Treasury + OFAC | 300 | rss | GET https://ofac.treasury.gov/rss.xml |
+| S08 | DTCC | 300 | dtcc_search | POST https://depositorytrustclearingcorporationproductionbw3fbrqw.org.coveo.com/rest/search/v2 |
+| S09 | Binance | 30 | json | GET https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=48&pageNo=1&pageSize=20 |
+| S09 | Binance | 30 | json | GET https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=161&pageNo=1&pageSize=20 |
+| S09 | Binance | 30 | json | GET https://www.binance.com/bapi/composite/v1/public/cms/article/list/query?type=1&catalogId=49&pageNo=1&pageSize=20 |
+| S10 | OKX | 60 | json | GET https://www.okx.com/api/v5/support/announcements?annType=announcements-new-listings |
+| S10 | OKX | 60 | json | GET https://www.okx.com/api/v5/support/announcements?annType=announcements-delistings |
+| S10 | OKX | 60 | json | GET https://www.okx.com/api/v5/support/announcements?annType=announcements-trading-updates |
+| S10 | OKX | 60 | json | GET https://www.okx.com/api/v5/support/announcements?annType=latest-events |
+| S11 | Bybit | 60 | json | GET https://api.bybit.com/v5/announcements/index?locale=en-US&type=new_crypto&limit=20 |
+| S11 | Bybit | 60 | json | GET https://api.bybit.com/v5/announcements/index?locale=en-US&type=delistings&limit=20 |
+| S11 | Bybit | 60 | json | GET https://api.bybit.com/v5/announcements/index?locale=en-US&type=latest_bybit_news&limit=20 |
+| S12 | Kraken | 120 | rss | GET https://blog.kraken.com/feed |
+| S13 | Robinhood | 300 | html | GET https://robinhood.com/newsroom/ |
+| S14 | Venue instrument lists | 60 | instruments | GET https://api.binance.com/api/v3/exchangeInfo |
+| S14 | Venue instrument lists | 60 | instruments | GET https://fapi.binance.com/fapi/v1/exchangeInfo |
+| S14 | Venue instrument lists | 60 | instruments | GET https://api.exchange.coinbase.com/products |
+| S14 | Venue instrument lists | 120 | instruments | GET https://api.kraken.com/0/public/AssetPairs |
+| S14 | Venue instrument lists | 60 | instruments | GET https://www.okx.com/api/v5/public/instruments?instType=SPOT |
+| S14 | Venue instrument lists | 60 | instruments | GET https://www.okx.com/api/v5/public/instruments?instType=SWAP |
+| S14 | Venue instrument lists | 60 | instruments | GET https://api.bybit.com/v5/market/instruments-info?category=spot&limit=1000 |
+| S14 | Venue instrument lists | 60 | instruments | GET https://api.bybit.com/v5/market/instruments-info?category=linear&limit=1000 |
+| S14 | Venue instrument lists | 60 | instruments | POST https://api.hyperliquid.xyz/info |
+| S15 | Uniswap | 600 | html | GET https://blog.uniswap.org/ |
+| S16 | Ondo Finance | 600 | html | GET https://ondo.finance/blog |
+| S17 | LayerZero | 600 | html | GET https://layerzero.network/blog |
+| S18 | BlackRock | 600 | html | GET https://www.blackrock.com/corporate/newsroom/media/press-releases |
+| S19 | Franklin Templeton | 600 | html | GET https://www.franklintempleton.com/press-releases |
+| S20 | Circle | 600 | html | GET https://www.circle.com/pressroom |
+| S21 | Tether | 300 | rss | GET https://tether.io/feed/ |
+| S22 | Paxos | 600 | html | GET https://www.paxos.com/newsroom |
+| S23 | Governance forums | 300 | rss | GET https://gov.uniswap.org/latest.rss |
+| S23 | Governance forums | 300 | rss | GET https://governance.aave.com/latest.rss |
+| S23 | Governance forums | 300 | rss | GET https://gov.ethenafoundation.com/latest.rss |
+| S23 | Governance forums | 300 | rss | GET https://forum.cow.fi/latest.rss |
+| S23 | Governance forums | 300 | rss | GET https://forum.morpho.org/latest.rss |
+| S23 | Governance forums | 600 | rss | GET https://forum.euler.finance/latest.rss |
+| S23 | Governance forums | 600 | rss | GET https://gov.1inch.io/latest.rss |
+| S23 | Governance forums | 600 | rss | GET https://gov.near.org/latest.rss |
+| S24 | Snapshot | 120 | graphql | POST https://hub.snapshot.org/graphql |
+| S25 | GitHub | 600 | atom | GET https://github.com/Uniswap/v4-core/releases.atom |
+| S25 | GitHub | 600 | atom | GET https://github.com/aave-dao/aave-v3-origin/releases.atom |
+| S25 | GitHub | 600 | atom | GET https://github.com/cowprotocol/services/releases.atom |
+| S25 | GitHub | 600 | atom | GET https://github.com/hyperliquid-dex/hyperliquid-python-sdk/releases.atom |
+| S25 | GitHub | 600 | atom | GET https://github.com/1inch/swap-vm/releases.atom |
+| S25 | GitHub | 600 | atom | GET https://github.com/elliottech/lighter-python/releases.atom |
+| S25 | GitHub | 600 | atom | GET https://github.com/ava-labs/avalanchego/releases.atom |
+| S25 | GitHub | 600 | atom | GET https://github.com/near/nearcore/releases.atom |
+| S25 | GitHub | 600 | atom | GET https://github.com/worldcoin/world-chain/releases.atom |
+| S25 | GitHub | 600 | atom | GET https://github.com/PlasmaLaboratories/node-templates/releases.atom |
+| S25 | GitHub | 600 | atom | GET https://github.com/LayerZero-Labs/LayerZero-v2/commits/main.atom |
+| S25 | GitHub | 600 | atom | GET https://github.com/morpho-org/morpho-blue/commits/main.atom |
+| S26 | BNY | 600 | html | GET https://www.bny.com/corporate/global/en/about-us/newsroom.html |
+| S27 | The Clearing House | 600 | html | GET https://www.theclearinghouse.org/About/Media/press-releases |
+| S28 | Anchorage Digital | 600 | html | GET https://www.anchorage.com/insights |
+| S29 | X | 60 | x | GET https://x.com/i/lists/{list_id} |
+| S30 | BBC News | 120 | rss | GET https://feeds.bbci.co.uk/news/business/rss.xml |
+| S30 | BBC News | 300 | rss | GET https://feeds.bbci.co.uk/news/technology/rss.xml |
+| S31 | Bloomberg | 120 | rss | GET https://feeds.bloomberg.com/markets/news.rss |
+| S32 | Reuters | 300 | rss | GET https://news.google.com/rss/search?q=site:reuters.com+crypto&hl=en-US&gl=US&ceid=US:en |
+| S33 | CoinDesk | 120 | rss | GET https://www.coindesk.com/arc/outboundfeeds/rss/ |
+| S34 | The Block | 120 | rss | GET https://www.theblock.co/rss.xml |
+
+## Verified endpoint limit detail
+
+Binance spot/futures weights depend on endpoint and limit; see config/api_limits.yaml and the documented used-weight headers. USD-M fundingRate/fundingInfo have a shared500requests/5minutes cap (Tank≤250), and openInterestHist has a separate1000requests/5minutes cap (Tank≤500). The native archive endpoints remain read-only and checksum verified.
+
+Bybit official HTTP IP quota is600requests/5seconds, so the combined reserved Tank budget is at most300/5seconds. Hyperliquid official aggregate HTTP quota is1200weight/minute, Tank≤600: l2Book/allMids cost2; the ordinary info requests Tank uses cost20; userRole costs60. fundingHistory/recentTrades add weight per20returned items and candleSnapshot per60. Preserve these response-size weights. Etherscan free tier documents3calls/second and100000/day on selected chains; the half-budget is1.5/second and50000/day shared by service and sandbox. An unsupported free-tier chain remains n/a.
+
+OKX official endpoint limits are per2seconds; service plus sandbox may reserve at most half:
+
+| Endpoint | Documented requests/2s | Tank shared budget/2s | Scope |
+|---|---|---|---|
+| /api/v5/market/books | 40 | 20 | IP |
+| /api/v5/market/trades | 100 | 50 | IP |
+| /api/v5/market/history-trades | 20 | 10 | IP |
+| /api/v5/market/candles | 40 | 20 | IP |
+| /api/v5/market/history-candles | 20 | 10 | IP |
+| /api/v5/public/open-interest | 20 | 10 | IP_INSTRUMENT |
+| /api/v5/public/funding-rate | 10 | 5 | IP_INSTRUMENT |
+| /api/v5/public/funding-rate-history | 10 | 5 | IP_INSTRUMENT |
+| /api/v5/public/instruments | 20 | 10 | IP_INSTRUMENT_TYPE |
+| /api/v5/market/tickers | 20 | 10 | IP |
+| /api/v5/market/ticker | 20 | 10 | IP |
+| /api/v5/public/mark-price | 10 | 5 | IP_INSTRUMENT |
+| /api/v5/market/mark-price-candles | 20 | 10 | IP |
+
+Official sources: https://www.okx.com/docs-v5/en/ ; https://bybit-exchange.github.io/docs/v5/rate-limit ; https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/rate-limits-and-user-limits ; https://docs.etherscan.io/resources/rate-limits . Verified on17October2026; provider changes require adapter verification, not guessed fallback limits.
+
+Hyperliquid recentTrades has no documented maximum response count. The adapter reserves its documented base, serializes calls and debits actual returned-size weight before releasing the provider slot. It does not claim a mathematically proven precharge bound for an undocumented response size, and does not invent a maximum. OKX index-tickers additionally documents20requests/2seconds perIP (Tank shared reserve≤10).

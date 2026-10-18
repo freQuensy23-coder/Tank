@@ -10,5 +10,6 @@
   },
   "required": [
     "token"
-  ]
+  ],
+  "description": "Stored fundamentals. Returns: Fees and revenue, supply and unlocks, venues and markets."
 }

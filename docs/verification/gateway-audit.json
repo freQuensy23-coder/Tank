@@ -1,0 +1,198 @@
+{
+  "audit": "Independent offline Codex gateway and deployment credential boundary audit",
+  "date_utc": "2026-10-17T18:11:30.083322+00:00",
+  "status": "PASS_OFFLINE_SCOPE",
+  "scope": {
+    "real_credentials_used": false,
+    "operator_auth_files_read": false,
+    "authenticated_external_requests": 0,
+    "external_requests": "Only public npm package installation and previously fetched public official source were used. Gateway/auth exchanges use MockTransport; downstream HTTP uses loopback.",
+    "runtime_claim": "Real aiohttp listeners, real RuntimeSupervisor reload sequence, actual pinned pi client, synthetic upstream provider. This is not a live ChatGPT/OpenMA/KVM production integration certification."
+  },
+  "current_requirements": [
+    {
+      "source": "02_Tank_V0_HLD.md section5/8; TechnicalDesign section3.2",
+      "requirement": "OpenMA custom ModelCard with pi_config.api=openai-responses, gpt-6.1-sol, base_url=http://tank:8790/v1; internal key only; Tank signs with operator Codex OAuth.",
+      "evidence": [
+        "tests/test_gateway_audit.py::test_actual_pinned_pi_library_through_gateway_offline",
+        "tests/test_deploy.py::test_openma_preparation_is_offline_and_has_responses_model",
+        "tests/test_codex_gateway.py::test_signing_translation_and_header_isolation"
+      ]
+    },
+    {
+      "source": "02_Tank_V0_HLD.md section5/8",
+      "requirement": "Single Python process gateway, startup/reload/ordered closing endpoint; exactly tank/openma/postgres Compose services, no published host ports.",
+      "evidence": [
+        "tests/test_runtime.py::test_gateway_starts_in_same_runtime_before_sources_and_closes_after_drain",
+        "tests/test_gateway_audit.py::test_supervisor_reload_rebinds_actual_gateway_and_shutdown_closes_port",
+        "tests/test_deploy.py::test_compose_topology_and_credential_boundaries"
+      ]
+    },
+    {
+      "source": "02_Tank_V0_HLD.md section8/11; TechnicalDesign section3.2",
+      "requirement": "Writable codex-auth only in Tank; no OAuth in OpenMA or sandboxes; Docker secret files outside repository; provider usage-limit/reset passthrough, no invented local spending/token caps.",
+      "evidence": [
+        "tests/test_deploy.py::test_compose_topology_and_credential_boundaries",
+        "tests/test_gateway_audit.py::test_provider_cookie_jar_and_hop_headers_never_cross_boundary",
+        "tests/test_codex_gateway.py::test_provider_errors_and_reset_headers_preserved",
+        "tests/test_codex_gateway.py::test_sse_failure_and_usage_reset_preserved"
+      ]
+    }
+  ],
+  "protocol_sources": {
+    "codex": {
+      "repository": "https://github.com/openai/codex",
+      "commit": "ce0323f2f2d3b25e82806cd555237da3db4e1897",
+      "locally_inspected": [
+        "codex-rs/login/src/auth/manager.rs",
+        "codex-rs/login/src/oauth/client.rs",
+        "codex-rs/login/src/auth/storage.rs",
+        "codex-rs/login/src/token_data.rs",
+        "codex-rs/codex-api/src/endpoint/responses.rs",
+        "codex-rs/codex-api/src/rate_limits.rs"
+      ],
+      "confirmed": [
+        "JSON refresh grant at fixed OAuth URL with public CLI clientID and refresh_reason",
+        "Codex ChatGPT auth schema; optional rotated token preservation",
+        "5minute proactive expiry and 8day fallback interval",
+        "streaming Responses endpoint and Codex primary/secondary reset headers"
+      ]
+    },
+    "openma": {
+      "repository": "https://github.com/openma-ai/open-managed-agents",
+      "commit": "85d5361f535c7221de975838dc48444e468cc02e",
+      "locally_inspected": [
+        "packages/control-plane-node/src/modules/node-foundation.ts",
+        "packages/managed-agents-adapters-runtime/package.json",
+        "pnpm-lock.yaml"
+      ],
+      "confirmed": [
+        "ModelCard wireModel/apiKey/baseURL/provider/piConfig are resolved by pinned OpenMA",
+        "pi-ai locked to1.1.0"
+      ]
+    },
+    "pi_ai": {
+      "package": "@earendil-works/pi-ai",
+      "version": "1.1.0",
+      "integrity": "sha512-1T7LAkc/5Bvc0v6w4vAGVdCrli0o/E0pEmYKTnixu95vSFArBjvbhS/G4ZwI0RUePgf0Imcu0VyqlM4EcXxqfw==",
+      "integrity_matches_openma_lock": true,
+      "actual_execution": "PASS",
+      "actual_flow": "pi stream(openai-responses,provider=tank-codex,fake internal key) -> real localhost gateway -> MockTransport fixed CodexURL/fake OAuth -> synthetic terminal SSE -> actual pi parser start/done",
+      "verified_request_fields": [
+        "developer initial instruction promoted to instructions",
+        "prompt_cache_retention24h emitted by generic pi client and removed by gateway",
+        "function tools retained",
+        "reasoning.effort=medium retained",
+        "include=reasoning.encrypted_content retained",
+        "store=false and stream=true",
+        "internal Bearer replaced by fake OAuth; fake accountID added",
+        "toolCall/function_call and toolResult/function_call_output IDs paired through gateway",
+        "prior reasoning encrypted_content replay retained"
+      ],
+      "reproduction": "npm install --prefix /tmp/tank-gateway-pi-audit --ignore-scripts --omit=optional --no-audit --no-fund @earendil-works/pi-ai@1.1.0; then run pytest tests/test_gateway_audit.py. Override package location with TANK_AUDIT_PI_PACKAGE. Test skips explicitly when external dependency or Node is unavailable."
+    }
+  },
+  "audit_regressions": [
+    "Unauthorized HTTP request with unfinished999999byte body receives401 before body/auth-file/provider access",
+    "Concurrent initial401 wave and delayed stale401 replies refresh only once",
+    "Cancelling refresh caller still persists provider-rotated refresh token before gateway close",
+    "Malformed/string/bool/expired/NaN/infinite refresh expiry cannot overwrite existing auth",
+    "OAuth redirect never followed; no Location/cookie leakage",
+    "HTTPS_PROXY environment ignored; incoming cookies/proxy-auth and provider cookie jar excluded",
+    "Provider429 Retry-After and reset-at preserved; no local retry/reset invented",
+    "Malformed scalar/string/invalidJSON/invalidUTF8 nonstreamSSE fails with static errors and credential-free diagnostics",
+    "Actual RuntimeSupervisor rejected candidate keeps live listener; accepted candidate rebinds same port and key changes; shutdown closes port",
+    "Actual pinned pi1.1.0 request and terminalSSE parser roundtrip through real gateway",
+    "NonUTF8/invalid Authorization returns401 before unfinished body/auth-file/provider access",
+    "Nonstream upstream.close exception cannot log synthetic OAuth; diagnostic is static",
+    "Whole HTTP client.close failure becomes static error; second close is idempotent",
+    "Actual pinned pi replay includes encrypted reasoning, function call and matching function-call-output"
+  ],
+  "findings": [
+    {
+      "id": "GW-AUDIT-01",
+      "severity": "P1",
+      "issue": "Request cancellation during rotating token exchange discarded new tokens",
+      "status": "FIXED_VERIFIED",
+      "fix": "Shielded tracked credential tasks persist provider rotation even after caller cancellation; close drains tasks; bounded total refresh timeout."
+    },
+    {
+      "id": "GW-AUDIT-02",
+      "severity": "P1",
+      "issue": "Malformed refresh JWT expiry could overwrite auth before post-write validation",
+      "status": "FIXED_VERIFIED",
+      "fix": "Validate refreshed access/expiry before persistence; preserve old auth on malformed values."
+    },
+    {
+      "id": "GW-AUDIT-03",
+      "severity": "P2",
+      "issue": "Unexpected malformed SSE exceptions could enter aiohttp diagnostics",
+      "status": "FIXED_VERIFIED",
+      "fix": "Static exception boundary prevents credential-bearing exception rendering."
+    },
+    {
+      "id": "GW-AUDIT-04",
+      "severity": "P2",
+      "issue": "Connection-nominated allowlisted response headers were forwarded",
+      "status": "FIXED_VERIFIED",
+      "fix": "Exclude dynamic Connection tokens from allowlist response forwarding."
+    },
+    {
+      "id": "GW-AUDIT-05",
+      "severity": "P1",
+      "issue": "Nonstream early terminal return followed by failing upstream.aclose bypassed static handler and logged synthetic OAuth plaintext",
+      "status": "FIXED_VERIFIED",
+      "reproduction": "tests/test_gateway_audit.py::test_upstream_close_exception_cannot_print_oauth_credentials",
+      "owner_notified": true,
+      "fix": "All upstream response closure uses a static diagnostic boundary; nonstream completion/401/OAuth cleanup do not print transport exceptions. Whole-client shutdown errors become static GatewayError with suppressed exception chaining."
+    },
+    {
+      "id": "GW-AUDIT-06",
+      "severity": "P2",
+      "issue": "NonUTF8 Authorization header failed UTF8 reencoding before authentication handling, producing500/default aiohttp log instead of401",
+      "status": "FIXED_VERIFIED",
+      "fix": "Compare the one raw Authorization header value as bytes; reject malformed/duplicate headers before reading body or OAuth."
+    },
+    {
+      "id": "GW-AUDIT-07",
+      "severity": "P1",
+      "issue": "Unrelated tokenmetadata edits during refresh could be misclassified as credential replacement and discard provider-rotated tokens",
+      "status": "FIXED_OWNER_REGRESSION_VERIFIED",
+      "fix": "Fingerprint actual credential fields only; merge unrelated external metadata when persisting. Owner regression included in passing combined suite."
+    }
+  ],
+  "checks": {
+    "result": "88 passed; zero skipped; Ruff clean",
+    "elapsed_s": 2.2,
+    "commands": [
+      ".venv/bin/pytest -q tests/test_gateway_audit.py tests/test_codex_gateway.py tests/test_runtime.py tests/test_deploy.py",
+      ".venv/bin/ruff check tests/test_gateway_audit.py src/tank/codex_gateway.py tests/test_codex_gateway.py"
+    ],
+    "actual_pi_probe_executed": true,
+    "gateway_owner_source_freeze_confirmed": true
+  },
+  "limitations": [
+    "No real subscription model entitlement or real refresh tested; tokens deliberately not requested/read.",
+    "No Linux/KVM microVM runtime certification; deployment owner verifies available image/Compose steps separately.",
+    "Abrupt process or host power loss after provider rotation but before receiving/persisting response is an unavoidable external token handoff window; atomic file fsync/replace protects file integrity, not provider-side distributed transaction.",
+    "One active gateway writer is required; no distributed cross-container/external-writer lock. Operator replacement before persist is observed, but arbitrary external writes at the exact replacement instant cannot be made transactional.",
+    "No production latency/throughput/backpressure stress claim; semantic streaming/cancellation/backpressure verified by local tests.",
+    "Any full service startup requiring operator business configuration or real external service credentials remains separate from this offline gateway audit."
+  ],
+  "file_sha256": {
+    "01_Tank_V0_PRD.md": "a93c66f3ee06fedda4a52f65bcd847ab14f65f1cd8b1316f8b1b8b65355c01ca",
+    "02_Tank_V0_HLD.md": "60a7a468fbd9edd4fa41ac92a2b922db54c341c8df88f700dcdd6360fe9fd96e",
+    "03_Tank_V0_Technical_Design.md": "c29e8c416ec5bd5160bd2b3ebfb00fa475fc6405fb796acfc080e50a247613e2",
+    "src/tank/codex_gateway.py": "212875ea423c4bbca1d8af4017001e625afc3a7ea04fe45d9580c00ff253f16b",
+    "tests/test_codex_gateway.py": "315e7a0f3d443099e1383c1068ec17f1443ab0a225256343b85182ea7569d27f",
+    "tests/test_gateway_audit.py": "67794224336869b50ed6e52d58dbc69ea26df255fec4a7697edcad63ce170642",
+    "src/tank/runtime.py": "09c669dfe86700adf6df80ba6f8968fe80a6e93e9c8456ed2c0ea607884317c1",
+    "tests/test_runtime.py": "ac2179083ddbf37732aaca60f8c712e5a4c611d0315cbbd72ab6a2b5035f8db7",
+    "compose.yaml": "5370cf129a354c31c24be3dab3f1779f92fe73f10ba51627fb9a007d1dcaa0b3",
+    "deploy/prepare_openma.py": "75ac9b28e6e720b1cec17bee0ce7d8f9c6c84e218afb298f9c3702273ead5383",
+    "deploy/prepare_openma_source.py": "e6904392460f0a2200564e7ab0832d04cc2989f5b4d718d3e2584736f21d377c",
+    "deploy/openma_entrypoint.mjs": "0ae378b128006926a44a5a3e4b1d680948b189f6e9c3cd3ac91e2967a7e49fcc",
+    "config/openma.yaml": "c508cec48035b58d15408c17296c7ee789d99f644a437b1d4f0c674c630e97fd"
+  },
+  "open_findings": []
+}

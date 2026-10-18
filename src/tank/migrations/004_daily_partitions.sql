@@ -1,0 +1,91 @@
+-- Daily UTC range partitions; a default partition retains historical backfills and incomplete captures.
+ALTER TABLE mkt.klines_1m RENAME TO klines_1m_unpartitioned;
+CREATE TABLE mkt.klines_1m (LIKE mkt.klines_1m_unpartitioned INCLUDING DEFAULTS INCLUDING CONSTRAINTS) PARTITION BY RANGE ("open_time");
+CREATE INDEX klines_1m_partition_key ON mkt.klines_1m(storage_key);
+CREATE INDEX klines_1m_partition_time ON mkt.klines_1m("open_time");
+CREATE INDEX klines_1m_partition_document ON mkt.klines_1m USING gin(document);
+CREATE TRIGGER immutable_record BEFORE UPDATE OR DELETE ON mkt.klines_1m FOR EACH ROW EXECUTE FUNCTION ops.protect_immutable();
+DO $$ DECLARE d date; BEGIN FOR d IN SELECT generate_series((now() AT TIME ZONE 'UTC')::date-100,(now() AT TIME ZONE 'UTC')::date+14,'1 day')::date LOOP
+ EXECUTE format('CREATE TABLE mkt.klines_1m_%s PARTITION OF mkt.klines_1m FOR VALUES FROM (%L) TO (%L)', to_char(d,'YYYYMMDD'),d::text||' 00:00:00+00',(d+1)::text||' 00:00:00+00');
+ END LOOP; END $$;
+CREATE TABLE mkt.klines_1m_historical PARTITION OF mkt.klines_1m DEFAULT;
+INSERT INTO mkt.klines_1m SELECT * FROM mkt.klines_1m_unpartitioned;
+DROP TABLE mkt.klines_1m_unpartitioned;
+CREATE UNIQUE INDEX klines_1m_partition_natural ON mkt.klines_1m("instrument_id","open_time");
+ALTER TABLE mkt.flow_bars_1m RENAME TO flow_bars_1m_unpartitioned;
+CREATE TABLE mkt.flow_bars_1m (LIKE mkt.flow_bars_1m_unpartitioned INCLUDING DEFAULTS INCLUDING CONSTRAINTS) PARTITION BY RANGE ("minute_start");
+CREATE INDEX flow_bars_1m_partition_key ON mkt.flow_bars_1m(storage_key);
+CREATE INDEX flow_bars_1m_partition_time ON mkt.flow_bars_1m("minute_start");
+CREATE INDEX flow_bars_1m_partition_document ON mkt.flow_bars_1m USING gin(document);
+CREATE TRIGGER immutable_record BEFORE UPDATE OR DELETE ON mkt.flow_bars_1m FOR EACH ROW EXECUTE FUNCTION ops.protect_immutable();
+DO $$ DECLARE d date; BEGIN FOR d IN SELECT generate_series((now() AT TIME ZONE 'UTC')::date-100,(now() AT TIME ZONE 'UTC')::date+14,'1 day')::date LOOP
+ EXECUTE format('CREATE TABLE mkt.flow_bars_1m_%s PARTITION OF mkt.flow_bars_1m FOR VALUES FROM (%L) TO (%L)', to_char(d,'YYYYMMDD'),d::text||' 00:00:00+00',(d+1)::text||' 00:00:00+00');
+ END LOOP; END $$;
+CREATE TABLE mkt.flow_bars_1m_historical PARTITION OF mkt.flow_bars_1m DEFAULT;
+INSERT INTO mkt.flow_bars_1m SELECT * FROM mkt.flow_bars_1m_unpartitioned;
+DROP TABLE mkt.flow_bars_1m_unpartitioned;
+CREATE UNIQUE INDEX flow_bars_1m_partition_natural ON mkt.flow_bars_1m("instrument_id","minute_start");
+ALTER TABLE mkt.book_summaries RENAME TO book_summaries_unpartitioned;
+CREATE TABLE mkt.book_summaries (LIKE mkt.book_summaries_unpartitioned INCLUDING DEFAULTS INCLUDING CONSTRAINTS) PARTITION BY RANGE ("exchange_ts");
+CREATE INDEX book_summaries_partition_key ON mkt.book_summaries(storage_key);
+CREATE INDEX book_summaries_partition_time ON mkt.book_summaries("exchange_ts");
+CREATE INDEX book_summaries_partition_document ON mkt.book_summaries USING gin(document);
+CREATE TRIGGER immutable_record BEFORE UPDATE OR DELETE ON mkt.book_summaries FOR EACH ROW EXECUTE FUNCTION ops.protect_immutable();
+DO $$ DECLARE d date; BEGIN FOR d IN SELECT generate_series((now() AT TIME ZONE 'UTC')::date-100,(now() AT TIME ZONE 'UTC')::date+14,'1 day')::date LOOP
+ EXECUTE format('CREATE TABLE mkt.book_summaries_%s PARTITION OF mkt.book_summaries FOR VALUES FROM (%L) TO (%L)', to_char(d,'YYYYMMDD'),d::text||' 00:00:00+00',(d+1)::text||' 00:00:00+00');
+ END LOOP; END $$;
+CREATE TABLE mkt.book_summaries_historical PARTITION OF mkt.book_summaries DEFAULT;
+INSERT INTO mkt.book_summaries SELECT * FROM mkt.book_summaries_unpartitioned;
+DROP TABLE mkt.book_summaries_unpartitioned;
+CREATE UNIQUE INDEX book_summaries_partition_natural ON mkt.book_summaries("instrument_id","exchange_ts");
+ALTER TABLE mkt.oi_obs RENAME TO oi_obs_unpartitioned;
+CREATE TABLE mkt.oi_obs (LIKE mkt.oi_obs_unpartitioned INCLUDING DEFAULTS INCLUDING CONSTRAINTS) PARTITION BY RANGE ("ts");
+CREATE INDEX oi_obs_partition_key ON mkt.oi_obs(storage_key);
+CREATE INDEX oi_obs_partition_time ON mkt.oi_obs("ts");
+CREATE INDEX oi_obs_partition_document ON mkt.oi_obs USING gin(document);
+CREATE TRIGGER immutable_record BEFORE UPDATE OR DELETE ON mkt.oi_obs FOR EACH ROW EXECUTE FUNCTION ops.protect_immutable();
+DO $$ DECLARE d date; BEGIN FOR d IN SELECT generate_series((now() AT TIME ZONE 'UTC')::date-100,(now() AT TIME ZONE 'UTC')::date+14,'1 day')::date LOOP
+ EXECUTE format('CREATE TABLE mkt.oi_obs_%s PARTITION OF mkt.oi_obs FOR VALUES FROM (%L) TO (%L)', to_char(d,'YYYYMMDD'),d::text||' 00:00:00+00',(d+1)::text||' 00:00:00+00');
+ END LOOP; END $$;
+CREATE TABLE mkt.oi_obs_historical PARTITION OF mkt.oi_obs DEFAULT;
+INSERT INTO mkt.oi_obs SELECT * FROM mkt.oi_obs_unpartitioned;
+DROP TABLE mkt.oi_obs_unpartitioned;
+CREATE UNIQUE INDEX oi_obs_partition_natural ON mkt.oi_obs("instrument_id","metric_key","ts");
+ALTER TABLE mkt.liq_obs RENAME TO liq_obs_unpartitioned;
+CREATE TABLE mkt.liq_obs (LIKE mkt.liq_obs_unpartitioned INCLUDING DEFAULTS INCLUDING CONSTRAINTS) PARTITION BY RANGE ("ts");
+CREATE INDEX liq_obs_partition_key ON mkt.liq_obs(storage_key);
+CREATE INDEX liq_obs_partition_time ON mkt.liq_obs("ts");
+CREATE INDEX liq_obs_partition_document ON mkt.liq_obs USING gin(document);
+CREATE TRIGGER immutable_record BEFORE UPDATE OR DELETE ON mkt.liq_obs FOR EACH ROW EXECUTE FUNCTION ops.protect_immutable();
+DO $$ DECLARE d date; BEGIN FOR d IN SELECT generate_series((now() AT TIME ZONE 'UTC')::date-100,(now() AT TIME ZONE 'UTC')::date+14,'1 day')::date LOOP
+ EXECUTE format('CREATE TABLE mkt.liq_obs_%s PARTITION OF mkt.liq_obs FOR VALUES FROM (%L) TO (%L)', to_char(d,'YYYYMMDD'),d::text||' 00:00:00+00',(d+1)::text||' 00:00:00+00');
+ END LOOP; END $$;
+CREATE TABLE mkt.liq_obs_historical PARTITION OF mkt.liq_obs DEFAULT;
+INSERT INTO mkt.liq_obs SELECT * FROM mkt.liq_obs_unpartitioned;
+DROP TABLE mkt.liq_obs_unpartitioned;
+ALTER TABLE mkt.tickers_24h RENAME TO tickers_24h_unpartitioned;
+CREATE TABLE mkt.tickers_24h (LIKE mkt.tickers_24h_unpartitioned INCLUDING DEFAULTS INCLUDING CONSTRAINTS) PARTITION BY RANGE ("ts");
+CREATE INDEX tickers_24h_partition_key ON mkt.tickers_24h(storage_key);
+CREATE INDEX tickers_24h_partition_time ON mkt.tickers_24h("ts");
+CREATE INDEX tickers_24h_partition_document ON mkt.tickers_24h USING gin(document);
+CREATE TRIGGER immutable_record BEFORE UPDATE OR DELETE ON mkt.tickers_24h FOR EACH ROW EXECUTE FUNCTION ops.protect_immutable();
+DO $$ DECLARE d date; BEGIN FOR d IN SELECT generate_series((now() AT TIME ZONE 'UTC')::date-100,(now() AT TIME ZONE 'UTC')::date+14,'1 day')::date LOOP
+ EXECUTE format('CREATE TABLE mkt.tickers_24h_%s PARTITION OF mkt.tickers_24h FOR VALUES FROM (%L) TO (%L)', to_char(d,'YYYYMMDD'),d::text||' 00:00:00+00',(d+1)::text||' 00:00:00+00');
+ END LOOP; END $$;
+CREATE TABLE mkt.tickers_24h_historical PARTITION OF mkt.tickers_24h DEFAULT;
+INSERT INTO mkt.tickers_24h SELECT * FROM mkt.tickers_24h_unpartitioned;
+DROP TABLE mkt.tickers_24h_unpartitioned;
+CREATE UNIQUE INDEX tickers_24h_partition_natural ON mkt.tickers_24h("instrument_id","ts");
+ALTER TABLE mkt.trades RENAME TO trades_unpartitioned;
+CREATE TABLE mkt.trades (LIKE mkt.trades_unpartitioned INCLUDING DEFAULTS INCLUDING CONSTRAINTS) PARTITION BY RANGE ("ts");
+CREATE INDEX trades_partition_key ON mkt.trades(storage_key);
+CREATE INDEX trades_partition_time ON mkt.trades("ts");
+CREATE INDEX trades_partition_document ON mkt.trades USING gin(document);
+CREATE TRIGGER immutable_record BEFORE UPDATE OR DELETE ON mkt.trades FOR EACH ROW EXECUTE FUNCTION ops.protect_immutable();
+DO $$ DECLARE d date; BEGIN FOR d IN SELECT generate_series((now() AT TIME ZONE 'UTC')::date-100,(now() AT TIME ZONE 'UTC')::date+14,'1 day')::date LOOP
+ EXECUTE format('CREATE TABLE mkt.trades_%s PARTITION OF mkt.trades FOR VALUES FROM (%L) TO (%L)', to_char(d,'YYYYMMDD'),d::text||' 00:00:00+00',(d+1)::text||' 00:00:00+00');
+ END LOOP; END $$;
+CREATE TABLE mkt.trades_historical PARTITION OF mkt.trades DEFAULT;
+INSERT INTO mkt.trades SELECT * FROM mkt.trades_unpartitioned;
+DROP TABLE mkt.trades_unpartitioned;
+CREATE UNIQUE INDEX trades_partition_natural ON mkt.trades("instrument_id","trade_id","ts");

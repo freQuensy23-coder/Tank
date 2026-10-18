@@ -4,7 +4,7 @@ version: baseline-2.3
 description: Analyze a continuous event with Tank evidence tools.
 ---
 
- A `SKILL.md` kept in `/opt/tank/config/skills/tank-event-analyst/` and uploaded to OpenMA on deploy; OpenMA inlines it into the system prompt at session start. It carries the class criteria, certainty rules, freshness grades, stage ladder, hard rules and card template verbatim from 01 §1.1, §6.2–6.3, §7.1 and §8, and this playbook:
+ A `SKILL.md` kept in `/config/skills/tank-event-analyst/` and uploaded to OpenMA on deploy; OpenMA inlines it into the system prompt at session start. It carries the class criteria, certainty rules, freshness grades, stage ladder, hard rules and card template verbatim from 01 §1.1, §6.2–6.3, §7.1 and §8, and this playbook:
 
 1. **NEW_ITEM.** Read the item and check what Tank already knows (`list_open_events`, `search_tank_items`). For a MEDIUM fact, check the official sources first (`fetch_page`, `search_tank_items`, `web_search`). Then `record_event`: facts with verbatim quotes, certainty with its reason, when the event really became public, freshness, stage. If the item reports no new fact, `record_event` with `is_event = false`, and stop. If the event is already open in another session, `merge_into` it, and stop.
 2. **Class.** `set_assessment`: the criterion of 01 §6.3 with its quote, the seven scores with reasons, token capture, impact horizon. The tool applies §4.3 and returns the final class. LOW or MATERIAL → stop; the event stays TRACKED.
@@ -123,4 +123,138 @@ WHAT TO DO: DON'T CHASE
 18. An unverified fact is never presented as verified.
 
 ---
+
+
+## Required delivery deadlines
+
+STRUCTURAL SHOCK: publish the PARTIAL card within 3 minutes after Tank learns the fact. MAJOR: publish the FULL card within 8 minutes after Tank learns the fact. A decisive condition requires an UPDATE within 60 seconds, after the event's current analysis step if one is running. Own scripts, browser work and deeper research must not delay these deadlines; continue deeper work in a later material update. The deterministic publication/delivery gates still apply.
+
+## Normative input rubrics for assessment, capture and beneficiaries
+
+The following input rules are copied from Technical Design§4.1–4.7. Deterministic Market Truth and Decision tools still own every market number, grade and action.
+
+### 4.1 Score semantics
+
+| Score | Meaning |
+|---|---|
+| 0–1 | Absent, strongly adverse or disproven |
+| 2–3 | Weak or materially adverse |
+| 4–5 | Mixed, neutral or incomplete |
+| 6 | Mildly supportive |
+| 7 | Clearly supportive |
+| 8 | Strong |
+| 9 | Exceptional |
+| 10 | Extreme, structural, unusually clean |
+
+Missing evidence is `null`, never 0. Scores are never averaged into one number.
+
+### 4.2 EMS dimension rubrics
+
+| Dimension | 0 | 2 | 4 | 6 | 8 | 10 |
+|---|---|---|---|---|---|---|
+| **D — Economic directness** | No economic content | Attention/branding only | Enables future activity (option value) | Creates likely usage or activity | Creates direct fees, demand, collateral or access | Creates contractually defined, recurring mechanical flows |
+| **M — Magnitude** (effect R relative to the base recorded in the rationale) | R < 0.1% | 0.1–1% | 1–5% | 5–20% | 20–50% | ≥ 50% or a new order of magnitude |
+| **P — Permanence** | One-off promotion | Temporary incentive (weeks) | Multi-month program | Durable product or architecture | Legal, regulatory or structural change | Irreversible supply or legal change |
+| **X — Distribution expansion** | No new access | Incremental new venue for existing users | New retail pool (major listing, new region) | New institutional channel | Large new institutional pool (custody, broker, clearing access) | Previously barred capital class gains access |
+| **F — Mechanical flows** | None | Discretionary, unscheduled | Scheduled but small vs volume | Contractual/mandated, material vs daily volume | Large mandated flows | Forced flows of structural size (index inclusion, creations, mandated collateral, supply removal) |
+| **S — Surprise** | Fully expected or already public | Widely expected, timing unclear | Partly anticipated / rumored | Mostly unexpected | Unexpected and consequential | True surprise / abrupt state change |
+| **I — Implementation** | Deterministic from event state (§3.6) | | | | | |
+
+Rules for the base of M: token market cap for token-mechanical flows; current annualized protocol revenue or activity for usage and fee effects; the token's covered daily volume for access and distribution effects. Without any numeric basis, M is null with reason NOT_ESTIMABLE (01 FR-M-01: unknown, never guessed).
+
+### 4.3 Classification and EMS score
+
+The agent submits the class with `set_assessment`, with the matched criterion of 01 §6.3 (G1–G6, M1–M7, MATERIAL or LOW) and a verbatim quote that supports it. The tool then checks it:
+
+| Check | Effect |
+|---|---|
+| Certainty LOW | Class ≤ MATERIAL |
+| STRUCTURAL SHOCK without certainty HIGH, a verified stage ≥ APPROVED and an accepted claim for the G-criterion | Class = MAJOR |
+| MAJOR without certainty ≥ MEDIUM, or without a quote for the M-criterion | Class = MATERIAL |
+| M1 venue other than Binance, Coinbase, OKX, Bybit, Kraken or Robinhood | Class = MATERIAL |
+| Stage PROPOSED, except M4 (token economics put to a binding vote) and M5 (an ETF/ETP filing) | Class ≤ MATERIAL |
+| No universe token concerned, directly or as a named beneficiary or loser | Class = LOW |
+
+The seven dimension scores are printed on the card next to the class; they explain it and never decide it.
+
+Structural criteria (each needs an accepted claim):
+
+| Gate | Condition |
+|---|---|
+| G1 | Permanent change to the supply equation |
+| G2 | Mechanical demand, buyback or creation flow begins |
+| G3 | Previously inaccessible capital can participate |
+| G4 | Token becomes required infrastructure for a large system |
+| G5 | Legal/regulatory state changes from blocked or unclear to permitted |
+| G6 | Major asset becomes eligible for custody, collateral, clearing or settlement |
+
+Examples:
+
+| Case | Class | Why |
+|---|---|---|
+| @sama: "We will integrate WLD and OpenAI" | MAJOR | M2 — integration with a large company; certainty HIGH (a World co-founder) |
+| @tier10k: "Robinhood to list LIT", not confirmed by S13 | MAJOR | M1 — certainty MEDIUM; the card says what is not verified |
+| Fee burn put to a binding vote | MAJOR | M4 — never STRUCTURAL SHOCK while the stage is PROPOSED |
+| The Clearing House partners with Quant on on-chain money | STRUCTURAL SHOCK | G4 — verified by the TCH release |
+| Aave proposal to onboard USAT | MATERIAL | A proposal still to be decided |
+| FinCEN special measure against the A7 network's sub-agents | LOW | No universe token concerned |
+
+### 4.4 Event certainty and timing confidence
+
+| Certainty | Rule |
+|---|---|
+| HIGH | An official source or primary document of the organization involved (its site, an exchange announcement, a regulator publication, a filing), its official X account, its founders or C-level team speaking about the organization, or a verified market/technical artifact (e.g., the instrument trades). Example: Sam Altman, CEO of OpenAI and co-founder of World, posts "we will integrate WLD and OpenAI". |
+| MEDIUM | Likely true but not proven: a reliable reporter or outlet, a founder speaking about another organization, a plausible claim without a primary quote. Example: @tier10k posts "Robinhood to list LIT". |
+| LOW | Implausible, or an unknown or unreliable author. Example: an unknown account posts "Bybit pivots to making condoms". |
+
+The agent assigns certainty with a reason in `record_event`; its own check of the official sources (§3.5) can raise MEDIUM to HIGH. LOW-certainty facts are recorded and never produce a card. An official denial sets lifecycle INVALIDATED. Timing confidence: HIGH = exact primary timestamp; MEDIUM = bucket precision; LOW = collection time only.
+
+### 4.5 Effective Economic Capture and token capture
+
+The agent fills the chain with quotes in `set_assessment`; the tool applies the caps.
+
+| Step | Recorded as |
+|---|---|
+| Headline activity | What is advertised or reported (volume, TVL, users, notional). |
+| Eligible activity | Portion actually subject to fees or the mechanism. |
+| Effective fees | Fees remaining after discounts, rebates, incentives, exemptions. |
+| Protocol capture | Who earns the economics, and how much. |
+| Token capture | Mechanism that reaches the token (buyback, burn, staking reward, fee share, gas, collateral, required lock), whether active, and on what it is conditional. |
+
+Capture score rubric: 0 none · 2 branding/narrative · 4 indirect usage · 6 required network/token utility · 8 direct fees/staking/lock/burn linkage · 10 mechanical recurring buy/burn/required demand.
+
+| Cap | Rule |
+|---|---|
+| C1 | Only headline-activity evidence (volume, TVL, usage) → score ≤ 3. |
+| C2 | Token mechanism named but without primary evidence of linkage → ≤ 4. |
+| C3 | Mechanism not active (proposal, pending vote, future switch) → ≤ 5 and `conditional = true`. |
+| C4 | Effective fees unknown → ≤ 7. |
+| C5 | DIRECT requires score ≥ 7 with an active, primary-evidenced mechanism. |
+
+Class: ≥ 7 DIRECT · 4–6 INDIRECT · 0–3 NARRATIVE_ONLY · null UNKNOWN.
+When `token_flow_pct_mcap` is computable, it also informs the M and F dimensions.
+
+### 4.6 Impact Horizon rules
+
+- `impact_start = NOW` only if event state ≥ LIVE, or the event is an immediately effective market-access change (for example the instrument already trades).
+- PROPOSED events start at WEEKS or later, unless a dated decision falls within days (then DAYS with ramp CONDITIONAL).
+- Ramp CONDITIONAL requires at least one dependency.
+- Timing confidence is HIGH only when dated milestones are quoted from primary sources.
+
+### 4.7 Beneficiary mapping
+
+Algorithm:
+
+1. **Seed.** Actors and subjects of the event, and their tokens.
+2. **Layer walk.** For each of the eight `StackLayer`s, take dependency-map entities serving that layer in the event's context (chain, asset class), plus the edges the agent submits with `set_beneficiaries`. Each proposed edge must cite evidence; an entity outside the registry is kept as unresolved and noted.
+3. **Roles and direction.** PRIMARY (directly gains), SECONDARY (gains through a layer), COMPETITOR (alternative that may lose share), LOSER (thesis weakened). Competitors and losers must state the share-loss mechanism.
+4. **States.** Integration state from accepted claims only (§3.6). An edge supported only by the dependency map is COMPATIBLE at most.
+5. **Capture.** Capture chain per token (§4.5).
+6. **Exposure score:** 10 sole required rail with counterparty evidence · 8 one of two or three required rails with LIVE evidence · 6 likely rail (BUILT/SUBMITTED/APPROVED evidence) · 4 plausible candidate (dependency map + compatibility) · 2 thematic association · 0 none.
+7. **Credible beneficiary:** role ∈ {PRIMARY, SECONDARY} · capture at least INDIRECT (rubric level 4, §4.5) · exposure at least a likely rail (level 6) · integration state ≥ BUILT (PRIMARY uses the event state) · edge certainty ≥ MEDIUM · tradable on covered venues.
+8. **Analysis set** (universe tokens only, 01 §4.1): tradable PRIMARY tokens, top 4 credible SECONDARY tokens by exposure × capture, top 2 tradable LOSER tokens by exposure (01 FR-B-03).
+9. **Least-repriced expression:** among credible beneficiaries with liquidity NORMAL (§5.5), the lowest repricing band, then the lowest event-window `pctile` (§5.7), then the higher exposure. The reason is stored.
+10. **No credible secondary:** each layer reports NONE, UNKNOWN or "not tradable" with a reason.
+
+Card token blocks (max 3, 01 FR-A-05): tradable PRIMARY → least-repriced credible SECONDARY → next most relevant SECONDARY or LOSER.
 

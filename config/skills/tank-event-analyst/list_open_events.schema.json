@@ -8,5 +8,6 @@
       "type": "string"
     }
   },
-  "required": []
+  "required": [],
+  "description": "Reads open events. Returns: Statements, stages, known_to_us_at, sessions."
 }

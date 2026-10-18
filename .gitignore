@@ -9,5 +9,9 @@ __pycache__/
 .DS_Store
 data/
 logs/
+dist/
+deploy/operator.env
+deploy/generated/
 *.egg-info/
 fixture_check/data/
+config/.tank-config-version.json

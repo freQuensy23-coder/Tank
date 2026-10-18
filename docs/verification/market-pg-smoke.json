@@ -1,0 +1,22 @@
+{
+  "recorded_at": "2026-10-17T17:12:37.210359Z",
+  "database": "isolated PostgreSQL16 tank_market_capture_test",
+  "scope": "Explicit simulated packets against real storage; no production evidence synthesized.",
+  "status": "PASS",
+  "checks": [
+    "migration11",
+    "exact Decimal native quantities persisted in typed numeric columns",
+    "trade dedup across reopen",
+    "minute reconstructed after restart",
+    "strict indexed latest_before anchor",
+    "snapshot actual raw anchor/cutoff trade points",
+    "raw Parquet SHA256 verified after reopen",
+    "capture readiness explicit NOT_REQUESTED"
+  ],
+  "typed_native_values": {
+    "buy_qty": "1E-18",
+    "sell_qty": "2E-18",
+    "sum_sq_qty": "5E-36"
+  },
+  "raw_packet_sha256": "454bf3f029391aec56963f56c25b35927ea92516e78fac97ad73eeae95f37609"
+}

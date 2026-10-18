@@ -1,0 +1,244 @@
+{
+  "status": "PASSED_SYNTHETIC_CONTROL_PLANE_ROUNDTRIP",
+  "sessions_created": 0,
+  "model_requests_sent": 0,
+  "external_provider_requests_sent": 0,
+  "credentials": "synthetic only",
+  "resources": {
+    "analyst": {
+      "http_status": 200,
+      "skill_count": 2,
+      "custom_tool_names": [
+        "get_item",
+        "search_tank_items",
+        "list_open_events",
+        "get_event",
+        "get_registry",
+        "get_token_facts",
+        "web_search",
+        "fetch_page",
+        "record_event",
+        "add_observation",
+        "merge_into",
+        "set_assessment",
+        "set_beneficiaries",
+        "get_market_truth",
+        "get_decision",
+        "publish_card",
+        "schedule_milestone",
+        "propose_pattern"
+      ],
+      "harness": "pi",
+      "model": {
+        "id": "gpt-6.1-sol",
+        "effort": {
+          "type": "medium"
+        }
+      },
+      "native": {
+        "configs": [
+          {
+            "enabled": false,
+            "name": "web_search",
+            "permission_policy": {
+              "type": "always_allow"
+            },
+            "type": "web_search"
+          },
+          {
+            "enabled": false,
+            "name": "web_fetch",
+            "permission_policy": {
+              "type": "always_allow"
+            },
+            "type": "web_fetch"
+          },
+          {
+            "enabled": false,
+            "name": "schedule",
+            "permission_policy": {
+              "type": "always_allow"
+            },
+            "type": "schedule"
+          },
+          {
+            "enabled": false,
+            "name": "cancel_schedule",
+            "permission_policy": {
+              "type": "always_allow"
+            },
+            "type": "cancel_schedule"
+          },
+          {
+            "enabled": false,
+            "name": "list_schedules",
+            "permission_policy": {
+              "type": "always_allow"
+            },
+            "type": "list_schedules"
+          },
+          {
+            "enabled": true,
+            "name": "browser",
+            "permission_policy": {
+              "type": "always_allow"
+            },
+            "type": "browser"
+          }
+        ],
+        "default_config": {
+          "enabled": true,
+          "permission_policy": {
+            "type": "always_allow"
+          }
+        },
+        "type": "agent_toolset_20260401"
+      }
+    },
+    "scout": {
+      "http_status": 200,
+      "skill_count": 1,
+      "custom_tool_names": [
+        "search_tank_items",
+        "web_search",
+        "record_review"
+      ],
+      "harness": "pi",
+      "model": {
+        "id": "gpt-6.1-sol",
+        "effort": {
+          "type": "medium"
+        }
+      },
+      "native": {
+        "configs": [
+          {
+            "enabled": false,
+            "name": "web_search",
+            "permission_policy": {
+              "type": "always_allow"
+            },
+            "type": "web_search"
+          },
+          {
+            "enabled": false,
+            "name": "web_fetch",
+            "permission_policy": {
+              "type": "always_allow"
+            },
+            "type": "web_fetch"
+          },
+          {
+            "enabled": false,
+            "name": "schedule",
+            "permission_policy": {
+              "type": "always_allow"
+            },
+            "type": "schedule"
+          },
+          {
+            "enabled": false,
+            "name": "cancel_schedule",
+            "permission_policy": {
+              "type": "always_allow"
+            },
+            "type": "cancel_schedule"
+          },
+          {
+            "enabled": false,
+            "name": "list_schedules",
+            "permission_policy": {
+              "type": "always_allow"
+            },
+            "type": "list_schedules"
+          },
+          {
+            "enabled": false,
+            "name": "browser",
+            "permission_policy": {
+              "type": "always_allow"
+            },
+            "type": "browser"
+          }
+        ],
+        "default_config": {
+          "enabled": false,
+          "permission_policy": {
+            "type": "always_allow"
+          }
+        },
+        "type": "agent_toolset_20260401"
+      }
+    },
+    "production_environment": {
+      "http_status": 200,
+      "networking": {
+        "type": "unrestricted"
+      }
+    },
+    "replay_environment": {
+      "http_status": 200,
+      "networking": {
+        "type": "limited",
+        "allow_mcp_servers": false,
+        "allow_package_managers": false,
+        "allowed_hosts": [
+          "postgres"
+        ]
+      }
+    },
+    "model_card": {
+      "http_status": 200,
+      "provider": "tank-codex",
+      "base_url": "http://tank:8790/v1",
+      "api": "openai-responses"
+    }
+  },
+  "synthetic_process_provider_selection": {
+    "http_status": 200,
+    "provider": "openrouter",
+    "openrouter_key_present": true,
+    "typesafe_key_present": false,
+    "plain_openrouter_key_present": false,
+    "codex_auth_not_in_environment": true
+  },
+  "recorded_at": "2026-10-18T06:59:30.264859+00:00",
+  "phase": "OpenRouter Jev deployment delta with Codex analyst gateway",
+  "final_health_after_qa": {
+    "recorded_at": "2026-10-18T07:03:57.110026+00:00",
+    "openma": {
+      "http_status": 200,
+      "body": {
+        "status": "ok",
+        "runtime": "node",
+        "pid": 42,
+        "uptime_s": 453,
+        "auth": "better-auth-pg",
+        "backends": {
+          "agents": "postgres",
+          "events": "postgres",
+          "hub": "pg-notify",
+          "memory_blobs": "localfs /app/data/memory-blobs",
+          "files_blobs": "localfs /app/data/files",
+          "v1_stream": "sql-replicated",
+          "db": "postgres postgres:5432/oma"
+        }
+      }
+    },
+    "postgres_ready": true,
+    "test_project": "tank-openrouter-20261018"
+  },
+  "final_qa": "700 passed, 6 intentional Memory-only skips; all20 actual pinned OpenMA SQL/Node probes passed",
+  "cleanup": {
+    "completed_at": "2026-10-18T07:04:34.219038+00:00",
+    "project": "tank-openrouter-20261018",
+    "remaining_project_resources": {
+      "containers": [],
+      "volumes": [],
+      "networks": []
+    },
+    "synthetic_secret_fixture_removed": true,
+    "images_and_retained_oci_layout_preserved": true,
+    "other_projects_and_root_native_postgres_untouched": true
+  }
+}
