@@ -177,8 +177,6 @@ Rules:
 
 ### 4.3 X accounts (86)
 
-X is optional (D10): Tank runs and is accepted without it, and the operator turns it on once an X session is available.
-
 On the list: every official account of a universe project's organizations (project, company, foundation, chain or main product), its founders, and its C-level (CEO, CTO, COO, CPO, President, foundation executive director), plus accounts that bring facts the other sources do not carry. Not on the list: people who left the project, investors and other staff, dormant accounts, and accounts whose owner no official source confirms. Posts of these organizations, founders and C-level about their own project count as an official source (FR-E-05).
 
 | Token | Organization accounts (41) | Founders and C-level (37) |
@@ -261,7 +259,7 @@ Each requirement describes behavior the operator can observe or a test can check
 | FR-D-01 | Tank MUST see every new item of every source in §4.2 within its max delay and MUST record when it first saw it. |
 | FR-D-02 | Once an event is graded MAJOR or higher (§6.3), Tank MUST check the official sources of the organizations involved every 15 s for 2 h; around a known milestone (vote end, effective date, launch time) it MUST check every 15 s from 5 min before until confirmed or 2 h after. |
 | FR-D-03 | A new market or a status change on any of the 6 venues MUST become an item within its max delay (S14). |
-| FR-D-04 | When X is turned on (D10), Tank MUST capture every post of the X accounts in §4.3 with author, text, time and the posts it quotes or reposts. |
+| FR-D-04 | Tank MUST capture every post of the X accounts in §4.3 with author, text, time and the posts it quotes or reposts. |
 | FR-D-05 | Tank MUST use only free data sources. |
 | FR-D-06 | News, GitHub commits and X posts of founders, C-level and the other accounts of §4.3 MUST go to the full analysis when they are about crypto — crypto assets, exchanges, regulation, or a project of the universe — and are kept with the reason for review otherwise. The other sources and the organization accounts always go to the full analysis. (How the check works: 03 §3.1.) |
 
@@ -455,7 +453,7 @@ The reviewer can: list cards and updates for a period; open a card with its vers
 
 | Checkpoint | Pass condition |
 |---|---|
-| V0-A Sources | All sources except X (S29) and both market-data paths run unattended 72 h with < 1% failed reads per source; when X is turned on (D10), it meets the same bar and the X list holds exactly the 86 accounts of §4.3; every metric of 03 §2.10 passes its meaning check; archive history passes integrity checks for 5 tokens × 7 days. |
+| V0-A Sources | All 34 sources and both market-data paths run unattended 72 h with < 1% failed reads per source; the X list holds exactly the 86 accounts of §4.3; every metric of 03 §2.10 passes its meaning check; archive history passes integrity checks for 5 tokens × 7 days. |
 | V0-B Events | On 200 labeled items from S01–S34 (≥ 30 repeats of a known event, ≥ 10 across different sources): repeats and developments join their event's analysis with precision and recall ≥ 0.90 (FR-E-02); ≥ 95% of the items labeled as about crypto reach the full analysis (FR-D-06); first-known times correct; Tank's freshness grade matches the reviewer's on ≥ 90% of items; no state overstated. |
 | V0-C Grading | The 27 test cases of 03 §11.3 pass; no proposed event is graded STRUCTURAL SHOCK. |
 | V0-D Beneficiaries | The CoW case names CoW as a secondary beneficiary on liquidity/execution; the World and Ondo cases show capture no stronger than indirect; the Quant case names credible secondaries or explains per layer why none qualifies. |
@@ -499,4 +497,3 @@ Social/narrative scoring (virality, community spread); persistent narrative trac
 | D7 | The analysis model runs on the operator's ChatGPT subscription (Codex sign-in, no API key). Token and spending limits are out of V0 scope. |
 | D8 | One event, one analysis: the first item starts it, and every later item that repeats or develops the event within 3 days, every fired condition and every milestone joins it, even while it is running. |
 | D9 | The agents' web search uses DuckDuckGo, with no key and no cost. DuckDuckGo has no official search API, so Tank reads its results page; the terms-of-service and blocking risk is accepted. |
-| D10 | X (S29) is optional. Without it Tank loses the posts of the 86 accounts, so news of organizations, founders and C-level arrives only through their other sources, later or not at all; nothing else changes. |
