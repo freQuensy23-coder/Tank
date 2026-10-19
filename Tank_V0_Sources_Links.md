@@ -1,6 +1,6 @@
 # Tank V0 — sources and X accounts with links
 
-Built from 02 HLD §3 (sources) and 01 PRD §4.3 (X accounts), 19 Oct 2026. Links point to what Tank reads; for APIs a human page is given next to it.
+Built from 02 HLD §3 (sources) and 01 PRD §4.3 (X accounts), 19 Oct 2026. Links point to what Tank reads; for APIs a human page is given next to it. Every link was opened on 19 Oct 2026 (X handles through X's oEmbed; SEC, Quant and Snapshot in a browser, since they refuse scripted requests).
 
 **Who watches what.** The agent does not monitor anything. Tank's `sources` module polls S01–S28 and S30–S34 at the intervals below, `xsensor` reads the X list (S29) every 60 s, and Jev filters each new item and routes it. Only items routed to an event reach the agent's session; inside it the agent can also open pages (`fetch_page`) and search the web (`web_search`).
 
@@ -10,12 +10,12 @@ Built from 02 HLD §3 (sources) and 01 PRD §4.3 (X accounts), 19 Oct 2026. Link
 |---|---|---|---|
 | S01 | SEC | [press releases RSS](https://www.sec.gov/news/pressreleases.rss) · [speeches & statements RSS](https://www.sec.gov/news/speeches-statements.rss) | 60 s · 120 s |
 | S02 | SEC EDGAR | [latest S-1 filings (Atom)](https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=S-1&owner=include&count=40&output=atom) | 120 s |
-| S03 | Federal Register | [documents API](https://www.federalregister.gov/api/v1/documents.json) (SEC, CFTC, Fed, OCC, Treasury, FinCEN) · [site](https://www.federalregister.gov/) | — |
+| S03 | Federal Register | [documents API](https://www.federalregister.gov/api/v1/documents.json) (SEC, CFTC, Fed, OCC, Treasury, FinCEN) | — |
 | S04 | CFTC | [press releases RSS](https://www.cftc.gov/RSS/RSSGP/rssgp.xml) · [enforcement RSS](https://www.cftc.gov/RSS/RSSENF/rssenf.xml) | 120 s · 300 s |
 | S05 | Federal Reserve | [press RSS](https://www.federalreserve.gov/feeds/press_all.xml) | 120 s |
 | S06 | OCC | [news RSS](https://www.occ.gov/rss/occ_news.xml) | 300 s |
 | S07 | US Treasury + OFAC | [Treasury press releases](https://home.treasury.gov/news/press-releases) · [OFAC RSS](https://ofac.treasury.gov/rss.xml) | 300 s |
-| S08 | DTCC | [news page](https://www.dtcc.com/news) | 300 s |
+| S08 | DTCC | [press releases](https://www.dtcc.com/press-releases) (the HLD page `dtcc.com/news` now redirects to Insights) | 300 s |
 
 ## Exchanges and brokers
 
@@ -25,7 +25,7 @@ Built from 02 HLD §3 (sources) and 01 PRD §4.3 (X accounts), 19 Oct 2026. Link
 | S10 | OKX | [announcements](https://www.okx.com/help/section/announcements-latest-announcements) (API: [v5/support/announcements](https://www.okx.com/api/v5/support/announcements)) | 60 s |
 | S11 | Bybit | [announcements](https://announcements.bybit.com/) (API: [v5/announcements](https://api.bybit.com/v5/announcements/index?locale=en-US)) | 60 s |
 | S12 | Kraken | [blog RSS](https://blog.kraken.com/feed) | 120 s |
-| S13 | Robinhood | [newsroom](https://newsroom.aboutrobinhood.com/) | 300 s |
+| S13 | Robinhood | [newsroom](https://robinhood.com/newsroom/) (moved from `newsroom.aboutrobinhood.com`) | 300 s |
 | S14 | New markets on 6 venues | [Binance spot](https://api.binance.com/api/v3/exchangeInfo), [Binance perps](https://fapi.binance.com/fapi/v1/exchangeInfo), [Coinbase](https://api.exchange.coinbase.com/products), [Kraken](https://api.kraken.com/0/public/AssetPairs), [OKX spot](https://www.okx.com/api/v5/public/instruments?instType=SPOT), [OKX swaps](https://www.okx.com/api/v5/public/instruments?instType=SWAP), [Bybit spot](https://api.bybit.com/v5/market/instruments-info?category=spot), [Bybit perps](https://api.bybit.com/v5/market/instruments-info?category=linear) | — |
 
 ## Issuers and protocols
@@ -45,7 +45,7 @@ Built from 02 HLD §3 (sources) and 01 PRD §4.3 (X accounts), 19 Oct 2026. Link
 
 | ID | Source | Links |
 |---|---|---|
-| S23 | 8 forums (latest topics RSS) | [Uniswap](https://gov.uniswap.org) · [Aave](https://governance.aave.com) · [Ethena](https://gov.ethenafoundation.com) · [CoW](https://forum.cow.fi) · [Morpho](https://forum.morpho.org) · [Euler](https://forum.euler.finance) · [1inch](https://gov.1inch.io) · [NEAR](https://gov.near.org) |
+| S23 | 8 forums (latest topics RSS) | [Uniswap](https://gov.uniswap.org) · [Aave](https://governance.aave.com) · [Ethena](https://gov.ethenafoundation.com) · [CoW](https://forum.cow.fi) · [Morpho](https://forum.morpho.org) · [Euler](https://forum.euler.finance) · [1inch](https://gov.1inch.network) (moved from `gov.1inch.io`) · [NEAR](https://gov.near.org) |
 | S24 | 6 Snapshot spaces | [uniswapgovernance.eth](https://snapshot.org/#/uniswapgovernance.eth) · [aavedao.eth](https://snapshot.org/#/aavedao.eth) · [cakevote.eth](https://snapshot.org/#/cakevote.eth) · [cow.eth](https://snapshot.org/#/cow.eth) · [morpho.eth](https://snapshot.org/#/morpho.eth) · [1inch.eth](https://snapshot.org/#/1inch.eth) |
 
 ## GitHub (S25)
@@ -82,6 +82,29 @@ Built from 02 HLD §3 (sources) and 01 PRD §4.3 (X accounts), 19 Oct 2026. Link
 | S32 | Reuters | [crypto via Google News RSS](https://news.google.com/rss/search?q=site:reuters.com+crypto&hl=en-US&gl=US&ceid=US:en) | 300 s |
 | S33 | CoinDesk | [RSS](https://www.coindesk.com/arc/outboundfeeds/rss/) | 120 s |
 | S34 | The Block | [RSS](https://www.theblock.co/rss.xml) | 120 s |
+
+## Market data (6 venues)
+
+| Data | Venues and documentation |
+|---|---|
+| Spot | [Binance](https://developers.binance.com/docs/binance-spot-api-docs), [Coinbase](https://docs.cdp.coinbase.com/exchange/introduction/welcome), [OKX](https://www.okx.com/docs-v5/en/), [Bybit](https://bybit-exchange.github.io/docs/v5/intro), [Kraken](https://docs.kraken.com/api/) |
+| Perpetuals | [Binance](https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info), [OKX](https://www.okx.com/docs-v5/en/), [Bybit](https://bybit-exchange.github.io/docs/v5/intro), [Hyperliquid](https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api) |
+| Fees, unlocks, lending, stablecoins | [DefiLlama API](https://api-docs.defillama.com/) |
+| Exchange wallets | [Binance](https://github.com/DefiLlama/DefiLlama-Adapters/blob/4a6ef31a4eed4f24882a7d82bff50306b40b6d6c/projects/binance/index.js) and [OKX](https://github.com/DefiLlama/DefiLlama-Adapters/blob/b70f0fb4dc9ff463866d676c14d21b0ed0930d76/projects/okex/index.js) address lists (DefiLlama-Adapters, pinned commits); balances via [Etherscan API](https://docs.etherscan.io/) |
+
+## Universe (22 tokens)
+
+| Basket | Tokens (official site) |
+|---|---|
+| Benchmarks | [BTC](https://bitcoin.org/), [ETH](https://ethereum.org/) |
+| DEX & execution | [UNI](https://uniswap.org/), [CAKE](https://pancakeswap.finance/), [AERO](https://aerodrome.finance/), [CRV](https://www.curve.finance/), [1INCH](https://1inch.com/), [ZRX](https://0x.org/), [COW](https://cow.fi/) |
+| Perp DEX | [HYPE](https://hyperliquid.xyz/), [LIT](https://lighter.xyz/) |
+| Lending & credit | [AAVE](https://aave.com/), [MORPHO](https://morpho.org/), [EUL](https://www.euler.finance/) |
+| RWA & tokenization | [ONDO](https://ondo.finance/) |
+| Interoperability | [ZRO](https://layerzero.network/), [QNT](https://quant.network/) |
+| L1 / settlement | [AVAX](https://www.avalanche.com/), [NEAR](https://near.org/), [XPL](https://www.plasma.org/) |
+| Synthetic dollar | [ENA](https://ethena.fi/) |
+| Identity / payments | [WLD](https://world.org/) |
 
 ## X (S29): 86 accounts in one private list, read every 60 s
 
