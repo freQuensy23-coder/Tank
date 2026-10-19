@@ -474,7 +474,6 @@ Alert                                # append-only; one row per version
   card_text: str; card_struct: {section: content}
   decisions: [dec_id]
   evidence_bundle_id: str
-  linter: {passed: bool, violations: [rule_id], regenerations: int}
   supersedes_version: int?
 
 DeliveryRecord                       # append-only ledger; one row per transition
@@ -781,7 +780,7 @@ Messages into a session:
 | MILESTONE | MILESTONE_CHECK resolved or missed a milestone | The milestone, the outcome and the quote from the official source |
 | CALL_EXPIRED | An open call reached its 7-day limit (§7.2) | The call |
 
-**Skill `tank-event-analyst`.** A `SKILL.md` kept in the config repository under `skills/tank-event-analyst/` and uploaded to OpenMA on deploy; OpenMA inlines it into the system prompt at session start. It carries the class criteria, certainty rules, freshness grades, stage ladder, hard rules and card template verbatim from 01 §1.1, §6.2–6.3, §7.1 and §8, and this playbook:
+**Skill `tank-event-analyst`.** A `SKILL.md` kept in the config repository under `skills/tank-event-analyst/` and uploaded to OpenMA on deploy; OpenMA inlines it into the system prompt at session start. It carries the class criteria, certainty rules, freshness grades, stage ladder, hard rules and card template verbatim from 01 §1.1, §6.2–6.3, §7.1 and §8, the claim rules V1–V7 (below) and the wording rules L1–L12 (§7.5), and this playbook:
 
 1. **NEW_ITEM.** Read the item and check what Tank already knows (`list_open_events`, `search_tank_items`). For a MEDIUM fact, check the official sources first (`fetch_page`, `search_tank_items`, `web_search`). Then `record_event`: facts with verbatim quotes, certainty with its reason, when the event really became public, freshness, stage. If the item reports no new fact, `record_event` with `is_event = false`, and stop. If the event is already open in another session, `merge_into` it, and stop.
 2. **Class.** `set_assessment`: the criterion of 01 §6.3 with its quote, the seven scores with reasons, token capture, impact horizon. The tool applies §4.3 and returns the final class. LOW or MATERIAL → stop; the event stays TRACKED.
@@ -806,14 +805,14 @@ Tools, all executed by the `sessions` module; writes are validated and logged:
 | `get_token_facts(token)` | Stored fundamentals | Fees and revenue, supply and unlocks, venues and markets |
 | `web_search(query)` | DuckDuckGo text search through the `ddgs` library (02 §9): 10 results, DuckDuckGo only; results stored as evidence | Titles, URLs and snippets |
 | `fetch_page(url)` | HTTPS GET (20 s, ≤ 2 MB); page stored as evidence | Readable text |
-| `record_event(extraction)` | Validators below; writes the event, its ORIGIN observation and the claims | `event_id`; accepted and dropped claims with reasons |
-| `add_observation(event_id, item_id, link, claims)` | Same validators; state machine §3.6 | New stage, contradictions |
+| `record_event(extraction)` | Entity resolution (V3); writes the event, its ORIGIN observation and the claims as the agent gives them | `event_id` |
+| `add_observation(event_id, item_id, link, claims)` | Entity resolution (V3); state machine §3.6 | New stage, contradictions |
 | `merge_into(event_id)` | Merges this session's event into an earlier open event (§3.3) | The surviving event |
 | `set_assessment(event_id, assessment)` | Checks §4.3–4.6; a MAJOR+ final class escalates the official sources of the event's organizations to 15 s for 2 h (§9) and opens the reaction record (§8) | Final class, with any cap applied |
 | `set_beneficiaries(event_id, edges)` | Rules of §4.7 | Analysis set (universe tokens) and per-layer reasons for none |
 | `get_market_truth(event_id, tokens)` | ESCALATE_TOKENS, backfill, RUN_MARKET_TRUTH (§5) | Market Truth and Data Confidence per token |
 | `get_decision(event_id, token)` | Outlook (§6), grades (§4.8–4.9), action (§7.1–7.2), conditions (§6.6) | Action, grades, outlook, conditions, decisive facts |
-| `publish_card(event_id, kind, verdict, why)` | Alert gate and update policy (§7.4), linter (§7.5), template, evidence bundle, DELIVER job | Alert id and version, or the refusal with reasons |
+| `publish_card(event_id, kind, verdict, why)` | Alert gate and update policy (§7.4), template, evidence bundle, DELIVER job | Alert id and version, or the refusal with reasons |
 | `schedule_milestone(event_id, milestone, due_at, source)` | MILESTONE_CHECK job | — |
 | `propose_pattern(hook, subject, evidence)` | Scout proposal (§10) | Proposal id |
 
@@ -858,16 +857,16 @@ Tools, all executed by the `sessions` module; writes are validated and logged:
 }
 ```
 
-Validators inside `record_event` and `add_observation`:
+Claim rules. They are written in the skill and followed by the agent; the tools store the claims, their `verified` flags and stages as the agent gives them and do not re-check them. Only V3 is done by Tank.
 
 | ID | Rule |
 |---|---|
-| V1 | Every claim's quote must be a verbatim substring of the item text or of a page or search result fetched in this session (whitespace-normalized); otherwise the claim is dropped. |
-| V2 | Each state claim keeps the stage it states and gets `verified = true` only when it rests on a HIGH-certainty source (§4.4). LIVE or higher also needs an availability statement from the lexicon ("now live", "available to", "launched", "trading opens") or a market/technical artifact (e.g., the instrument actually trades); otherwise the claim is held at the highest stage the text supports. |
-| V3 | Entities resolve to the registry through aliases; unresolved entities are kept as `UNRESOLVED:<name>`. |
+| V1 | Every claim's quote is a verbatim substring of the item text or of a page or search result fetched in this session. |
+| V2 | Each state claim keeps the stage it states. The agent marks it `verified` only when it rests on a HIGH-certainty source (§4.4). LIVE or higher also needs an availability statement ("now live", "available to", "launched", "trading opens") or a market/technical artifact (e.g., the instrument actually trades); otherwise the agent states the highest stage the text supports. |
+| V3 | Tank resolves entities to the registry through aliases; unresolved entities are kept as `UNRESOLVED:<name>`. |
 | V4 | Event time without a quoted time gets precision `BUCKET(1d)` or null. |
-| V5 | Compatibility, SDK or repository evidence from one side is `SOURCE_SIDE_SUPPORT` and can support at most BUILT on the integration ladder. |
-| V7 | `public_at` is not later than the item's `observed_at`, its quote (if any) is verbatim, and the freshness grade matches the age bucket of §3.4; otherwise the tool refuses with the error. |
+| V5 | Compatibility, SDK or repository evidence from one side is `SOURCE_SIDE_SUPPORT` and supports at most BUILT on the integration ladder; it never limits the event state. |
+| V7 | `public_at` is not later than the item's `observed_at`, its quote (if any) is verbatim, and the freshness grade matches the age bucket of §3.4. |
 
 A second agent, `tank-scout-reviewer`, reviews scout proposals (§10) in one session per proposal, with `web_search`, `search_tank_items` and `record_review`.
 
@@ -906,7 +905,7 @@ The agent records, for every item (`record_event`, `add_observation`), when the 
 
 The agent judges from the content, not from the time of the post: a founder posting now "yesterday we shipped X and told all the press" gives `public_at` = yesterday. It works from the item text, the source's publication time when the feed has one and the item's `observed_at`, and looks for an earlier appearance with `search_tank_items` and `web_search`, so a story that was public earlier is never graded fresh.
 
-The event keeps `public_at` and the grade of the observation that created it. Effects: a STALE event or state change never produces a card or an update (§7.4); the card prints the grade with the public and known times; linter L10 blocks "new", "fresh", "just" or "breaking" wording unless the grade is FRESH or NORMAL.
+The event keeps `public_at` and the grade of the observation that created it. Effects: a STALE event or state change never produces a card or an update (§7.4); the card prints the grade with the public and known times; wording rule L10 (§7.5): no "new", "fresh", "just" or "breaking" unless the grade is FRESH or NORMAL.
 
 ### 3.5 Verification (inside the session)
 
@@ -1500,16 +1499,16 @@ Rate limit ⚙: at most one update per event per 15 min, except START, EXIT and 
 
 **Never sent:** LOW/MATERIAL events; STALE events and STALE state changes; repeat coverage without a new claim; re-evaluations that only produce HOLD or identical actions.
 
-### 7.5 Composition and prohibition linter
+### 7.5 Composition and wording rules
 
 - The card is template-first: classes, numbers, windows, units, enums and condition texts come from structured data. The agent supplies only the verdict sentence and the 2–3 WHY bullets in `publish_card`, written from the facts the tools returned.
 - The VERIFIED / NOT VERIFIED line is built from the claims: verified claims with their source; unverified claims with what is missing (e.g., "no OpenAI or World announcement").
 - At most ⚙3 token blocks; card length ≤ ⚙3,500 characters.
 - Missing fields print as `n/a (<reason>)`.
 
-Linter rules (applied to template output and prose before sending):
+Wording rules. They are written in the skill: the agent follows them in the verdict and WHY bullets, and the template's own text is written so it never breaks them. Tank does not check the card's prose; a broken rule is found in review (§11.5).
 
-| Rule | Blocks |
+| Rule | Never write |
 |---|---|
 | L1 | "Market-wide", "broad" or unqualified buying/selling language unless spot class is BROAD with ≥ 2 complete venues; single-venue data must be labeled with the venue. |
 | L2 | Leverage, new-position or OI-build language unless oi_class is REAL_NATIVE; PRICE_MARKUP must be stated as price markup. |
@@ -1518,13 +1517,11 @@ Linter rules (applied to template output and prose before sending):
 | L5 | Liquidation totals called market-wide unless every included venue is COMPLETE. |
 | L6 | Cross-window trend claims without the cohort-consistent flag. |
 | L7 | Probability language ("chance", "probability", "odds", "% likely"); any price range in a scenario. |
-| L8 | Any number without a window and unit (template-enforced, re-checked). |
+| L8 | Any number without a window and unit (template-enforced). |
 | L9 | A missing value printed as 0. |
 | L10 | "New", "fresh", "just" or "breaking" wording unless the event's freshness is FRESH or NORMAL. |
 | L11 | "Accumulation" or "accumulating" unless the move class is SPOT_LED_ACCUMULATION (aggressor side and price response checked, §5.8). |
 | L12 | While price is up or flat with spot SELL (§5.9 trigger): "weak", "weakness" or "bearish"; "absorption" or "absorbed" unless the divergence state is ABSORPTION CONFIRMED; the unresolved alternatives must be printed. |
-
-On a prose violation `publish_card` refuses with the rule and the sentence; the agent rewrites it once; if the new version still breaks a rule, the sentence is removed. Violations are logged on the alert.
 
 ### 7.6 Delivery and ledger
 
@@ -1618,7 +1615,7 @@ Cases as recorded in the September 2026 call log and in Addendum 002-B. Cutoff =
 
 | ID | Case at T0 | Cutoff | Assertions on V0 behavior |
 |---|---|---|---|
-| F-01 | UNI — "Arc" fee/burn proposal; OI ≈ +10%, modest funding | 21 Sep 2026 15:02 | Event state PROPOSED; capture conditional with score ≤ 5; EMS never STRUCTURAL; linter blocks "burn is live" wording. |
+| F-01 | UNI — "Arc" fee/burn proposal; OI ≈ +10%, modest funding | 21 Sep 2026 15:02 | Event state PROPOSED; capture conditional with score ≤ 5; EMS never STRUCTURAL; the card never says the burn is live (L3). |
 | F-02 | ZRO — Anchorage + post-unlock setup; futures-heavy; funding elevated; weak spot confirmation | 22 Sep 2026 18:52 | Move class not SPOT_LED_ACCUMULATION or ORGANIC_MIXED; unlock recorded as potential supply, not a sale; action ≠ START. |
 | F-03 | COW — Ondo / BlackRock Intelligent Portfolios settling through CoW; OI falling; laggard tape | 24 Sep 2026 16:12 | CoW mapped as SECONDARY on LIQUIDITY_EXECUTION with integration state as evidenced; event not dropped; action ∈ {WATCH_TO_START, WAIT}. |
 | F-04 | ENA — fee-switch/buyback economics + equity-basis framework; strong spot; major supply overhang on 5 Oct | 25 Sep 2026 11:33 | Capture DIRECT only if the mechanism is active and evidenced, otherwise conditional; overhang recorded as UNRESOLVED; START blocked while unresolved; overhang shown in WHAT CHANGES THE ACTION. |
@@ -1629,13 +1626,13 @@ Cases as recorded in the September 2026 call log and in Addendum 002-B. Cutoff =
 | F-09 | ONDO — SEC tokenized-equity + DTCC context; very large derivatives activity; weak direct token capture | 18 Sep 2026 09:30 | EMS ≥ MAJOR; capture ≤ INDIRECT → thesis ≤ C → positive action only as tactical; OI decomposition shown; no leverage claim from USD OI alone. |
 | F-10 | AVAX — ICE/NYSE testing + Janus validator; spot improving; OI down | 18 Sep 2026 17:12 | "Testing" maps to IN_DEVELOPMENT or BUILT, never LIVE; class MAJOR only through M2 with the ICE/NYSE claim quoted, never STRUCTURAL SHOCK while the stage is below APPROVED. |
 | F-11 | WLD — Market Truth validation case (Addendum 002-B) | 16 Oct 2026 12:30 UTC | 1h and 4h spot direction SELL; capital-weighted breadth on the sell side, Kraken shown as a small (~2.5%) buying venue; 4h native OI +8.18% → REAL_NATIVE with the markup component reported; divergence PERP_LED_MARKUP with ABSORPTION_CANDIDATE unresolved; venues with incomplete data in the window (in the Addendum case: Bybit spot current-day history) listed as excluded with reasons; action ∈ {DONT_CHASE, WAIT}. |
-| F-12 | QNT — Binance perp, 26 Sep 2026 19:00–23:00 UTC: native OI +0.42%, USD OI +19.98%, price +23.43% | 26 Sep 2026 23:00 | `oi_class` PRICE_MARKUP on Binance; flag PRICE_MARKUP_OI; linter L2 blocks any "new positions / leverage" wording. |
+| F-12 | QNT — Binance perp, 26 Sep 2026 19:00–23:00 UTC: native OI +0.42%, USD OI +19.98%, price +23.43% | 26 Sep 2026 23:00 | `oi_class` PRICE_MARKUP on Binance; flag PRICE_MARKUP_OI; the card never speaks of new positions or leverage (L2). |
 | F-13 | ONDO — 24 Sep 2026 12:00–16:00 UTC: Binance native OI +57.32%, USD OI +88.53%, price +13.56%, Binance spot taker-buy share 48.3% | 24 Sep 2026 16:00 | `oi_class` REAL_NATIVE; move class PERP_LED_CHASE (directly or through the divergence discriminator), never SPOT_LED_ACCUMULATION; action ∈ {DONT_CHASE, WAIT}. |
 | F-14 | QNT — 27 Sep 2026 19:00–23:00 UTC: native OI −30.36%, price +54.09% between the closes of the 19:00 and 23:00 hourly bars (+50.78% in the 22:00 hour) | 27 Sep 2026 23:00 | Native OI change reported as positions closing during the rise; move class ∈ {SHORT_SQUEEZE, LIQUIDITY_VACUUM, UNKNOWN}; direction TWO_SIDED or UNKNOWN; never SPOT_LED_ACCUMULATION. |
 | F-15 | EUL — Binance spot, 23 Sep 2026 06:00–07:00 UTC: volume 46.9 × the 7-day hourly median, taker-buy share 63.1%, price +0.27% | 23 Sep 2026 07:00 | No order-book depth in the archive, so weak_response is n/a and SELL_SIDE_ABSORPTION cannot be chosen; move class UNKNOWN; never SPOT_LED_ACCUMULATION; the card never says "accumulation". |
 | F-16 | 15 Sep 2026 UTC day: BTC −3.25% (worst BTC day between 4 Sep and 16 Oct 2026) | 15 Sep 2026 23:59 | Market context STRESS: the day's −3.25% is below BTC's 24h normal range (lower edge −3.01% over the 90 days before); Trade Grade one notch lower for non-STRUCTURAL events; a non-STRUCTURAL beneficiary is never BULLISH; no veto of any action. |
 | F-17 | Snapshot `aavedao.eth`: "[ARFC] Onboard USAT to Aave V3 Core Instance and Aave V4 Core Hub on Ethereum", voting 15 Oct 2026 17:52 → 18 Oct 2026 17:52 UTC | 15 Oct 2026 18:00 | State PROPOSED; class MATERIAL (a proposal); no card; milestone check scheduled for 18 Oct 2026 17:52 UTC. |
-| F-18 | Federal Register 2026-20888 (CFTC), Proposed Rule "Regulation Crypto Asset Transactions and Regulation Crypto Asset Markets", published 13 Oct 2026 | 13 Oct 2026 | State PROPOSED; never STRUCTURAL_SHOCK; linter L3 blocks "approved" or "in force" wording. |
+| F-18 | Federal Register 2026-20888 (CFTC), Proposed Rule "Regulation Crypto Asset Transactions and Regulation Crypto Asset Markets", published 13 Oct 2026 | 13 Oct 2026 | State PROPOSED; never STRUCTURAL_SHOCK; the card never says "approved" or "in force" (L3). |
 | F-19 | Federal Register 2026-20466 (SEC), Proposed Rule "Adviser and Regulated Fund Custody Rules; Crypto Custody Rules", published 6 Oct 2026 | 6 Oct 2026 | State PROPOSED; custody/compliance layer named if MAJOR; never STRUCTURAL_SHOCK. |
 | F-20 | Federal Register 2026-20371 (FinCEN), Proposed Rule "Proposal of Special Measure Prohibiting the Transmittal of Funds Regarding Transactions Involving the A7 Network's Sub-Agents", published 5 Oct 2026 | 5 Oct 2026 | State PROPOSED; class LOW (no universe token concerned); no card. |
 | F-21 | Bybit (S11): "New listing: Listing of DNAUSDT on Bybit Perpetual on Oct 16, 2026, 11:45AM UTC" | 16 Oct 2026 11:45 | Token outside the universe; class LOW; no card. |
@@ -1655,9 +1652,9 @@ The open-interest figures of F-11–F-14 come from Binance `openInterestHist` (F
 | ID | Input | Expected |
 |---|---|---|
 | T1 OI decomposition (F-11-like) | n0 = 100.00, n1 = 108.18, p0 = 1.0000, p1 = 1.0705; the native change is beyond its normal range | ΔUSD = +15.81%; position 8.18; markup 7.05; interaction 0.577; pos_share 0.517 > 0.5; oi_class REAL_NATIVE |
-| T2 Price markup | n0 = 100, n1 = 100.5, p0 = 1.00, p1 = 1.10; native change within its normal range, USD change beyond it | ΔUSD = +10.55%; native +0.5%; oi_class PRICE_MARKUP; L2 blocks leverage wording |
+| T2 Price markup | n0 = 100, n1 = 100.5, p0 = 1.00, p1 = 1.10; native change within its normal range, USD change beyond it | ΔUSD = +10.55%; native +0.5%; oi_class PRICE_MARKUP |
 | T3 Broad sell, small venues buying | A: V 600, cvd −40 · B: 250, −10 · C: 100, +5 · D: 25, +6 · E: 25, +3; every imbalance passes the flow test (§0) | CVD −36 → SELL; buy share 0.482; venue breadth 60% positive / 40% negative; cwb_sell 0.85 > 0.5 and the largest venue (A) sells; top_contrib_share 0.80 > 0.5 but others_cwb_sell 0.625 ≥ 0.5 → not CONCENTRATED; class BROAD |
-| T4 Single-venue spike | A: V 300, cvd +60 (passes the flow test) · B: 300, −2 · C: 300, +1 · D: 100, 0 (B–D do not); the composite passes | CVD +59 → BUY; top_contrib_share 0.98 > 0.5; others_cwb_buy 0 → CONCENTRATED; L1 forces venue labeling |
+| T4 Single-venue spike | A: V 300, cvd +60 (passes the flow test) · B: 300, −2 · C: 300, +1 · D: 100, 0 (B–D do not); the composite passes | CVD +59 → BUY; top_contrib_share 0.98 > 0.5; others_cwb_buy 0 → CONCENTRATED |
 | T5 Constant cohort | 24h complete {Binance, OKX, Coinbase, Kraken}; 1h complete {Binance 500, OKX 200, Kraken 50, Bybit 250} | Cohort {Binance, OKX, Kraken}; share_of_max 0.75 > 0.5 (most of the volume) → trend claim allowed on cohort figures only |
 | T6 Funding normalization | X 0.0100%/8h · Y 0.0050%/4h · Z 0.0020%/1h | 8h-eq 0.0100%, 0.0100%, 0.0160%; dispersion 0.0060%; no averaged "market funding" field exists |
 | T7 Classes | §4.3 examples | Fee burn put to a binding vote → MAJOR (M4), never STRUCTURAL SHOCK; verified selection as required infrastructure → STRUCTURAL SHOCK (G4) |
@@ -1666,7 +1663,7 @@ The open-interest figures of F-11–F-14 come from Binance `openInterestHist` (F
 
 ### 11.5 Shadow-mode review (V0-H)
 
-- **Daily:** label every card and update of the previous day (CATCH, LATE, FALSE_ALARM, NOISE); inspect linter violations and the delivery ledger.
+- **Daily:** label every card and update of the previous day (CATCH, LATE, FALSE_ALARM, NOISE); check the cards' wording against the rules of §7.5 and the delivery ledger.
 - **Weekly miss audit:** the reviewer lists major events from the covered source buckets during the week; each one without a MAJOR+ Tank event is a MISS with a reason (late, wrong beneficiary, bad data, old news, state error, Market Truth error, delivery failure, source not covered).
 - **Outcome evaluator** (descriptive, no calibration): realized return from `entry_ref_price` at the best horizon; MFE/MAE within the horizon; which conditions fired and when; whether the direction bias matched the sign of a realized BTC-adjusted move beyond the token's normal range for that horizon (§0).
 - **Metrics:** S1–S9 from the PRD, computed from `known_to_us_at`, `public_at`, the ledger and review labels.
@@ -1996,7 +1993,6 @@ CREATE TABLE out.alerts (                              -- append-only, one row p
   card_struct         jsonb NOT NULL,
   decisions           text[] NOT NULL,
   evidence_bundle_id  char(64) NOT NULL,
-  linter              jsonb NOT NULL,
   supersedes_version  int,
   config_version      text NOT NULL,
   code_version        text NOT NULL,

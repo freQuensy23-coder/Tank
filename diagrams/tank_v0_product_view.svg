@@ -173,8 +173,8 @@
 <rect x="510.0" y="2040.0" width="410.0" height="89.0" rx="14" fill="#FFF8E6" stroke="#C99A2E" stroke-width="1.2"/>
 <text x="520.0" y="2062.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0"><tspan font-weight="700">Card rules met?</tspan></text>
 <text x="520.0" y="2084.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0">Checks the card: MAJOR or STRUCTURAL SHOCK · certainty high or</text>
-<text x="520.0" y="2100.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0">medium · freshness FRESH to OLD · the event is open · the 18 hard</text>
-<text x="520.0" y="2116.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0">rules of PRD §8</text>
+<text x="520.0" y="2100.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0">medium · freshness FRESH to OLD · the event is open; the agent writes</text>
+<text x="520.0" y="2116.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="390.0">it by the hard rules of PRD §8</text>
 <path d="M 715.0 266.0 L 715.0 292.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
 <path d="M 715.0 416.0 L 715.0 442.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
 <path d="M 715.0 742.0 L 715.0 768.0" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>

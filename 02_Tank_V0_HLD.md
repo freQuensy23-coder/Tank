@@ -267,7 +267,7 @@ Tank is one service: a single Python 3.12 asyncio process, `tank serve`, built a
 | `pipeline` | `httpx` | FILTER_ITEM and ROUTE_ITEM jobs | Jev filter and routing (03 §3.1); a routed item becomes an AGENT_MESSAGE job |
 | `sessions` | `httpx`, `httpx-sse`, `ddgs` | AGENT_MESSAGE and SCOUT_REVIEW jobs; one stream task per working session | The only module that talks to OpenMA: opens one session per event and posts its messages (03 §3.2); follows a session's stream while the agent works; runs each custom tool the agent calls against PostgreSQL, DuckDuckGo and the web, and answers with `user.custom_tool_result`; a slow tool (`get_market_truth`) is answered when its job finishes |
 | `codex_gateway` | `httpx` | An HTTP endpoint on the Compose network (`http://tank:8790/v1`) | The model endpoint behind OpenMA's Model Card for `gpt-6.1-sol` (OpenAI Responses API): checks the internal key, adds the operator's ChatGPT (Codex) OAuth token and account id from the volume `codex-auth`, and forwards the call to the endpoint the Codex CLI uses; when the token expires it refreshes it with the refresh token and writes the new tokens back; a usage-limit answer goes back to OpenMA with its reset time |
-| `analysis` | `numpy`, `pandas` | ESCALATE_TOKENS, RUN_MARKET_TRUTH, EVAL_CONDITIONS, MILESTONE_CHECK and REACTION_CAPTURE jobs; the code behind the tools | State Tracker, EMS checks, Beneficiary rules, Market Truth, Outlook, Decision Engine, Alert Composer + Linter, evidence bundles; no LLM |
+| `analysis` | `numpy`, `pandas` | ESCALATE_TOKENS, RUN_MARKET_TRUTH, EVAL_CONDITIONS, MILESTONE_CHECK and REACTION_CAPTURE jobs; the code behind the tools | State Tracker, EMS checks, Beneficiary rules, Market Truth, Outlook, Decision Engine, Alert Composer, evidence bundles; no LLM |
 | `delivery` | `httpx` | DELIVER jobs | Telegram send, threading, ledger; ops notices |
 | `scheduler` | — | One loop | Runs each source loop at its cadence (normal or 15 s escalated); creates EVAL_CONDITIONS every minute, MILESTONE_CHECK at a milestone's time and REACTION_CAPTURE at each checkpoint; hot-set demotion; heartbeat notice; retention; nightly backup (`pg_dump` and `bundles/` to an external disk) |
 | CLI | `click` | Short commands of the same program | Review, scout decisions, replay, archive fetch, bundle reproduction, source and handle checks |
@@ -322,7 +322,7 @@ sequenceDiagram
   JOB->>DB: RUN_MARKET_TRUTH: Market Truth (no LLM)
   SES->>OMA: get_market_truth result
   OMA->>SES: get_decision, publish_card FULL
-  SES->>DB: outlook, grades, action (code); gate + linter; alert + DELIVER job
+  SES->>DB: outlook, grades, action (code); gate; alert + DELIVER job
   JOB->>TG: sendMessage (or reply to the partial)
   JOB->>DB: ledger SENT with message_id
 ```

@@ -84,7 +84,7 @@
 <rect x="410.0" y="895.0" width="404.0" height="386.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
 <text x="422.0" y="917.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">analysis</tspan><tspan font-weight="700"> — plain code, no LLM</tspan></text>
 <text x="422.0" y="935.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="380.0">The jobs below, and the code behind the agent's tools: outlook, thesis</text>
-<text x="422.0" y="950.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="380.0">and trade grades, action, alert gate, hard-rule linter</text>
+<text x="422.0" y="950.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="380.0">and trade grades, action, alert gate</text>
 <rect x="422.0" y="965.0" width="380.0" height="91.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
 <text x="430.0" y="985.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ESCALATE_TOKENS</tspan><tspan font-weight="700"> · </tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">RUN_MARKET_TRUTH</tspan></text>
 <text x="430.0" y="1005.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="364.0">Jobs of the agent's <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">get_market_truth</tspan>: tokens to the hot tier, then spot</text>
@@ -163,8 +163,8 @@
 <text x="1298.5" y="1080.5" font-size="10.5" fill="#52606D" text-anchor="start" xml:space="preserve"><tspan font-weight="700">no LLM</tspan></text>
 <rect x="842.0" y="1123.0" width="508.0" height="63.0" rx="6" fill="#F7FAFC" stroke="#9AA5B1" stroke-width="1.0"/>
 <text x="850.0" y="1143.0" font-size="12" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">publish_card</tspan></text>
-<text x="850.0" y="1163.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">Alert gate and update policy, hard-rule linter on the agent's wording, template, evidence bundle</text>
-<text x="850.0" y="1177.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">(SHA-256) → DELIVER job; one lock per event</text>
+<text x="850.0" y="1163.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">Alert gate and update policy, template, evidence bundle (SHA-256) → DELIVER job; one lock per</text>
+<text x="850.0" y="1177.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="492.0">event</text>
 <rect x="1292.5" y="1129.0" width="49.5" height="17" rx="8.5" fill="#FFFFFF" stroke="#9AA5B1" stroke-width="1"/>
 <text x="1298.5" y="1141.5" font-size="10.5" fill="#52606D" text-anchor="start" xml:space="preserve"><tspan font-weight="700">no LLM</tspan></text>
 <text x="842.0" y="1208.0" font-size="11" fill="#52606D" text-anchor="start" xml:space="preserve" data-maxw="508.0">On start: replays each open session from its last event; a tool call left without a result runs again</text>
