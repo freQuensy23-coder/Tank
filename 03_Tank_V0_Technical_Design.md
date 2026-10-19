@@ -21,7 +21,7 @@ Values marked ⚙ are collected in §12 with their basis: a PRD requirement, an 
 | IDs | ULID-based, typed prefixes: `ITM-` item, `EVT-` event, `OBS-` observation, `CLM-` claim, `EMS-`, `EDG-` beneficiary edge, `MTA-` Market Truth assessment, `OUT-` outlook, `DEC-` decision, `CND-` watch condition, `CAL-` call, `ALR-` alert (+ integer version), `RWP-` reaction pack, `JOB-`, `PRP-` proposal, `FIX-` fixture. `source_id`, `entity_id`, `token_id`, `instrument_id` are readable slugs (e.g. `binance:spot:UNIUSDT`). Evidence bundles are content-addressed: `EVB-<sha256>`. |
 | Time | UTC everywhere; stored with microsecond resolution. Every timestamp field has a sibling precision: `EXACT`, `BUCKET(<size>)`, `COLLECTION_ONLY`. |
 | Units | Native token quantity and USD notional are separate decimal fields. Returns are decimal fractions. Funding is stored as rate per interval + `interval_h`, with derived `rate_8h_eq`. Basis in bps. |
-| Missing data | Never 0. Every measurable is `Measured{value, unit, window, observed_at, precision, coverage, reason}`; when `value = null`, `reason ∈ {NOT_SUPPORTED, SOURCE_FAILED, INCOMPLETE, UNVERIFIED_SEMANTICS, NOT_APPLICABLE, NOT_ESTIMABLE, PENDING}`. |
+| Missing data | Never 0. Every measurable is `Measured{value, unit, window, observed_at, precision, coverage, reason}`; when `value = null`, `reason ∈ {NOT_SUPPORTED, SOURCE_FAILED, INCOMPLETE, NOT_APPLICABLE, NOT_ESTIMABLE, PENDING}`. |
 | Scores | 0–10 rubric levels (§4.1–4.2, §4.5, §4.7), or `null` with a reason. Scores are never averaged into one number. |
 | Normal range | For a per-token measure with base-tier history — BTC-adjusted return, volume, native and USD open-interest change, funding, exchange-inventory change, BTC realized volatility — the normal range is the middle 95% of the token's own values for the same window length over its stored history (up to 90 days, 01 §9; at least 7 days, one weekly cycle, else n/a). "Beyond normal" means outside it. Each token is judged against itself; 95% is the usual significance level. |
 | Majority | "Most" means more than half — of volume, of net flow, of a USD change. |
@@ -52,7 +52,6 @@ Values marked ⚙ are collected in §12 with their basis: a PRD requirement, an 
 | `StackLayer` | ISSUER_PRODUCT, VENUE_DEX, SETTLEMENT_L1_L2, LIQUIDITY_EXECUTION, LENDING_COLLATERAL, ORACLE_DATA, INTEROPERABILITY, CUSTODY_COMPLIANCE |
 | `BeneficiaryRole` | PRIMARY, SECONDARY, COMPETITOR, LOSER |
 | `MarketType` | SPOT, PERP_LINEAR, PERP_INVERSE |
-| `SemanticConfidence` | VERIFIED, DOCUMENTED_UNTESTED, INFERRED, UNKNOWN |
 | `LiqCoverage` | COMPLETE, SAMPLED, UNKNOWN |
 | `SpotDirection` | BUY, SELL, NEUTRAL |
 | `SpotClass` | BROAD, CONCENTRATED, DIVERGENT, INSUFFICIENT_DATA |
@@ -284,7 +283,7 @@ MetricSemantics
   meaning: str
   unit: BASE_QTY | CONTRACTS | QUOTE_NOTIONAL | USD_NOTIONAL | RATE_PER_INTERVAL | PRICE | BPS | COUNT
   contract_multiplier_ref: instrument_id?
-  sidedness: SINGLE_SIDED | BOTH_SIDES | N_A | UNKNOWN
+  sidedness: SINGLE_SIDED | BOTH_SIDES | NOT_PUBLISHED | N_A
   side_semantics: TAKER_SIDE | MAKER_SIDE | BUYER_IS_MAKER_FLAG | N_A
   trade_aggregation: PER_FILL | PER_TAKER_ORDER_SAME_PRICE | N_A
   scope: str                         # per instrument / per venue / provider aggregate
@@ -296,9 +295,8 @@ MetricSemantics
   requires_native_normalization: bool
   aggregation_class: str             # only identical classes may be combined
   inference_limits: [str]            # what this metric cannot prove
-  semantic_confidence: SemanticConfidence
-  verified_at: ts?; verified_by: str?; doc_ref: str?
-  critical: bool
+  evidence: str                      # how the meaning was established (documentation, live sample)
+  doc_ref: str?
 
 FlowBar1m                            # per instrument per minute (hot tier, from trades)
   instrument_id, minute_start
@@ -407,7 +405,6 @@ DataConfidence
   class: LOW | MEDIUM | HIGH          # §5.10 conditions
   failed: [{condition, reason}]      # conditions that keep it from HIGH
   limiting: {condition, reason}      # printed as the card's "main unknown"
-  critical_semantics_verified: bool
 
 MarketTruthAssessment
   mta_id, token_id, event_id?, cutoff, primary_window
@@ -577,33 +574,33 @@ Core DDL: §14.
 
 Trade aggressor side, units and IDs:
 
-| `metric_key` | Field | Meaning in Tank | Unit / time | Dedup key | Confidence |
+| `metric_key` | Field | Meaning in Tank | Unit / time | Dedup key | Evidence |
 |---|---|---|---|---|---|
-| `binance.spot.aggTrade` / `binance.usdm.aggTrade` | `m` | `m = true` → buyer was maker → aggressor SELL | `q` base units; `T` ms | `a` (agg ID; `f`–`l` trade range) | VERIFIED (live sample `"m":false` on WLDUSDT) |
-| `coinbase.spot.matches` / REST `trades` | `side` | Maker order side → aggressor is the opposite side | `size` base; `time` ISO-8601 µs | `trade_id` | VERIFIED (exchange documentation; live sample `"side":"sell"`) |
-| `okx.spot.trades` / `okx.swap.trades` | `side` | Taker side | `sz` base (spot) or contracts (swap, × `ctVal`); `ts` ms | `tradeId` | VERIFIED |
-| `bybit.spot.publicTrade` / `bybit.linear.publicTrade` | `S` (WS), `side` (REST) | Taker side | `v`/`size` base; `T`/`time` ms | `i` / `execId` | VERIFIED |
-| `kraken.spot.trade` | `side` (WS v2), `b`/`s` (REST) | Taker side | `qty` base; REST time = seconds (float) | `trade_id` | VERIFIED |
-| `hyperliquid.perp.trades` | `side` | `B` → aggressor BUY, `A` → aggressor SELL | `sz` coin; `time` ms | `tid` | VERIFIED (16 Oct 2026, BTC/ETH/HYPE/SOL against the book: of trades printed at the bid or ask, 104 of 115 `B` at the ask, 49 of 62 `A` at the bid) |
+| `binance.spot.aggTrade` / `binance.usdm.aggTrade` | `m` | `m = true` → buyer was maker → aggressor SELL | `q` base units; `T` ms | `a` (agg ID; `f`–`l` trade range) | Live sample `"m":false` on WLDUSDT |
+| `coinbase.spot.matches` / REST `trades` | `side` | Maker order side → aggressor is the opposite side | `size` base; `time` ISO-8601 µs | `trade_id` | Exchange documentation; live sample `"side":"sell"` |
+| `okx.spot.trades` / `okx.swap.trades` | `side` | Taker side | `sz` base (spot) or contracts (swap, × `ctVal`); `ts` ms | `tradeId` | — |
+| `bybit.spot.publicTrade` / `bybit.linear.publicTrade` | `S` (WS), `side` (REST) | Taker side | `v`/`size` base; `T`/`time` ms | `i` / `execId` | — |
+| `kraken.spot.trade` | `side` (WS v2), `b`/`s` (REST) | Taker side | `qty` base; REST time = seconds (float) | `trade_id` | — |
+| `hyperliquid.perp.trades` | `side` | `B` → aggressor BUY, `A` → aggressor SELL | `sz` coin; `time` ms | `tid` | 16 Oct 2026, BTC/ETH/HYPE/SOL against the book: of trades printed at the bid or ask, 104 of 115 `B` at the ask, 49 of 62 `A` at the bid |
 
 Open interest:
 
-| `metric_key` | Field used | Unit / sidedness | Not to be used | Confidence |
+| `metric_key` | Field used | Unit / sidedness | Not to be used | Evidence |
 |---|---|---|---|---|
-| `binance.usdm.openInterest` | `openInterest` | Base units, single-sided (WLDUSDT 16 Oct 2026: 203,999,216 WLD) | — | VERIFIED |
-| `binance.usdm.openInterestHist` | `sumOpenInterest`; `sumOpenInterestValue` | Base units, single-sided; USD notional (price-contaminated); 5m buckets, 30-day history | `CMCCirculatingSupply` (not OI) | VERIFIED |
-| `okx.swap.open-interest` | `oiCcy` | Coin units, single-sided (`oi` = contracts; `oi × ctVal` = `oiCcy`; WLD `ctVal` = 1) | `oiUsd` alone | VERIFIED |
-| `bybit.linear.open-interest` | `singleOpenInterest` | Base units, single-sided | `openInterest` = both sides counted (ratio 2.000 on BTCUSDT, ETHUSDT, WLDUSDT, 16 Oct 2026) | VERIFIED |
-| `hyperliquid.perp.ctx` | `openInterest` | Coin units; sidedness not published by Hyperliquid | Summing with other venues | VERIFIED for per-venue % change only (a sidedness factor cancels in a ratio) |
+| `binance.usdm.openInterest` | `openInterest` | Base units, single-sided (WLDUSDT 16 Oct 2026: 203,999,216 WLD) | — | — |
+| `binance.usdm.openInterestHist` | `sumOpenInterest`; `sumOpenInterestValue` | Base units, single-sided; USD notional (price-contaminated); 5m buckets, 30-day history | `CMCCirculatingSupply` (not OI) | — |
+| `okx.swap.open-interest` | `oiCcy` | Coin units, single-sided (`oi` = contracts; `oi × ctVal` = `oiCcy`; WLD `ctVal` = 1) | `oiUsd` alone | — |
+| `bybit.linear.open-interest` | `singleOpenInterest` | Base units, single-sided | `openInterest` = both sides counted (ratio 2.000 on BTCUSDT, ETHUSDT, WLDUSDT, 16 Oct 2026) | — |
+| `hyperliquid.perp.ctx` | `openInterest` | Coin units; sidedness not published by Hyperliquid | Summing with other venues | Per-venue % change only (a sidedness factor cancels in a ratio) |
 
 Funding:
 
-| `metric_key` | Settled value | Current estimate | Interval | Confidence |
+| `metric_key` | Settled value | Current estimate | Interval | Evidence |
 |---|---|---|---|---|
-| Binance USDⓈ-M | `/fapi/v1/fundingRate` → `fundingRate` at `fundingTime` | `/fapi/v1/premiumIndex` → `lastFundingRate` (+ `nextFundingTime`); WS `r` | `fundingIntervalHours` from `/fapi/v1/fundingInfo`, else 8 h | VERIFIED |
-| OKX SWAP | `settFundingRate` (`settState`), history `fundingRate` | `fundingRate` (`method: current_period`) applying at `fundingTime` | spacing of `prevFundingTime` → `fundingTime` (8 h on WLD) | VERIFIED |
-| Bybit linear | `/v5/market/funding/history` → `fundingRate` | tickers `fundingRate` (+ `nextFundingTime`) | `fundingIntervalHour` (8 on WLD) | VERIFIED |
-| Hyperliquid | `fundingHistory` | `metaAndAssetCtxs` → `funding` | 1 h | VERIFIED (WLD 16 Oct 2026: 0.0000125 per hour = 0.0100% per 8 h, equal to Binance, OKX and Bybit) |
+| Binance USDⓈ-M | `/fapi/v1/fundingRate` → `fundingRate` at `fundingTime` | `/fapi/v1/premiumIndex` → `lastFundingRate` (+ `nextFundingTime`); WS `r` | `fundingIntervalHours` from `/fapi/v1/fundingInfo`, else 8 h | — |
+| OKX SWAP | `settFundingRate` (`settState`), history `fundingRate` | `fundingRate` (`method: current_period`) applying at `fundingTime` | spacing of `prevFundingTime` → `fundingTime` (8 h on WLD) | — |
+| Bybit linear | `/v5/market/funding/history` → `fundingRate` | tickers `fundingRate` (+ `nextFundingTime`) | `fundingIntervalHour` (8 on WLD) | — |
+| Hyperliquid | `fundingHistory` | `metaAndAssetCtxs` → `funding` | 1 h | WLD 16 Oct 2026: 0.0000125 per hour = 0.0100% per 8 h, equal to Binance, OKX and Bybit |
 
 Liquidations:
 
@@ -614,7 +611,7 @@ Liquidations:
 | OKX `liquidation-orders` | SAMPLED — OKX documentation: "This data doesn't represent the total number of liquidations on OKX" |
 | Hyperliquid | NOT_SUPPORTED (no public stream) |
 
-Every row above ships with an adapter self-test that fetches a live sample and asserts unit, field presence and ID behavior; a failed self-test downgrades the row to UNKNOWN until fixed.
+Tank always reads venue fields by this table; there is no runtime check of their meaning. When a venue changes a field, this table and `semantics.yaml` are updated.
 
 
 ### 2.11 Registry — initial content (`registry.yaml`)
@@ -1236,7 +1233,7 @@ Venue-count breadth is always shown next to capital-weighted breadth. When they 
 | Bybit linear | `singleOpenInterest` — never `openInterest`, which counts both sides | `singleOpenInterest × markPrice` |
 | Hyperliquid | `openInterest` — per-venue % change only (sidedness not published) | not summed |
 
-Synchronized (summed) OI uses Binance, OKX and Bybit only. Any unit, sidedness or multiplier not VERIFIED keeps the observation out of synchronized composites. Example of the error this prevents: summing Binance `openInterest` (203,999,216 WLD) with Bybit `openInterest` (171,034,871) instead of `singleOpenInterest` (85,517,436) overstates combined WLD OI by 85.5M WLD (≈ 30%).
+Synchronized (summed) OI uses Binance, OKX and Bybit only, each by the field and unit of §2.10. Example of the error this prevents: summing Binance `openInterest` (203,999,216 WLD) with Bybit `openInterest` (171,034,871) instead of `singleOpenInterest` (85,517,436) overstates combined WLD OI by 85.5M WLD (≈ 30%).
 
 **OI decomposition** over W (`n` = native OI, `p` = mark price):
 
@@ -1360,13 +1357,13 @@ A class, not a score: first matching row.
 
 | Class | Conditions |
 |---|---|
-| LOW | A critical metric is INFERRED or UNKNOWN (§2.10) · fewer than 2 complete spot venues |
-| HIGH | Every critical metric VERIFIED · the complete spot venues carry most of the estimated volume · when perps exist, the synchronized OI covers the venues with most of the perp volume · every field of the snapshot observed within its own cadence before the cutoff |
+| LOW | Fewer than 2 complete spot venues |
+| HIGH | The complete spot venues carry most of the estimated volume · when perps exist, the synchronized OI covers the venues with most of the perp volume · every field of the snapshot observed within its own cadence before the cutoff |
 | MEDIUM | Otherwise |
 
-The first condition that keeps the class from HIGH (checked in the order semantics, spot coverage, derivatives coverage, freshness of fields) and its reason become the card's "main unknown".
+The first condition that keeps the class from HIGH (checked in the order spot coverage, derivatives coverage, freshness of fields) and its reason become the card's "main unknown".
 
-Critical metrics for a token: aggressor-side semantics of every venue in the spot composite; native OI unit/sidedness and funding semantics (when perps exist); book depth range; reference price. **START requires Data Confidence HIGH** (01 FR-T-12).
+**START requires Data Confidence HIGH** (01 FR-T-12).
 
 ---
 
@@ -1443,7 +1440,7 @@ Condition library (the card shows at most two: the decisive upgrade and the deci
 ### 7.1 Action matrix (no open call)
 
 ```
-A1  if dc.class == LOW or not dc.critical_semantics_verified:   WAIT     (data)
+A1  if dc.class == LOW:   WAIT     (data)
 A0  if ems.class == STRUCTURAL_SHOCK and role == PRIMARY
        and repricing == HEAVY:                                   DONT_CHASE (+ secondaries mandatory)
 A2  if role == LOSER or outlook.direction == BEARISH:           WAIT     (long-exposure action set)
@@ -1664,7 +1661,7 @@ The open-interest figures of F-11–F-14 come from Binance `openInterestHist` (F
 | T5 Constant cohort | 24h complete {Binance, OKX, Coinbase, Kraken}; 1h complete {Binance 500, OKX 200, Kraken 50, Bybit 250} | Cohort {Binance, OKX, Kraken}; share_of_max 0.75 > 0.5 (most of the volume) → trend claim allowed on cohort figures only |
 | T6 Funding normalization | X 0.0100%/8h · Y 0.0050%/4h · Z 0.0020%/1h | 8h-eq 0.0100%, 0.0100%, 0.0160%; dispersion 0.0060%; no averaged "market funding" field exists |
 | T7 Classes | §4.3 examples | Fee burn put to a binding vote → MAJOR (M4), never STRUCTURAL SHOCK; verified selection as required infrastructure → STRUCTURAL SHOCK (G4) |
-| T8 Data Confidence | 3 complete spot venues carrying most of the volume · synchronized OI on the main perp venues · one critical metric DOCUMENTED_UNTESTED · fields fresh | MEDIUM (not every critical metric VERIFIED, none INFERRED or UNKNOWN); main unknown = semantics; START blocked |
+| T8 Data Confidence | 3 complete spot venues carrying most of the volume · synchronized OI on the main perp venues · funding last observed past its cadence | MEDIUM; main unknown = funding freshness; START blocked |
 | T9 Missing ≠ zero | Venue stream disconnected 12:05–12:09 | Those minutes `complete = false`; venue excluded from 1h composite with reason; no zero-volume bars written |
 
 ### 11.5 Shadow-mode review (V0-H)

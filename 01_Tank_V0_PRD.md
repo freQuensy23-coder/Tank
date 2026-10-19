@@ -304,7 +304,7 @@ Each requirement describes behavior the operator can observe or a test can check
 
 | ID | Requirement |
 |---|---|
-| FR-T-01 | Tank MUST use a market metric only after its meaning is verified (units, which side, what it counts); a key metric with unverified meaning blocks a START action and lowers data confidence. |
+| FR-T-01 | Tank MUST read every market metric by its documented meaning on each venue (units, which side, what it counts); when a venue changes a field, the documentation is updated. |
 | FR-T-02 | Tank MUST measure over the last 15 min, 1 h, 4 h, 24 h and since the event, all against one fixed analysis time. |
 | FR-T-03 | Spot buying and selling MUST be shown per venue and combined, with how many venues agree and how much traded volume sits on the agreeing venues, and classed as broad, concentrated in one venue, divergent, or insufficient data. One venue's flow is never presented as market-wide. |
 | FR-T-04 | A statement that buying or selling strengthened or weakened between periods MUST compare the same set of venues; otherwise the card says the comparison is not like-for-like and makes no trend claim. |
@@ -315,7 +315,7 @@ Each requirement describes behavior the operator can observe or a test can check
 | FR-T-09 | Tank MUST show the token's move raw, net of BTC and ETH, against its sector, relative to its own volatility, and since the event (separately from rolling 24 h figures). |
 | FR-T-10 | Tank MUST state how much of the event is already priced: moved against the event, unpriced, early, substantial or heavy. |
 | FR-T-11 | Tank MUST name what is moving the price — spot-led accumulation, organic mixed, perp-led chase, short squeeze, sell-side absorption, passive spot absorption, distribution, price markup without new positions, liquidity vacuum, real venue fragmentation, or unknown — with 2–3 decisive facts. When price rises while spot selling dominates, it MUST weigh perp-led markup, passive absorption, liquidity vacuum and fragmentation, and keep unresolved alternatives visible. |
-| FR-T-12 | Each analysis MUST carry a data confidence — high, medium or low — and name its weakest input as the main unknown; START is allowed only when data confidence is high and all key metrics are verified. (03 §5.10.) |
+| FR-T-12 | Each analysis MUST carry a data confidence — high, medium or low — and name its weakest input as the main unknown; START is allowed only when data confidence is high. (03 §5.10.) |
 | FR-T-13 | Tank MUST show supply context: exchange balances where public wallet lists exist (Binance, OKX), upcoming unlocks (an unlock is potential supply, never a sale), lending utilization, and stablecoin supply on the event's chain; missing items show "n/a" with the reason. |
 
 ### 6.6 Movement outlook
@@ -425,11 +425,10 @@ The reviewer can: list cards and updates for a period; open a card with its vers
 10. A trend between periods is claimed only on the same set of venues.
 11. Figures that measure different things are never combined; funding is never averaged; sampled liquidations are never shown as totals.
 12. No probabilities.
-13. A key metric with unverified meaning blocks START.
-14. "Unknown" is a valid answer.
-15. The scout never changes what Tank tells the operator.
-16. Every card is timestamped, unchanged after sending, and reproducible from its evidence.
-17. A token is identified by its project, never by ticker alone.
+13. "Unknown" is a valid answer.
+14. The scout never changes what Tank tells the operator.
+15. Every card is timestamped, unchanged after sending, and reproducible from its evidence.
+16. A token is identified by its project, never by ticker alone.
 18. An unverified fact is never presented as verified.
 
 ---

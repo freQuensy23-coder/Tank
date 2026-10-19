@@ -26,7 +26,7 @@ One Linux host runs everything in Docker Compose: the Tank service — one async
 
 1. Adapters isolate each source; everything downstream reads canonical rows from PostgreSQL.
 2. Raw first: every payload is written to disk with SHA-256 before parsing.
-3. Native units and per-venue data first; composites only from fields whose semantics are VERIFIED (03 §2.10).
+3. Native units and per-venue data first; venue fields are read by the semantics registry (03 §2.10), and composites combine only fields of the same meaning and unit.
 4. One frozen cutoff per analysis; every value carries observation time and precision.
 5. Missing is never zero; exclusions carry reasons.
 6. One agent session per event reads, analyzes and judges — in its own sandbox it may write files and run any command or script — but changes Tank's state only through Tank's tools, and every tool validates its input. Market Truth, Outlook, grades, actions and the card gate are code behind those tools and contain no LLM calls.
@@ -411,7 +411,6 @@ Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a
 | Failure | Detection | Behavior |
 |---|---|---|
 | Venue WebSocket disconnect | Socket closed / no message 30 s / ID gap | Reconnect with backoff; REST backfill by trade ID; minutes without full backfill marked incomplete; the venue drops out of composites for those windows. |
-| Unverified field semantics | Semantics gate | Field kept as supplemental raw only; Data Confidence lowered; START blocked if critical. |
 | Binance archive checksum mismatch or gap | SHA-256 vs `.CHECKSUM`; continuity check | File rejected; window marked incomplete; re-download once after 1 h. |
 | Agent turn error or refusal | `session.error` in the session stream | The message is sent again once; then the event is marked FAILED; no card content generated from it. |
 | DuckDuckGo rate limit or block | `ddgs` rate-limit, block or timeout error | Retries after 5, 15 and 45 s; then `web_search` returns the error to the agent, and a fact it could not confirm stays MEDIUM. No other engine is used. DuckDuckGo blocks some cloud IP ranges, so a test search runs from the host before launch. |
