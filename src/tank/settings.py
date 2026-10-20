@@ -2,6 +2,7 @@ import base64
 import hashlib
 import io
 import json
+import logging
 import os
 import subprocess
 import tempfile
@@ -200,10 +201,12 @@ class Settings(BaseSettings):
                 values = source()
                 present = sorted(name for name in CONFIG_OWNED_FIELDS if values.get(name))
                 if present:
-                    raise ValueError(
-                        "Configuration values must not come from the environment: "
-                        + ", ".join("TANK_" + name.upper() for name in present)
-                        + " (sources.yaml contact_email, delivery.yaml chat IDs)"
+                    # The configuration is the only source (TDD §13); environment values
+                    # are ignored, never used, and named so the operator removes them.
+                    logging.getLogger("tank.settings").warning(
+                        "Ignoring %s from the environment: set sources.yaml contact_email and "
+                        "delivery.yaml chat IDs instead",
+                        ", ".join("TANK_" + name.upper() for name in present),
                     )
                 return {k: v for k, v in values.items() if k not in CONFIG_OWNED_FIELDS}
 
