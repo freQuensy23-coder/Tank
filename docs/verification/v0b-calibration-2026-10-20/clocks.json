@@ -1,0 +1,5735 @@
+{
+"ITM-01M57D8NR36HCDTEQ9GD0CPJQV": {
+"clock": "2026-10-18T00:11:09Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR3XPBSS5SNWKQTQXKF": {
+"clock": "2026-10-17T03:57:16Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR4A87YZK3N5WT8AEQG": {
+"clock": "2026-10-18T10:22:17Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR4WTBEN4DKAT6YECW4": {
+"clock": "2026-10-18T08:12:24Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR5MNEAV291PF9HXP7W": {
+"clock": "2026-10-15T23:18:21Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR5WHS3S0YM7AAD41CW": {
+"clock": "2026-10-16T10:16:27Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR5J5Z6Y834JVSNEWDP": {
+"clock": "2026-10-16T12:32:31Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR6TDPT8VG5E4M5W60M": {
+"clock": "2026-10-15T23:16:12Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR61ZA0HF8DJDKWX0A9": {
+"clock": "2026-10-16T05:00:17Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR69F69ZXD030GEDZBT": {
+"clock": "2026-10-15T14:55:21Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR665ZWAZ220NSR3M98": {
+"clock": "2026-10-15T17:19:49Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR7NCABDVMTKWD5F3BQ": {
+"clock": "2026-10-14T23:02:57Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR722PCAY32NJW32ZWG": {
+"clock": "2026-10-15T11:34:55Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR77S63HFZS6FNJXXEK": {
+"clock": "2026-10-15T13:25:17Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR8K7M9J8SC5MECFSQM": {
+"clock": "2026-10-14T23:01:11Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR882YPTYQ7VXF8DV57": {
+"clock": "2026-10-14T17:46:30Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR8JNDWAPFRDFY3DYFY": {
+"clock": "2026-10-14T16:47:32Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR84RKJDMBJWJRE9ZRN": {
+"clock": "2026-10-14T15:54:04Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR9PRER631R48X9ZWZ8": {
+"clock": "2026-10-14T15:26:14Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR99CCP5HQMA9DYRA09": {
+"clock": "2026-10-14T11:57:22Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NR93JZ1XJV978WV0HPX": {
+"clock": "2026-10-14T12:09:45Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRAKDX9262PP83A7B86": {
+"clock": "2026-10-14T08:27:17Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRAJP3MSZZFAVW6ZEZQ": {
+"clock": "2026-10-14T07:18:08Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRACK8VC392JPZ072ET": {
+"clock": "2026-10-14T23:01:28Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRA0KPRQH5QAJXTA562": {
+"clock": "2026-10-13T23:05:29Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRBY17Y4VPR2VQM2YXT": {
+"clock": "2026-10-08T23:09:56Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRBA2P563S4SF8SK7R8": {
+"clock": "2026-10-07T23:10:13Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRBGJDEMEW2JF8ARAKA": {
+"clock": "2026-10-07T07:09:32Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRBG14CME1ZRFNX6F6Y": {
+"clock": "2026-09-30T23:02:21Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRC1347N25TCYCV9KBM": {
+"clock": "2026-09-29T23:06:50Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRCXTEFXYTT0P7XX5BY": {
+"clock": "2026-09-24T23:03:53Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRCZ67505VF3ECNH8WN": {
+"clock": "2026-09-23T23:12:22Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRC9NYD399VZEF2PCWE": {
+"clock": "2026-09-22T09:11:48Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRD2FB3D8JW6EZ8T9RE": {
+"clock": "2026-09-16T23:18:47Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRDGK9AMEJM9H4BYZD2": {
+"clock": "2026-10-18T11:03:04Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NREWC6H3JCCJW4KQZNE": {
+"clock": "2026-10-18T06:07:40Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRETJ79PNJTK4X6K76T": {
+"clock": "2026-10-17T21:33:17Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRECNPEQBCS0EFAP42P": {
+"clock": "2026-10-17T14:12:02Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRERQQ13HC53VZZNADK": {
+"clock": "2026-10-17T06:18:16Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRFRPXTV5299TGB1F1Y": {
+"clock": "2026-09-27T23:05:53Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRFX4GG84XEHQ3N4QAS": {
+"clock": "2026-09-25T08:31:56Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRFC9GQW1NQHGN05X32": {
+"clock": "2026-09-05T23:20:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRFJJ9BQ1KA2NKCM9F9": {
+"clock": "2026-07-22T23:51:24Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRGMFFGZHQ5SNP7C12Y": {
+"clock": "2026-06-30T23:05:19Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRG1H3N2B5P96J26PSY": {
+"clock": "2026-10-15T18:30:09Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRGD9GEW5CC71W4K2BN": {
+"clock": "2026-10-13T15:44:45Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NRG6DJW3Q537HMTG1Q1": {
+"clock": "2026-10-12T17:08:32Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSPQK9N8AEYF8713JBX": {
+"clock": "2026-10-17T17:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSP1X9VEPQEV1B0NHQP": {
+"clock": "2026-10-17T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSQMXXMTYPNBWMPVV59": {
+"clock": "2026-10-17T06:39:48Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSQ60YRCZVFNCCHBQF6": {
+"clock": "2026-10-17T02:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSQWYP558WS677Y3H40": {
+"clock": "2026-10-16T11:15:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSR89DJ16JMARNJC7SP": {
+"clock": "2026-10-16T10:54:35Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSRYCAW2100C2H56SAG": {
+"clock": "2026-10-16T10:48:49Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSSA3AG4G2G2EJP1KC1": {
+"clock": "2026-10-16T10:41:03Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSSPFPVQQYTGZ1DXW5N": {
+"clock": "2026-10-16T10:24:30Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSSFH58KVS1PTR24ENK": {
+"clock": "2026-10-16T09:48:14Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSSQQCCNB3AAJQ0NB0F": {
+"clock": "2026-10-16T09:36:21Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSTZRF79BG7HNMPR961": {
+"clock": "2026-10-16T05:53:58Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NST43NMZCDQH7X4T72B": {
+"clock": "2026-10-16T04:29:19Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSTZDGEQYFB3MMY8J4E": {
+"clock": "2026-10-16T04:14:22Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSVH3PZC674DHE5JVGV": {
+"clock": "2026-10-15T18:48:02Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSV5KY48SE9Z7BRPSCM": {
+"clock": "2026-10-15T15:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSVND13F9XBR6JBND2E": {
+"clock": "2026-10-15T12:35:24Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NSVZXC7N61Y0Y1AQBQP": {
+"clock": "2026-10-15T12:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXJ04YQXWY19M18HDRQ": {
+"clock": "2026-10-17T20:24:32Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXJHSWTX54AN2NM9XC4": {
+"clock": "2026-10-16T18:11:29Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXK59K55XKH5A64WZF4": {
+"clock": "2026-10-16T15:31:33Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXKYQJD921QZ30MWDDX": {
+"clock": "2026-10-16T05:12:48Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXK2S9C4HEGWQGNSM3F": {
+"clock": "2026-10-15T23:27:57Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXK842PCBTFWMG289T0": {
+"clock": "2026-10-15T14:25:48Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXM3DQENN6ASDTSR174": {
+"clock": "2026-10-13T15:59:07Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXM86XV0NDXD83A24F8": {
+"clock": "2026-10-13T09:34:43Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXMEN5T8JW9GNPNS0KR": {
+"clock": "2026-10-13T19:45:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXNX34W1QAS0CJARAHB": {
+"clock": "2026-10-06T19:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXNWJ6ZWD6TY8SMB4AK": {
+"clock": "2026-09-29T19:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXNJ2PZ92TQQJRFGCBK": {
+"clock": "2026-09-22T20:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXNN29W3J2GWPZM09V8": {
+"clock": "2026-10-10T01:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXP2RT676F8ZVR21SJW": {
+"clock": "2026-10-03T01:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXP41JGBFBXR9PZA6FM": {
+"clock": "2026-09-26T01:00:13Z",
+"basis": "published_at"
+},
+"ITM-01M57D8NXPT1HVNRVAYD7APZ9Y": {
+"clock": "2026-09-19T01:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1F73PVK0BVYJXBVBRX": {
+"clock": "2026-10-17T19:56:25Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1GP4D5PGTHFKTNR44X": {
+"clock": "2026-10-16T20:22:57Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1G3MPT7RWBTE0PNS2K": {
+"clock": "2026-10-16T17:21:29Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1GZ51Q4NJAWHARSHWQ": {
+"clock": "2026-10-16T14:58:29Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1HQMZB0YP70YNDF7ZX": {
+"clock": "2026-10-16T13:31:07Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1HJP0A2T8F8403D3GJ": {
+"clock": "2026-10-16T11:34:54Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1HVSXMKASVNVZ8B3DV": {
+"clock": "2026-10-16T11:25:12Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1JZWF7C664SB0RBB8M": {
+"clock": "2026-10-16T09:30:21Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1JVB6QEVN8J31PGVQD": {
+"clock": "2026-10-16T05:44:05Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1KV6W842KHJ15655KC": {
+"clock": "2026-10-15T21:41:14Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1MZMHB6Q8EZFF3X8VV": {
+"clock": "2026-10-15T16:06:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1MYKE4ZTQDSG9Y0ANX": {
+"clock": "2026-10-15T16:00:02Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1NJZ6Q5QAAR4XQSS1D": {
+"clock": "2026-10-15T15:48:32Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1NV0VZEEZB0KA1XS88": {
+"clock": "2026-10-15T14:43:35Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1PQYEFDN9BYANDR4CW": {
+"clock": "2026-10-15T14:26:53Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1PHMVBPGQEH24CDA6T": {
+"clock": "2026-10-15T14:01:06Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P1PEFREGMR6JT6RYGAT": {
+"clock": "2026-10-15T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4KECB8QWJTZ2J481XP": {
+"clock": "2026-10-16T10:41:54Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4K4EWXYTHKEEQEJ28R": {
+"clock": "2026-10-16T16:10:37Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4M2GM0HA33E64AS4HB": {
+"clock": "2026-10-13T13:43:39Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4MDBZJSKR75FP0W1RM": {
+"clock": "2026-05-01T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4NSY2QDJTEF4QSC7FK": {
+"clock": "2026-10-13T07:55:41Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4NH901XE01MQBQJ04Y": {
+"clock": "2026-10-16T21:23:05Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4N8D4EPYTFBC4567JY": {
+"clock": "2026-10-13T09:52:47Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4PB4AA873KTHFWB4AY": {
+"clock": "2026-10-15T10:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4QBH8QK679B5ECAGQ3": {
+"clock": "2026-10-16T17:51:43Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4Q2ZY0S7YQK57RYWR2": {
+"clock": "2026-10-15T21:43:21Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4Q79T2PF3W3R4FQXBA": {
+"clock": "2026-10-15T12:55:45Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4RMGQMQ6XZHCYXBQV7": {
+"clock": "2026-10-15T15:20:51Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4RZFKFNY6VFD7EQ0VX": {
+"clock": "2026-10-15T15:22:30Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4SX89H1DBVAQF95MS4": {
+"clock": "2026-10-16T04:55:18Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4SGHTFW1GW0C2WKWYG": {
+"clock": "2026-10-16T14:58:32Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4S151FS7PZ16959X65": {
+"clock": "2026-10-16T16:11:23Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4TDE7QGJ48GQSE3KR0": {
+"clock": "2026-10-09T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4TR88PB55X7WCG05B6": {
+"clock": "2026-10-15T19:23:54Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4TDMZJSPV2F4P21BYN": {
+"clock": "2026-10-15T17:47:57Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4VWVXHKDN9BTM4DRV3": {
+"clock": "2026-10-15T18:33:47Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4VX3FNE3XPHB2S320C": {
+"clock": "2026-10-16T06:05:04Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4V9V2KETAFKFM6YJ1F": {
+"clock": "2026-10-15T05:01:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4WKCDVS0FDF70GX7GK": {
+"clock": "2026-10-14T16:11:32Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4W5RK9S9X2VPDM0678": {
+"clock": "2026-10-15T09:11:49Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4WD7TZ9EA4WVA8MQGD": {
+"clock": "2026-10-15T19:43:18Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4WAJYCDHZKC9BBWYRW": {
+"clock": "2026-10-15T03:03:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4XZ2B07EZPWTHQZ258": {
+"clock": "2026-10-14T18:58:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4XJE4CR99F8CGSY88J": {
+"clock": "2026-10-14T18:14:50Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4Y5MA7YHB7299KWW6W": {
+"clock": "2026-10-15T00:50:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4YYW443AZQJ37021M5": {
+"clock": "2026-10-14T15:24:09Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4ZZVTS78JVH3E1H8GC": {
+"clock": "2026-10-12T19:38:21Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4ZQW3AF8JVVZ24FE60": {
+"clock": "2026-10-13T21:10:50Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P4ZYCNFX23B1CB92BPW": {
+"clock": "2026-10-14T17:53:02Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P50XWGRXFK40DVEPRZT": {
+"clock": "2026-10-12T14:15:46Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P50BCARQ29R77TY5ETZ": {
+"clock": "2026-10-13T19:35:06Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P50SH0QAERPAGQVHXAC": {
+"clock": "2026-10-13T14:19:01Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P51PGDARQYAP8CTWXFW": {
+"clock": "2026-10-13T13:23:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5114FR0JRWC9HSS8E4": {
+"clock": "2026-10-12T21:28:30Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5144QQZ365FVVBGEG7": {
+"clock": "2026-10-12T21:29:31Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P51F3W6SJCGQ1Y2CRD3": {
+"clock": "2026-10-12T19:22:34Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P52KW090DPH1YA49X6F": {
+"clock": "2026-10-12T14:17:39Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P52HY4RMY8RJD9RSTTT": {
+"clock": "2026-10-11T23:07:43Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P53TQ4XEC1950XH6ACB": {
+"clock": "2026-10-05T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P53BMQVW8YDJZQ9KTRM": {
+"clock": "2026-10-15T18:34:57Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P541K2PVX73RJBCBH4G": {
+"clock": "2026-09-30T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P549EMHY3E2E6CQHM1A": {
+"clock": "2026-10-02T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P54G9Z99QY3MK1WZQ3Q": {
+"clock": "2026-10-08T10:46:17Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5415NPM806FZ0G7EYK": {
+"clock": "2026-10-01T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P55MQTQA62XYC0S1QB4": {
+"clock": "2026-09-25T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5P7E74PKWCPGPKJGMW": {
+"clock": "2026-10-18T05:23:16Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5Q6D80S5ESNJXBWA9B": {
+"clock": "2026-10-18T05:11:17Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5QVXAG559A6VEZAMTK": {
+"clock": "2026-10-18T03:39:38Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5QGMNQ509FFFH32BQ6": {
+"clock": "2026-10-18T03:34:56Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5RSW3WASRBK80G9P6D": {
+"clock": "2026-10-18T01:45:09Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5R22B1BAY50XH39Y2H": {
+"clock": "2026-10-17T23:57:37Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5R4PDBC2GQMS2PNYYE": {
+"clock": "2026-10-17T22:09:20Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5SH9BK97114GT3Y7XS": {
+"clock": "2026-10-17T21:44:20Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5SJ1DRBXNS6KBWDZRW": {
+"clock": "2026-10-17T16:31:01Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5S0RWZDVDM05XSDVD5": {
+"clock": "2026-10-17T02:34:29Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5SPY1C5307X70VGDK4": {
+"clock": "2026-10-17T14:35:04Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5TSCCY20DHCBZ057DA": {
+"clock": "2026-10-17T14:27:13Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5TZME4PJGHH0N6QD3Q": {
+"clock": "2026-10-17T14:03:47Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5TY32YPGDDQCNWJEJB": {
+"clock": "2026-10-17T14:03:13Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5V69FV5EEBP32QR2SX": {
+"clock": "2026-10-17T13:39:38Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5VXC92B65W1GNQ3MYG": {
+"clock": "2026-10-17T13:17:32Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P5VTRC8QAV2B9PCZWMP": {
+"clock": "2026-10-17T12:51:57Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6TYB40D0QA5M8TSBKY": {
+"clock": "2026-10-16T12:00:12.457000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6T637FZB9FXA3HGZJG": {
+"clock": "2026-10-16T04:00:21.704000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6TCZZ75QXH6KWXBA9N": {
+"clock": "2026-10-15T10:00:14.794000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6TEBDN7EWBD4P3S1A0": {
+"clock": "2026-10-14T09:00:11.157000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6VHRYVDW8FT7NXJF6W": {
+"clock": "2026-10-14T03:41:04.833000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6VHJZ69632ZWTK1XBR": {
+"clock": "2026-10-13T04:00:13.435000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6V61Q8G9G945YHEM99": {
+"clock": "2026-10-12T02:40:23.968000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6W0KZK3KC03A15V8TX": {
+"clock": "2026-10-09T02:45:07.822000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6WMYA0PZCJWC323BSF": {
+"clock": "2026-10-08T05:00:15.791000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6WHS6F92554JW52GQW": {
+"clock": "2026-10-08T02:50:14.892000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6WSP4EEH6H541G6QTH": {
+"clock": "2026-10-07T07:00:26.009000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6WP7NG2AX6SS0S03VP": {
+"clock": "2026-10-07T06:00:19.062000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6XVK47VHQSJX8DWFVZ": {
+"clock": "2026-10-07T04:00:14.327000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6XRACTSK9C3AK1X6YT": {
+"clock": "2026-10-02T04:30:09.959000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6XPN2BZTKCK6VES72R": {
+"clock": "2026-10-02T03:15:10.527000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6YWZFMPA1SE6R39TYH": {
+"clock": "2026-10-01T08:00:21.649000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6YKY3V53VSCP2MQ0R0": {
+"clock": "2026-10-01T07:00:22.444000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6Y5FDW9J9TJWFX85FX": {
+"clock": "2026-09-30T11:00:13.532000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8P6YK40DFKV8PD1ZJK5G": {
+"clock": "2026-09-30T10:00:11.188000Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA1SWCA7ST2GWC1SD79": {
+"clock": "2026-10-16T11:17:25Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA1VT8BSJ22D3R5N6RQ": {
+"clock": "2026-10-16T09:29:43Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA29B5S5D50ETQNK873": {
+"clock": "2026-10-13T08:06:40Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA2K9X6K18KJS2P0CDB": {
+"clock": "2026-10-13T08:06:35Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA3X9X68VJFQG66JGHE": {
+"clock": "2026-10-12T09:46:45Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA3P0DBWA1CXTH4DFFX": {
+"clock": "2026-10-12T09:46:40Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA3685Z1YV98H99V78N": {
+"clock": "2026-10-12T09:46:35Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA3FY7NY54D92K7HD7A": {
+"clock": "2026-10-12T09:46:30Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA4RJXR1A3RRS4ZEQ6G": {
+"clock": "2026-10-09T09:40:54Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA42BR6P5V971DN44XC": {
+"clock": "2026-10-09T09:40:49Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA5C4NF5CM9E6QW5Y5G": {
+"clock": "2026-10-09T09:40:45Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA55TKPVD0CN14PQE0R": {
+"clock": "2026-10-09T09:40:39Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA69XS33SRXPD4M2ZKF": {
+"clock": "2026-10-09T09:36:43Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA68H45Z5ZHFN67T3S0": {
+"clock": "2026-10-08T11:04:13Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA6KB5M2N01J6NPHGRQ": {
+"clock": "2026-10-08T11:04:09Z",
+"basis": "published_at"
+},
+"ITM-01M57D8PA7DVMP9ZC7RGVHNG9J": {
+"clock": "2026-10-08T11:02:29Z",
+"basis": "published_at"
+},
+"ITM-01M57D8Q6FJ7ZM6P1HXE40HYMA": {
+"clock": "2026-10-13T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8Q6H0FXXNS0VR871WADE": {
+"clock": "2026-10-06T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QVGSBT3WNPQ0T74BKXK": {
+"clock": "2026-09-29T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZJTR04TB3JTSMS7W2J": {
+"clock": "2026-10-14T17:52:44Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZKMZ623SKCFMVP7P45": {
+"clock": "2026-10-06T12:53:40Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZMTHC67289YSE2Y196": {
+"clock": "2026-09-30T18:32:32Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZNKTNMFAF6BV9R9EKA": {
+"clock": "2026-09-30T09:43:16Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZPQVHKE3JX10GQAKJ4": {
+"clock": "2026-09-28T15:51:22Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZPM4CQXG1JPH6BCVC2": {
+"clock": "2026-09-21T13:54:45Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZQ4W09Y73M6P8XP24T": {
+"clock": "2026-09-21T13:54:16Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZQFV05KDTHBPEP6PM6": {
+"clock": "2026-09-21T13:49:52Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZRY4KKZCEM5DB31TF3": {
+"clock": "2026-09-18T14:41:53Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZRR48G8JK1W9HS790K": {
+"clock": "2026-09-18T04:30:29Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZSBA38H4JQ1WDY46WY": {
+"clock": "2026-09-15T06:31:35Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZS0Y90JFCZ9C9ZMVKK": {
+"clock": "2026-09-14T15:02:33Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZTP3EY6ET03PZSZGRA": {
+"clock": "2026-09-02T15:46:11Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZT7S82Q940XP1Z5VM5": {
+"clock": "2026-09-02T11:35:27Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZT325M7A80HWM2DQKB": {
+"clock": "2026-09-01T09:58:40Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZVBMRZ9P6GVQCB2QM2": {
+"clock": "2026-08-19T18:54:46Z",
+"basis": "published_at"
+},
+"ITM-01M57D8QZVSHVMBB4R6VSM8TAT": {
+"clock": "2026-08-19T17:06:53Z",
+"basis": "published_at"
+},
+"ITM-01M57D8SDAR1PDX25E88DW3GGM": {
+"clock": "2026-10-09T14:59:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8SRRV5EXCKN0ZB0D3RCD": {
+"clock": "2026-10-06T20:30:24Z",
+"basis": "published_at"
+},
+"ITM-01M57D8TWV0BDEGRWDG0MBGY7X": {
+"clock": "2026-10-06T14:37:55Z",
+"basis": "published_at"
+},
+"ITM-01M57D8V916RMJYMB53QAYP1B2": {
+"clock": "2026-10-05T12:47:36Z",
+"basis": "published_at"
+},
+"ITM-01M57D8X5M2VV1J57TNZ5NWJG5": {
+"clock": "2026-09-30T15:45:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8XGQY4KXS6EZACVJPQVS": {
+"clock": "2026-09-29T13:55:53Z",
+"basis": "published_at"
+},
+"ITM-01M57D8Y8J7DFZ4B1YXNEEFE0Q": {
+"clock": "2026-09-23T18:27:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8YMKJ8KX609W9E41923T": {
+"clock": "2026-09-23T16:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8ZKTQQW47GEPJVN5GSS2": {
+"clock": "2026-09-16T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8ZZY1D1CAPAVXA3SAR7Y": {
+"clock": "2026-09-14T16:47:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D909BMKGJ00A4AK5JPBN5": {
+"clock": "2026-09-11T15:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D90NDQRXN1ZVS1G9CMBWP": {
+"clock": "2026-09-10T17:45:22Z",
+"basis": "published_at"
+},
+"ITM-01M57D90YS0HSW7WHPD01HXK7Y": {
+"clock": "2026-09-03T20:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D91A8YNM78605HF18AHF8": {
+"clock": "2026-09-03T14:27:49Z",
+"basis": "published_at"
+},
+"ITM-01M57D929BEQ2APM5PAJ987QRP": {
+"clock": "2026-09-01T14:57:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8RJ4RGX9AAC0H0GQAD9B": {
+"clock": "2026-09-18T14:39:50Z",
+"basis": "published_at"
+},
+"ITM-01M57D8RJ5JZ0WS3RF7KZPKPXQ": {
+"clock": "2026-07-11T11:38:11Z",
+"basis": "published_at"
+},
+"ITM-01M57D8RJ607QHYAB36MKVPZ3H": {
+"clock": "2026-07-07T13:46:50Z",
+"basis": "published_at"
+},
+"ITM-01M57D8RJ8Z9W8XRTBFWYBGDSY": {
+"clock": "2026-06-29T16:08:35Z",
+"basis": "published_at"
+},
+"ITM-01M57D8RJ915B9HKKC4H6GB92G": {
+"clock": "2026-05-16T17:20:37Z",
+"basis": "published_at"
+},
+"ITM-01M57D8RJA29DH7XTR4ZYYH0GW": {
+"clock": "2026-04-24T19:46:26Z",
+"basis": "published_at"
+},
+"ITM-01M57D8S8G40THR0SNGRASP30B": {
+"clock": "2026-10-09T16:13:55Z",
+"basis": "published_at"
+},
+"ITM-01M57D8S8JKRJSDTCKWSZHRMFJ": {
+"clock": "2026-10-02T16:10:53Z",
+"basis": "published_at"
+},
+"ITM-01M57D8V7G6VGFT1HH1AHJYEKY": {
+"clock": "2026-10-05T15:40:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8VD319M2FH2XGWC2G81Q": {
+"clock": "2026-10-07T18:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8VD712BV32AN2FVMJVSE": {
+"clock": "2026-09-16T18:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8VD791EJS2ZKWAWS9HV1": {
+"clock": "2026-09-16T18:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8WVMN5153393GZG240VN": {
+"clock": "2026-10-02T12:35:48Z",
+"basis": "published_at"
+},
+"ITM-01M57D8WVN2RENV8FFJP43S5NV": {
+"clock": "2026-09-21T18:51:47Z",
+"basis": "published_at"
+},
+"ITM-01M57D8WVSKSNVYM6JNXCSKSX7": {
+"clock": "2026-09-09T16:22:00Z",
+"basis": "published_at"
+},
+"ITM-01M57D8XM84EPN5RNZXZ4ZYF72": {
+"clock": "2026-09-12T19:34:35Z",
+"basis": "published_at"
+},
+"ITM-01M57D8XMH7BGDCA03SFJWQK2X": {
+"clock": "2026-04-14T01:06:24Z",
+"basis": "published_at"
+},
+"ITM-01M57D8XMKSQQVB0JRQJHMGWMA": {
+"clock": "2026-03-09T14:48:20Z",
+"basis": "published_at"
+},
+"ITM-01M57D917HAEYE65V8HDJRWMAQ": {
+"clock": "2026-08-19T09:26:14Z",
+"basis": "published_at"
+},
+"ITM-01M57D944GZXY7W5RQZMY278KC": {
+"clock": "2026-10-09T14:29:09Z",
+"basis": "published_at"
+},
+"ITM-01M57D94E8MK59X6T806KY51N8": {
+"clock": "2026-10-09T14:12:58Z",
+"basis": "published_at"
+},
+"ITM-01M57D950SN2DD56TBZ2JXYCBE": {
+"clock": "2026-10-01T20:00:02Z",
+"basis": "published_at"
+},
+"ITM-01M57D95CBJW4Z60S9GGX9MY48": {
+"clock": "2026-10-01T19:59:13Z",
+"basis": "published_at"
+},
+"ITM-01M57D95P9RK3V4PRM0MJKE4G4": {
+"clock": "2026-10-01T19:58:10Z",
+"basis": "published_at"
+},
+"ITM-01M57D98WME8F9E7XG4P6BTY3M": {
+"clock": "2026-09-23T19:43:22Z",
+"basis": "published_at"
+},
+"ITM-01M57D998G3PEFVVS16EZAF9MR": {
+"clock": "2026-09-22T21:37:43Z",
+"basis": "published_at"
+},
+"ITM-01M57D99J6P3TWR7KP2F2QSP3C": {
+"clock": "2026-09-18T14:40:06Z",
+"basis": "published_at"
+},
+"ITM-01M57D99XYHH6SKDKCA94GEXCG": {
+"clock": "2026-09-17T21:51:48Z",
+"basis": "published_at"
+},
+"ITM-01M57D9AJMT5874PQ0BT2EKYXF": {
+"clock": "2026-09-17T14:15:27Z",
+"basis": "published_at"
+},
+"ITM-01M57D9AWWM6CVBS64DVX760RD": {
+"clock": "2026-09-17T14:14:05Z",
+"basis": "published_at"
+},
+"ITM-01M57D9B7TDN1TCFH07SDP4EMN": {
+"clock": "2026-09-17T14:03:14Z",
+"basis": "published_at"
+},
+"ITM-01M57DMJBY56JE9VQQAPSHH1YM": {
+"clock": "2026-07-21T23:15:24Z",
+"basis": "published_at"
+},
+"ITM-01M57DMJC1NN7GAM58ZWQFV573": {
+"clock": "2026-07-11T11:41:11Z",
+"basis": "published_at"
+},
+"ITM-01M57DMJC2ACHVPAC55JRHV9VE": {
+"clock": "2026-07-07T14:41:18Z",
+"basis": "published_at"
+},
+"ITM-01M57DMJCGRXRB2TF5VCRNJ856": {
+"clock": "2026-05-16T17:24:50Z",
+"basis": "published_at"
+},
+"ITM-01M57DMJCM3NSE2D1K6G0P14EV": {
+"clock": "2026-05-03T12:57:27Z",
+"basis": "published_at"
+},
+"ITM-01M57DMJCQJK9ZZC2HQ7Y1ZEEB": {
+"clock": "2026-04-20T15:59:04Z",
+"basis": "published_at"
+},
+"ITM-01M57DMJCWSF7VKJWWRH74N7YC": {
+"clock": "2026-03-25T19:28:47Z",
+"basis": "published_at"
+},
+"ITM-01M57DMJCZNVHC6VSGFZTSA5WK": {
+"clock": "2026-03-17T20:17:46Z",
+"basis": "published_at"
+},
+"ITM-01M57DMJD0GK0NEGGB65TQ231J": {
+"clock": "2026-03-15T14:44:20Z",
+"basis": "published_at"
+},
+"ITM-01M57DMJD3CG31PD054FGJJDGA": {
+"clock": "2026-03-05T18:28:17Z",
+"basis": "published_at"
+},
+"ITM-01M57EPANHRAVMY9H4GWN0RZCG": {
+"clock": "2026-03-03T05:28:40Z",
+"basis": "published_at"
+},
+"ITM-01M57EPANSYAGH6896KAY6Q8SW": {
+"clock": "2026-01-19T19:14:49Z",
+"basis": "published_at"
+},
+"ITM-01M57EPANSCY462PSJ1EY2WQX8": {
+"clock": "2026-01-19T19:13:59Z",
+"basis": "published_at"
+},
+"ITM-01M57EPAP2HW6FTK51KBB17Q0G": {
+"clock": "2025-12-16T14:15:21Z",
+"basis": "published_at"
+},
+"ITM-01M57EPAPB366BNAWXEH3FG9QG": {
+"clock": "2025-12-04T12:15:42Z",
+"basis": "published_at"
+},
+"ITM-01M57EPAPK038PPQXRJ6M2JAY4": {
+"clock": "2025-11-06T20:01:30Z",
+"basis": "published_at"
+},
+"ITM-01M57EPAPMXM3EYGB6JXX6500H": {
+"clock": "2025-11-01T16:05:47Z",
+"basis": "published_at"
+},
+"ITM-01M57EPAPR9Y5XBEA3JYNKJDYZ": {
+"clock": "2025-10-22T15:15:16Z",
+"basis": "published_at"
+},
+"ITM-01M57EPAPYFFY0Y879R8VQ29AQ": {
+"clock": "2025-10-14T07:13:44Z",
+"basis": "published_at"
+},
+"ITM-01M57EPAQ2923JE86Q1PDK4EGY": {
+"clock": "2025-10-06T23:11:43Z",
+"basis": "published_at"
+},
+"ITM-01M57EPAQ2H2VDW15WR6QT8K27": {
+"clock": "2025-10-01T04:07:35Z",
+"basis": "published_at"
+},
+"ITM-01M57EPAQPAKQNA7857VWJRCRR": {
+"clock": "2025-08-21T21:53:40Z",
+"basis": "published_at"
+},
+"ITM-01M57EPBP730MZ5T4KYGKCW2S7": {
+"clock": "2026-01-18T12:06:36Z",
+"basis": "published_at"
+},
+"ITM-01M57EPBPBND1CD188PV2GMH4K": {
+"clock": "2025-09-29T23:52:48Z",
+"basis": "published_at"
+},
+"ITM-01M57EPN4QBN97X5RNN94SKS9X": {
+"clock": "2025-12-04T11:28:06Z",
+"basis": "published_at"
+},
+"ITM-01M57EPN4WM55JAJ87K32XRH1N": {
+"clock": "2025-11-20T21:49:52Z",
+"basis": "published_at"
+},
+"ITM-01M57EPNW791W36N80PQGQ3ZET": {
+"clock": "2026-01-13T18:27:07Z",
+"basis": "published_at"
+},
+"ITM-01M57EPNW8B7K204FMQYQFM01M": {
+"clock": "2025-12-16T17:17:05Z",
+"basis": "published_at"
+},
+"ITM-01M57EPP5HXBX2SESXPDDTV326": {
+"clock": "2025-10-25T13:48:02Z",
+"basis": "published_at"
+},
+"ITM-01M57EPP5JR9HG4F1NRZMZ9GCN": {
+"clock": "2025-10-16T18:02:43Z",
+"basis": "published_at"
+},
+"ITM-01M57EPP5MN7YW8VTQS2S6MCA8": {
+"clock": "2025-10-07T15:17:49Z",
+"basis": "published_at"
+},
+"ITM-01M57EPP5MWB5HG4QMRG77GSAN": {
+"clock": "2025-10-02T02:50:12Z",
+"basis": "published_at"
+},
+"ITM-01M57EPP5NSXSC11A6HE9Q9NWV": {
+"clock": "2025-09-30T02:54:28Z",
+"basis": "published_at"
+},
+"ITM-01M57EPP5Q27ZVFMPJMPC81WRB": {
+"clock": "2025-08-21T21:52:19Z",
+"basis": "published_at"
+},
+"ITM-01M57EQ14T74P7F7ANMQDVFDBH": {
+"clock": "2026-08-04T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ1ASJE0079JNXNTYCBFZ": {
+"clock": "2026-08-04T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ1GZQFZQEQ0J746P3NY8": {
+"clock": "2026-05-15T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ1QJDDZFN1ZS1P9HE2KG": {
+"clock": "2026-05-15T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ1Y198MJA2K734JZBKKH": {
+"clock": "2026-05-08T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ24J01SZ3SF67CVDPQRX": {
+"clock": "2026-04-24T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ2AQ9B4VP34TVW8G66S7": {
+"clock": "2026-04-24T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ2GYDXEKZGSCF6F8ZJEJ": {
+"clock": "2026-04-10T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ2Q423M10XK7WTJCYM6A": {
+"clock": "2026-03-26T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ2XJX60XQMTDKPTFDJB7": {
+"clock": "2026-03-12T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ343Q9PDBCCXBQ1GYG02": {
+"clock": "2026-03-11T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ3AZ057ETQ0S6K6GMSAQ": {
+"clock": "2026-03-11T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ3HCJV8G8RKHYSXVW6CB": {
+"clock": "2026-03-09T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ3QTV43WT1RBBSQRCGB9": {
+"clock": "2026-02-19T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ3Y829XTFKWPTVWNCW5B": {
+"clock": "2026-02-12T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ44FQBS4RNJGJ7AWEEB8": {
+"clock": "2026-01-30T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ4AWMF43TGWAFFTEF367": {
+"clock": "2026-01-16T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ4HKHZAHJ6B5C2FVR2RJ": {
+"clock": "2026-01-13T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ4R6N5KYJDE14RVWDNSB": {
+"clock": "2026-01-08T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M57EQ4YPNZSG73FJ47EWT3RE": {
+"clock": "2026-08-25T00:00:00Z",
+"basis": "url_date_day_precision"
+},
+"ITM-01M59JQHKFCN2TYPXYFJRTRJSV": {
+"clock": "2026-09-11T18:08:58Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHKCFHSD13SXT4V5W62K": {
+"clock": "2026-09-17T13:08:32Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHKAS1N9T8ND1BDW6JB8": {
+"clock": "2026-09-21T13:00:57Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHK705VHPFCCXDS53322": {
+"clock": "2026-09-22T20:38:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHK5DMEHW3CZKT0B68PD": {
+"clock": "2026-09-24T14:46:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHK2MZP1NW3MXG4S9H73": {
+"clock": "2026-10-01T13:06:31Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHJTDEJAT25CCP7AWYKP": {
+"clock": "2026-10-05T17:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHJQ67R0D6MCVK3CFQF0": {
+"clock": "2026-10-09T19:30:51Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHJJ0GDVX93YNX6Y5DEB": {
+"clock": "2026-10-09T20:00:26Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHNPFRJVDV511D74WCWE": {
+"clock": "2026-09-11T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHN5NTAH4813RAFY3GFB": {
+"clock": "2026-09-24T18:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHN0XTPQMVVY97YZM5CA": {
+"clock": "2026-09-29T20:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHMY4GADRDAQ035R9J30": {
+"clock": "2026-09-30T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHMSGPSC8MF957FFPWBE": {
+"clock": "2026-10-02T20:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHNFY6RYPMQHVBK1ZXMT": {
+"clock": "2026-09-18T15:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHNDSD9E6P3D9NC13SJZ": {
+"clock": "2026-09-18T15:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHN8RCRW6ZDRXADDB9YF": {
+"clock": "2026-09-24T15:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHMVNGPDZ1DBMNZ96FM2": {
+"clock": "2026-10-02T15:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHMFSQKPX1ZAS8HP1M2F": {
+"clock": "2026-10-08T20:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHM86033H43H52E05972": {
+"clock": "2026-10-16T15:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHMADGS5G6GXV3YSZ2F0": {
+"clock": "2026-10-13T18:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHNADXRQMEQA9M2H1XXK": {
+"clock": "2026-09-22T20:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHN3DZ7VTNR3132J6HJH": {
+"clock": "2026-09-25T20:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHMQWHF0JHCQRMEZ0T3J": {
+"clock": "2026-10-02T20:45:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHMMMFCRH9XZGC6GBMRX": {
+"clock": "2026-10-05T20:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHMDS3WQDW548DE1H9DW": {
+"clock": "2026-10-09T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHPSWECTJ5ZERXCNNMKB": {
+"clock": "2026-08-03T12:39:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHPQ9K6A5DX1YDT3ECJ3": {
+"clock": "2026-08-11T18:11:08Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHPNQ1STEB48WP0GJ8Q5": {
+"clock": "2026-08-19T14:21:35Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHPJXAZ0JJVHCNHG4TKN": {
+"clock": "2026-08-28T22:59:51Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHPGMZME1NMZJYHX3290": {
+"clock": "2026-09-01T18:45:49Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHPDYVZFPYMJNBKSR5WN": {
+"clock": "2026-09-09T13:44:33Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHPB1V2EAQ15GS32JXSZ": {
+"clock": "2026-09-14T13:00:26Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHP83GZGSPCJMNCM4598": {
+"clock": "2026-09-15T14:11:14Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHP6AH3E857AGAQP6DTW": {
+"clock": "2026-09-25T16:03:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQHP4446VGKK1ZXPBRAT1": {
+"clock": "2026-09-30T14:56:39Z",
+"basis": "published_at"
+},
+"ITM-01M59JQNQ3M4S4B5B6PS7T0PBC": {
+"clock": "2026-09-29T04:45:01.338000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQP40PA89WAA5CQ4VZYBJ": {
+"clock": "2026-09-24T10:45:04.777000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQNX55ZDA1NM5FK4MF003": {
+"clock": "2026-09-30T03:00:04.692000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQNNZH73ZET4JKY40DFHK": {
+"clock": "2026-09-30T03:30:01.555000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQK311FF6HQ2RBHMDSJS4": {
+"clock": "2026-10-13T03:30:01.158000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQK4KVGJF9ZYRYVC99SJZ": {
+"clock": "2026-10-12T06:15:02.026000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQPARWFZ96SVQFTPKW1SE": {
+"clock": "2026-09-23T05:00:01.336000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQPBMY6EDHG68D6Z0RQZJ": {
+"clock": "2026-09-23T04:30:01.911000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQNBKTF54TH8G7G4KAMV5": {
+"clock": "2026-10-01T06:30:01.040000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQP7BX48FFEXJ6X4RSQYV": {
+"clock": "2026-09-22T07:31:04.920000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQNYR9P78FQC26KB1KSMW": {
+"clock": "2026-09-23T07:15:46.848000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQK3BFQ1CPSFHKM91J2TN": {
+"clock": "2026-10-14T03:00:04.033000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQNKW5GYYE13XH63FXHSY": {
+"clock": "2026-10-07T03:00:06.945000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQNKCP4JR666YQ7E1DDXG": {
+"clock": "2026-10-07T04:00:08.051000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQPACJ25J5MKP5YMHHZ3H": {
+"clock": "2026-09-23T05:30:02.080000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQNV1DFGH5M8JSMHB5K89": {
+"clock": "2026-09-28T10:00:13.103000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQNXW4W2V5YPEVPZAFFDY": {
+"clock": "2026-09-24T07:30:38.608000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQNTGG49JVMFT5EHF0834": {
+"clock": "2026-09-28T04:45:07.051000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQK3PRZ5XFHA7M2Q2EK3C": {
+"clock": "2026-10-14T03:30:08.368000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQNF6W8PRR1KCM36NTQGQ": {
+"clock": "2026-10-06T06:15:28.410000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQVED5KE8Y1TYRR8F6Q0": {
+"clock": "2026-08-17T10:00:13.377000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQB77739TEVTZRXFM3W2": {
+"clock": "2026-09-22T08:00:01.264000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQPM0ZV1ZV8M9145R69S3": {
+"clock": "2026-10-14T06:00:08.049000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQPJE2QJ03EEEZ74M3BSC": {
+"clock": "2026-10-01T02:45:13.435000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQC4QRT66CQHPSBRWZNZ": {
+"clock": "2026-09-16T05:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQMNFEN7CJ17E47CZNND": {
+"clock": "2026-09-04T08:30:02.234000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQBSQ6KPACQECAKTAMGM": {
+"clock": "2026-09-22T06:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQ70GHAEKGJJ60VT5WT2": {
+"clock": "2026-09-29T08:00:01.341000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQ43HHE319S5FD34ER1P": {
+"clock": "2026-10-09T08:00:05.136000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQGYK19GDP5Q6V1NNABF": {
+"clock": "2026-09-15T10:00:15.716000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQ4G56ZME1WZDK6DZ3RW": {
+"clock": "2026-09-29T09:15:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQM3EBSJNA6R8KYTKNVT": {
+"clock": "2026-09-08T10:30:08.750000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQP7D1T9GX5KSCQ2S9YZ": {
+"clock": "2026-08-31T10:00:03.200000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQ5RKGY0Q1X0DCVRRM08": {
+"clock": "2026-09-23T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQK8TQ52F1WAT8CXYAQX": {
+"clock": "2026-09-10T06:00:12.727000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQXG4K4NSN9935K7CWN2": {
+"clock": "2026-08-10T10:00:04.147000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQXTT2DMXXCEYMTVAE3H": {
+"clock": "2026-08-11T07:45:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQQ0E7J3NEK5JKNANEF0": {
+"clock": "2026-09-08T10:15:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQR3RY3TWX6AHEJ48E8N": {
+"clock": "2026-08-20T06:00:06.608000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQRQ035H97Z8KBZSDSCY": {
+"clock": "2026-08-18T08:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSME21SZ4PM8PQ57DSBR": {
+"clock": "2026-09-30T07:00:01.479000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQRHTSVYZR2526WFMTF99": {
+"clock": "2026-10-13T08:00:03.415000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQRZS6FTFYYNMT06074CD": {
+"clock": "2026-10-09T07:00:14.078000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQS8M0443WJ74X611N35Y": {
+"clock": "2026-10-02T13:00:20.325000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSRCNNPD95Q0GYT3R7Z0": {
+"clock": "2026-09-29T09:00:15.285000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQYDG8P876B4MN3BJXXX": {
+"clock": "2026-10-19T01:00:18.349000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQRQ33VY29YTRKNZWW5WP": {
+"clock": "2026-10-13T03:00:09.478000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQRXNMVS6V50AXTC0J27Z": {
+"clock": "2026-10-12T07:30:02.991000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQR8RGRM01MH5NPYXHXBQ": {
+"clock": "2026-10-14T02:00:07.740000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQRX3XZVF8FSSNJ7K78ZA": {
+"clock": "2026-10-12T12:00:13.975000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQS20Z5QARGJRD0QKX263": {
+"clock": "2026-10-06T09:30:01.366000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQR64TZ1ES2741D76KMY7": {
+"clock": "2026-10-15T07:00:08.552000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQRNKFDSVZT5WPFQ0KD8P": {
+"clock": "2026-10-13T10:00:02.376000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQS9R273D71FFFYPDPGPS": {
+"clock": "2026-10-06T05:00:01.912000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQRC1RZCQWS3KT7KJ6J9B": {
+"clock": "2026-10-15T10:00:08.418000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSD95K08C4Q0T04S7SY4": {
+"clock": "2026-09-30T02:30:09.202000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQRCV0CCHJB2WK93YTF3B": {
+"clock": "2026-10-15T06:00:01.894000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSJSW16ZE094MQVFZ44E": {
+"clock": "2026-09-29T07:00:02.508000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQQZHK7VR6KAJ6J7WFK0X": {
+"clock": "2026-10-19T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQRJS4NAS4JBG4J8MPBBX": {
+"clock": "2026-10-14T04:00:01.646000Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSP5QWAEZBERJ9RTDMD8": {
+"clock": "2026-04-13T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSP0NKCM7WG8S9DZNZ6J": {
+"clock": "2026-04-14T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSNTWMJZHGP1TX1P49BQ": {
+"clock": "2026-04-20T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSNMV30RA461BE2HGD6Y": {
+"clock": "2026-04-28T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSNE12BCJE6SQCESE4T9": {
+"clock": "2026-04-29T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSN65E9FHX9C0468TXWX": {
+"clock": "2026-04-30T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSN1DSFNJVVPG7HP9X75": {
+"clock": "2026-06-16T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSMVPSMH3SB57M386YK2": {
+"clock": "2026-06-17T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSMNJY6JCXMR7EYPGWNX": {
+"clock": "2026-06-22T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSKK9JVNXM0Z21QFJV3A": {
+"clock": "2026-07-01T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSKFX8PKXBATH5PD1SF3": {
+"clock": "2026-07-30T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSKAH55A2TZY9HK3NFA3": {
+"clock": "2026-07-31T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSK4NJM385BDC4WMN2KD": {
+"clock": "2026-08-03T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSHKFCKV6XJJJ4J51M2D": {
+"clock": "2026-08-19T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSH9QS4MC8HWBJ9XAT83": {
+"clock": "2026-09-02T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSG30EQ20YTQYXJP8HXD": {
+"clock": "2026-09-09T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSF209DPVHAVK4E4RSB8": {
+"clock": "2026-10-05T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSDQE1SEAP2W0SVP12T3": {
+"clock": "2026-10-07T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSSJGD0JYRPYY0XNPCSY": {
+"clock": "2026-08-17T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSS92D5ZSSNBTEG91C7S": {
+"clock": "2026-08-21T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSS1GCZAJ5N475XM3VRA": {
+"clock": "2026-08-27T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSRXJ9H7DCFTFQ1RWF38": {
+"clock": "2026-08-27T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSRQ2R10BX073TXM7MCX": {
+"clock": "2026-08-27T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSR12XJ4F0QCRX52DPXN": {
+"clock": "2026-09-17T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSQY9YW329VQZFMGG225": {
+"clock": "2026-09-18T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSQQGHKNED4HFKMGCM0D": {
+"clock": "2026-09-18T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSQKKKC37BQYTQCTHRG1": {
+"clock": "2026-09-23T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSQFHK9BG1KFY3M8X8CE": {
+"clock": "2026-09-29T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSQ75BXKDT3A3HMTJ3F1": {
+"clock": "2026-09-29T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSQ0ZWB98CV0A2PDEZ33": {
+"clock": "2026-10-02T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSPR2KES84CRPEX2JPJZ": {
+"clock": "2026-10-07T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSPBGYPVJ68SKA6DR7QF": {
+"clock": "2026-10-16T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSVGY09REA4K1XRKKEEM": {
+"clock": "2026-10-02T15:37:04Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSVC58MM1GXPXJ1G9CTR": {
+"clock": "2026-10-02T15:42:33Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSV5WBQN2FBNXYVR6CX8": {
+"clock": "2026-10-05T12:02:01Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSV1XCAX5JZS3XX1S1TA": {
+"clock": "2026-10-06T15:31:26Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSTX0D51RWJBQYYX83X5": {
+"clock": "2026-10-07T13:43:17Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSTTXR550YGXQC962XH0": {
+"clock": "2026-10-08T15:43:45Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSTPPY1SCNC1569YDAR0": {
+"clock": "2026-10-08T15:53:24Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSTH80VPW5W5VMEMS85V": {
+"clock": "2026-10-08T15:53:48Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSTDFNQVDF96R3B3KZMA": {
+"clock": "2026-10-12T15:17:29Z",
+"basis": "published_at"
+},
+"ITM-01M59JQST8HHFZYJGTMP6571TV": {
+"clock": "2026-10-16T10:30:11Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSXK957GTVJ6X7ZNWTSJ": {
+"clock": "2026-07-09T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSXFCYJ53QJPNDEY15TD": {
+"clock": "2026-07-20T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSXCW66DGECR54V8X16V": {
+"clock": "2026-07-27T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSX9F8EWBM4N5ED5NW3Y": {
+"clock": "2026-08-05T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSX5HE4BSH5K3X491E9P": {
+"clock": "2026-08-14T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSX2ZKM2TNNY1ENP8332": {
+"clock": "2026-08-18T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSWX79V181EC81ZV33NF": {
+"clock": "2026-09-01T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSWV364ZXRAVXA4DJWP6": {
+"clock": "2026-09-04T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSWQYTR07S8REW45PWA9": {
+"clock": "2026-09-09T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSWKK15F2SQ5YFY8M1TK": {
+"clock": "2026-09-18T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSWEJ1Q0DC7NHH67V47M": {
+"clock": "2026-09-22T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSW9G25YJGH59KR2T0P4": {
+"clock": "2026-09-22T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSW5KZ64GTA3ZFX2W2VD": {
+"clock": "2026-09-24T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSW2A2YGTF9V23GSHQXX": {
+"clock": "2026-09-29T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQSVRMQTC00F2K7YJP324": {
+"clock": "2026-09-30T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQW994NTVRFCYHGM462SD": {
+"clock": "2026-09-28T17:46:30Z",
+"basis": "published_at"
+},
+"ITM-01M59JQWHX4NFDM85JZSATMXN1": {
+"clock": "2026-09-22T16:41:11Z",
+"basis": "published_at"
+},
+"ITM-01M59JQTA0Q28P0X31DRYMJDQF": {
+"clock": "2026-10-14T14:30:47Z",
+"basis": "published_at"
+},
+"ITM-01M59JQX7TN9X8KWM179CWPVNE": {
+"clock": "2026-09-17T12:55:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQV6JE29W0Q55RZPJW2V5": {
+"clock": "2026-09-30T18:30:01Z",
+"basis": "published_at"
+},
+"ITM-01M59JQY6505EQ9QZKDX9XRCYJ": {
+"clock": "2026-09-01T19:17:39Z",
+"basis": "published_at"
+},
+"ITM-01M59JQV66ADZ449S74THZ7PV2": {
+"clock": "2026-10-01T15:03:35Z",
+"basis": "published_at"
+},
+"ITM-01M59JQV9FBPYC48ZNYXWFJSWJ": {
+"clock": "2026-09-30T16:42:15Z",
+"basis": "published_at"
+},
+"ITM-01M59JQV7DEA0MADS3CN9WABHR": {
+"clock": "2026-10-01T16:16:07Z",
+"basis": "published_at"
+},
+"ITM-01M59JQY51R10AY7RYGV4ZK6MC": {
+"clock": "2026-09-01T17:52:32Z",
+"basis": "published_at"
+},
+"ITM-01M59JQY4QWX1XMA0H5G9SXFEX": {
+"clock": "2026-09-11T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQY4HH4W7JNG1DHP8S2PE": {
+"clock": "2026-09-11T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQY4ES21B2YMDYXTRB40S": {
+"clock": "2026-09-14T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQY4BFAN8NWGN5Q79DWW2": {
+"clock": "2026-09-14T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQY4888GNRQQEB4P8TJAH": {
+"clock": "2026-09-14T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQY44KHKGVEW4GYZD03TQ": {
+"clock": "2026-09-14T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQY3VWM0MKADVMQAQAPRF": {
+"clock": "2026-09-30T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQY3RWSFYSNS9STQT4KN3": {
+"clock": "2026-09-30T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQY3MQF1A3W0Z26889351": {
+"clock": "2026-09-30T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JQY3GAVZ06GMEBBRQAE1D": {
+"clock": "2026-10-05T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR0KFFKP9TGYTMGGBZTV7": {
+"clock": "2026-09-11T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR0K75583RVB0ZDDK8HFG": {
+"clock": "2026-09-22T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR0JQBEJFZBP28X0C0SDD": {
+"clock": "2026-10-02T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR0JKYXY8T9C4GJV1MMW3": {
+"clock": "2026-10-02T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR0JE8J37RTTFRRXAPQS4": {
+"clock": "2026-10-06T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR0J9XQF19ZMFCHB5NZSD": {
+"clock": "2026-10-06T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR0HZ7VQZ4HJK94QHDEN2": {
+"clock": "2026-10-09T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR0MCVST1CN30QX8Q1RY9": {
+"clock": "2026-10-12T09:00:11.429000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR1S1EXHYK16WWJYJM59W": {
+"clock": "2026-08-27T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR1FGTM263457162QEN2P": {
+"clock": "2026-08-27T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR1FSY79PNN4CA46MNH9D": {
+"clock": "2026-08-27T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR0Y9EW2RH00A0DPTTGSN": {
+"clock": "2026-09-17T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR1G4NR9AJMK96F1AQKB5": {
+"clock": "2026-09-29T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR197AGN2ZF5AAD9QR3B0": {
+"clock": "2026-10-14T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR1F03Y9J4E2X1HMS824H": {
+"clock": "2026-08-27T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR0XC25WZ121WM8YAE7E5": {
+"clock": "2026-09-17T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR0XVVNKC3K84PAYPKWVD": {
+"clock": "2026-09-17T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR17ZA9X48H2CPXA6C4P5": {
+"clock": "2026-09-29T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR18NKKQG9D9H5DKA5FMK": {
+"clock": "2026-08-27T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR18ASB142XCVQSF2RZF3": {
+"clock": "2026-08-27T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR2KTT4RVRQ4CCT859CCT": {
+"clock": "2023-09-14T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR299SM715Q97BE9QDHPC": {
+"clock": "2023-12-05T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR1ZY47S1FP6P3MD8Z22H": {
+"clock": "2026-09-25T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR29QVAG7PBM4T3GPJ4NQ": {
+"clock": "2026-09-22T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR28W5Q0G68VH2X3K1V1E": {
+"clock": "2026-09-25T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR1Y5V9B9ABEAFP5BQS94": {
+"clock": "2026-10-07T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR2M6AW93TACWF7NMY1NJ": {
+"clock": "2023-10-10T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR2ADMRT1S1P0ZDVMFF82": {
+"clock": "2023-11-27T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR1RKR93S10TZPTSMTET2": {
+"clock": "2026-10-07T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR2MJY87T8EWRPAWEM2FG": {
+"clock": "2023-09-05T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR1YJFBBWSR15MNPXV2F0": {
+"clock": "2026-09-28T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3G57714ESMKK27YBS14": {
+"clock": "2026-08-18T13:07:47.904000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR37S2AQT24E0HNS8N7XZ": {
+"clock": "2026-08-24T23:30:30.793000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR34TWE2KT6FPC4D5YBDE": {
+"clock": "2026-09-16T21:47:58.178000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3BY87EW5JN64XYGJKJH": {
+"clock": "2026-07-01T19:04:16.505000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR30SHPEVE5P8QW36KG9T": {
+"clock": "2026-10-02T14:07:50.225000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3ATE77149NSEGTACK6N": {
+"clock": "2026-06-25T13:06:38.607000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR34D5P20R4F544AWGRJ3": {
+"clock": "2026-09-10T15:45:37.245000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3GNX5K1904HR6KWD4PT": {
+"clock": "2025-09-23T14:07:35.482000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3BHGYBD6AF0MHGW8P6D": {
+"clock": "2026-06-12T14:14:14.161000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR344NW1M2000Z0TG7BRS": {
+"clock": "2026-10-09T14:15:30.537000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR2XXV42NTK4E7CRNSRFE": {
+"clock": "2026-09-16T12:18:52.650000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3FTC5E7CRANFZE541EA": {
+"clock": "2026-02-11T14:00:47.953000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR2N3MNR6S1XPBQRJTWSJ": {
+"clock": "2026-10-14T14:53:28.729000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3M9G977WP3939AARZBS": {
+"clock": "2025-02-21T16:34:12.818000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3N2SNZH5KM5E07SA40W": {
+"clock": "2025-02-21T16:38:55.999000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3FC13TTEP56PES8F3RY": {
+"clock": "2025-05-06T15:41:08.716000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3MPWFTY7EBXG41R5RF8": {
+"clock": "2025-04-02T11:15:58.685000Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3J1HABK8XGPB011CWGK": {
+"clock": "2026-08-12T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3HZKJ9X3X074ATV6AQM": {
+"clock": "2026-08-13T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3HWR92QWQ7W52514NFQ": {
+"clock": "2026-08-13T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3HSKC3NVPFGKB6AM8G4": {
+"clock": "2026-08-14T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3HG9BMPH4GDE9AAT00Q": {
+"clock": "2026-09-18T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3HBM1QZ3131421DEK9J": {
+"clock": "2026-10-01T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3H1Q21FE6GXW4RKQ48X": {
+"clock": "2026-10-16T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3GX14YYWVNWH2FE4A7B": {
+"clock": "2026-10-19T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3GT8J0P51VXHFQSDC8D": {
+"clock": "2026-10-19T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3K82KSJJS4JV48RBTTT": {
+"clock": "2026-10-15T22:15:56Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3J4746R9GPGA2VKC9BB": {
+"clock": "2026-10-19T01:10:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3J7T6B4J7EH7K5HME4N": {
+"clock": "2026-10-18T19:50:28Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3JGQEC7MK6W3SC4Y2RJ": {
+"clock": "2026-10-17T18:14:43Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3JA4KNYQFXKWJBYAQG8": {
+"clock": "2026-10-18T16:07:43Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3K1DFGTYNHS9ZG94X9K": {
+"clock": "2026-10-16T10:13:32Z",
+"basis": "published_at"
+},
+"ITM-01M59JR50Z3MCS1YJRBQ6TF63V": {
+"clock": "2026-10-01T20:30:37Z",
+"basis": "published_at"
+},
+"ITM-01M59JR6V97BVCDHYBX6KGMG9Q": {
+"clock": "2026-09-30T13:58:47Z",
+"basis": "published_at"
+},
+"ITM-01M59JR5SYVZ69GEEHF145NHZR": {
+"clock": "2026-09-30T18:10:25Z",
+"basis": "published_at"
+},
+"ITM-01M59JR5XPR4RXJ4RNHGF0W4F5": {
+"clock": "2026-09-30T19:15:06Z",
+"basis": "published_at"
+},
+"ITM-01M59JR5WSY7DMR7PNH0HQ8F1R": {
+"clock": "2026-09-30T17:56:36Z",
+"basis": "published_at"
+},
+"ITM-01M59JR41YXVVJJBAM5KKREVER": {
+"clock": "2026-10-16T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3X9VV5Z9F894ZM6EP54": {
+"clock": "2026-10-14T01:30:17Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3WA46R6GFFRSRDQCQ70": {
+"clock": "2026-10-16T18:11:50Z",
+"basis": "published_at"
+},
+"ITM-01M59JR3WRGV982GYTEHCNT4N8": {
+"clock": "2026-10-14T17:49:25Z",
+"basis": "published_at"
+},
+"ITM-01M59JR665PXYQ7QXT2YGFQV16": {
+"clock": "2026-09-30T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRE4HCQ0QBEWHJNQE8SK6": {
+"clock": "2026-09-17T14:16:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JR5Y1BHETM8B7VSGQ3JTJ": {
+"clock": "2026-09-30T21:09:08Z",
+"basis": "published_at"
+},
+"ITM-01M59JR6YGWBH21042RNWB23CM": {
+"clock": "2026-09-28T12:30:55Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFJHW63HS7HF1Q4J5CYT": {
+"clock": "2026-08-28T14:01:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRF97XN0ZJFD5QHX5DGHN": {
+"clock": "2026-09-21T13:26:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JREX1KH1RKCF3BYT0A9N1": {
+"clock": "2026-09-24T12:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JREXGHFPV4K7PYBS5GDBY": {
+"clock": "2026-10-05T18:49:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFYKA061TET70X0NZCYT": {
+"clock": "2026-07-27T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JREXSVABYBF1KWWFMFADX": {
+"clock": "2026-07-15T11:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRF3XGJVDVXHF8GA47G02": {
+"clock": "2026-09-29T12:48:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRF9WVNF8BFA2S6CA681E": {
+"clock": "2026-09-16T12:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRF9HTT6CNVT67CP6C05A": {
+"clock": "2026-09-22T12:50:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFCZ61NNAMPVEB9HJTMT": {
+"clock": "2026-09-02T12:28:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFMX3N52S4FC2Q8Y56WK": {
+"clock": "2026-08-12T12:45:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFMFF9HZXHK64MDBJM74": {
+"clock": "2026-08-04T11:46:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFNBE0SBS02RENXEBKVN": {
+"clock": "2026-08-27T12:59:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFNHFZM8CZBJAZANZZ22": {
+"clock": "2026-08-20T09:35:25.233000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFMJ82PPS6NJP1BZ7JM7": {
+"clock": "2026-10-15T01:58:04.267000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFP4YBPCPQJA5WF83J9G": {
+"clock": "2026-07-08T10:49:07.709000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFPJVPJZYTXKN20RBQM5": {
+"clock": "2026-06-22T11:25:21.447000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFNWP397NTRJ9476R2M3": {
+"clock": "2026-07-30T06:55:30.253000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFNKYK1PF9ZMX7FY6FGC": {
+"clock": "2026-08-06T07:04:56.327000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFNTWH82DRR1NCRVWQ6N": {
+"clock": "2026-07-30T06:55:31.962000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFPG04DF84SH5Q6S7ZB5": {
+"clock": "2026-06-22T12:23:29.287000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFP7WZWNHAQ6V69PN571": {
+"clock": "2026-07-03T03:05:37.240000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFP9VM0JVS83Z92Q1FPS": {
+"clock": "2026-07-01T09:07:32.105000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFN246YJ7F3GTQS62H1T": {
+"clock": "2026-09-21T10:00:14.554000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFNF95W06TQ7NFV4NMVQ": {
+"clock": "2026-08-24T09:29:08.095000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFN48Q2KPWAJTFGJX5KC": {
+"clock": "2026-08-27T07:47:55.137000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFPDK53FCECR5KP19HW6": {
+"clock": "2026-06-25T06:23:35.844000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFNRSSCJYAZEPQEB4VX1": {
+"clock": "2026-07-31T05:12:56.888000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFNNJSQBCX12H7WKRPV6": {
+"clock": "2026-07-31T05:19:30.507000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFMP0G1PAXTA06P1T05X": {
+"clock": "2026-10-12T09:00:11.384000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFP2Y0QAHYMW1ZCJG1H7": {
+"clock": "2026-07-28T03:10:20.227000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFNZZDMTD8RPJYR8K9PV": {
+"clock": "2026-07-28T10:21:31.341000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFPBBF525REFY6FP0JJW": {
+"clock": "2026-06-29T05:30:18.759000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFQE3RG1PE825RSVAVDD": {
+"clock": "2025-07-02T20:34:09Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "baf2092b4eac524df70aa09283f98c8f9141ae0fe6081499e7e16258326da1b0"
+},
+"ITM-01M59JRFQC4F8G6JYWMR18PPWN": {
+"clock": "2025-08-05T19:34:38Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "baf2092b4eac524df70aa09283f98c8f9141ae0fe6081499e7e16258326da1b0"
+},
+"ITM-01M59JRFQ9RMND6MGEM74XXDCC": {
+"clock": "2025-08-12T18:45:12Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "baf2092b4eac524df70aa09283f98c8f9141ae0fe6081499e7e16258326da1b0"
+},
+"ITM-01M59JRFQ7HR1EQFBE4ZX5SJQP": {
+"clock": "2025-09-11T02:02:26Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "baf2092b4eac524df70aa09283f98c8f9141ae0fe6081499e7e16258326da1b0"
+},
+"ITM-01M59JRFQ338R857R4JPJCQ60Z": {
+"clock": "2025-10-17T20:47:54Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "baf2092b4eac524df70aa09283f98c8f9141ae0fe6081499e7e16258326da1b0"
+},
+"ITM-01M59JRFQ001QQ8JE17ACMCRHT": {
+"clock": "2025-11-04T04:36:09Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "baf2092b4eac524df70aa09283f98c8f9141ae0fe6081499e7e16258326da1b0"
+},
+"ITM-01M59JRFPYM1K569VAZCY6NGJM": {
+"clock": "2025-11-18T23:48:02Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "baf2092b4eac524df70aa09283f98c8f9141ae0fe6081499e7e16258326da1b0"
+},
+"ITM-01M59JRFPVYGB9B6G0PY922M9N": {
+"clock": "2026-02-04T19:06:56Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "baf2092b4eac524df70aa09283f98c8f9141ae0fe6081499e7e16258326da1b0"
+},
+"ITM-01M59JRFPR487D5BJD3KFH3653": {
+"clock": "2026-04-14T21:53:41Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "baf2092b4eac524df70aa09283f98c8f9141ae0fe6081499e7e16258326da1b0"
+},
+"ITM-01M59JRFPNS9YCFA75J0TSVS7Z": {
+"clock": "2026-06-04T19:49:39Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "baf2092b4eac524df70aa09283f98c8f9141ae0fe6081499e7e16258326da1b0"
+},
+"ITM-01M59JRFRBHNJ7BWS5W4M70PPA": {
+"clock": "2026-03-25T11:12:31Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "57643383628d8f5220bf11f7c6cbe5d31930c3330b7c4cb1f579aaab4ac7d33a"
+},
+"ITM-01M59JRFR9VNCJE415F6Q6TF22": {
+"clock": "2026-03-30T16:13:44Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "57643383628d8f5220bf11f7c6cbe5d31930c3330b7c4cb1f579aaab4ac7d33a"
+},
+"ITM-01M59JRFR6RP4ZJFP0EH377RT3": {
+"clock": "2026-04-22T11:04:55Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "57643383628d8f5220bf11f7c6cbe5d31930c3330b7c4cb1f579aaab4ac7d33a"
+},
+"ITM-01M59JRFR46FGF1VTPXMG9XFGW": {
+"clock": "2026-05-22T08:29:37Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "57643383628d8f5220bf11f7c6cbe5d31930c3330b7c4cb1f579aaab4ac7d33a"
+},
+"ITM-01M59JRFQZ50HCEDNCFXSJAAPA": {
+"clock": "2026-06-12T10:12:57Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "57643383628d8f5220bf11f7c6cbe5d31930c3330b7c4cb1f579aaab4ac7d33a"
+},
+"ITM-01M59JRFQW202RTBE5MAS9EF2S": {
+"clock": "2026-07-10T14:21:26Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "57643383628d8f5220bf11f7c6cbe5d31930c3330b7c4cb1f579aaab4ac7d33a"
+},
+"ITM-01M59JRFQTRKSAEB36T7P8S2NN": {
+"clock": "2026-09-14T17:23:42Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "57643383628d8f5220bf11f7c6cbe5d31930c3330b7c4cb1f579aaab4ac7d33a"
+},
+"ITM-01M59JRFQQWZK6C3GNJ25ZFFT0": {
+"clock": "2026-09-15T12:32:53Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "57643383628d8f5220bf11f7c6cbe5d31930c3330b7c4cb1f579aaab4ac7d33a"
+},
+"ITM-01M59JRFQMA8P105N1G0AC7KYV": {
+"clock": "2026-09-29T13:00:34Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "57643383628d8f5220bf11f7c6cbe5d31930c3330b7c4cb1f579aaab4ac7d33a"
+},
+"ITM-01M59JRFQGXW1WJSVKNHSACYTS": {
+"clock": "2026-09-30T09:13:07Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "57643383628d8f5220bf11f7c6cbe5d31930c3330b7c4cb1f579aaab4ac7d33a"
+},
+"ITM-01M59JRFRTBSQDFMZ9FB8TAXDR": {
+"clock": "2026-09-28T13:18:11Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFRQJR1R7Y30K0C9PJE5": {
+"clock": "2026-10-07T12:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFRMCFYVG7736BJNK0DZ": {
+"clock": "2026-10-13T12:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFRJQ2ZTYEB3Q1Z827V5": {
+"clock": "2026-10-14T12:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFREH0NA1F2FPWPT26DF": {
+"clock": "2026-10-15T12:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFS2J8A53D4E88YR1BV2": {
+"clock": "2026-10-09T09:46:09Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFS9WCVHEPCCABN34YPD": {
+"clock": "2026-10-14T12:14:30Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFSN2FYXA1XXC1899ZXP": {
+"clock": "2026-10-07T10:03:10Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFSKHEN18K71ZP6QP42A": {
+"clock": "2026-10-08T06:41:52Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFSH6BRYAA6N7D1HETCN": {
+"clock": "2026-10-12T07:13:48Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFTBAB346N3WD5EBSQK5": {
+"clock": "2026-10-07T10:29:17Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFSBW65KZGDZCDVTC07M": {
+"clock": "2026-10-14T10:54:27Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFSESTDZ8BMWXADW1TNS": {
+"clock": "2026-10-13T10:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFTD7KXPFCD1HCJR3DTH": {
+"clock": "2026-09-21T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFT427QTQ83JH6JHH33H": {
+"clock": "2026-09-29T10:32:12Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFSX87FY1VBM5ABYJPNG": {
+"clock": "2026-10-14T07:52:25Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFT0XBFCTKKHC6S7ZBGK": {
+"clock": "2026-09-30T15:08:29Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFRXXPXPW8N200TF13CP": {
+"clock": "2026-10-15T11:13:55Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFT70SW9MXYKBX219VKG": {
+"clock": "2026-09-28T20:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFSTQFXD8GXH0RTQCEJQ": {
+"clock": "2026-10-06T08:02:05Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFS7WZZE46N8Z7HDT1DE": {
+"clock": "2026-10-15T10:00:01Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFSRNKMG4K4Y7NE8YA2V": {
+"clock": "2026-10-05T11:26:07Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFS4D2QFYY7M0K5S1NJ8": {
+"clock": "2026-10-15T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFT20JCHVVNXC208ZMAS": {
+"clock": "2026-09-30T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFTJT3066GCM9N0H7J3T": {
+"clock": "2026-09-23T07:00:16.439000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFTF3HJAJCN0VDGV42FZ": {
+"clock": "2026-09-23T10:00:13.684000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFV2AT4G5SYYMZTSG261": {
+"clock": "2026-08-07T08:00:09.991000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFVVGNAECDH7QJ2224E7": {
+"clock": "2026-03-27T05:00:09.605000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFVHC1JCMQVK611A65A9": {
+"clock": "2026-05-26T08:00:05.915000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFTSGCTZABPP3PTQJ9EC": {
+"clock": "2026-09-10T13:00:18.349000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFV7RKJ85B1C7BSBEKHJ": {
+"clock": "2026-07-13T07:34:00.731000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFTQ3K4ZAHMMT1VNPS4S": {
+"clock": "2026-09-16T02:00:11.039000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFVBDFDKPXVWFX7BKDH0": {
+"clock": "2026-06-22T02:00:10.370000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFVYNJMTTY7056Z44RJW": {
+"clock": "2026-03-12T08:00:18.113000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFTWPGR0MRAPF9FGYQ9Q": {
+"clock": "2026-09-10T11:00:10.316000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFVKY59G56WGYA5ERMY3": {
+"clock": "2026-05-05T04:00:13.661000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFVR00PK3Y5R53BSEWRC": {
+"clock": "2026-03-27T08:00:07.580000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFV0D5HGBHAEFMVE5BMK": {
+"clock": "2026-08-27T16:30:13.829000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFTNKSY5AZNSPMKY2538": {
+"clock": "2026-09-18T05:06:15.660000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFV5NWCGCA6H1MD5J5TY": {
+"clock": "2026-07-14T10:00:16.123000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFVPCEWX4526ET8CXH3S": {
+"clock": "2026-04-08T05:00:09.635000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFV9XQWMS7CZSQKAVJPZ": {
+"clock": "2026-06-26T02:00:07.277000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFVE7H5XBFHTWQPAN5WQ": {
+"clock": "2026-06-11T10:30:10.781000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFWD3WWCYYAS5GM2SDYJ": {
+"clock": "2026-08-14T13:51:18Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "131ddcf536f4bfba1bb884f1de9f4bb9dbed836694fdb40496e84a0cf085510a"
+},
+"ITM-01M59JRFWAS4PQ6B9NCN6Z9P4Y": {
+"clock": "2026-08-14T13:57:19Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "131ddcf536f4bfba1bb884f1de9f4bb9dbed836694fdb40496e84a0cf085510a"
+},
+"ITM-01M59JRFW622TKQSS9Y8RMZD3W": {
+"clock": "2026-09-02T08:29:01Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "131ddcf536f4bfba1bb884f1de9f4bb9dbed836694fdb40496e84a0cf085510a"
+},
+"ITM-01M59JRFX76MR4WRSY0372Y7J1": {
+"clock": "2026-09-19T19:50:08Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFWQYQ45RMF57HN86E3G": {
+"clock": "2026-10-14T08:00:08Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFWYVGG3R05BTDQQCK5C": {
+"clock": "2026-10-15T09:15:32Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFXXPQ4HEW6D3NVFR428": {
+"clock": "2026-08-31T07:00:08Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFX5H44W3CS3SECY2KSS": {
+"clock": "2026-10-01T08:30:08Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFXAEC45ND2MSYTFX576": {
+"clock": "2026-09-17T10:00:08Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFXC66G84STQG7ZD58YB": {
+"clock": "2026-09-17T09:30:09Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFY2Z60Y3Q1NANWD4MM5": {
+"clock": "2026-08-28T09:05:54Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFXN7234TKY1J6Y5WVJF": {
+"clock": "2026-09-03T09:01:45Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFX26CG92NGSR0VNSQF7": {
+"clock": "2026-10-03T07:38:44Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFY53M7ZTBX8WW4FB6GN": {
+"clock": "2026-08-28T08:50:08Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFXFHT84KK8X66B2DEDJ": {
+"clock": "2026-09-16T09:01:49Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFXH0G2CV81CR4G0XWAH": {
+"clock": "2026-09-10T08:10:08Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFWJ8GFQ4DJMSGK62X0E": {
+"clock": "2026-10-14T09:10:20Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFXQM3NT9456W6WWQ5W9": {
+"clock": "2026-09-03T09:01:49Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFWM3ZPXVBQ0B82GTT30": {
+"clock": "2026-10-14T09:10:24Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFWVG6JE6RTWSTTXB68Z": {
+"clock": "2026-10-08T09:31:02Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFY8ASXAZC05EFRS88C4": {
+"clock": "2026-08-27T08:00:09Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFXT7PCR2MN3X0PMDH50": {
+"clock": "2026-09-02T00:00:08Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFY0RW3X5VKE4CM6TRM0": {
+"clock": "2026-08-31T04:00:08Z",
+"basis": "published_at"
+},
+"ITM-01M59JRG0F5S0GTVGH29Q4W17K": {
+"clock": "2026-07-21T09:18:16.102000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRG0AAC33XXSC8XQ2845A": {
+"clock": "2026-07-27T09:35:16.048000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFZR8RP057702M0ZMGZ3": {
+"clock": "2026-09-02T09:17:25.279000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFYZBMJG86Q3N0EPZTPP": {
+"clock": "2026-09-30T08:31:57.955000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFYBVDCNW80T72FCBA7X": {
+"clock": "2026-10-15T08:52:20.783000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRG01J584QKSRVC4KJ0R2": {
+"clock": "2026-08-13T09:42:25.281000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFZB69KBQ2H7GST2TYAV": {
+"clock": "2026-09-25T07:00:11.833000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFZTPJG83RD4Y0FPQQGV": {
+"clock": "2026-08-26T08:40:05.360000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFZETRQG5XTX4MW4GT5E": {
+"clock": "2026-09-15T07:00:31.380000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFZNB0J9VV0VRFJ58RXM": {
+"clock": "2026-09-04T07:00:11.620000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFZZDE7HMFN11J97Q729": {
+"clock": "2026-08-17T07:00:14.050000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFYRRYH5TZ08Q7Z07G36": {
+"clock": "2026-10-14T07:15:22.919000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRG04Y9T3NEBFWM2EYX0J": {
+"clock": "2026-08-05T06:56:20.927000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRG0CHWMS038459QJHWH0": {
+"clock": "2026-07-27T06:00:15.114000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFYXSBWYKZRMBQA5FJFQ": {
+"clock": "2026-10-08T07:00:17.107000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFZ70N7BDQ96HGSP9RX6": {
+"clock": "2026-09-28T10:01:42.972000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFYT76VHYMQS6FA0QS64": {
+"clock": "2026-10-08T08:00:26.880000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRG07PAKQ9WXB8DJW28FY": {
+"clock": "2026-07-30T08:25:28.980000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFZ5HK2DDNFNDM3T3D1S": {
+"clock": "2026-09-28T11:36:39.160000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRFZWYV7JABKJTDJANHPB": {
+"clock": "2026-08-19T09:35:12.758000Z",
+"basis": "published_at"
+},
+"ITM-01M59JRG2206NHZQF0RF4F396J": {
+"clock": "2026-10-08T10:00:09Z",
+"basis": "published_at"
+},
+"ITM-01M59JRG1N2Q5QMRJXTM96A5MK": {
+"clock": "2026-10-09T09:36:53Z",
+"basis": "published_at"
+},
+"ITM-01M59JRG18S21TKZ31MTM8D2QR": {
+"clock": "2026-10-12T09:46:26Z",
+"basis": "published_at"
+},
+"ITM-01M59JRG0PV1A00RM8HPKFK2VK": {
+"clock": "2026-10-13T08:06:44Z",
+"basis": "published_at"
+},
+"ITM-01M59JRG2VWE3N8QHY5AYDRT7Z": {
+"clock": "2026-09-03T15:03:23Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "355a468606c3160710f5621ea2f313a85bdd5b24315c06b172b88d76bebb86a1"
+},
+"ITM-01M59JRG2M1AR0VDQ48J4JVGN7": {
+"clock": "2026-09-16T17:24:17Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "355a468606c3160710f5621ea2f313a85bdd5b24315c06b172b88d76bebb86a1"
+},
+"ITM-01M59JRG2FDGY5FH6F9THE0XK7": {
+"clock": "2026-09-17T11:56:28Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "355a468606c3160710f5621ea2f313a85bdd5b24315c06b172b88d76bebb86a1"
+},
+"ITM-01M59JRG2A1WB6TKKDPY4M28AP": {
+"clock": "2026-09-28T14:42:06Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "355a468606c3160710f5621ea2f313a85bdd5b24315c06b172b88d76bebb86a1"
+},
+"ITM-01M59JRG24Z9XPG3W8TZMA18BE": {
+"clock": "2026-10-14T10:33:56Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "355a468606c3160710f5621ea2f313a85bdd5b24315c06b172b88d76bebb86a1"
+},
+"ITM-01M59JRG2XDFY58ZFGC5TKS6H1": {
+"clock": "2026-09-03T15:24:11Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "355a468606c3160710f5621ea2f313a85bdd5b24315c06b172b88d76bebb86a1"
+},
+"ITM-01M59JRG2QRPEH6FE40AHC15JQ": {
+"clock": "2026-09-16T17:31:56Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "355a468606c3160710f5621ea2f313a85bdd5b24315c06b172b88d76bebb86a1"
+},
+"ITM-01M59JRG2HA6QYNTSSBW7YVM4R": {
+"clock": "2026-09-17T12:05:00Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "355a468606c3160710f5621ea2f313a85bdd5b24315c06b172b88d76bebb86a1"
+},
+"ITM-01M59JRG2DSA8A85HTR6XD5Q6B": {
+"clock": "2026-09-28T15:04:07Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "355a468606c3160710f5621ea2f313a85bdd5b24315c06b172b88d76bebb86a1"
+},
+"ITM-01M59JRG27ABBFHDQF48ZEEVX9": {
+"clock": "2026-10-14T10:40:32Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "355a468606c3160710f5621ea2f313a85bdd5b24315c06b172b88d76bebb86a1"
+},
+"ITM-01M59JRG442KMZJFGH9QPZ025A": {
+"clock": "2025-09-15T22:34:36Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG47S26GD34B6R14DPCG": {
+"clock": "2025-08-14T03:31:00Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG3G99JECJYZ0JVP17CY": {
+"clock": "2025-10-08T17:40:37Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG3DEV6X51SXYPWW4CJT": {
+"clock": "2025-10-17T03:48:48Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG34W6TYA11RWXE60NWB": {
+"clock": "2026-02-24T02:04:11Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG3NNKQCY0D1RF9QDRZ3": {
+"clock": "2025-09-16T04:54:11Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG4H5AEFNA1WBRJQX1XE": {
+"clock": "2025-04-03T17:39:57Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG3RE1GXSX292AQY2NW0": {
+"clock": "2025-09-16T04:03:43Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG3BWVJHGG2W415B1T36": {
+"clock": "2025-11-07T06:01:07Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG4AGKYP7HMJ2JMNB11R": {
+"clock": "2025-07-19T02:21:39Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG3YT1SYNCCB2GBRMHDG": {
+"clock": "2025-09-16T00:51:40Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG4P8V8QWDEVPPSVJQST": {
+"clock": "2025-03-06T19:33:33Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG4FQ7WSC3YFWYTHJ1BP": {
+"clock": "2025-04-10T07:41:30Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG4K3KCGD118DA3CNQTG": {
+"clock": "2025-03-06T19:58:28Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG30R0R3M972FY96JTMH": {
+"clock": "2026-02-27T07:56:33Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG36P7CE4SFGWZV6R9NG": {
+"clock": "2025-11-08T02:09:52Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG4CYJTR6MSA8NPPS2TT": {
+"clock": "2025-07-19T01:50:06Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG3KYH76N3WPE4RPGZKQ": {
+"clock": "2025-10-02T08:32:27Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG42Y3N705PPX2NCEFXC": {
+"clock": "2025-09-15T23:41:57Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRG3WYV50C1N7XCBYXAGE": {
+"clock": "2025-09-16T03:28:01Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "681197608a9036554001bff048318f1126c118b2f353b0c24109b3de74987cd8"
+},
+"ITM-01M59JRGQ3JH0WA7W1RWBGHDN6": {
+"clock": "2026-04-16T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGPN42KV02A34998ZGFS": {
+"clock": "2025-12-12T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGZ2RMTT014FRHWT63GG": {
+"clock": "2025-11-25T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGNFXTJ5RQRJNSSC99WT": {
+"clock": "2026-03-24T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGP1EB5HTT2PJNNN7TJG": {
+"clock": "2026-05-28T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH0VJN6A1E0HY5HS8WGS": {
+"clock": "2025-10-08T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGQ814SG97SD152ZZ13R": {
+"clock": "2025-01-23T19:00:03Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "9cf6045cc06ac80c8d20e8f796752f8a28b3a69e3b3301fc98167205f3b467c7"
+},
+"ITM-01M59JRGQE3TEBT59N4080WZV6": {
+"clock": "2026-10-18T23:24:59Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGRB2CSXMTCFEEMRQM0D": {
+"clock": "2026-10-18T08:12:17Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGSMYWB8V1PH26AJJR9D": {
+"clock": "2026-09-17T23:00:47Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGQA32C8XRZY7X1GQ4MM": {
+"clock": "2026-10-18T23:00:45Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGQHVHGZ4J24952BHKJC": {
+"clock": "2026-10-18T16:46:42Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGQVBQP6V399W9XBS4BT": {
+"clock": "2026-10-19T04:30:59Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGR69VKT1JHCDNGD1MQV": {
+"clock": "2026-10-17T01:59:48Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGQKTNPRVTQZ7AN7SKDG": {
+"clock": "2026-10-19T06:08:02Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGQPRPWK2GBYD6N2TTY3": {
+"clock": "2026-10-19T07:17:25Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGSW1EJRCMZJQB43GMQQ": {
+"clock": "2026-10-19T05:10:28Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGQSH0R7S4M09VHG2NBK": {
+"clock": "2026-10-18T23:28:45Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGTW6RFPB9RBCW5DV30W": {
+"clock": "2026-10-10T11:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRGWVMQRHAA56CTA1WMNR": {
+"clock": "2026-10-01T19:26:13Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "c48f6cdfe556a151ea85782307452186623c140a56c999df209002f6eee139c3"
+},
+"ITM-01M59JRGX90GSQM1489P4V6EZV": {
+"clock": "2026-09-30T18:41:52Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "c48f6cdfe556a151ea85782307452186623c140a56c999df209002f6eee139c3"
+},
+"ITM-01M59JRGWQZP6EJ1QB6K9TDJAR": {
+"clock": "2026-10-01T19:26:15Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "c48f6cdfe556a151ea85782307452186623c140a56c999df209002f6eee139c3"
+},
+"ITM-01M59JRGX68W63V2RT40M36NYM": {
+"clock": "2026-09-30T18:41:54Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "c48f6cdfe556a151ea85782307452186623c140a56c999df209002f6eee139c3"
+},
+"ITM-01M59JRGWM31EVVE03KWQC7XC3": {
+"clock": "2026-10-01T19:26:17Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "c48f6cdfe556a151ea85782307452186623c140a56c999df209002f6eee139c3"
+},
+"ITM-01M59JRGX4S4F7GPERCNY1Y899": {
+"clock": "2026-09-30T18:41:57Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "c48f6cdfe556a151ea85782307452186623c140a56c999df209002f6eee139c3"
+},
+"ITM-01M59JRGXFHMA7KNAH6MPE4WH2": {
+"clock": "2026-09-22T17:39:12Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "c48f6cdfe556a151ea85782307452186623c140a56c999df209002f6eee139c3"
+},
+"ITM-01M59JRGXD5GNJFNPYM2863RYZ": {
+"clock": "2026-09-22T17:44:15Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "c48f6cdfe556a151ea85782307452186623c140a56c999df209002f6eee139c3"
+},
+"ITM-01M59JRGWHFK40MM62TSNZFCC2": {
+"clock": "2026-10-01T19:46:37Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "c48f6cdfe556a151ea85782307452186623c140a56c999df209002f6eee139c3"
+},
+"ITM-01M59JRGX0VP5BJARD4GTR2JQT": {
+"clock": "2026-09-30T18:41:40Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "c48f6cdfe556a151ea85782307452186623c140a56c999df209002f6eee139c3"
+},
+"ITM-01M59JRGYB8X9FFMM1SZMAC0H7": {
+"clock": "2025-11-17T03:49:44Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "ee775468494eea14ca13358ed367d6a932b97e07e8ac8b8aef82aa3f1517fe39"
+},
+"ITM-01M59JRGY84G5BP9XZ53EA4EDX": {
+"clock": "2025-11-17T04:06:16Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "ee775468494eea14ca13358ed367d6a932b97e07e8ac8b8aef82aa3f1517fe39"
+},
+"ITM-01M59JRGY5FW5H2C0M4867NECM": {
+"clock": "2025-11-17T16:42:06Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "ee775468494eea14ca13358ed367d6a932b97e07e8ac8b8aef82aa3f1517fe39"
+},
+"ITM-01M59JRGY2D9PQESEH3K9C1QAY": {
+"clock": "2025-11-20T15:15:58Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "ee775468494eea14ca13358ed367d6a932b97e07e8ac8b8aef82aa3f1517fe39"
+},
+"ITM-01M59JRGXZDW4ZHMB3YF2GHJ2V": {
+"clock": "2026-01-02T16:31:26Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "ee775468494eea14ca13358ed367d6a932b97e07e8ac8b8aef82aa3f1517fe39"
+},
+"ITM-01M59JRGXT6AFC38JJ92RDTP97": {
+"clock": "2026-03-03T16:59:11Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "ee775468494eea14ca13358ed367d6a932b97e07e8ac8b8aef82aa3f1517fe39"
+},
+"ITM-01M59JRGXQQJPHDQ91CWCSDKHB": {
+"clock": "2026-03-27T17:41:42Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "ee775468494eea14ca13358ed367d6a932b97e07e8ac8b8aef82aa3f1517fe39"
+},
+"ITM-01M59JRGXNC4VNVXZ0H89WCB5C": {
+"clock": "2026-06-16T16:40:24Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "ee775468494eea14ca13358ed367d6a932b97e07e8ac8b8aef82aa3f1517fe39"
+},
+"ITM-01M59JRGXJHVQKBP2SEZ956WZZ": {
+"clock": "2026-08-03T10:20:10Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "ee775468494eea14ca13358ed367d6a932b97e07e8ac8b8aef82aa3f1517fe39"
+},
+"ITM-01M59JRGZSP3Q1DN85MFKQ0Q70": {
+"clock": "2026-10-07T09:34:28Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "b4c2ba0d2c598da905a71fa3ffa441870d8d7cd3826ef892ed1c5110e62b2223"
+},
+"ITM-01M59JRGZNS5RFN5YPKDH8D7C7": {
+"clock": "2026-10-08T06:11:14Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "b4c2ba0d2c598da905a71fa3ffa441870d8d7cd3826ef892ed1c5110e62b2223"
+},
+"ITM-01M59JRGZCRQHYEZPDHJDDA0AY": {
+"clock": "2026-10-12T00:13:34Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "b4c2ba0d2c598da905a71fa3ffa441870d8d7cd3826ef892ed1c5110e62b2223"
+},
+"ITM-01M59JRGZ9NHPRZ24KC51Q65VP": {
+"clock": "2026-10-14T16:28:50Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "b4c2ba0d2c598da905a71fa3ffa441870d8d7cd3826ef892ed1c5110e62b2223"
+},
+"ITM-01M59JRGYJ2B2HKACKAYP94H47": {
+"clock": "2026-10-19T00:11:19Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "b4c2ba0d2c598da905a71fa3ffa441870d8d7cd3826ef892ed1c5110e62b2223"
+},
+"ITM-01M59JRGYEN6DEJCJDSESHP5FZ": {
+"clock": "2026-10-16T11:41:29Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "b4c2ba0d2c598da905a71fa3ffa441870d8d7cd3826ef892ed1c5110e62b2223"
+},
+"ITM-01M59JRGZJEZFBMA5T7FXHC8E9": {
+"clock": "2026-10-07T16:39:58Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "b4c2ba0d2c598da905a71fa3ffa441870d8d7cd3826ef892ed1c5110e62b2223"
+},
+"ITM-01M59JRGZFEG3SG9JZWN1NEE1D": {
+"clock": "2026-10-08T09:24:55Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "b4c2ba0d2c598da905a71fa3ffa441870d8d7cd3826ef892ed1c5110e62b2223"
+},
+"ITM-01M59JRGZ62H7FKNEP710Y8HVK": {
+"clock": "2026-10-14T16:26:09Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "b4c2ba0d2c598da905a71fa3ffa441870d8d7cd3826ef892ed1c5110e62b2223"
+},
+"ITM-01M59JRGYNTNDXP8J6E6H5805B": {
+"clock": "2026-10-15T16:56:03Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "b4c2ba0d2c598da905a71fa3ffa441870d8d7cd3826ef892ed1c5110e62b2223"
+},
+"ITM-01M59JRJA9B2D1526PV73XCAWV": {
+"clock": "2026-08-04T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRJSQGVMYTFEZ6Z0TM1SE": {
+"clock": "2026-07-29T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRJ592NXNS3QXN3M17EED": {
+"clock": "2026-10-15T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH15A25MW1M7DZYA393V": {
+"clock": "2026-10-14T17:52:44Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH1YCSBS013XK9QFF69A": {
+"clock": "2026-09-29T20:21:16Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH1J92F0YJBKZEFAB22P": {
+"clock": "2026-10-01T09:54:17Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH2KXEH0KXRZRRNRAS28": {
+"clock": "2026-09-18T14:45:51Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHEYPXTH3F70H2TDAGJQ": {
+"clock": "2026-06-04T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHEA2YA1BRXCGBDW0HYW": {
+"clock": "2026-02-10T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHAD0J69EN7XW0HE3VHD": {
+"clock": "2025-11-26T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHDX9DGPVN69DY5NE387": {
+"clock": "2025-08-15T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHBBBN86SM899QFNZGXP": {
+"clock": "2026-05-11T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHBXCC66EHYZK3AH9E78": {
+"clock": "2026-01-13T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH51QPNT2V81WTKT1EN4": {
+"clock": "2005-09-10T07:49:43Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH4QD6WQP7GGM16041B3": {
+"clock": "2026-10-16T21:11:56Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH8HY7Y5SYDRNQX91C87": {
+"clock": "2026-09-25T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHF3XHBMPNZJ3J3KMQG0": {
+"clock": "2025-11-13T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH9YXPNQYDPG45FCJSJE": {
+"clock": "2023-06-07T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH5GW6KSWTXCY8AHBF2X": {
+"clock": "2026-10-14T15:01:44Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHD0WWCR9DTHPS8W3NNE": {
+"clock": "2025-05-28T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH9MCMJ2R3XTFGV109KY": {
+"clock": "2026-08-05T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHETJVY0PPF82VVTGTDW": {
+"clock": "2025-08-21T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHDR39N8WNXE6ZB34CH5": {
+"clock": "2023-03-14T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH8VZPJTF742WMSBZVST": {
+"clock": "2021-01-07T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH9HAPKVXWC6R69SNBKF": {
+"clock": "2023-09-14T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHEH6RCNAWV9YMG6DS37": {
+"clock": "2025-04-08T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH9W67E2BGSTZHPE5KZH": {
+"clock": "2025-11-28T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH79Y2DTQ7S03G5XP8H3": {
+"clock": "2026-10-13T09:34:09Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH96QN39Z39C2AS6REWV": {
+"clock": "2026-02-06T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHAW9JEYWE1RF463GETH": {
+"clock": "2026-08-03T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH54DVMN8B0ZA1WHZ82F": {
+"clock": "2026-10-07T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH6VQ49J1AM9DP4KP62D": {
+"clock": "2026-10-15T10:55:43Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHD7H8BW2KT6BZGFKK7Z": {
+"clock": "2022-12-02T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHCQH8RZZDRK36RQZ6E2": {
+"clock": "2021-08-12T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHE778VM9TH9Z9AF3WKT": {
+"clock": "2025-03-12T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHCWNS9GX9KS9QQPD0KW": {
+"clock": "2025-06-18T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH9QYCNQS6X6S4X5EJRT": {
+"clock": "2022-06-21T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHANSMGB4M6Z76STW9MR": {
+"clock": "2026-06-12T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHBZJNRP4WEDP85K6SFP": {
+"clock": "2022-01-13T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH5XTD0X3C03NP12N4MH": {
+"clock": "2026-10-15T21:50:23Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHD4W29K52AYGDMMPEZK": {
+"clock": "2024-11-14T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHC3ZS16Q30VSJKZCV5D": {
+"clock": "2022-02-17T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHCCB1D4G8REY1XPJGXH": {
+"clock": "2025-12-17T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHDNDDPC7H62A205EMN8": {
+"clock": "2025-02-06T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHEDD313AR20V4R81EBH": {
+"clock": "2026-08-17T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHCKXZQH1VK4YX66NEEZ": {
+"clock": "2026-01-07T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHDTBEFBPPHA5YRD4RJW": {
+"clock": "2025-08-13T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHASKJBPKNF0KXN4PMGC": {
+"clock": "2024-01-11T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH5EMRE55ZJMRPWAM98H": {
+"clock": "2026-10-18T21:45:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH8YAQ6DVAHBY64QWJYZ": {
+"clock": "2022-11-08T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHAGCAWTEH6N6KYNQMZB": {
+"clock": "2025-03-31T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHA3MWBT0VG7TX5RWJFS": {
+"clock": "2026-02-07T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH8QX5YB46R50NDFZN8K": {
+"clock": "2024-12-12T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHEPECQF4GBZXXTY480Q": {
+"clock": "2021-09-28T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH8MGBB4FP2V80BVRFDN": {
+"clock": "2021-09-06T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHE41EGQS51W6146XWFS": {
+"clock": "2021-09-27T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH9DADMCX7TBC0GK82P3": {
+"clock": "2025-08-26T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH9AD7NFST29TTR4EQZC": {
+"clock": "2026-08-17T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHBKYB177VBTB7PB2B62": {
+"clock": "2026-09-03T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHBPT0AB14RTWDQ00WA9": {
+"clock": "2026-07-08T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHAA22J21XBXGC9QC4YR": {
+"clock": "2025-11-10T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH4XVFC0SPFNB0ZJMEWV": {
+"clock": "2026-10-12T14:17:01Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHC95WV20XXCWPF98CRJ": {
+"clock": "2026-09-15T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHBSDDC8CEFFNATFG75K": {
+"clock": "2025-10-16T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHE1B8TC6SGFJB3XF2XH": {
+"clock": "2025-10-30T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHA6N6XTM55KE78T76KM": {
+"clock": "2026-02-26T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHB2ZFSRG329RVZ4MB3G": {
+"clock": "2025-02-20T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH4MV1AAC76J73S6NNDR": {
+"clock": "2026-10-16T20:40:58Z",
+"basis": "published_at"
+},
+"ITM-01M59JRH7VZHW0PFA9MA20QQQG": {
+"clock": "2026-10-07T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHBFXEW435SAC2KNQSXT": {
+"clock": "2025-09-18T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHDEC2MANKNXJWM2RTRM": {
+"clock": "2025-09-22T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHCGYEQE46BD9DD0KKSY": {
+"clock": "2022-11-13T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHDAHV3FQTCHCXG4C81F": {
+"clock": "2025-06-27T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHC6A11Z7SHE41Y8Q249": {
+"clock": "2026-04-13T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRHCSTT4HZWT5ZXRKXP46": {
+"clock": "2025-02-03T08:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRKCYWTWVZ6EBH9TXT5TM": {
+"clock": "2026-09-21T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRK4XDQEEZWBG85VEHFXX": {
+"clock": "2026-10-05T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRKCBHA9J52E8VP6CT35P": {
+"clock": "2026-09-28T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRK8NMXBSRYD7XHMDZ8CB": {
+"clock": "2026-10-08T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRJV73S2G5213BR3W6EVG": {
+"clock": "2026-10-15T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRJQKAND20PJZR8NPP7EP": {
+"clock": "2026-10-16T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRJ4RK5FNTDH77GN891GG": {
+"clock": "2026-08-25T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRKDGVX44GH7J3TRVNY1P": {
+"clock": "2026-09-23T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRK46PHSG5K2Y56DW6FDK": {
+"clock": "2026-09-30T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRK3GNV7ZXDRDFWYAVYJ2": {
+"clock": "2026-10-15T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRJTHBWNT32TNZW8C752W": {
+"clock": "2026-09-22T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRJFT4S0D2Y91N3P1ATB6": {
+"clock": "2026-02-10T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRJS7YDBFN1SRYAXHDAT3": {
+"clock": "2026-02-10T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRK9G8PE4B7G5GG2PDKDX": {
+"clock": "2024-09-12T07:41:36Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "f63412eb8897598c9c53192d748cb2e7a46c0ca7a262835212fa5f5ee941e56d"
+},
+"ITM-01M59JRK9AH4T2GEYM3YABVQ8N": {
+"clock": "2025-03-05T08:56:48Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "f63412eb8897598c9c53192d748cb2e7a46c0ca7a262835212fa5f5ee941e56d"
+},
+"ITM-01M59JRK97X8FHWJSG4TMQ8708": {
+"clock": "2025-03-05T08:48:18Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "f63412eb8897598c9c53192d748cb2e7a46c0ca7a262835212fa5f5ee941e56d"
+},
+"ITM-01M59JRK9DQN4PQTWEED2S32BS": {
+"clock": "2025-02-24T10:35:22Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "f63412eb8897598c9c53192d748cb2e7a46c0ca7a262835212fa5f5ee941e56d"
+},
+"ITM-01M59JRK953QXBTA740V6TYX9S": {
+"clock": "2025-07-30T09:07:16Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "f63412eb8897598c9c53192d748cb2e7a46c0ca7a262835212fa5f5ee941e56d"
+},
+"ITM-01M59JRK91S5EBEM3Q7D1YQ8NH": {
+"clock": "2025-08-07T19:26:36Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "f63412eb8897598c9c53192d748cb2e7a46c0ca7a262835212fa5f5ee941e56d"
+},
+"ITM-01M59JRK8Z5ZCR59MTRKRNNJ64": {
+"clock": "2026-01-08T08:02:00Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "f63412eb8897598c9c53192d748cb2e7a46c0ca7a262835212fa5f5ee941e56d"
+},
+"ITM-01M59JRK8VTN3KSYVWCH61ZWPT": {
+"clock": "2026-08-05T15:02:42Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "f63412eb8897598c9c53192d748cb2e7a46c0ca7a262835212fa5f5ee941e56d"
+},
+"ITM-01M59JRKB5689N72F8ZY2M66SH": {
+"clock": "2026-07-31T12:03:00Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKASWWQGG8CZS88HR8S5": {
+"clock": "2026-08-25T17:46:36Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRK9TYENGV9YB6Z4QWVDP": {
+"clock": "2026-10-16T12:51:35Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKAZKM5S0S23BKF1ADPN": {
+"clock": "2026-07-31T18:20:26Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKBAD3H82JZZWNR2T6DD": {
+"clock": "2026-07-31T09:58:35Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKA5TRCHTSWPNT3QZNDK": {
+"clock": "2026-09-09T09:28:03Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKBCAJ42QBP2EADB0RA5": {
+"clock": "2026-07-31T09:41:16Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKA2A1QZ5PMMR2S5HB3J": {
+"clock": "2026-09-09T15:11:46Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKAPHJ4BT0MNFM8SGTAB": {
+"clock": "2026-08-31T17:39:01Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKAW0PXXYRNN8VY6NABX": {
+"clock": "2026-08-25T15:58:45Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRK9KTPC3M1F6GWH3ESNK": {
+"clock": "2026-10-16T14:04:42Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRK9PG4Z5MJ9A3VGSK529": {
+"clock": "2026-10-16T13:35:14Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKA8YP169R8810T2RMPN": {
+"clock": "2026-09-09T09:19:50Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKB7DW73MHSMPMQARB9H": {
+"clock": "2026-07-31T10:51:23Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKAB5BE9ZG42GY6J9SK9": {
+"clock": "2026-09-08T12:58:16Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKAKX026RKKS1SM1SE2E": {
+"clock": "2026-09-01T05:52:55Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKAGMZ9D87V30XDHCF5E": {
+"clock": "2026-09-07T08:00:34Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRK9Z0YFJGNPW4KDVAWVX": {
+"clock": "2026-10-15T13:47:47Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKAEXE2KJFR8Z4FA26FA": {
+"clock": "2026-09-07T08:11:03Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRKB224ARTBMMBNCRNC4M": {
+"clock": "2026-07-31T17:11:55Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "20baa439864deee19a4fce4f47e609f542dc2a6970e59cc73b5e8a06880882e0"
+},
+"ITM-01M59JRMGX3K7TWMC4VA78VEFA": {
+"clock": "2026-09-16T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRN9ZFA0T8ZEDNMTSY6WC": {
+"clock": "2026-08-07T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRNQ6C5M82XNTM5YTFDD7": {
+"clock": "2026-10-07T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRPDH8K6ZH4MRBZP82P2Q": {
+"clock": "2026-09-29T05:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRMJSS28B616ZWXGXH5KE": {
+"clock": "2026-09-08T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRN1N0SGCF7D8Y8K13M4Z": {
+"clock": "2026-08-10T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRPJHP8KQ8X6S2755EZEW": {
+"clock": "2026-09-17T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRMJ7T6VYBC1H9XQW14YT": {
+"clock": "2026-08-13T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRP21H858CJP7TXD0M6SK": {
+"clock": "2026-10-01T05:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRPTXVH10MAYYEJVY2AZ1": {
+"clock": "2026-09-30T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRPMN0RV999XD7TDP632D": {
+"clock": "2026-10-01T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRPEVJ27R3XPYNJNSM8ZW": {
+"clock": "2026-10-13T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRP84ZRY62VXEABB3T66C": {
+"clock": "2026-10-19T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRPCZDHSDB2T53FDWGF02": {
+"clock": "2026-10-14T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRPNMDT73XPJ8Z3DE5CW9": {
+"clock": "2026-09-16T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVJFE00XWE39DN6YYS0Z": {
+"clock": "2024-11-12T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV2RKS6R7W1Y0CX8VEYD": {
+"clock": "2024-12-02T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTYTPD9EP3BTN4X8N4CJ": {
+"clock": "2024-12-04T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTGHT60Z5C9YGZCK91RE": {
+"clock": "2025-01-08T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTG7PXZBJ0CCKYVQZE9M": {
+"clock": "2025-02-10T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTBVJ4CFBDHZPD3B9PD0": {
+"clock": "2025-02-17T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVJ91QJ5YKXMYAG3A0QH": {
+"clock": "2025-02-03T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRT12S5P5K4QPD15QJTX0": {
+"clock": "2025-02-20T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRSXK7F81627BPV31557J": {
+"clock": "2025-03-31T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRSF2NQ7G3MNT8N4MM8H2": {
+"clock": "2025-07-17T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRSSQARCC0230GVYZYCMW": {
+"clock": "2025-07-01T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRSBNEZC7K9QG33MA5XSZ": {
+"clock": "2025-10-16T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRS7H3FM17JKCBF4K12BN": {
+"clock": "2025-10-17T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRSYRMV12DBER8AQXNX4C": {
+"clock": "2025-10-20T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRRSSRGHM0W79PD8AQ8T0": {
+"clock": "2025-12-04T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRRWV7FWANAAVAMWK5PQ9": {
+"clock": "2025-11-05T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRRNFPHMQWB77XRNESV27": {
+"clock": "2026-02-09T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRRDSC4MPVH54C0Q0WVGQ": {
+"clock": "2026-02-25T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRRCWCGKMNGFY07PY3W32": {
+"clock": "2026-04-07T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRR0N1P3Y43SFG7KHEE32": {
+"clock": "2026-05-19T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRR77WHRND1J0DT26FRH6": {
+"clock": "2026-05-14T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRQV8X0XPZKKTYX1PHN7D": {
+"clock": "2026-06-10T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRQM98DVR79ASX57H6A1F": {
+"clock": "2026-06-05T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRQSDAGCG8BPH15EHQ4YY": {
+"clock": "2026-07-27T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRQEJ42GFCQFVCQ8X0HZG": {
+"clock": "2026-09-24T00:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTZR6SXZ22TF5K2FDMW6": {
+"clock": "2026-09-29T20:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTZNQCZ9VK42F55FKVWM": {
+"clock": "2026-09-30T15:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTZJH6X031635ERA0W6P": {
+"clock": "2026-10-01T17:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTZFRSSZJ0NYANQ8QAT1": {
+"clock": "2026-10-05T20:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTZCYFAVQRHW7WQKC5GB": {
+"clock": "2026-10-07T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTZ9W51CVSKGSJD2WH51": {
+"clock": "2026-10-08T20:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTZ6GWFX6QVXVVZGWKP0": {
+"clock": "2026-10-08T21:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTZ4TZBXHZCXNP20S6YN": {
+"clock": "2026-10-13T20:15:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTZ18JKK15S77JXWZV8E": {
+"clock": "2026-10-14T11:15:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTYYTF4YQK8KRYJFV4V3": {
+"clock": "2026-10-14T16:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV21P5AXCXQY3NZBQBKD": {
+"clock": "2026-05-15T08:16:10Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV0H98PFG5A3G4513Z6C": {
+"clock": "2026-07-21T19:13:20Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV17E9C6J0KT2JEP2Z2F": {
+"clock": "2026-06-29T13:56:17Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV2C7QR2SKJ9ZMKWWTZD": {
+"clock": "2026-04-28T13:18:51Z",
+"basis": "published_at"
+},
+"ITM-01M59JRTZT9B8GEJK9FTY218ZK": {
+"clock": "2026-09-12T19:38:59Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV3QJZ16YPC368JKKXCF": {
+"clock": "2026-03-11T12:19:56Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV3FKVP17YFGATG4TNV9": {
+"clock": "2026-03-19T12:51:32Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV2HPEJT30R86P87DHH7": {
+"clock": "2026-04-27T09:17:25Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV1XVSP4GWKF5E78PEC1": {
+"clock": "2026-05-19T13:56:50Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV0DTM3ZW7GEX2YVRXV2": {
+"clock": "2026-07-21T19:30:24Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV13H7NZ1KZNJ7K6JND3": {
+"clock": "2026-06-29T16:41:14Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV1RAXY3JX4390T1SGMJ": {
+"clock": "2026-06-03T07:56:32Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV3KV83E8JP1FY0YVX6H": {
+"clock": "2026-03-16T19:53:41Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV29YZ3W62H9HBKV3VZC": {
+"clock": "2026-04-28T15:09:46Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV0VJKY8RC1XFN0F6GNQ": {
+"clock": "2026-07-08T12:54:31Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV3B8V2G1EW61BB18HTB": {
+"clock": "2026-03-20T16:45:21Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV0Z7G799ZKPZ8VJJEZQ": {
+"clock": "2026-07-01T14:04:14Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV0PMVF9A2XE2FED4SA3": {
+"clock": "2026-07-15T09:39:40Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV2VAZY6P66DS07S3HCN": {
+"clock": "2026-04-24T12:02:45Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV1BRX6Z22TTQV787MPD": {
+"clock": "2026-06-23T07:09:49Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV04TGHP8YP5Q9D8CTAT": {
+"clock": "2026-08-14T12:13:19Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV1GTGC3PVJFRSCSP7VH": {
+"clock": "2026-06-08T18:52:01Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV1MNZ6EQPTMERGS1ZR5": {
+"clock": "2026-06-08T18:51:53Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV2Z18GEN42G7S6GWZRQ": {
+"clock": "2026-04-15T05:23:15Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV37JK1JCRXH44R5M1KD": {
+"clock": "2026-04-13T08:37:01Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV09XA1GA4RQQB1N1ZDA": {
+"clock": "2026-07-27T11:24:19Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV25GJS34NPZRT0GBB0S": {
+"clock": "2026-05-05T10:44:36Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV4QJT6P30818YGCHNPP": {
+"clock": "2026-08-25T21:46:03Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "060f4266a1be7788b0289399b3fc1a250987a715fb6e3c8826a49d5fbb5d439c"
+},
+"ITM-01M59JRV4G0DJYSBBB46T7E9D4": {
+"clock": "2026-08-31T12:43:55Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "060f4266a1be7788b0289399b3fc1a250987a715fb6e3c8826a49d5fbb5d439c"
+},
+"ITM-01M59JRV4D92YVX102B82TG85X": {
+"clock": "2026-09-11T13:13:10Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "060f4266a1be7788b0289399b3fc1a250987a715fb6e3c8826a49d5fbb5d439c"
+},
+"ITM-01M59JRV48VHY1HQKC6JT29M8P": {
+"clock": "2026-09-13T11:00:27Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "060f4266a1be7788b0289399b3fc1a250987a715fb6e3c8826a49d5fbb5d439c"
+},
+"ITM-01M59JRV45R6MVQ22DXBE9FVY4": {
+"clock": "2026-09-29T07:44:00Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "060f4266a1be7788b0289399b3fc1a250987a715fb6e3c8826a49d5fbb5d439c"
+},
+"ITM-01M59JRV4Y7N6EDM4Q085K5KX1": {
+"clock": "2026-08-12T17:59:18Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "060f4266a1be7788b0289399b3fc1a250987a715fb6e3c8826a49d5fbb5d439c"
+},
+"ITM-01M59JRV4T27F4GVCH3T24YYE9": {
+"clock": "2026-08-14T16:22:32Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "060f4266a1be7788b0289399b3fc1a250987a715fb6e3c8826a49d5fbb5d439c"
+},
+"ITM-01M59JRV4KWQG16G6CY2PZ6Z4A": {
+"clock": "2026-08-31T18:10:14Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "060f4266a1be7788b0289399b3fc1a250987a715fb6e3c8826a49d5fbb5d439c"
+},
+"ITM-01M59JRV429BM0CG5VXQ827V05": {
+"clock": "2026-09-28T08:30:48Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "060f4266a1be7788b0289399b3fc1a250987a715fb6e3c8826a49d5fbb5d439c"
+},
+"ITM-01M59JRV3YR47H53MGXVE0SG81": {
+"clock": "2026-10-06T06:37:48Z",
+"basis": "atom_entry_updated",
+"raw_sha256": "060f4266a1be7788b0289399b3fc1a250987a715fb6e3c8826a49d5fbb5d439c"
+},
+"ITM-01M59JRV8G6597ADDJECTBG176": {
+"clock": "2026-06-24T20:40:31Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV7W0XNN110CDR1YT3BH": {
+"clock": "2026-08-16T06:22:33Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV5DDXGVS0D28WFJ62ED": {
+"clock": "2026-10-09T16:28:10Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV8NAD2M2JDXE981J7K1": {
+"clock": "2026-06-24T14:08:08Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV9BM8KAEZM79SA4ZKW4": {
+"clock": "2026-06-02T07:41:40Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV64DDXD8N5VR74M3ZD2": {
+"clock": "2026-10-01T15:27:23Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVA16DW9477FZFDP7TPW": {
+"clock": "2026-04-09T15:48:57Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV96CXWVT8FKYN61JB1M": {
+"clock": "2026-06-04T19:37:32Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV8Z7MZMG240EWXN327S": {
+"clock": "2026-06-15T17:05:22Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV7PBE4TWH60H9K3XDK1": {
+"clock": "2026-08-25T19:27:58Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV5JXH33J3CYCK55J9B8": {
+"clock": "2026-10-07T18:01:29Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV9NWHM3K5P0AMGXQVYW": {
+"clock": "2026-05-12T11:39:13Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV7CJ92TEKTSR9NPMHJS": {
+"clock": "2026-09-02T11:56:48Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV8CEMG4G4VWS52G1CQE": {
+"clock": "2026-07-25T03:50:59Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV58318F6TZGKMZD6SQV": {
+"clock": "2026-10-10T21:34:38Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV7HEXCMG438H35ZYSPJ": {
+"clock": "2026-08-29T13:34:21Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV6G75388SZ9Y0GB6EYJ": {
+"clock": "2026-09-30T13:50:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV815JQN2PQ6ZFXK7CC2": {
+"clock": "2026-08-03T21:29:29Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV5SFY5ZRDKAG8YDZP5Q": {
+"clock": "2026-10-05T03:00:41Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV6NY3DF1DVB7F9S5Y9T": {
+"clock": "2026-09-29T09:05:22Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV8S99W0RGB2YJ72E6NW": {
+"clock": "2026-06-22T12:56:04Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV71J25XMXH8W4EAFE7Q": {
+"clock": "2026-09-11T13:59:20Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV77NMGS1PSEWWDTAWDB": {
+"clock": "2026-09-03T06:25:27Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV9F5AVH2X8BZ1MFRWDW": {
+"clock": "2026-05-24T18:57:30Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV86BR8WPJY20WXG33DB": {
+"clock": "2026-07-27T02:24:54Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV60KYCCN2VXPJSWDTFG": {
+"clock": "2026-10-04T08:10:42Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV525P1KVV6TQXRTZSDJ": {
+"clock": "2026-10-12T09:14:43Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV691P2G8TYN4EPNFQYW": {
+"clock": "2026-09-30T16:41:10Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV6VQDNWGPD1NMSNE6GK": {
+"clock": "2026-09-24T03:31:03Z",
+"basis": "published_at"
+},
+"ITM-01M59JRV9WJXCPQXAJW130EWQY": {
+"clock": "2026-04-16T13:19:28Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVDHV4RF6Q9NYBX37NYP": {
+"clock": "2026-10-07T11:07:41Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVAKJJCSPY3J96G0E84Q": {
+"clock": "2026-10-16T00:04:06Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVBJ8V33A75V32WF9ZX1": {
+"clock": "2026-10-14T14:26:05Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVB6AZ1C7GDWVETSYEXQ": {
+"clock": "2026-10-15T15:00:17Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVBEGDCVYRTYF47A3FBY": {
+"clock": "2026-10-15T13:36:20Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVBANZFD0V4AME41EGQB": {
+"clock": "2026-10-15T13:45:34Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVARPWFWFB038B59RSK7": {
+"clock": "2026-10-15T15:19:58Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVD89VRJW22NQ2EN11BK": {
+"clock": "2026-10-08T06:17:23Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVC13EYQ78HY7R9RZRAH": {
+"clock": "2026-10-13T17:42:46Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVDTSY3DNJJ1528RBTX8": {
+"clock": "2026-10-04T12:26:31Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVCSK6Z4VECBK62W0BH9": {
+"clock": "2026-10-09T17:25:13Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVCHZA3PAZH406PDAP0W": {
+"clock": "2026-10-12T13:20:34Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVE2SKP5DZWKNNW2PNYN": {
+"clock": "2026-10-02T15:21:26Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVC6GQWB3Y1BMJ7W09T7": {
+"clock": "2026-10-13T02:59:37Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVBRHJ6EMP1K7PTA9Q3R": {
+"clock": "2026-10-14T11:33:12Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVCEH1SEV8F2WA5C5PPX": {
+"clock": "2026-10-12T18:27:26Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVBXNJ6CHCZCTHT9XZWY": {
+"clock": "2026-10-13T19:37:13Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVDNPCVBQXBSCYC5CS7S": {
+"clock": "2026-10-06T14:59:21Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVCN84AA4ZA6E612HAZF": {
+"clock": "2026-10-09T18:51:52Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVAFAP13RNG3B7N7PWYQ": {
+"clock": "2026-10-16T14:44:56Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVB2Z5GY35HJZRSD6E60": {
+"clock": "2026-10-15T15:05:40Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVAXV0JHS68ZF3G2K7NV": {
+"clock": "2026-10-15T15:08:29Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVDCHQ8EJCKJPVXGSH4D": {
+"clock": "2026-10-07T14:26:13Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVD43CJZCJX6V1107YF4": {
+"clock": "2026-10-08T16:17:09Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVABYRG3T1MCEE04YTQ8": {
+"clock": "2026-10-16T16:43:25Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVCXY4MVS32PTB566CKB": {
+"clock": "2026-10-09T16:21:48Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVC9466HWBS7GJ4GXX2P": {
+"clock": "2026-10-12T18:44:12Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVA644H3PM55C3603RCN": {
+"clock": "2026-10-18T20:00:51Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVHD2FKZG3WCR19JPNQ3": {
+"clock": "2026-10-05T08:17:09Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVEYNP0EHY0R2HDGE9A0": {
+"clock": "2026-10-16T12:54:02Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVFP250JA5ZFWAR43CTP": {
+"clock": "2026-10-14T17:14:14Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVJWNBGJR0C0G664D9SC": {
+"clock": "2026-09-18T13:40:44Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVH74GEKJPCZZ20ETNTY": {
+"clock": "2026-10-05T08:49:26Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVEJ6J7WDTSCTFZ943TE": {
+"clock": "2026-10-18T12:36:34Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVH07TCCDYDBGR0EDVQ3": {
+"clock": "2026-10-05T14:15:30Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVK7G47H9GSYMFYTSB3A": {
+"clock": "2026-09-16T09:27:15Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVFV2984TF1JP8BZ2677": {
+"clock": "2026-10-14T12:30:51Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVF4THVVPSZ4K7ZB3HGD": {
+"clock": "2026-10-16T12:02:15Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVK16E3Y5V9C8D2D10XC": {
+"clock": "2026-09-17T10:35:23Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVG6CER2HV8YP7HN1SPT": {
+"clock": "2026-10-12T16:16:46Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVKZMTV225SJC2YCANJ4": {
+"clock": "2026-09-10T17:53:53Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVE6Y885NQG714APDYG1": {
+"clock": "2026-10-18T23:45:03Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVGCMHNSJA32X55DFTVS": {
+"clock": "2026-10-12T10:59:32Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVKK0YDRCJKQ3TK5JHNC": {
+"clock": "2026-09-13T05:56:53Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVFB6PN5Z828N2X85X5B": {
+"clock": "2026-10-15T15:51:24Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVG02QYSKRCM79GZMPVY": {
+"clock": "2026-10-13T13:10:05Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVGSSSVPKQ6Q500SE2WJ": {
+"clock": "2026-10-05T16:14:37Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVKSADZ46GGJG64HTK0A": {
+"clock": "2026-09-10T23:12:49Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVECEXQTCWJJHK6T62SH": {
+"clock": "2026-10-18T17:20:42Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVER9JTF938FTFMYKKXT": {
+"clock": "2026-10-16T23:55:42Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVKC17EFK7530KAGWCDV": {
+"clock": "2026-09-15T12:19:49Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVGK6HYT8YY0A0BWT75E": {
+"clock": "2026-10-09T14:28:25Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVFGXF6MMA3EDCYR00ZF": {
+"clock": "2026-10-15T02:40:48Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVJJSFSFZ2W63HAAARHG": {
+"clock": "2026-09-27T20:34:43Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVJ1X44M8T9FTB8EG393": {
+"clock": "2026-10-01T13:25:36Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVHK9V94E5V1PMJKPCFX": {
+"clock": "2026-10-02T19:08:33Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVQZ0YEF8B96BDB5FFZJ": {
+"clock": "2026-04-02T21:19:22Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVR3SFT3BMMPQ1Y7461X": {
+"clock": "2026-04-02T16:20:52Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVR8GEQTPNTT1DHP20WR": {
+"clock": "2026-04-02T16:15:17Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVQT0AXTQZP620HJNBDB": {
+"clock": "2026-04-02T21:31:22Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVPFFT1WTE73SQY52X8S": {
+"clock": "2026-06-26T13:05:03Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVM4WAX8HBZKT1A7MQPB": {
+"clock": "2026-10-06T07:07:36Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVNCF40W0MHN6J25T2ZZ": {
+"clock": "2026-07-04T21:38:30Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVRXCGF5SGS1E3JM9SH4": {
+"clock": "2026-03-15T20:09:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVPXMHD76W0EC221NT7V": {
+"clock": "2026-06-14T03:00:12Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVMVDBQ20DJ6Y1NE139X": {
+"clock": "2026-07-23T12:15:43Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVQN1PPPF29CT4W93D8J": {
+"clock": "2026-04-08T22:57:31Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVPMMWNCCBZ3TAGDFC60": {
+"clock": "2026-06-25T12:09:44Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVMN0R4JT1ZMNKHCQ8SX": {
+"clock": "2026-08-04T01:42:54Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVQCPMJ2KDFN1W9QZJM7": {
+"clock": "2026-04-13T18:05:43Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVQGDA2Z1JCFZJ1KARYD": {
+"clock": "2026-04-10T23:30:12Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVMFSYY0Z6SF90X26F27": {
+"clock": "2026-09-10T17:01:43Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVPRHJR07972D57K0FK4": {
+"clock": "2026-06-19T17:04:30Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVRRS1ZS7YKE4PNQVZRY": {
+"clock": "2026-03-25T23:27:51Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVRJ456E51670ST4QE3V": {
+"clock": "2026-03-25T23:31:21Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVRD4SW0PWX5Q96PRFGB": {
+"clock": "2026-03-31T20:28:49Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVP3FHA1XR0TZJY0ZGXH": {
+"clock": "2026-06-29T20:01:21Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVNY0EGBMNZBF5QK27C7": {
+"clock": "2026-06-30T16:32:34Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVNRX6JADWSA7WM0XW2Y": {
+"clock": "2026-06-30T16:33:33Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVNKZQ6BSCEMVG85Y2VC": {
+"clock": "2026-06-30T16:34:19Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVSPJ7YC2Q8705PWN373": {
+"clock": "2026-04-27T17:08:51Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVW3FVDAATTPT3TGGB4N": {
+"clock": "2026-01-28T11:03:29Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVSB4ZHK1M301MT8JH8D": {
+"clock": "2026-07-14T18:40:45Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVS24KXMFTEYVCJ6HBRC": {
+"clock": "2026-09-08T14:26:06Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVVW7JMFP26HAXYD0Y74": {
+"clock": "2026-02-04T04:57:54Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVT3KNXRG8NNFH6K8ZHN": {
+"clock": "2026-03-26T10:40:20Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVTAK2QGD5FPVPP64G3X": {
+"clock": "2026-03-02T14:47:22Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVVSVR86T0D317MJVT4G": {
+"clock": "2026-02-04T15:07:47Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVV7YB237SPM45PGRXMA": {
+"clock": "2026-02-12T23:25:31Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVV4EEXA61A32XRGWAPD": {
+"clock": "2026-02-12T23:26:23Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVTHAV09MZW9J4FAJQHF": {
+"clock": "2026-02-19T23:44:03Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVVN1HVCAXDESHC44E4P": {
+"clock": "2026-02-04T16:29:03Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVTMY7P8BADT6JSX562P": {
+"clock": "2026-02-19T23:40:50Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVVFZMCDX3A5RYZT9EBJ": {
+"clock": "2026-02-05T15:22:32Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVVZQG67FJB9ZGF6BAK3": {
+"clock": "2026-02-03T21:47:28Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVWC89QW4PYR0E178FWH": {
+"clock": "2026-01-14T03:14:47Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVTZX9TB5T71W74PR8S6": {
+"clock": "2026-02-19T19:36:55Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVWM58HQPEN6A99EY2JD": {
+"clock": "2026-01-07T03:48:46Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVS7280W61S1E3XYYAJT": {
+"clock": "2026-08-09T02:34:47Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVSEG1V8CSFP6JAHEXCE": {
+"clock": "2026-07-03T20:04:04Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVT7DNBZM4QDMM0B3N9N": {
+"clock": "2026-03-04T16:53:46Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVTWF4PE2SB87F9A9HRC": {
+"clock": "2026-02-19T19:39:05Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVVCF4KBQW1VQR7P9CC8": {
+"clock": "2026-02-11T21:04:19Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVTR8QXH4MRH25XVJC3N": {
+"clock": "2026-02-19T19:40:05Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVW7X55Q3NNWZXS9511D": {
+"clock": "2026-01-20T22:11:55Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVSJD834B0WJZAYQY61K": {
+"clock": "2026-04-29T19:49:38Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVSYV7ZNP4R664JETRKY": {
+"clock": "2026-04-08T02:24:22Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVTDW5B3TNS578BZS5BN": {
+"clock": "2026-02-23T16:51:29Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVWG4AH9N6BJ9V11VPE6": {
+"clock": "2026-01-12T18:15:06Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVSTSDZ19GJAYNVYXGXM": {
+"clock": "2026-04-10T11:42:39Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVY08DYK9M4YDYTFAG2X": {
+"clock": "2026-10-18T01:06:35Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVX5QFRJT4R0V9MA3BK2": {
+"clock": "2026-10-18T23:28:06Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVXM8ECTXJ9WSRVH84RC": {
+"clock": "2026-10-18T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVWQMVMD3TAPFDNYGV50": {
+"clock": "2026-10-19T06:23:16Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVX0F16XRECNZYYCCTXA": {
+"clock": "2026-10-19T03:36:58Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVX2KN027X3RFGDST70C": {
+"clock": "2026-10-19T02:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVY6H3GAWQXA87P9ZFR4": {
+"clock": "2026-10-17T15:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVYKGVY4FETD6MY709PT": {
+"clock": "2026-10-16T14:58:22Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVXXGRX2E757RXR69QZX": {
+"clock": "2026-10-18T07:13:32Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVWXWZ5JEBH7M2S8FM67": {
+"clock": "2026-10-19T04:54:31Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVXA0S5QETCVWWV1RJCZ": {
+"clock": "2026-10-18T16:33:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVXQNZ7SSGDH7PQ96HAW": {
+"clock": "2026-10-18T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVYB4EJCBWY3RPTFTNY0": {
+"clock": "2026-10-17T12:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVXEJ9R6BYVY0Z5ZBVCR": {
+"clock": "2026-10-18T16:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVX711AHX3M3KMPKSEMH": {
+"clock": "2026-10-18T18:30:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVWT992WYFG95Z1GQX1S": {
+"clock": "2026-10-19T05:23:02Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVXT4AXSDSYVW4T4N4P7": {
+"clock": "2026-10-18T12:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVXHKPJ9FRG8N3PJT246": {
+"clock": "2026-10-18T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVYWNNBQW65X0M76GAPG": {
+"clock": "2026-10-16T10:52:26Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW01CEPC0AF5YS1MB2QE": {
+"clock": "2026-10-19T06:15:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW04KYX4S1EN86MAJNW7": {
+"clock": "2026-10-19T06:10:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVZW9RPRVEVXTQGQKN2A": {
+"clock": "2026-10-18T20:00:04Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW0BTVQ7DGNZCTD8PHBB": {
+"clock": "2026-10-19T06:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVZ97DFFTRMMX74NP6BT": {
+"clock": "2026-10-19T07:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW0EZRE2D70N71RQEG92": {
+"clock": "2026-10-19T05:58:31Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVZ43B5HXF3JWZ7HP3YF": {
+"clock": "2026-10-19T04:15:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW062Q0CQAKWEV4KSHET": {
+"clock": "2026-10-19T03:17:53Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVZ6HHK94ZB8TN6SA0V6": {
+"clock": "2026-10-18T22:07:25Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVZZZ0VXGADA59064B2R": {
+"clock": "2026-10-18T23:47:43Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVZBSPWXGJY0DG5D0V6M": {
+"clock": "2026-10-19T02:07:39Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVZQMCBE6VC56K57E4VT": {
+"clock": "2026-10-19T06:42:47Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVYYH5SQ97MG724FHWD2": {
+"clock": "2026-10-19T06:08:17Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW0HT0181T53VZBV2KS3": {
+"clock": "2026-10-19T05:55:22Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW09BA5PC0EC1BQG1GHS": {
+"clock": "2026-10-19T06:02:45Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVZT1Y1YNCGRVYM4N3J2": {
+"clock": "2026-10-19T06:34:41Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVZM5WBT68HYZJ166QBP": {
+"clock": "2026-10-19T06:43:04Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVZGN4E7DAPPSAT5QEPY": {
+"clock": "2026-10-19T06:45:45Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVZD3EPM9RWB0KMYCTK0": {
+"clock": "2026-10-19T06:49:40Z",
+"basis": "published_at"
+},
+"ITM-01M59JRVZ1K1SF4S45MD89BMAJ": {
+"clock": "2026-10-19T07:43:55Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW0TJGZQN8FXMCYN1N9Y": {
+"clock": "2026-09-24T09:15:27Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW1T8ANFSCHB6C30B4Z9": {
+"clock": "2026-07-07T08:58:44Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW2Z4885DGSF6A01QWHZ": {
+"clock": "2026-04-30T11:26:46Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW34CT01K35S09PR23PX": {
+"clock": "2026-04-26T14:42:16Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW2FJ2X08N4E0QY42XAQ": {
+"clock": "2026-06-11T12:11:12Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW25CTNVS8RED388DFH9": {
+"clock": "2026-06-23T20:29:04Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW1FKFQ8G4PDXCT7JRR8": {
+"clock": "2026-07-24T14:01:33Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW51AVFDVXWXXG4NJ5A7": {
+"clock": "2025-11-26T00:30:39Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW3XX740M76NNW4N87NQ": {
+"clock": "2026-03-05T20:04:54Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW4W2W7SDJDDB3F246EW": {
+"clock": "2025-12-04T10:44:22Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW3B6A1R4GKBAVH242YV": {
+"clock": "2026-04-23T16:44:52Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW0ZF2NC5STQG3QHQDXS": {
+"clock": "2026-09-22T17:34:41Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW0KKW3WMQGQC9WGNT5D": {
+"clock": "2026-09-24T14:57:48Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW4C2XBG63414DMRT7G8": {
+"clock": "2026-02-10T01:51:29Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW2N95321Y33EV5M68V1": {
+"clock": "2026-06-04T11:27:38Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW3GJ40WX7FJ9B97JZKV": {
+"clock": "2026-04-14T12:15:30Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW3Q6QFR9XV22TC75J95": {
+"clock": "2026-04-13T21:10:48Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW5G5SGBWXWPF1RMH47F": {
+"clock": "2025-11-12T21:19:47Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW15JBZ1M7Z26QA0R09S": {
+"clock": "2026-09-08T12:40:29Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW4Q5287QBY2YRSW6VRP": {
+"clock": "2025-12-23T02:33:48Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW2AA31CNPVGNB3SFF83": {
+"clock": "2026-06-16T10:46:46Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW2TG4Q6M808EAB5RDTK": {
+"clock": "2026-05-29T11:58:32Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW471YRQFB30BQ0QA31Q": {
+"clock": "2026-02-25T14:17:19Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW4HSFF5Q5YK3TFCJPXJ": {
+"clock": "2025-12-24T15:58:04Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW1NF56QVP8444FHW3QG": {
+"clock": "2026-07-23T20:04:27Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW57V2XK5STFCE7Z2ZGS": {
+"clock": "2025-11-25T10:08:05Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW5BGC77G59BMT7WM809": {
+"clock": "2025-11-20T18:52:41Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW42K5100R77K5HM3KXZ": {
+"clock": "2026-03-05T16:31:56Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW204K5462TMPB0RAMEM": {
+"clock": "2026-07-03T12:24:06Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW74HE0FCFY8Q1FAECC3": {
+"clock": "2026-08-28T14:23:22Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW8TF87JVKDFQXY8PPWJ": {
+"clock": "2026-07-22T14:41:34Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW7DD3GEMARDRDNMB5KV": {
+"clock": "2026-08-27T13:59:31Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWE7BWCXEB4M40DWENSK": {
+"clock": "2026-03-16T09:44:57Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWFEM9RGPG7RQQXZE95V": {
+"clock": "2026-02-11T17:31:11Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW7PGZ7EYJ9H28JCA5VM": {
+"clock": "2026-08-21T20:50:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWF11ZGRBDV7BJWT4205": {
+"clock": "2026-03-06T17:13:50Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW5QFXBVQY395RDEB0KZ": {
+"clock": "2026-10-13T08:22:25Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW9C6E9HX1GZWP44BAAJ": {
+"clock": "2026-07-17T15:31:54Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWB58TN0YQCGJ9HEMBF1": {
+"clock": "2026-05-28T14:12:11Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWAP0GGZG32SVG0HE4EW": {
+"clock": "2026-06-05T10:45:06Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWA1C3QR1RMWG0HWAH9T": {
+"clock": "2026-06-08T07:14:46Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW6V8G615480YVFSDV2R": {
+"clock": "2026-09-21T16:53:32Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWD2A2GGC2YYEXXRK4M1": {
+"clock": "2026-04-15T22:09:55Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW7Y33RSE98TQMNSP6S2": {
+"clock": "2026-08-04T20:16:57Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW8683J168GMX443N9QD": {
+"clock": "2026-07-23T15:53:44Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWDKSPPKNCKNJYR9MCEK": {
+"clock": "2026-04-14T11:09:09Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW8GZBMW206PWA7QJYEJ": {
+"clock": "2026-07-23T15:44:14Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWEG7FYYPYYBCGTY3J63": {
+"clock": "2026-03-12T15:33:16Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW6204HJGEND4C7FWSZV": {
+"clock": "2026-09-21T17:00:26Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW9PKT2BJH2EGAJBJYE9": {
+"clock": "2026-06-18T19:05:05Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWCR472CEVFGV6R3FA4P": {
+"clock": "2026-04-16T07:59:39Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWDABCCK88PD9HZ85RTA": {
+"clock": "2026-04-14T13:44:20Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWAC9107J6X65227MJK9": {
+"clock": "2026-06-05T11:17:54Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWC0VZHPDERCDNSAM303": {
+"clock": "2026-05-12T09:09:29Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWESA148Z7ZC0X4NEJ6M": {
+"clock": "2026-03-10T16:05:12Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWBK0KHJBM7Q2EC56TMJ": {
+"clock": "2026-05-20T10:15:47Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWDYXG3CVET3E00R6RXP": {
+"clock": "2026-04-08T12:51:31Z",
+"basis": "published_at"
+},
+"ITM-01M59JRW935TAHVJW8MWMT7QEM": {
+"clock": "2026-07-22T13:26:05Z",
+"basis": "published_at"
+},
+"ITM-01M59JRWCDT8BESEBCVAM43H9V": {
+"clock": "2026-05-07T16:23:56Z",
+"basis": "published_at"
+},
+"ITM-01M59JTCZA82WDQ43YCZQQBZWR": {
+"clock": "2025-12-05T22:07:39.659000Z",
+"basis": "published_at"
+},
+"ITM-01M59JTEPZWD68S1JJAF8PJR1M": {
+"clock": "2025-12-02T18:00:19.319000Z",
+"basis": "published_at"
+},
+"ITM-01M59JTDAYX9W9HR4837XMNW6A": {
+"clock": "2025-12-02T18:00:19.319000Z",
+"basis": "published_at"
+},
+"ITM-01M59JTFGEFYKSN3R21P67MG38": {
+"clock": "2025-11-25T16:59:22.146000Z",
+"basis": "published_at"
+},
+"ITM-01M59JTCH86Q1ADVVPAHK7TZA1": {
+"clock": "2025-12-11T17:12:14.520000Z",
+"basis": "published_at"
+},
+"ITM-01M59JSXGEWZA2J63WA29EBG1H": {
+"clock": "2025-12-19T21:38:02.816000Z",
+"basis": "published_at"
+},
+"ITM-01M59JSTQWNV45G97M3BN85B5P": {
+"clock": "2026-02-12T14:18:41.839000Z",
+"basis": "published_at"
+},
+"ITM-01M59JSRD20PZ229DQS3D1ZFZX": {
+"clock": "2026-04-01T13:44:15.179000Z",
+"basis": "published_at"
+},
+"ITM-01M59JSTYSXTJFPN9Z0ZNP21W3": {
+"clock": "2026-02-10T19:34:29.590000Z",
+"basis": "published_at"
+},
+"ITM-01M59JS06BV1CRQ397TB3F81TH": {
+"clock": "2026-09-08T21:07:28.382000Z",
+"basis": "published_at"
+},
+"ITM-01M59JSRZJGD1T854BSTJ1T54H": {
+"clock": "2026-03-30T19:53:14.112000Z",
+"basis": "published_at"
+},
+"ITM-01M59JS04N96MQYKFXA0DGCC4T": {
+"clock": "2026-09-08T22:22:13.799000Z",
+"basis": "published_at"
+},
+"ITM-01M59JS0QK6T8C51BR555H56CA": {
+"clock": "2026-06-22T13:47:48.375000Z",
+"basis": "published_at"
+},
+"ITM-01M59JSR698RKEZPYJ78NYEW3R": {
+"clock": "2026-03-12T13:40:09.248000Z",
+"basis": "published_at"
+},
+"ITM-01M59JS0ZXWYYBHZ9NR64HAD74": {
+"clock": "2026-06-17T17:45:52.486000Z",
+"basis": "published_at"
+},
+"ITM-01M59JSW2TT37M8E8TP7QEGXTG": {
+"clock": "2026-01-22T14:49:35.847000Z",
+"basis": "published_at"
+},
+"ITM-01M59JSWGDG8K3RE3SYTRY9PTB": {
+"clock": "2026-01-13T14:30:28.483000Z",
+"basis": "published_at"
+},
+"ITM-01M59JSS6GTAN3HXZC5K22FM96": {
+"clock": "2026-04-09T13:14:11.354000Z",
+"basis": "published_at"
+},
+"ITM-01M59JSVGQ89GNE3JSSRSNTHPB": {
+"clock": "2026-01-29T19:29:42.662000Z",
+"basis": "published_at"
+},
+"ITM-01M59JSX9RV89QSVY7X3ZDCN6N": {
+"clock": "2026-01-07T16:45:55.142000Z",
+"basis": "published_at"
+},
+"ITM-01M59JV64KD8CACR1PFDWNSSQ5": {
+"clock": "2026-09-16T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JV5Z56K1WTJPQDD4F0FX8": {
+"clock": "2026-09-22T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JVDVJB3XBZAT61YCBVW5Q": {
+"clock": "2026-04-15T12:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JVBRW3Z84R152XC0YVZQG": {
+"clock": "2026-05-04T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JVCT6QQFHK4Q7SQMVXCTP": {
+"clock": "2026-04-16T12:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JV44MGGMZWQ3P3D7X761K": {
+"clock": "2026-09-28T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JVCVC55NHNK6PNFJQFZJR": {
+"clock": "2026-04-29T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JV2J4S23SPWXHTGRGQWP1": {
+"clock": "2026-09-29T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JVBQ96BGF75NA91HER82Y": {
+"clock": "2026-05-12T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JVA4TAH9AF6BM7YNWBZW6": {
+"clock": "2026-05-19T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JVB5QABH9V82J7W4YQ501": {
+"clock": "2026-05-13T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JV7XM6FXBKK4GW20FYXCR": {
+"clock": "2026-07-27T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JV7M9JFJEK8DR5WXVYCX2": {
+"clock": "2026-07-15T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JVEJJCT5FANMCRQD27JW8": {
+"clock": "2026-03-30T12:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JV483GXXDKYFWE48DM0A2": {
+"clock": "2026-09-23T12:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JVER2VG1BX8CEVEEQF4GG": {
+"clock": "2026-03-04T11:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JV96FEQV6J3NP0SEDAHZH": {
+"clock": "2026-06-29T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JVDE62NZYRPY3WE4KBSD7": {
+"clock": "2026-04-01T12:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JV9K670K5PN3CBXFRT24J": {
+"clock": "2026-05-27T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JVB6Z72MXYEDSWBF7QFB1": {
+"clock": "2026-05-13T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JW82HPS1KWDZZFGKZFS03": {
+"clock": "2025-11-17T05:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWB30EYT2BHCXSZF3VAFP": {
+"clock": "2025-09-09T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JW2R7N0V2QMG61N67F4H0": {
+"clock": "2025-12-17T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JW70JDHPPQPP23HRHMWHJ": {
+"clock": "2025-12-04T05:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWCXR4WZKMVX8J8KNAJPF": {
+"clock": "2025-06-02T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWEATJ65Y9F33THWT3M64": {
+"clock": "2025-04-29T10:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWD267WRS8PRN1M9J7CCN": {
+"clock": "2025-06-18T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWD1V1TN18HKB9Q6ZNAAB": {
+"clock": "2025-09-11T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JW5AFP585KXEXJ85R5B0V": {
+"clock": "2025-12-23T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JW799KJJR19R9346FEWFT": {
+"clock": "2025-12-15T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JW97WE2RGVY3N1AG6SSTW": {
+"clock": "2025-09-23T10:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWB8EYDY3PZFT5MZF6FP4": {
+"clock": "2025-09-03T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWCFPHC2Q8QBD7JZJCW6G": {
+"clock": "2025-07-02T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JW4K5TFRW8WEBX85RJDCV": {
+"clock": "2025-12-11T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JW9ACH0W4S6F39SDF7289": {
+"clock": "2025-09-30T04:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JW68V0CTXEDQ0KJFCT6X5": {
+"clock": "2025-12-10T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWAMGEES1CZXM58B17Q7C": {
+"clock": "2025-11-10T05:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JVGF8YYCDFT85NQF99M9Z": {
+"clock": "2026-02-25T05:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JW7A368DQ16GMWS4PFCB0": {
+"clock": "2026-03-02T11:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JVGEX7WX8HQGNGJYGGMAJ": {
+"clock": "2026-01-07T05:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWQ9FV6V3FTW821C1FZPA": {
+"clock": "2024-12-02T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWNSVMS47QHHV8MR361PW": {
+"clock": "2024-12-09T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWQJC1NMDWCJ4PJAF87B9": {
+"clock": "2024-11-22T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWNKT04MFKH76H462FSW9": {
+"clock": "2024-12-30T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWRJ85S257BQFWAWPNRDF": {
+"clock": "2024-11-13T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWP0RSDVTRC71RGVY9QJ7": {
+"clock": "2024-12-11T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWS3Q6JS6SYFANFFSHDHQ": {
+"clock": "2024-10-23T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWPVKJMR7VRR47CYTVB13": {
+"clock": "2024-12-04T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWQR9A45RKWPDP1EJ5BJE": {
+"clock": "2024-11-18T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWKYFTX2EC27SDZSZSA11": {
+"clock": "2025-02-24T11:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWMF1QZWCW168PFEEDSNQ": {
+"clock": "2025-02-04T11:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWG6PMVSBZDBD30RZSX45": {
+"clock": "2025-04-02T10:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWM9X9CCEBWVMV2QG7GAS": {
+"clock": "2025-02-05T11:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWGHF2XCHVF8KRWAN25Z5": {
+"clock": "2025-04-23T10:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWG709MHH3DMSXSXMTFCX": {
+"clock": "2025-03-31T10:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWJ1HJNMZEETP5JWDPTRD": {
+"clock": "2025-03-25T10:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWJQ74PWC0HZXG91SKGGJ": {
+"clock": "2025-03-12T10:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWJDJ7YV8MD0M3Y7WAR80": {
+"clock": "2025-03-18T10:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWMZTR9JAMTA4BBMAVD2R": {
+"clock": "2025-01-14T11:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWK4DSFGTDJ3S1HFNETS8": {
+"clock": "2025-04-14T10:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JTD0R609RFQG9FK2RX49K": {
+"clock": "2020-02-28T14:50:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JTD0M2D126AS9QG17RTT5": {
+"clock": "2020-02-28T17:54:57Z",
+"basis": "published_at"
+},
+"ITM-01M59JTD0FZS2Y9YR97VACP7JF": {
+"clock": "2020-07-30T14:33:04Z",
+"basis": "published_at"
+},
+"ITM-01M59JTD0BV3NTMYEFBK5MJASN": {
+"clock": "2020-11-12T21:39:04Z",
+"basis": "published_at"
+},
+"ITM-01M59JTD05B17P8EX2YTQHS7J1": {
+"clock": "2021-02-10T16:09:38Z",
+"basis": "published_at"
+},
+"ITM-01M59JTD01B3C4WKH8X8YT1AG3": {
+"clock": "2021-04-14T18:19:36Z",
+"basis": "published_at"
+},
+"ITM-01M59JTCZW55N4HFQJS3MJSM7X": {
+"clock": "2021-09-13T20:33:33Z",
+"basis": "published_at"
+},
+"ITM-01M59JTCZQ4DFZV5DBYXXBQY30": {
+"clock": "2022-01-24T21:44:35Z",
+"basis": "published_at"
+},
+"ITM-01M59JTCZKRQWXCASVJ111D8YW": {
+"clock": "2022-07-15T19:57:33Z",
+"basis": "published_at"
+},
+"ITM-01M59JTCZF0EB26DC7DRQZC1QJ": {
+"clock": "2025-02-12T20:26:25Z",
+"basis": "published_at"
+},
+"ITM-01M59JX18RYJA85T8H9PB5R6KZ": {
+"clock": "2024-06-11T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWWEKPW52YM5Y6E7EAP4M": {
+"clock": "2024-10-15T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWV444RS28FJ0RJXBBS0Z": {
+"clock": "2024-10-02T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX049BFVMZ628A0ET4W3Q": {
+"clock": "2024-06-20T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX3A5GFS4WQWBME2EDPH7": {
+"clock": "2024-05-29T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX3FZZXR2ZEQ73D4YY9RG": {
+"clock": "2024-05-13T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX46W21GQK3VKDJ2TK64A": {
+"clock": "2024-05-30T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWTY5M591A2JV78TK8KB8": {
+"clock": "2024-10-16T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX01B07MZJFS0TCJNJY9Z": {
+"clock": "2024-07-10T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWYPRFTDW74NB7AAJMEJ2": {
+"clock": "2024-07-15T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX1EXQX5ZB4SM5EGSVHSM": {
+"clock": "2024-06-05T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWWN9DNW9CZ36KY3N3NE9": {
+"clock": "2024-09-23T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX0K5N71DDW39K9H2Z9GK": {
+"clock": "2024-06-12T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWYHE12HNRBZS21TB2DQ0": {
+"clock": "2024-08-07T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX1S5S6YRS6PQQ5HJH3DC": {
+"clock": "2024-06-04T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWZJ0ZGA907SQ8485641M": {
+"clock": "2024-09-09T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWTV29D27ZBSSZTT32G6H": {
+"clock": "2024-10-03T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWY7ADF25NBQB19FJZRP1": {
+"clock": "2024-08-21T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX2D2J5N8T9JSYSMH1N6D": {
+"clock": "2024-05-31T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JWWV62Z1TS5SZGAHSH8M7": {
+"clock": "2024-09-12T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXBG765K9BFWGGZS47E03": {
+"clock": "2023-12-06T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXE82CBF3QDVAHQBVK4F2": {
+"clock": "2023-12-12T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXB2S9ATTY8AH26H3XBXQ": {
+"clock": "2023-12-11T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXA9W9BC7GRY9FWQN9RGA": {
+"clock": "2023-12-14T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXD71MS6TACJ35YNWNDQB": {
+"clock": "2023-11-08T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXDXWK0XB59RZBENYMDGM": {
+"clock": "2023-10-30T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXER0G6YZDYCSZKVVY92Y": {
+"clock": "2023-10-19T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXD1EYRRK8157GV0EZRJ3": {
+"clock": "2023-11-15T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXC7A068YBTXN7NHSK2C7": {
+"clock": "2023-11-29T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX9JS450XYSMCH7J8MZ8P": {
+"clock": "2024-01-23T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX7HRNEWAB2TFHYQ8H3J5": {
+"clock": "2024-03-06T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX5YDG5ZGEQ3RYYFX32JA": {
+"clock": "2024-04-10T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX8GR7ZSG14R8D0YZH7HT": {
+"clock": "2024-02-28T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX5XT990MHFT9XXKM0CQ2": {
+"clock": "2024-04-22T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX7QST15R8MNERR05164M": {
+"clock": "2024-03-25T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX9ERF12QAVBDFB1YBRZ5": {
+"clock": "2024-01-31T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX9661B2MYS3M5VC8SF65": {
+"clock": "2024-02-14T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX7PBCECXXZMEYXQ27EN4": {
+"clock": "2024-03-12T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX5W8SAMSFY1EYJ40RD12": {
+"clock": "2024-04-03T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JX65NHK8BW697JMBPEEYN": {
+"clock": "2024-04-17T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXNYQ9V59DWN4A90Q0SQ4": {
+"clock": "2022-12-13T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXQEW6T1Z859VT7JWZ78X": {
+"clock": "2022-11-21T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXQKVZKBSTJ3SSG122A0F": {
+"clock": "2022-11-30T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXQSEKT00RNJD6GYBCAHM": {
+"clock": "2022-10-11T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXQ1RPYTRXDMT76VWMPAQ": {
+"clock": "2022-12-07T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXGMG05FYA4BJF83ASBFF": {
+"clock": "2023-09-19T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXJ6Y5A8F9TCC63PZHZMM": {
+"clock": "2023-07-18T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXJCDWSTK26C6KZ6Y9F2C": {
+"clock": "2023-05-23T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXGG2J2DPZZ86T1Z51X3Q": {
+"clock": "2023-09-27T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXKPB3JPZ0Q5M2B5N252C": {
+"clock": "2023-05-15T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXKT51K2PDNR7TRTJTRXR": {
+"clock": "2023-05-09T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXGA4P7C28XTA1WQY3BXZ": {
+"clock": "2023-09-18T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXNA8KFD060G7TZP17R12": {
+"clock": "2023-02-15T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXNQY664E3P4FWAAHJ1ZN": {
+"clock": "2023-01-18T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXNCSYS6CXA398WZQQAH0": {
+"clock": "2023-02-01T14:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXM1WJFF798QX6TCMFF0R": {
+"clock": "2023-03-13T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXJ8SJ52DGQYTN23W5J0Y": {
+"clock": "2023-06-14T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXKZV1CGFQTJ0Z2NSWGFC": {
+"clock": "2023-03-22T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXJ1XF3PBBC9R7W3YTQ9T": {
+"clock": "2023-09-12T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXGF4CYXN5YVKPZ7MTRSX": {
+"clock": "2023-09-13T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JTP5D83FV7B7WJGT3C1C8": {
+"clock": "2026-10-16T20:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXZMWD3980Z39H2X2Q065": {
+"clock": "2022-06-15T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JY17JP4SBQNCW2T44HHMV": {
+"clock": "2022-03-30T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JY0SHPF66N6PZKYE13270": {
+"clock": "2022-04-25T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JY0XD19J8BM3JRDSADQ4N": {
+"clock": "2022-04-12T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXYZ425YD0D1N0D6GW8KR": {
+"clock": "2022-05-12T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXX2YYNNBMD25NTC8QTK0": {
+"clock": "2022-07-19T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JY21BJWBXY02KX93HBZ75": {
+"clock": "2022-03-29T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXX8RA074A8JQMXBXRZ4D": {
+"clock": "2022-06-17T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JY0G0T3REYWRSC3QB45H7": {
+"clock": "2022-05-04T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXVCDYTQDEPJ2HF30NR8Z": {
+"clock": "2022-08-10T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXSF90KB4MTH97Z9B896S": {
+"clock": "2022-09-21T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXVJ647KXCDHESJRTVHH2": {
+"clock": "2022-07-27T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXSZYNC5RZXXWPG27796W": {
+"clock": "2022-09-27T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXYZG05ZX634WZHPYVG2Z": {
+"clock": "2022-06-08T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXYNRJX0SB5Y6HFQ8JH9E": {
+"clock": "2022-06-02T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXX37NPJZWAANTTHPJG84": {
+"clock": "2022-06-28T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXVC2BECZN51NQPQEAAQH": {
+"clock": "2022-08-01T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXSEBF1AMHWP7QQNFP9NW": {
+"clock": "2022-09-07T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXVHYNEFNABNM53QP5EJ3": {
+"clock": "2022-08-22T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JXSE1373XQAKREFWM3S2E": {
+"clock": "2022-08-24T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JY3P2XTDBKQ06YTP4EVMS": {
+"clock": "2022-03-16T13:00:00Z",
+"basis": "published_at"
+},
+"ITM-01M59JY3JBJ5R0ZQPX9HTGB8XZ": {
+"clock": "2022-02-16T14:00:00Z",
+"basis": "published_at"
+}
+}

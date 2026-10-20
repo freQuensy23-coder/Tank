@@ -407,3 +407,25 @@ def test_state_emits_identical_title_body_once_without_mutating_capture(title, b
         "quoted": "Original quoted material",
     }
     assert item == original
+
+
+@pytest.mark.parametrize("text", ["Uniswap governance passes fee switch", "$UNI fee switch passes"])
+async def test_event_with_resolved_token_id_is_a_candidate_for_alias_or_ticker(text):
+    # W5: event tools store tokens as registry token_ids ("uniswap:UNI"), never bare tickers.
+    from tank.util import utcnow
+
+    opts, _ = options()
+    repo = MemoryRepository()
+    now = utcnow()
+    await repo.put("evt.events", "e", {"event_id": "e", "entities": [], "tokens_mentioned": ["uniswap:UNI"]})
+    await repo.put("ops.agent_sessions", "s", {"session_id": "s", "event_id": "e", "last_item_at": iso(now)})
+    pipe = Pipeline(repo, opts, http=object())
+    assert "uniswap:UNI" in pipe.identities({"title": text})
+    events = await pipe._candidate_events(pipe.identities({"title": text}), iso(now), now)
+    assert [event["event_id"] for event in events] == ["e"]
+
+
+def test_bare_item_ticker_resolves_to_registry_token_id():
+    opts, _ = options()
+    ids = Pipeline(MemoryRepository(), opts, http=object()).identities({"title": "fee switch", "tokens": ["UNI"]})
+    assert {"uniswap:UNI", "uniswap"} <= ids

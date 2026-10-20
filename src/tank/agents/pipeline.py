@@ -10,7 +10,7 @@ import httpx
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, sha256, utcnow
 
-from .jev import MODEL, classify, provider_binding
+from .jev import BINDING, MODEL, classify
 
 JEV_PROMPT_VERSION = "jev-v1"
 
@@ -73,7 +73,7 @@ class Pipeline:
                 },
             }
         }
-        binding = provider_binding(getattr(self.settings, "jev_provider", "openrouter"))
+        binding = BINDING
         state_fingerprint = sha256(state)
         question_fingerprint = sha256(questions)
         request_fingerprint = sha256({"model": binding.request_model, "state": state, "questions": questions})
@@ -104,9 +104,7 @@ class Pipeline:
         api_key = getattr(self.settings, "openrouter_api_key", None)
         if not api_key:
             raise ConfigurationError("Jev requires OPENROUTER_API_KEY or TANK_OPENROUTER_API_KEY")
-        data = await classify(
-            self.http, api_key=api_key, state=state, questions=questions, provider=binding.provider
-        )
+        data = await classify(self.http, api_key=api_key, state=state, questions=questions)
         score = float(data["answers"][name]["noul"])
         if not 0 <= score <= 1 or data.get("model") not in binding.resolved_models:
             raise ValueError("Jev returned invalid score or unexpected resolved model")
@@ -232,9 +230,13 @@ class Pipeline:
         text = " ".join(
             str(item.get(k) or "") for k in ("title", "text", "body", "quoted", "author_organization")
         )
-        result = {e["entity_id"] if isinstance(e, dict) else e for e in item.get("entities", [])} | set(
-            item.get("tokens_mentioned", item.get("tokens", []))
-        )
+        raw_tokens = item.get("tokens_mentioned", item.get("tokens", []))
+        result = {e["entity_id"] if isinstance(e, dict) else e for e in item.get("entities", [])} | set(raw_tokens)
+        # Events store registry token ids (V3): a bare ticker or $TICKER on the item resolves to one.
+        symbols = {str(row.get("symbol", "")).casefold(): row["token_id"] for row in registry.get("tokens", [])}
+        for value in raw_tokens:
+            if isinstance(value, str) and value.removeprefix("$").casefold() in symbols:
+                result.add(symbols[value.removeprefix("$").casefold()])
 
         def matches(name):
             return name and re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.IGNORECASE)

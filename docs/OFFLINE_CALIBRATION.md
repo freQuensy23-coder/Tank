@@ -1,86 +1,62 @@
-# Jev calibration
+# Jev calibration (`tank calibrate`)
 
-Run one command before choosing new cutoffs:
+Both Jev cutoffs are calibrated offline, before the service first starts (03 §3.1, 01 V0-B), and recorded in
+`config/thresholds.yaml` at a checkpoint (01 D6). One command does the whole pass:
 
 ```sh
-uv run tank calibrate frozen-packet.json --output-dir new-experiment
+TANK_SECRETS_DIR=/etc/tank/secrets uv run tank calibrate packet.json --output-dir runs/<name>
 ```
 
-It calls only `POST https://openrouter.ai/api/v1/systemone`, with request model
-`typesafe/jev-1.13` and the pinned resolved snapshot
-`typesafe/jev-1.13-20260917`. Normal Settings resolution reads the OpenRouter key
-from `.env` or its Docker secret. No service, native agent, collectors, delivery
-or X session starts. Production configuration is never changed by this command.
+It starts no service, session, collector or delivery. It calls only `POST https://openrouter.ai/api/v1/systemone`
+with the pinned `typesafe/jev-1.13` binding, through the service's own `Pipeline`: same item state, same
+questions, same registry identities, same candidate builder. Production configuration is never changed.
 
-The single JSON packet is independently labeled and frozen before scoring:
+## Packet
+
+One frozen JSON file:
 
 ```json
 {
-  "dataset_id": "review-YYYY-MM-DD",
-  "status": "FROZEN",
-  "synthetic": false,
-  "labeler": "reviewer identity",
-  "labeled_at": "2026-10-20T00:00:00Z",
-  "candidate_set_description": "Complete preceding captured event/session states",
-  "export_provenance": "Location and review of the original source/runtime export",
-  "complete_prefix_export": true,
+  "dataset_id": "...", "status": "FROZEN", "labeler": "...", "labeled_at": "...",
+  "routing_window_days": 3,
   "items": [
-    {
-      "item_id": "ITEM-ID",
-      "source_id": "S30",
-      "label_group": "INDEPENDENT-EVENT-GROUP",
-      "relevant": true,
-      "cross_source_repeat": false,
-      "expected_event_id": null,
-      "source_item": {
-        "item_id": "ITEM-ID",
-        "source_id": "S30",
-        "source": "Original source name",
-        "author": "Original author",
-        "title": "Original headline",
-        "text": "Original collected text",
-        "observed_at": "2026-10-18T12:00:00Z",
-        "content_hash": "original content hash",
-        "raw_sha256": "original raw artifact hash"
-      },
-      "prefix": {"events": [], "sessions": []}
-    }
+    {"item_id": "...", "source_id": "S30", "clock": "2026-10-16T11:34:54Z", "relevant": true,
+     "event_id": "E1", "source_item": {"item_id": "...", "source_id": "S30", "source": "...",
+     "author": "...", "title": "...", "text": "...", "quoted": null, "subtype": null, "author_role": null}}
+  ],
+  "events": [
+    {"event_id": "E1", "statement": "...", "entities": [], "tokens_mentioned": [], "event_state": "PROPOSED"}
   ]
 }
 ```
 
-Supply at least 200 labeled news items, including at least 30 repeats/developments
-and 10 cross-source repeats. Each prefix contains the complete actual preceding
-event and session records at that item's original observation time. Event records
-include `event_id` and `known_to_us_at`; sessions include `session_id`, `event_id`
-and `last_item_at`. Empty lists are explicit. Future states are refused before any
-paid call. Source metadata such as S25 `subtype` and S29 `author_role` stays in the
-original source item. `expected_event_id` identifies a true antecedent even when
-the runtime candidate prefilter misses it; a missing candidate remains a measured
-miss.
+- `clock` is when the item became visible online (its publication time), not when an archive was collected.
+  The 3-day routing window and every candidate set are evaluated at this clock.
+- `relevant` is the reviewer's "about crypto" label (FR-D-06).
+- `event_id` is the reviewer's event for every item that reaches ROUTE_ITEM (crypto, or an ALWAYS source).
+  Items are replayed in clock order: the first item of an event opens it, each later one is a repeat or
+  development that must join it. A later item more than 3 days after the event's last item must carry a new
+  event (FR-E-02), otherwise the packet is refused. A routed item without `event_id` opens a session in
+  which no event is extracted, so it never becomes a candidate (03 §3.1).
+- `events` hold what the agent records for the event: the statement of the real-world fact, entities,
+  tokens (registry token ids) and stage. `known_to_us_at` is the clock of the event's first item.
 
-The command uses the service's exact registry identity matching, three-day
-candidate window, stable candidate order, state construction, questions and
-classification adapter. Labels never enter a Jev question or event state. There
-is no calibration-specific semantic rewriting of claims, stages or identities.
+## Report
 
-The report selects the highest filter cutoff retaining at least 95% of relevant
-items, and the highest routing cutoff with both precision and recall at least
-90%. If no routing threshold qualifies, the report says so and separately shows
-the best measured F1 and its threshold. This does not apply that threshold or
-claim 90/90. A proposal requires recorded review and separate D6 retesting.
+The output directory gets `calibration-report.json`, `scored-items.json`, `thresholds.proposed.yaml` and
+`usage/`: one immutable Jev usage row per exact request. A rerun reuses them and pays only for new requests.
 
-The output contains immutable original inputs, code/config/registry generation,
-request/response attempts without authorization headers, successful usage rows,
-scored items, `calibration-report.json` and `thresholds.proposed.yaml`. Restarting
-the same command reuses only successful scores for exact identical inputs and
-code/config; changed inputs require a new directory. Failed attempts remain.
-Synthetic test packets cannot produce production-eligible proposals.
+- Filter cutoff: the highest value at which at least 95% of the items labeled relevant pass.
+- Routing cutoff: the highest value at which routing precision and recall both reach 0.90. Per item the online
+  rule applies: the candidate with the highest score at or above the cutoff gets the item. A wrong existing
+  event counts as both a false positive and a false negative.
+- V0-B checks: at least 200 items, 30 repeats and 10 cross-source repeats; at least 95% of crypto items reach
+  the full analysis (ALWAYS sources, or filter score at or above the cutoff); a routing cutoff exists.
+- `status` is PASS only when every check passes; only then does `thresholds.proposed.yaml` carry cutoffs.
+  The full precision/recall curve is always reported.
 
-The user-authorized deployed baseline remains `jev-v1`, filter 0.23 and routing
-0.67. Its measured 1403-item result and independent D6 evidence remain in
-[the selection record](verification/prompt-selection-2026-10-20/selection.json).
-The user approved proceeding with that best measured baseline despite unmet
-90/90; this command does not reopen or silently change that decision. Earlier
-multi-file acquisition/reference/cache protocols and their evidence are historical
-records, not additional supported calibration modes.
+First-known times, freshness grades and stages (the rest of V0-B) are the agent's outputs and are checked in
+the session acceptance, not here.
+
+The current packet and how it was rebuilt from the reviewed 1403-item set are in
+`docs/verification/v0b-calibration-2026-10-20/`.

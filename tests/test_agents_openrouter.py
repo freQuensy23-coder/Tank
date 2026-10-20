@@ -29,7 +29,7 @@ def response(model="typesafe/jev-1.13-20260917", **usage):
 @pytest.mark.asyncio
 async def test_plain_http_openrouter_wire_and_billed_cost_are_retained(tmp_path):
     repo = MemoryRepository()
-    opts = settings(tmp_path, openrouter_api_key="FAKE_OR_KEY_ONLY", jev_provider="openrouter")
+    opts = settings(tmp_path, openrouter_api_key="FAKE_OR_KEY_ONLY")
     calls = []
     item = {
         "item_id": "i",
@@ -96,15 +96,6 @@ async def test_missing_openrouter_key_never_attempts_direct_provider(tmp_path):
     assert calls == []
 
 
-def test_direct_provider_is_rejected_before_requests(tmp_path):
-    from tank.agents.jev import provider_binding
-
-    with pytest.raises(ValueError, match="only OpenRouter"):
-        provider_binding("typesafe")
-    with pytest.raises(ValueError):
-        settings(tmp_path, jev_provider="typesafe")
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "resolved", ["typesafe/jev-1.14-20261014", "~typesafe/jev-latest", "jev-latest", "typesafe/jev-1.13"]
@@ -143,7 +134,6 @@ async def test_openrouter_retains_exact_reported_zero_cost():
         actual = await classify(
             http,
             api_key="FAKE_OR_KEY",
-            provider="openrouter",
             state="data",
             questions={"relevant": {"type": "noul", "instructions": FILTER}},
         )
@@ -199,7 +189,6 @@ async def test_plain_openrouter_errors_are_not_retried_or_chat_wrapped(status, b
                 api_key="FAKE",
                 state={"text": "data"},
                 questions={"relevant": {"type": "noul", "instructions": FILTER}},
-                provider="openrouter",
             )
     assert len(calls) == 1
 
@@ -220,5 +209,4 @@ async def test_plain_openrouter_rejects_malformed_typed_answer(answer):
                 api_key="FAKE",
                 state={"text": "data"},
                 questions={"relevant": {"type": "noul", "instructions": FILTER}},
-                provider="openrouter",
             )

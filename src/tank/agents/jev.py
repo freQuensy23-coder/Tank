@@ -1,4 +1,4 @@
-"""Pinned, typed Jev classification through OpenRouter's System One endpoint."""
+"""Pinned, typed Jev classification through OpenRouter's System One endpoint (03 §3.1)."""
 
 import math
 from dataclasses import dataclass
@@ -15,22 +15,18 @@ class JevBinding:
     semantic_model: str = MODEL
 
 
-def provider_binding(provider="openrouter"):
-    if provider != "openrouter":
-        raise ValueError("Jev supports only OpenRouter /api/v1/systemone")
-    return JevBinding()
+BINDING = JevBinding()
 
 
-async def classify(http, *, api_key, state, questions, provider="openrouter"):
-    binding = provider_binding(provider)
+async def classify(http, *, api_key, state, questions):
     response = await http.post(
-        binding.base_url + "/v1/systemone",
+        BINDING.base_url + "/v1/systemone",
         headers={"Authorization": "Bearer " + api_key},
-        json={"model": binding.request_model, "state": state, "questions": questions},
+        json={"model": BINDING.request_model, "state": state, "questions": questions},
     )
     response.raise_for_status()
     data = response.json()
-    if not isinstance(data, dict) or data.get("model") not in binding.resolved_models:
+    if not isinstance(data, dict) or data.get("model") not in BINDING.resolved_models:
         raise ValueError("Jev returned an unexpected resolved model for the pinned provider binding")
     if not isinstance(data.get("answers"), dict) or not isinstance(data.get("usage"), dict):
         raise TypeError("Jev returned an invalid decision response")
