@@ -209,3 +209,7 @@ def test_data_guide_matches_typed_market_column_contract():
         section = guide.split("## " + table + "\n", 1)[1].split("\n## ", 1)[0]
         for field, data_type in columns.items():
             assert f"| `{field}` | `{data_type}` |" in section
+
+
+def test_backup_keeps_three_snapshots_until_it_has_its_own_disk():
+    assert load("thresholds")["backup_snapshots_kept"] == 3

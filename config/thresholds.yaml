@@ -53,6 +53,7 @@ hot_oi_funding_interval_s: 60
 base_retention_days: 90
 hot_raw_retention_days: 30
 jobs_retention_days: 30
+backup_snapshots_kept: 3  # until the backup has its own disk (lead ruling 2026-10-20)
 archive_retention_days: 180
 quiet_socket_s: 30
 archive_retry_s: 3600
