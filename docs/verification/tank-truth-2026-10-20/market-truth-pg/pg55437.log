@@ -1,0 +1,4 @@
+START 2026-10-20T16:57:24Z tests/test_truth_condition_postgres.py
+.                                                                        [100%]
+1 passed in 47.31s
+EXIT 0 2026-10-20T16:58:12Z
