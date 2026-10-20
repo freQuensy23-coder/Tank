@@ -18,6 +18,8 @@ class FlowAccumulator:
         self.boundaries = {}
         self.references = {}
         self.coverage_ranges = {}
+        # Bars changed since the service last recorded them.
+        self.dirty = set()
 
     def prove_range(self, instrument_id, start, end, *, complete, source, reason=None, observed_at=None):
         proof = {
@@ -50,6 +52,7 @@ class FlowAccumulator:
                 and parse_time(key[1]) < parse_time(end)
                 and parse_time(key[1]) + timedelta(minutes=1) > parse_time(start)
             ):
+                self.dirty.add(key)
                 existing = bar.setdefault("_coverage", [])
                 if (
                     existing
@@ -68,6 +71,7 @@ class FlowAccumulator:
         key = (instrument["instrument_id"], iso(minute))
         if key in self.bars:
             return
+        self.dirty.add(key)
         self.bars[key] = {
             "instrument_id": key[0],
             "token_id": instrument["token_id"],
@@ -132,8 +136,11 @@ class FlowAccumulator:
             at = parse_time(point)
             minute = iso(at.replace(second=0, microsecond=0))
             self.boundaries.setdefault((instrument_id, minute), set()).add(at)
+            self.dirty.add((instrument_id, minute))
             if at.second == 0 and at.microsecond == 0:
-                self.boundaries.setdefault((instrument_id, iso(at - timedelta(minutes=1))), set()).add(at)
+                previous = iso(at - timedelta(minutes=1))
+                self.boundaries.setdefault((instrument_id, previous), set()).add(at)
+                self.dirty.add((instrument_id, previous))
 
     @staticmethod
     def covered(start, end, ranges):
@@ -230,6 +237,7 @@ class FlowAccumulator:
                 else None,
             }
         b = self.bars[key]
+        self.dirty.add(key)
         b.pop("zero_trade_minute", None)
         b["_trades"].append(trade)
         side = trade["side"].lower()
@@ -387,3 +395,4 @@ class FlowAccumulator:
             ) <= parse_time(end):
                 b["gap_reason"] = reason
                 b["complete"] = False
+                self.dirty.add(key)

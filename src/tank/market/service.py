@@ -12,6 +12,7 @@ from decimal import Decimal, localcontext
 
 import httpx
 
+from tank.market_storage import latest_market_trades
 from tank.time_precision import Timestamp, chosen_boundary, collection_clock, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time, sha256, utcnow
 
@@ -24,6 +25,9 @@ from .rate_gate import PriorityGate, binance_request_weight, public_request_cons
 from .streams import STREAM_PING_INTERVAL_S, endpoint_keys, stream_group_loop
 
 log = logging.getLogger(__name__)
+# Raw journals are appended and fsynced at most this often (seconds); typed rows of
+# the same prints follow in the same flush.
+RAW_FLUSH_S = 5
 COLLECTIONS = {
     "flow_bars": ("mkt.flow_bars_1m", "minute_start"),
     "klines": ("mkt.klines_1m", "open_time"),
@@ -57,8 +61,12 @@ class MarketService:
         }
         self.semantics = settings.load_config("semantics")["metrics"]
         self.book_archive = BookArchive(settings.data_dir, instruments=self.instruments.values())
-        self._book_raw_pending = []
         self.trade_archive = TradeArchive(settings.data_dir, instruments=self.instruments.values())
+        self._raw_written = 0.0
+        self._raw_stats = {"rows": 0, "sealed": 0, "writes": 0, "max_write_s": 0.0, "max_pending": 0}
+        self._raw_logged = time.monotonic()
+        self._started = utcnow()
+        self._hour_loads = {}
         self._pending_market = {}
         self._market_cache = {}
         self._market_flush_lock = asyncio.Lock()
@@ -67,7 +75,6 @@ class MarketService:
         self._capture_checkpoints = {}
         self._recovery_pending = set()
         self._active_backfills = {}
-        self._backfill_open_hours = {}
         self.flow = FlowAccumulator()
         self.books = {}
         self.streams = {}
@@ -205,14 +212,8 @@ class MarketService:
             if not (preserve_verified and trusted):
                 left, right = max(lo, cursor), min(hi, cursor + timedelta(minutes=1))
                 if left < right:
-                    await asyncio.to_thread(
-                        self.trade_archive.coverage,
-                        iid,
-                        left,
-                        right,
-                        complete=False,
-                        reason=str(reason),
-                        source="CAPTURE_GAP",
+                    self.trade_archive.coverage(
+                        iid, left, right, complete=False, reason=str(reason), source="CAPTURE_GAP"
                     )
                     if private is not None:
                         private["complete"] = False
@@ -280,7 +281,6 @@ class MarketService:
             if self._market_restored:
                 return
             for collection, groups, field in (
-                ("mkt.capture_state", ("instrument_id",), "updated_at"),
                 ("mkt.tickers_24h", ("instrument_id",), "ts"),
                 ("mkt.funding_obs", ("instrument_id", "kind"), "as_of"),
             ):
@@ -288,17 +288,35 @@ class MarketService:
                 for row in rows:
                     iid = row["instrument_id"]
                     key = (
-                        iid
-                        if collection == "mkt.capture_state"
-                        else iid + ":" + row["kind"] + ":" + row["as_of"]
+                        iid + ":" + row["kind"] + ":" + row["as_of"]
                         if collection == "mkt.funding_obs"
                         else iid + ":" + row["ts"]
                     )
                     self._market_cache.setdefault(collection, {}).setdefault(key, row)
-                    if collection == "mkt.capture_state":
-                        self._capture_checkpoints[iid] = row
-                        if row.get("last_trade"):
-                            self.flow.last[iid] = dict(row["last_trade"], instrument_id=iid)
+            # The reconnect backfill resumes from the last stored print (03 §5.2): the
+            # newest flow bar that holds a trade carries its ID and time.
+            for row in await latest_market_trades(
+                self.repo, list(self.instruments), start=utcnow() - timedelta(days=2)
+            ):
+                iid, last = row["instrument_id"], row["last_trade"]
+                self._capture_checkpoints[iid] = {
+                    "instrument_id": iid,
+                    "last_trade_id": last["trade_id"],
+                    "last_trade": last,
+                    "last_ts": last["ts"],
+                }
+                self.flow.last[iid] = dict(last, instrument_id=iid)
+            # Prints of the last minutes before a restart are on disk: remember them so
+            # none is taken twice, and resume the bar of the newest minute, which was
+            # still in progress. Earlier bars are already final in PostgreSQL.
+            since = (utcnow() - timedelta(minutes=3)).replace(second=0, microsecond=0)
+            for iid in self.instruments:
+                rows = await asyncio.to_thread(self.trade_archive.recent, iid, since)
+                newest = max((r["ts"][:16] for r in rows), default=None)
+                for row in rows:
+                    self.trade_archive.remember(row)
+                    if row["ts"][:16] == newest:
+                        self.flow.add(row, continuity=False, emit_record=False)
             self._market_restored = True
 
     async def _raw(self, instrument, kind, payload):
@@ -310,53 +328,19 @@ class MarketService:
         """
         if kind == "websocket" and isinstance(payload, dict) and payload.get("type") == "last_match":
             point = norm.trade(instrument, payload, source="WS_INITIAL_SNAPSHOT")
-            await asyncio.to_thread(self.trade_archive.append, self.provenance(point))
+            self.trade_archive.append(self.provenance(point))
 
-    async def flush_market(self, *, seal_completed=True):
-        """Durable evidence precedes one typed multi-row write per collection."""
+    async def flush_market(self, *, raw=None):
+        """Write raw journals when due, then one multi-row write per typed collection (03 §14).
+
+        Raw prints and books go to disk in one worker thread every RAW_FLUSH_S, or at
+        once with `raw=True` (a backfill about to read its prints back, an archive
+        import, shutdown); `raw=False` writes typed rows only. A typed bar can reach
+        PostgreSQL at most RAW_FLUSH_S before the prints it was built from.
+        """
         async with self._market_flush_lock:
-            manifests = []
-            book_entries, self._book_raw_pending = self._book_raw_pending, []
-            try:
-                if book_entries:
-                    manifests += await asyncio.to_thread(self.book_archive.write_batch, book_entries)
-                manifests += await asyncio.to_thread(self.book_archive.flush_expired)
-            except Exception:
-                self._book_raw_pending[:0] = book_entries
-                raise
-            manifests += await asyncio.to_thread(
-                self.trade_archive.flush,
-                seal_before=utcnow() if seal_completed else None,
-                seal_exclude=tuple(
-                    (iid, hour) for iid, hours in self._backfill_open_hours.items() for hour in hours
-                ),
-            )
-            for row in manifests:
-                inst = self.instruments.get(row["instrument_id"], {})
-                row["token_id"] = inst.get("token_id")
-                await self._put("mkt.raw_archives", row["archive_id"], row)
-            # Recovery bars are committed only after their complete raw
-            # minute chunks have received the durable index version.
-            for row in list(self._pending_market.get("mkt.flow_bars_1m", {}).values()):
-                proof = row.get("capture_proof")
-                if not proof:
-                    continue
-                committed = await asyncio.to_thread(
-                    self.trade_archive.minute_provenance, row["instrument_id"], row["minute_start"]
-                )
-                if committed is None:
-                    continue
-                chunks = committed["chunks"]
-                if proof.get("chunks") != chunks or not proof.get("index_path"):
-                    proof = dict(
-                        proof,
-                        **committed,
-                    )
-                    row["capture_proof"] = proof
-                    private = self.flow.bars.get((row["instrument_id"], row["minute_start"]))
-                    if private is not None:
-                        private["capture_proof"] = proof
-                    row["semantic_fingerprint"] = sha256(self._semantic_content(row))
+            if raw or (raw is None and time.monotonic() - self._raw_written >= RAW_FLUSH_S):
+                await self._write_raw()
             pending, self._pending_market = self._pending_market, {}
             for collection, values in pending.items():
                 try:
@@ -376,19 +360,50 @@ class MarketService:
                                 target.setdefault(pending_key, pending_row)
                     raise
 
+    async def _write_raw(self):
+        trades, books = self.trade_archive.take(), self.book_archive.take()
+        pending = sum(map(len, trades.values())) + sum(map(len, books.values()))
+        started = time.monotonic()
+
+        def write():
+            result = self.trade_archive.write(trades)
+            booked = self.book_archive.write(books)
+            return result["rows"] + booked["rows"], len(result["sealed"]) + len(booked["sealed"])
+
+        try:
+            rows, sealed = await asyncio.to_thread(write)
+        except Exception:
+            self.trade_archive.restore(trades)
+            self.book_archive.restore(books)
+            raise
+        elapsed = time.monotonic() - started
+        self._raw_written = time.monotonic()
+        stats = self._raw_stats
+        stats.update(
+            rows=stats["rows"] + rows,
+            sealed=stats["sealed"] + sealed,
+            writes=stats["writes"] + 1,
+            max_write_s=max(stats["max_write_s"], elapsed),
+            max_pending=max(stats["max_pending"], pending),
+        )
+        if time.monotonic() - self._raw_logged >= 60:
+            log.info(
+                "raw archive: %d rows in %d writes, %d hours sealed, max write %.2fs, max batch %d rows",
+                stats["rows"],
+                stats["writes"],
+                stats["sealed"],
+                stats["max_write_s"],
+                stats["max_pending"],
+            )
+            self._raw_logged = time.monotonic()
+            self._raw_stats = {"rows": 0, "sealed": 0, "writes": 0, "max_write_s": 0.0, "max_pending": 0}
+
     async def close(self):
         try:
             await self._flush_flow()
-            await self.flush_market()
-            for row in await asyncio.to_thread(self.book_archive.flush_all):
-                row["token_id"] = self.instruments.get(row["instrument_id"], {}).get("token_id")
-                await self._put("mkt.raw_archives", row["archive_id"], row)
-            for row in await asyncio.to_thread(
-                self.trade_archive.flush, seal_before=utcnow() + timedelta(hours=1)
-            ):
-                row["token_id"] = self.instruments.get(row["instrument_id"], {}).get("token_id")
-                await self._put("mkt.raw_archives", row["archive_id"], row)
-            await self.flush_market()
+            await self.flush_market(raw=True)
+            await asyncio.to_thread(self.trade_archive.close)
+            await asyncio.to_thread(self.book_archive.close)
         finally:
             if self._owns_http:
                 await self.http.aclose()
@@ -943,40 +958,60 @@ class MarketService:
         await self._ensure_market_restore()
         minute = iso(parse_time(row["ts"]).replace(second=0, microsecond=0))
         bar_key = (iid, minute)
-        if not await asyncio.to_thread(self.trade_archive.append, self.provenance(row)):
+        canonical = self.trade_archive.canonical(row)
+        if self.trade_archive.needs_load(canonical):
+            await self._load_trade_hour(canonical)
+        late = bar_key not in self.flow.bars and self.trade_archive.minute_archived(iid, minute)
+        if not self.trade_archive.append(self.provenance(row)):
             return False
         if backfill:
             return True
-        committed = (
-            await asyncio.to_thread(self.trade_archive.minute_provenance, iid, minute)
-            if bar_key not in self.flow.bars
-            else None
-        )
-        if committed and committed["chunks"]:
-            recovered = await asyncio.to_thread(
-                self.trade_archive.recover_minute, iid, minute, cause="LATE_BAR_RECOVERY"
-            )
-            for point in recovered.get("reference_points", []):
-                self.flow.references[(iid, point["boundary"])] = point
-            for point in recovered["rows"]:
+        if late:
+            # The minute's bar already left memory: rebuild it from its archived prints.
+            for point in await self._archived_minute(iid, minute):
                 self.flow.add(point, continuity=False, emit_record=False)
-            self.flow.bars[bar_key]["_coverage"] = recovered["coverage"]
-            self.flow.bars[bar_key]["capture_proof"] = recovered["provenance"]
+            self.flow.bars[bar_key]["_coverage"] = self.trade_archive.coverage_for(iid, minute)
         else:
-            self.flow.add(row, continuity=not backfill, emit_record=False)
+            self.flow.add(row, continuity=True, emit_record=False)
         checkpoint = self._capture_checkpoints.get(iid)
         if checkpoint is None or parse_time(row["ts"]) >= parse_time(checkpoint["last_ts"]):
-            checkpoint = {
+            self._capture_checkpoints[iid] = {
                 "instrument_id": iid,
-                "token_id": instrument["token_id"],
                 "last_trade_id": row["trade_id"],
                 "last_trade": self.flow.trade_point(row),
-                **norm.timestamp_fields("last_ts", row["ts"], row["ts_prec"]),
-                **collection_clock().fields("updated_at"),
+                "last_ts": row["ts"],
             }
-            self._capture_checkpoints[iid] = checkpoint
-            await self._put("mkt.capture_state", iid, checkpoint)
         return True
+
+    async def _load_trade_hour(self, canonical):
+        """Load once the identities of an hour an earlier process wrote; waiters share it."""
+        task = self._hour_loads.get(canonical)
+        if task is None:
+            task = asyncio.ensure_future(asyncio.to_thread(self.trade_archive.load_ids, canonical))
+            self._hour_loads[canonical] = task
+        try:
+            ids = await task
+        finally:
+            if task.done():
+                self._hour_loads.pop(canonical, None)
+        if self.trade_archive.needs_load(canonical):
+            self.trade_archive.mark_loaded(canonical, ids)
+
+    async def _archived_minute(self, iid, minute, *, hours=None):
+        """Every print of one minute this capture holds: durable journals plus buffer."""
+        hour = iso(parse_time(minute).replace(minute=0, second=0, microsecond=0))
+        if hours is None or hour not in hours:
+            await self.flush_market(raw=True)
+            grouped = await asyncio.to_thread(self.trade_archive.read_minutes, iid, hour)
+            if hours is not None:
+                hours.clear()
+                hours[hour] = grouped
+        else:
+            grouped = hours[hour]
+        rows = {str(r["trade_id"]): r for r in grouped.get(iso(parse_time(minute)), ())}
+        for row in self.trade_archive.buffered(iid, minute):
+            rows.setdefault(str(row["trade_id"]), row)
+        return sorted(rows.values(), key=lambda r: (r["ts"], str(r["trade_id"])))
 
     async def _save_book(self, instrument):
         iid = instrument["instrument_id"]
@@ -985,23 +1020,15 @@ class MarketService:
             return
         self._book_due[iid] = now + float(self.thresholds.get("book_interval_s", 10))
         row = self.books[iid].summary()
-        received = row["received_ts"]
-        self._book_raw_pending.append(
-            (
-                iid,
-                "BOOK_SUMMARY",
-                dict(
-                    {k: v for k, v in row.items() if k not in ("bids", "asks")},
-                    market_type=instrument["market_type"],
-                ),
-                received,
-            )
+        self.book_archive.add(
+            iid,
+            "BOOK_SUMMARY",
+            {k: v for k, v in row.items() if k not in ("bids", "asks")},
+            row["received_ts"],
         )
         pending_snapshot = getattr(self.books[iid], "pending_snapshot", None)
         if pending_snapshot is not None:
-            self._book_raw_pending.append(
-                (iid, "BOOK_SNAPSHOT", pending_snapshot, pending_snapshot["received_ts"])
-            )
+            self.book_archive.add(iid, "BOOK_SNAPSHOT", pending_snapshot, pending_snapshot["received_ts"])
             self.books[iid].pending_snapshot = None
         key = iid + ":" + row["exchange_ts"]
         row.update(second_path_confirmed=False, second_path_reason="REST_CONFIRMATION_PENDING")
@@ -1043,16 +1070,20 @@ class MarketService:
                     if not allow_recovery:
                         cursor += timedelta(minutes=1)
                         continue
-                    audit = await asyncio.to_thread(
-                        self.trade_archive.recover_minute, iid, cursor, cause="RESTART_RECOVERY"
+                    # A minute this process archived, or one begun before it started,
+                    # is rebuilt from its prints; any other unseen minute is empty.
+                    rows = (
+                        await self._archived_minute(iid, cursor)
+                        if self.trade_archive.minute_archived(iid, cursor)
+                        or cursor < self._started + timedelta(minutes=1)
+                        else []
                     )
                     self.flow.empty_minute(self.instruments[iid], cursor)
-                    if audit["rows"]:
+                    if rows:
                         self.flow.bars.pop(key)
-                        for point in audit["rows"]:
+                        for point in rows:
                             self.flow.add(point, continuity=False, emit_record=False)
-                    self.flow.bars[key]["_coverage"] = audit["coverage"]
-                    self.flow.bars[key]["capture_proof"] = audit["provenance"]
+                    self.flow.bars[key]["_coverage"] = self.trade_archive.coverage_for(iid, cursor)
                 bar = self.flow.bars[key]
                 start, end = max(since, cursor), min(through, cursor + timedelta(minutes=1))
                 if end > start:
@@ -1065,29 +1096,22 @@ class MarketService:
                         source="CONTINUOUS_STREAM",
                         reason=bar.get("gap_reason"),
                     )
-                    await asyncio.to_thread(
-                        self.trade_archive.coverage,
-                        iid,
-                        start,
-                        end,
-                        complete=complete,
-                        reason=bar.get("gap_reason"),
-                    )
+                    self.trade_archive.coverage(iid, start, end, complete=complete, reason=bar.get("gap_reason"))
                 cursor += timedelta(minutes=1)
             self._zero_cursor[iid] = max(
                 since.replace(second=0, microsecond=0),
                 through.replace(second=0, microsecond=0) - timedelta(minutes=1),
             )
+        # Only bars that changed since the last flush are recorded again.
+        dirty, self.flow.dirty = self.flow.dirty, set()
         for key, bar in list(self.flow.bars.items()):
             minute = parse_time(key[1])
-            complete = self.flow.covered(
-                minute, minute + timedelta(minutes=1), bar.get("_coverage", [])
-            ) and not bar.get("gap_reason")
-            row = self.flow.record(key, complete=complete)
-            await asyncio.to_thread(
-                self.trade_archive.reference_points, key[0], row.get("reference_points", [])
-            )
-            await self._put("mkt.flow_bars_1m", key[0] + ":" + key[1], row)
+            if key in dirty:
+                complete = self.flow.covered(
+                    minute, minute + timedelta(minutes=1), bar.get("_coverage", [])
+                ) and not bar.get("gap_reason")
+                row = self.flow.record(key, complete=complete)
+                await self._put("mkt.flow_bars_1m", key[0] + ":" + key[1], row)
             if minute + timedelta(minutes=3) < now:
                 self.flow.bars.pop(key, None)
                 self._market_cache.get("mkt.flow_bars_1m", {}).pop(key[0] + ":" + key[1], None)
@@ -1109,17 +1133,16 @@ class MarketService:
             return
         iid = instrument["instrument_id"]
         for lo, hi in proven_ranges:
-            await asyncio.to_thread(
-                self.trade_archive.coverage, iid, lo, hi, complete=True, source="REST_RANGE_EXHAUSTED"
-            )
-        await self.flush_market()  # Raw/index fsync precedes any derived SQL bar.
+            self.trade_archive.coverage(iid, lo, hi, complete=True, source="REST_RANGE_EXHAUSTED")
+        await self.flush_market(raw=True)  # Raw journals are durable before any derived bar.
         previous = self.flow.references.get((iid, iso(start)), {}).get("last_trade")
         minute = parse_time(start).replace(second=0, microsecond=0)
-        verified_batch = {}  # One immutable decoded batch, only for this audit operation.
+        hours = {}  # the one archived hour this audit is reading
         while minute < parse_time(end):
-            audit = await asyncio.to_thread(
-                self.trade_archive.recover_minute, iid, minute, cause="AUDIT", verified_batch=verified_batch
-            )
+            audit = {
+                "rows": await self._archived_minute(iid, minute, hours=hours),
+                "coverage": self.trade_archive.coverage_for(iid, minute),
+            }
             accumulator = FlowAccumulator()
             accumulator.boundaries = self.flow.boundaries
             accumulator.references = self.flow.references
@@ -1148,25 +1171,20 @@ class MarketService:
             if gap:
                 lo, hi = max(parse_time(start), minute), min(parse_time(end), minute + timedelta(minutes=1))
                 bar["_coverage"].append({"start": iso(lo), "end": iso(hi), "complete": False, "reason": gap})
-                await asyncio.to_thread(self.trade_archive.coverage, iid, lo, hi, complete=False, reason=gap)
+                self.trade_archive.coverage(iid, lo, hi, complete=False, reason=gap)
             complete = (
                 accumulator.covered(minute, minute + timedelta(minutes=1), bar["_coverage"]) and gap is None
             )
             bar["_rest_verified"] = complete
             row = accumulator.record(key, complete=complete)
-            row.update(
-                backfill_verified=complete,
-                capture_method="REST_RANGE_EXHAUSTED",
-                capture_proof=audit["provenance"],
-            )
-            await asyncio.to_thread(self.trade_archive.reference_points, iid, row.get("reference_points", []))
+            row.update(backfill_verified=complete, capture_method="REST_RANGE_EXHAUSTED")
             await self._put("mkt.flow_bars_1m", iid + ":" + iso(minute), row)
             if minute >= utcnow() - timedelta(minutes=3):
                 self.flow.bars[key] = bar
             if minute.minute == 59:
-                await self.flush_market()
+                await self.flush_market(raw=False)
             minute += timedelta(minutes=1)
-        await self.flush_market()
+        await self.flush_market(raw=False)
 
     def _register_capture_boundaries(self, ids, cutoff, anchor=None):
         end = parse_time(cutoff)
@@ -1203,7 +1221,6 @@ class MarketService:
             self._active_backfills[iid] -= 1
             if not self._active_backfills[iid]:
                 self._active_backfills.pop(iid)
-                self._backfill_open_hours.pop(iid, None)
             await self.flush_market()
 
     async def _backfill(self, instrument, anchor, *, checkpoint=None):
@@ -1266,10 +1283,6 @@ class MarketService:
                         t = norm.trade(instrument, raw)
                         normalized.append((t, raw))
                     normalized.sort(key=lambda x: parse_time(x[0]["ts"]))
-                    self._backfill_open_hours[instrument["instrument_id"]] = {
-                        iso(parse_time(t["ts"]).replace(minute=0, second=0, microsecond=0))
-                        for t, _ in normalized
-                    }
                     for t, raw in normalized:
                         ts = parse_time(t["ts"])
                         if ts < start and (
@@ -3531,7 +3544,7 @@ class MarketService:
         ids = {r["instrument_id"] for r in instruments}
         self._register_capture_boundaries(ids, cutoff, anchor)
         await self._flush_flow(allow_recovery=False)
-        await self.flush_market(seal_completed=False)
+        await self.flush_market()
         result["flow_segments"] = []
         result["reference_points"] = []
         for name, (collection, field) in COLLECTIONS.items():
@@ -3847,7 +3860,7 @@ class MarketService:
         hot = {r["token_id"] for r in await self.repo.list("mkt.hot_tokens", limit=10000)}
         result = []
         for iid, inst in self.instruments.items():
-            state = await self.repo.get("mkt.capture_state", iid)
+            state = self._capture_checkpoints.get(iid)
             gaps = await self.repo.list("mkt.capture_gaps", filters={"instrument_id": iid}, limit=10000)
             result.append(
                 {
@@ -4073,7 +4086,7 @@ class MarketService:
                 await self.flush_market()
                 await self._sync_streams()
                 with suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(stop.wait(), 1)
+                    await asyncio.wait_for(stop.wait(), RAW_FLUSH_S)
         finally:
             for task in [*workers, *self.streams.values(), *self._background]:
                 task.cancel()

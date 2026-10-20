@@ -753,3 +753,29 @@ async def market_series_counts(self, instrument_ids, start, cutoff, assembled_at
         rows = await (await self._conn().execute(query, args)).fetchall()
     counts.update({row["instrument_id"]: row["n"] for row in rows})
     return counts
+
+
+async def latest_market_trades(repo, instrument_ids, *, start):
+    """Newest flow bar holding a print, per instrument: its `last_trade` resumes capture."""
+    instrument_ids = sorted(set(instrument_ids))
+    start = parse_time(start)
+    if not instrument_ids:
+        return []
+    if not hasattr(repo, "_conn"):
+        latest = {}
+        async for row in repo.iter_all("mkt.flow_bars_1m"):
+            iid = row.get("instrument_id")
+            if iid not in instrument_ids or not row.get("last_trade") or parse_time(row["minute_start"]) < start:
+                continue
+            if iid not in latest or parse_time(row["minute_start"]) > parse_time(latest[iid]["minute_start"]):
+                latest[iid] = row
+        return [{"instrument_id": iid, "last_trade": row["last_trade"]} for iid, row in sorted(latest.items())]
+    query = (
+        "SELECT point.instrument_id, point.last_trade FROM unnest(%s::text[]) AS scope(instrument_id) "
+        "CROSS JOIN LATERAL (SELECT instrument_id, last_trade FROM mkt.flow_bars_1m "
+        "WHERE instrument_id = scope.instrument_id AND minute_start >= %s AND last_trade IS NOT NULL "
+        "ORDER BY minute_start DESC LIMIT 1) AS point"
+    )
+    async with repo.transaction():
+        rows = await (await repo._conn().execute(query, [instrument_ids, start])).fetchall()
+    return [{"instrument_id": row["instrument_id"], "last_trade": row["last_trade"]} for row in rows]

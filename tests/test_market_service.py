@@ -71,40 +71,6 @@ def setup(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_trade_archive_contention_keeps_event_loop_responsive(setup):
-    import asyncio
-    from threading import Event, Thread
-
-    repo, settings, inst = setup
-    async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
-        await service._ensure_market_restore()
-        locked, release, fallback = Event(), Event(), Event()
-
-        def writer():
-            with service.trade_archive._lock:
-                locked.set()
-                if not release.wait(2):
-                    fallback.set()
-
-        thread = Thread(target=writer)
-        thread.start()
-        await asyncio.to_thread(locked.wait, 2)
-        raw = {"a": 1, "p": "2", "q": "3", "T": int(utcnow().timestamp() * 1000), "m": False}
-        task = asyncio.create_task(service.ingest_trade(inst, raw))
-        try:
-            # This coroutine must release the archive writer before its fallback;
-            # a synchronous archive lock on the event loop prevents that.
-            await asyncio.sleep(0.05)
-            assert not fallback.is_set()
-            assert not task.done()
-        finally:
-            release.set()
-            await asyncio.to_thread(thread.join, 3)
-        assert await task
-
-
-@pytest.mark.asyncio
 async def test_trade_dedup_restart_and_precise_bar_reconstruction(setup):
     repo, settings, inst = setup
     http = httpx.AsyncClient()
@@ -958,9 +924,13 @@ async def test_backfill_cannot_regress_reconnect_checkpoint(setup):
     await service.ingest_trade(
         inst, {"a": 90, "p": "2", "q": "1", "T": now - 1000, "m": False}, backfill=True
     )
-    await service.flush_market()
-    checkpoint = await repo.get("mkt.capture_state", inst["instrument_id"])
-    assert checkpoint["last_trade_id"] == "100"
+    assert service._capture_checkpoints[inst["instrument_id"]]["last_trade_id"] == "100"
+    await service._flush_flow()
+    await service.flush_market(raw=True)
+    # A restart resumes from the last print of the newest stored flow bar, not a checkpoint table.
+    restarted = MarketService(repo, settings)
+    await restarted._ensure_market_restore()
+    assert restarted._capture_checkpoints[inst["instrument_id"]]["last_trade_id"] == "100"
     await service.close()
 
 

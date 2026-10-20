@@ -50,7 +50,7 @@ async def test_backfill_source_payload_is_kept_by_normalized_trade_without_frame
 
 @pytest.mark.asyncio
 async def test_coinbase_initial_last_match_retained_only_as_parquet_without_live_flow_claim(setup):
-    from tank.market.archive import RawArchive
+    import asyncio
 
     repo, settings, original = setup
     inst = dict(original, venue="coinbase", instrument_id="coinbase:spot:ABC-USD", venue_symbol="ABC-USD")
@@ -69,9 +69,10 @@ async def test_coinbase_initial_last_match_retained_only_as_parquet_without_live
         await service._raw(inst, "websocket", frame)
         assert not service.flow.bars
         assert not (settings.data_dir / "raw/market_frames").exists()
-        manifests = service.trade_archive.flush()
-    assert len(manifests) == 1 and manifests[0]["path"].endswith(".parquet")
-    rows = RawArchive.read_verified(manifests[0]["path"], manifests[0]["sha256"])
+        await service.flush_market(raw=True)
+        canonical = service.trade_archive.path(inst["instrument_id"], frame["time"])
+        rows = await asyncio.to_thread(service.trade_archive.read_hour, canonical)
+    assert canonical == settings.data_dir / "raw/trades/coinbase/spot/ABC-USD/2026-10-17/12.parquet"
     assert rows[0]["capture_source"] == "WS_INITIAL_SNAPSHOT"
     assert json.loads(rows[0]["source_payload_json"]) == frame
     assert not list((settings.data_dir / "raw/trades").rglob("*.jsonl"))
