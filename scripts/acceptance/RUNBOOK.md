@@ -58,16 +58,15 @@ Start at the lead's go, with the stack untouched for the window:
 
 ```
 RUN=/srv/tank/data/qa/v0a-$(date -u +%Y%m%dT%H%MZ); mkdir -p $RUN
-date -u +%FT%TZ > $RUN/started_at
-nohup python3 $A/source_sampler.py --out $RUN/source-reads.jsonl --hours 73 \
-  > /srv/tank-work/logs/tank-acceptance/v0a-sampler.log 2>&1 &
+python3 $A/v0a_health.py --snapshot $RUN/start.json
 ```
 
-- Each day, and at 72 h: `python3 $A/v0a_health.py --reads $RUN/source-reads.jsonl --since $(cat $RUN/started_at) --until <now> --out $RUN/day-N`. Also run `latency.py` for the same window.
+- Sources: every feed keeps cumulative `reads` (one poll after retries) and `detail_reads` (article/detail fetches) counters in `ops.source_checkpoints`, written by tank-sources and surviving restarts. The window is end minus start, so nothing has to sample. `python -m tank.sources.read_report` reads the same counters and can cross-check.
+- Each day and at 72 h: `python3 $A/v0a_health.py --start-snapshot $RUN/start.json --end-snapshot $RUN/end-dayN.json --out $RUN/day-N`. Also run `latency.py` over the same window.
 - Pass:
-  - all 34 sources have ≥ 1 read, failed reads < 1% per source, and no silence longer than 3× their slowest interval;
+  - each of the 34 sources has reads, failed/(ok+failed) < 1% counting detail fetches, and its feeds were polled at ≥ 95% of their configured cadence (unattended, no stall);
   - BASE market path: every active instrument misses < 1% of its 1m kline, OI and funding polls;
-  - HOT path: stream gap time < 1% of hot time.
+  - HOT path: streaming gap time < 1% of hot time.
   - The other V0-A clauses come from their owners: the X list holds exactly 86 accounts (tank-sources), the §2.10 meaning checks pass (tank-truth), and archive integrity holds for 5 tokens × 7 days (tank-market).
 - Any restart, manual fix or config change inside the window restarts the 72 h.
 

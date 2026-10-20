@@ -30,19 +30,17 @@ def test_summary_unmeasured_is_never_a_pass():
     assert common.summary([80, 85, 89], 90, "max")["status"] == "PASS"
 
 
-def test_source_ratio_counts_only_window_and_non_baseline(tmp_path):
+def test_source_ratio_uses_counter_deltas_and_cadence():
     health = load("v0a_health")
-    reads = tmp_path / "reads.jsonl"
-    rows = [
-        '{"kind": "ATTEMPT", "key": "S01:0", "source_id": "S01", "at": "2026-10-20T00:00:00Z", "baseline": true}',
-        *[f'{{"kind": "ATTEMPT", "key": "S01:0", "source_id": "S01", "at": "2026-10-21T00:{m:02d}:00Z", "baseline": false}}'
-          for m in range(0, 60)],
-        '{"kind": "FAILURE", "key": "S01:0", "source_id": "S01", "at": "2026-10-21T00:30:05Z", "baseline": false}',
-    ]
-    reads.write_text("\n".join(rows) + "\n")
-    out, _ = health.sources(str(reads), "2026-10-21T00:00:00Z", "2026-10-21T01:00:00Z", ["S01", "S02"], {"S01": 60})
-    s01 = next(r for r in out if r["source_id"] == "S01")
-    s02 = next(r for r in out if r["source_id"] == "S02")
-    assert s01["attempts"] == 60 and s01["failures"] == 1
-    assert s01["status"] == "FAIL"  # 1/60 > 1%
-    assert s02["status"] == "FAIL" and s02["attempts"] == 0
+    start = {"taken_at": "2026-10-21T00:00:00Z", "feeds": {
+        "S01:0": {"reads": {"ok": 1000, "failed": 5}, "detail_reads": {"ok": 0, "failed": 0}},
+    }}
+    end = {"taken_at": "2026-10-21T01:00:00Z", "feeds": {
+        "S01:0": {"reads": {"ok": 1059, "failed": 6}, "detail_reads": {"ok": 0, "failed": 0}, "status": "HEALTHY"},
+        "S02:0": {"reads": {"ok": 30, "failed": 0}, "detail_reads": {"ok": 10, "failed": 0}, "status": "HEALTHY"},
+    }}
+    rows = {r["source_id"]: r for r in health.sources(start, end, {"S01:0": 60, "S02:0": 60, "S03:0": 60}, 3600)}
+    assert rows["S01"]["reads"] == 60 and rows["S01"]["failures"] == 1
+    assert rows["S01"]["status"] == "FAIL"  # 1/60 > 1%
+    assert rows["S02"]["status"] == "FAIL"  # 30 polls of 60 expected: not polled at its cadence
+    assert rows["S03"]["reads"] == 0 and rows["S03"]["status"] == "FAIL"
