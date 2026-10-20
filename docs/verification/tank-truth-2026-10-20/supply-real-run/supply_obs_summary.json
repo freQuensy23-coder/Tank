@@ -1,0 +1,1271 @@
+{
+ "0x:ZRX": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Ethereum",
+   "n": 3248,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "145148293451.02",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": true,
+   "reason": null,
+   "balances": [
+    [
+     "binance",
+     1,
+     "0",
+     "17/17"
+    ],
+    [
+     "okx",
+     1,
+     "7092239.467087599575809865",
+     "323/323"
+    ]
+   ],
+   "errors": 0,
+   "error_sample": []
+  },
+  "FUNDAMENTALS": {
+   "available": false,
+   "reason": "NO_SUPPORTED_PUBLIC_FEES_ADAPTER",
+   "fees24h": null,
+   "rev24h": null,
+   "holders24h": null
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": false,
+   "reason": "NO_PUBLISHED_DATASET",
+   "unlocks_14d": []
+  },
+  "WALLET_FLOWS": {
+   "available": true,
+   "reason": null,
+   "flows": 16,
+   "queries": 340
+  }
+ },
+ "1inch:1INCH": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Ethereum",
+   "n": 3248,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "145148293451.02",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": true,
+   "reason": null,
+   "balances": [
+    [
+     "binance",
+     1,
+     "0",
+     "14/17"
+    ],
+    [
+     "okx",
+     1,
+     "14255418.255100625596007091",
+     "276/323"
+    ]
+   ],
+   "errors": 51,
+   "error_sample": [
+    {
+     "reason": "Etherscan request failed: Max calls per sec rate limit reached (3/sec)",
+     "wallet": "0x42a93a9f5cfda54716c414b6eaf07cf512f46ead",
+     "chainid": 1
+    },
+    {
+     "reason": "Etherscan request failed: Max calls per sec rate limit reached (3/sec)",
+     "wallet": "0x8a6f8404c9ea4c33502a3f6a4bf8e41ef5ca10ea",
+     "chainid": 1
+    }
+   ]
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "1209",
+   "rev24h": "213",
+   "holders24h": "0"
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": false,
+   "reason": "NO_PUBLISHED_DATASET",
+   "unlocks_14d": []
+  },
+  "WALLET_FLOWS": {
+   "available": true,
+   "reason": null,
+   "flows": 29,
+   "queries": 289
+  }
+ },
+ "aave:AAVE": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Ethereum",
+   "n": 3248,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "145148293451.02",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": true,
+   "reason": null,
+   "balances": [
+    [
+     "binance",
+     1,
+     "0",
+     "17/17"
+    ],
+    [
+     "okx",
+     1,
+     "213852.739259326954898324",
+     "323/323"
+    ]
+   ],
+   "errors": 0,
+   "error_sample": []
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "1146586",
+   "rev24h": "147706",
+   "holders24h": "0"
+  },
+  "LENDING": {
+   "available": true,
+   "reason": null,
+   "pools": [
+    [
+     "aave-v3",
+     "Ethereum",
+     "7ee6c38b",
+     "0",
+     0,
+     126190087
+    ]
+   ],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": []
+  },
+  "WALLET_FLOWS": {
+   "available": true,
+   "reason": null,
+   "flows": 52,
+   "queries": 340
+  }
+ },
+ "aerodrome:AERO": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Base",
+   "n": 1163,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "5143278102.01",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": false,
+   "reason": null,
+   "balances": [],
+   "errors": 1,
+   "error_sample": [
+    {
+     "chain": "Base",
+     "reason": "Etherscan request failed: Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis",
+     "chainid": 8453,
+     "contract": "0x940181a94a35a4569e4529a3cdfb74e38fd98631",
+     "operation": "decimals"
+    }
+   ]
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "256493",
+   "rev24h": "181551",
+   "holders24h": "181551"
+  },
+  "LENDING": {
+   "available": true,
+   "reason": null,
+   "pools": [
+    [
+     "euler-v2",
+     "Base",
+     "ed39b965",
+     "0.1997",
+     "3.34815",
+     271472
+    ],
+    [
+     "euler-v2",
+     "Base",
+     "05c0fed1",
+     "0.5476",
+     "4.06926",
+     164382
+    ],
+    [
+     "morpho-blue",
+     "Base",
+     "e5ee7e24",
+     "0.3018",
+     "27.53823",
+     1043745
+    ]
+   ],
+   "unmapped": 3
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": []
+  },
+  "WALLET_FLOWS": {
+   "available": false,
+   "reason": "SOURCE_FAILED",
+   "flows": 0,
+   "queries": 0
+  }
+ },
+ "avalanche:AVAX": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Avalanche",
+   "n": 2086,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "1388477406.92",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "6637",
+   "rev24h": "6637",
+   "holders24h": "6637"
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": [
+    [
+     "2026-10-25T00:00:00Z",
+     "Foundation",
+     "1667000"
+    ]
+   ]
+  }
+ },
+ "bitcoin:BTC": {
+  "CHAIN_LIQUIDITY": {
+   "available": false,
+   "reason": "stablecoins.llama.fi: HTTP 404",
+   "chain": "Bitcoin",
+   "n": 0,
+   "last": null
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": false,
+   "reason": "NOT_SUPPORTED_NATIVE_OR_NON_EVM",
+   "balances": [],
+   "errors": 0,
+   "error_sample": []
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "205010",
+   "rev24h": "0",
+   "holders24h": null
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": false,
+   "reason": "NO_PUBLISHED_DATASET",
+   "unlocks_14d": []
+  }
+ },
+ "cow:COW": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Ethereum",
+   "n": 3248,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "145148293451.02",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": true,
+   "reason": null,
+   "balances": [
+    [
+     "binance",
+     1,
+     "0",
+     "17/17"
+    ],
+    [
+     "okx",
+     1,
+     "71.3700067414",
+     "323/323"
+    ]
+   ],
+   "errors": 0,
+   "error_sample": []
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "70385",
+   "rev24h": "52540",
+   "holders24h": "0"
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": []
+  },
+  "WALLET_FLOWS": {
+   "available": true,
+   "reason": null,
+   "flows": 0,
+   "queries": 340
+  }
+ },
+ "curve:CRV": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Ethereum",
+   "n": 3248,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "145148293451.02",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": true,
+   "reason": null,
+   "balances": [
+    [
+     "binance",
+     1,
+     "0",
+     "17/17"
+    ],
+    [
+     "okx",
+     1,
+     "15586202.125169528293962432",
+     "265/323"
+    ]
+   ],
+   "errors": 59,
+   "error_sample": [
+    {
+     "reason": "Etherscan request failed: Max calls per sec rate limit reached (3/sec)",
+     "wallet": "0x5041ed759dd4afc3a72b8192c143f72f4724081a",
+     "chainid": 1
+    },
+    {
+     "reason": "Etherscan request failed: Max calls per sec rate limit reached (3/sec)",
+     "wallet": "0x51c6abe562e755582d268340b2cf0e2d8895a155",
+     "chainid": 1
+    }
+   ]
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "75035",
+   "rev24h": "31844",
+   "holders24h": "28396"
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 3
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": []
+  },
+  "WALLET_FLOWS": {
+   "available": true,
+   "reason": null,
+   "flows": 40,
+   "queries": 281
+  }
+ },
+ "ethena:ENA": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Ethereum",
+   "n": 3248,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "145148293451.02",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "2.08",
+   "rev24h": "2.08",
+   "holders24h": null
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": [
+    [
+     "2026-10-21T00:00:00Z",
+     "Investors",
+     "2566790.7472325"
+    ],
+    [
+     "2026-10-22T00:00:00Z",
+     "Investors",
+     "2566790.747233"
+    ],
+    [
+     "2026-10-23T00:00:00Z",
+     "Investors",
+     "2566790.7472323"
+    ],
+    [
+     "2026-10-24T00:00:00Z",
+     "Investors",
+     "2566790.7472327"
+    ],
+    [
+     "2026-10-25T00:00:00Z",
+     "Investors",
+     "2566790.747233"
+    ],
+    [
+     "2026-10-26T00:00:00Z",
+     "Investors",
+     "2566790.7472326"
+    ],
+    [
+     "2026-10-27T00:00:00Z",
+     "Investors",
+     "2566790.7472329"
+    ],
+    [
+     "2026-10-28T00:00:00Z",
+     "Investors",
+     "2566790.7472325"
+    ]
+   ]
+  }
+ },
+ "ethereum:ETH": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Ethereum",
+   "n": 3248,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "145148293451.02",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": false,
+   "reason": "NOT_SUPPORTED_NATIVE_OR_NON_EVM",
+   "balances": [],
+   "errors": 0,
+   "error_sample": []
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "301882",
+   "rev24h": "81930",
+   "holders24h": "59709"
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": false,
+   "reason": "NO_PUBLISHED_DATASET",
+   "unlocks_14d": []
+  }
+ },
+ "euler:EUL": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Ethereum",
+   "n": 3248,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "145148293451.02",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": true,
+   "reason": null,
+   "balances": [
+    [
+     "binance",
+     1,
+     "0",
+     "17/17"
+    ],
+    [
+     "okx",
+     1,
+     "29.4265193131",
+     "323/323"
+    ]
+   ],
+   "errors": 0,
+   "error_sample": []
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "54813",
+   "rev24h": "2630",
+   "holders24h": "0"
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": []
+  },
+  "WALLET_FLOWS": {
+   "available": true,
+   "reason": null,
+   "flows": 0,
+   "queries": 340
+  }
+ },
+ "hyperliquid:HYPE": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Hyperliquid L1",
+   "n": 687,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "7044087100.46",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": false,
+   "reason": null,
+   "balances": [],
+   "errors": 1,
+   "error_sample": [
+    {
+     "chain": "Hyperliquid L1, HyperCore token",
+     "reason": "CHAIN_NOT_SUPPORTED"
+    }
+   ]
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "2485468",
+   "rev24h": "1921508",
+   "holders24h": "1921508"
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": [
+    [
+     "2026-10-21T00:00:00Z",
+     "Validator Rewards",
+     "25697.669255212"
+    ]
+   ]
+  },
+  "WALLET_FLOWS": {
+   "available": false,
+   "reason": "SOURCE_FAILED",
+   "flows": 0,
+   "queries": 0
+  }
+ },
+ "layerzero:ZRO": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Polygon",
+   "n": 2274,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "3316303843.23",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "7711",
+   "rev24h": "0",
+   "holders24h": "0"
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 1
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": [
+    [
+     "2026-10-21T00:00:00Z",
+     "Core Contributors",
+     "10625000"
+    ],
+    [
+     "2026-10-21T00:00:00Z",
+     "Strategic Partners",
+     "13000000"
+    ]
+   ]
+  }
+ },
+ "lighter:LIT": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Ethereum",
+   "n": 3248,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "145148293451.02",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": true,
+   "reason": null,
+   "balances": [
+    [
+     "binance",
+     1,
+     "0",
+     "17/17"
+    ],
+    [
+     "okx",
+     1,
+     "8780860.2146949846",
+     "323/323"
+    ]
+   ],
+   "errors": 0,
+   "error_sample": []
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "198446",
+   "rev24h": "192354",
+   "holders24h": "93203"
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": []
+  },
+  "WALLET_FLOWS": {
+   "available": true,
+   "reason": null,
+   "flows": 98,
+   "queries": 340
+  }
+ },
+ "morpho:MORPHO": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Ethereum",
+   "n": 3248,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "145148293451.02",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": true,
+   "reason": null,
+   "balances": [
+    [
+     "binance",
+     1,
+     "0",
+     "17/17"
+    ],
+    [
+     "okx",
+     1,
+     "3681722.135716204894547541",
+     "323/323"
+    ]
+   ],
+   "errors": 0,
+   "error_sample": []
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "731994",
+   "rev24h": "0",
+   "holders24h": "0"
+  },
+  "LENDING": {
+   "available": true,
+   "reason": null,
+   "pools": [
+    [
+     "morpho-blue",
+     "Ethereum",
+     "24a6127b",
+     "0.2869",
+     "7.51415",
+     1957035
+    ]
+   ],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": [
+    [
+     "2026-10-21T00:00:00Z",
+     "Strategic Partners",
+     "85266.75786598"
+    ],
+    [
+     "2026-10-22T00:00:00Z",
+     "Strategic Partners",
+     "85266.7578659"
+    ],
+    [
+     "2026-10-23T00:00:00Z",
+     "Strategic Partners",
+     "85266.75786596"
+    ],
+    [
+     "2026-10-24T00:00:00Z",
+     "Strategic Partners",
+     "85266.75786590"
+    ],
+    [
+     "2026-10-25T00:00:00Z",
+     "Strategic Partners",
+     "85266.75786597"
+    ],
+    [
+     "2026-10-26T00:00:00Z",
+     "Strategic Partners",
+     "85266.75786590"
+    ],
+    [
+     "2026-10-27T00:00:00Z",
+     "Strategic Partners",
+     "85266.75786597"
+    ],
+    [
+     "2026-10-28T00:00:00Z",
+     "Strategic Partners",
+     "85266.7578659"
+    ]
+   ]
+  },
+  "WALLET_FLOWS": {
+   "available": true,
+   "reason": null,
+   "flows": 50,
+   "queries": 340
+  }
+ },
+ "near:NEAR": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Near",
+   "n": 1564,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "128631157.75",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "3957",
+   "rev24h": "2770",
+   "holders24h": "2770"
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": []
+  }
+ },
+ "ondo:ONDO": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Ethereum",
+   "n": 3248,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "145148293451.02",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": true,
+   "reason": null,
+   "balances": [
+    [
+     "binance",
+     1,
+     "0",
+     "17/17"
+    ],
+    [
+     "okx",
+     1,
+     "97101243.587611558851352274",
+     "323/323"
+    ]
+   ],
+   "errors": 0,
+   "error_sample": []
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "321631",
+   "rev24h": "0",
+   "holders24h": "0"
+  },
+  "LENDING": {
+   "available": true,
+   "reason": null,
+   "pools": [
+    [
+     "morpho-blue",
+     "Ethereum",
+     "bec4869d",
+     "0.3724",
+     "7.51486",
+     1573939
+    ]
+   ],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": []
+  },
+  "WALLET_FLOWS": {
+   "available": true,
+   "reason": null,
+   "flows": 91,
+   "queries": 340
+  }
+ },
+ "pancakeswap:CAKE": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "BNB Chain",
+   "n": 2193,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "14323801828.89",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": false,
+   "reason": null,
+   "balances": [],
+   "errors": 1,
+   "error_sample": [
+    {
+     "chain": "BNB Chain",
+     "reason": "Etherscan request failed: Free API access is not supported for this chain. Please upgrade your api plan for full chain coverage. https://etherscan.io/apis",
+     "chainid": 56,
+     "contract": "0x0e09fabb73bd3ade0a17ecc321fd13a19e81ce82",
+     "operation": "decimals"
+    }
+   ]
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "289756.72",
+   "rev24h": "97784.34",
+   "holders24h": "63133.08"
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 2
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": []
+  },
+  "WALLET_FLOWS": {
+   "available": false,
+   "reason": "SOURCE_FAILED",
+   "flows": 0,
+   "queries": 0
+  }
+ },
+ "plasma:XPL": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Plasma",
+   "n": 392,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "1334378437.03",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "102",
+   "rev24h": "102",
+   "holders24h": "102"
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": [
+    [
+     "2026-10-26T00:00:00Z",
+     "Team",
+     "69444444.4444444"
+    ],
+    [
+     "2026-10-26T00:00:00Z",
+     "Investors",
+     "69444444.4444444"
+    ],
+    [
+     "2026-10-26T00:00:00Z",
+     "Ecosystem & Growth",
+     "88888888.8888889"
+    ]
+   ]
+  }
+ },
+ "quant:QNT": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Ethereum",
+   "n": 3248,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "145148293451.02",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "FUNDAMENTALS": {
+   "available": false,
+   "reason": "NO_SUPPORTED_PUBLIC_FEES_ADAPTER",
+   "fees24h": null,
+   "rev24h": null,
+   "holders24h": null
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": false,
+   "reason": "NO_PUBLISHED_DATASET",
+   "unlocks_14d": []
+  }
+ },
+ "uniswap:UNI": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "Ethereum",
+   "n": 3248,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "145148293451.02",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "EXCHANGE_INVENTORY": {
+   "available": true,
+   "reason": null,
+   "balances": [
+    [
+     "binance",
+     1,
+     "0",
+     "17/17"
+    ],
+    [
+     "okx",
+     1,
+     "20143846.919745187491926372",
+     "323/323"
+    ]
+   ],
+   "errors": 0,
+   "error_sample": []
+  },
+  "FUNDAMENTALS": {
+   "available": true,
+   "reason": null,
+   "fees24h": "2111921",
+   "rev24h": "160305",
+   "holders24h": "160305"
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 3
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": []
+  },
+  "WALLET_FLOWS": {
+   "available": true,
+   "reason": null,
+   "flows": 158,
+   "queries": 340
+  }
+ },
+ "world:WLD": {
+  "CHAIN_LIQUIDITY": {
+   "available": true,
+   "reason": null,
+   "chain": "World Chain",
+   "n": 608,
+   "last": {
+    "ts": "2026-10-20T00:00:00Z",
+    "ts_prec": null,
+    "supply_usd": "18144861.38",
+    "ts_prec_reason": "INCOMPLETE"
+   }
+  },
+  "FUNDAMENTALS": {
+   "available": false,
+   "reason": "NO_SUPPORTED_PUBLIC_FEES_ADAPTER",
+   "fees24h": null,
+   "rev24h": null,
+   "holders24h": null
+  },
+  "LENDING": {
+   "available": false,
+   "reason": "NO_MATCHED_LENDING_POOLS",
+   "pools": [],
+   "unmapped": 0
+  },
+  "UNLOCKS": {
+   "available": true,
+   "reason": null,
+   "unlocks_14d": [
+    [
+     "2026-10-21T00:00:00Z",
+     "Investors",
+     "739235.5009484"
+    ],
+    [
+     "2026-10-22T00:00:00Z",
+     "Investors",
+     "739235.5009482"
+    ],
+    [
+     "2026-10-23T00:00:00Z",
+     "Investors",
+     "739235.5009485"
+    ],
+    [
+     "2026-10-24T00:00:00Z",
+     "Investors",
+     "739235.5009481"
+    ],
+    [
+     "2026-10-25T00:00:00Z",
+     "Investors",
+     "739235.5009485"
+    ],
+    [
+     "2026-10-26T00:00:00Z",
+     "Investors",
+     "739235.5009482"
+    ],
+    [
+     "2026-10-27T00:00:00Z",
+     "Investors",
+     "739235.5009484"
+    ],
+    [
+     "2026-10-28T00:00:00Z",
+     "Investors",
+     "739235.5009482"
+    ]
+   ]
+  }
+ }
+}

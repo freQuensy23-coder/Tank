@@ -1,0 +1,569 @@
+{
+ "mta_id": "MTA-01M5D756SW6Q839Z3WHC3AE9D4",
+ "cutoff": "2026-10-20T17:47:00Z",
+ "primary_window": "EVENT",
+ "move_class": "UNKNOWN",
+ "class_confidence": "LOW",
+ "data_confidence": {
+  "class": "MEDIUM",
+  "limiting": {
+   "condition": "derivatives_coverage",
+   "reason": "INCOMPLETE"
+  },
+  "main_unknown": null
+ },
+ "dc_failed": [
+  {
+   "condition": "derivatives_coverage",
+   "reason": "INCOMPLETE"
+  },
+  {
+   "condition": "freshness",
+   "reason": "INCOMPLETE",
+   "collection": "klines",
+   "instrument_id": "coinbase:spot:COW-USD",
+   "metric_family": "price",
+   "cadence_s": 60.0
+  },
+  {
+   "condition": "freshness",
+   "reason": "INCOMPLETE",
+   "collection": "oi",
+   "instrument_id": "binance:perp_linear:COWUSDT",
+   "metric_family": "oi",
+   "cadence_s": 60.0
+  },
+  {
+   "condition": "freshness",
+   "reason": "INCOMPLETE",
+   "collection": "oi",
+   "instrument_id": "bybit:perp_linear:COWUSDT",
+   "metric_family": "oi",
+   "cadence_s": 60.0
+  },
+  {
+   "condition": "freshness",
+   "reason": "INCOMPLETE",
+   "collection": "funding",
+   "instrument_id": "bybit:perp_linear:COWUSDT",
+   "metric_family": "funding",
+   "cadence_s": 60.0
+  },
+  {
+   "condition": "freshness",
+   "collection": "klines",
+   "instrument_id": "coinbase:spot:COW-USD",
+   "kind": null,
+   "cadence_s": 60.0,
+   "age_s": 1440.0,
+   "reason": "INCOMPLETE"
+  },
+  {
+   "condition": "freshness",
+   "collection": "oi",
+   "instrument_id": "binance:perp_linear:COWUSDT",
+   "kind": null,
+   "cadence_s": 60.0,
+   "age_s": 120.0,
+   "reason": "INCOMPLETE"
+  },
+  {
+   "condition": "freshness",
+   "collection": "oi",
+   "instrument_id": "bybit:perp_linear:COWUSDT",
+   "kind": null,
+   "cadence_s": 60.0,
+   "age_s": 120.0,
+   "reason": "INCOMPLETE"
+  },
+  {
+   "condition": "freshness",
+   "collection": "oi",
+   "instrument_id": "binance:perp_linear:COWUSDT",
+   "kind": null,
+   "cadence_s": 60.0,
+   "age_s": 85.274,
+   "reason": "INCOMPLETE"
+  },
+  {
+   "condition": "freshness",
+   "collection": "funding",
+   "instrument_id": "bybit:perp_linear:COWUSDT",
+   "kind": "CURRENT_ESTIMATE",
+   "cadence_s": 60.0,
+   "age_s": 69.578179,
+   "reason": "INCOMPLETE"
+  }
+ ],
+ "relative": {
+  "anchor": {
+   "ts": "2026-10-20T17:20:00Z",
+   "type": "T1",
+   "ref_price": "0.13600000",
+   "price_source": "LAST_TRADE",
+   "price_reason": null
+  },
+  "windows": {
+   "W15M": {
+    "start": "2026-10-20T17:32:00Z",
+    "cutoff": "2026-10-20T17:47:00Z",
+    "r_raw": 0.0,
+    "r_btc_adj": -0.0016835202010940797,
+    "r_eth_adj": -0.0025827649479566173,
+    "r_sector_adj": -0.00574609527605463,
+    "pctile": null,
+    "coverage": {
+     "reference_venue": "coinbase:spot:COW-USD",
+     "complete_24h": true
+    }
+   },
+   "W1H": {
+    "start": "2026-10-20T16:47:00Z",
+    "cutoff": "2026-10-20T17:47:00Z",
+    "r_raw": 0.004441154700221883,
+    "r_btc_adj": 0.0011028154117229683,
+    "r_eth_adj": 0.0007673463355575283,
+    "r_sector_adj": -0.022923594192933217,
+    "pctile": null,
+    "coverage": {
+     "reference_venue": "coinbase:spot:COW-USD",
+     "complete_24h": true
+    }
+   },
+   "W4H": {
+    "start": "2026-10-20T13:47:00Z",
+    "cutoff": "2026-10-20T17:47:00Z",
+    "r_raw": 0.032724505327245135,
+    "r_btc_adj": 0.019684922910737424,
+    "r_eth_adj": 0.010644024056075896,
+    "r_sector_adj": 0.005359756434090035,
+    "pctile": null,
+    "coverage": {
+     "reference_venue": "coinbase:spot:COW-USD",
+     "complete_24h": true
+    }
+   },
+   "W24H": {
+    "start": "2026-10-19T17:47:00Z",
+    "cutoff": "2026-10-20T17:47:00Z",
+    "r_raw": 0.06347962382445149,
+    "r_btc_adj": 0.051646389451418306,
+    "r_eth_adj": 0.03988527144874432,
+    "r_sector_adj": 0.03430376237247068,
+    "pctile": null,
+    "coverage": {
+     "reference_venue": "coinbase:spot:COW-USD",
+     "complete_24h": true
+    }
+   },
+   "EVENT": {
+    "start": "2026-10-20T17:20:00Z",
+    "cutoff": "2026-10-20T17:47:00Z",
+    "r_raw": -0.0014705882352941176,
+    "r_btc_adj": -0.0026624158137857953,
+    "r_eth_adj": -0.0024293962125765452,
+    "r_sector_adj": -0.02883533712844922,
+    "pctile": null,
+    "coverage": {
+     "reference_venue": "coinbase:spot:COW-USD",
+     "complete_24h": true
+    }
+   }
+  },
+  "beta": null,
+  "repricing": null,
+  "market_context": "NEUTRAL"
+ },
+ "spot": {
+  "W15M": {
+   "start": "2026-10-20T17:32:00Z",
+   "cutoff": "2026-10-20T17:47:00Z",
+   "class": null,
+   "direction": null,
+   "cvd": "256.80000000",
+   "buy_share": 1.0,
+   "n_complete": 2,
+   "covered_share_est": 0.5276639860804788,
+   "venues": [
+    {
+     "venue": "binance",
+     "cvd": "256.80000000",
+     "volume_native": "256.80000000",
+     "buy_share": 1.0,
+     "sign": 0
+    },
+    {
+     "venue": "coinbase",
+     "cvd": "0",
+     "volume_native": "0",
+     "buy_share": null,
+     "sign": 0
+    }
+   ],
+   "excluded": [
+    {
+     "venue": "kraken",
+     "reason": "INCOMPLETE",
+     "detail": "FULL_MINUTE_COVERAGE_INCOMPLETE"
+    }
+   ]
+  },
+  "W1H": {
+   "start": "2026-10-20T16:47:00Z",
+   "cutoff": "2026-10-20T17:47:00Z",
+   "class": null,
+   "direction": null,
+   "cvd": "28251.50000000",
+   "buy_share": 0.6638495703019428,
+   "n_complete": 2,
+   "covered_share_est": 0.9894470238984575,
+   "venues": [
+    {
+     "venue": "binance",
+     "cvd": "31818.10000000",
+     "volume_native": "78514.70000000",
+     "buy_share": 0.7026251135137751,
+     "sign": 1
+    },
+    {
+     "venue": "coinbase",
+     "cvd": "-3566.60000000",
+     "volume_native": "7697.00000000",
+     "buy_share": 0.2683123294790178,
+     "sign": 0
+    }
+   ],
+   "excluded": [
+    {
+     "venue": "kraken",
+     "reason": "INCOMPLETE",
+     "detail": "FULL_MINUTE_COVERAGE_INCOMPLETE"
+    }
+   ]
+  },
+  "W4H": {
+   "start": "2026-10-20T13:47:00Z",
+   "cutoff": "2026-10-20T17:47:00Z",
+   "class": null,
+   "direction": null,
+   "cvd": "126151.60000000",
+   "buy_share": 0.6348984708064805,
+   "n_complete": 2,
+   "covered_share_est": 0.9921954102135693,
+   "venues": [
+    {
+     "venue": "binance",
+     "cvd": "106540.80000000",
+     "volume_native": "427678.00000000",
+     "buy_share": 0.6245572603687821,
+     "sign": 1
+    },
+    {
+     "venue": "coinbase",
+     "cvd": "19610.80000000",
+     "volume_native": "39901.80000000",
+     "buy_share": 0.7457382874958022,
+     "sign": 1
+    }
+   ],
+   "excluded": [
+    {
+     "venue": "kraken",
+     "reason": "INCOMPLETE",
+     "detail": "FULL_MINUTE_COVERAGE_INCOMPLETE"
+    }
+   ]
+  },
+  "W24H": {
+   "start": "2026-10-19T17:47:00Z",
+   "cutoff": "2026-10-20T17:47:00Z",
+   "class": null,
+   "direction": null,
+   "cvd": "152514.90000000",
+   "buy_share": 0.8244430442165221,
+   "n_complete": 1,
+   "covered_share_est": null,
+   "venues": [
+    {
+     "venue": "coinbase",
+     "cvd": "152514.90000000",
+     "volume_native": "235041.10000000",
+     "buy_share": 0.8244430442165221,
+     "sign": 1
+    }
+   ],
+   "excluded": [
+    {
+     "venue": "binance",
+     "reason": "INCOMPLETE",
+     "detail": "FULL_MINUTE_COVERAGE_INCOMPLETE"
+    },
+    {
+     "venue": "kraken",
+     "reason": "INCOMPLETE",
+     "detail": "FULL_MINUTE_COVERAGE_INCOMPLETE"
+    }
+   ]
+  },
+  "EVENT": {
+   "start": "2026-10-20T17:20:00Z",
+   "cutoff": "2026-10-20T17:47:00Z",
+   "class": null,
+   "direction": null,
+   "cvd": "-1298.70000000",
+   "buy_share": 0.24423963133640553,
+   "n_complete": 2,
+   "covered_share_est": 0.8598652249755965,
+   "venues": [
+    {
+     "venue": "binance",
+     "cvd": "-777.70000000",
+     "volume_native": "1291.30000000",
+     "buy_share": 0.19886935646247966,
+     "sign": 0
+    },
+    {
+     "venue": "coinbase",
+     "cvd": "-521.00000000",
+     "volume_native": "1247.60000000",
+     "buy_share": 0.29119910227637064,
+     "sign": 0
+    }
+   ],
+   "excluded": [
+    {
+     "venue": "kraken",
+     "reason": "INCOMPLETE",
+     "detail": "FULL_MINUTE_COVERAGE_INCOMPLETE"
+    }
+   ]
+  }
+ },
+ "derivatives": {
+  "W15M": {
+   "sync": {
+    "venues": null,
+    "oi_native_start": null,
+    "oi_native_end": null,
+    "oi_native_chg_pct": null,
+    "oi_class": null,
+    "start_observed_at": null,
+    "end_observed_at": null
+   },
+   "funding": [
+    {
+     "venue": "binance",
+     "instrument_id": "binance:perp_linear:COWUSDT",
+     "funding_8h_eq": "0.00010000",
+     "funding_vs_normal": "WITHIN"
+    },
+    {
+     "venue": "bybit",
+     "instrument_id": "bybit:perp_linear:COWUSDT",
+     "funding_8h_eq": "0.00010",
+     "funding_vs_normal": "WITHIN"
+    }
+   ],
+   "liquidations": {
+    "complete_venues_total": {
+     "long": null,
+     "short": null
+    },
+    "sampled_venues_min": {
+     "long": null,
+     "short": null
+    },
+    "complete_venues_total_reasons": {
+     "long": "INCOMPLETE",
+     "short": "INCOMPLETE"
+    },
+    "sampled_venues_min_reasons": {
+     "long": "INCOMPLETE",
+     "short": "INCOMPLETE"
+    }
+   }
+  },
+  "W1H": {
+   "sync": {
+    "venues": null,
+    "oi_native_start": null,
+    "oi_native_end": null,
+    "oi_native_chg_pct": null,
+    "oi_class": null,
+    "start_observed_at": null,
+    "end_observed_at": null
+   },
+   "funding": [
+    {
+     "venue": "binance",
+     "instrument_id": "binance:perp_linear:COWUSDT",
+     "funding_8h_eq": "0.00010000",
+     "funding_vs_normal": "WITHIN"
+    },
+    {
+     "venue": "bybit",
+     "instrument_id": "bybit:perp_linear:COWUSDT",
+     "funding_8h_eq": "0.00010",
+     "funding_vs_normal": "WITHIN"
+    }
+   ],
+   "liquidations": {
+    "complete_venues_total": {
+     "long": null,
+     "short": null
+    },
+    "sampled_venues_min": {
+     "long": null,
+     "short": null
+    },
+    "complete_venues_total_reasons": {
+     "long": "INCOMPLETE",
+     "short": "INCOMPLETE"
+    },
+    "sampled_venues_min_reasons": {
+     "long": "INCOMPLETE",
+     "short": "INCOMPLETE"
+    }
+   }
+  },
+  "W4H": {
+   "sync": {
+    "venues": null,
+    "oi_native_start": null,
+    "oi_native_end": null,
+    "oi_native_chg_pct": null,
+    "oi_class": null,
+    "start_observed_at": null,
+    "end_observed_at": null
+   },
+   "funding": [
+    {
+     "venue": "binance",
+     "instrument_id": "binance:perp_linear:COWUSDT",
+     "funding_8h_eq": "0.00010000",
+     "funding_vs_normal": "WITHIN"
+    },
+    {
+     "venue": "bybit",
+     "instrument_id": "bybit:perp_linear:COWUSDT",
+     "funding_8h_eq": "0.00010",
+     "funding_vs_normal": "WITHIN"
+    }
+   ],
+   "liquidations": {
+    "complete_venues_total": {
+     "long": null,
+     "short": null
+    },
+    "sampled_venues_min": {
+     "long": null,
+     "short": null
+    },
+    "complete_venues_total_reasons": {
+     "long": "INCOMPLETE",
+     "short": "INCOMPLETE"
+    },
+    "sampled_venues_min_reasons": {
+     "long": "INCOMPLETE",
+     "short": "INCOMPLETE"
+    }
+   }
+  },
+  "W24H": {
+   "sync": {
+    "venues": null,
+    "oi_native_start": null,
+    "oi_native_end": null,
+    "oi_native_chg_pct": null,
+    "oi_class": null,
+    "start_observed_at": null,
+    "end_observed_at": null
+   },
+   "funding": [
+    {
+     "venue": "binance",
+     "instrument_id": "binance:perp_linear:COWUSDT",
+     "funding_8h_eq": "0.00010000",
+     "funding_vs_normal": "WITHIN"
+    },
+    {
+     "venue": "bybit",
+     "instrument_id": "bybit:perp_linear:COWUSDT",
+     "funding_8h_eq": "0.00010",
+     "funding_vs_normal": "WITHIN"
+    }
+   ],
+   "liquidations": {
+    "complete_venues_total": {
+     "long": null,
+     "short": null
+    },
+    "sampled_venues_min": {
+     "long": null,
+     "short": null
+    },
+    "complete_venues_total_reasons": {
+     "long": "INCOMPLETE",
+     "short": "INCOMPLETE"
+    },
+    "sampled_venues_min_reasons": {
+     "long": "INCOMPLETE",
+     "short": "INCOMPLETE"
+    }
+   }
+  },
+  "EVENT": {
+   "sync": {
+    "venues": null,
+    "oi_native_start": null,
+    "oi_native_end": null,
+    "oi_native_chg_pct": null,
+    "oi_class": null,
+    "start_observed_at": null,
+    "end_observed_at": null
+   },
+   "funding": [
+    {
+     "venue": "binance",
+     "instrument_id": "binance:perp_linear:COWUSDT",
+     "funding_8h_eq": "0.00010000",
+     "funding_vs_normal": "WITHIN"
+    },
+    {
+     "venue": "bybit",
+     "instrument_id": "bybit:perp_linear:COWUSDT",
+     "funding_8h_eq": "0.00010",
+     "funding_vs_normal": "WITHIN"
+    }
+   ],
+   "liquidations": {
+    "complete_venues_total": {
+     "long": null,
+     "short": null
+    },
+    "sampled_venues_min": {
+     "long": null,
+     "short": null
+    },
+    "complete_venues_total_reasons": {
+     "long": "INCOMPLETE",
+     "short": "INCOMPLETE"
+    },
+    "sampled_venues_min_reasons": {
+     "long": "INCOMPLETE",
+     "short": "INCOMPLETE"
+    }
+   }
+  }
+ },
+ "supply": {
+  "supply_in_evidence": "UNKNOWN",
+  "unavailable": {
+   "exchange_inventory": "INCOMPLETE",
+   "flows": "INCOMPLETE",
+   "unlocks": "INCOMPLETE",
+   "lending": "INCOMPLETE",
+   "stablecoin_chain": "INCOMPLETE"
+  }
+ }
+}
