@@ -652,7 +652,6 @@ TABLE_COLUMNS["ops.capture_tier_transitions"] = {
     "config_version": "text",
     "code_version": "text",
 }
-APPEND_ONLY = APPEND_ONLY | {"ops.capture_tier_transitions"}
 
 # Explicit timestamp projection inventory; no origin/precision policy is inferred here.
 TIMESTAMP_PRECISION_FIELDS = {
