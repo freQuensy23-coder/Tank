@@ -233,10 +233,46 @@ def article_links(payload, feed):
     return rows
 
 
+BYBIT_BOILERPLATE = re.compile(
+    r"Bybit is committed to maintaining a secure and reliable trading environment for our community\.\s*"
+)
+
+
+def contentful_text(node):
+    """Text of a Contentful rich-text document, one block per paragraph or heading."""
+    if isinstance(node, dict):
+        if node.get("nodeType") == "text":
+            return node.get("value", "")
+        parts = [contentful_text(child) for child in node.get("content", [])]
+        joiner = " " if node.get("nodeType") in {"paragraph", "hyperlink", "list-item"} else "\n"
+        return joiner.join(part for part in parts if part.strip())
+    return ""
+
+
 def article(payload, *, source_id=None):
     tree = HTMLParser(payload)
     title_node = tree.css_first("h1")
-    if source_id == "S08":
+    body_text = None
+    if source_id == "S01":
+        # SEC pages carry a "More in this Section" side menu; the release is the body field.
+        authored = tree.css("main .field--name-body")
+        if len(authored) != 1 or not text(authored[0].html):
+            raise ValueError("SEC release requires one nonempty body field")
+        body = authored[0]
+    elif source_id == "S13":
+        # Robinhood renders the release from its Contentful entry; the HTML around it is menus and footer.
+        script = tree.css_first('script#__NEXT_DATA__[type="application/json"]')
+        entry = (
+            json.loads(script.text()).get("props", {}).get("pageProps", {}).get("article") if script else None
+        )
+        content = (entry or {}).get("fields", {}).get("content")
+        body_text = " ".join(contentful_text(content).split()) if content else ""
+        if not body_text:
+            raise ValueError("Robinhood article requires its Contentful content")
+        body = None
+        if not title_node and (entry or {}).get("fields", {}).get("title"):
+            title_node = HTMLParser("<h1>" + entry["fields"]["title"] + "</h1>").css_first("h1")
+    elif source_id == "S08":
         # DTCC's <article> elements are contact cards and related-news cards.
         # Authored release blocks are separate ordered rich-text components.
         authored = tree.css("main .content-item--richtextblock .rtf")
@@ -336,7 +372,7 @@ def article(payload, *, source_id=None):
     fields = timestamp_fields(timestamp, date_only=basis == "BLACKROCK_CALENDAR_PUBLICATION_META")
     return {
         "title": title,
-        "text": text(body.html if body else payload),
+        "text": body_text if body_text is not None else text(body.html if body else payload),
         **fields,
         "published_at_basis": basis,
         "published_at_missing_reason": None
@@ -466,7 +502,8 @@ def _json_items(payload, source_id):
             {
                 "external_id": r["url"],
                 "title": r["title"],
-                "text": text(r.get("description", "")),
+                # The generic opening sentence is not content; no description keeps the title.
+                "text": BYBIT_BOILERPLATE.sub("", text(r.get("description", ""))).strip() or r["title"],
                 "url": r["url"],
                 **timestamp_fields(r.get("publishTime") or r.get("dateTimestamp")),
                 "tags": r.get("tags"),

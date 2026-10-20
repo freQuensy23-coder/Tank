@@ -1450,7 +1450,7 @@ async def test_missing_publisher_article_keeps_raw_error_and_continues_valid_ent
             tmp_path,
             [
                 {
-                    "source_id": "S13",
+                    "source_id": "S20",
                     "feeds": [
                         {
                             "kind": "html",
@@ -1464,20 +1464,20 @@ async def test_missing_publisher_article_keeps_raw_error_and_continues_valid_ent
         http=http,
     )
     try:
-        result = await service.poll_once("S13")
+        result = await service.poll_once("S20")
         assert result["status"] == "DEGRADED" and result["items"] == 1
         rows = [r for (table, _), r in repo.rows.items() if table == "ingest.source_items"]
         assert len(rows) == 1 and rows[0]["title"] == "Valid publisher release"
-        state = await repo.get("ops.source_checkpoints", "S13:0")
+        state = await repo.get("ops.source_checkpoints", "S20:0")
         failure = state["article_errors"]["https://publisher.example/newsroom/missing"]
         assert state["status"] == "DEGRADED" and failure["http_status"] == 404
         assert failure["payload_sha256"] == sha256(b"<html>Publisher removed this article</html>")
         assert len(list(Path(tmp_path).rglob("*.zst"))) == 1
         assert not await service.captured(
-            source_id="S13", external_id="https://publisher.example/newsroom/missing"
+            source_id="S20", external_id="https://publisher.example/newsroom/missing"
         )
         assert len([r for r in calls if r.url.path.endswith("/missing")]) == 1
-        await service.poll_once("S13")
+        await service.poll_once("S20")
         assert len([r for r in calls if r.url.path.endswith("/missing")]) == 2
         assert all(not r.headers.get("If-None-Match") for r in calls if r.url.path == "/newsroom/")
         assert len([r for r in calls if r.url.path.endswith("/valid")]) == 1
@@ -1510,7 +1510,7 @@ async def test_empty_200_article_isolated_without_suppressing_valid_sibling(tmp_
             tmp_path,
             [
                 {
-                    "source_id": "S13",
+                    "source_id": "S20",
                     "feeds": [
                         {
                             "kind": "html",
@@ -1524,15 +1524,15 @@ async def test_empty_200_article_isolated_without_suppressing_valid_sibling(tmp_
         http=http,
     )
     try:
-        result = await service.poll_once("S13")
+        result = await service.poll_once("S20")
         assert result["status"] == "DEGRADED" and result["items"] == 1
-        state = await repo.get("ops.source_checkpoints", "S13:0")
+        state = await repo.get("ops.source_checkpoints", "S20:0")
         error = state["article_errors"]["https://publisher.example/newsroom/empty"]
         assert error["reason"] == "EMPTY_ARTICLE_BODY" and error["http_status"] == 200
         assert error["payload_sha256"] == sha256(empty_body)
         assert len(list(Path(tmp_path).rglob("*.zst"))) == 1
         assert not await service.captured(
-            source_id="S13", external_id="https://publisher.example/newsroom/empty"
+            source_id="S20", external_id="https://publisher.example/newsroom/empty"
         )
         assert len([r for (table, _), r in repo.rows.items() if table == "ingest.source_items"]) == 1
     finally:
@@ -1562,7 +1562,7 @@ async def test_seen_full_article_empty_index_deduplicates_before_new_content_gua
     repo = Repo()
     http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
     source = {
-        "source_id": "S13",
+        "source_id": "S20",
         "feeds": [
             {
                 "kind": "html",
@@ -1573,12 +1573,12 @@ async def test_seen_full_article_empty_index_deduplicates_before_new_content_gua
     }
     service = SourceService(repo, settings(tmp_path, [source]), http=http)
     try:
-        assert (await service.poll_once("S13"))["status"] == "HEALTHY"
+        assert (await service.poll_once("S20"))["status"] == "HEALTHY"
         original = next(r for (table, _), r in repo.rows.items() if table == "ingest.source_items")
         original_hash = original["content_hash"]
         original_text = original["text"]
         phase[0] = 1
-        result = await service.poll_once("S13")
+        result = await service.poll_once("S20")
         assert result["status"] == "HEALTHY" and result["items"] == 1
         known = await repo.get("ingest.source_items", original["item_id"])
         assert known == original
@@ -1586,13 +1586,13 @@ async def test_seen_full_article_empty_index_deduplicates_before_new_content_gua
         assert len([r for (table, _), r in repo.rows.items() if table == "ingest.source_items"]) == 2
         with pytest.raises(ValueError, match="no normalized content"):
             await service.ingest(
-                source, captured(service, "S13", {"external_id": "new-empty", "title": "", "text": ""})
+                source, captured(service, "S20", {"external_id": "new-empty", "title": "", "text": ""})
             )
         changed = await service.ingest(
             source,
             captured(
                 service,
-                "S13",
+                "S20",
                 {
                     "external_id": known["external_id"],
                     "title": "Changed index title",
@@ -1813,7 +1813,7 @@ async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_fi
         return httpx.Response(200, text="<article><h1>Release</h1><p>Full release evidence</p></article>")
 
     source = {
-        "source_id": "S13",
+        "source_id": "S20",
         "feeds": [
             {
                 "kind": "html",
@@ -1835,7 +1835,7 @@ async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_fi
                 await asyncio.sleep(0.005)
 
         await asyncio.wait_for(three_indexes(), 1)
-        state = await repo.get("ops.source_checkpoints", "S13:0")
+        state = await repo.get("ops.source_checkpoints", "S20:0")
         first_seen = state["pending_batches"][0]["rows"][0]["observed_at"]
         assert not any(c == "ingest.source_items" for c, _ in repo.rows)
         assert parse_time(first_seen) < parse_time(calls[-1])
@@ -1843,12 +1843,12 @@ async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_fi
         await asyncio.wait_for(run, 1)
         release.set()
         restarted = SourceService(repo, settings(tmp_path, [source]), http=http)
-        await restarted.poll_once("S13")
+        await restarted.poll_once("S20")
         row = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
         assert row["observed_at"] == first_seen
         # Re-reading the same index while the article is pending is not a new observation.
         assert row["observation_count"] == 1
-        assert not (await repo.get("ops.source_checkpoints", "S13:0"))["pending_batches"]
+        assert not (await repo.get("ops.source_checkpoints", "S20:0"))["pending_batches"]
 
 
 @pytest.mark.asyncio
@@ -2035,7 +2035,7 @@ def test_publication_meta_and_ambiguous_articles_preserve_precision():
     assert row["published_at_precision"] == "BUCKET(1d)"
     blackrock = '<article>Release</article><meta name="publicationDate" content="1791936000000">'
     assert parsers.article(blackrock, source_id="S18")["published_at_precision"] == "BUCKET(1d)"
-    assert parsers.article(blackrock, source_id="S13")["published_at"] is None
+    assert parsers.article(blackrock, source_id="S20")["published_at"] is None
     competing = (
         '<article><h1>Release</h1></article><script type="application/ld+json">'
         + json.dumps(
@@ -2106,7 +2106,7 @@ async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path):
     from tank.util import iso
 
     source = {
-        "source_id": "S13",
+        "source_id": "S20",
         "feeds": [{"url": "https://example.org/index", "kind": "html", "article_pattern": "^/article/"}],
     }
     repo = Repo()
@@ -2123,7 +2123,7 @@ async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path):
         state = {"etag": "older-index", "fetched_at": iso()}
         await svc.poller.queue_rows(
             state,
-            "S13:0",
+            "S20:0",
             source,
             source["feeds"][0],
             [
@@ -2139,10 +2139,10 @@ async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path):
             "captured-before-restart",
             state["fetched_at"],
         )
-        await repo.put("ops.source_checkpoints", "S13:0", state)
-        result = await svc.poll_once("S13")
+        await repo.put("ops.source_checkpoints", "S20:0", state)
+        result = await svc.poll_once("S20")
         assert result["items"] == 1 and result["status"] == "HEALTHY"
-        assert not (await repo.get("ops.source_checkpoints", "S13:0"))["pending_batches"]
+        assert not (await repo.get("ops.source_checkpoints", "S20:0"))["pending_batches"]
         assert len(repo.jobs) == 1
 
 
@@ -2813,3 +2813,59 @@ def test_source_http_client_uses_standard_tls_hello(tmp_path):
     assert tls_context().post_handshake_auth is True
     svc = SourceService(Repo(), settings(tmp_path, []))
     assert svc.http._transport._pool._ssl_context.post_handshake_auth is True
+
+
+def test_article_text_without_site_boilerplate():
+    sec = (
+        b'<main><div class="main-content__sidenav">More in this Section Press Release Other release</div>'
+        b'<div class="main-content__main"><h1>SEC charges firm</h1>'
+        b'<div class="field--name-body"><p>The Commission today charged a firm.</p></div>'
+        b"<p>Last Reviewed or Updated: Oct. 20, 2026</p></div></main>"
+    )
+    assert parsers.article(sec, source_id="S01")["text"] == "The Commission today charged a firm."
+    entry = {
+        "fields": {
+            "title": "Robinhood launches X",
+            "content": {
+                "nodeType": "document",
+                "content": [
+                    {"nodeType": "paragraph", "content": [{"nodeType": "text", "value": "First paragraph."}]},
+                    {
+                        "nodeType": "paragraph",
+                        "content": [{"nodeType": "text", "value": "Second paragraph."}],
+                    },
+                ],
+            },
+        }
+    }
+    robinhood = (
+        "<div>All News Ideas Education Design Crypto</div><h1>Robinhood launches X</h1>"
+        '<script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps({"props": {"pageProps": {"article": entry}}})
+        + "</script>"
+    ).encode()
+    row = parsers.article(robinhood, source_id="S13")
+    assert row["text"] == "First paragraph. Second paragraph." and row["title"] == "Robinhood launches X"
+    bybit = {
+        "retCode": 0,
+        "result": {
+            "list": [
+                {
+                    "title": "Delisting of ABC",
+                    "url": "https://announcements.bybit.com/a",
+                    "description": "Bybit is committed to maintaining a secure and reliable trading environment for our community. ",
+                    "publishTime": 1792238400000,
+                },
+                {
+                    "title": "New listing DEF",
+                    "url": "https://announcements.bybit.com/b",
+                    "description": "",
+                    "publishTime": 1792238400000,
+                },
+            ]
+        },
+    }
+    assert [row["text"] for row in parsers.json_items(bybit, "S11")] == [
+        "Delisting of ABC",
+        "New listing DEF",
+    ]
