@@ -30,6 +30,7 @@ services:
       TANK_X_STORAGE_STATE_PATH: /run/secrets/x_session
       TANK_BACKUP_DIR: /backup
       TANK_X_ENABLED: ${TANK_X_ENABLED:-false}
+      TANK_TRADES_LOADER_DIR: /data/trades_loader
     secrets:
     - oma_api_key
     - opencode_api_key
@@ -41,6 +42,7 @@ services:
     volumes:
     - tank-data:/data
     - sealed-replay-evidence:/data/replay/evidence
+    - trades-loader:/data/trades_loader:ro
     - tank-browser:/browser
     - codex-auth:/codex-auth
     - backup:/backup
@@ -56,6 +58,23 @@ services:
     logging: *id001
     networks:
     - tank-net
+  trades-loader:
+    image: tank-trades-loader:latest
+    build:
+      context: trades_loader
+    restart: unless-stopped
+    command:
+    - -registry
+    - /config/registry.yaml
+    - -out
+    - /data/trades_loader
+    volumes:
+    - trades-loader:/data/trades_loader
+    - type: bind
+      source: ${TANK_CONFIG_PATH:-./config}
+      target: /config
+      read_only: true
+    logging: *id001
   openma:
     image: tank-openma:85d5361f535c7221de975838dc48444e468cc02e-tank5-startup
     build:
@@ -172,6 +191,7 @@ volumes:
   pg-data: {}
   openma-data: {}
   sealed-replay-evidence: {}
+  trades-loader: {}
   backup:
     driver: local
     driver_opts:

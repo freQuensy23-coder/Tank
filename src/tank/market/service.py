@@ -4,6 +4,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import time
 from contextlib import suppress
 from copy import deepcopy
@@ -21,6 +22,8 @@ from .adapters import VenueAdapter
 from .archive import BookArchive, TradeArchive
 from .capture import event_anchor
 from .flow import FlowAccumulator
+from .loader_feed import SOURCE as LOADER_SOURCE
+from .loader_feed import LoaderFeed
 from .rate_gate import PriorityGate, binance_request_weight, public_request_constraints
 from .streams import STREAM_PING_INTERVAL_S, endpoint_keys, stream_group_loop
 
@@ -59,6 +62,8 @@ class MarketService:
     def __init__(self, repo, settings, *, http=None):
         self.repo = repo
         self.settings = settings
+        # Flow-bar keys the trades_loader made complete; other writers never replace them.
+        self._loader_minutes = {}
         self.http = http or httpx.AsyncClient(timeout=30, headers={"User-Agent": settings.user_agent})
         self._owns_http = http is None
         registry = settings.load_config("registry")
@@ -181,6 +186,8 @@ class MarketService:
                     ).fields(field)
                 )
         if collection == "mkt.flow_bars_1m":
+            if str(key) in self._loader_minutes and row.get("capture_method") != LOADER_SOURCE:
+                return row
             row = dict(row, **norm.timestamp_fields("minute_start", row["minute_start"], "BUCKET(60s)"))
             if row.get("received_ts") is not None:
                 row["received_ts_prec"] = "COLLECTION_ONLY"
@@ -4202,6 +4209,30 @@ class MarketService:
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), 60)
 
+    async def _loader_feed_loop(self, stop):
+        """Turn the trades_loader's sealed minutes into complete flow bars (reads files only)."""
+        root = os.environ.get("TANK_TRADES_LOADER_DIR", "/data/trades_loader")
+        if not os.path.isdir(root):
+            log.info("trades_loader output %s absent; flow bars come from streams only", root)
+            return
+        feed = LoaderFeed(root)
+        while not stop.is_set():
+            now = utcnow()
+            for instrument in list(self.instruments.values()):
+                try:
+                    rows = await asyncio.to_thread(feed.read, instrument, now)
+                except Exception:
+                    log.exception("trades_loader feed failed for %s", instrument["instrument_id"])
+                    continue
+                for key, row in rows:
+                    self._loader_minutes[key[0] + ":" + key[1]] = parse_time(key[1])
+                    self.flow.bars.pop(key, None)
+                    await self._put("mkt.flow_bars_1m", key[0] + ":" + key[1], row)
+            horizon = now - timedelta(hours=27)
+            self._loader_minutes = {k: m for k, m in self._loader_minutes.items() if m >= horizon}
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(stop.wait(), 10)
+
     async def run(self, stop):
         self._stop = stop
         if self.settings.replay:
@@ -4226,6 +4257,7 @@ class MarketService:
             workers = [asyncio.create_task(self._instrument_loop(inst)) for inst in self.instruments.values()]
             workers.append(asyncio.create_task(self._warm_series_counts()))
             workers.append(asyncio.create_task(self._supply_loop()))
+            workers.append(asyncio.create_task(self._loader_feed_loop(stop)))
             workers.append(
                 asyncio.create_task(
                     self.bootstrap_history(days=int(self.thresholds.get("historical_lookback_days", 90)))
