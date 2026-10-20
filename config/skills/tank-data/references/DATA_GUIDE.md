@@ -1648,6 +1648,7 @@ Ticker natural identity is instrument plus timestamp; funding identity is instru
 | `date` | `timestamptz` |
 | `date_prec` | `text` |
 | `date_prec_reason` | `text` |
+| `evidence_mode` | `text` |
 | `instrument_id` | `text` |
 | `kind` | `text` |
 | `label` | `text` |
@@ -1662,8 +1663,13 @@ Ticker natural identity is instrument plus timestamp; funding identity is instru
 | `recorded_at_prec` | `text` |
 | `recorded_at_prec_reason` | `text` |
 | `sale_inferred` | `boolean` |
+| `schedule_as_of` | `timestamptz` |
+| `schedule_as_of_prec` | `text` |
+| `schedule_as_of_prec_reason` | `text` |
 | `token_id` | `text` |
 | `semantic_fingerprint` | `text` |
+
+`evidence_mode` = `HISTORICAL_RECONSTRUCTION` marks a schedule captured after the fact (`observed_at` is the capture time) that was public by `schedule_as_of`; such a row is known from the end of its `schedule_as_of` bucket. An unlock is potential supply, never a sale.
 
 ## mkt.hot_tokens
 
