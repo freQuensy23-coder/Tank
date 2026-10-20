@@ -1,5 +1,5 @@
-alerts_chat_id: '-1004408952606'
-ops_chat_id: '-1004481434974'
+alerts_chat_id: '-5554997594'
+ops_chat_id: '-1003917191977'
 parse_mode: HTML
 max_attempts: 5
 secrets: Docker secret telegram_bot_token at /run/secrets/telegram_bot_token
