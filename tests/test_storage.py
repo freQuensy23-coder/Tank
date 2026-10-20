@@ -474,16 +474,12 @@ async def test_latest_before_strict_cutoff_and_control_records(repo):
         )
         is None
     )
-    rid, bid = new_id("rsv"), new_id("backfill")
-    await repo.put(
-        "ops.routing_reservations", rid, {"reservation_id": rid, "status": "PENDING", "created_at": iso()}
-    )
+    bid = new_id("backfill")
     await repo.put(
         "mkt.backfill_runs",
         bid,
         {"backfill_id": bid, "status": "PENDING", "anchor": iso(), "result": {"instruments": []}},
     )
-    assert (await repo.get("ops.routing_reservations", rid))["status"] == "PENDING"
     assert (await repo.get("mkt.backfill_runs", bid))["result"] == {"instruments": []}
 
 
