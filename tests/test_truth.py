@@ -1271,6 +1271,34 @@ def test_oi_fact_reports_venue_decomposition_when_synchronized_class_unavailable
     assert next(f["text"] for f in facts if f["metric"] == "derivatives.oi_native_chg_pct").endswith("; class MIXED.")
 
 
+def test_hourly_archive_bars_with_binance_close_time_join_minute_bars_on_the_hour():
+    """F-16: Binance closeTime is hh:59:59.999; prices are keyed by the bar boundary (open + interval)."""
+    from tank.analysis.truth import _price_groups
+
+    def bar(open_time, interval, close, close_time=None):
+        row = {"instrument_id": "binance:spot:BTCUSDT", "token_id": "bitcoin:BTC", "market_type": "SPOT",
+               "open_time": open_time, "interval_s": interval, "complete": True, "c": close}
+        if close_time:
+            row["close_time"] = close_time
+        return row
+
+    snapshot = {
+        "cutoff": "2026-09-01T00:02:00Z",
+        "klines": [
+            bar("2026-08-31T22:00:00Z", 3600, "100", "2026-08-31T22:59:59.999Z"),
+            bar("2026-08-31T23:00:00Z", 3600, "101", "2026-08-31T23:59:59.999Z"),
+            bar("2026-09-01T00:00:00Z", 60, "102"),
+            bar("2026-09-01T00:01:00Z", 60, "103"),
+        ],
+    }
+    prices = _price_groups(snapshot)["binance:spot:BTCUSDT"]
+    assert sorted(iso(t) for t in prices) == [
+        "2026-08-31T23:00:00Z", "2026-09-01T00:00:00Z", "2026-09-01T00:01:00Z", "2026-09-01T00:02:00Z",
+    ]
+    hourly = [t for t in prices if t.minute == 0 and t.second == 0]
+    assert len(hourly) == 2
+
+
 def test_null_measurements_have_companion_context_without_wrapping_literal_fields():
     from runpy import run_path
 
