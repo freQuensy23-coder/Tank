@@ -31,3 +31,17 @@ Production `tank` and `oma` were backed up the way HLD §5/§8 and `deploy/backu
 - Open points, raised with the lead:
   1. The spec says nothing on how long backup snapshots are kept. They grow by about 0.8 GB a day.
   2. `/var/backups/tank` is on the production disk, while HLD §8 says "an external disk on the host".
+
+## Run 2: full materialized restore (18:11–18:17Z, [run2-full/](run2-full/))
+
+By 18:11Z there was 25–28 GB free, so this run restored the same snapshot `tank-2026-10-20` with `FULL=1`. Every table was materialized, including all `mkt.klines_1m` and `mkt.oi_obs` partitions: 7,127/7,127 dump entries; restored sizes tank 8.83 GB, oma 22 MB.
+
+- `pg_restore --exit-on-error` completed. Manifest hashes match (14/14).
+- Against **current** production, 381/393 tables match by row count plus sorted-row hash ([run2-full/tables.tsv](run2-full/tables.tsv)).
+- The other 12 tables changed in production after the 16:52Z snapshot. 10 are OpenMA tables (agent and skill registration, sessions); the other two are `ingest.source_items` content and `ops.agent_sessions` (same row counts, archived sessions).
+- For those 12, the restored content was compared with the dump itself (`pg_restore -a` stream): 12/12 identical ([run2-full/drift-vs-dump.tsv](run2-full/drift-vs-dump.tsv)).
+- So all 393 restored tables equal the backup, and the differences from production are only writes made after the backup.
+- Migration 038 rehearsal on the restored production copy: it removed exactly 4,705 `METRIC_SEMANTICS` rows, and `ARCHIVE_RETRY` rows were not touched ([run2-full/after-sql.log](run2-full/after-sql.log), [run2-full/after-sql-counts.txt](run2-full/after-sql-counts.txt)).
+- The restore container and volume were deleted at 18:17:18Z.
+
+Snapshot retention: `tank.backup.prune_backup_snapshots` keeps the newest `backup_snapshots_kept` complete snapshots (lead ruling: 3 on the shared disk).
