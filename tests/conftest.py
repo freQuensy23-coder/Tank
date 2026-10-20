@@ -74,7 +74,28 @@ def test_database_hosts(environment):
     return hosts
 
 
+def check_test_databases(environment):
+    """Tests truncate and drop; they run only on dedicated tank_test_* databases.
+
+    Each workstream uses its own database, e.g. tank_test_<session>, created on the
+    shared cluster; the production databases tank, oma and tank_replay are refused.
+    """
+    from psycopg.conninfo import conninfo_to_dict
+
+    for name in sorted(TEST_DATABASE_VARIABLES):
+        value = environment.get(name)
+        if not value:
+            continue
+        try:
+            database = conninfo_to_dict(value).get("dbname") or ""
+        except Exception:
+            raise pytest.UsageError(f"{name} is not a valid PostgreSQL URL") from None
+        if not database.startswith("tank_test"):
+            raise pytest.UsageError(f"{name} must name a dedicated tank_test_* database, not {database!r}")
+
+
 # Run before test-module collection: collection cannot inherit operator settings.
+check_test_databases(os.environ)
 scrub_inherited_environment(os.environ)
 # Sandbox home/config lookup as well as explicit settings; browser binaries are
 # public cached executables, so preserve only their known cache location.

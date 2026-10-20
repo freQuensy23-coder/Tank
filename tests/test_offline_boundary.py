@@ -120,3 +120,26 @@ def test_known_operator_auth_path_is_blocked_before_file_open(monkeypatch):
     monkeypatch.setattr(policy, "_ORIGINAL_OPEN", forbidden_native)
     with pytest.raises(policy.OfflineCredentialError), open("/codex-auth/auth.json"):
         pass
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "postgresql://postgres:FAKE@172.30.60.2/tank",
+        "postgresql://tank:FAKE@postgres:5432/oma",
+        "host=172.30.60.2 dbname=tank_replay user=postgres",
+        "postgresql://postgres:FAKE@172.30.60.2/",
+    ],
+)
+def test_production_databases_are_refused(url):
+    with pytest.raises(pytest.UsageError):
+        policy.check_test_databases({"TANK_TEST_DATABASE_URL": url})
+
+
+def test_dedicated_test_database_is_accepted():
+    policy.check_test_databases(
+        {
+            "TANK_TEST_DATABASE_URL": "postgresql://postgres:FAKE@172.30.60.2/tank_test_tank-ops",
+            "TANK_E2E_DATABASE_URL": "host=172.30.60.2 dbname=tank_test_e2e user=postgres",
+        }
+    )

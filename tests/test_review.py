@@ -108,50 +108,16 @@ async def test_outcome_immutable_revision_and_frozen_beta():
         )
     a = await service.outcome(alert, decision, truth, now=END)
     b = await service.outcome(alert, decision, truth, now="2026-10-02T00:00:00Z")
-    assert a == b and a["revision"] == 1
+    # Outcomes are computed on demand from stored evidence; qa.outcomes is gone (W11).
+    stable = lambda r: {k: v for k, v in r.items() if not k.startswith("computed_at")}  # noqa: E731
+    assert stable(a) == stable(b) and "revision" not in a
     assert a["realized_return"] == pytest.approx(0.2)
     assert a["btc_adjusted_return"] == pytest.approx(0.18) and a["direction_correct"] is True
     assert a["mfe"] == pytest.approx(0.3) and a["mae"] == pytest.approx(-0.1)
     corrected = await repo.get("mkt.flow_bars_1m", "59")
     await put_flow(repo, "59", dict(corrected, c=11))
     c = await service.outcome(alert, decision, truth, now=END)
-    assert c["revision"] == 2 and c["realized_return"] == pytest.approx(0.1)
-    assert (await repo.get("qa.outcomes", a["outcome_id"]))["realized_return"] == pytest.approx(0.2)
-
-
-@pytest.mark.asyncio
-async def test_postgres_outcome_restart_immutability():
-    import os
-
-    from tank.storage import ImmutableRecordError, PostgresRepository
-    from tank.util import new_id
-
-    url = os.getenv("TANK_TEST_DATABASE_URL")
-    if not url:
-        pytest.skip("requires isolated TANK_TEST_DATABASE_URL")
-    repo = PostgresRepository(url)
-    await repo.open()
-    await repo.migrate()
-    key = new_id("OUT")
-    record = {
-        "outcome_id": key,
-        "alert_id": new_id("alert"),
-        "version": 1,
-        "dec_id": "d",
-        "computed_at": END,
-        "revision": 1,
-        "input_hash": "a" * 64,
-        "realized_return": 0.2,
-    }
-    try:
-        await repo.put("qa.outcomes", key, record, immutable=True)
-        await repo.close()
-        await repo.open()
-        assert (await repo.get("qa.outcomes", key))["realized_return"] == 0.2
-        with pytest.raises(ImmutableRecordError):
-            await repo.put("qa.outcomes", key, dict(record, realized_return=0.3), immutable=True)
-    finally:
-        await repo.close()
+    assert c["realized_return"] == pytest.approx(0.1)
 
 
 @pytest.mark.asyncio
@@ -305,7 +271,6 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
     assert frozen["outcomes"][0]["status"] == "COMPLETED"
     assert frozen["outcomes"][0]["btc_adjusted_return"] is not None
     assert frozen["outcomes"][0]["direction_reason"] is None
-    assert await repo.list("qa.outcomes")
     report = await ReviewService(repo).report(
         iso(parse_time(now) - timedelta(minutes=1)),
         iso(parse_time(now) + timedelta(minutes=1)),

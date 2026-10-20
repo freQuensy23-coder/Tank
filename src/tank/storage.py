@@ -1323,6 +1323,7 @@ async def _prune_jobs(self, before):
                 yield from strings(nested)
 
     async with self.lock("tank:job_retention"):
+        await _prune_expired_escalations(self, cutoff)
         candidates_by_id = set()
         for status in ("DONE", "FAILED", "EXPIRED"):
             async for job in self.iter_range(
@@ -1336,7 +1337,7 @@ async def _prune_jobs(self, before):
             references.update(value for value in strings(job.get("payload")) if value in candidates_by_id)
             for key in ("depends_on", "dependencies", "parent_job_id", "job_ids"):
                 references.update(value for value in strings(job.get(key)) if value in candidates_by_id)
-        for collection in ("ops.agent_sessions", "ops.tool_calls", "ops.routing_reservations"):
+        for collection in ("ops.agent_sessions", "ops.tool_calls"):
             async for record in self.iter_all(collection):
                 references.update(value for value in strings(record) if value in candidates_by_id)
         candidates = list(candidates_by_id - references)
@@ -1355,6 +1356,23 @@ async def _prune_jobs(self, before):
                 self._data["ops.jobs"].pop(job_id, None)
                 count += 1
         return count
+
+
+async def _prune_expired_escalations(self, cutoff):
+    """Source escalations are control records like jobs (HLD §7.1 ops: 30 days after expiry)."""
+    if isinstance(self, PostgresRepository):
+        await self._conn().execute(
+            "DELETE FROM ops.source_escalations WHERE expires_at<%s AND NOT immutable", (cutoff,)
+        )
+        return
+    rows = self._data.get("ops.source_escalations", {})
+    for key, row in list(rows.items()):
+        if (
+            row.get("expires_at")
+            and parse_time(row["expires_at"]) < cutoff
+            and ("ops.source_escalations", key) not in self._immutable
+        ):
+            rows.pop(key)
 
 
 MemoryRepository.prune_jobs = _prune_jobs

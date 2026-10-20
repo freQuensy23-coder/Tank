@@ -423,37 +423,6 @@ class ReviewService:
                     frozen_beta=beta,
                     frozen_normal_range=nr,
                 )
-        if result["status"] == "COMPLETED":
-            digest = sha256({k: v for k, v in result.items() if not k.startswith("computed_at")})
-            key = sha256([alert["alert_id"], alert["version"], decision.get("dec_id"), digest])
-            async with self.repo.lock(
-                "outcome:" + sha256([alert["alert_id"], alert["version"], decision.get("dec_id")])
-            ):
-                old = await self.repo.list(
-                    "qa.outcomes",
-                    filters={
-                        "alert_id": alert["alert_id"],
-                        "version": alert["version"],
-                        "dec_id": decision.get("dec_id"),
-                    },
-                    limit=10000,
-                )
-                existing = next((r for r in old if r.get("input_hash") == digest), None)
-                record = existing or dict(
-                    result,
-                    outcome_id=key,
-                    alert_id=alert["alert_id"],
-                    version=alert["version"],
-                    **collection_clock(now).fields("computed_at"),
-                    revision=max([r.get("revision", 0) for r in old], default=0) + 1,
-                    input_hash=digest,
-                    config_version=alert.get("config_version"),
-                    code_version=alert.get("code_version"),
-                )
-                if not existing:
-                    await self.repo.put("qa.outcomes", key, record, immutable=True)
-                return record
-
         return result
 
     async def report(self, start, end, *, checks=None, now=None):
