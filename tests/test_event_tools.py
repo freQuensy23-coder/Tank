@@ -4760,3 +4760,21 @@ async def test_list_open_events_skips_events_whose_session_failed(service):
         )
     listed = await service.dispatch("list_open_events", {"entity_or_token": "world"}, {})
     assert [row["event_id"] for row in listed["events"]] == ["live-event"]
+
+
+async def test_token_facts_show_unlocks_before_the_cutoff_and_nothing_after(service):
+    """F-02 / 03 §3.2: get_token_facts returns supply and unlocks known at the
+    cutoff, including a recent past unlock; rows observed later stay hidden."""
+    now = utcnow()
+    rows = {
+        "past": {"date": iso(now - timedelta(days=3)), "observed_at": iso(now - timedelta(days=10))},
+        "next": {"date": iso(now + timedelta(days=5)), "observed_at": iso(now - timedelta(days=1))},
+        "future-capture": {"date": iso(now + timedelta(days=6)), "observed_at": iso(now + timedelta(hours=1))},
+    }
+    for label, row in rows.items():
+        await service.repo.put(
+            "mkt.unlocks", "layerzero:ZRO:" + label, {"token_id": "layerzero:ZRO", "label": label, **row}
+        )
+    facts = await service.dispatch("get_token_facts", {"token": "layerzero:ZRO"}, {})
+    assert [(u["label"], u["relative_to_cutoff"]) for u in facts["unlocks"]] == [("past", "PAST"), ("next", "UPCOMING")]
+    assert facts["analysis_cutoff"] and "supply_obs" in facts and "capture_chains" in facts

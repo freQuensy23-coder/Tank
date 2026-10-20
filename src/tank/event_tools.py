@@ -474,14 +474,39 @@ class EventToolService:
         } | {"dependency_map": self.settings.load_config("dependency_map")}
 
     async def get_token_facts(self, a, c):
+        """Stored fundamentals, supply and unlocks known at the analysis cutoff
+        (03 §3.2). Unlocks dated before the cutoff stay visible, labelled PAST,
+        so the agent can weigh a recent unlock; Tank draws no conclusion."""
         token = a["token"]
         registry = await self.get_registry({"entity_or_token": token}, c)
+        cutoff = utcnow()
+
+        def known(row):
+            stamp = row.get("observed_at") or row.get("captured_at")
+            return stamp is None or parse_time(stamp) <= cutoff
+
+        unlocks = []
+        for row in sorted(
+            (r for r in await self.rows("mkt.unlocks", filters={"token_id": token}) if known(r)),
+            key=lambda r: str(r.get("date") or ""),
+        ):
+            date = row.get("date")
+            unlocks.append(
+                dict(
+                    row,
+                    relative_to_cutoff=None
+                    if not date
+                    else "PAST"
+                    if parse_time(date) < cutoff
+                    else "UPCOMING",
+                )
+            )
         return {
             "registry": registry,
-            **{
-                t.split(".")[-1]: await self.rows(t, filters={"token_id": token})
-                for t in ["mkt.supply_obs", "mkt.unlocks", "evt.capture_chains"]
-            },
+            "analysis_cutoff": iso(cutoff),
+            "supply_obs": [r for r in await self.rows("mkt.supply_obs", filters={"token_id": token}) if known(r)],
+            "unlocks": unlocks,
+            "capture_chains": await self.rows("evt.capture_chains", filters={"token_id": token}),
         }
 
     def validate_evidence_url(self, url):
