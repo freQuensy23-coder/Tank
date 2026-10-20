@@ -212,9 +212,79 @@ def test_normal_composer_rejects_historical_runtime_before_preparing(tmp_path, m
     monkeypatch.setattr(
         composer, "load_module", lambda name: SimpleNamespace(verify_runtime=lambda path: runtime)
     )
-    with pytest.raises(ValueError, match="qualified replay-DNS"):
+    with pytest.raises(ValueError, match="natively qualified|has not passed native qualification"):
         composer.prepare(tmp_path / "source", tmp_path / "output", tmp_path / "runtime")
     assert not (tmp_path / "output").exists()
+
+
+LOCAL_AMD64 = {
+    "boxlite_version": "0.10.6",
+    "architecture": "amd64",
+    "artifact_sha256": "a" * 64,
+    "source_build_verification": "PINNED_LOCAL_BUILD_VERIFIED_NATIVE_NOT_RUN",
+}
+PASSED = {"kvm": "PASS", "state_persistence": "PASS", "dns": "PASS", "replay_isolation": "PASS"}
+
+
+def gate_fixture(tmp_path, monkeypatch, registry):
+    deploy = tmp_path / "deploy"
+    if registry is not None:
+        write(deploy, composer.NATIVE_QUALIFICATION, json.dumps(registry))
+    monkeypatch.setattr(composer, "BASE", deploy)
+    monkeypatch.setattr(
+        composer, "load_module", lambda name: SimpleNamespace(verify_runtime=lambda path: dict(LOCAL_AMD64))
+    )
+
+    def reached(*args, **kwargs):
+        raise RuntimeError("gate passed")
+
+    monkeypatch.setattr(composer, "asset_hashes", reached)
+
+
+@pytest.mark.parametrize(
+    "registry",
+    [
+        None,
+        {},
+        {"arm64": {"status": "PASS", "shim_sha256": "a" * 64, "checks": PASSED}},
+        {"amd64": {"status": "FAIL", "shim_sha256": "a" * 64, "checks": PASSED}},
+        {"amd64": {"status": "PASS", "shim_sha256": "b" * 64, "checks": PASSED}},
+        {"amd64": {"status": "PASS", "shim_sha256": "a" * 64, "checks": {**PASSED, "dns": "NOT_RUN"}}},
+        {"amd64": {"status": "PASS", "shim_sha256": "a" * 64, "checks": {"kvm": "PASS"}}},
+    ],
+)
+def test_deploy_refuses_local_runtime_without_native_qualification(tmp_path, monkeypatch, registry):
+    gate_fixture(tmp_path, monkeypatch, registry)
+    with pytest.raises(ValueError, match="amd64 has not passed native qualification"):
+        composer.prepare(tmp_path / "source", tmp_path / "output", tmp_path / "runtime")
+    assert not (tmp_path / "output").exists()
+
+
+def test_deploy_admits_local_runtime_after_native_qualification(tmp_path, monkeypatch):
+    gate_fixture(tmp_path, monkeypatch, {"amd64": {"status": "PASS", "shim_sha256": "a" * 64, "checks": PASSED}})
+    with pytest.raises(RuntimeError, match="gate passed"):
+        composer.prepare(tmp_path / "source", tmp_path / "output", tmp_path / "runtime")
+
+
+def test_qualification_candidate_is_composed_only_on_explicit_request(tmp_path, monkeypatch):
+    gate_fixture(tmp_path, monkeypatch, None)
+    with pytest.raises(RuntimeError, match="gate passed"):
+        composer.prepare(
+            tmp_path / "source", tmp_path / "output", tmp_path / "runtime", qualification_candidate=True
+        )
+
+
+def test_deployment_verify_refuses_unqualified_composition(tmp_path, monkeypatch):
+    gate_fixture(tmp_path, monkeypatch, None)
+    monkeypatch.setattr(composer, "verify", lambda root: {"status": "PREPARED_NOT_BUILT_OR_NATIVE_QUALIFIED"})
+    with pytest.raises(ValueError, match="has not passed native qualification"):
+        composer.deployment_verify(tmp_path)
+    write(
+        composer.BASE,
+        composer.NATIVE_QUALIFICATION,
+        json.dumps({"amd64": {"status": "PASS", "shim_sha256": "a" * 64, "checks": PASSED}}),
+    )
+    assert composer.deployment_verify(tmp_path)["native_qualification"]["status"] == "PASS"
 
 
 def continuation_fixture(tmp_path, monkeypatch):

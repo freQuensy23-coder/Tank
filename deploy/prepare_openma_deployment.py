@@ -16,6 +16,8 @@ RECEIPT = "tank-deployment-composition.json"
 FINAL_STAGES = ("openma_skill_aliases", "openma_file_io", "openma_replay_network")
 CONTINUATION_STAGE = "openma_continuation"
 TOOL_KIND_STAGE = "openma_tool_kind"
+NATIVE_QUALIFICATION = "boxlite/v0.10.6/native-qualification.json"
+NATIVE_CHECKS = ("kvm", "state_persistence", "dns", "replay_isolation")
 
 
 def digest(path):
@@ -333,6 +335,37 @@ def verify(root):
     return receipt
 
 
+def require_native_qualification(runtime):
+    """Refuse a BoxLite runtime that has not passed native qualification on its architecture."""
+    if runtime.get("boxlite_version") != "0.10.6":
+        raise ValueError("Normal deployment requires a natively qualified BoxLite 0.10.6 runtime")
+    if runtime.get("external_qualification", {}).get("status") == "PASS":
+        return runtime["external_qualification"]
+    architecture = runtime.get("architecture")
+    path = BASE / NATIVE_QUALIFICATION
+    entry = json.loads(path.read_text()).get(architecture) if path.is_file() else None
+    if (
+        runtime.get("source_build_verification") != "PINNED_LOCAL_BUILD_VERIFIED_NATIVE_NOT_RUN"
+        or not entry
+        or entry.get("status") != "PASS"
+        or entry.get("shim_sha256") != runtime.get("artifact_sha256")
+        or any(entry.get("checks", {}).get(check) != "PASS" for check in NATIVE_CHECKS)
+    ):
+        raise ValueError(
+            f"Normal deployment refused: BoxLite runtime for {architecture} has not passed native qualification"
+        )
+    return entry
+
+
+def deployment_verify(root):
+    """Verify a composition and admit it for deployment only with a natively qualified runtime."""
+    receipt = verify(root)
+    runtime = load_module("prepare_boxlite_runtime.py").verify_runtime(
+        Path(root).resolve() / "tank-deploy/boxlite-runtime"
+    )
+    return {**receipt, "native_qualification": require_native_qualification(runtime)}
+
+
 def publish_new_directory(source, destination):
     """Atomically reserve a new name; preserve any pre-existing destination."""
     destination.mkdir()
@@ -349,7 +382,7 @@ def publish_new_directory(source, destination):
         raise
 
 
-def prepare(source, destination, boxlite_runtime):
+def prepare(source, destination, boxlite_runtime, *, qualification_candidate=False):
     destination = Path(destination).absolute()
     if destination.is_symlink() or destination.exists():
         raise ValueError("Destination must be new")
@@ -357,13 +390,13 @@ def prepare(source, destination, boxlite_runtime):
     if destination == source or source in destination.parents:
         raise ValueError("Destination must be outside the source tree")
     runtime = load_module("prepare_boxlite_runtime.py").verify_runtime(boxlite_runtime)
-    if runtime.get("boxlite_version") != "0.10.6" or not (
-        runtime.get("external_qualification", {}).get("status") == "PASS"
-        or runtime.get("source_build_verification") == "PINNED_LOCAL_BUILD_VERIFIED_NATIVE_NOT_RUN"
-    ):
-        raise ValueError(
-            "Normal deployment requires a qualified replay-DNS runtime or verified pinned local build"
-        )
+    if qualification_candidate:
+        if runtime.get("boxlite_version") != "0.10.6" or (
+            runtime.get("source_build_verification") != "PINNED_LOCAL_BUILD_VERIFIED_NATIVE_NOT_RUN"
+        ):
+            raise ValueError("A native qualification candidate requires a verified pinned local build")
+    else:
+        require_native_qualification(runtime)
     assets = asset_hashes()
     with tempfile.TemporaryDirectory(prefix=".tank-openma-compose-", dir=destination.parent) as temporary:
         staging = Path(temporary)
@@ -417,14 +450,24 @@ if __name__ == "__main__":
     make.add_argument("source", type=Path)
     make.add_argument("destination", type=Path)
     make.add_argument("--boxlite-runtime", type=Path, required=True)
+    make.add_argument(
+        "--native-qualification-candidate",
+        action="store_true",
+        help="compose an unqualified local build only to run native qualification on it",
+    )
     check = sub.add_parser("verify")
     check.add_argument("directory", type=Path)
+    check.add_argument("--deployment", action="store_true", help="also require native qualification")
     args = parser.parse_args()
-    result = (
-        prepare(args.source, args.destination, args.boxlite_runtime)
-        if args.command == "prepare"
-        else verify(args.directory)
-    )
+    if args.command == "prepare":
+        result = prepare(
+            args.source,
+            args.destination,
+            args.boxlite_runtime,
+            qualification_candidate=args.native_qualification_candidate,
+        )
+    else:
+        result = deployment_verify(args.directory) if args.deployment else verify(args.directory)
     print(
         json.dumps(
             {
