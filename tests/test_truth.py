@@ -1172,6 +1172,29 @@ def test_klines_poll_watermark_keeps_quiet_spot_venue_fresh_without_inventing_ca
     assert compute_market_truth(snapshot)["data_confidence"]["class"] == "MEDIUM"
 
 
+def test_previous_window_bars_without_usd_rate_do_not_crash_size_profile():
+    """Live COW run: bars before the window carried size_buckets=None (no historical USD rate)."""
+    from runpy import run_path
+
+    snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
+        "synthetic_start_snapshot"
+    ]()
+    first = compute_market_truth(snapshot)
+    start = parse_time(first["spot"][first["primary_window"]]["start"])
+    for bar in snapshot["flow_bars"]:
+        if parse_time(bar["minute_start"]) < start:
+            bar["size_buckets"] = None
+        else:
+            bar["size_buckets"] = {
+                f"B{i}": {"buy_qty": "1", "sell_qty": "1", "buy_notional": "10", "sell_notional": "5"}
+                for i in range(1, 6)
+            }
+    result = compute_market_truth(snapshot)
+    profile = result["spot"][result["primary_window"]]["size_profile"]
+    assert float(profile["large_ticket_sell_notional"]) > 0
+    assert profile["sell_share_rising"] is None
+
+
 def test_null_measurements_have_companion_context_without_wrapping_literal_fields():
     from runpy import run_path
 
