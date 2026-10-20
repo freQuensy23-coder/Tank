@@ -1,0 +1,80 @@
+{
+  "manifest_bundles": 12,
+  "restored_bundles": 12,
+  "all_match_manifest": true,
+  "all_content_addressed": true,
+  "bundles": [
+    {
+      "file": "0fc66667aa44c68339bd811c82db0046c48678d08ae40cc1ac76ae1a20e0a7a0.json.zst",
+      "bytes": 1679601,
+      "manifest_sha256_match": true,
+      "name_is_sha256": true
+    },
+    {
+      "file": "23efea2a23fc8978c9af2b692f7b50f49b3c05dd4730a76ed7b9b0f3c7268acb.json.zst",
+      "bytes": 670577,
+      "manifest_sha256_match": true,
+      "name_is_sha256": true
+    },
+    {
+      "file": "25cf8a1885cd9db2c57f1f1d8119d2efb1ff8c38402e932fbf682194a6e5dfe3.json.zst",
+      "bytes": 299,
+      "manifest_sha256_match": true,
+      "name_is_sha256": true
+    },
+    {
+      "file": "261c4fa0b592db7ac007a0073394ee89ef8c90d6e9cbb239131f07d396385285.json.zst",
+      "bytes": 2791194,
+      "manifest_sha256_match": true,
+      "name_is_sha256": true
+    },
+    {
+      "file": "36303149ccab8f3dcd1b0b8b769ae7f2bae760b303621f118b7b06223bd47b6b.json.zst",
+      "bytes": 295,
+      "manifest_sha256_match": true,
+      "name_is_sha256": true
+    },
+    {
+      "file": "924d30fe6b0138adc67643bcb319e826bc88bd52bee93735abfc60435c033dc8.json.zst",
+      "bytes": 206955586,
+      "manifest_sha256_match": true,
+      "name_is_sha256": true
+    },
+    {
+      "file": "950dc204b5e20a2bd71d8aca988eb28bde4fe03c33b7c77537617fffc6f37c13.json.zst",
+      "bytes": 369447,
+      "manifest_sha256_match": true,
+      "name_is_sha256": true
+    },
+    {
+      "file": "a3f33702bd5a719228c2fd7ddb3d17cf4e17c3e15c51df700767b5372b83d9d3.json.zst",
+      "bytes": 4672655,
+      "manifest_sha256_match": true,
+      "name_is_sha256": true
+    },
+    {
+      "file": "b36659929c24208332ac55d842a00fabdb962bb9b48f45cbb6089d54984c66e9.json.zst",
+      "bytes": 1073992,
+      "manifest_sha256_match": true,
+      "name_is_sha256": true
+    },
+    {
+      "file": "d6206633c63fc8ce310bc4705ef8a289a8c993ebfe6e86c7e6fa656bdcb51212.json.zst",
+      "bytes": 300,
+      "manifest_sha256_match": true,
+      "name_is_sha256": true
+    },
+    {
+      "file": "f01e8159b03191437656aeacda83cf28d13ee5515a6497ea2c72e896651889f6.json.zst",
+      "bytes": 697,
+      "manifest_sha256_match": true,
+      "name_is_sha256": true
+    },
+    {
+      "file": "f3659bf154ccf66f05475b1e5caef9904a7dbfeb6be037ececdddc1b8cbad0b1.json.zst",
+      "bytes": 3878,
+      "manifest_sha256_match": true,
+      "name_is_sha256": true
+    }
+  ]
+}
