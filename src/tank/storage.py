@@ -642,11 +642,17 @@ class PostgresRepository(QueueMixin):
                         pass
                     raise
 
+        # Each backend caches the catalog of ~3,500 relations (mostly market partitions,
+        # 90-180 MiB per backend), so connections are recycled: idle ones close after
+        # 2 minutes and every one is replaced after 10. max_size stays 16 because
+        # advisory locks hold a connection for their body and waiters hold one each.
         self._pool = AsyncConnectionPool(
             self.database_url,
             open=False,
             min_size=1,
             max_size=16,
+            max_idle=120,
+            max_lifetime=600,
             connection_class=CancellationSafeConnection,
             kwargs={"row_factory": dict_row},
         )
