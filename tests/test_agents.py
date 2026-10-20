@@ -266,7 +266,8 @@ async def test_message_running_session_posted_and_retry_failure():
         await service.process_event("ses_1", {"id": "err1", "type": "session.error"})
         await service.process_event("ses_1", {"id": "err2", "type": "session.error"})
     assert len(posts) == 2
-    assert (await repo.get("evt.events", "evt_1"))["status"] == "FAILED"
+    assert (await repo.get("ops.agent_sessions", "ses_1"))["status"] == "FAILED"
+    assert "status" not in (await repo.get("evt.events", "evt_1"))
 
 
 @pytest.mark.asyncio
