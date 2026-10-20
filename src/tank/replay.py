@@ -13,13 +13,11 @@ import copy
 import hashlib
 import json
 from dataclasses import dataclass
-from dataclasses import field as dataclass_field
 from datetime import UTC, datetime, timedelta
 from itertools import pairwise
 from pathlib import Path
 
 from tank.market_schema import MARKET_COLUMNS
-from tank.sources.recovery import source_record_at
 from tank.time_precision import Timestamp, propagate_timestamp
 from tank.util import canonical_json, iso, parse_time
 
@@ -206,7 +204,6 @@ class ReplayInputs:
     _records: tuple
     _tool_results: tuple
     assembled_at: str | None = None
-    _source_metadata_cache: dict = dataclass_field(default_factory=dict, compare=False, repr=False)
     fixture_reference: dict | None = None
     input_sha256: str | None = None
 
@@ -214,76 +211,6 @@ class ReplayInputs:
         from tank.fixture_reference import availability
 
         return availability(row, self.fixture_reference)
-
-    def source_for_import(self, record):
-        from zstandard import ZstdError
-
-        from tank.sources.legacy import (
-            needs_source_metadata_repair,
-            normalize_legacy_source_record,
-            retained_source_payload,
-        )
-
-        if not needs_source_metadata_repair(record):
-            return copy.deepcopy(record)
-        identity = digest(record)
-        if identity in self._source_metadata_cache:
-            return copy.deepcopy(self._source_metadata_cache[identity])
-        declared = self.config.get("sources", {})
-        sources = declared.get("sources", []) if isinstance(declared, dict) else declared
-        feeds = [
-            feed
-            for source in sources
-            if source.get("source_id") == record.get("source_id")
-            for feed in source.get("feeds", [])
-            if feed.get("url") == record.get("feed")
-        ]
-        if len(feeds) != 1:
-            raise ReplayError(
-                "insufficient_fixture: legacy source metadata lacks unique captured configured feed"
-            )
-        for ref_field, hash_field in (
-            ("raw_ref", "raw_sha256"),
-            ("detail_raw_ref", "detail_raw_sha256"),
-            ("discovery_raw_ref", "discovery_raw_sha256"),
-        ):
-            raw_ref, raw_hash = record.get(ref_field), record.get(hash_field)
-            if not raw_ref or not raw_hash:
-                continue
-            try:
-                payload = retained_source_payload(raw_ref)
-            except (OSError, ValueError, TypeError, ZstdError):
-                continue
-            normalized = normalize_legacy_source_record(
-                record,
-                payload,
-                feed=feeds[0],
-                raw_ref=raw_ref,
-                raw_sha256=raw_hash,
-                converted_at=datetime.now(UTC),
-            )
-            if normalized["source_metadata_repair"]["outcome"] == "VERIFIED":
-                self._source_metadata_cache[identity] = normalized
-                return copy.deepcopy(normalized)
-        raise ReplayError(
-            "insufficient_fixture: legacy source publication metadata unverified by retained bytes"
-        )
-
-    def preflight_source_metadata(self):
-        for row in self._records:
-            if row["collection"] != "ingest.source_items":
-                continue
-            # Both ends cover the original and current captured projection;
-            # intermediate body/metadata versions are checked at their boundaries.
-            points = [row["available_at"], self.cutoff]
-            current = row["record"]
-            while current.get("body_recovery"):
-                recovery = current["body_recovery"]
-                if parse_time(recovery["recovered_at"]) <= parse_time(self.cutoff):
-                    points.append(recovery["recovered_at"])
-                current = recovery["original_record"]
-            for at in points:
-                self.source_for_import(source_record_at(row["record"], at))
 
     @property
     def evidence_mode(self):
@@ -362,9 +289,7 @@ class ReplayInputs:
         if bound > parse_time(self.cutoff):
             raise ReplayError("query exceeds replay cutoff")
         return [
-            source_record_at(row["record"], bound)
-            if collection == "ingest.source_items"
-            else copy.deepcopy(row["record"])
+            copy.deepcopy(row["record"])
             for row in self._records
             if row["collection"] == collection and self.record_visible(row, bound)
         ]
@@ -728,7 +653,6 @@ async def run_captured_tools(inputs, repo):
     from tank.event_tools import EventToolService
     from tank.settings import Settings
 
-    inputs.preflight_source_metadata()
     calls = inputs.config.get("replay_tool_calls")
     if not calls:
         raise ReplayError("insufficient_fixture: missing captured analyst tool calls")
@@ -836,11 +760,7 @@ async def run_captured_tools(inputs, repo):
                 clock.advance(call["available_at"])
                 market_batches = {}
                 for index, row in enumerate(inputs._records):
-                    projected = (
-                        source_record_at(row["record"], clock.now())
-                        if row["collection"] == "ingest.source_items"
-                        else row["record"]
-                    )
+                    projected = row["record"]
                     revision_identity = (index, digest(projected))
                     if revision_identity in seeded or row["collection"] in {
                         "replay.market_snapshots",
@@ -862,11 +782,7 @@ async def run_captured_tools(inputs, repo):
                                 seeded.update(identity for identity, _ in batch)
                                 batch.clear()
                         else:
-                            record = (
-                                inputs.source_for_import(projected)
-                                if collection == "ingest.source_items"
-                                else copy.deepcopy(projected)
-                            )
+                            record = copy.deepcopy(projected)
                             await repo.put(collection, row["key"], record)
                             seeded.add(revision_identity)
                 for collection, batch in market_batches.items():
@@ -959,10 +875,9 @@ async def replay_fixture(repo, settings, fixture_id, *, mode="fresh-session"):
         raise ReplayError(f"insufficient_fixture: no captured packet for {fixture_id}")
     bundle_id = digest(json.loads(path.read_text()))
     directory = settings.data_dir / "replay" / "bundles" / bundle_id
-    if mode == "captured-tools":
-        return await replay_bundle(path, repo, settings, output_dir=directory)
+    # 03 §11.1: a fixture replays only as a fresh tank-replay session with stored tool results.
     if mode != "fresh-session":
-        raise ReplayError("Unknown replay mode")
+        raise ReplayError("Fixture replay runs only as a fresh tank-replay session")
     result = await run_operational_replay(path, repo, settings)
     freeze(directory / "outputs.json", result)
     freeze(directory / "inputs.json", json.loads(path.read_text()))
@@ -1310,7 +1225,7 @@ def replay_message_timestamp(inputs, message):
     if not candidates:
         raise ReplayError("insufficient_fixture: replay source item or timestamp is absent")
     _, source = min(candidates, key=lambda entry: (parse_time(entry[1]["available_at"]), entry[0]))
-    record = source_record_at(source["record"], source["available_at"])
+    record = source["record"]
     if record.get("observed_at"):
         return propagate_timestamp(record, "observed_at")
     return propagate_timestamp(source, "available_at")
@@ -1331,7 +1246,6 @@ async def run_operational_replay(bundle_path, repo, settings, *, http=None):
     from tank.util import new_id
 
     inputs = load_inputs(bundle_path, settings)
-    inputs.preflight_source_metadata()
     messages = original_replay_messages(inputs)
     if not isinstance(messages, list) or not messages:
         raise ReplayError("insufficient_fixture: missing original replay_messages")
@@ -1505,7 +1419,6 @@ async def replay_agent_session(
     from tank.scheduler import Scheduler
 
     inputs = load_inputs(bundle_path, settings)
-    inputs.preflight_source_metadata()
     if not settings.replay or not isinstance(event_tools, EventToolService) or event_tools.repo is not repo:
         raise ReplayError("fresh replay requires the real EventToolService on an isolated replay repository")
     if (
@@ -1587,11 +1500,7 @@ async def replay_agent_session(
             enumerate(inputs._records),
             key=lambda entry: (parse_time(inputs.available_at(entry[1])), entry[0]),
         ):
-            projected = (
-                source_record_at(row["record"], clock.now())
-                if row["collection"] == "ingest.source_items"
-                else row["record"]
-            )
+            projected = row["record"]
             identity = (revision, digest(projected))
             if identity in imported or row["collection"] in {
                 "replay.market_snapshots",
@@ -1620,7 +1529,6 @@ async def replay_agent_session(
                 else:
                     record = copy.deepcopy(projected)
                     if collection == "ingest.source_items":
-                        record = inputs.source_for_import(record)
                         fresh = await repo.get(collection, row["key"])
                         for field in (
                             "event_id",
@@ -1653,15 +1561,6 @@ async def replay_agent_session(
                             record = {**fresh, **record}
                         if "extraction_status" not in record:
                             record["extraction_status"] = "PENDING"
-                        metadata_repair = record.pop("source_metadata_repair", None)
-                        if metadata_repair:
-                            record["source_metadata_repair_sha256"] = digest(metadata_repair)
-                        recovery = record.get("body_recovery")
-                        if isinstance(recovery, dict) and "original_record" in recovery:
-                            recovery = copy.deepcopy(recovery)
-                            original_snapshot = recovery.pop("original_record")
-                            recovery["original_record_sha256"] = digest(original_snapshot)
-                            record["body_recovery"] = recovery
                     await repo.put(collection, row["key"], record)
                     imported.add(identity)
         for collection, batch in market_batches.items():
@@ -2337,11 +2236,6 @@ async def replay_agent_session(
                 "replay_run_id": run_id,
                 "replay_evidence": evidence_capture,
                 "guest_prefix_receipts": evidence_view.receipts if evidence_view else [],
-                "source_metadata_normalizations": [
-                    copy.deepcopy(record["source_metadata_repair"])
-                    for record in inputs._source_metadata_cache.values()
-                    if record.get("source_metadata_repair")
-                ],
                 "session_id": sid,
                 "session_ids": session_ids,
                 "mode": "FRESH_OPENMA_SESSION",
