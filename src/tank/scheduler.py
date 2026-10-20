@@ -933,7 +933,7 @@ class Scheduler:
     async def _measure_reaction(self, payload):
         payload = dict(payload)
         captured_stamp = collection_clock()
-        from tank.analysis.truth import benchmark_reaction_values, compute_market_truth
+        from tank.analysis.truth import compute_market_truth
 
         anchor_stamp = propagate_timestamp(payload["anchor"], "ts", precision_aliases=("precision",))
         payload["anchor"] = {**payload["anchor"], **anchor_stamp.fields("ts")}
@@ -943,6 +943,10 @@ class Scheduler:
         end = origin if offset < 0 else origin + timedelta(seconds=offset)
         start_stamp = offset_schedule(anchor_stamp, start - origin)
         end_stamp = offset_schedule(anchor_stamp, end - origin)
+        if payload["token_id"] in BENCHMARK_TOKENS:
+            event = await self.repo.get("evt.events", payload["event_id"]) or {"event_id": payload["event_id"]}
+            if payload["token_id"] not in await self.analysis_set(event):
+                return await self._measure_benchmark(payload, captured_stamp, start, end, start_stamp, end_stamp)
         snapshot = await self.market.snapshot(
             payload["token_id"],
             end_stamp,
@@ -984,33 +988,59 @@ class Scheduler:
             **start_stamp.fields("window_start"),
             **end_stamp.fields("window_end"),
         }
-        if payload["token_id"] in BENCHMARK_TOKENS:
-            event = await self.repo.get("evt.events", payload["event_id"]) or {"event_id": payload["event_id"]}
-            if payload["token_id"] not in await self.analysis_set(event):
-                # Lead ruling 2026-10-20 (03 §8.1): a benchmark outside the analysis set records the
-                # raw return from base-tier kline closes; trade/derivative values are NOT_APPLICABLE.
-                bench = benchmark_reaction_values(snapshot, start, end)
-                checkpoint_data.update(
-                    r_raw=bench["r_raw"],
-                    r_btc_adj=None,
-                    pctile=None,
-                    spot_cvd=None,
-                    spot_method="NOT_APPLICABLE",
-                    spot_coverage=None,
-                    oi_native_start=None,
-                    oi_native_end=None,
-                    oi_native_chg_pct=None,
-                    oi_class=None,
-                    oi_venues=None,
-                    funding=[],
-                    liquidations=None,
-                    benchmark=bench,
-                )
         return {
             "payload": payload,
             "captured_stamp": captured_stamp,
             "checkpoint_data": checkpoint_data,
             "truth": truth,
+        }
+
+    async def _measure_benchmark(self, payload, captured_stamp, start, end, start_stamp, end_stamp):
+        """Lead ruling 2026-10-20 (03 §8.1): a benchmark outside the analysis set
+        records the raw return from base-tier 1m kline closes of its largest spot
+        venue; trade and derivative values are NOT_APPLICABLE. Only those klines
+        are read (the window plus the trailing 24 h), never a full snapshot:
+        BTC/ETH snapshots over 90 days of every collection cost gigabytes."""
+        from tank.analysis.truth import benchmark_reaction_values
+
+        token = payload["token_id"]
+        lower = min(start, end - timedelta(hours=24)) - timedelta(hours=1)
+        rows = []
+        for iid, instrument in (getattr(self.market, "instruments", None) or {}).items():
+            if instrument.get("token_id") != token or ":spot:" not in iid:
+                continue
+            async for row in self.repo.iter_range(
+                "mkt.klines_1m",
+                "open_time",
+                start=iso(lower),
+                end=iso(end + timedelta(microseconds=1)),
+                filters={"instrument_id": iid},
+            ):
+                rows.append(dict(row, token_id=token))
+        bench = benchmark_reaction_values({"token_id": token, "klines": rows}, start, end)
+        checkpoint_data = {
+            "r_raw": bench["r_raw"],
+            "r_btc_adj": None,
+            "pctile": None,
+            "spot_cvd": None,
+            "spot_method": "NOT_APPLICABLE",
+            "spot_coverage": None,
+            "oi_native_chg_pct": None,
+            "oi_native_start": None,
+            "oi_native_end": None,
+            "oi_venues": None,
+            "oi_class": None,
+            "funding": [],
+            "liquidations": None,
+            "benchmark": bench,
+            **start_stamp.fields("window_start"),
+            **end_stamp.fields("window_end"),
+        }
+        return {
+            "payload": payload,
+            "captured_stamp": captured_stamp,
+            "checkpoint_data": checkpoint_data,
+            "truth": {"benchmark": bench},
         }
 
     async def _commit_reaction(self, plan, measured):
