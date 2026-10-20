@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
+from urllib.parse import quote
 
 import yaml
 from pydantic import AliasChoices, Field, PrivateAttr
@@ -194,6 +195,18 @@ class Settings(BaseSettings):
                     values[field] = value
             if (root / "x_session").is_file():
                 values["x_storage_state_path"] = root / "x_session"
+            # The Compose roles (HLD §8): the same URLs deploy/tank_entrypoint.py builds,
+            # so `docker compose exec tank tank …` (HLD §9 CLI) reaches the database too.
+            for field, name, role in (
+                ("database_url", "tank_db_password", "tank"),
+                ("openma_database_url", "oma_db_password", "oma"),
+            ):
+                path = root / name
+                if path.is_file():
+                    password = path.read_text().strip()
+                    if not password:
+                        raise ValueError(f"Docker secret {name} is empty")
+                    values[field] = f"postgresql://{role}:{quote(password, safe='')}@postgres:5432/{role}"
             return values
 
         def without_config_owned(source):

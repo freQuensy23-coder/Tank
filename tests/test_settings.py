@@ -239,3 +239,19 @@ def test_user_agent_and_chats_from_configuration(tmp_path):
 
 def test_openrouter_key_is_gone():
     assert "openrouter_api_key" not in Settings.model_fields
+
+
+def test_database_urls_from_compose_role_secrets(tmp_path, monkeypatch):
+    for name in ("TANK_DATABASE_URL", "TANK_OPENMA_DATABASE_URL"):
+        monkeypatch.delenv(name, raising=False)
+    (tmp_path / "tank_db_password").write_text("FAKE p@ss/word\n")
+    (tmp_path / "oma_db_password").write_text("FAKE-oma\n")
+    settings = Settings(_env_file=None, secrets_dir=tmp_path)
+    assert settings.database_url == "postgresql://tank:FAKE%20p%40ss%2Fword@postgres:5432/tank"
+    assert settings.openma_database_url == "postgresql://oma:FAKE-oma@postgres:5432/oma"
+    monkeypatch.setenv("TANK_DATABASE_URL", "postgresql://explicit/tank_test_x")
+    assert Settings(_env_file=None, secrets_dir=tmp_path).database_url == "postgresql://explicit/tank_test_x"
+    assert (
+        Settings(_env_file=None, secrets_dir=tmp_path / "absent").database_url
+        == "postgresql://explicit/tank_test_x"
+    )
