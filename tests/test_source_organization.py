@@ -74,7 +74,6 @@ async def test_normal_poll_preserves_actual_author_and_exposes_exact_pruner_orga
         config_version="test",
         code_version="test",
         x_list_id=None,
-        capture_only=True,
         load_config=lambda name: (
             {"sources": [src]} if name == "sources" else registry if name == "registry" else {}
         ),

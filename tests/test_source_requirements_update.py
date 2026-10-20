@@ -24,7 +24,6 @@ def config(tmp_path, sources):
         user_agent="Tank source regression",
         config_version="test",
         code_version="test",
-        capture_only=True,
         x_enabled=False,
         load_config=lambda name: {"sources": sources} if name == "sources" else {},
     )
@@ -111,8 +110,8 @@ async def test_duplicate_preserves_capture_and_counts_one_observation(tmp_path):
     duplicate = await service.ingest({**source, "name": "New config name"}, changed)
     replay = await service.ingest(source, captured("first", b"Original publication bytes", incoming))
     try:
-        assert {k: v for k, v in duplicate.items() if k != "observation_count"} == {
-            k: v for k, v in first.items() if k != "observation_count"
+        assert {k: v for k, v in duplicate.items() if k not in {"observation_count", "observed_feeds"}} == {
+            k: v for k, v in first.items() if k not in {"observation_count", "observed_feeds"}
         }
         assert duplicate["item_id"] == replay["item_id"] == "first"
         assert replay["observation_count"] == 2

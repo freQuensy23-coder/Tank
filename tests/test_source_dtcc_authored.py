@@ -103,9 +103,7 @@ async def test_normal_dtcc_poll_uses_actual_retained_release_bodies(tmp_path):
         assert request.method == "GET" and not request.headers.get("Authorization")
         return httpx.Response(200, content=pages[str(request.url)])
 
-    settings = Settings(
-        data_dir=tmp_path, capture_only=True, x_enabled=False, user_agent="Tank offline regression"
-    )
+    settings = Settings(data_dir=tmp_path, x_enabled=False, user_agent="Tank offline regression")
     object.__setattr__(
         settings,
         "load_config",

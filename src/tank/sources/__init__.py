@@ -198,23 +198,25 @@ class SourceService:
                     await asyncio.sleep(delay)
         raise error
 
+    async def captured(self, **filters):
+        """The stored item matching (source_id, external_id) or content_hash (03 §2.9)."""
+        rows = await self.repo.list("ingest.source_items", filters=filters, limit=1)
+        return rows[0] if rows else None
+
     async def observe_known(self, source_id, external_id, feed):
         """True when the item is already captured; a sighting in another feed counts once (03 §3.1)."""
-        key = sha256(source_id + "|" + str(external_id))
-        index = await self.repo.get("ops.source_dedup", key)
-        if not index:
+        item = await self.captured(source_id=source_id, external_id=str(external_id))
+        if not item:
             return False
-        if feed not in index.get("feeds", []):
+        if feed not in item.get("observed_feeds", [item.get("feed")]):
             async with self.repo.lock("ingest-dedup"), self.repo.transaction():
-                await self._count_observation(index["item_id"])
-                await self.repo.put(
-                    "ops.source_dedup", key, dict(index, feeds=index.get("feeds", []) + [feed])
-                )
+                await self._count_observation(item["item_id"], feed)
         return True
 
-    async def _count_observation(self, item_id):
+    async def _count_observation(self, item_id, feed):
         old = await self.repo.get("ingest.source_items", item_id)
         old["observation_count"] = old.get("observation_count", 1) + 1
+        old["observed_feeds"] = old.get("observed_feeds", [old.get("feed")]) + [feed]
         await self.repo.put("ingest.source_items", item_id, old)
         return old
 
@@ -239,25 +241,20 @@ class SourceService:
         feed = item.get("feed") or source.get("feed") or sid
         item_id = item["item_id"]
         async with self.repo.lock("ingest-dedup"), self.repo.transaction():
-            dedup_key = sha256(sid + "|" + external)
-            identity_index = await self.repo.get("ops.source_dedup", dedup_key)
-            index = identity_index or await self.repo.get("ops.source_dedup", "content:" + content_hash)
-            if not index and not body and sid != "S29":
+            existing = await self.captured(source_id=sid, external_id=external) or await self.captured(
+                content_hash=content_hash
+            )
+            if not existing and not body and sid != "S29":
                 raise ValueError("Source entry has no normalized content")
-            if index:
-                if index["item_id"] == item_id:
+            if existing:
+                if existing["item_id"] == item_id:
                     # Replay of an ingest that already committed.
-                    return await self.repo.get("ingest.source_items", item_id)
+                    return existing
                 # Exact duplicate: no new item, one more observation per new feed (03 §3.1).
                 Path(item["raw_ref"]).unlink(missing_ok=True)
-                feeds = (identity_index or {}).get("feeds", [])
-                if feed in feeds:
-                    return await self.repo.get("ingest.source_items", index["item_id"])
-                old = await self._count_observation(index["item_id"])
-                await self.repo.put(
-                    "ops.source_dedup", dedup_key, {"item_id": old["item_id"], "feeds": feeds + [feed]}
-                )
-                return old
+                if feed in existing.get("observed_feeds", [existing.get("feed")]):
+                    return existing
+                return await self._count_observation(existing["item_id"], feed)
             observed_at = item.get("observed_at") or iso()
             raw_ref, raw_hash = item["raw_ref"], item["raw_sha256"]
             account = self.accounts.get(
@@ -353,16 +350,13 @@ class SourceService:
 
             record.update(collection_clock(record["observed_at"]).fields("observed_at"))
             await self.repo.put("ingest.source_items", item_id, record)
-            await self.repo.put("ops.source_dedup", dedup_key, {"item_id": item_id, "feeds": [feed]})
-            await self.repo.put("ops.source_dedup", "content:" + content_hash, {"item_id": item_id})
-            if not getattr(self.settings, "capture_only", False):
-                await self.repo.enqueue(
-                    "FILTER_ITEM" if filtered else "ROUTE_ITEM",
-                    {"item_id": item_id},
-                    item_id,
-                    priority=priority,
-                    max_attempts=2,
-                )
+            await self.repo.enqueue(
+                "FILTER_ITEM" if filtered else "ROUTE_ITEM",
+                {"item_id": item_id},
+                item_id,
+                priority=priority,
+                max_attempts=2,
+            )
             return record
 
     async def poll_once(self, source_id, *, due_only=False, escalated=False):

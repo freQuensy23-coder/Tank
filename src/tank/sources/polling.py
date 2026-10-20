@@ -130,7 +130,11 @@ class SourcePoller:
             external = str(row["external_id"])
             row.setdefault("feed", feed["url"])
             row.setdefault("observed_at", acquired_at)
-            if external in pending or await svc.observe_known(sid, external, row["feed"]):
+            if (
+                external in pending
+                or external in current.get("duplicate_ids", [])
+                or await svc.observe_known(sid, external, row["feed"])
+            ):
                 continue
             if sid == "S02" and not svc.filing_matches(row):
                 continue
@@ -688,8 +692,9 @@ class SourcePoller:
             item["raw_ref"], item["raw_sha256"] = svc.raw(
                 payload, source_id=sid, item_id=item["item_id"], observed_at=item["observed_at"]
             )
-        await svc.ingest(source, item)
-        return None
+        stored = await svc.ingest(source, item)
+        # A content duplicate of another item: remember it so later polls skip it.
+        return "DUPLICATE" if stored["item_id"] != item["item_id"] else None
 
     async def drain(self, source, index, *, force=False, escalated=False):
         sid = source["source_id"]
@@ -707,7 +712,7 @@ class SourcePoller:
             batches = deepcopy(state.get("pending_batches", []))
             if not batches:
                 return {"items": 0, "errors": []}
-            errors, completed, count = [], {}, 0
+            errors, completed, count, duplicates = [], {}, 0, []
             article_errors = {}
             for batch in batches:
 
@@ -716,6 +721,9 @@ class SourcePoller:
                     async with self.details:
                         try:
                             error = await self._item(source, feed, key, current_batch, row)
+                            if error == "DUPLICATE":
+                                duplicates.append(str(row["external_id"]))
+                                return None
                             if error:
                                 article_errors[row["url"]] = error
                                 errors.append("Article parse failure (empty visible text): " + row["url"])
@@ -761,6 +769,8 @@ class SourcePoller:
                     batch = current["pending_batches"].pop(0)
                     current.update(batch["coverage"])
                 current["article_errors"] = article_errors
+                if duplicates:
+                    current["duplicate_ids"] = (current.get("duplicate_ids", []) + duplicates)[-1000:]
                 if errors:
                     current.update(
                         status="DEGRADED",

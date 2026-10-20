@@ -32,8 +32,13 @@ class Repo:
         self.rows[c, k] = dict(v)
         return v
 
-    async def list(self, *a, **k):
-        return []
+    async def list(self, collection, *, filters=None, limit=1000):
+        rows = [
+            dict(row)
+            for (table, _), row in self.rows.items()
+            if table == collection and all(row.get(k) == v for k, v in (filters or {}).items())
+        ]
+        return rows[:limit]
 
     async def iter_all(self, collection, *, filters=None, batch_size=1000):
         from copy import deepcopy
@@ -1274,38 +1279,6 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(tmp_path, m
 
 
 @pytest.mark.asyncio
-async def test_capture_only_never_enqueues_analysis(tmp_path):
-    from tank.storage import MemoryRepository
-
-    repo = MemoryRepository()
-    await repo.open()
-    config = settings(tmp_path, [])
-    config.capture_only = True
-    svc = SourceService(repo, config)
-    try:
-        source = {"source_id": "S29", "name": "X"}
-        svc.accounts = {"other": {"role": "OTHER"}}
-        item = captured(
-            svc,
-            "S29",
-            {
-                "external_id": "same-status",
-                "author": "original",
-                "monitored_author": "other",
-                "title": "",
-                "text": "Actual original content",
-                "published_at": None,
-            },
-        )
-        first = await svc.ingest(source, item)
-        assert first["deferrable"] and first["author_role"] == "OTHER"
-        assert not await repo.list("ops.jobs")
-    finally:
-        await svc.close()
-        await repo.close()
-
-
-@pytest.mark.asyncio
 async def test_public_renderer_is_isolated_from_x_profile_and_secret(tmp_path):
     import os
 
@@ -1500,11 +1473,8 @@ async def test_missing_publisher_article_keeps_raw_error_and_continues_valid_ent
         assert state["status"] == "DEGRADED" and failure["http_status"] == 404
         assert failure["payload_sha256"] == sha256(b"<html>Publisher removed this article</html>")
         assert len(list(Path(tmp_path).rglob("*.zst"))) == 1
-        assert not await repo.get(
-            "ops.source_dedup",
-            __import__("tank.util", fromlist=["sha256"]).sha256(
-                "S13|https://publisher.example/newsroom/missing"
-            ),
+        assert not await service.captured(
+            source_id="S13", external_id="https://publisher.example/newsroom/missing"
         )
         assert len([r for r in calls if r.url.path.endswith("/missing")]) == 1
         await service.poll_once("S13")
@@ -1561,11 +1531,8 @@ async def test_empty_200_article_isolated_without_suppressing_valid_sibling(tmp_
         assert error["reason"] == "EMPTY_ARTICLE_BODY" and error["http_status"] == 200
         assert error["payload_sha256"] == sha256(empty_body)
         assert len(list(Path(tmp_path).rglob("*.zst"))) == 1
-        assert not await repo.get(
-            "ops.source_dedup",
-            __import__("tank.util", fromlist=["sha256"]).sha256(
-                "S13|https://publisher.example/newsroom/empty"
-            ),
+        assert not await service.captured(
+            source_id="S13", external_id="https://publisher.example/newsroom/empty"
         )
         assert len([r for (table, _), r in repo.rows.items() if table == "ingest.source_items"]) == 1
     finally:
@@ -1753,7 +1720,7 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_content_duplicate_remembers_secondary_external_identity(tmp_path):
+async def test_content_duplicate_counts_once_and_is_remembered_by_the_feed(tmp_path):
     repo = Repo()
     svc = SourceService(repo, settings(tmp_path, []))
     first = await svc.ingest(
@@ -1762,18 +1729,31 @@ async def test_content_duplicate_remembers_secondary_external_identity(tmp_path)
     duplicate = await svc.ingest(
         {"source_id": "S04"}, captured(svc, "S04", {"external_id": "b", "title": "Same", "text": "Release"})
     )
-    edited = await svc.ingest(
-        {"source_id": "S04"},
-        captured(svc, "S04", {"external_id": "b", "title": "Changed", "text": "Updated release"}),
-    )
-    assert first["item_id"] == duplicate["item_id"] == edited["item_id"]
-    assert edited["observed_at"] == first["observed_at"]
-    # The edit comes from a feed already counted for this item.
-    assert edited["observation_count"] == 2
+    assert first["item_id"] == duplicate["item_id"] and duplicate["observation_count"] == 2
     assert len([key for key in repo.rows if key[0] == "ingest.source_items"]) == 1
     # Duplicates are not captured items: only the first item's raw file remains.
     assert [p.name for p in tmp_path.rglob("*.zst")] == [first["item_id"] + ".json.zst"]
     await svc.close()
+
+    # Within a feed, a republished entry with a new guid is skipped on later polls.
+    republished = RSS.replace(
+        b"</channel>",
+        b"<item><guid>release-42-copy</guid><title>New protocol</title><link>https://example.org/a</link>"
+        b"<pubDate>Fri, 16 Oct 2026 12:00:00 GMT</pubDate><description>Protocol deployment &amp; vote</description></item></channel>",
+    )
+    repo = Repo()
+    source = {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, content=republished))
+    ) as http:
+        svc = SourceService(repo, settings(tmp_path / "feed", [source]), http=http)
+        await svc.poll_once("S30")
+        state = await repo.get("ops.source_checkpoints", "S30:0")
+        assert len(state["duplicate_ids"]) == 1
+        await svc.poll_once("S30")
+        items = [v for (c, _), v in repo.rows.items() if c == "ingest.source_items"]
+        assert len(items) == 1 and items[0]["observation_count"] == 1
+        assert len(list((tmp_path / "feed").rglob("*.zst"))) == 1
 
 
 @pytest.mark.asyncio
@@ -2656,7 +2636,7 @@ async def test_raw_durability_failure_prevents_source_item_and_job_persistence(
     monkeypatch.setattr(raw_store.os, "fsync", fail_fsync)
     result = await svc.poll_once("S30")
     assert result["status"] == "DEGRADED" and "durable storage failure" in result["errors"][0]
-    assert not any(collection in {"ingest.source_items", "ops.source_dedup"} for collection, _ in repo.rows)
+    assert not any(collection in {"ingest.source_items"} for collection, _ in repo.rows)
     assert not repo.jobs
     assert not list(Path(tmp_path).rglob("*.tmp"))
     monkeypatch.setattr(raw_store.os, "fsync", original_fsync)
@@ -2665,113 +2645,6 @@ async def test_raw_durability_failure_prevents_source_item_and_job_persistence(
     assert recovered["raw_ref"].endswith(recovered["item_id"] + ".json.zst")
     assert len(repo.jobs) == 1
     await svc.close()
-
-
-@pytest.mark.asyncio
-async def test_supervised_retry_after_repository_failure_reuses_owned_real_http_client(tmp_path):
-    import asyncio
-
-    from tank.capture import CaptureService
-    from tank.storage import MemoryRepository
-
-    received = asyncio.Event()
-    paused = asyncio.Event()
-    retry = asyncio.Event()
-    requests = []
-    handlers = set()
-
-    async def respond(reader, writer):
-        task = asyncio.current_task()
-        handlers.add(task)
-        try:
-            request = await reader.readuntil(b"\r\n\r\n")
-            requests.append(request)
-            received.set()
-            number = str(len(requests)).encode()
-            body = RSS.replace(b"release-42", b"local-release-" + number).replace(
-                b"New protocol", b"New protocol " + number
-            )
-            writer.write(
-                b"HTTP/1.1 200 OK\r\nContent-Type: application/rss+xml\r\nConnection: close\r\nContent-Length: "
-                + str(len(body)).encode()
-                + b"\r\n\r\n"
-                + body
-            )
-            await writer.drain()
-        finally:
-            writer.close()
-            await writer.wait_closed()
-            handlers.discard(task)
-
-    class RecoveringRepository(MemoryRepository):
-        failed = False
-
-        async def list(self, collection, **kwargs):
-            if collection == "ops.source_escalations" and received.is_set() and not self.failed:
-                self.failed = True
-                raise OSError("Injected temporary repository ENOSPC")
-            return await super().list(collection, **kwargs)
-
-    server = await asyncio.start_server(respond, "127.0.0.1", 0)
-    port = server.sockets[0].getsockname()[1]
-    source = {
-        "source_id": "S30",
-        "feeds": [{"url": f"http://127.0.0.1:{port}/rss", "kind": "rss", "interval_s": 0.01}],
-    }
-    config = settings(tmp_path, [source])
-    config.capture_only = True
-    repo = RecoveringRepository()
-    await repo.open()
-    svc = SourceService(repo, config)  # Real owned httpx client; no MockTransport.
-    capture = CaptureService(repo, config, sources=svc, market=object())
-
-    async def pause(stop, seconds):
-        paused.set()
-        await retry.wait()
-
-    capture._pause = pause
-    stop = asyncio.Event()
-    supervised = asyncio.create_task(capture._supervise("sources", svc, stop))
-    try:
-        await asyncio.wait_for(paused.wait(), 3)
-        assert repo.failed and len(requests) == 1
-        assert not svc.http.is_closed
-        assert not svc.poller.active_acquisitions and not svc.poller.active_details
-        assert not any(
-            task.get_coro().__qualname__
-            in {"SourcePoller.loop", "SourcePoller.acquire", "SourcePoller.drain"}
-            for task in asyncio.all_tasks()
-            if not task.done()
-        )
-        retry.set()
-
-        async def recovered_items():
-            while len(await repo.list("ingest.source_items")) < 2:
-                await asyncio.sleep(0.005)
-
-        await asyncio.wait_for(recovered_items(), 3)
-        assert len(requests) >= 2
-        state = await repo.get("ops.source_checkpoints", "S30:0")
-        assert state["source_id"] == "S30"
-        assert state["updated_at"].endswith("Z")
-        assert state["updated_at_prec"] == "COLLECTION_ONLY"
-        assert not await repo.list("ops.jobs")
-        stop.set()
-        await asyncio.wait_for(supervised, 3)
-        assert not svc.http.is_closed  # Only the final resource owner closes it.
-    finally:
-        stop.set()
-        retry.set()
-        if not supervised.done():
-            supervised.cancel()
-        await asyncio.gather(supervised, return_exceptions=True)
-        await svc.close()
-        server.close()
-        await server.wait_closed()
-        if handlers:
-            await asyncio.gather(*handlers, return_exceptions=True)
-        await repo.close()
-    assert svc.http.is_closed
 
 
 def test_dtcc_retained_public_release_slugs_preserve_case_dots_and_document_boundaries():

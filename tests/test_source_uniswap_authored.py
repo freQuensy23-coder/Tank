@@ -110,7 +110,7 @@ async def test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches
 ):
     fixtures = [entry for entry in retained() if entry[0] in {206, 216}]
     pages = {row["url"]: payload for _, row, payload in fixtures}
-    settings = Settings(data_dir=tmp_path, capture_only=True, x_enabled=False)
+    settings = Settings(data_dir=tmp_path, x_enabled=False)
     source = next(x for x in settings.load_config("sources")["sources"] if x["source_id"] == "S15")
     feed_url = source["feeds"][0]["url"]
     links = '<a href="/latest-updates">Latest Updates</a>' + "".join(

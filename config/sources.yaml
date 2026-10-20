@@ -1,5 +1,5 @@
 version: baseline-2.3
-user_agent: null
+contact_email: inbox@ai.com
 sources:
 - source_id: S01
   name: SEC
