@@ -38,7 +38,8 @@ async def test_full_registry_baskets_and_optional_sector_peer_prices_reach_norma
     await repo.put_market_batch("mkt.klines_1m", [row], keys=["sector-peer"])
     async with httpx.AsyncClient() as http:
         service = MarketService(repo, settings, http=http)
-        snap = await service.snapshot("world:WLD", cutoff)
+        # A sector peer reaches the snapshot of a token of its sector (WLD has no sector adjustment).
+        snap = await service.snapshot("0x:ZRX", cutoff)
         assert snap["sector_baskets"] == registry["sector_baskets"]
         assert len(snap["tokens"]) == 22 and all("sector" not in t for t in snap["tokens"])
         assert any(r["instrument_id"] == peer["instrument_id"] for r in snap["klines"])

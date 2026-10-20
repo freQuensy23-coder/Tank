@@ -12,7 +12,7 @@ from decimal import Decimal, localcontext
 
 import httpx
 
-from tank.market_storage import latest_market_trades
+from tank.market_storage import latest_market_trades, market_series_day_counts, sampled_market_history
 from tank.time_precision import Timestamp, chosen_boundary, collection_clock, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time, sha256, utcnow
 
@@ -91,6 +91,8 @@ class MarketService:
         # instrument -> the last few times a klines poll succeeded. Venues omit minutes
         # without trades (Coinbase), so a missing candle is not a stale poll.
         self._klines_polled = {}
+        # (instrument, UTC day) -> complete 1m closes, for whole past days (snapshot coverage).
+        self._kline_day_counts = {}
         self._pending_market = {}
         self._market_cache = {}
         self._market_flush_lock = asyncio.Lock()
@@ -824,6 +826,9 @@ class MarketService:
                     if flow.get("volume_usd") is not None:
                         row["quote_volume_usd"] = flow["volume_usd"]
                         row["quote_volume_usd_reason"] = None
+        self._kline_day_counts.pop(
+            (iid, parse_time(row["open_time"]).replace(hour=0, minute=0, second=0, microsecond=0)), None
+        )
         await self._put("mkt.klines_1m", iid + ":" + row["open_time"], row)
 
     async def save_ticker_observation(self, instrument, row):
@@ -2288,7 +2293,7 @@ class MarketService:
         return [
             row
             async for row in self.repo.iter_range(
-                collection, field, start=start, end=end, filters=filters, batch_size=10000
+                collection, field, start=start, end=end, filters=filters, batch_size=100000
             )
         ]
 
@@ -2527,8 +2532,13 @@ class MarketService:
         coverage_count,
         fixed_window=False,
         captured_rows=None,
+        rolling=None,
     ):
-        """Compact exact typed projections; histories never retain wide kline records."""
+        """Compact exact typed projections; histories never retain wide kline records.
+
+        `rolling` names a cursor that later calls with a later cutoff extend instead of
+        reading the whole history again (live snapshots).
+        """
         from array import array
         from bisect import bisect_left
         from datetime import UTC, datetime
@@ -2565,7 +2575,7 @@ class MarketService:
         # Concurrent historical checkpoints must not evict each other's rolling
         # cursor and repeatedly reload the same history. Live conditions retain
         # their incremental cursor; fixed snapshots have their own bounded keys.
-        key = (iid, kind, start, cutoff) if fixed_window else (iid, kind)
+        key = (iid, kind, rolling) if rolling else (iid, kind, start, cutoff) if fixed_window else (iid, kind)
         async with locks.setdefault(key, asyncio.Lock()):
             previous = cache.get(key)
             reset = previous is None or start < previous["start"] or cutoff < previous["cutoff"]
@@ -2644,7 +2654,8 @@ class MarketService:
                     end=upper_open + timedelta(microseconds=1),
                     instrument_ids=[iid],
                     assembled_at=assembled_at,
-                    batch_size=10000,
+                    # One page: every keyset page re-sorts the rest of the range.
+                    batch_size=200000,
                 ):
                     apply(row)
             else:
@@ -2657,7 +2668,7 @@ class MarketService:
                         end=upper_open + timedelta(microseconds=1),
                         instrument_ids=[iid],
                         assembled_at=assembled_at,
-                        batch_size=10000,
+                        batch_size=200000,
                     ):
                         apply(row)
                 async for row in self.repo.iter_late_arrivals(
@@ -3599,6 +3610,48 @@ class MarketService:
             )
         return result
 
+    async def _series_counts(self, instrument_ids, start, cutoff, assembled):
+        """Complete 1m closes per instrument in [start, cutoff). Whole UTC days before
+        today are counted once per process; only the partial edge days are read again."""
+        start, cutoff = parse_time(start), parse_time(cutoff)
+        first = start.replace(hour=0, minute=0, second=0, microsecond=0)
+        if first < start:
+            first += timedelta(days=1)
+        last = min(cutoff, utcnow()).replace(hour=0, minute=0, second=0, microsecond=0)
+        if first >= last:
+            return await self.repo.market_series_counts(instrument_ids, start, cutoff, assembled)
+        cache = self._kline_day_counts
+        days = [first + timedelta(days=n) for n in range((last - first).days)]
+        missing = [day for day in days if any((iid, day) not in cache for iid in instrument_ids)]
+        if missing:
+            found = await market_series_day_counts(
+                self.repo, instrument_ids, missing[0], missing[-1] + timedelta(days=1), assembled
+            )
+            for day in missing:
+                for iid in instrument_ids:
+                    cache[iid, day] = found.get((iid, day), 0)
+        head = await self.repo.market_series_counts(instrument_ids, start, first, assembled)
+        tail = await self.repo.market_series_counts(instrument_ids, last, cutoff, assembled)
+        return {
+            iid: head.get(iid, 0) + tail.get(iid, 0) + sum(cache[iid, day] for day in days)
+            for iid in instrument_ids
+        }
+
+    async def _warm_series_counts(self):
+        """Count past days of every spot series once, a few instruments at a time, so the
+        first Market Truth snapshot after a start does not pay for 90 days at once."""
+        spot = [iid for iid, inst in self.instruments.items() if norm.venue_key(inst).endswith(".spot")]
+        end = utcnow()
+        for offset in range(0, len(spot), 4):
+            if self._stop is not None and self._stop.is_set():
+                return
+            try:
+                await self._series_counts(spot[offset : offset + 4], end - timedelta(days=90), end, iso())
+            except Exception as exc:  # noqa: BLE001 - a later snapshot counts what is missing
+                log.warning("series count warm-up failed: %s", type(exc).__name__)
+                return
+            await asyncio.sleep(1)
+
     async def snapshot(self, token_id, cutoff, anchor=None):
         # Strings passed to this API select an analysis boundary. Timestamp
         # callers preserve the uncertainty of an event-derived schedule.
@@ -3641,7 +3694,11 @@ class MarketService:
             values = []
             for iid in ids if name != "supply" else [None]:
                 filters = {"instrument_id": iid} if iid is not None else {"token_id": token_id}
-                range_start = recent_start if name == "klines" else history_start
+                # Event windows (03 §5.3-§5.5) are read in full from recent_start. Only
+                # the normal ranges reach back 90 days (03 §0): OI at the base-tier
+                # cadence (300 s, 03 §5.1), funding as its settled history; book,
+                # ticker, flow and liquidation history beyond the windows is unused.
+                range_start = history_start if name == "supply" else recent_start
                 rows = await self._range(
                     collection,
                     field,
@@ -3649,11 +3706,29 @@ class MarketService:
                     end=cutoff_dt + timedelta(microseconds=1),
                     filters=filters,
                 )
+                if name == "oi" and recent_start > history_start:
+                    rows = (
+                        await sampled_market_history(
+                            self.repo, collection, field, ("metric_key",), [iid], history_start, recent_start, 300
+                        )
+                        + rows
+                    )
                 if name == "funding":
+                    if recent_start > history_start:
+                        rows = (
+                            await self._range(
+                                collection,
+                                field,
+                                start=history_start,
+                                end=recent_start,
+                                filters=dict(filters, kind="SETTLED"),
+                            )
+                            + rows
+                        )
                     settled = await self._range(
                         collection,
                         "funding_time",
-                        start=range_start,
+                        start=history_start,
                         end=cutoff_dt + timedelta(microseconds=1),
                         filters=filters,
                     )
@@ -3691,14 +3766,36 @@ class MarketService:
             result[name] = sorted(
                 values, key=lambda r: r.get(field) or r.get("funding_time") or r.get("settlement_time")
             )
+        # Benchmarks plus the peers Market Truth can compare against (03 §5.7): the
+        # token's sector, or the DeFi sectors when its sector has fewer than two peers.
+        members = {}
+        for t in self.tokens.values():
+            if t.get("sector"):
+                members.setdefault(t["sector"], set()).add(t["token_id"])
+        for basket in self.sector_baskets:
+            if basket.get("sector"):
+                members.setdefault(basket["sector"], set()).update(basket.get("constituents", []))
+        sector = next(
+            (name for name, ids_ in members.items() if token_id in ids_ and name != "BENCHMARK"),
+            self.tokens.get(token_id, {}).get("sector"),
+        )
+        same_sector = members.get(sector, set()) - {token_id} if sector != "BENCHMARK" else set()
+        # IDENTITY_PAYMENTS has no sector adjustment at all (Market Truth: not applicable).
+        if len(same_sector) < 2 and sector != "IDENTITY_PAYMENTS":
+            same_sector |= {
+                identity
+                for name in ("DEX_EXECUTION", "LENDING_CREDIT", "PERP_DEX", "RWA", "INTEROPERABILITY", "SYNTHETIC_DOLLAR")
+                for identity in members.get(name, ())
+            }
         peers = {
             t["token_id"]
             for t in self.tokens.values()
-            if t.get("symbol") in ("BTC", "ETH")
-            or t.get("sector") not in (None, "BENCHMARK")
-            or t["token_id"] in self._sector_tokens
+            if t.get("symbol") in ("BTC", "ETH") or t["token_id"] in same_sector
         } - {token_id}
         assembled = iso()
+        # A live snapshot (cutoff within the last hour) extends one cursor per series;
+        # a historical cutoff reads its own fixed window.
+        rolling = "LIVE_SNAPSHOT" if cutoff_dt >= utcnow() - timedelta(hours=1) else None
         captured_klines = None
         if recent_start == history_start:
             # Long event windows already loaded every target candle used by the
@@ -3707,12 +3804,13 @@ class MarketService:
             captured_klines = {iid: [] for iid in ids}
             for row in result["klines"]:
                 captured_klines[row["instrument_id"]].append(row)
-        all_spot = [inst for inst in self.instruments.values() if norm.venue_key(inst).endswith(".spot")]
-        counts = await self.repo.market_series_counts(
-            [inst["instrument_id"] for inst in all_spot],
-            history_start,
-            cutoff_dt,
-            assembled,
+        all_spot = [
+            inst
+            for inst in self.instruments.values()
+            if norm.venue_key(inst).endswith(".spot") and inst["token_id"] in peers | {token_id}
+        ]
+        counts = await self._series_counts(
+            [inst["instrument_id"] for inst in all_spot], history_start, cutoff_dt, assembled
         )
         result["series_coverage_counts"] = counts
         result["stat_price_series"] = {}
@@ -3723,7 +3821,7 @@ class MarketService:
                 for row in await self.repo.latest_market_records(
                     "mkt.klines_1m",
                     time_field="open_time",
-                    instrument_ids=list(self.instruments),
+                    instrument_ids=sorted(ids | {inst["instrument_id"] for inst in all_spot}),
                     start=cutoff_dt - timedelta(days=90),
                     cutoff=cutoff_dt - timedelta(minutes=1),
                     assembled_at=assembled,
@@ -3752,6 +3850,7 @@ class MarketService:
                 coverage_count=counts.get(iid, 0),
                 fixed_window=True,
                 captured_rows=captured_klines.get(iid) if captured_klines is not None else None,
+                rolling=rolling,
             )
             result["stat_price_series"][iid] = series
             # Exact reference prices remain original decimal observations, not
@@ -3788,6 +3887,7 @@ class MarketService:
                 coverage_count=counts.get(iid, 0),
                 fixed_window=True,
                 captured_rows=captured_klines.get(iid) if captured_klines is not None else None,
+                rolling=rolling,
             )
             if volume["times_us"]:
                 result["stat_volume_series"][iid] = volume
@@ -4125,6 +4225,7 @@ class MarketService:
                     hot["event_id"], hot["token_id"], event_anchor(event)["ts"] if event else hot["since"]
                 )
             workers = [asyncio.create_task(self._instrument_loop(inst)) for inst in self.instruments.values()]
+            workers.append(asyncio.create_task(self._warm_series_counts()))
             workers.append(asyncio.create_task(self._supply_loop()))
             workers.append(
                 asyncio.create_task(

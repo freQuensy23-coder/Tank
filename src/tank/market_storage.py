@@ -788,3 +788,88 @@ async def latest_market_trades(repo, instrument_ids, *, start):
     async with repo.transaction():
         rows = await (await repo._conn().execute(query, [instrument_ids, start])).fetchall()
     return [{"instrument_id": row["instrument_id"], "last_trade": row["last_trade"]} for row in rows]
+
+
+async def market_series_day_counts(repo, instrument_ids, start, end, assembled_at=None):
+    """Complete finite positive 1m closes per (instrument, UTC day) for whole days in [start, end)."""
+    from psycopg import sql
+
+    instrument_ids = sorted(set(instrument_ids))
+    start, end = parse_time(start), parse_time(end)
+    counts = {}
+    if not instrument_ids or start >= end:
+        return counts
+    if not hasattr(repo, "_conn"):
+        async for row in repo.iter_market_projection(
+            "mkt.klines_1m",
+            ["instrument_id", "open_time", "c", "interval_s"],
+            "open_time",
+            start=start,
+            end=end,
+            filters={"complete": True, "interval_s": 60},
+            instrument_ids=instrument_ids,
+            assembled_at=assembled_at,
+        ):
+            close = Decimal(row["c"]) if row["c"] is not None else None
+            opened = parse_time(row["open_time"])
+            if close is not None and close.is_finite() and close > 0 and opened < end:
+                day = opened.replace(hour=0, minute=0, second=0, microsecond=0)
+                counts[row["instrument_id"], day] = counts.get((row["instrument_id"], day), 0) + 1
+        return counts
+    args = [instrument_ids, start, end]
+    availability = sql.SQL("")
+    if assembled_at is not None:
+        availability = sql.SQL(" AND (recorded_at IS NULL OR recorded_at<=%s)")
+        args.append(parse_time(assembled_at))
+    query = sql.SQL(
+        "SELECT instrument_id, date_trunc('day', open_time AT TIME ZONE 'UTC') AS day, count(*) AS n "
+        "FROM mkt.klines_1m WHERE instrument_id=ANY(%s::text[]) AND open_time>=%s AND open_time<%s "
+        "AND interval_s=60 AND complete IS TRUE AND c>0 AND c<'Infinity'::numeric {} GROUP BY 1, 2"
+    ).format(availability)
+    async with repo.transaction():
+        rows = await (await repo._conn().execute(query, args)).fetchall()
+    from datetime import UTC
+
+    for row in rows:
+        counts[row["instrument_id"], row["day"].replace(tzinfo=UTC)] = row["n"]
+    return counts
+
+
+async def sampled_market_history(repo, collection, time_field, group_fields, instrument_ids, start, end, bucket_s):
+    """The last point per (instrument, group, bucket_s bucket) in [start, end).
+
+    Older history behind normal ranges is read at the base-tier cadence: denser hot
+    points matter only near the event, which the caller reads in full.
+    """
+    from psycopg import sql
+
+    instrument_ids = sorted(set(instrument_ids))
+    start, end = parse_time(start), parse_time(end)
+    if not instrument_ids or start >= end:
+        return []
+    if not hasattr(repo, "_conn"):
+        latest = {}
+        for iid in instrument_ids:
+            async for row in repo.iter_range(collection, time_field, start=start, end=end, filters={"instrument_id": iid}):
+                at = parse_time(row[time_field])
+                if not start <= at < end:
+                    continue
+                key = (iid, *(row.get(g) for g in group_fields), int(at.timestamp()) // bucket_s)
+                if key not in latest or at >= parse_time(latest[key][time_field]):
+                    latest[key] = row
+        return sorted(latest.values(), key=lambda r: r[time_field])
+    groups = [sql.Identifier("instrument_id"), *map(sql.Identifier, group_fields)]
+    bucket = sql.SQL("floor(extract(epoch from {}) / {})").format(sql.Identifier(time_field), sql.Literal(int(bucket_s)))
+    query = sql.SQL(
+        "SELECT DISTINCT ON ({groups}, {bucket}) * FROM {table} WHERE instrument_id = ANY(%s::text[]) "
+        "AND {ts} >= %s AND {ts} < %s ORDER BY {groups}, {bucket}, {ts} DESC"
+    ).format(
+        groups=sql.SQL(",").join(groups),
+        bucket=bucket,
+        table=sql.Identifier(*collection.split(".")),
+        ts=sql.Identifier(time_field),
+    )
+    args = [instrument_ids, start, end]
+    async with repo.transaction():
+        rows = await (await repo._conn().execute(query, args)).fetchall()
+    return sorted((decode(collection, row) for row in rows), key=lambda r: r[time_field])
