@@ -1195,6 +1195,41 @@ def test_previous_window_bars_without_usd_rate_do_not_crash_size_profile():
     assert profile["sell_share_rising"] is None
 
 
+def test_benchmark_reaction_return_uses_largest_spot_venue_base_klines():
+    """03 §8.1 benchmark (lead ruling 2026-10-20): raw return from base klines; the rest NOT_APPLICABLE."""
+    from tank.analysis.truth import benchmark_reaction_values
+
+    end = parse_time("2026-10-16T12:00:00Z")
+    start = end - timedelta(hours=1)
+
+    def bar(iid, minute, close, usd):
+        return {
+            "instrument_id": iid,
+            "token_id": "bitcoin:BTC",
+            "market_type": "PERP_LINEAR" if "perp" in iid else "SPOT",
+            "open_time": iso(minute),
+            "interval_s": 60,
+            "complete": True,
+            "c": str(close),
+            "quote_volume_usd": str(usd),
+        }
+
+    klines = []
+    for i in range(120):
+        minute = end - timedelta(minutes=120 - i)
+        klines.append(bar("binance:spot:BTCUSDT", minute, 100 + i, 1000))
+        klines.append(bar("coinbase:spot:BTC-USD", minute, 50 + i, 10))
+        klines.append(bar("binance:perp_linear:BTCUSDT", minute, 1, 10**9))
+    result = benchmark_reaction_values({"token_id": "bitcoin:BTC", "klines": klines}, start, end)
+    assert result["r_raw_venue"] == "binance:spot:BTCUSDT"
+    # Last closes at or before each bound: bar i=59 closes at start, i=119 closes at end.
+    assert result["price_start"] == 159 and result["price_end"] == 219
+    assert abs(result["r_raw"] - (219 / 159 - 1)) < 1e-12
+    assert result["reason"] == "NOT_APPLICABLE" and "spot_cvd" in result["not_applicable"]
+    empty = benchmark_reaction_values({"token_id": "bitcoin:BTC", "klines": []}, start, end)
+    assert empty["r_raw"] is None and empty["r_raw_reason"] == "INCOMPLETE"
+
+
 def test_null_measurements_have_companion_context_without_wrapping_literal_fields():
     from runpy import run_path
 
