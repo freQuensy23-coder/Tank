@@ -34,6 +34,9 @@ def test_compose_topology_and_credential_boundaries():
                 "TANK_TELEGRAM_ALERTS_CHAT", "TANK_TELEGRAM_OPS_CHAT"} & set(tank["environment"])
     assert "openrouter_api_key" in oma["secrets"]
     assert "max_locks_per_transaction=256" in c["services"]["postgres"]["command"]
+    # The 2 GiB postgres container spills to disk instead of being OOM-killed (20:02Z 2026-10-20).
+    for setting in ("shared_buffers=384MB", "work_mem=16MB", "max_parallel_workers_per_gather=0"):
+        assert setting in c["services"]["postgres"]["command"]
     assert "typesafe_api_key" not in c["secrets"]
     assert "x_session" not in tank["secrets"] and "x_session" not in c["secrets"]
     assert tank["environment"]["TANK_X_ENABLED"] == "${TANK_X_ENABLED:-false}"
