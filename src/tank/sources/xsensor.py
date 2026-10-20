@@ -139,12 +139,28 @@ class XSensor:
         self.context = None
         self.driver = None
 
+    @staticmethod
+    async def refuse_optional_cookies(page):
+        """The consent banner covers the bottom of the timeline; decline non-essential cookies."""
+        refuse = page.get_by_role("button", name="Refuse non-essential cookies")
+        if await refuse.count():
+            await refuse.first.click(timeout=5000)
+
+    @staticmethod
+    async def expand(button):
+        """Open a truncated post; if X does not respond, keep the visible text."""
+        try:
+            await button.click(timeout=5000)
+            return True
+        except Exception:  # noqa: BLE001 — one unexpandable post must not fail the list read
+            return False
+
     async def capture_page(self, page, kind):
         payload = (await page.content()).encode()
         self.pages.append({"kind": kind, "url": page.url, "sha256": sha256(payload)})
         return payload
 
-    async def posts(self, list_id, checkpoint=None, *, known_ids=None):
+    async def posts(self, list_id, checkpoint=None, *, known_ids=None, members=None):
         if not list_id:
             raise ValueError("S29.list_id in sources.yaml is required")
         async with self.lock:
@@ -165,6 +181,7 @@ class XSensor:
                 ):
                     raise RuntimeError("X session unavailable or expired; operator session renewal required")
                 await page.wait_for_selector("article", timeout=20000)
+                await self.refuse_optional_cookies(page)
                 stalled = 0
                 for _ in range(25):
                     await self.capture_page(page, "X_LIST_HTML")
@@ -179,6 +196,8 @@ class XSensor:
                             continue
                         time = times.first
                         link = time.locator("xpath=ancestor::a[1]")
+                        if not await link.count():
+                            continue
                         href = await link.get_attribute("href") or ""
                         match = re.search(r"/([^/]+)/status/(\d+)", href)
                         if not match:
@@ -188,8 +207,7 @@ class XSensor:
                             reached = True
                             break
                         expand = node.locator('[data-testid="tweet-text-show-more-link"]')
-                        if await expand.count():
-                            await expand.first.click()
+                        if await expand.count() and await self.expand(expand.first):
                             await page.wait_for_timeout(250)
                             await self.capture_page(page, "X_EXPANDED_LIST_HTML")
                         pieces = await node.locator('[data-testid="tweetText"]').all_text_contents()
@@ -209,9 +227,10 @@ class XSensor:
                             ):
                                 related.append({"author": m.group(1), "status_id": m.group(2)})
                         social = await node.locator('[data-testid="socialContext"]').all_text_contents()
-                        reposter_links = await node.locator(
-                            '[data-testid="socialContext"] a[href]'
-                        ).evaluate_all('(nodes)=>nodes.map(n=>n.getAttribute("href"))')
+                        # X wraps the "… reposted" label in the reposter's profile link.
+                        reposter_links = await node.locator('[data-testid="socialContext"]').evaluate_all(
+                            '(nodes)=>nodes.map(n=>(n.closest("a[href]")||n.querySelector("a[href]")||{getAttribute:()=>null}).getAttribute("href"))'
+                        )
                         reposter = next(
                             (
                                 m.group(1)
@@ -223,6 +242,9 @@ class XSensor:
                         media = await node.locator('[data-testid="tweetPhoto"] img, video').evaluate_all(
                             '(nodes)=>nodes.map(n=>({type:n.tagName.toLowerCase(),alt:n.getAttribute("alt")||null,src:n.getAttribute("src")||null,poster:n.getAttribute("poster")||null}))'
                         )
+                        if members and (reposter or handle).lower() not in members:
+                            # Neither author nor reposter is in the list: thread context or promotion.
+                            continue
                         result[status_id] = {
                             "external_id": status_id,
                             "observed_at": iso(),
@@ -286,12 +308,14 @@ class XSensor:
                             found = False
                             for index in range(await candidates.count()):
                                 candidate = candidates.nth(index)
+                                # Cards without a permalinked time (e.g. promoted or withheld) are not the quote.
                                 permalink = candidate.locator("time").first.locator("xpath=ancestor::a[1]")
+                                if not await permalink.count():
+                                    continue
                                 if related["status_id"] not in (await permalink.get_attribute("href") or ""):
                                     continue
                                 expansion = candidate.locator('[data-testid="tweet-text-show-more-link"]')
-                                if await expansion.count():
-                                    await expansion.first.click()
+                                if await expansion.count() and await self.expand(expansion.first):
                                     await self.capture_page(detail, "X_EXPANDED_QUOTED_STATUS_HTML")
                                 quote_text = await candidate.locator(
                                     '[data-testid="tweetText"]'

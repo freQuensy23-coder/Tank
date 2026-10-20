@@ -191,6 +191,7 @@ class SourcePoller:
                 source.get("list_id"),
                 state.get("status_id"),
                 known_ids=state.get("recent_status_ids", []),
+                members=set(svc.accounts),
             )
             captures = svc.xsensor.pages
             if not captures:
