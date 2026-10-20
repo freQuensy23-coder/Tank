@@ -12,21 +12,24 @@ from tank.time_precision import collection_clock, offset_schedule, propagate_tim
 from tank.util import parse_time, utcnow
 
 log = logging.getLogger(__name__)
-TIMEOUTS = {
+# Spec job timeouts (03 §3.8). User decision 2026-10-20: every timeout x15 while the system is under test.
+TIMEOUT_SCALE = 15
+SPEC_TIMEOUTS = {
     "FILTER_ITEM": 10,
     "ROUTE_ITEM": 20,
     "AGENT_MESSAGE": 10,
     "ESCALATE_TOKENS": 10,
-    "RUN_MARKET_TRUTH": 999,  # user decision 2026-10-20 (was 90 s)
+    "RUN_MARKET_TRUTH": 90,
     "DELIVER": 10,
     "EVAL_CONDITIONS": 20,
     "MILESTONE_CHECK": 90,
-    "REACTION_CAPTURE": 999,  # user decision 2026-10-20 (was 120 s)
+    "REACTION_CAPTURE": 120,
     "SCOUT_REVIEW": 300,
 }
+TIMEOUTS = {kind: seconds * TIMEOUT_SCALE for kind, seconds in SPEC_TIMEOUTS.items()}
 
 
-ADMISSION_TIMEOUT_S = 10
+ADMISSION_TIMEOUT_S = 10 * TIMEOUT_SCALE
 CAPTURE_WAIT_S = 15  # Included in the RUN_MARKET_TRUTH job time.
 
 

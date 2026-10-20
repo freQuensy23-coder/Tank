@@ -1809,7 +1809,7 @@ class EventToolService:
                 )
         truths = []
         for job in jobs:
-            deadline = asyncio.get_running_loop().time() + 999  # same as runtime.TIMEOUTS[RUN_MARKET_TRUTH] (user decision 2026-10-20)
+            deadline = asyncio.get_running_loop().time() + 90 * 15  # = runtime.TIMEOUTS[RUN_MARKET_TRUTH] (x15 under test, user decision 2026-10-20)
             while True:
                 current = await self.require("ops.jobs", job["job_id"])
                 if current["status"] == "DONE":
