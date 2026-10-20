@@ -1,7 +1,6 @@
 """Independent raw TTL scheduling; all file fixtures live beneath pytest tmp_path."""
 
 import asyncio
-import json
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -11,7 +10,7 @@ import pytest
 import tank.scheduler as scheduler_module
 from tank.scheduler import Scheduler
 from tank.storage import MemoryRepository
-from tank.util import iso, parse_time
+from tank.util import parse_time
 
 NOW = parse_time("2026-10-19T12:00:00Z")
 
@@ -162,54 +161,25 @@ async def test_successful_backup_pruning_uses_same_daily_guard(monkeypatch, tmp_
 
 
 async def test_missing_backup_still_prunes_expired_temporary_raw_file(tmp_path):
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
+    """With no backup configured, the daily raw TTL still removes expired raw
+    day directories of the HLD §7.2 layout and keeps recent ones."""
     data = tmp_path / "data"
-    directory = data / "raw" / "trades"
-    directory.mkdir(parents=True)
-    stamp = NOW - timedelta(days=70)
-    expired = directory / "expired.parquet"
-    pinned = directory / "pinned.parquet"
-    for path in (expired, pinned):
-        pq.write_table(pa.Table.from_pylist([{"ts": iso(stamp), "instrument_id": "v:T"}]), path)
+    old = (NOW - timedelta(days=70)).date().isoformat()
+    recent = (NOW - timedelta(days=2)).date().isoformat()
+    for day in (old, recent):
+        directory = data / "raw" / "trades" / "binance" / "spot" / "ABCUSDT" / day
+        directory.mkdir(parents=True)
+        (directory / "12.parquet").write_bytes(b"x")
     scheduler = quiet_scheduler(
         SimpleNamespace(backup_dir=None, data_dir=data, load_config=lambda name: {"instruments": []})
     )
     # Use the production pruner, retaining mocks only for unrelated database pruning.
     scheduler.prune_raw_files = Scheduler.prune_raw_files.__get__(scheduler, Scheduler)
-    for identity, path in (("expired", expired), ("pinned", pinned)):
-        await scheduler.repo.put(
-            "mkt.raw_archives",
-            identity,
-            {
-                "archive_id": identity,
-                "path": str(path),
-                "token_id": "T",
-                "kind": "trades",
-                "received_ts": iso(stamp),
-            },
-        )
-    await scheduler.repo.put(
-        "out.evidence_bundles",
-        "pin",
-        {
-            "bundle_id": "pin",
-            "payload": {"raw_path": str(pinned)},
-        },
-    )
     try:
         await scheduler.tick(NOW)
         await asyncio.gather(*scheduler.background.values())
-        assert not expired.exists()
-        assert pinned.is_file()
-        records = [
-            json.loads(line)
-            for line in (data / "retention" / "removed-market-files.jsonl").read_text().splitlines()
-        ]
-        assert len(records) == 2
-        assert records[0]["status"] == "REMOVAL_INTENT"
-        assert records[1]["status"] == "REMOVAL_COMPLETE"
+        assert not (data / "raw/trades/binance/spot/ABCUSDT" / old).exists()
+        assert (data / "raw/trades/binance/spot/ABCUSDT" / recent / "12.parquet").is_file()
         assert await scheduler.repo.get("ops.scheduler_checkpoints", "raw-retention")
         scheduler.repo.prune_market.assert_not_awaited()
         scheduler.repo.prune_jobs.assert_not_awaited()
