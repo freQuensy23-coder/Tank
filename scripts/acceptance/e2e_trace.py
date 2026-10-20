@@ -67,7 +67,10 @@ SELECT call_id, session_id, tool, status, requested_at, answered_at,
  WHERE session_id IN (SELECT session_id FROM ops.agent_sessions WHERE event_id = :'eid')
  ORDER BY requested_at
 """
-BUNDLES = "SELECT bundle_id, document->'payload' AS payload, document->>'sha256' AS sha FROM out.evidence_bundles WHERE bundle_id IN (SELECT evidence_bundle_id FROM out.alerts WHERE event_id = :'eid')"
+# out.evidence_bundles.bundle_id is "EVB-<sha>"; alerts reference the bare sha (also the storage key).
+BUNDLES = """SELECT storage_key, bundle_id, document->'payload' AS payload, document->>'sha256' AS sha FROM out.evidence_bundles
+ WHERE storage_key IN (SELECT evidence_bundle_id FROM out.alerts WHERE event_id = :'eid')
+    OR bundle_id IN (SELECT 'EVB-' || evidence_bundle_id FROM out.alerts WHERE event_id = :'eid')"""
 
 
 def canonical_sha(value):
@@ -128,8 +131,9 @@ def trace(event_id):
     bundle_checks = []
     for b in bundles:
         digest = canonical_sha(b["payload"]) if b["payload"] is not None else None
+        referenced = {a.get("evidence_bundle_id") for a in rows["alerts"]}
         bundle_checks.append({"bundle_id": b["bundle_id"], "stored_sha": b["sha"], "recomputed": digest,
-                              "valid": digest == b["bundle_id"] == b["sha"]})
+                              "valid": digest == b["sha"] and b["sha"] in referenced})
 
     stages = {
         "source_item_relevant": bool(opening and opening["relevance_decision"] in ("ALWAYS", "SEND")),
@@ -163,7 +167,13 @@ def trace(event_id):
     within = {k: (timings[k] is not None and timings[k] <= v) for k, v in limits.items() if v is not None}
     within["delivery_after_generation_s"] = all(v is not None and v <= 10 for v in timings["delivery_after_generation_s"]) \
         if timings["delivery_after_generation_s"] else False
-    manual = [j for j in rows["jobs"] if (j.get("payload") or {}).get("reason") or (j.get("payload") or {}).get("operator")]
+    # An operator step is an agent message an operator injected (kind RECOVERY / note "Operator …"), or a job
+    # payload that names an operator. Automatic reasons (e.g. late REACTION_CAPTURE) are not manual steps.
+    def operator_job(j):
+        p = j.get("payload") or {}
+        return bool(p.get("operator")) or (j["type"] == "AGENT_MESSAGE" and (
+            p.get("kind") == "RECOVERY" or str(p.get("note", "")).lower().startswith("operator")))
+    manual = [j for j in rows["jobs"] if operator_job(j)]
     agent_rules = sorted({(a.get("model_id"), a.get("prompt_version")) for a in rows["alerts"]}, key=str)
     return {
         "event_id": event_id,
@@ -176,6 +186,9 @@ def trace(event_id):
         "limits_s": limits,
         "within_limits": within,
         "operator_or_manual_jobs": [j["job_id"] for j in manual],
+        "recovered_by_operator": bool(manual),
+        "operator_steps": [{"job_id": j["job_id"], "type": j["type"], "kind": (j.get("payload") or {}).get("kind"),
+                            "created_at": j["created_at"], "note": str((j.get("payload") or {}).get("note", ""))[:300]} for j in manual],
         "agent_rules_in_force": [{"model_id": m, "prompt_version": pv} for m, pv in agent_rules],
         "evidence_bundles": bundle_checks,
         "timeline": timeline,
@@ -190,7 +203,8 @@ def render(t):
     out += ["", "## Timings (s)", ""]
     out += [f"- {k}: {v}" + (f" (limit {t['limits_s'][k]})" if t["limits_s"].get(k) else "") for k, v in t["timings"].items()]
     out += ["", f"Within limits: {json.dumps(t['within_limits'])}",
-            f"Operator/manual jobs in chain: {t['operator_or_manual_jobs'] or 'none'}",
+            f"Operator/manual steps in chain: {t['operator_or_manual_jobs'] or 'none'}"
+            + (" — RECOVERED BY OPERATOR (not a no-manual-step V0-G pass)" if t["recovered_by_operator"] else ""),
             f"Agent rules in force (model, prompt version): {t['agent_rules_in_force']}", "", "## Timeline", "",
             "| at | +s from known | step | detail |", "|---|---:|---|---|"]
     out += [f"| {r['at']} | {r['since_known_s']:.1f} | {r['step']} | {r['detail']} |" for r in t["timeline"]]
@@ -219,4 +233,4 @@ if __name__ == "__main__":
     write_json(os.path.join(d, "receipt.json"), {"written_at": iso(utcnow()), "files": {
         f: hashlib.sha256(open(os.path.join(d, f), "rb").read()).hexdigest() for f in sorted(os.listdir(d))}})
     print(render(t)[:4000])
-    sys.exit(0 if t["chain_complete"] and all(t["within_limits"].values()) else 1)
+    sys.exit(0 if t["chain_complete"] and all(t["within_limits"].values()) and not t["recovered_by_operator"] else 1)
