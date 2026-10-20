@@ -50,7 +50,8 @@ def binance_request_weight(host, path, params):
     """
     limit = int(params.get("limit", 100))
     if host == "api.binance.com":
-        fixed = {"/api/v3/aggTrades": 4, "/api/v3/klines": 2}
+        # exchangeInfo is read by the Binance listing source (tank.sources), not by market.
+        fixed = {"/api/v3/exchangeInfo": 20, "/api/v3/aggTrades": 4, "/api/v3/klines": 2}
         if path in fixed:
             return fixed[path]
         if path == "/api/v3/depth":
@@ -59,6 +60,7 @@ def binance_request_weight(host, path, params):
             return 2 if params.get("symbol") else 80
     elif host == "fapi.binance.com":
         fixed = {
+            "/fapi/v1/exchangeInfo": 1,
             "/fapi/v1/aggTrades": 20,
             "/fapi/v1/openInterest": 1,
             "/futures/data/openInterestHist": 0,

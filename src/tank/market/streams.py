@@ -81,9 +81,12 @@ async def process_frame(self, instrument, raw):
         if event == "aggTrade":
             await self.ingest_trade(instrument, data)
         elif event == "depthUpdate":
-            if int(data["u"]) <= int(book.sequence):
+            bridging = self._book_initial_bridge.get(iid, True)
+            # Drop events the snapshot already contains: spot u <= lastUpdateId; the
+            # USDⓈ-M bridge event itself has u == lastUpdateId, so only u < lastUpdateId.
+            if int(data["u"]) < int(book.sequence) + (1 if not bridging or key.endswith("spot") else 0):
                 return
-            if self._book_initial_bridge.get(iid, True):
+            if bridging:
                 # Futures initial bridge includes lastUpdateId (spot lastUpdateId+1).
                 target = int(book.sequence) + (1 if key.endswith("spot") else 0)
                 if not int(data["U"]) <= target <= int(data["u"]):
@@ -549,6 +552,17 @@ async def stream_group_loop(self, endpoint):
                 global_liqs = False
                 venue = venue_key(self.instruments[next(iter(self._stream_groups[endpoint]))]).split(".")[0]
                 index = {}
+                sent_at = [0.0]
+
+                async def send(message):
+                    # Binance closes a connection that receives more than 5 messages
+                    # a second; keep control messages at most 4 per second.
+                    if venue == "binance":
+                        wait = sent_at[0] + 0.25 - time.monotonic()
+                        if wait > 0:
+                            await asyncio.sleep(wait)
+                        sent_at[0] = time.monotonic()
+                    await socket.send(json.dumps(message))
 
                 async def membership(desired, active=active, preparing=preparing, pending=pending):
                     nonlocal global_liqs
@@ -557,7 +571,7 @@ async def stream_group_loop(self, endpoint):
                     for message in subscription_messages(
                         [self.instruments[i] for i in removed], subscribe=False, endpoint=endpoint
                     ):
-                        await socket.send(json.dumps(message))
+                        await send(message)
                     for iid in removed:
                         if iid in preparing:
                             old_task = preparing.pop(iid)
@@ -572,7 +586,7 @@ async def stream_group_loop(self, endpoint):
                     for message in subscription_messages(
                         [self.instruments[i] for i in added], endpoint=endpoint
                     ):
-                        await socket.send(json.dumps(message))
+                        await send(message)
                     for iid in added:
                         pending[iid] = []
                         preparing[iid] = asyncio.create_task(
@@ -617,9 +631,9 @@ async def stream_group_loop(self, endpoint):
                         old.cancel()
                         await asyncio.gather(old, return_exceptions=True)
                     for message in subscription_messages([inst], subscribe=False, endpoint=endpoint):
-                        await socket.send(json.dumps(message))
+                        await send(message)
                     for message in subscription_messages([inst], endpoint=endpoint):
-                        await socket.send(json.dumps(message))
+                        await send(message)
                     pending[iid] = []
 
                     async def delayed_prepare():
