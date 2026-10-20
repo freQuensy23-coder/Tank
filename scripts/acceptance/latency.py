@@ -14,7 +14,9 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import iso, query, seconds, summary, utcnow, write_json  # noqa: E402
+import json  # noqa: E402
+
+from common import iso, parse, query, seconds, summary, utcnow, write_json  # noqa: E402
 
 MAJOR_PLUS = ("MAJOR", "STRUCTURAL_SHOCK")
 
@@ -71,7 +73,27 @@ SELECT al.alert_id, al.version, al.kind, al.event_id, al.generated_at,
 """
 
 
-def measure(since, until):
+def fixture_windows(path):
+    """[(start, end)] of native fixture runs (run_fixtures.py), to read latency with and without fixture load."""
+    if not path or not os.path.exists(path):
+        return []
+    starts, out = {}, []
+    for line in open(path):
+        r = json.loads(line)
+        if r["event"] == "START":
+            starts[r["fixture_id"]] = r["at"]
+        elif r["event"] == "END" and r["fixture_id"] in starts:
+            out.append((starts.pop(r["fixture_id"]), r["at"]))
+    out += [(a, iso(utcnow())) for a in starts.values()]
+    return out
+
+
+def overlaps(start, end, windows):
+    return any(start is not None and end is not None and parse(start) < parse(b) and parse(a) < parse(end)
+               for a, b in windows)
+
+
+def measure(since, until, windows=()):
     params = {"since": since, "until": until}
     items = query(ITEMS, params)
     events = query(EVENTS, params)
@@ -97,6 +119,7 @@ def measure(since, until):
             continue
         event_lat.append(lat)
         item_rows.append({"item_id": it["item_id"], "source_id": it["source_id"], "path": path,
+                          "during_fixture": overlaps(it["observed_at"], it["recorded_at"] or it["routed_at"], windows),
                           "observed_at": it["observed_at"], "seconds": lat,
                           "filter_s": seconds(it["filtered_at"], it["observed_at"]),
                           "route_s": seconds(it["routed_at"], it["observed_at"])})
@@ -121,6 +144,7 @@ def measure(since, until):
 
     metrics = {
         "item_to_event": summary(event_lat, 90, "p95"),
+        "item_to_event_without_fixture_load": summary([r["seconds"] for r in item_rows if not r["during_fixture"]], 90, "p95"),
         # Items without an event yet count with their age at the window end: a lower bound, never hidden.
         "item_to_event_with_pending_lower_bound": summary(event_lat + [p["age_s"] for p in pending], 90, "p95"),
         "structural_first_card_generated": summary([r["first_card_generated_s"] for r in structural], 180, "max"),
@@ -164,8 +188,9 @@ if __name__ == "__main__":
     ap.add_argument("--since", required=True)
     ap.add_argument("--until", default=None)
     ap.add_argument("--out", default=None, help="directory for latency.json and latency.md")
+    ap.add_argument("--fixture-windows", default="/srv/tank/data/qa/fixture-windows.jsonl")
     a = ap.parse_args()
-    res = measure(a.since, a.until or iso(utcnow()))
+    res = measure(a.since, a.until or iso(utcnow()), fixture_windows(a.fixture_windows))
     md = render(res)
     if a.out:
         write_json(os.path.join(a.out, "latency.json"), res)
