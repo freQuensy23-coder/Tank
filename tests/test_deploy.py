@@ -253,6 +253,13 @@ def test_local_oci_export_verifier_checks_referenced_blobs_and_safe_paths(tmp_pa
 
     bundle(members)
     assert helper.prepare(archive, tmp_path / "valid")["verified_descriptors"] == 1
+    with archive.open("rb") as raw:
+        stdin = type("Stdin", (), {"buffer": raw})()
+        original, helper.sys.stdin = helper.sys.stdin, stdin
+        try:
+            assert helper.prepare("-", tmp_path / "streamed")["verified_descriptors"] == 1
+        finally:
+            helper.sys.stdin = original
     members["blobs/sha256/" + digest] = b"corrupted"
     bundle(members)
     with pytest.raises(ValueError, match="digest/size"):
