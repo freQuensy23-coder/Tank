@@ -76,11 +76,6 @@ async def test_scored_match_joins_running_event_despite_other_pending_extraction
         "running",
         {"session_id": "running", "event_id": "event", "status": "RUNNING", "last_item_at": at},
     )
-    await repo.put(
-        "ops.routing_reservations",
-        "other",
-        {"reservation_id": "other", "entities": ["aave"], "status": "PENDING", "last_item_at": at},
-    )
     pipe = Pipeline(repo, opts, http=object())
 
     async def score(item, name, state):
@@ -92,7 +87,6 @@ async def test_scored_match_joins_running_event_despite_other_pending_extraction
     assert routed["route"]["decision"] == "ADDED"
     assert routed["route_event_id"] == "event"
     assert routed["routing_message"] == {"kind": "ITEM_ADDED", "item_id": "item", "event_id": "event"}
-    assert len(await repo.list("ops.routing_reservations")) == 1
 
 
 @pytest.mark.asyncio
@@ -125,7 +119,6 @@ async def test_new_item_routes_without_reservation_state():
     routed = await Pipeline(repo, opts, http=object()).route_item({"item_id": "new"})
     assert routed["routing_message"] == {"kind": "NEW_ITEM", "item_id": "new"}
     assert routed["route"] == {"decision": "NEW_SESSION", "event_id": None, "p_same": None}
-    assert await repo.list("ops.routing_reservations") == []
 
 
 @pytest.mark.asyncio
@@ -160,7 +153,6 @@ async def test_pending_extraction_is_not_a_candidate_then_real_event_is_scored(s
         assert pending["routing_message"]["kind"] == "NEW_ITEM" and not calls
         assert first["routing_message"] == {"kind": "NEW_ITEM", "item_id": "first"}
         assert "reservation_id" not in pending["route"]
-        assert await repo.list("ops.routing_reservations") == []
         await repo.put(
             "ops.agent_sessions", "ses", {"session_id": "ses", "event_id": "evt", "last_item_at": iso()}
         )
@@ -182,21 +174,9 @@ async def test_other_pending_session_never_blocks_unmatched_item(status):
     opts, _ = options()
     repo = MemoryRepository()
     await repo.put("ingest.source_items", "i", {"item_id": "i", "title": "Aave other event"})
-    await repo.put(
-        "ops.routing_reservations",
-        "old",
-        {
-            "reservation_id": "old",
-            "status": "PENDING",
-            "last_item_at": iso(),
-            "entities": ["aave"],
-            "session_id": "ses",
-        },
-    )
     await repo.put("ops.agent_sessions", "ses", {"session_id": "ses", "status": status})
     result = await Pipeline(repo, opts, http=object()).route_item({"item_id": "i"})
     assert result["route"]["decision"] == "NEW_SESSION"
-    assert (await repo.get("ops.routing_reservations", "old"))["status"] == "PENDING"
 
 
 def test_identity_matching_uses_registry_aliases_and_qualifiers_without_code_overrides():
