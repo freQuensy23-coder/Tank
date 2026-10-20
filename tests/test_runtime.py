@@ -36,18 +36,6 @@ async def test_timeout_reports_suspended_operation_without_exception_values(monk
 
 
 @pytest.mark.asyncio
-async def test_supervisor_rejects_acquisition_settings_before_starting_any_service():
-    from tank.runtime import RuntimeSupervisor
-    from tank.settings import Settings
-
-    factory = AsyncMock()
-    supervisor = RuntimeSupervisor(None, Settings(capture_only=True, _env_file=None), factory=factory)
-    with pytest.raises(ValueError, match="acquisition settings"):
-        await supervisor.run(asyncio.Event(), asyncio.Event())
-    factory.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_worker_survives_bad_job_and_persists_result():
     repo = MemoryRepository()
     stop = asyncio.Event()

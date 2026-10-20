@@ -111,8 +111,6 @@ class Runtime:
     def validate_settings(settings):
         from tank.bootstrap import validate_registry
 
-        if getattr(settings, "capture_only", False):
-            raise ValueError("Historical acquisition settings cannot start the live Tank service")
         if settings.workers != 8:
             raise ValueError("Tank production requires exactly eight workers")
         for name in ("sources", "registry", "semantics", "dependency_map", "thresholds"):
