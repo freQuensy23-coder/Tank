@@ -42,6 +42,8 @@ RISK_ORDER = [
 
 _BASELINE_CACHE = ContextVar("truth_baseline_cache", default=None)
 _BASELINE_DEPENDENCY = ContextVar("truth_baseline_dependency", default=None)
+# Per-assessment observation-time memo (id(row) -> (row, time)); set with _ASSESSMENT_INPUTS.
+_TIMES = ContextVar("truth_observation_times", default=None)
 _PARAMETERS = ContextVar("tank_truth_parameters", default=None)
 _ASSESSMENT_INPUTS = ContextVar("truth_assessment_inputs", default=None)
 
@@ -257,16 +259,16 @@ def repricing(value, event_history, day_history):
 
 
 def _time(row):
-    inputs = _ASSESSMENT_INPUTS.get()
-    times = inputs.setdefault("times", {}) if inputs is not None else None
-    identity = id(row)
-    if times is not None and identity in times:
-        return times[identity][1]
+    times = _TIMES.get()
+    if times is not None:
+        hit = times.get(id(row))
+        if hit is not None:
+            return hit[1]
     value = _observation_time(row)
     if times is not None:
         # An assessment reads one frozen snapshot. Retaining the row prevents
         # identity reuse by temporary derived observations during that call.
-        times[identity] = (row, value)
+        times[id(row)] = (row, value)
     return value
 
 
@@ -710,15 +712,22 @@ def oi_temporally_admissible(row):
 @precise
 def _oi_stats(rows, start, end, *, history_identity=None):
     rows = [row for row in rows if oi_temporally_admissible(row)]
+    ordered = sorted((_time(r), i) for i, r in enumerate(rows))
+    ordered_times = [t for t, _ in ordered]
+    tolerance = float(parameter("oi_sync_tolerance_s", 60))
 
     def nearest(t):
-        eligible = [
-            r
-            for r in rows
-            if _time(r) <= end
-            and abs((_time(r) - t).total_seconds()) <= float(parameter("oi_sync_tolerance_s", 60))
-        ]
-        return min(eligible, key=lambda r: abs((_time(r) - t).total_seconds())) if eligible else None
+        # Same choice as min() over rows in their order: smallest distance, first row on ties.
+        lo = bisect_left(ordered_times, t - timedelta(seconds=tolerance))
+        hi = bisect_right(ordered_times, min(t + timedelta(seconds=tolerance), end))
+        best = None
+        for when, index in ordered[lo:hi]:
+            if abs((when - t).total_seconds()) > tolerance:
+                continue
+            rank = (abs((when - t).total_seconds()), index)
+            if best is None or rank < best:
+                best = rank
+        return rows[best[1]] if best else None
 
     a, z = nearest(start), nearest(end)
     if not a or not z:
@@ -4175,54 +4184,6 @@ def timestamp_companions(result, snapshot):
     """Declare selected bounds; propagate source precision without reading ISO formatting."""
     result = deepcopy(result)
     source_times = defaultdict(dict)
-    time_fields = (
-        "minute_start",
-        "open_time",
-        "exchange_ts",
-        "ts",
-        "as_of",
-        "settlement_time",
-        "funding_time",
-        "observed_at",
-    )
-    for collection in (
-        "flow_bars",
-        "klines",
-        "books",
-        "oi",
-        "funding",
-        "liquidations",
-        "supply",
-    ):
-        rows = snapshot.get(collection, [])
-        rows = rows.values() if isinstance(rows, dict) else rows
-        for row in rows:
-            for field in time_fields:
-                if row.get(field) is None:
-                    continue
-                stamp = propagate_timestamp(row, field, precision_aliases=("timestamp_precision",))
-                source_times[(row.get("instrument_id"), stamp.value)].setdefault(collection, []).append(stamp)
-                if field in ("open_time", "minute_start") and row.get("interval_s") is not None:
-                    closed = offset_schedule(stamp, timedelta(seconds=int(row["interval_s"])))
-                    source_times[(row.get("instrument_id"), closed.value)].setdefault(collection, []).append(
-                        closed
-                    )
-                break
-    for row in snapshot.get("flow_bars", []):
-        for point in row.get("reference_points") or []:
-            trade = point.get("last_trade")
-            if trade:
-                stamp = propagate_timestamp(trade, "ts")
-                source_times[(row["instrument_id"], stamp.value)].setdefault("reference_points", []).append(
-                    stamp
-                )
-        for name in ("first_trade", "last_trade"):
-            trade = row.get(name)
-            if trade:
-                stamp = propagate_timestamp(trade, "ts")
-                source_times[(row["instrument_id"], stamp.value)].setdefault("reference_points", []).append(
-                    stamp
-                )
     temporal = {
         "received_ts",
         "exchange_ts",
@@ -4254,6 +4215,84 @@ def timestamp_companions(result, snapshot):
         "rv24_observed_cutoff",
         "event_public_at",
     }
+
+    # Only (instrument, time) pairs that the result names can be looked up below; parse those
+    # once and propagate precision only for matching source rows (not ~60k history rows).
+    needed = set()
+
+    def collect(value, iid=None):
+        if isinstance(value, list):
+            for child in value:
+                collect(child, iid)
+        elif isinstance(value, dict):
+            iid = value.get("instrument_id", value.get("ref_venue", iid))
+            for key, child in value.items():
+                if key in temporal and isinstance(child, str):
+                    try:
+                        needed.add((iid, parse_time(child)))
+                    except (TypeError, ValueError):
+                        pass
+                else:
+                    collect(child, iid)
+
+    collect(result)
+    time_fields = (
+        "minute_start",
+        "open_time",
+        "exchange_ts",
+        "ts",
+        "as_of",
+        "settlement_time",
+        "funding_time",
+        "observed_at",
+    )
+    for collection in (
+        "flow_bars",
+        "klines",
+        "books",
+        "oi",
+        "funding",
+        "liquidations",
+        "supply",
+    ):
+        rows = snapshot.get(collection, [])
+        rows = rows.values() if isinstance(rows, dict) else rows
+        for row in rows:
+            observed = _time(row)
+            if observed is None:
+                continue
+            interval = row.get("interval_s")
+            if (row.get("instrument_id"), observed) not in needed and not (
+                interval is not None
+                and (row.get("instrument_id"), observed + timedelta(seconds=int(interval))) in needed
+            ):
+                continue
+            for field in time_fields:
+                if row.get(field) is None:
+                    continue
+                stamp = propagate_timestamp(row, field, precision_aliases=("timestamp_precision",))
+                source_times[(row.get("instrument_id"), stamp.value)].setdefault(collection, []).append(stamp)
+                if field in ("open_time", "minute_start") and row.get("interval_s") is not None:
+                    closed = offset_schedule(stamp, timedelta(seconds=int(row["interval_s"])))
+                    source_times[(row.get("instrument_id"), closed.value)].setdefault(collection, []).append(
+                        closed
+                    )
+                break
+    for row in snapshot.get("flow_bars", []):
+        for point in row.get("reference_points") or []:
+            trade = point.get("last_trade")
+            if trade:
+                stamp = propagate_timestamp(trade, "ts")
+                source_times[(row["instrument_id"], stamp.value)].setdefault("reference_points", []).append(
+                    stamp
+                )
+        for name in ("first_trade", "last_trade"):
+            trade = row.get(name)
+            if trade:
+                stamp = propagate_timestamp(trade, "ts")
+                source_times[(row["instrument_id"], stamp.value)].setdefault("reference_points", []).append(
+                    stamp
+                )
 
     cutoff_stamp = (
         propagate_timestamp(snapshot, "cutoff")
@@ -4580,9 +4619,11 @@ def compute_market_truth(snapshot, *, config=None, baseline_cache=None):
     baselines = _BASELINE_CACHE.set(baseline_cache if baseline_cache is not None else {})
     dependency = _BASELINE_DEPENDENCY.set(None)
     inputs = _ASSESSMENT_INPUTS.set({})
+    times = _TIMES.set({})
     try:
         return _compute_market_truth(snapshot, config=config)
     finally:
+        _TIMES.reset(times)
         _ASSESSMENT_INPUTS.reset(inputs)
         _BASELINE_DEPENDENCY.reset(dependency)
         _BASELINE_CACHE.reset(baselines)
