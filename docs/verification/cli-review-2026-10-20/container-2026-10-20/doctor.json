@@ -1,0 +1,109 @@
+{
+  "ready": false,
+  "checks": [
+    {
+      "check": "sources_syntax",
+      "ok": true
+    },
+    {
+      "check": "delivery_syntax",
+      "ok": true
+    },
+    {
+      "check": "registry_syntax",
+      "ok": true
+    },
+    {
+      "check": "semantics_syntax",
+      "ok": true
+    },
+    {
+      "check": "dependency_map_syntax",
+      "ok": true
+    },
+    {
+      "check": "thresholds_syntax",
+      "ok": true
+    },
+    {
+      "check": "calibration",
+      "ok": true
+    },
+    {
+      "check": "openma_syntax",
+      "ok": true
+    },
+    {
+      "check": "openma_agent_id",
+      "ok": true
+    },
+    {
+      "check": "openma_scout_agent_id",
+      "ok": true
+    },
+    {
+      "check": "openma_environment_id",
+      "ok": true
+    },
+    {
+      "check": "openma_replay_environment_id",
+      "ok": true
+    },
+    {
+      "check": "opencode_api_key",
+      "ok": true
+    },
+    {
+      "check": "openma_api_key",
+      "ok": true
+    },
+    {
+      "check": "codex_gateway_key",
+      "ok": true
+    },
+    {
+      "check": "etherscan_api_key",
+      "ok": true
+    },
+    {
+      "check": "telegram_token",
+      "ok": true
+    },
+    {
+      "check": "telegram_alerts_chat",
+      "ok": true
+    },
+    {
+      "check": "telegram_ops_chat",
+      "ok": true
+    },
+    {
+      "check": "backup_dir",
+      "ok": true
+    },
+    {
+      "check": "codex_auth_file_present",
+      "ok": true
+    },
+    {
+      "check": "s29_list_id",
+      "ok": true
+    },
+    {
+      "check": "x_profile",
+      "ok": false
+    },
+    {
+      "check": "user_agent_contact",
+      "ok": true
+    },
+    {
+      "check": "database",
+      "ok": true
+    },
+    {
+      "check": "schema",
+      "ok": true
+    }
+  ]
+}

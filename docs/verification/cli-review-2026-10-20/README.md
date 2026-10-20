@@ -37,3 +37,11 @@ The commands of 01 §7.4, HLD §9, TDD §13 and docs/OPERATIONS.md were run with
 - Positive `replay` / `bundle reproduce`: this needs a captured replay packet (tank-sessions) and, for fresh-session mode, the deployed OpenMA (tank-platform).
 - `doctor` inside the deployed `tank` container: after deploy.
 - Weekly miss audit: a major event that Tank never recorded has no event_id. `review label` accepts only an alert_id or event_id (TDD §2.8), so such a MISS cannot be recorded. Spec question raised with the lead.
+
+## In the `tank` container on production (18:40Z, [container-2026-10-20/](container-2026-10-20/))
+
+The commands were run in the Compose `tank` service (`docker compose -p tank … run --rm --no-deps --entrypoint tank -v <ws/tank-ops src>:/app/src:ro tank …`). That is the same environment as `docker compose exec tank tank …` (HLD §9): the entrypoint is skipped, and the real secrets and config are mounted.
+
+- Finding, now fixed: the database URLs came only from `deploy/tank_entrypoint.py`. `exec` skips the entrypoint, so every CLI command in the container failed to reach PostgreSQL (`database: OperationalError`). Settings now builds the same `postgresql://tank:…@postgres:5432/tank` and oma URLs from the mounted `tank_db_password` and `oma_db_password` secrets. The environment still overrides them.
+- `doctor`: 25/26 checks ok ([doctor.json](container-2026-10-20/doctor.json)). They cover the database and schema, OpenCode key, OpenMA ids, Telegram token and both chats from delivery.yaml, `User-Agent TankV0/1.0 (inbox@ai.com)`, S29 list_id, backup dir and codex auth. The failing check is `x_profile`: the X browser profile in `/browser` is still empty, and xsensor seeds it on its first start.
+- `review list`, `review metrics` (week), `review show EVENT`, `reaction EVENT`, `scout list`, `coverage` and `sources check` all exit 0 against production ([commands.tsv](container-2026-10-20/commands.tsv)). Production has no cards yet (0 alerts).
