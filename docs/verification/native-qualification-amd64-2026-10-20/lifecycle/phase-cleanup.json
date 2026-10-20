@@ -1,0 +1,9 @@
+{
+  "status": "PASS",
+  "id": "rEAHsoxscQWH",
+  "exactScopedReap": true,
+  "acquisitionRetries": 0,
+  "nativeCatalogAfter": [],
+  "noGuestRestoreOrBootRequired": true,
+  "openmaSessionArchiveApiCalled": false
+}

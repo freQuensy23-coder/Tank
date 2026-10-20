@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""Deployment proof: read back registered OpenMA resources, then run one real session.
+
+The session must load the registered skills (the agent reports the skill version that
+exists only in tank-event-analyst/SKILL.md) and make one schema-bound custom tool call
+(get_registry), answered with Tank's own EventToolService result. Read-only for Tank state.
+Usage: openma_session_proof.py OUT_DIR OPENMA_BASE_URL PROPOSED_OPENMA_YAML CONFIG_DIR
+"""
+
+import hashlib
+import json
+import sys
+import time
+from pathlib import Path
+
+import httpx
+import yaml
+
+sys.path.insert(0, "/srv/tank/src")
+from tank.agents.wire import tool_wire_result  # noqa: E402
+from tank.event_tools import EventToolService  # noqa: E402
+from tank.settings import Settings  # noqa: E402
+from tank.util import canonical_json  # noqa: E402
+
+out, base, proposed_path, config_dir = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4])
+out.mkdir(parents=True, exist_ok=True)
+proposed = yaml.safe_load(proposed_path.read_text())
+key = Path("/etc/tank/secrets/oma_api_key").read_text().strip()
+client = httpx.Client(
+    base_url=base.rstrip("/") + "/v1/",
+    headers={"x-api-key": key, "anthropic-beta": "managed-agents-2026-04-01,skills-2025-10-02"},
+    timeout=60,
+)
+
+
+def save(name, value):
+    (out / name).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
+
+
+def get(path, **params):
+    response = client.get(path, params=params or None)
+    response.raise_for_status()
+    body = response.json()
+    return body.get("data", body) if isinstance(body, dict) and "data" in body and len(body) <= 2 else body
+
+
+# Readback of every registered resource.
+agent = get("agents/" + proposed["agent_id"])
+save("agent-readback.json", agent)
+local_tools = json.loads((config_dir / "skills/tank-event-analyst/tools.json").read_text())
+remote_custom = {t["name"]: t for t in agent.get("tools", []) if t.get("type") == "custom"}
+tool_check = {
+    "local_count": len(local_tools),
+    "remote_custom_count": len(remote_custom),
+    "names_match": sorted(remote_custom) == sorted(t["name"] for t in local_tools),
+    "schemas_match": all(
+        canonical_json(remote_custom.get(t["name"], {}).get("input_schema")) == canonical_json(t.get("input_schema"))
+        for t in local_tools
+    ),
+}
+skills = []
+for binding in agent.get("skills", []):
+    meta = get(f"skills/{binding['skill_id']}")
+    skills.append({"binding": binding, "skill": meta})
+save("skills-readback.json", skills)
+environments = {name: get("environments/" + proposed[key_]) for name, key_ in
+                [("tank-analysis", "environment_id"), ("tank-replay", "replay_environment_id")]}
+save("environments-readback.json", environments)
+save("tool-check.json", tool_check)
+assert tool_check["local_count"] == 18 and tool_check["names_match"] and tool_check["schemas_match"], tool_check
+
+# One real session.
+marker = "tank-platform-deploy-proof-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+session = client.post("sessions", json={"agent": proposed["agent_id"], "environment_id": proposed["environment_id"],
+                                        "metadata": {"tank_identity": marker}})
+session.raise_for_status()
+session = session.json()
+sid = session["id"]
+save("session-created.json", session)
+prompt = (
+    "Deployment check by the Tank operator, not a news item and not an event. Do exactly this: "
+    "1) call the tool get_registry once with entity_or_token set to \"ETH\"; "
+    "2) then answer in one line: the version string from the front matter of your tank-event-analyst skill, "
+    "and how many entries the tool returned under tokens. Do not call any other tool and do not record anything."
+)
+posted = client.post(f"sessions/{sid}/events", json={"events": [
+    {"type": "user.message", "content": [{"type": "text", "text": prompt}]}]})
+posted.raise_for_status()
+tools = EventToolService(None, Settings(config_dir=config_dir), None, None)
+seen, events, answered, deadline = set(), [], [], time.monotonic() + 900
+finished = None
+while time.monotonic() < deadline and not finished:
+    page = None
+    while True:
+        params = {"limit": 100, "order": "asc", **({"page": page} if page else {})}
+        data = client.get(f"sessions/{sid}/events", params=params).json()
+        for event in data.get("data", []):
+            if event["id"] in seen:
+                continue
+            seen.add(event["id"])
+            events.append(event)
+            kind = event.get("type")
+            if kind == "agent.custom_tool_use":
+                import asyncio
+                result = asyncio.run(getattr(tools, event["name"])(event.get("input") or {}, {}))
+                if event["name"] != "get_registry":
+                    result = {"error": "deployment check permits only get_registry"}
+                body = {"type": "user.custom_tool_result", "custom_tool_use_id": event["id"],
+                        "content": [{"type": "text", "text": canonical_json(
+                            tool_wire_result(event["name"], result, session_id=sid, call_id=event["id"]))}]}
+                if event["name"] != "get_registry":
+                    body["is_error"] = True
+                client.post(f"sessions/{sid}/events", json={"events": [body]}).raise_for_status()
+                answered.append({"tool": event["name"], "input": event.get("input"), "tokens": len(result.get("tokens", []))})
+            if kind == "session.status_idle" and (event.get("stop_reason") or {}).get("type") == "end_turn":
+                finished = event
+            if kind in {"session.error", "session.status_terminated", "execution.status_failed"}:
+                finished = event
+        page = data.get("next_page")
+        if not page:
+            break
+    time.sleep(3)
+save("session-events.json", events)
+messages = [b.get("text", "") for e in events if e.get("type") == "agent.message" for b in e.get("content", [])]
+expected_version = next(l.split(":", 1)[1].strip() for l in
+                        (config_dir / "skills/tank-event-analyst/SKILL.md").read_text().splitlines() if l.startswith("version:"))
+summary = {
+    "session_id": sid,
+    "marker": marker,
+    "tool_check": tool_check,
+    "skills": [{"name": s["skill"].get("name") or s["skill"].get("display_title"), **s["binding"]} for s in skills],
+    "tool_calls_answered": answered,
+    "final_event": finished,
+    "agent_text": messages,
+    "expected_skill_version": expected_version,
+    "skill_version_reported": any(expected_version in m for m in messages),
+    "real_tool_call": any(a["tool"] == "get_registry" for a in answered),
+}
+summary["status"] = "PASS" if summary["skill_version_reported"] and summary["real_tool_call"] and finished and \
+    finished.get("type") == "session.status_idle" else "FAIL"
+save("result.json", summary)
+print(json.dumps({k: summary[k] for k in ("status", "session_id", "skill_version_reported", "real_tool_call", "agent_text")}))

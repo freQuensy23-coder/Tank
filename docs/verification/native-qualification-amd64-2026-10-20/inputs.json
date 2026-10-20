@@ -1,0 +1,7 @@
+{"image": "tank-openma:server-r86-amd64", "image_id": "sha256:929d2a888318afd348e47ec22bafcb3ff6c1ed65f2667c771ffea0ed39e8c0ff", "runtime_identity": "50b110dd1f37a6edee1ae5a80f104bbb772180725127ed44bc77e474c3e45641",
+ "kvm_device": "crw-rw---- root:kvm a:e8", "kvm_gid": 994,
+ "host_kernel": "6.8.0-147-generic", "host_machine": "x86_64",
+ "host_cpu_virt": "svm", "kvm_module": "kvm_amd",
+ "oci_index_sha256": "906ee9fa0d54aebf7aa44a352bf2e8c001a846f7de58327ebf9d75c4924f8322",
+ "shim_sha256": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+ "database_ip": "172.30.60.2", "qualification_ip": "172.30.60.10"}

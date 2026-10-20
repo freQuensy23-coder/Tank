@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import shutil
+import sys
 import tarfile
 from pathlib import Path, PurePosixPath
 
@@ -19,7 +20,11 @@ def prepare(archive: Path, destination: Path, *, boxlite_version="0.9.0", archit
         raise ValueError("OCI destination must be new")
     destination.mkdir(parents=True)
     try:
-        with tarfile.open(archive, "r:*") as bundle:
+        # "-" streams `docker save` output from stdin, so no intermediate archive is written.
+        stream = str(archive) == "-"
+        with (
+            tarfile.open(fileobj=sys.stdin.buffer, mode="r|*") if stream else tarfile.open(archive, "r:*")
+        ) as bundle:
             for member in bundle:
                 relative = PurePosixPath(member.name)
                 if (

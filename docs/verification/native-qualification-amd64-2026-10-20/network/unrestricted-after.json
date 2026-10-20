@@ -1,0 +1,123 @@
+{
+  "name": "unrestricted-after",
+  "policy": {
+    "mode": "enabled"
+  },
+  "bootAndProbeMs": 3296,
+  "probe": {
+    "machine": {
+      "ok": true,
+      "value": "x86_64",
+      "ms": 0
+    },
+    "kernel": {
+      "ok": true,
+      "value": "6.12.87",
+      "ms": 0
+    },
+    "hypervisor_cpu_flag": {
+      "ok": true,
+      "value": true,
+      "ms": 1
+    },
+    "nameservers": [
+      "192.168.127.1"
+    ],
+    "dns_getaddrinfo_example.com": {
+      "ok": true,
+      "value": [
+        "104.20.23.154",
+        "172.66.147.243"
+      ],
+      "ms": 16
+    },
+    "dns_getaddrinfo_openrouter.ai": {
+      "ok": true,
+      "value": [
+        "104.18.2.115",
+        "104.18.3.115"
+      ],
+      "ms": 3
+    },
+    "dns_getaddrinfo_api.etherscan.io": {
+      "ok": true,
+      "value": [
+        "162.252.84.9",
+        "217.79.240.58",
+        "217.79.243.34",
+        "23.111.175.138",
+        "23.92.68.154"
+      ],
+      "ms": 18
+    },
+    "dns_getaddrinfo_postgres": {
+      "ok": true,
+      "value": [
+        "172.30.60.2"
+      ],
+      "ms": 28
+    },
+    "dns_udp_configured": {
+      "ok": true,
+      "value": {
+        "rcode": 0,
+        "answers": 2
+      },
+      "ms": 3
+    },
+    "dns_udp_public_1.1.1.1": {
+      "ok": true,
+      "value": {
+        "rcode": 0,
+        "answers": 2
+      },
+      "ms": 18
+    },
+    "tls_direct_ip_1.1.1.1": {
+      "ok": true,
+      "value": {
+        "peer": "1.1.1.1",
+        "version": "TLSv1.3"
+      },
+      "ms": 129
+    },
+    "tls_direct_ip_8.8.8.8": {
+      "ok": true,
+      "value": {
+        "peer": "8.8.8.8",
+        "version": "TLSv1.3"
+      },
+      "ms": 75
+    },
+    "https_example.com": {
+      "ok": true,
+      "value": 200,
+      "ms": 144
+    },
+    "https_openrouter_models": {
+      "ok": true,
+      "value": 200,
+      "ms": 99
+    },
+    "db_tcp": {
+      "ok": true,
+      "value": "172.30.60.2",
+      "ms": 6
+    },
+    "db_select": {
+      "ok": true,
+      "value": "tank_agent tank",
+      "ms": 278
+    },
+    "db_write_refused": {
+      "ok": false,
+      "error": "RuntimeError: ERROR:  cannot execute CREATE TABLE in a read-only transaction",
+      "ms": 104
+    },
+    "db_cross_database": {
+      "ok": false,
+      "error": "RuntimeError: psql: error: connection to server at \"172.30.60.2\", port 5432 failed: FATAL:  pg_hba.conf rejects connection for host \"172.30.60.10\", user \"tank_agent\", database \"tank_replay\", no encryption",
+      "ms": 47
+    }
+  }
+}
