@@ -9,6 +9,7 @@ import json
 import os
 import uuid
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from types import SimpleNamespace
 from urllib.parse import urlsplit, urlunsplit
 
@@ -18,7 +19,7 @@ import pytest
 from tank.agents import SessionService
 from tank.runtime import Runtime
 from tank.storage import MemoryRepository, PostgresRepository
-from tank.util import iso, sha256
+from tank.util import iso, parse_time, sha256, utcnow
 
 
 @asynccontextmanager
@@ -209,14 +210,18 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
                     job = await repo.get("ops.jobs", jobs[name])
                     assert job["status"] == "QUEUED" and job["attempts"] == 0 and job["last_error"] is None
                     assert job["expires_at"] == expiries[name]
+                    # A waiting turn sleeps instead of spinning on the job workers.
+                    assert parse_time(job["run_after"]) > utcnow() + timedelta(seconds=30)
                 # One slot frees: the older waiting turn (NEW_ITEM) goes first.
                 await release(repo, "s1")
+                await sessions.wake_waiting()
                 await until(lambda: _done(status, "new"))
                 await asyncio.sleep(1.5)
                 assert await status("idle") == "QUEUED"
                 assert posted[1] == ("s_new", "i_new")
                 # Another slot frees: the remaining turn goes.
                 await release(repo, "s2")
+                await sessions.wake_waiting()
                 await until(lambda: _done(status, "idle"))
                 assert posted == [("s1", "i_busy"), ("s_new", "i_new"), ("s3", "i_idle")]
             finally:
