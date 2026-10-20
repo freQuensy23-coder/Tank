@@ -29,6 +29,9 @@ DEFAULT_MAX_RUNNING_SESSIONS = 2
 ADMITTED_JOB_TYPES = ("AGENT_MESSAGE", "SCOUT_REVIEW")
 # A deferred turn sleeps this long unless wake_waiting() schedules it earlier.
 ADMISSION_SLEEP_S = 60
+# Admission reads only these fields: full session documents carry long message logs.
+SESSION_ADMISSION_FIELDS = ("session_id", "status", "runtime_status", "active_message_id")
+JOB_ADMISSION_FIELDS = ("job_id", "status", "priority", "payload", "slot_waiting_since", "slot_admitted")
 BUSY_RUNTIME_STATES = {"PENDING", "RUNNING", "REQUIRES_ACTION"}
 
 
@@ -1675,17 +1678,18 @@ class SessionService:
         )
 
     async def existing_session(self, payload):
-        """The session a message would go to, without creating one."""
-        if payload.get("session_id"):
-            return await self.repo.get("ops.agent_sessions", payload["session_id"])
+        """The admission fields of the session a message would go to, without creating one."""
         event_id = payload.get("event_id")
         for field, value in (
+            ("session_id", payload.get("session_id")),
             ("event_id", event_id),
             ("item_id", payload.get("item_id") if not event_id else None),
             ("proposal_id", payload.get("proposal_id") or payload.get("prp_id")),
         ):
             if value:
-                async for session in self.repo.iter_all("ops.agent_sessions", filters={field: value}):
+                async for session in self.repo.iter_metadata(
+                    "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={field: value}
+                ):
                     return session
         return None
 
@@ -1693,15 +1697,21 @@ class SessionService:
         """Running turns (busy sessions plus admitted jobs) and the queued waiting jobs."""
         running = {
             session["session_id"]
-            async for session in self.repo.iter_all("ops.agent_sessions", filters={"status": "OPEN"})
+            async for session in self.repo.iter_metadata(
+                "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={"status": "OPEN"}
+            )
             if self.running(session)
         }
         waiting = []
         for kind in ADMITTED_JOB_TYPES:
-            async for other in self.repo.iter_all("ops.jobs", filters={"type": kind, "status": "RUNNING"}):
+            async for other in self.repo.iter_metadata(
+                "ops.jobs", JOB_ADMISSION_FIELDS, filters={"type": kind, "status": "RUNNING"}
+            ):
                 if other["job_id"] != exclude_job and other.get("slot_admitted"):
                     running.add("job:" + other["job_id"])
-            async for other in self.repo.iter_all("ops.jobs", filters={"type": kind, "status": "QUEUED"}):
+            async for other in self.repo.iter_metadata(
+                "ops.jobs", JOB_ADMISSION_FIELDS, filters={"type": kind, "status": "QUEUED"}
+            ):
                 if other["job_id"] != exclude_job and other.get("slot_waiting_since"):
                     waiting.append(other)
         waiting.sort(key=lambda row: (row["priority"], row["slot_waiting_since"], row["job_id"]))

@@ -217,8 +217,15 @@ class Runtime:
                 if kind in ADMITTED_JOB_TYPES and hasattr(getattr(self, "sessions", None), "admit"):
                     # Admission is scheduling, not the job's work: it has its own bound
                     # and does not spend the 03 §3.8 timeout of the message itself.
-                    async with asyncio.timeout(ADMISSION_TIMEOUT_S):
-                        await self.sessions.admit(job)
+                    try:
+                        async with asyncio.timeout(ADMISSION_TIMEOUT_S):
+                            await self.sessions.admit(job)
+                    except TimeoutError as slow:
+                        # A slow admission check is a wait: it must never spend an
+                        # attempt, so a waiting turn is never dropped.
+                        raise AdmissionDeferred(
+                            offset_schedule(collection_clock(utcnow()), timedelta(seconds=5))
+                        ) from slow
                 async with asyncio.timeout(TIMEOUTS[kind]):
                     result = await self.handlers[kind](job["payload"])
                 async with self.repo.transaction():
