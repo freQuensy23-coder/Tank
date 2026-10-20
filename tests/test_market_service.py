@@ -202,6 +202,7 @@ async def test_polling_venue_error_preserves_gap_not_zero(setup):
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     service = MarketService(repo, settings, http=http)
     await service.poll_once(inst["instrument_id"])
+    await service.flush_market()  # pollers leave the write to the supervisor's flush
     gaps = await repo.list("mkt.capture_gaps")
     # Binance metadata comes from the semantics registry (no request); klines and ticker fail.
     assert {g["kind"] for g in gaps} >= {"KLINES", "TICKER"}

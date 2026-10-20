@@ -88,6 +88,9 @@ class MarketService:
         self._reads = {}  # host -> [succeeded, failed] REST reads since the last minute log
         self._hot_since = {}  # hot token -> earliest anchor of its events
         self._frames = {}  # WebSocket endpoint -> frames received since the last minute log
+        # instrument -> the last few times a klines poll succeeded. Venues omit minutes
+        # without trades (Coinbase), so a missing candle is not a stale poll.
+        self._klines_polled = {}
         self._pending_market = {}
         self._market_cache = {}
         self._market_flush_lock = asyncio.Lock()
@@ -182,7 +185,8 @@ class MarketService:
         if collection.startswith("mkt."):
             if collection == "mkt.trades":
                 raise ValueError("Individual trades belong only in normalized hourly Parquet")
-            row = jsonable(row)
+            # Book summaries arrive JSON-ready (OrderBook.summary); re-walking their levels is waste.
+            row = dict(row) if collection == "mkt.book_summaries" else jsonable(row)
             row = (
                 dict(row, config_version=self.settings.config_version, code_version=self.settings.code_version)
                 if collection in PUBLIC_MARKET
@@ -401,6 +405,8 @@ class MarketService:
             self.trade_archive.restore(trades)
             self.book_archive.restore(books)
             raise
+        self.trade_archive.written()
+        self.book_archive.written()
         elapsed = time.monotonic() - started
         self._raw_written = time.monotonic()
         stats = self._raw_stats
@@ -623,10 +629,12 @@ class MarketService:
             try:
                 if kind == "klines":
                     rows = await adapter.klines()
+                    polled = iso()
                     await self._raw(instrument, "klines", rows)
                     for raw in rows:
                         row = norm.kline(instrument, raw)
                         await self._store_kline(instrument, row)
+                    self._klines_polled[instrument_id] = (self._klines_polled.get(instrument_id, []) + [polled])[-5:]
                 elif kind == "ticker":
                     await self._ticker(instrument, await adapter.ticker())
                 else:
@@ -725,7 +733,8 @@ class MarketService:
                         await self._funding(instrument, raw, "SETTLED", historical_interval)
             except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
                 await self._gap(instrument, kind.upper(), exc)
-        await self.flush_market()
+        # Typed rows are written by the supervisor's flush every RAW_FLUSH_S; 181 pollers
+        # each taking the flush lock would stall the stream consumers.
 
     def _fresh(self, instrument_id, kind, rows, stamp):
         """Points of a repeated REST history newer than those processed before, and the
@@ -1039,9 +1048,10 @@ class MarketService:
             return True
         if late:
             # The minute's bar already left memory: rebuild it from its archived prints.
-            for point in await self._archived_minute(iid, minute):
-                self.flow.add(point, continuity=False, emit_record=False)
-            self.flow.bars[bar_key]["_coverage"] = self.trade_archive.coverage_for(iid, minute)
+            fresh = bar_key not in self.flow.bars
+            self._merge_prints(bar_key, await self._archived_minute(iid, minute))
+            if fresh:
+                self.flow.bars[bar_key]["_coverage"] = self.trade_archive.coverage_for(iid, minute)
         else:
             self.flow.add(row, continuity=True, emit_record=False)
         checkpoint = self._capture_checkpoints.get(iid)
@@ -1068,11 +1078,22 @@ class MarketService:
         if self.trade_archive.needs_load(canonical):
             self.trade_archive.mark_loaded(canonical, ids)
 
+    def _merge_prints(self, key, rows):
+        """Add archived prints to a bar, skipping prints it already holds (a concurrent
+        rebuild or a live print may have created the bar during the read)."""
+        held = {str(t["trade_id"]) for t in self.flow.bars.get(key, {}).get("_trades", ())}
+        for point in rows:
+            if str(point["trade_id"]) not in held:
+                held.add(str(point["trade_id"]))
+                self.flow.add(point, continuity=False, emit_record=False)
+
     async def _archived_minute(self, iid, minute, *, hours=None):
-        """Every print of one minute this capture holds: durable journals plus buffer."""
+        """Every print of one minute this capture holds: durable journals, plus rows
+        buffered or being written. It never waits for a flush (stream consumers call it)."""
         hour = iso(parse_time(minute).replace(minute=0, second=0, microsecond=0))
+        # Taken before the read: a write that completes meanwhile moves its rows to disk.
+        pending = self.trade_archive.buffered(iid, minute)
         if hours is None or hour not in hours:
-            await self.flush_market(raw=True)
             grouped = await asyncio.to_thread(self.trade_archive.read_minutes, iid, hour)
             if hours is not None:
                 hours.clear()
@@ -1080,16 +1101,19 @@ class MarketService:
         else:
             grouped = hours[hour]
         rows = {str(r["trade_id"]): r for r in grouped.get(iso(parse_time(minute)), ())}
-        for row in self.trade_archive.buffered(iid, minute):
+        for row in pending + self.trade_archive.buffered(iid, minute):
             rows.setdefault(str(row["trade_id"]), row)
         return sorted(rows.values(), key=lambda r: (r["ts"], str(r["trade_id"])))
 
     async def _save_book(self, instrument):
         iid = instrument["instrument_id"]
-        now = time.monotonic()
+        # 10 s summaries on a fixed wall-clock grid (:00, :10, ...), from the first
+        # update at or after each grid point, so a cutoff finds one at most 10 s old.
+        now = time.time()
         if self._book_due.get(iid, 0) > now:
             return
-        self._book_due[iid] = now + float(self.thresholds.get("book_interval_s", 10))
+        interval = float(self.thresholds.get("book_interval_s", 10))
+        self._book_due[iid] = (now // interval + 1) * interval
         row = self.books[iid].summary()
         self.book_archive.add(
             iid,
@@ -1152,12 +1176,15 @@ class MarketService:
                         if self.trade_archive.minute_archived(iid, cursor)
                         else []
                     )
-                    self.flow.empty_minute(self.instruments[iid], cursor)
-                    if rows:
-                        self.flow.bars.pop(key)
-                        for point in rows:
-                            self.flow.add(point, continuity=False, emit_record=False)
-                    self.flow.bars[key]["_coverage"] = self.trade_archive.coverage_for(iid, cursor)
+                    if key not in self.flow.bars:  # no live print arrived during the read
+                        self.flow.empty_minute(self.instruments[iid], cursor)
+                        self.flow.bars[key]["_coverage"] = self.trade_archive.coverage_for(iid, cursor)
+                        if rows:
+                            self.flow.bars.pop(key)
+                            self._merge_prints(key, rows)
+                            self.flow.bars[key]["_coverage"] = self.trade_archive.coverage_for(iid, cursor)
+                    else:
+                        self._merge_prints(key, rows)
                 bar = self.flow.bars[key]
                 start, end = max(since, cursor), min(through, cursor + timedelta(minutes=1))
                 if end > start:
@@ -2335,7 +2362,17 @@ class MarketService:
             "hot_events": (transition or {}).get("event_ids", []),
             "collections": {
                 "flow_bars": {"cadence_s": 60, "basis": "ONE_MINUTE_CLOSED_FLOW_BAR"},
-                "klines": {"cadence_s": base},
+                "klines": {
+                    "cadence_s": base,
+                    # End of the last successful poll at or before the cutoff, per instrument.
+                    "observed_through": {
+                        iid: max(at for at in polls if parse_time(at) <= end)
+                        for iid, polls in self._klines_polled.items()
+                        if self.instruments.get(iid, {}).get("token_id") == token_id
+                        and any(parse_time(at) <= end for at in polls)
+                    },
+                    "watermark_basis": "LAST_SUCCESSFUL_POLL_BOUNDED_BY_CUTOFF",
+                },
                 "books": {
                     "cadence_s": profile.get("book_s", float(self.thresholds.get("book_interval_s", 10)))
                 },

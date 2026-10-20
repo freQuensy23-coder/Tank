@@ -84,7 +84,16 @@ def decode(collection, row):
     return result
 
 
-def semantic_fingerprint(record):
+# Fields left out of a collection's fingerprint: book levels belong to their exchange_ts
+# (the row's identity) and are the bulk of each summary.
+FINGERPRINT_EXCLUDED = {"mkt.book_summaries": frozenset({"bids", "asks"})}
+
+
+def semantic_fingerprint(record, collection=None):
+    excluded = FINGERPRINT_EXCLUDED.get(collection, frozenset())
+    if excluded:
+        record = {k: v for k, v in record.items() if k not in excluded}
+
     def strip(value):
         if isinstance(value, dict):
             return {
@@ -220,7 +229,7 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
             if collection in ("mkt.funding_obs", "mkt.tickers_24h"):
                 record = encode(collection, merge_point(collection, previous_record, record))
         identity_keys[identity] = str(key)
-        record["semantic_fingerprint"] = semantic_fingerprint(record)
+        record["semantic_fingerprint"] = semantic_fingerprint(record, collection)
         unique[str(key)] = record
     if not hasattr(self, "_conn"):
         changed = []

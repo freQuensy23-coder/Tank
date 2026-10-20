@@ -68,6 +68,7 @@ class HourlyParquet:
         self.root = Path(root)
         self.grace_s = grace_s
         self._buffer = defaultdict(list)
+        self._inflight = {}  # taken by the writer, not yet durable
         self._journals = {}
         self._orphans = set()
         self._recovered = False
@@ -92,10 +93,16 @@ class HourlyParquet:
 
     def take(self):
         buffer, self._buffer = self._buffer, defaultdict(list)
-        return dict(buffer)
+        self._inflight = dict(buffer)
+        return self._inflight
+
+    def written(self):
+        """Event loop: the taken buffer is durable."""
+        self._inflight = {}
 
     def restore(self, buffer):
         """Put back a buffer whose write failed, ahead of rows added since."""
+        self._inflight = {}
         for canonical, rows in buffer.items():
             self._buffer[canonical][:0] = rows
 
@@ -454,14 +461,16 @@ class TradeArchive(HourlyParquet):
         return stamp in self._minutes.get(self.path(instrument_id, stamp), ())
 
     def buffered(self, instrument_id, minute):
-        """Event loop: prints of that minute not yet handed to the writer."""
+        """Event loop: prints of that minute not yet durable (buffered or being written)."""
         if instrument_id not in self.instruments:
             return []
         lo = parse_time(minute).replace(second=0, microsecond=0)
         hi = lo + timedelta(minutes=1)
+        canonical = self.path(instrument_id, lo)
         return [
             row
-            for row in self._buffer.get(self.path(instrument_id, lo), ())
+            for rows in (self._inflight.get(canonical, ()), self._buffer.get(canonical, ()))
+            for row in rows
             if row["instrument_id"] == instrument_id and lo <= parse_time(row["ts"]) < hi
         ]
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import heapq
 import zlib
 from decimal import Decimal
 
@@ -116,13 +117,14 @@ class OrderBook:
         self.exchange_ts_prec = "EXACT" if ts is not None else "COLLECTION_ONLY"
         if key.startswith("kraken"):
             for side, book in (("bid", self.bids), ("ask", self.asks)):
-                if len(book) <= 1000:
+                excess = len(book) - 1000
+                if excess <= 0:
                     continue
-                keep = set(sorted(book, reverse=side == "bid")[:1000])
-                for price in list(book):
-                    if price not in keep:
-                        book.pop(price)
-                        self._strings[side].pop(price)
+                # Drop the levels farthest from mid (usually one or two per update).
+                far = heapq.nsmallest(excess, book) if side == "bid" else heapq.nlargest(excess, book)
+                for price in far:
+                    book.pop(price)
+                    self._strings[side].pop(price)
         if checksum is not None:
             if venue_key(self.instrument).startswith("okx") and int(checksum) == 0:
                 self.integrity_method = "SEQ_ID_PREV_SEQ_ID_CHECKSUM_DEPRECATED_20260623"
@@ -132,8 +134,8 @@ class OrderBook:
 
     def verify(self, expected):
         key = venue_key(self.instrument)
-        bids = sorted(self.bids, reverse=True)
-        asks = sorted(self.asks)
+        bids = heapq.nlargest(25, self.bids)  # checksums cover the top 25 (OKX) / 10 (Kraken)
+        asks = heapq.nsmallest(25, self.asks)
         if key.startswith("okx"):
             parts = []
             for i in range(25):
@@ -184,21 +186,32 @@ class OrderBook:
         )
         depth = {}
         ranges = {}
+        levels = {}
+        bands = (("p0_5", Decimal(".5")), ("p1", Decimal(1)), ("p2", Decimal(2)))
         for side, book in (("bid", self.bids), ("ask", self.asks)):
             far = min(book) if side == "bid" else max(book)
             covered = abs(far / mid - 1) * 100
             ranges[side] = covered
+            # Only levels within 2% of mid are sorted (a full book can hold tens of
+            # thousands of levels); |p/mid - 1| <= x  <=>  p on the right side of mid(1 ∓ x).
+            if side == "bid":
+                edge = mid * (1 - Decimal(".02"))
+                near = sorted((p for p in book if p >= edge), reverse=True)
+            else:
+                edge = mid * (1 + Decimal(".02"))
+                near = sorted(p for p in book if p <= edge)
+            levels[side] = [(p, book[p] * multiplier) for p in near]
             depth[side] = {}
-            for name, pct in (("p0_5", Decimal(".5")), ("p1", Decimal(1)), ("p2", Decimal(2))):
+            for name, pct in bands:
                 if covered < pct:
                     depth[side][name] = None
                     continue
-                levels = [(p, q * multiplier) for p, q in book.items() if abs(p / mid - 1) * 100 <= pct]
+                inside = [(p, q) for p, q in levels[side] if abs(p / mid - 1) * 100 <= pct]
                 depth[side][name] = {
-                    "native": sum((q for p, q in levels), Decimal(0)),
-                    "usd": sum((p * q * fx for p, q in levels), Decimal(0)) if fx is not None else None,
+                    "native": sum((q for p, q in inside), Decimal(0)),
+                    "usd": sum((p * q * fx for p, q in inside), Decimal(0)) if fx is not None else None,
                 }
-        return jsonable(
+        row = jsonable(
             {
                 "instrument_id": self.instrument["instrument_id"],
                 "token_id": self.instrument["token_id"],
@@ -209,16 +222,6 @@ class OrderBook:
                 "best_ask": ask,
                 "spread_bps": (ask - bid) / mid * 10000,
                 "depth": depth,
-                "bids": [
-                    [p, q * multiplier]
-                    for p, q in sorted(self.bids.items(), reverse=True)
-                    if abs(p / mid - 1) <= Decimal(".02")
-                ],
-                "asks": [
-                    [p, q * multiplier]
-                    for p, q in sorted(self.asks.items())
-                    if abs(p / mid - 1) <= Decimal(".02")
-                ],
                 "raw_levels_range_pct": "2",
                 "raw_levels_scope": "WITHIN_TWO_PERCENT_OF_MID",
                 "quote_asset": self.instrument.get("quote_asset"),
@@ -230,3 +233,6 @@ class OrderBook:
                 "gap_reason": self.gap_reason,
             }
         )
+        row["bids"] = [[str(p), str(q)] for p, q in levels["bid"]]
+        row["asks"] = [[str(p), str(q)] for p, q in levels["ask"]]
+        return row
