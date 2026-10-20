@@ -194,6 +194,21 @@ async def put_market_batch(self, collection, records, *, keys=None):
     return await _put_market_batch(self, collection, records, keys=keys)
 
 
+# A flow bar written incomplete only because its writer holds no proof for the minute is
+# absence of evidence, not evidence of loss: it never replaces a stored complete bar (a
+# restarted or second process would otherwise unprove minutes the live stream proved).
+UNPROVEN = "STREAM_COVERAGE_UNPROVEN"
+
+
+def _unproves(collection, old, new):
+    return (
+        collection == "mkt.flow_bars_1m"
+        and old.get("complete") is True
+        and new.get("complete") is not True
+        and (new.get("gap_reason") or UNPROVEN) == UNPROVEN
+    )
+
+
 async def _put_market_batch(self, collection, records, *, keys=None, _columns=None):
     # Forward migration import can target a historical typed schema. Ordinary
     # production writes always use the entire current explicit column contract.
@@ -255,7 +270,9 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
                 old = rows.get(previous, {})
                 if old and collection in ("mkt.funding_obs", "mkt.tickers_24h"):
                     value = merge_point(collection, old, value)
-                if old.get("semantic_fingerprint") != value["semantic_fingerprint"]:
+                if old.get("semantic_fingerprint") != value["semantic_fingerprint"] and not _unproves(
+                    collection, old, value
+                ):
                     if previous is not None and previous != key:
                         rows.pop(previous)
                     rows[key] = value
@@ -305,6 +322,19 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
         sql.SQL(",").join(map(sql.Identifier, identity)),
         assignments,
     )
+    if collection == "mkt.flow_bars_1m":
+        query = sql.SQL(
+            "INSERT INTO {} AS current ({}) {} ON CONFLICT ({}) DO UPDATE SET {} WHERE current.semantic_fingerprint IS DISTINCT FROM EXCLUDED.semantic_fingerprint"
+            " AND NOT (current.complete IS TRUE AND EXCLUDED.complete IS NOT TRUE AND coalesce(EXCLUDED.gap_reason, {}) = {}) RETURNING *"
+        ).format(
+            table,
+            sql.SQL(",").join(map(sql.Identifier, names)),
+            source,
+            sql.SQL(",").join(map(sql.Identifier, identity)),
+            assignments,
+            sql.Literal(UNPROVEN),
+            sql.Literal(UNPROVEN),
+        )
     if collection in ("mkt.funding_obs", "mkt.tickers_24h"):
         mode = "funding" if collection == "mkt.funding_obs" else "ticker"
         merged = sql.SQL("ops.merge_market_point({},to_jsonb(current),to_jsonb(EXCLUDED))").format(
@@ -763,11 +793,17 @@ async def latest_market_trades(repo, instrument_ids, *, start):
         latest = {}
         async for row in repo.iter_all("mkt.flow_bars_1m"):
             iid = row.get("instrument_id")
-            if iid not in instrument_ids or not row.get("last_trade") or parse_time(row["minute_start"]) < start:
+            if (
+                iid not in instrument_ids
+                or not row.get("last_trade")
+                or parse_time(row["minute_start"]) < start
+            ):
                 continue
             if iid not in latest or parse_time(row["minute_start"]) > parse_time(latest[iid]["minute_start"]):
                 latest[iid] = row
-        return [{"instrument_id": iid, "last_trade": row["last_trade"]} for iid, row in sorted(latest.items())]
+        return [
+            {"instrument_id": iid, "last_trade": row["last_trade"]} for iid, row in sorted(latest.items())
+        ]
     query = (
         "SELECT point.instrument_id, point.last_trade FROM unnest(%s::text[]) AS scope(instrument_id) "
         "CROSS JOIN LATERAL (SELECT instrument_id, last_trade FROM mkt.flow_bars_1m "
@@ -824,7 +860,9 @@ async def market_series_day_counts(repo, instrument_ids, start, end, assembled_a
     return counts
 
 
-async def sampled_market_history(repo, collection, time_field, group_fields, instrument_ids, start, end, bucket_s):
+async def sampled_market_history(
+    repo, collection, time_field, group_fields, instrument_ids, start, end, bucket_s
+):
     """The last point per (instrument, group, bucket_s bucket) in [start, end).
 
     Older history behind normal ranges is read at the base-tier cadence: denser hot
@@ -839,7 +877,9 @@ async def sampled_market_history(repo, collection, time_field, group_fields, ins
     if not hasattr(repo, "_conn"):
         latest = {}
         for iid in instrument_ids:
-            async for row in repo.iter_range(collection, time_field, start=start, end=end, filters={"instrument_id": iid}):
+            async for row in repo.iter_range(
+                collection, time_field, start=start, end=end, filters={"instrument_id": iid}
+            ):
                 at = parse_time(row[time_field])
                 if not start <= at < end:
                     continue
@@ -848,7 +888,9 @@ async def sampled_market_history(repo, collection, time_field, group_fields, ins
                     latest[key] = row
         return sorted(latest.values(), key=lambda r: r[time_field])
     groups = [sql.Identifier("instrument_id"), *map(sql.Identifier, group_fields)]
-    bucket = sql.SQL("floor(extract(epoch from {}) / {})").format(sql.Identifier(time_field), sql.Literal(int(bucket_s)))
+    bucket = sql.SQL("floor(extract(epoch from {}) / {})").format(
+        sql.Identifier(time_field), sql.Literal(int(bucket_s))
+    )
     query = sql.SQL(
         "SELECT DISTINCT ON ({groups}, {bucket}) * FROM {table} WHERE instrument_id = ANY(%s::text[]) "
         "AND {ts} >= %s AND {ts} < %s ORDER BY {groups}, {bucket}, {ts} DESC"

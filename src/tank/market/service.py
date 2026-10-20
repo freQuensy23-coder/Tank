@@ -643,7 +643,9 @@ class MarketService:
             await self._fx_rate(instrument)
         except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
             await self._gap(instrument, "QUOTE_FX", exc)
-        for kind in ("klines", "ticker", "derivatives"):
+        # OI and funding first: a slow host (shared by every series of the venue) must not
+        # push the 60 s HOT derivatives cadence behind klines and tickers (03 §5.1).
+        for kind in ("derivatives", "klines", "ticker"):
             if kind == "derivatives" and (not derivatives or norm.venue_key(instrument).endswith(".spot")):
                 continue
             try:
@@ -1727,7 +1729,8 @@ class MarketService:
         runs, bars = await self._incomplete_runs(iid, lo, hi)
         before = sum((b - a) // timedelta(minutes=1) for a, b in runs)
         venue = instrument["venue"]
-        for start, end in runs:
+        # Newest first: the event and primary windows matter before older history.
+        for start, end in reversed(runs):
             if venue in NO_TRADE_HISTORY or (venue == "bybit" and end < utcnow() - BYBIT_RECENT):
                 continue
             remaining = None if deadline is None else deadline - time.monotonic()
