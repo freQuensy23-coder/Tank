@@ -962,3 +962,35 @@ async def test_partition_relocation_commits_each_day_and_preserves_failed_day(ty
     assert [r["physical"] for r in physical] == ["mkt.flow_bars_1m_20200101", "mkt.flow_bars_1m_historical"]
     await repo.maintain_partitions()
     assert [await repo.get("mkt.flow_bars_1m", str(index)) for index in range(2)] == before
+
+
+async def _unproven_writes_keep_complete_bars(repo):
+    proven = flow()
+    await repo.put_market_batch("mkt.flow_bars_1m", [proven], keys=["bar"])
+    # A writer without proof for the minute (restored bar, second process) cannot unprove it.
+    for reason in (None, "STREAM_COVERAGE_UNPROVEN"):
+        assert (
+            await repo.put_market_batch(
+                "mkt.flow_bars_1m", [dict(proven, complete=False, gap_reason=reason)], keys=["bar"]
+            )
+            == []
+        )
+        assert (await repo.get("mkt.flow_bars_1m", "bar"))["complete"] is True
+    # Evidence of loss still invalidates it.
+    lost = dict(proven, complete=False, gap_reason="STREAM_DISCONNECTED: keepalive ping timeout")
+    assert len(await repo.put_market_batch("mkt.flow_bars_1m", [lost], keys=["bar"])) == 1
+    stored = await repo.get("mkt.flow_bars_1m", "bar")
+    assert stored["complete"] is False and stored["gap_reason"].startswith("STREAM_DISCONNECTED")
+    # An unproven bar may be replaced by anything, including a proven one.
+    assert len(await repo.put_market_batch("mkt.flow_bars_1m", [proven], keys=["bar"])) == 1
+
+
+async def test_unproven_flow_bar_never_replaces_a_complete_one_memory():
+    from tank.storage import MemoryRepository
+
+    await _unproven_writes_keep_complete_bars(MemoryRepository())
+
+
+async def test_unproven_flow_bar_never_replaces_a_complete_one_postgres(typed_repo):
+    await typed_repo.migrate()
+    await _unproven_writes_keep_complete_bars(typed_repo)
