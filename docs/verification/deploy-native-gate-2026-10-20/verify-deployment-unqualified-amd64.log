@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "/srv/tank-work/wt/tank-platform/deploy/prepare_openma_deployment.py", line 470, in <module>
+    result = deployment_verify(args.directory) if args.deployment else verify(args.directory)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/tank-work/wt/tank-platform/deploy/prepare_openma_deployment.py", line 366, in deployment_verify
+    return {**receipt, "native_qualification": require_native_qualification(runtime)}
+                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/tank-work/wt/tank-platform/deploy/prepare_openma_deployment.py", line 354, in require_native_qualification
+    raise ValueError(
+ValueError: Normal deployment refused: BoxLite runtime for amd64 has not passed native qualification
+exit=1
