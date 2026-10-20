@@ -1417,6 +1417,9 @@ async def test_live_late_normalized_arrivals_coalesce_stably_and_ignore_future_p
         len(first) == 1 and first[0]["source_count"] == 1
     )  # One actual changed aggregate; prints remain Parquet-only.
     assert first[0]["event_id"] == "E-late" and first[0]["anchor"] == iso(anchor)
+    # The changed bar ends at its minute + 60 s: windows ending earlier cannot change.
+    minute = (cutoff - timedelta(seconds=10)).replace(second=0, microsecond=0)
+    assert first[0]["market_from"] == iso(minute + timedelta(minutes=1))
     assert (await changes())[0]["change_id"] == first[0]["change_id"]
     assert not await service.ingest_trade(inst, raw)  # Immutable dedup creates no new arrival.
     await service.ingest_trade(
