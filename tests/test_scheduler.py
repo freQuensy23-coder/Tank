@@ -1585,3 +1585,50 @@ async def test_reaction_measurements_are_limited_and_extra_jobs_requeue():
     assert [r["committed"] for r in await asyncio.gather(*running)] == ["C0", "C1"]
     assert (await waiting) == {"committed": "C2"}
     assert await scheduler.reaction_capture(payloads[-1]) == {"committed": "C2"}
+
+
+@pytest.mark.asyncio
+async def test_eval_conditions_budget_stops_cleanly_and_rotates(monkeypatch):
+    """03 §3.8 (20 s): a slow batch stops starting conditions after its budget
+    and completes; invalidations go first, then the least recently evaluated."""
+    import tank.scheduler as scheduler_module
+
+    repo = MemoryRepository()
+    now = utcnow()
+    await repo.put("evt.events", "e", {"event_id": "e"})
+    for cond_id, role, last in [
+        ("old-upgrade", "UPGRADE", iso(now - timedelta(minutes=5))),
+        ("new-upgrade", "UPGRADE", iso(now - timedelta(minutes=1))),
+        ("exit", "INVALIDATION", iso(now)),
+    ]:
+        await repo.put(
+            "ana.watch_conditions",
+            cond_id,
+            {
+                "cond_id": cond_id,
+                "event_id": "e",
+                "token_id": "t",
+                "role": role,
+                "status": "ARMED",
+                "last_evaluated_at": last,
+                "expires_at": iso(now + timedelta(days=1)),
+                "expr": {"metric": "event.contradiction_fatal", "window": "W1H", "op": "==", "value": True},
+            },
+        )
+    monkeypatch.setattr(scheduler_module, "EVAL_CONDITIONS_BUDGET_S", -1)
+    scheduler = Scheduler(repo, SimpleNamespace(), None, SimpleNamespace(assess=AsyncMock(return_value={})))
+    await scheduler.eval_conditions({"cutoff": iso(now)})  # budget spent at once: nothing started
+    for cond_id in ("exit", "old-upgrade", "new-upgrade"):
+        assert "counters" not in await repo.get("ana.watch_conditions", cond_id)
+    order = []
+    original = repo.get
+
+    async def tracking_get(collection, key):
+        if collection == "ana.watch_conditions":
+            order.append(key)
+        return await original(collection, key)
+
+    repo.get = tracking_get
+    monkeypatch.setattr(scheduler_module, "EVAL_CONDITIONS_BUDGET_S", 60)
+    await scheduler.eval_conditions({"cutoff": iso(now)})
+    assert order == ["exit", "old-upgrade", "new-upgrade"]
