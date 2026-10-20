@@ -3,8 +3,8 @@
 One fixture at a time:
   1. verify the packet / private map / sealed outcomes against their pinned sha256 (entries JSON from
      the assembler, or tests/fixtures/manifest.json);
-  2. reset the replay database `tank_replay` (drop, create owner tank, `tank db migrate`,
-     deploy/read_only_role.sql + deploy/provision_replay_role.sh as postgres);
+  2. reset the replay database `tank_replay` with tank-sessions' reset script (drop, create, migrate,
+     read-only role, provisioning, emptiness check);
   3. copy the decompressed packet to /data/replay/inputs/F-xx.json and the private map to a path
      outside /data (TANK_REPLAY_PRIVATE_MASK_PATH); sealed outcomes never enter the container;
   4. `tank replay F-xx` in its own `compose run` process with the fixture config tree at /config: a fresh tank-replay session;
@@ -13,7 +13,8 @@ One fixture at a time:
 Manual clauses get a reviewer-signed manual-review.json afterwards (`review` step), which writes
 acceptance-run-with-manual.json for the manifest.
 
-The DB password is read inside the containers from their secrets; it is never printed or passed on argv.
+The replay DSN is built inside the container by tank-sessions' helper from the mounted secret (@REPLAY_DSN@);
+it is never printed or passed on argv.
 
 Usage (only after tank-platform says openma is live; never in parallel):
   python3 run_fixtures.py run --entries entries.json --fixtures F-17 --out /srv/tank/docs/verification/native-fixtures-2026-10-21
@@ -35,11 +36,12 @@ from common import iso, utcnow, write_json  # noqa: E402
 ROOT = Path("/srv/tank")
 COMPOSE = shlex.split(os.environ.get(
     "TANK_COMPOSE",
-    "docker compose -p tank --env-file /etc/tank/compose.env -f /srv/tank/compose.yaml -f /etc/tank/compose.server.yaml"))
+    "docker compose -p tank --project-directory /srv/tank -f /srv/tank/compose.yaml -f /etc/tank/compose.server.yaml"
+    " -f /srv/tank/docs/verification/server-recovery-bootstrap-2026-10-20/pg.resources.yaml --env-file /etc/tank/compose.env"))
+# tank-sessions owns the per-run tank_replay reset and the DSN helper (password never on argv or stdout).
+RESET = os.environ.get("TANK_REPLAY_RESET", "/srv/tank-work/ts/reset_tank_replay.sh")
+DSN_HELPER = os.environ.get("TANK_REPLAY_DSN_HELPER", "/srv/tank-work/ts/replay_dsn_exec.py")
 PRIVATE_IN_CONTAINER = "/replay-private/map.json"  # read-only bind mount outside /data
-DSN_SH = ('DSN="postgresql://tank:$(python3 -c \'import urllib.parse;'
-          'print(urllib.parse.quote(open("/run/secrets/tank_db_password").read().strip(), safe=""))\')'
-          '@postgres:5432/tank_replay"')
 
 
 def sh(args, *, input=None, check=True, timeout=None):
@@ -84,16 +86,10 @@ def container(service):
     return out
 
 
-def psql_admin(db, sql):
-    return sh(COMPOSE + ["exec", "-T", "-u", "postgres", "postgres", "psql", "-U", "postgres", "-d", db,
-                         "-v", "ON_ERROR_STOP=1"], input=sql)
-
-
 def reset_replay_db():
-    psql_admin("postgres", "DROP DATABASE IF EXISTS tank_replay WITH (FORCE);\nCREATE DATABASE tank_replay OWNER tank;\n")
-    sh(COMPOSE + ["exec", "-T", "tank", "sh", "-c", DSN_SH + ' && TANK_DATABASE_URL="$DSN" tank db migrate'])
-    psql_admin("tank_replay", (ROOT / "deploy/read_only_role.sql").read_text())
-    sh(COMPOSE + ["exec", "-T", "-u", "postgres", "postgres", "sh"], input=(ROOT / "deploy/provision_replay_role.sh").read_text())
+    out = sh([RESET], check=False, timeout=600)
+    if out.returncode != 0:
+        raise SystemExit("tank_replay reset failed: " + str(out.stderr)[-500:])
 
 
 def run_one(fid, entry, out_dir, timeout):
@@ -142,7 +138,9 @@ def run_one(fid, entry, out_dir, timeout):
     res = sh(COMPOSE + ["run", "--rm", "--no-deps", "-T",
                         *mounts,
                         "-e", f"TANK_REPLAY_PRIVATE_MASK_PATH={mask_path}",
-                        "tank", "sh", "-c", DSN_SH + f' && tank replay {fid} --database-url "$DSN"'],
+                        "-v", f"{DSN_HELPER}:/opt/replay_dsn_exec.py:ro",
+                        "tank", "/opt/tank/venv/bin/python", "/opt/replay_dsn_exec.py",
+                        "tank", "replay", fid, "--database-url", "@REPLAY_DSN@"],
              check=False, timeout=timeout)
     finished = iso(utcnow())
     (d / "replay-stdout.json").write_text(res.stdout)
