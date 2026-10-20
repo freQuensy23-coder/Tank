@@ -1316,7 +1316,7 @@ class EventToolService:
             if current_map and int(edge["map_version"]) == int(current_map["map_version"])
         ]
         registry = self.settings.load_config("registry")
-        concerned = set(resolve_tokens(registry, event.get("tokens_mentioned", []), event["statement"])) | {
+        concerned = set(resolve_tokens(registry, event.get("tokens_mentioned", []), event.get("statement") or "")) | {
             edge.get("token_id") for edge in current_edges
         }
         if not concerned.intersection(universe) and klass != "LOW":
@@ -2346,9 +2346,13 @@ class EventToolService:
                     evidence_labels[item_id] = (source or {}).get("name") or source_id or "source"
         event["evidence_labels"] = evidence_labels
         # Hard rule 16: the card names universe tokens by project and ticker.
+        # A captured config snapshot from before `project` falls back to `name`.
         event["token_labels"] = {
-            row["token_id"]: row["project"] + " (" + row["symbol"] + ")"
-            for row in self.settings.load_config("registry")["tokens"]
+            row["token_id"]: str(row.get("project") or row.get("name") or row["token_id"])
+            + " ("
+            + str(row.get("symbol") or row["token_id"].rpartition(":")[2])
+            + ")"
+            for row in self.settings.load_config("registry").get("tokens", [])
         }
         text = compose_card(
             event, assessment, beneficiaries, decisions, truths, kind=kind, verdict=verdict, why=why
