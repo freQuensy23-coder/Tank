@@ -1571,3 +1571,19 @@ async def test_late_data_revisions_coalesce_to_one_queued_job_per_checkpoint():
         await scheduler.detect_late_data(now)
     jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
     assert sorted(job["payload"]["checkpoint"] for job in jobs) == ["POST_15M", "PRE_24H"]
+
+
+@pytest.mark.asyncio
+async def test_queued_duplicate_late_revision_is_skipped_at_run_time():
+    """03 §8.6: with another automatic revision of the same checkpoint still
+    queued, a running one returns at once; the queued one measures all data."""
+    repo = MemoryRepository()
+    payload = {"event_id": "e", "token_id": "t", "checkpoint": "PRE_4H", "automatic_revision": True}
+    queued = await repo.enqueue(
+        "REACTION_CAPTURE", dict(payload, change_id="newer"), "reaction-late:x:PRE_4H", priority=2
+    )
+    market = SimpleNamespace(snapshot=AsyncMock(side_effect=AssertionError("must not measure")))
+    scheduler = Scheduler(repo, SimpleNamespace(), market, None)
+    result = await scheduler.reaction_capture(dict(payload, change_id="older"))
+    assert result == {"coalesced_into": queued["job_id"]}
+    market.snapshot.assert_not_called()

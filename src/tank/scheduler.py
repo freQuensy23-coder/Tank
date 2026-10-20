@@ -750,6 +750,20 @@ class Scheduler:
         )
 
     async def reaction_capture(self, payload):
+        if payload.get("automatic_revision"):
+            # 03 §8.6: a later queued revision of the same checkpoint measures all
+            # the data this one would; running both only repeats the capture.
+            async for job in self.repo.iter_all(
+                "ops.jobs", filters={"type": "REACTION_CAPTURE", "status": "QUEUED"}
+            ):
+                other = job["payload"]
+                if (
+                    other.get("automatic_revision")
+                    and other.get("change_id") != payload.get("change_id")
+                    and (other.get("event_id"), other.get("token_id"), other.get("checkpoint"))
+                    == (payload["event_id"], payload["token_id"], payload["checkpoint"])
+                ):
+                    return {"coalesced_into": job["job_id"]}
         lock = f"reaction:{payload['event_id']}:{payload['token_id']}:{payload['checkpoint']}"
         while True:
             async with self.repo.lock(lock):
