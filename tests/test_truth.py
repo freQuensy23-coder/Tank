@@ -640,6 +640,27 @@ def test_supply_wrappers_preserve_unavailable_and_do_not_treat_unlock_as_sale():
     assert result["unlocks_next_14d"][0]["inference"] == "POTENTIAL_SUPPLY_IS_NOT_A_SALE"
 
 
+def test_supply_without_observations_is_na_with_reason_not_empty():
+    """FR-T-13: no unlock data is n/a with a reason; [] only after a schedule was read."""
+    from tank.analysis.truth import supply_truth
+
+    end = parse_time("2026-10-16T12:00:00Z")
+    start = end - timedelta(hours=4)
+    empty = supply_truth({"supply": []}, start, end)
+    assert empty["unlocks_next_14d"] == []
+    assert empty["unavailable"] == {
+        "exchange_inventory": "INCOMPLETE",
+        "flows": "INCOMPLETE",
+        "unlocks": "INCOMPLETE",
+        "lending": "INCOMPLETE",
+        "stablecoin_chain": "INCOMPLETE",
+    }
+    assert empty["supply_in_evidence"] == "UNKNOWN"
+    read = {"kind": "UNLOCKS", "observed_at": iso(end), "available": True, "unlocks": []}
+    result = supply_truth({"supply": [read]}, start, end)
+    assert result["unlocks_next_14d"] == [] and "unlocks" not in result["unavailable"]
+
+
 def test_supply_inventory_own_history_wrapped_flows_chain_and_lending():
     from tank.analysis.truth import supply_truth
 
