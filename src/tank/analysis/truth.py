@@ -285,6 +285,18 @@ def _observation_time(row):
     return None
 
 
+def kline_close_time(row):
+    """The bar's close boundary, open_time + interval_s.
+
+    Binance closeTime (column [6], 03 §5.2.7) is the bar's last millisecond (hh:59:59.999);
+    keying prices by it splits hourly archive bars from minute bars closing at hh:00 and
+    drops them from every hourly series (F-16: 331 instead of ~2100 BTC 24h samples).
+    """
+    if row.get("open_time") is not None:
+        return parse_time(row["open_time"]) + timedelta(seconds=int(row.get("interval_s", 60)))
+    return parse_time(row["close_time"]) if row.get("close_time") else None
+
+
 def _venue(row):
     return row.get("venue") or str(row.get("instrument_id", "")).split(":")[0]
 
@@ -1146,11 +1158,7 @@ def _price_groups(snapshot, token=None, *, exact=False, reference_only=False):
             continue
         if token and r.get("token_id") != token and token not in r.get("instrument_id", "").upper():
             continue
-        t = (
-            parse_time(r["close_time"])
-            if r.get("close_time")
-            else _time(r) + timedelta(seconds=int(r.get("interval_s", 60)))
-        )
+        t = kline_close_time(r) or _time(r) + timedelta(seconds=int(r.get("interval_s", 60)))
         raw = r.get("c", r.get("close"))
         if exact and reference_only:
             raw = raw.get("value") if isinstance(raw, dict) else raw
@@ -2790,11 +2798,7 @@ def benchmark_reaction_values(snapshot, start, end):
     ]
 
     def close_time(r):
-        return (
-            parse_time(r["close_time"])
-            if r.get("close_time")
-            else _time(r) + timedelta(seconds=int(r.get("interval_s", 60)))
-        )
+        return kline_close_time(r) or _time(r) + timedelta(seconds=int(r.get("interval_s", 60)))
 
     volume = defaultdict(Decimal)
     for r in rows:
@@ -4590,18 +4594,14 @@ def condition_reference_close(snapshot, end):
             if row.get("instrument_id") == ref
             and row.get("complete") is True
             and selected
-            and (
-                parse_time(row["close_time"])
-                if row.get("close_time")
-                else _time(row) + timedelta(seconds=int(row.get("interval_s", 60)))
-            )
+            and (kline_close_time(row) or _time(row) + timedelta(seconds=int(row.get("interval_s", 60))))
             == selected[0]
         ),
         None,
     )
     observed = propagate_timestamp({}, "observed_at")
     if source:
-        if source.get("close_time"):
+        if source.get("close_time") and source.get("open_time") is None:
             observed = propagate_timestamp(source, "close_time")
         else:
             observed = offset_schedule(
