@@ -738,10 +738,24 @@ def oi_temporally_admissible(row):
 
 
 @precise
+def _oi_split(rows):
+    """(admissible rows, inadmissible rows, admissible (time, index) order) of one row list,
+    built once per assessment for a list shared across windows."""
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("oi_split", {}) if inputs is not None else None
+    hit = memo.get(id(rows)) if memo is not None else None
+    if hit is None or hit[0] is not rows:
+        admissible = [row for row in rows if oi_temporally_admissible(row)]
+        excluded = [row for row in rows if not oi_temporally_admissible(row)]
+        ordered = sorted((_time(r), i) for i, r in enumerate(admissible))
+        hit = (rows, admissible, excluded, ordered, [t for t, _ in ordered])
+        if memo is not None:
+            memo[id(rows)] = hit
+    return hit[1:]
+
+
 def _oi_stats(rows, start, end, *, history_identity=None):
-    rows = [row for row in rows if oi_temporally_admissible(row)]
-    ordered = sorted((_time(r), i) for i, r in enumerate(rows))
-    ordered_times = [t for t, _ in ordered]
+    rows, _, ordered, ordered_times = _oi_split(rows)
     tolerance = float(parameter("oi_sync_tolerance_s", 60))
 
     def nearest(t):
@@ -962,13 +976,14 @@ def derivatives_truth(snapshot, start, end):
                 instruments.setdefault(iid, row)
                 groups.setdefault(iid, [])
     for iid in groups:
-        groups[iid].extend(_instrument_rows(snapshot, "oi", iid))
+        # The indexed list itself (read-only here), so its split is shared by all windows.
+        groups[iid] = _instrument_rows(snapshot, "oi", iid)
     sem = {(s.get("instrument_id"), s["metric_key"]): s for s in snapshot.get("semantics", [])}
     per = []
     sync = []
     for instrument, rs in groups.items():
         stats = _oi_stats(rs, start, end)
-        unresolved = [r for r in rs if _time(r) <= end and not oi_temporally_admissible(r)]
+        unresolved = [r for r in _oi_split(rs)[1] if _time(r) <= end]
         venue = _venue(instruments[instrument])
         if stats is None:
             stats = {
