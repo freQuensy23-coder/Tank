@@ -4385,11 +4385,48 @@ class MarketService:
         gaps and are fetched again on the next pass (the filesystem and the imported rows
         are the only state)."""
         while self._stop is None or not self._stop.is_set():
+            await self._oi_history_pass(days)
             await self._bootstrap_pass(days)
             if self._stop is None:
                 return
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), 86400)
+
+    async def _oi_history_pass(self, days):
+        """Bybit 5-min OI history back `days` (02 §4.6), older than the first stored sample,
+        so venue-synchronized OI normal ranges have their 7+ days (03 §0). Rows use the live
+        metric key and 300 s grid; samples already captured live are not rewritten."""
+        end, start = utcnow(), utcnow() - timedelta(days=days)
+        for inst in self.instruments.values():
+            if norm.venue_key(inst) != "bybit.linear" or not inst.get("active", True):
+                continue
+            if self._stop is not None and self._stop.is_set():
+                return
+            iid = inst["instrument_id"]
+            stored = await self._range(
+                "mkt.oi_obs",
+                "ts",
+                start=start,
+                end=end,
+                filters={"instrument_id": iid, "metric_key": "bybit.linear.open-interest"},
+            )
+            upto = parse_time(stored[0]["ts"]) - timedelta(seconds=1) if stored else end
+            if upto <= start:
+                continue
+            adapter, cursor = self.adapter(inst, priority=2), None
+            try:
+                for _ in range(1000):
+                    rows, cursor = await adapter.oi_history(start=start, end=upto, cursor=cursor)
+                    for raw in rows:
+                        row = norm.oi(inst, raw)
+                        await self._put("mkt.oi_obs", iid + ":" + row["metric_key"] + ":" + row["ts"], row)
+                    await self.flush_market(raw=False)
+                    if not rows or not cursor:
+                        break
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - a venue failure stays a visible historical gap
+                await self._gap(inst, "HISTORICAL_OI", exc, start=iso(start), end=iso(upto))
 
     async def _bootstrap_pass(self, days):
         from .archive import fetch_archive
