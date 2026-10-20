@@ -2869,3 +2869,25 @@ def test_article_text_without_site_boilerplate():
         "Delisting of ABC",
         "New listing DEF",
     ]
+
+
+@pytest.mark.asyncio
+async def test_pending_rows_without_item_id_are_dropped_and_rediscovered(tmp_path):
+    source = {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}
+    repo = Repo()
+    old_row = {"external_id": "release-42", "url": "https://example.org/a", "title": "Old", "text": "Old"}
+    await repo.put(
+        "ops.source_checkpoints",
+        "S30:0",
+        {
+            "source_id": "S30",
+            "pending_batches": [{"batch_id": "old", "kind": "rss", "rows": [old_row], "coverage": {}}],
+        },
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, content=RSS))
+    ) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        await svc.poller.drain(source, 0, force=True)
+        assert not (await repo.get("ops.source_checkpoints", "S30:0"))["pending_batches"]
+        assert (await svc.poll_once("S30"))["items"] == 1

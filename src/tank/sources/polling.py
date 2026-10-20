@@ -710,6 +710,17 @@ class SourcePoller:
                 > self.now()
             ):
                 return {"items": 0, "errors": []}
+            if any(
+                "item_id" not in row for batch in state.get("pending_batches", []) for row in batch["rows"]
+            ):
+                # Rows queued before raw-at-capture carry no item_id or raw payload; drop them,
+                # the next poll rediscovers whatever is still in the feed.
+                async with self.lock(self.state_locks, key):
+                    current = await self.state(key)
+                    for batch in current.get("pending_batches", []):
+                        batch["rows"] = [row for row in batch["rows"] if "item_id" in row]
+                    await self.save(key, current)
+                state = await self.state(key)
             batches = deepcopy(state.get("pending_batches", []))
             if not batches:
                 return {"items": 0, "errors": []}
