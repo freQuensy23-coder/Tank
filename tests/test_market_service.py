@@ -1656,3 +1656,41 @@ async def test_bybit_window_beyond_its_1000_prints_is_a_named_source_limit(setup
         "SOURCE_LIMIT: Bybit recent-trade lists only the last 1000" in r for r in reasons
     )
     await service.close()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_keeps_book_levels_only_on_the_newest_rows(setup):
+    """Slippage walks only the newest integrity-checked book; older rows drop their levels."""
+    from tank.market.service import BOOK_LEVEL_ROWS
+    from tank.util import iso, parse_time
+
+    repo, settings, inst = setup
+    http = httpx.AsyncClient()
+    service = MarketService(repo, settings, http=http)
+    start = parse_time("2026-06-17T00:00:00Z")
+    count = BOOK_LEVEL_ROWS + 10
+    levels = [["2", "1"], ["3", "1"]]
+    for i in range(count):
+        await repo.put(
+            "mkt.book_summaries",
+            f"book{i:03d}",
+            {
+                "instrument_id": inst["instrument_id"],
+                "token_id": inst["token_id"],
+                "exchange_ts": iso(start + timedelta(seconds=10 * i)),
+                "integrity_ok": i <= 5,  # the newest integrity-checked book is old
+                "mid": "2",
+                "spread_bps": "1",
+                "depth": {"bid": {"p1": {"usd": "4"}}, "ask": {"p1": {"usd": "6"}}},
+                "bids": levels,
+                "asks": levels,
+            },
+        )
+    snapshot = await service.snapshot(inst["token_id"], iso(start + timedelta(seconds=10 * count)))
+    books = snapshot["books"]
+    assert len(books) == count
+    assert [i for i, b in enumerate(books) if "asks" in b] == [5, *range(10, count)]
+    assert all("bids" not in b for i, b in enumerate(books) if i not in [5, *range(10, count)])
+    assert all(b["depth"]["ask"]["p1"]["usd"] == "6" and b["mid"] == "2" for b in books)
+    assert books[5]["asks"] == levels
+    await http.aclose()

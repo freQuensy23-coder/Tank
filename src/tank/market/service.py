@@ -46,6 +46,8 @@ PUBLIC_MARKET = frozenset(
         "mkt.tickers_24h",
     }
 )
+
+BOOK_LEVEL_ROWS = 30  # newest book rows per instrument that keep their levels in a snapshot
 COLLECTIONS = {
     "flow_bars": ("mkt.flow_bars_1m", "minute_start"),
     "klines": ("mkt.klines_1m", "open_time"),
@@ -2364,6 +2366,33 @@ class MarketService:
             )
         ]
 
+    async def _book_range(self, collection, field, *, start=None, end=None, filters=None):
+        """One instrument's books, with order-book levels only where Market Truth walks them.
+
+        Slippage walks the levels of the newest integrity-checked book per venue (03 §5.5);
+        older rows are read for depth, spread and mid. Two days of BTC levels held ~3.5 GB
+        per snapshot, so pages stay small and rows outside the newest BOOK_LEVEL_ROWS drop
+        their levels (the slack covers availability-bounded snapshots).
+        """
+        rows, newest_ok = [], None
+
+        def strip(index):
+            if "bids" in rows[index] or "asks" in rows[index]:
+                rows[index] = {k: v for k, v in rows[index].items() if k not in ("bids", "asks")}
+
+        async for row in self.repo.iter_range(
+            collection, field, start=start, end=end, filters=filters, batch_size=500
+        ):
+            rows.append(row)
+            index = len(rows) - 1
+            if row.get("integrity_ok") is True:
+                if newest_ok is not None and newest_ok < index - BOOK_LEVEL_ROWS:
+                    strip(newest_ok)
+                newest_ok = index
+            if index >= BOOK_LEVEL_ROWS and index - BOOK_LEVEL_ROWS != newest_ok:
+                strip(index - BOOK_LEVEL_ROWS)
+        return rows
+
     async def _capture_metadata(self, token_id, cutoff):
         from .supply import supply_cadences
 
@@ -3770,7 +3799,7 @@ class MarketService:
                 # cadence (300 s, 03 §5.1), funding as its settled history; book,
                 # ticker, flow and liquidation history beyond the windows is unused.
                 range_start = history_start if name == "supply" else recent_start
-                rows = await self._range(
+                rows = await (self._book_range if name == "books" else self._range)(
                     collection,
                     field,
                     start=range_start,
