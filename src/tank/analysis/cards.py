@@ -622,6 +622,7 @@ def compose_card(
                 "",
                 outlook_line,
                 "",
+                _market_context(truth, decision),
                 "WHAT TO DO: "
                 + str(decision["action"]).replace("DONT_CHASE", "DON'T CHASE").replace("_", " ")
                 + (
@@ -688,6 +689,27 @@ def _market_breadth(truth, token):
         venues.append(text)
     if venues and window:
         lines.append(window + ": open interest by venue: " + "; ".join(venues))
+    sync = derivatives.get("synchronized") or {}
+    change = sync.get("oi_native_chg_pct")
+    if change is not None and Decimal(str(change)) < 0 and window:
+        # Native OI falling is positions closing (01 hard rule 3: native units only).
+        price = ((truth.get("relative") or {}).get("windows") or {}).get(derivatives.get("window") or "") or {}
+        move = price.get("r_raw")
+        if move is None:
+            during = "; price move n/a (not available for this window)"
+        elif Decimal(str(move)) > 0:
+            during = " while price rose " + format(Decimal(str(move)) * 100, "+.2f") + "%"
+        else:
+            during = "; price " + format(Decimal(str(move)) * 100, "+.2f") + "%"
+        lines.append(
+            window
+            + ": open positions (synchronized native OI) "
+            + format(Decimal(str(change)) * 100, "+.2f")
+            + "% in "
+            + _token_label(token)
+            + during
+            + ": positions closing"
+        )
     spot = (truth.get("spot") or {}).get(truth.get("primary_window", "W4H")) or {}
     rows = [row for row in spot.get("venues") or [] if isinstance(row, dict) and row.get("complete")]
     if rows:
@@ -709,6 +731,34 @@ def _market_breadth(truth, token):
             + " (share of spot volume)"
         )
     return lines
+
+
+def _market_context(truth, decision):
+    """03 §5.7 market context with its BTC input, and the Trade Grade notch (§4.9)."""
+    relative = truth.get("relative") or {}
+    context = relative.get("market_context")
+    inputs = relative.get("context_inputs") or {}
+    btc, normal = inputs.get("btc_return_24h"), inputs.get("return_normal_range")
+    if context is None:
+        text = "Market context: n/a (" + ("BTC normal range unavailable" if not normal else "not computed") + ")"
+    else:
+        text = "Market context: " + str(context)
+        if btc is not None:
+            text += " — BTC 24h " + format(Decimal(str(btc)) * 100, "+.2f") + "%"
+            if normal and len(normal) == 2 and None not in normal:
+                text += (
+                    " vs normal "
+                    + format(Decimal(str(normal[0])) * 100, "+.2f")
+                    + "% to "
+                    + format(Decimal(str(normal[1])) * 100, "+.2f")
+                    + "%"
+                )
+    raw, final = decision.get("trade_rule"), decision.get("trade_grade")
+    if any(str(r).startswith("CONTEXT_") for r in decision.get("trade_reasons") or []) and raw != final:
+        text += " · Trade " + str(raw) + " → " + str(final) + " for market context " + str(context)
+    elif context in {"HEADWIND", "STRESS"} and raw == "D":
+        text += " · Trade not lowered: already D"
+    return text
 
 
 def _integration_stage_label(subject, event, claims):
