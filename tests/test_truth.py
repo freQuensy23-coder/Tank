@@ -1230,6 +1230,47 @@ def test_benchmark_reaction_return_uses_largest_spot_venue_base_klines():
     assert empty["r_raw"] is None and empty["r_raw_reason"] == "INCOMPLETE"
 
 
+def test_oi_fact_reports_venue_decomposition_when_synchronized_class_unavailable():
+    """F-11 (03 §11.3): REAL_NATIVE with the markup component reported, also when the synchronized
+    USD decomposition is INCOMPLETE because one venue's mark is missing (§5.4: OI with its decomposition)."""
+    from tank.analysis.truth import decisive_facts
+
+    end = parse_time("2026-10-16T12:00:00Z")
+    start = end - timedelta(hours=4)
+    missing = {"detail": "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE", "reason": "INCOMPLETE", "pos_share": None}
+    derivatives = {
+        "synchronized": {
+            "venues": ["binance", "bybit"],
+            "oi_native_chg_pct": 0.0817617184994776,
+            "native_oi_vs_normal": "ABOVE",
+            "oi_class": None,
+            "decomposition": missing,
+        },
+        "per_venue": [
+            {
+                "venue": "binance",
+                "instrument_id": "binance:perp_linear:TUSDT",
+                "oi_class": "REAL_NATIVE",
+                "oi_native_chg_pct": 0.10368876317629552,
+                "decomposition": {"pos_share": 0.5734307024859249, "markup": "6530100.97923516", "position": "9688529.5111"},
+            },
+            {"venue": "bybit", "instrument_id": "bybit:perp_linear:TUSDT", "oi_class": None,
+             "oi_native_chg_pct": 0.0338, "decomposition": missing},
+        ],
+    }
+    spot = {"coverage": {"n_complete": 0}, "composite_max": {"cvd": None, "venues": []}, "venues": [], "classification": "INSUFFICIENT_DATA"}
+    relative = {"windows": {"W4H": {"r_btc_adj": None}}}
+    facts = decisive_facts(spot, derivatives, {}, relative, {}, "UNKNOWN", "W4H", start, end)
+    text = next(f["text"] for f in facts if f["metric"] == "derivatives.oi_native_chg_pct")
+    assert text == (
+        "W4H synchronized native OI +8.18%, ABOVE; class unavailable (SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE); "
+        "by venue: binance REAL_NATIVE (native +10.37%, position share 57.3%, price-markup component +6,530,101 USD)."
+    )
+    derivatives["synchronized"]["oi_class"] = "MIXED"
+    facts = decisive_facts(spot, derivatives, {}, relative, {}, "UNKNOWN", "W4H", start, end)
+    assert next(f["text"] for f in facts if f["metric"] == "derivatives.oi_native_chg_pct").endswith("; class MIXED.")
+
+
 def test_null_measurements_have_companion_context_without_wrapping_literal_fields():
     from runpy import run_path
 

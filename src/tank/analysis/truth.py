@@ -3743,11 +3743,32 @@ def decisive_facts(spot, derivatives, liquidity, relative, supply, move_class, w
     oi_instruments = [
         p["instrument_id"] for p in derivatives.get("per_venue", []) if p["venue"] in sync.get("venues", [])
     ]
+    oi_class_text = sync.get("oi_class")
+    if oi_class_text is None:
+        # §5.4: OI is shown with its decomposition. When the synchronized one is missing,
+        # say why and report the venues whose own decomposition classifies (e.g. F-11).
+        dec = sync.get("decomposition") or {}
+        why = dec.get("detail") or dec.get("reason") or sync.get("oi_usd_detail") or "INCOMPLETE"
+        venues_text = []
+        for p in derivatives.get("per_venue", []):
+            vdec = p.get("decomposition") or {}
+            if p.get("oi_class") is None or vdec.get("pos_share") is None:
+                continue
+            chg = p.get("oi_native_chg_pct")
+            markup = decimal(vdec.get("markup"))
+            venues_text.append(
+                f"{p['venue']} {p['oi_class']}"
+                + (f" (native {chg:+.2%}" if chg is not None else " (")
+                + f", position share {vdec['pos_share']:.1%}"
+                + (f", price-markup component {markup:+,.0f} USD" if markup is not None else "")
+                + ")"
+            )
+        oi_class_text = f"unavailable ({why})" + ("; by venue: " + ", ".join(venues_text) if venues_text else "")
     add(
         "derivatives.oi_native_chg_pct",
         oi,
         "DECIMAL_RETURN",
-        f"{window} synchronized native OI {oi:+.2%}, {normal_state or 'normal range unavailable'}; class {sync.get('oi_class') or 'unavailable'}."
+        f"{window} synchronized native OI {oi:+.2%}, {normal_state or 'normal range unavailable'}; class {oi_class_text}."
         if oi is not None
         else "",
         "mkt.oi_obs",
