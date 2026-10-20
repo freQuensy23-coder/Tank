@@ -784,10 +784,6 @@ async def test_metadata_pages_omit_large_document_payload(repo):
 
 
 async def test_capture_tier_transitions_follow_market_retention(repo):
-    if not isinstance(repo, PostgresRepository):
-        pytest.skip(
-            "Memory repository keeps append-only rows until models.py drops the table from APPEND_ONLY"
-        )
     old, recent = new_id("tier"), new_id("tier")
     for key, at in ((old, utcnow() - timedelta(days=120)), (recent, utcnow() - timedelta(days=1))):
         await repo.put(
