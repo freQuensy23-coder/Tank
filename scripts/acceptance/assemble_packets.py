@@ -183,7 +183,7 @@ def content_hash(record):
         (record.get("title", "") + " " + record["text"] + " " + (record.get("quoted") or "")).split()).encode()).hexdigest()
 
 
-ASSEMBLER_REVISION = 7
+ASSEMBLER_REVISION = 10
 SLUG_FIELDS = {"entity_id", "name"}
 HOST_MASK_FIXTURES = {"F-24", "F-25", "F-26", "F-27"}
 
@@ -314,7 +314,8 @@ def assemble(fixture, args, sections, code_version, out_root):
     added = args.add_replacements.get(fixture, {})
     build_key = digest({"rev": ASSEMBLER_REVISION, "source": spec["source"], "parent": sha(spec["parent"]),
                         "inverse_snapshots": fixture in args.inverse_snapshots, "note": args.note.get(fixture),
-                        "map_override": args.map_override.get(fixture), "exceptions": args.scan_exceptions.get(fixture),
+                        "map_override": args.map_override.get(fixture),
+                        "replay_timeout": [args.replay_timeout_base, args.replay_timeout_per_message], "exceptions": args.scan_exceptions.get(fixture),
                         "map": sha(spec["map"]), "seal": sha(spec["seal"]), "added": added,
                         "code_version": code_version, "config_version": args.config_version,
                         "config": digest({k: v.hex() for k, v in _capture(args.config_dir).items()}),
@@ -345,6 +346,18 @@ def assemble(fixture, args, sections, code_version, out_root):
     raw_paths = {h: project(p) for h, p in (old_map.get("original_raw_paths") or {}).items()}
     recovered = {}  # declared UTF-8 raw = record text, or inverse-masked bytes; always sha256-verified
     recovery_log = []
+    staged = set()
+    # Host identity admission reads the original raw inside the replay process (non-root uid). Stage a
+    # sha256-verified copy beside the map instead of relying on root-only retained directories.
+    for raw_sha, raw_path in list(raw_paths.items()):
+        if Path(raw_path).is_file():
+            data = read_bytes(raw_path)
+            if hashlib.sha256(data).hexdigest() != raw_sha:
+                raise AssemblyError(f"{fixture}: retained original raw checksum mismatch {raw_path}")
+            copy_path = str(out / "private/raw" / f"{raw_sha}.zst")
+            recovered[copy_path] = data
+            staged.add(copy_path)
+            raw_paths[raw_sha] = copy_path
     (old_fwd_text, _), (old_inv_text, _) = transform_pair(old_map.get("replacements", {}), old_map.get("case_sensitive_names", []))
     prior_rows = {r["key"]: r for r in prior["records"] if r["collection"] == "ingest.source_items"}
 
@@ -375,7 +388,8 @@ def assemble(fixture, args, sections, code_version, out_root):
             if isinstance(record.get(key), str):
                 record[key] = project(record[key])
         proof["raw_ref"] = project(proof["raw_ref"])
-        if not Path(raw_paths.get(proof["raw_sha256"], proof["raw_ref"])).is_file():
+        present = raw_paths.get(proof["raw_sha256"], proof["raw_ref"])
+        if not (present in recovered or Path(present).is_file()):
             text = record.get("text", "").encode()
             if (proof.get("derivation", {}).get("kind") == "DECLARED_UTF8_SOURCE_V1"
                     and hashlib.sha256(text).hexdigest() == proof["raw_sha256"]):
@@ -507,6 +521,9 @@ def assemble(fixture, args, sections, code_version, out_root):
     config_version = args.config_version or resolved_settings(overlay).config_version
     parent = {k: v for k, v in parent.items() if k != "input_sha256"}
     parent["config"] = {**{k: v for k, v in parent["config"].items() if k not in SECTIONS}, **copy.deepcopy(sections)}
+    # Harness-only wall-clock deadline for the whole native replay run (read by no product code); sealed input.
+    messages = len(parent["config"].get("replay_messages") or [])
+    parent["config"]["replay_timeout_seconds"] = args.replay_timeout_base + args.replay_timeout_per_message * max(messages - 1, 0)
     parent.update(code_version=code_version, config_version=config_version, assembled_at=now())
     parent["input_sha256"] = digest(parent)
     masked = fwd({k: v for k, v in parent.items() if k != "input_sha256"})
@@ -597,6 +614,7 @@ def assemble(fixture, args, sections, code_version, out_root):
         original_packet_path=str(out / "private/original-packet.json.zst"),
         original_registry_path=str(out / "private/original-registry.json"),
         predecessor_private_map={"path": spec["map"].relative_to(ROOT).as_posix(), "sha256": sha(spec["map"])})
+    private.pop("original_raw_paths", None)  # never carry stale (root-only or /data) predecessor paths
     if raw_paths:
         private["original_raw_paths"] = raw_paths
     if exceptions:
@@ -645,8 +663,11 @@ def assemble(fixture, args, sections, code_version, out_root):
         "fundamentals_evidence_masked": (overlay / "fundamentals_evidence.json").is_file(),
         "generation_note": args.note.get(fixture), "inverse_restored_snapshots": fixture in args.inverse_snapshots,
         "declared_technical_context_exceptions": exceptions,
+        "replay_timeout_seconds": parent["config"]["replay_timeout_seconds"],
         "recovered_originals": recovery_log + [{"path": p, "status": "declared UTF-8 raw recovered from record text, sha256-verified"}
-                                               for p in recovered if not any(p.endswith(r["sha256"] + ".zst") for r in recovery_log)],
+                                               for p in recovered if p not in staged
+                                               and not any(p.endswith(r["sha256"] + ".zst") for r in recovery_log)],
+        "staged_original_raw_copies": sorted(staged),
         "leak_scan_technical_context_warnings": warnings}, indent=1) + "\n").encode())
     return verify(fixture, rel, out, reused=False)
 
@@ -720,6 +741,9 @@ def main():
     parser.add_argument("--add-replacements", type=json.loads, default={},
                         help='JSON {"F-17": {"tether": "issuer-t"}}: extra exact-case registry slugs')
     parser.add_argument("--replace", action="store_true", help="rebuild a fixture dir with a different build key")
+    parser.add_argument("--replay-timeout-base", type=int, default=2700,
+                        help="config.replay_timeout_seconds = base + per_message * (replay_messages - 1)")
+    parser.add_argument("--replay-timeout-per-message", type=int, default=900)
     parser.add_argument("--scan-exceptions", type=json.loads, default={},
                         help='JSON {"F-26": {"tokens": [...], "fields": [...], "basis": "ruling"}}: tokens the leak scan tolerates in those fields only')
     parser.add_argument("--map-override", type=json.loads, default={}, help='JSON {"F-xx": "path/to/map.json"} (manifest mode)')
