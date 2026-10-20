@@ -272,6 +272,24 @@ def _time(row):
     return value
 
 
+def _instrument_rows(snapshot, collection, instrument_id):
+    """Rows of one instrument in their snapshot order, indexed once per assessment
+    (windows re-filtered every row of the collection per instrument)."""
+    rows = snapshot.get(collection, [])
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is None:
+        return [r for r in rows if r.get("instrument_id") == instrument_id]
+    memo = inputs.setdefault("by_instrument", {})
+    hit = memo.get((collection, id(rows)))
+    if hit is None or hit[0] is not rows:
+        index = defaultdict(list)
+        for row in rows:
+            index[row.get("instrument_id")].append(row)
+        hit = (rows, index)
+        memo[(collection, id(rows))] = hit
+    return hit[1].get(instrument_id, [])
+
+
 def _observation_time(row):
     for k in (
         "minute_start",
@@ -347,7 +365,17 @@ def _composite(venues):
 def _available(row, snapshot):
     assembled = snapshot.get("assembled_at")
     received = row.get("received_ts")
-    return not assembled or not received or parse_time(received) <= parse_time(assembled)
+    if not assembled or not received:
+        return True
+    inputs = _ASSESSMENT_INPUTS.get()
+    if inputs is None:
+        return parse_time(received) <= parse_time(assembled)
+    memo = inputs.setdefault("available", {})
+    hit = memo.get((id(row), assembled))
+    if hit is None or hit[0] is not row:
+        hit = (row, parse_time(received) <= parse_time(assembled))
+        memo[(id(row), assembled)] = hit
+    return hit[1]
 
 
 def flow_segments(snapshot):
@@ -933,9 +961,8 @@ def derivatives_truth(snapshot, start, end):
             if iid and _market(row) != "SPOT" and row.get("token_id", target) == target:
                 instruments.setdefault(iid, row)
                 groups.setdefault(iid, [])
-    for r in snapshot.get("oi", []):
-        if r.get("instrument_id") in groups:
-            groups[r["instrument_id"]].append(r)
+    for iid in groups:
+        groups[iid].extend(_instrument_rows(snapshot, "oi", iid))
     sem = {(s.get("instrument_id"), s["metric_key"]): s for s in snapshot.get("semantics", [])}
     per = []
     sync = []
@@ -955,11 +982,7 @@ def derivatives_truth(snapshot, start, end):
                 "reason": "INCOMPLETE",
                 "detail": "OI_BUCKET_EDGE_UNSPECIFIED" if unresolved else None,
             }
-        fs = [
-            f
-            for f in snapshot.get("funding", [])
-            if f.get("instrument_id") == instrument and _time(f) and _time(f) <= end
-        ]
+        fs = [f for f in _instrument_rows(snapshot, "funding", instrument) if _time(f) and _time(f) <= end]
         settled = sorted([f for f in fs if f.get("kind") == "SETTLED"], key=_time)
         est = sorted([f for f in fs if f.get("kind") == "CURRENT_ESTIMATE"], key=_time)
         last = settled[-1] if settled else {}
@@ -1016,11 +1039,7 @@ def derivatives_truth(snapshot, start, end):
                 baseline_cache[funding_key] = (fr,)
                 if len(baseline_cache) > 128:
                     baseline_cache.pop(next(iter(baseline_cache)))
-        liqs = [
-            r
-            for r in snapshot.get("liquidations", [])
-            if r.get("instrument_id") == instrument and start <= _time(r) < end
-        ]
+        liqs = [r for r in _instrument_rows(snapshot, "liquidations", instrument) if start <= _time(r) < end]
         cov = (rs[-1] if rs else instruments[instrument]).get("liq_coverage") or (
             "COMPLETE" if venue == "bybit" else "SAMPLED" if venue in ("binance", "okx") else "NOT_SUPPORTED"
         )
@@ -3320,7 +3339,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
         perp_flags.append(complete)
         p["perp_volume_usd"] = window_usd_volume(snapshot, iid, start, end)
         p["perp_volume_reason"] = None if p["perp_volume_usd"] is not None else "INCOMPLETE"
-        oi = [r for r in snapshot.get("oi", []) if r.get("instrument_id") == iid and _time(r) <= end]
+        oi = [r for r in _instrument_rows(snapshot, "oi", iid) if _time(r) <= end]
         historical = []
         initial = []
         for row in oi:
