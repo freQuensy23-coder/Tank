@@ -27,6 +27,8 @@ REST_TIMEOUT_S = 30
 # Host capacity (user decision 2026-10-20): at most this many sessions run a turn at once.
 DEFAULT_MAX_RUNNING_SESSIONS = 2
 ADMITTED_JOB_TYPES = ("AGENT_MESSAGE", "SCOUT_REVIEW")
+# A deferred turn sleeps this long unless wake_waiting() schedules it earlier.
+ADMISSION_SLEEP_S = 60
 BUSY_RUNTIME_STATES = {"PENDING", "RUNNING", "REQUIRES_ACTION"}
 
 
@@ -1687,6 +1689,24 @@ class SessionService:
                     return session
         return None
 
+    async def slot_state(self, exclude_job=None):
+        """Running turns (busy sessions plus admitted jobs) and the queued waiting jobs."""
+        running = {
+            session["session_id"]
+            async for session in self.repo.iter_all("ops.agent_sessions", filters={"status": "OPEN"})
+            if self.running(session)
+        }
+        waiting = []
+        for kind in ADMITTED_JOB_TYPES:
+            async for other in self.repo.iter_all("ops.jobs", filters={"type": kind, "status": "RUNNING"}):
+                if other["job_id"] != exclude_job and other.get("slot_admitted"):
+                    running.add("job:" + other["job_id"])
+            async for other in self.repo.iter_all("ops.jobs", filters={"type": kind, "status": "QUEUED"}):
+                if other["job_id"] != exclude_job and other.get("slot_waiting_since"):
+                    waiting.append(other)
+        waiting.sort(key=lambda row: (row["priority"], row["slot_waiting_since"], row["job_id"]))
+        return running, waiting
+
     async def admit(self, job):
         """Admit a turn under the running-session cap or raise AdmissionDeferred.
 
@@ -1694,6 +1714,8 @@ class SessionService:
         queues it behind the current turn. Otherwise the turn starts only while
         fewer than the cap are running and no older waiting message (by priority,
         then first enqueue) is still queued, so waiting messages keep their order.
+        A deferred job sleeps; wake_waiting() schedules it when a slot frees, so
+        waiting turns never occupy the job workers.
         """
         target = await self.existing_session(job["payload"])
         if target and self.running(target):
@@ -1701,27 +1723,30 @@ class SessionService:
         cap = self.running_session_cap()
         own = (job["priority"], job.get("slot_waiting_since") or job["created_at"])
         async with self.repo.lock("session-admission"):
-            running = {
-                session["session_id"]
-                async for session in self.repo.iter_all("ops.agent_sessions", filters={"status": "OPEN"})
-                if self.running(session)
-            }
-            for kind in ADMITTED_JOB_TYPES:
-                async for other in self.repo.iter_all("ops.jobs", filters={"type": kind}):
-                    if other["job_id"] == job["job_id"]:
-                        continue
-                    if other.get("status") == "RUNNING" and other.get("slot_admitted"):
-                        running.add("job:" + other["job_id"])
-                    elif (
-                        other.get("status") == "QUEUED"
-                        and other.get("slot_waiting_since")
-                        and (other["priority"], other["slot_waiting_since"]) < own
-                    ):
-                        raise AdmissionDeferred(offset_schedule(collection_clock(), timedelta(seconds=1)))
-            if len(running) >= cap:
-                raise AdmissionDeferred(offset_schedule(collection_clock(), timedelta(seconds=1)))
+            running, waiting = await self.slot_state(exclude_job=job["job_id"])
+            older = any((row["priority"], row["slot_waiting_since"]) < own for row in waiting)
+            if older or len(running) >= cap:
+                raise AdmissionDeferred(
+                    offset_schedule(collection_clock(), timedelta(seconds=ADMISSION_SLEEP_S))
+                )
             current = await self.repo.get("ops.jobs", job["job_id"])
             await self.repo.put("ops.jobs", job["job_id"], {**current, "slot_admitted": True})
+
+    async def wake_waiting(self):
+        """Schedule the oldest waiting turns for the free slots, and any turn whose session runs."""
+        cap = self.running_session_cap()
+        async with self.repo.lock("session-admission"):
+            running, waiting = await self.slot_state()
+            free = max(0, cap - len(running))
+            now = collection_clock()
+            for row in waiting:
+                target = await self.existing_session(row["payload"])
+                if free > 0 or (target and self.running(target)):
+                    if not (target and self.running(target)):
+                        free -= 1
+                    current = await self.repo.get("ops.jobs", row["job_id"])
+                    if current and current["status"] == "QUEUED":
+                        await self.repo.put("ops.jobs", row["job_id"], {**current, **now.fields("run_after")})
 
     async def scout_review(self, payload):
         proposal_id = payload.get("proposal_id") or payload.get("prp_id")
@@ -1739,6 +1764,7 @@ class SessionService:
                 if await self.finish_if_idle(sid):
                     continue
                 self.start_stream(sid)
+            await self.wake_waiting()
             try:
                 await asyncio.wait_for(stop.wait(), timeout=5)
             except TimeoutError:
