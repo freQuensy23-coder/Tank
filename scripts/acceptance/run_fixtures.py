@@ -7,7 +7,7 @@ One fixture at a time:
      deploy/read_only_role.sql + deploy/provision_replay_role.sh as postgres);
   3. copy the decompressed packet to /data/replay/inputs/F-xx.json and the private map to a path
      outside /data (TANK_REPLAY_PRIVATE_MASK_PATH); sealed outcomes never enter the container;
-  4. `tank replay F-xx --database-url <tank_replay>` inside the tank container: a fresh tank-replay session;
+  4. `tank replay F-xx` in its own `compose run` process with the fixture config tree at /config: a fresh tank-replay session;
   5. copy the frozen outputs.json + attempt log out, write acceptance-run.json (started_at, frozen_output),
      and only then evaluate the sealed predicates (tests/fixture_acceptance.check_completed).
 Manual clauses get a reviewer-signed manual-review.json afterwards (`review` step), which writes
@@ -36,7 +36,7 @@ ROOT = Path("/srv/tank")
 COMPOSE = shlex.split(os.environ.get(
     "TANK_COMPOSE",
     "docker compose -p tank --env-file /etc/tank/compose.env -f /srv/tank/compose.yaml -f /etc/tank/compose.server.yaml"))
-PRIVATE_IN_CONTAINER = "/tmp/tank-replay-private/map.json"  # outside /data, removed after each run
+PRIVATE_IN_CONTAINER = "/replay-private/map.json"  # read-only bind mount outside /data
 DSN_SH = ('DSN="postgresql://tank:$(python3 -c \'import urllib.parse;'
           'print(urllib.parse.quote(open("/run/secrets/tank_db_password").read().strip(), safe=""))\')'
           '@postgres:5432/tank_replay"')
@@ -93,29 +93,35 @@ def reset_replay_db():
 
 
 def run_one(fid, entry, out_dir, timeout):
+    """One fresh native replay in its own process (`compose run`), never inside the live runtime.
+
+    A masked fixture pins the masked copy of the config tree (its registry is masked), so the replay
+    process mounts that tree read-only at /config; the private map is mounted outside /data.
+    """
     d = Path(out_dir) / fid
     d.mkdir(parents=True, exist_ok=False)
-    tank = container("tank")
-    raw = sh(["zstd", "-dc", str(resolve(entry["acceptance_input"]["path"]))], input=None).stdout
+    config_dir = resolve(entry["config_dir"]["path"]) if entry.get("config_dir") else ROOT / "config"
+    raw = sh(["zstd", "-dc", str(resolve(entry["acceptance_input"]["path"]))]).stdout
     packet = json.loads(raw)
+    tank = container("tank")  # only to place the packet into the shared data volume
     with tempfile.TemporaryDirectory() as tmp:
         p = Path(tmp) / f"{fid}.json"
         p.write_text(raw)
-        exists = sh(COMPOSE + ["exec", "-T", "tank", "test", "-e", f"/data/replay/inputs/{fid}.json"], check=False)
-        if exists.returncode == 0:
+        if sh(COMPOSE + ["exec", "-T", "tank", "test", "-e", f"/data/replay/inputs/{fid}.json"], check=False).returncode == 0:
             stamp = utcnow().strftime("%Y%m%dT%H%M%SZ")
             sh(COMPOSE + ["exec", "-T", "tank", "mv", f"/data/replay/inputs/{fid}.json",
                           f"/data/replay/inputs/{fid}.json.superseded-{stamp}"])
-        sh(COMPOSE + ["exec", "-T", "tank", "mkdir", "-p", "/data/replay/inputs", os.path.dirname(PRIVATE_IN_CONTAINER)])
+        sh(COMPOSE + ["exec", "-T", "tank", "mkdir", "-p", "/data/replay/inputs"])
         sh(["docker", "cp", str(p), f"{tank}:/data/replay/inputs/{fid}.json"])
-    sh(["docker", "cp", str(resolve(entry["private_name_map"]["path"])), f"{tank}:{PRIVATE_IN_CONTAINER}"])
     reset_replay_db()
+    private = resolve(entry["private_name_map"]["path"])
     started = iso(utcnow())
-    try:
-        res = sh(COMPOSE + ["exec", "-T", "-e", f"TANK_REPLAY_PRIVATE_MASK_PATH={PRIVATE_IN_CONTAINER}", "tank", "sh", "-c",
-                            DSN_SH + f' && tank replay {fid} --database-url "$DSN"'], check=False, timeout=timeout)
-    finally:
-        sh(COMPOSE + ["exec", "-T", "tank", "rm", "-f", PRIVATE_IN_CONTAINER], check=False)
+    res = sh(COMPOSE + ["run", "--rm", "--no-deps", "-T",
+                        "-v", f"{config_dir}:/config:ro",
+                        "-v", f"{private}:{PRIVATE_IN_CONTAINER}:ro",
+                        "-e", f"TANK_REPLAY_PRIVATE_MASK_PATH={PRIVATE_IN_CONTAINER}",
+                        "tank", "sh", "-c", DSN_SH + f' && tank replay {fid} --database-url "$DSN"'],
+             check=False, timeout=timeout)
     finished = iso(utcnow())
     (d / "replay-stdout.json").write_text(res.stdout)
     (d / "replay-stderr.log").write_text(res.stderr[-20000:])
@@ -127,12 +133,12 @@ def run_one(fid, entry, out_dir, timeout):
     if sh(COMPOSE + ["exec", "-T", "tank", "test", "-f", bundle], check=False).returncode != 0:
         bundle = None
     receipt = {"fixture_id": fid, "started_at": started, "finished_at": finished, "exit_code": res.returncode,
-               "acceptance_input": entry["acceptance_input"], "evidence_mode": "FRESH_NATIVE_TANK_REPLAY",
-               "command": f"tank replay {fid} --database-url <tank_replay>"}
+               "acceptance_input": entry["acceptance_input"], "config_dir": str(config_dir),
+               "evidence_mode": "FRESH_NATIVE_TANK_REPLAY",
+               "command": f"compose run tank tank replay {fid} --database-url <tank_replay> (config {config_dir})"}
     if bundle and res.returncode == 0:
         sh(["docker", "cp", f"{tank}:{bundle}", str(d / "outputs.json")])
-        rel = os.path.relpath(d / "outputs.json", ROOT)
-        receipt["frozen_output"] = {"path": rel, "sha256": sha(d / "outputs.json")}
+        receipt["frozen_output"] = {"path": os.path.relpath(d / "outputs.json", ROOT), "sha256": sha(d / "outputs.json")}
         receipt["container_bundle"] = bundle
     write_json(d / "acceptance-run.json", receipt)
     return evaluate(fid, entry, d)
