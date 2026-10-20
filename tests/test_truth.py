@@ -1144,6 +1144,34 @@ def test_stale_available_noncritical_supply_prevents_high_but_missing_is_na():
     assert missing["supply"]["supply_in_evidence"] == "UNKNOWN"
 
 
+def test_klines_poll_watermark_keeps_quiet_spot_venue_fresh_without_inventing_candles():
+    """Coinbase publishes no candle for a minute without trades; a successful poll is an observation."""
+    from runpy import run_path
+
+    snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
+        "synthetic_start_snapshot"
+    ]()
+    end = parse_time(snapshot["cutoff"])
+    assert compute_market_truth(snapshot)["data_confidence"]["class"] == "HIGH"
+    iid = next(r["instrument_id"] for r in snapshot["klines"] if "spot" in r["instrument_id"])
+    quiet = [r for r in snapshot["klines"] if r["instrument_id"] == iid and parse_time(r["open_time"]) >= end - timedelta(minutes=5)]
+    assert quiet
+    snapshot["klines"] = [r for r in snapshot["klines"] if r not in quiet]
+    stale = compute_market_truth(snapshot)["data_confidence"]
+    assert stale["class"] == "MEDIUM"
+    assert any(f.get("collection") == "klines" and f.get("instrument_id") == iid for f in stale["failed"])
+    snapshot["capture_metadata"] = dict(
+        snapshot.get("capture_metadata") or {},
+        collections={"klines": {"observed_through": {iid: snapshot["cutoff"]}}},
+    )
+    fresh = compute_market_truth(snapshot)["data_confidence"]
+    assert not any(f.get("collection") == "klines" and f.get("instrument_id") == iid for f in fresh["failed"])
+    assert fresh["class"] == "HIGH"
+    # A watermark after the cutoff is not an observation before it.
+    snapshot["capture_metadata"]["collections"]["klines"]["observed_through"][iid] = iso(end + timedelta(minutes=1))
+    assert compute_market_truth(snapshot)["data_confidence"]["class"] == "MEDIUM"
+
+
 def test_null_measurements_have_companion_context_without_wrapping_literal_fields():
     from runpy import run_path
 
