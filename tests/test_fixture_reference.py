@@ -138,11 +138,13 @@ def test_captured_unlock_calendar_uses_observation_time_not_future_release(refer
     assert inputs.records("mkt.unlocks", cutoff="2022-09-21T11:59:59Z") == []
     assert inputs.records("mkt.unlocks") == [schedule["record"]]
 
-    # Today's calendar does not establish what was known at a historical cutoff.
+    # Today's calendar does not establish what was known at a historical cutoff: an undeclared
+    # late capture is refused (only a HISTORICAL_RECONSTRUCTION with schedule_as_of may enter).
     late = packet["assembled_at"]
     schedule["available_at"] = schedule["record"]["observed_at"] = late
     save(path, packet)
-    assert load_inputs(path, settings()).records("mkt.unlocks") == []
+    with pytest.raises(ReplayError, match="late unlock capture must be declared HISTORICAL_RECONSTRUCTION"):
+        load_inputs(path, settings())
 
 
 @pytest.mark.parametrize("bad", ["backdated", "simulated", "analysis_seed"])

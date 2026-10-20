@@ -600,7 +600,9 @@ def assemble(fixture, args, sections, code_version, out_root):
     if raw_paths:
         private["original_raw_paths"] = raw_paths
     if exceptions:
-        private["declared_technical_context_exceptions"] = {**exceptions, "basis": "declared synthetic case (TDD 11.3): identifier fields only, never narrative text; coordinator ruling 2026-10-20"}
+        if not exceptions.get("basis"):
+            raise AssemblyError(f"{fixture}: a declared scan exception needs its ruling text in 'basis'")
+        private["declared_technical_context_exceptions"] = exceptions
     if added:
         private["added_exact_case_replacements"] = sorted(added)
     if fixture in args.note:
@@ -719,7 +721,7 @@ def main():
                         help='JSON {"F-17": {"tether": "issuer-t"}}: extra exact-case registry slugs')
     parser.add_argument("--replace", action="store_true", help="rebuild a fixture dir with a different build key")
     parser.add_argument("--scan-exceptions", type=json.loads, default={},
-                        help='JSON {"F-26": {"tokens": [...], "fields": [...]}}: declared technical identifiers kept verbatim in those fields only')
+                        help='JSON {"F-26": {"tokens": [...], "fields": [...], "basis": "ruling"}}: tokens the leak scan tolerates in those fields only')
     parser.add_argument("--map-override", type=json.loads, default={}, help='JSON {"F-xx": "path/to/map.json"} (manifest mode)')
     parser.add_argument("--note", type=json.loads, default={}, help='JSON {"F-xx": "text"} recorded in map, seal and receipt')
     parser.add_argument("--inverse-snapshots", type=lambda v: {x.strip() for x in v.split(",") if x.strip()}, default=set(),
