@@ -54,7 +54,9 @@ cat "$OUT/manifest-check.json"
 log "restore oma (full)"
 docker exec -u postgres "$NAME" pg_restore --exit-on-error -d oma /b/oma.dump
 log "restore tank (all but klines_1m/oi_obs daily partition data)"
-docker exec -u postgres "$NAME" sh -c "pg_restore -l /b/tank.dump > /tmp/full.list && grep -Ev \"TABLE DATA mkt (klines_1m|oi_obs)_[0-9]{8} \" /tmp/full.list > /tmp/restore.list && wc -l /tmp/full.list /tmp/restore.list"
+# FULL=1 materializes every table (needs ~10 GB free); otherwise the two big tables stream.
+if [[ "${FULL:-0}" == 1 ]]; then SKIP="^$"; else SKIP="TABLE DATA mkt (klines_1m|oi_obs)_[0-9]{8} "; fi
+docker exec -u postgres "$NAME" sh -c "pg_restore -l /b/tank.dump > /tmp/full.list && grep -Ev \"$SKIP\" /tmp/full.list > /tmp/restore.list && wc -l /tmp/full.list /tmp/restore.list"
 docker exec -u postgres "$NAME" pg_restore --exit-on-error -j 2 -L /tmp/restore.list -d tank /b/tank.dump
 log "restored; sizes"
 rp -d postgres -c "select datname, pg_database_size(datname) from pg_database where datname in (\$\$tank\$\$,\$\$oma\$\$)" | tee "$OUT/restored-sizes.txt"
@@ -69,7 +71,7 @@ for db in oma tank; do
     diff /tmp/tank-ops-prod-tables.txt /tmp/tank-ops-restored-tables.txt | tee -a "$OUT/table-set-diff.txt" || true
   fi
   while read -r t; do
-    if [[ "$db" == tank && "$t" =~ ^mkt\.(klines_1m|oi_obs)_[0-9]{8}$ ]]; then
+    if [[ "${FULL:-0}" != 1 && "$db" == tank && "$t" =~ ^mkt\.(klines_1m|oi_obs)_[0-9]{8}$ ]]; then
       mode=stream
       read -r rc r < <(docker exec -u postgres "$NAME" pg_restore -a -n mkt -t "${t#mkt.}" -f - /b/tank.dump | copy_rows | rowhash)
     else
@@ -82,4 +84,12 @@ for db in oma tank; do
   done < /tmp/tank-ops-prod-tables.txt
 done
 awk -F"\t" "NR>1{n++; if(\$8==\"yes\")ok++; else bad++; rows+=\$4} END{printf \"{\\\"tables\\\":%d,\\\"match\\\":%d,\\\"mismatch\\\":%d,\\\"prod_rows\\\":%d}\\n\", n, ok, bad, rows}" "$OUT/tables.tsv" | tee "$OUT/summary.json"
+if [[ -n "${AFTER_SQL:-}" ]]; then
+  log "apply $AFTER_SQL to the restored tank (rehearsal, never production)"
+  docker exec -i -u postgres "$NAME" psql -X -v ON_ERROR_STOP=1 -d tank -c "SET ROLE tank" -f - < "$AFTER_SQL" 2>&1 | tee "$OUT/after-sql.log"
+  rp -d tank -c "select subject, label, count(*) from qa.reviews group by 1,2 order by 1,2" | tee "$OUT/after-sql-counts.txt"
+fi
+if [[ "${KEEP:-0}" != 1 ]]; then
+  docker rm -f "$NAME" >/dev/null && docker volume rm "$VOL" >/dev/null && log "restore container and volume deleted"
+fi
 log "done"
