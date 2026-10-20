@@ -1,4 +1,4 @@
-"""Version-pinned Jev classification. Cutoffs must come from labeled calibration."""
+"""Version-pinned Jev classification (03 §3.1). Cutoffs come from config/thresholds.yaml."""
 
 import asyncio
 import re
@@ -12,10 +12,38 @@ from tank.util import iso, sha256, utcnow
 
 from .jev import BINDING, MODEL, classify
 
-JEV_PROMPT_VERSION = "jev-v1"
+JEV_PROMPT_VERSION = "jev-v2"
 
-FILTER = "Is this text about crypto - crypto assets, crypto exchanges, crypto regulation or enforcement, blockchain networks, or one of these projects: Bitcoin, Ethereum, Uniswap, PancakeSwap, Aerodrome, Curve, 1inch, 0x, CoW Protocol, Hyperliquid, Lighter, Aave, Morpho, Euler, Ondo, LayerZero, Quant, Avalanche, NEAR, Plasma, Ethena, World (Worldcoin)? Whether it reports anything new or important does not matter here. General finance, technology or politics that does not touch crypto does not count."
-ROUTE = "Does the item report the same real-world event as the event described, or a new development of it - a confirmation, denial, stage change, new detail or new party? Another event about the same project does not count."
+# Jev reads questions literally and answers worse when `state` carries unrelated
+# material, so the state holds only the item (and the candidate event), each named
+# in the question, with boundary cases in the criteria.
+FILTER = "Is `item` about crypto: crypto assets, crypto exchanges, crypto regulation or enforcement, blockchain networks, or one of these projects: Bitcoin, Ethereum, Uniswap, PancakeSwap, Aerodrome, Curve, 1inch, 0x, CoW Protocol, Hyperliquid, Lighter, Aave, Morpho, Euler, Ondo, LayerZero, Quant, Avalanche, NEAR, Plasma, Ethena, World (Worldcoin)?"
+FILTER_CRITERIA = {
+    "true": "About crypto, even if it reports nothing new or important.",
+    "false": "General finance, technology or politics that does not touch crypto.",
+}
+ROUTE = "Does `item` report the same real-world event as `event`, or a new development of that event?"
+ROUTE_CRITERIA = {
+    "true": "The same event, or a development of it: a confirmation, denial, stage change, new detail or new party.",
+    "false": "A different event, even one about the same project, company, exchange or token.",
+}
+TEXT_LIMIT = 2000  # characters of item body sent to Jev
+
+
+def _clean(value):
+    return " ".join(str(value or "").split())
+
+
+def _words(value):
+    return re.findall(r"\w+", value.casefold())
+
+
+def _truncate(text, limit=TEXT_LIMIT):
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    end = max(cut.rfind(". "), cut.rfind("? "), cut.rfind("! "))
+    return (cut[: end + 1] if end > limit // 2 else cut[: cut.rfind(" ")]) + " …"
 
 
 class ConfigurationError(ValueError):
@@ -46,18 +74,35 @@ class Pipeline:
         return float(value)
 
     @staticmethod
-    def state(item):
-        return {
-            "source": item.get("source") or item.get("source_name") or item.get("source_id"),
-            "author": item.get("author")
-            or item.get("source")
-            or item.get("source_name")
-            or item.get("source_id"),
-            "text": "\n\n".join(
-                dict.fromkeys(str(v) for v in (item.get("title"), item.get("text") or item.get("body")) if v)
-            ),
-            "quoted": item.get("quoted"),
-        }
+    def item_view(item):
+        """The item as Jev sees it: source, author when it adds anything, title, body once, quote."""
+        source = _clean(item.get("source") or item.get("source_name") or item.get("source_id"))
+        author = _clean(item.get("author"))
+        title = _clean(item.get("title"))
+        body = _clean(item.get("text") or item.get("body"))
+        # Feeds often repeat the headline as the body, sometimes with the outlet name appended.
+        if title and source:
+            for separator in (" - ", " | ", " — "):
+                if title.casefold().endswith((separator + source).casefold()):
+                    title = title[: -len(separator + source)].rstrip()
+        if body.casefold().startswith(title.casefold()):
+            body = body[len(title) :].lstrip(" -|:—")
+        if set(_words(body)) <= set(_words(title)) | set(_words(source)):
+            body = ""
+        view = {"source": source}
+        if author and author.casefold() != source.casefold():
+            view["author"] = author
+        if title:
+            view["title"] = title
+        if body:
+            view["text"] = _truncate(body)
+        if _clean(item.get("quoted")):
+            view["quoted"] = _truncate(_clean(item["quoted"]))
+        return view
+
+    @classmethod
+    def state(cls, item):
+        return {"item": cls.item_view(item)}
 
     async def score(self, item, name, state):
         return (await self._score_record(item, name, state))["score"]
@@ -67,10 +112,7 @@ class Pipeline:
             name: {
                 "type": "noul",
                 "instructions": FILTER if name == "relevant" else ROUTE,
-                "criteria": {
-                    "true": "About crypto" if name == "relevant" else "Same event or a development of it",
-                    "false": "Not about crypto" if name == "relevant" else "A different event",
-                },
+                "criteria": FILTER_CRITERIA if name == "relevant" else ROUTE_CRITERIA,
             }
         }
         binding = BINDING
@@ -231,9 +273,13 @@ class Pipeline:
             str(item.get(k) or "") for k in ("title", "text", "body", "quoted", "author_organization")
         )
         raw_tokens = item.get("tokens_mentioned", item.get("tokens", []))
-        result = {e["entity_id"] if isinstance(e, dict) else e for e in item.get("entities", [])} | set(raw_tokens)
+        result = {e["entity_id"] if isinstance(e, dict) else e for e in item.get("entities", [])} | set(
+            raw_tokens
+        )
         # Events store registry token ids (V3): a bare ticker or $TICKER on the item resolves to one.
-        symbols = {str(row.get("symbol", "")).casefold(): row["token_id"] for row in registry.get("tokens", [])}
+        symbols = {
+            str(row.get("symbol", "")).casefold(): row["token_id"] for row in registry.get("tokens", [])
+        }
         for value in raw_tokens:
             if isinstance(value, str) and value.removeprefix("$").casefold() in symbols:
                 result.add(symbols[value.removeprefix("$").casefold()])
@@ -266,18 +312,36 @@ class Pipeline:
                 result.update([row.get("entity_id"), row.get("token_id")])
         return result - {None}
 
-    @classmethod
-    def routing_state(cls, item, event):
-        return {
-            **cls.state(item),
-            "event": {
-                "statement": event.get("statement"),
-                "entities": event.get("entities", []),
-                "tokens": event.get("tokens_mentioned", event.get("tokens", [])),
-                "stage": event.get("event_state", event.get("stage")),
-                "known_to_us_at": event.get("known_to_us_at"),
-            },
+    def event_view(self, event):
+        """The candidate event as Jev sees it: the agent's statement, readable names, stage."""
+        registry = self.settings.load_config("registry")
+        names = {
+            row["entity_id"]: (row.get("aliases") or row.get("names") or [row["entity_id"]])[0]
+            for row in registry.get("entities", [])
         }
+        symbols = {row["token_id"]: row.get("symbol") for row in registry.get("tokens", [])}
+
+        def label(value, table):
+            key = value.get("entity_id") if isinstance(value, dict) else value
+            key = str(key).removeprefix("UNRESOLVED:")
+            return table.get(key) or key.split(":")[-1]
+
+        view = {"statement": _clean(event.get("statement"))}
+        entities = list(dict.fromkeys(label(e, names) for e in event.get("entities", [])))
+        tokens = list(
+            dict.fromkeys(label(t, symbols) for t in event.get("tokens_mentioned", event.get("tokens", [])))
+        )
+        if entities:
+            view["entities"] = entities
+        if tokens:
+            view["tokens"] = tokens
+        stage = event.get("event_state", event.get("stage"))
+        if stage:
+            view["stage"] = str(stage).lower()
+        return view
+
+    def routing_state(self, item, event):
+        return {"item": self.item_view(item), "event": self.event_view(event)}
 
     async def _candidate_events(self, identities, since, now):
         # iter_range is half-open; PostgreSQL timestamps have microsecond

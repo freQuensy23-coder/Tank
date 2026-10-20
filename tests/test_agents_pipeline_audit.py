@@ -21,16 +21,13 @@ def options():
     ), config
 
 
-def test_audit_2_10_11_20_exact_filter_title_outlet():
+def test_filter_question_asks_the_03_3_1_condition_about_the_named_item():
     design = Path("03_Tank_V0_Technical_Design.md").read_text()
-    assert f'"instructions": "{FILTER}"' in design
+    # Same condition and project list as 03 §3.1, phrased for Jev's literal reading (user decision 2026-10-20).
+    projects = FILTER.split("one of these projects: ")[1].rstrip("?")
+    assert f"one of these projects: {projects}?" in design and FILTER.startswith("Is `item` about crypto")
     state = Pipeline.state({"source_name": "Outlet", "title": "Aave approved", "body": "Details"})
-    assert state == {
-        "source": "Outlet",
-        "author": "Outlet",
-        "text": "Aave approved\n\nDetails",
-        "quoted": None,
-    }
+    assert state == {"item": {"source": "Outlet", "title": "Aave approved", "text": "Details"}}
 
 
 @pytest.mark.parametrize(
@@ -376,17 +373,23 @@ async def test_candidate_window_includes_equal_clock_and_lower_boundary_only():
 @pytest.mark.parametrize(
     ("title", "body", "expected"),
     [
-        ("OKX lists QNT", "OKX lists QNT", "OKX lists QNT"),
+        ("OKX lists QNT", "OKX lists QNT", {"title": "OKX lists QNT"}),
+        ("OKX lists QNT", "OKX  lists\nQNT ", {"title": "OKX lists QNT"}),
+        (
+            "Judge rejects bid - OKX",
+            "Judge rejects bid OKX",
+            {"title": "Judge rejects bid"},
+        ),
         (
             "OKX lists QNT",
-            "Deposits open at 10:00 UTC.\nTrading opens at 12:00 UTC; withdrawals follow tomorrow.",
-            "OKX lists QNT\n\nDeposits open at 10:00 UTC.\nTrading opens at 12:00 UTC; withdrawals follow tomorrow.",
+            "Deposits open at 10:00 UTC.\nTrading opens at 12:00 UTC.",
+            {"title": "OKX lists QNT", "text": "Deposits open at 10:00 UTC. Trading opens at 12:00 UTC."},
         ),
-        ("OKX lists QNT", "", "OKX lists QNT"),
+        ("OKX lists QNT", "", {"title": "OKX lists QNT"}),
     ],
-    ids=["identical-headline-body-once", "different-full-body-preserved", "empty-body-headline-once"],
+    ids=["identical", "whitespace", "outlet-suffix", "body-kept", "empty-body"],
 )
-def test_state_emits_identical_title_body_once_without_mutating_capture(title, body, expected):
+def test_item_view_sends_title_and_body_once_without_mutating_capture(title, body, expected):
     from copy import deepcopy
 
     item = {
@@ -401,12 +404,38 @@ def test_state_emits_identical_title_body_once_without_mutating_capture(title, b
     }
     original = deepcopy(item)
     assert Pipeline.state(item) == {
-        "source": "OKX",
-        "author": "OKX",
-        "text": expected,
-        "quoted": "Original quoted material",
+        "item": {"source": "OKX", **expected, "quoted": "Original quoted material"}
     }
     assert item == original
+
+
+def test_long_body_is_cut_at_a_sentence():
+    body = "First sentence is here. " * 200
+    text = Pipeline.item_view({"source": "SEC", "title": "Speech", "text": body})["text"]
+    assert len(text) <= 2002 and text.endswith(". …")
+
+
+def test_routing_state_names_item_and_event_with_readable_identities():
+    opts, _ = options()
+    state = Pipeline(MemoryRepository(), opts, http=object()).routing_state(
+        {"source": "Reuters", "author": "Jane Doe", "title": "Uniswap fee switch passes"},
+        {
+            "statement": "Uniswap governance approved the fee switch.",
+            "entities": [{"entity_id": "uniswap", "role": "SUBJECT"}, {"entity_id": "UNRESOLVED:Gauntlet"}],
+            "tokens_mentioned": ["uniswap:UNI", "UNRESOLVED:FOO"],
+            "event_state": "APPROVED",
+            "known_to_us_at": "2026-10-20T10:00:00.123456Z",
+        },
+    )
+    assert state == {
+        "item": {"source": "Reuters", "author": "Jane Doe", "title": "Uniswap fee switch passes"},
+        "event": {
+            "statement": "Uniswap governance approved the fee switch.",
+            "entities": ["Uniswap", "Gauntlet"],
+            "tokens": ["UNI", "FOO"],
+            "stage": "approved",
+        },
+    }
 
 
 @pytest.mark.parametrize("text", ["Uniswap governance passes fee switch", "$UNI fee switch passes"])
@@ -427,5 +456,7 @@ async def test_event_with_resolved_token_id_is_a_candidate_for_alias_or_ticker(t
 
 def test_bare_item_ticker_resolves_to_registry_token_id():
     opts, _ = options()
-    ids = Pipeline(MemoryRepository(), opts, http=object()).identities({"title": "fee switch", "tokens": ["UNI"]})
+    ids = Pipeline(MemoryRepository(), opts, http=object()).identities(
+        {"title": "fee switch", "tokens": ["UNI"]}
+    )
     assert {"uniswap:UNI", "uniswap"} <= ids
