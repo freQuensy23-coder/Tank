@@ -1502,3 +1502,108 @@ def test_synthetic_search_never_claims_acquisition_or_expands_its_contract(refer
     save(path, packet)
     with pytest.raises(ReplayError, match="exact declared empty response"):
         load_inputs(path, settings())
+
+
+def _discourse_topic(post5_version=1, created="2022-09-21T10:48:47.970Z"):
+    def post(number, cooked, at, version=1):
+        return {
+            "id": 1000 + number,
+            "post_number": number,
+            "cooked": cooked,
+            "created_at": at,
+            "updated_at": at,
+            "version": version,
+            "last_edited_at": None,
+            "username": "author" + str(number),
+        }
+
+    return {
+        "id": 830,
+        "post_stream": {
+            "posts": [
+                post(1, "<p>Proposal put to a tokenholder vote.</p>", "2022-09-01T09:00:00.000Z"),
+                post(5, "<p>The tokenholder vote has now passed.</p>", created, post5_version),
+                post(6, "<p>FUTURE_CANARY reply after the cutoff.</p>", "2022-10-12T14:43:46.086Z"),
+            ]
+        },
+    }
+
+
+def _topic_post_packet(reference_packet, topic, post_number=5):
+    from pathlib import Path
+
+    import tank.fixture_reference as fixture_reference
+    from tank.sources import parsers
+
+    path, packet = reference_packet
+    original = json.dumps(topic).encode()
+    original_path = path.parent / "topic-original.json"
+    original_path.write_bytes(original)
+    selector = {"post_number": post_number}
+    view = fixture_reference.project_original_source("DISCOURSE_TOPIC_POST_V1", original, selector)
+    view_path = path.parent / "topic-post-view.json"
+    view_path.write_bytes(view)
+    post = next(p for p in topic["post_stream"]["posts"] if p["post_number"] == post_number)
+    row = packet["records"][0]
+    record = row["record"]
+    record.update(
+        text=parsers.text(post["cooked"]),
+        raw_ref=str(view_path),
+        raw_sha256=sha256(view),
+        published_at=post["created_at"],
+        published_at_precision="EXACT",
+    )
+    row["simulated_available_at"] = post["created_at"]
+    row["as_of_evidence"] = {
+        "kind": "IMMUTABLE_ORIGINAL_PUBLICATION",
+        "version_id": "discourse:830:post:" + str(post["id"]) + ":version:1",
+        "source_url": record["feed"],
+        "raw_ref": str(view_path),
+        "raw_sha256": sha256(view),
+        "body_sha256": sha256(record["text"].encode()),
+        "derivation": {
+            "kind": "SOURCE_ORIGINAL_FIELD_PROJECTION_V1",
+            "source_kind": "DISCOURSE_TOPIC_POST_V1",
+            "selector": selector,
+        },
+        "projection_provenance": {
+            "original_raw_ref": str(original_path),
+            "original_raw_sha256": sha256(original),
+            "projection_module_sha256": sha256(Path(fixture_reference.__file__).read_bytes()),
+        },
+    }
+    return packet, view
+
+
+def test_discourse_topic_post_projection_admits_one_unedited_reply(reference_packet):
+    packet, view = _topic_post_packet(reference_packet, _discourse_topic())
+    save(reference_packet[0], packet)
+    inputs = load_inputs(reference_packet[0], settings())
+    selected = json.loads(view)["post_stream"]["posts"]
+    assert [p["post_number"] for p in selected] == [5]
+    assert b"FUTURE_CANARY" not in view
+    assert inputs.records("ingest.source_items")[0]["published_at"] == "2022-09-21T10:48:47.970Z"
+
+
+def test_discourse_topic_post_refuses_edited_reply(reference_packet):
+    packet, _ = _topic_post_packet(reference_packet, _discourse_topic(post5_version=2))
+    save(reference_packet[0], packet)
+    with pytest.raises(ReplayError, match="version is unproven"):
+        load_inputs(reference_packet[0], settings())
+
+
+def test_discourse_topic_post_refuses_missing_post_number():
+    from tank.fixture_reference import project_original_source
+
+    raw = json.dumps(_discourse_topic()).encode()
+    with pytest.raises(ValueError, match="selection must be unique"):
+        project_original_source("DISCOURSE_TOPIC_POST_V1", raw, {"post_number": 7})
+    with pytest.raises(ValueError, match="explicit integer post_number"):
+        project_original_source("DISCOURSE_TOPIC_POST_V1", raw, {"post_number": "5"})
+
+
+def test_discourse_topic_post_refuses_publication_after_cutoff(reference_packet):
+    packet, _ = _topic_post_packet(reference_packet, _discourse_topic(created="2022-09-23T08:00:00.000Z"))
+    save(reference_packet[0], packet)
+    with pytest.raises(ReplayError, match="publication precision interval"):
+        load_inputs(reference_packet[0], settings())
