@@ -20,8 +20,6 @@ services:
       TANK_CONFIG_DIR: /config
       TANK_OPENMA_URL: http://openma:8787
       TANK_OPENMA_API_KEY_FILE: /run/secrets/oma_api_key
-      TANK_JEV_PROVIDER: openrouter
-      TANK_OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
       TANK_TELEGRAM_TOKEN_FILE: /run/secrets/telegram_bot_token
       TANK_ETHERSCAN_API_KEY_FILE: /run/secrets/etherscan_api_key
       TANK_CODEX_GATEWAY_KEY_FILE: /run/secrets/codex_gateway_key
@@ -31,13 +29,10 @@ services:
       TANK_X_PROFILE_DIR: /browser
       TANK_X_STORAGE_STATE_PATH: /run/secrets/x_session
       TANK_BACKUP_DIR: /backup
-      TANK_USER_AGENT: ${TANK_USER_AGENT:?Set declared contact User-Agent}
       TANK_X_ENABLED: ${TANK_X_ENABLED:-false}
-      TANK_TELEGRAM_ALERTS_CHAT: ${TANK_TELEGRAM_ALERTS_CHAT:-}
-      TANK_TELEGRAM_OPS_CHAT: ${TANK_TELEGRAM_OPS_CHAT:-}
     secrets:
     - oma_api_key
-    - openrouter_api_key
+    - opencode_api_key
     - telegram_bot_token
     - etherscan_api_key
     - codex_gateway_key
@@ -134,6 +129,8 @@ services:
     - password_encryption=scram-sha-256
     - -c
     - hba_file=/etc/postgresql/tank-pg_hba.conf
+    - -c
+    - max_locks_per_transaction=256
     secrets:
     - postgres_password
     - tank_db_password
@@ -188,6 +185,8 @@ secrets:
     file: ${TANK_SECRETS_DIR}/oma_auth_secret
   openrouter_api_key:
     file: ${TANK_SECRETS_DIR}/openrouter_api_key
+  opencode_api_key:
+    file: ${TANK_SECRETS_DIR}/opencode_api_key
   telegram_bot_token:
     file: ${TANK_SECRETS_DIR}/telegram_bot_token
   etherscan_api_key:

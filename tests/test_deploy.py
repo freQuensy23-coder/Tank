@@ -28,9 +28,12 @@ def test_compose_topology_and_credential_boundaries():
     oma = c["services"]["openma"]
     assert oma["environment"]["LITEBOX_MEMORY_MIB"] == "${TANK_SANDBOX_MEMORY_MIB:-2048}"
     assert oma["environment"]["LITEBOX_CPUS"] == "${TANK_SANDBOX_CPUS:-2}"
-    assert tank["environment"]["TANK_JEV_PROVIDER"] == "openrouter"
-    assert tank["environment"]["TANK_OPENROUTER_API_KEY_FILE"] == "/run/secrets/openrouter_api_key"
-    assert "openrouter_api_key" in tank["secrets"] and "openrouter_api_key" in oma["secrets"]
+    # Jev runs through OpenCode; User-Agent and Telegram chats come only from config.
+    assert "opencode_api_key" in tank["secrets"] and "openrouter_api_key" not in tank["secrets"]
+    assert not {"TANK_JEV_PROVIDER", "TANK_OPENROUTER_API_KEY_FILE", "TANK_USER_AGENT",
+                "TANK_TELEGRAM_ALERTS_CHAT", "TANK_TELEGRAM_OPS_CHAT"} & set(tank["environment"])
+    assert "openrouter_api_key" in oma["secrets"]
+    assert "max_locks_per_transaction=256" in c["services"]["postgres"]["command"]
     assert "typesafe_api_key" not in c["secrets"]
     assert "x_session" not in tank["secrets"] and "x_session" not in c["secrets"]
     assert tank["environment"]["TANK_X_ENABLED"] == "${TANK_X_ENABLED:-false}"
