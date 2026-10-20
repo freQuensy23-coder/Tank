@@ -10,12 +10,13 @@ import json
 import time
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
+from datetime import timedelta
 
 import httpx
 from httpx_sse import aconnect_sse
 
 from tank.agents import workflow
-from tank.time_precision import collection_clock, propagate_timestamp
+from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, iso, sha256
 
 from .pipeline import ConfigurationError
@@ -23,6 +24,18 @@ from .security import redact_tool_arguments
 from .wire import tool_wire_result
 
 REST_TIMEOUT_S = 30
+# Host capacity (user decision 2026-10-20): at most this many sessions run a turn at once.
+DEFAULT_MAX_RUNNING_SESSIONS = 2
+ADMITTED_JOB_TYPES = ("AGENT_MESSAGE", "SCOUT_REVIEW")
+BUSY_RUNTIME_STATES = {"PENDING", "RUNNING", "REQUIRES_ACTION"}
+
+
+class AdmissionDeferred(Exception):
+    """The running-session cap is full: the message waits in order, no attempt is spent."""
+
+    def __init__(self, not_before):
+        self.not_before = not_before
+        super().__init__("Running-session cap reached; the message waits for a free slot")
 
 
 @dataclass(frozen=True)
@@ -53,7 +66,7 @@ class SessionService:
         self.http = http or httpx.AsyncClient(timeout=REST_TIMEOUT_S)
         self.owns_http = http is None
         # Long-lived idle subscriptions must not consume control-plane slots
-        # needed to acknowledge tools. No local session admission cap is added.
+        # needed to acknowledge tools. Turn admission is capped separately (admit).
         self.stream_http = stream_http or (
             http
             if http is not None
@@ -1646,6 +1659,69 @@ class SessionService:
                     stream_task.cancel()
                     await asyncio.gather(stream_task, return_exceptions=True)
             await asyncio.sleep(delay)
+
+    def running_session_cap(self):
+        cap = self.settings.load_config("openma").get("max_running_sessions", DEFAULT_MAX_RUNNING_SESSIONS)
+        if isinstance(cap, bool) or not isinstance(cap, int) or cap < 1:
+            raise ConfigurationError("openma.yaml max_running_sessions must be a positive integer")
+        return cap
+
+    @staticmethod
+    def running(session):
+        return session.get("status") == "OPEN" and (
+            session.get("runtime_status") in BUSY_RUNTIME_STATES or bool(session.get("active_message_id"))
+        )
+
+    async def existing_session(self, payload):
+        """The session a message would go to, without creating one."""
+        if payload.get("session_id"):
+            return await self.repo.get("ops.agent_sessions", payload["session_id"])
+        event_id = payload.get("event_id")
+        for field, value in (
+            ("event_id", event_id),
+            ("item_id", payload.get("item_id") if not event_id else None),
+            ("proposal_id", payload.get("proposal_id") or payload.get("prp_id")),
+        ):
+            if value:
+                async for session in self.repo.iter_all("ops.agent_sessions", filters={field: value}):
+                    return session
+        return None
+
+    async def admit(self, job):
+        """Admit a turn under the running-session cap or raise AdmissionDeferred.
+
+        A message to a session already running a turn is never blocked: OpenMA
+        queues it behind the current turn. Otherwise the turn starts only while
+        fewer than the cap are running and no older waiting message (by priority,
+        then first enqueue) is still queued, so waiting messages keep their order.
+        """
+        target = await self.existing_session(job["payload"])
+        if target and self.running(target):
+            return
+        cap = self.running_session_cap()
+        own = (job["priority"], job.get("slot_waiting_since") or job["created_at"])
+        async with self.repo.lock("session-admission"):
+            running = {
+                session["session_id"]
+                async for session in self.repo.iter_all("ops.agent_sessions", filters={"status": "OPEN"})
+                if self.running(session)
+            }
+            for kind in ADMITTED_JOB_TYPES:
+                async for other in self.repo.iter_all("ops.jobs", filters={"type": kind}):
+                    if other["job_id"] == job["job_id"]:
+                        continue
+                    if other.get("status") == "RUNNING" and other.get("slot_admitted"):
+                        running.add("job:" + other["job_id"])
+                    elif (
+                        other.get("status") == "QUEUED"
+                        and other.get("slot_waiting_since")
+                        and (other["priority"], other["slot_waiting_since"]) < own
+                    ):
+                        raise AdmissionDeferred(offset_schedule(collection_clock(), timedelta(seconds=1)))
+            if len(running) >= cap:
+                raise AdmissionDeferred(offset_schedule(collection_clock(), timedelta(seconds=1)))
+            current = await self.repo.get("ops.jobs", job["job_id"])
+            await self.repo.put("ops.jobs", job["job_id"], {**current, "slot_admitted": True})
 
     async def scout_review(self, payload):
         proposal_id = payload.get("proposal_id") or payload.get("prp_id")

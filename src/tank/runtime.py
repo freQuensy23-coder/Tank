@@ -5,6 +5,7 @@ import logging
 import traceback
 from datetime import timedelta
 
+from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
 from tank.scheduler import Scheduler
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
@@ -213,6 +214,8 @@ class Runtime:
                 if kind not in self.handlers:
                     raise ValueError(f"Unregistered durable job kind: {kind}")
                 async with asyncio.timeout(TIMEOUTS[kind]):
+                    if kind in ADMITTED_JOB_TYPES and hasattr(getattr(self, "sessions", None), "admit"):
+                        await self.sessions.admit(job)
                     result = await self.handlers[kind](job["payload"])
                 async with self.repo.transaction():
                     await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
@@ -231,6 +234,24 @@ class Runtime:
                                 **current,
                                 "status": "QUEUED",
                                 "attempts": max(0, current["attempts"] - 1),
+                                **deferred.not_before.fields("run_after"),
+                            },
+                        )
+            except AdmissionDeferred as deferred:
+                # A full running-session cap is a wait, not a failed attempt: keep
+                # the payload, the expiry and the first-wait order key.
+                async with self.repo.transaction():
+                    current = await self.repo.get("ops.jobs", job["job_id"])
+                    if current and current["status"] == "RUNNING":
+                        await self.repo.put(
+                            "ops.jobs",
+                            job["job_id"],
+                            {
+                                **current,
+                                "status": "QUEUED",
+                                "attempts": max(0, current["attempts"] - 1),
+                                "slot_waiting_since": current.get("slot_waiting_since")
+                                or current["created_at"],
                                 **deferred.not_before.fields("run_after"),
                             },
                         )
