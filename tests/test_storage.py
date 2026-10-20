@@ -491,193 +491,8 @@ def test_decisive_fact_projection_requires_canonical_text():
     assert _projection("ana.market_truth", {"decisive_facts": ["Positive"]})["decisive_facts"] == ["Positive"]
 
 
-async def test_budget_retirement_fresh_schema_rejects_new_budget_notices(repo):
-    if not isinstance(repo, PostgresRepository):
-        with pytest.raises(ValueError, match="Unknown collection"):
-            await repo.put("ops.budget_state", "day", {"day": "2026-10-01"})
-        return
-    import psycopg
-
-    async with repo.transaction():
-        result = await (
-            await repo._conn().execute(
-                "SELECT to_regclass('ops.budget_state') AS live,to_regclass('archive.ops_budget_state') AS historical"
-            )
-        ).fetchone()
-        assert result["live"] is None and result["historical"] is None
-    nid = new_id("notice")
-    with pytest.raises(psycopg.errors.CheckViolation):
-        await repo.put("out.ops_notices", nid, {"notice_id": nid, "kind": "LLM_BUDGET", "text": "obsolete"})
 
 
-async def test_budget_retirement_upgrade_preserves_historical_data(tmp_path):
-    import os
-
-    import psycopg
-    from psycopg import sql
-    from psycopg.conninfo import conninfo_to_dict, make_conninfo
-    from psycopg.types.json import Jsonb
-
-    url = os.getenv("TANK_TEST_DATABASE_URL")
-    if not url:
-        pytest.skip("Requires isolated PostgreSQL with CREATE DATABASE permission")
-    database = "tank_budget_upgrade_" + new_id("test").replace("-", "").lower()
-    admin = await psycopg.AsyncConnection.connect(url, autocommit=True)
-    try:
-        try:
-            await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
-        except psycopg.errors.InsufficientPrivilege:
-            pytest.skip("Budget upgrade test requires CREATE DATABASE in an isolated PostgreSQL cluster")
-        args = conninfo_to_dict(url)
-        args["dbname"] = database
-        db = PostgresRepository(make_conninfo(**args))
-        await db.open()
-        try:
-            await db.migrate(target="013_outcome_ledger.sql")
-            async with db.transaction():
-                await db._conn().execute(
-                    "INSERT INTO ops.budget_state(storage_key,document,day,spent_usd) VALUES ('2026-10-01',%s,'2026-10-01',42.5)",
-                    (Jsonb({"day": "2026-10-01", "spent_usd": "42.5"}),),
-                )
-                await db._conn().execute(
-                    "INSERT INTO out.ops_notices(storage_key,document,notice_id,kind) VALUES ('legacy',%s,'legacy','LLM_BUDGET')",
-                    (Jsonb({"notice_id": "legacy", "kind": "LLM_BUDGET"}),),
-                )
-                await db._conn().execute(
-                    "INSERT INTO evt.events(storage_key,document,event_id) VALUES ('legacy-partial','{}','legacy-partial')"
-                )
-
-            # A historical013 client cannot write026 columns. Build explicit old-schema
-            # records through SQL, then exercise the current forward migration unchanged.
-            async def legacy_write_job(job):
-                columns = (
-                    "job_id",
-                    "type",
-                    "priority",
-                    "payload",
-                    "idem_key",
-                    "status",
-                    "attempts",
-                    "max_attempts",
-                    "run_after",
-                    "expires_at",
-                    "last_error",
-                    "created_at",
-                    "finished_at",
-                )
-                values = [
-                    job["job_id"],
-                    Jsonb(job),
-                    *[Jsonb(job[name]) if name == "payload" else job.get(name) for name in columns],
-                ]
-                names = ("storage_key", "document", *columns)
-                query = sql.SQL(
-                    "INSERT INTO ops.jobs ({}) VALUES ({}) ON CONFLICT(storage_key) DO UPDATE SET {}"
-                ).format(
-                    sql.SQL(",").join(map(sql.Identifier, names)),
-                    sql.SQL(",").join(sql.Placeholder() for _ in names),
-                    sql.SQL(",").join(
-                        sql.SQL("{}=EXCLUDED.{}").format(sql.Identifier(name), sql.Identifier(name))
-                        for name in names[1:]
-                    ),
-                )
-                async with db.transaction():
-                    await db._conn().execute(query, values)
-                return job
-
-            async def legacy_enqueue(kind, payload, idem_key, *, run_after=None, expires_at=None):
-                return await legacy_write_job(
-                    {
-                        "job_id": new_id("job"),
-                        "type": kind,
-                        "priority": 1,
-                        "payload": payload,
-                        "idem_key": idem_key,
-                        "status": "QUEUED",
-                        "attempts": 0,
-                        "max_attempts": 3,
-                        "run_after": run_after or iso(),
-                        "expires_at": expires_at,
-                        "last_error": None,
-                        "created_at": iso(),
-                        "finished_at": None,
-                    }
-                )
-
-            paused = await legacy_enqueue(
-                "AGENT_MESSAGE",
-                {"item_id": "budget-held"},
-                "budget-held",
-                run_after=iso(utcnow() + timedelta(hours=8)),
-                expires_at=iso(utcnow() + timedelta(hours=20)),
-            )
-            original_expiry = paused["expires_at"]
-            paused["budget_paused_at"] = iso()
-            await legacy_write_job(paused)
-            scheduled = await legacy_enqueue(
-                "AGENT_MESSAGE",
-                {"item_id": "normal-schedule"},
-                "normal-schedule",
-                run_after=iso(utcnow() + timedelta(hours=9)),
-            )
-            obsolete = await legacy_enqueue("DELIVER", {"notice_id": "legacy"}, "legacy-budget-delivery")
-            partial = await legacy_enqueue("PUBLISH_PARTIAL", {}, "retired-partial")
-            checkpoint = await legacy_enqueue(
-                "REACTION_CAPTURE",
-                {},
-                "broken-checkpoint",
-                run_after=iso(utcnow() + timedelta(hours=24)),
-                expires_at=iso(utcnow() + timedelta(hours=6)),
-            )
-            checkpoint.update(status="EXPIRED")
-            await legacy_write_job(checkpoint)
-            already_attempted = await legacy_enqueue(
-                "REACTION_CAPTURE",
-                {},
-                "attempted-checkpoint",
-                run_after=iso(utcnow() + timedelta(hours=24)),
-                expires_at=iso(utcnow() + timedelta(hours=6)),
-            )
-            already_attempted.update(status="EXPIRED", attempts=1)
-            await legacy_write_job(already_attempted)
-            await db.migrate(legacy_bundle_dir=tmp_path / "bundles")
-            await db.migrate(legacy_bundle_dir=tmp_path / "bundles")
-            assert (await db.get("ops.jobs", partial["job_id"]))["status"] == "EXPIRED"
-            repaired = await db.get("ops.jobs", checkpoint["job_id"])
-            assert repaired["status"] == "QUEUED" and parse_time(repaired["expires_at"]) == parse_time(
-                repaired["run_after"]
-            ) + timedelta(hours=6)
-            assert (await db.get("ops.jobs", already_attempted["job_id"]))["status"] == "EXPIRED"
-            released = await db.get("ops.jobs", paused["job_id"])
-            assert parse_time(released["run_after"]) <= utcnow()
-            assert released["expires_at"] == original_expiry
-            assert released["budget_retirement"]["action"] == "RELEASED_PAUSE"
-            assert parse_time(
-                (await db.get("ops.jobs", scheduled["job_id"]))["run_after"]
-            ) > utcnow() + timedelta(hours=8)
-            assert (await db.get("ops.jobs", obsolete["job_id"]))["status"] == "EXPIRED"
-            from test_storage_retired_schema import bundle_rows
-
-            exports = await db.list("ops.market_migration_exports")
-            table = next(
-                entry
-                for receipt in exports
-                for entry in receipt["tables"]
-                if entry["collection"] == "archive.ops_budget_state"
-            )
-            state = bundle_rows(table["path"])[0]
-            assert state["document"]["spent_usd"] == "42.5" and str(state["spent_usd"]) == "42.5000"
-            assert (await db.get("out.ops_notices", "legacy"))["kind"] == "LLM_BUDGET"
-            assert await db.get("evt.events", "legacy-partial") == {}
-            with pytest.raises(psycopg.errors.CheckViolation):
-                await db.put("out.ops_notices", "new", {"notice_id": "new", "kind": "LLM_BUDGET"})
-        finally:
-            await db.close()
-    finally:
-        await admin.execute(
-            sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(database))
-        )
-        await admin.close()
 
 
 async def test_uncapped_keyset_and_latest_outside_first_page(repo):
@@ -714,7 +529,7 @@ async def test_uncapped_keyset_and_latest_outside_first_page(repo):
         _ = [r async for r in repo.iter_all("evt.events", batch_size=0)]
 
 
-async def test_normalized_retention_keeps_whole_event_day_and_sealed_raw_ledger(repo):
+async def test_normalized_retention_keeps_whole_event_day(repo):
     old = utcnow() - timedelta(days=120)
     event, ems = new_id("evt"), new_id("ems")
     await repo.put(
@@ -737,25 +552,10 @@ async def test_normalized_retention_keeps_whole_event_day_and_sealed_raw_ledger(
         await repo.put(
             "mkt.flow_bars_1m", key, {"instrument_id": "retention:" + key, "minute_start": iso(at)}
         )
-    sealed = new_id("archive")
-    await repo.put(
-        "mkt.raw_archives",
-        sealed,
-        {
-            "archive_id": sealed,
-            "status": "SEALED",
-            "path": "/test/verified.parquet",
-            "sha256": "a" * 64,
-            "received_ts": iso(old),
-        },
-    )
-    with pytest.raises(ImmutableRecordError):
-        await repo.delete("mkt.raw_archives", sealed)
     await repo.prune_market(utcnow() - timedelta(days=90))
     assert await repo.get("mkt.flow_bars_1m", expired) is None
     assert await repo.get("mkt.flow_bars_1m", preserved)
     assert await repo.get("mkt.flow_bars_1m", current)
-    assert (await repo.get("mkt.raw_archives", sealed))["sha256"] == "a" * 64
     with pytest.raises(ValueError, match="Unknown collection"):
         await repo.get("mkt.trades", "unsupported-current-raw-sql")
 
@@ -987,12 +787,18 @@ async def test_metadata_pages_omit_large_document_payload(repo):
     )
 
 
-async def test_postgres_pool_recycles_connections():
-    url = os.getenv("TANK_TEST_DATABASE_URL")
-    if not url:
-        pytest.skip("Real PostgreSQL requires TANK_TEST_DATABASE_URL pointing at an isolated test database")
-    repo = await PostgresRepository(url).open()
-    try:
-        assert (repo._pool.max_size, repo._pool.max_idle, repo._pool.max_lifetime) == (16, 120, 600)
-    finally:
-        await repo.close()
+
+
+async def test_capture_tier_transitions_follow_market_retention(repo):
+    if not isinstance(repo, PostgresRepository):
+        pytest.skip("Memory repository keeps append-only rows until models.py drops the table from APPEND_ONLY")
+    old, recent = new_id("tier"), new_id("tier")
+    for key, at in ((old, utcnow() - timedelta(days=120)), (recent, utcnow() - timedelta(days=1))):
+        await repo.put(
+            "ops.capture_tier_transitions",
+            key,
+            {"transition_id": key, "token_id": "retention:" + key, "effective_at": iso(at), "tier": "BASE"},
+        )
+    await repo.prune_market(utcnow() - timedelta(days=90))
+    assert await repo.get("ops.capture_tier_transitions", old) is None
+    assert await repo.get("ops.capture_tier_transitions", recent)

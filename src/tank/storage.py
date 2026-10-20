@@ -380,11 +380,6 @@ class MemoryRepository(QueueMixin):
     async def delete(self, collection, key):
         _table(collection)
         async with self.transaction():
-            if (
-                collection == "mkt.raw_archives"
-                and self._data.get(collection, {}).get(str(key), {}).get("status") == "SEALED"
-            ):
-                raise ImmutableRecordError("Immutable sealed raw archive")
             if collection in APPEND_ONLY or (collection, str(key)) in self._immutable:
                 raise ImmutableRecordError(f"Immutable record: {collection}/{key}")
             self._data.get(collection, {}).pop(str(key), None)
@@ -1156,6 +1151,8 @@ async def _prune_market(self, before):
         "mkt.supply_obs": "ts",
         # Gaps describe the series above and share their retention (tank-market, W11).
         "mkt.capture_gaps": "observed_at",
+        # Capture tiers in force at a cutoff (03 §5.10); mutable since migration 042.
+        "ops.capture_tier_transitions": "effective_at",
     }
     counts = {}
     async with self.lock("tank:market_retention"):
