@@ -72,7 +72,8 @@ def test_changed_tool_descriptions_remain_exactly_synced():
             key: value for key, value in schema.items() if key not in {"$schema", "title", "description"}
         }
     skill = (directory / "SKILL.md").read_text()
-    assert "`add_observation` is not mandatory" in skill
+    # 03 §3.2 playbook step 5, verbatim (the skill carries the spec playbook).
+    assert "Repeat coverage → `add_observation` CORROBORATION, and stop." in skill
     assert "NO_UNIVERSE_CONCERN" in skill
     assert "delivery_status: QUEUED" in skill
 
