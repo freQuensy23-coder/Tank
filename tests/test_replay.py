@@ -2474,7 +2474,10 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
             ],
             timeout=3,
         )
-    conditions = await repo.list("ana.watch_conditions")
+    all_conditions = await repo.list("ana.watch_conditions")
+    # W1 (03 §6.6): the fired watch is spent; the same expression is re-armed.
+    conditions = [c for c in all_conditions if not c.get("rearmed_from")]
+    rearmed = [c for c in all_conditions if c.get("rearmed_from")]
     assert len(conditions) == 1 and conditions[0]["cond_id"] != "old-condition"
     assert report["identity_substitutions"]["old-condition"] == conditions[0]["cond_id"]
     assert report["causal_tool_receipts"][0]["source_call_id"] == "decision"
@@ -2485,8 +2488,10 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
     if state == "APPROVED":
         assert conditions[0]["status"] == "FIRED"
         assert messages[1]["condition"]["cond_id"] == conditions[0]["cond_id"]
+        assert [(c["status"], c["rearmed_from"]) for c in rearmed] == [("ARMED", conditions[0]["cond_id"])]
     else:
         assert conditions[0]["status"] == "ARMED"
+        assert rearmed == []
         assert len(messages) == 1
 
 

@@ -10,6 +10,12 @@ from tank.analysis.cards import compose_card
 def card_inputs():
     event = {
         "statement": "Approval changes access.",
+        "token_labels": {
+            "world:WLD": "World (WLD)",
+            "lighter:LIT": "Lighter (LIT)",
+            "uniswap:UNI": "Uniswap (UNI)",
+            "cow:COW": "CoW Protocol (COW)",
+        },
         "event_state": "APPROVED",
         "state_verified": True,
         "freshness": "FRESH",
@@ -155,9 +161,9 @@ NOT VERIFIED: none recorded
 WHY IT MATTERS
 • What changed: The approval is confirmed
 • Economic effect: not estimable
-• Token capture: WLD DIRECT — Required token gas
+• Token capture: World (WLD) DIRECT — Required token gas
 
-WHO: primary WLD · secondary none — No eligible dependency rail
+WHO: primary World (WLD) · secondary none — No eligible dependency rail
 • Issuer / product: Issuer is the primary
 • Exchanges / DEX: No listing identified
 • Settlement L1 / L2: No settlement rail identified
@@ -167,7 +173,7 @@ WHO: primary WLD · secondary none — No eligible dependency rail
 • Interoperability: No cross-chain dependency identified
 • Custody / compliance: No custody provider identified
 
-── WLD (PRIMARY) ──
+── World (WLD) (PRIMARY) ──
 
 MARKET TRUTH: ORGANIC MIXED
 • 4h: price 5.00%
@@ -324,8 +330,8 @@ def test_who_excludes_unjustified_links_and_never_repeats_primary_as_secondary()
     e["beneficiary_edges"] = [duplicate, candidate, loser]
     card = compose_card(e, a, [primary, duplicate], [d], [m])
     who = next(line for line in card.splitlines() if line.startswith("WHO:"))
-    assert who.count("primary UNI") == 1
-    assert "secondary UNI" not in who and "candidate" not in who
+    assert who.count("primary Uniswap (UNI)") == 1
+    assert "secondary Uniswap (UNI)" not in who and "candidate" not in who
     assert "loser OutsideLoser" in who
     # A credible secondary is shown with its recorded layer and state, and
     # removes the no-secondaries explanation instead of listing all candidates.
@@ -340,8 +346,71 @@ def test_who_excludes_unjustified_links_and_never_repeats_primary_as_secondary()
     second_decision, second_truth = dict(d, token_id="cow:COW"), dict(m, token_id="cow:COW")
     card = compose_card(e, a, [primary, secondary], [d, second_decision], [m, second_truth])
     who = next(line for line in card.splitlines() if line.startswith("WHO:"))
-    assert "secondary COW (LIQUIDITY_EXECUTION, unverified LIVE)" in who
+    assert "secondary CoW Protocol (COW) (LIQUIDITY_EXECUTION, unverified LIVE)" in who
     assert "secondary none" not in who and "No listing identified" not in card
+
+
+def test_secondary_outside_universe_is_named_without_market_block():
+    """W7 (PRD §4.1): a beneficiary outside the 22 tokens is named on the card,
+    with no market block; dependency-map candidates stay unnamed."""
+    e, a, primary, d, m = card_inputs()
+    outside = {
+        "entity_id": "litentry",
+        "token_id": "litentry:LIT",
+        "role": "SECONDARY",
+        "layer": "ISSUER_PRODUCT",
+        "credible": False,
+        "tradable": False,
+        "integration_state": "BUILT",
+        "evidence": ["clm-1"],
+    }
+    candidate = dict(outside, entity_id="candidate", token_id="other:OTH", evidence=[], dependency_ref="x")
+    e["beneficiary_edges"] = [outside, candidate]
+    card = compose_card(e, a, [primary], [d], [m], why=["a", "b"])
+    who = next(line for line in card.splitlines() if line.startswith("WHO:"))
+    assert "secondary litentry (LIT) (ISSUER_PRODUCT, unverified BUILT)" in who
+    assert "outside the token universe, no market block" in who
+    assert "OTH" not in who
+    assert card.count("── ") == 1  # only World has a market block
+
+
+def test_tokens_are_named_by_project_never_ticker_alone():
+    """W8 (PRD hard rule 16): Lighter and Litentry never both print as "LIT"."""
+    from tank.analysis.cards import token_name
+
+    labels = card_inputs()[0]["token_labels"]
+    assert token_name("lighter:LIT", labels) == "Lighter (LIT)"
+    assert token_name("litentry:LIT", labels) == "litentry (LIT)"
+    assert token_name("UNRESOLVED:Foo", labels) == "Foo (unresolved)"
+    card = render(card_inputs())
+    assert "── World (WLD) (PRIMARY) ──" in card and "── WLD " not in card
+
+
+@pytest.mark.parametrize(
+    "action,shown", [("START", True), ("WAIT", False), ("DONT_CHASE", False), ("REDUCE", False)]
+)
+def test_tactical_label_only_on_positive_actions(action, shown):
+    """W9 (FR-O-03, 03 §4.8): "(tactical)" never follows WAIT or DON'T CHASE."""
+    values = card_inputs()
+    values[3].update(action=action, tactical=True, thesis_grade="C")
+    line = next(line for line in render(values).splitlines() if line.startswith("WHAT TO DO:"))
+    assert ("(tactical)" in line) is shown
+
+
+def test_missing_card_fields_print_reason_not_dash():
+    """W13 (03 §7.5): missing fields print n/a (<reason>), never a bare dash."""
+    values = card_inputs()
+    values[4]["decisive_facts"][0].pop("window")
+    values[3].pop("thesis_grade")
+    values[3]["outlook"].pop("confidence")
+    values[1].pop("criterion")
+    card = render(values)
+    assert "n/a (window unavailable)" in card
+    assert "Thesis n/a (grade unavailable)" in card
+    assert "CONFIDENCE: n/a (confidence unavailable)" in card
+    assert "MAJOR (n/a (criterion unavailable))" in card
+    for line in card.splitlines():
+        assert not line.rstrip().endswith("—") and "—)" not in line and ": —" not in line
 
 
 @pytest.mark.parametrize("confirmation", [None, "ABSORPTION_CANDIDATE", "ABSORPTION_CONFIRMED", "flag"])
@@ -689,3 +758,53 @@ def test_card_length_diagnostics_preserve_full_preview_and_structured_guidance()
     assert inputs == original
     inputs[0]["thresholds"] = {"card_max_chars": 100000}
     assert render(inputs) == diagnostic["preview"]
+
+
+def test_market_truth_names_venue_oi_class_markup_and_spot_breadth():
+    """F-11 (03 §11.3): per-venue OI class with the markup component and the
+    spot venues on each side are printed, each with venue and window."""
+    values = card_inputs()
+    truth = values[4]
+    truth["derivatives"] = {
+        "window": "W4H",
+        "per_venue": [
+            {
+                "coverage": {"venue": "binance"},
+                "oi_class": "REAL_NATIVE",
+                "oi_native_chg_pct": 0.1037,
+                "decomposition": {"markup": "6530100.97", "pos_share": 0.5734},
+            },
+            {"coverage": {"venue": "bybit"}, "oi_class": None},
+        ],
+    }
+    truth["spot"] = {
+        "W4H": {
+            "window": "W4H",
+            "venues": [
+                {"venue": "binance", "complete": True, "sign": 0, "volume_share": 0.656},
+                {"venue": "kraken", "complete": True, "sign": 1, "volume_share": 0.028},
+            ],
+        }
+    }
+    market = render(values).split("MARKET TRUTH:", 1)[1].split("OUTLOOK:", 1)[0]
+    assert "4h: open interest by venue: binance REAL_NATIVE +10.37% in WLD (position share 57.3%" in market
+    assert "price-markup component present" in market and "bybit" not in market
+    assert "4h: spot venues net buying: kraken 2.8%; net selling: none" in market
+
+
+def test_no_event_premise_prints_scenario_reason_and_no_accumulation_word():
+    """03 §7.5: the template never names a missing event and never writes
+    "accumulation" (L11) in its own condition texts."""
+    from tank.analysis.decisions import DecisionEngine
+
+    truth = {
+        "token_id": "T",
+        "move_class": "UNKNOWN",
+        "data_confidence": {"class": "HIGH"},
+        "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL"},
+    }
+    result = DecisionEngine().evaluate({}, {}, {"token_id": "T", "role": "UNKNOWN"}, truth)
+    outlook = result["outlook"]
+    assert outlook["scenarios"]["failure"] is None
+    assert outlook["scenario_reasons"]["failure"] == "no event premise"
+    assert all("accumulation" not in c["human_text"].lower() for c in result["conditions"])

@@ -560,6 +560,7 @@ class Scheduler:
                         datetime.fromtimestamp(endpoint, timezone.utc), precision="EXACT"
                     )
                 counters = dict(cond.get("counters", {}))
+                unobserved, leaf_matches = [], []
 
                 async def evaluate(expr, path="root"):
                     if "all" in expr:
@@ -578,6 +579,7 @@ class Scheduler:
                     if market_metric and required > 1:
                         created = cond.get("created_at")
                         if created and parse_time(evaluation_cutoff) <= parse_time(created):
+                            unobserved.append(path)
                             return False
                     truth = {}
                     if market_metric:
@@ -597,6 +599,7 @@ class Scheduler:
                         truth = cache[cache_key]
                     value = metric_value(truth, event, metric, expr.get("window", "W1H"))
                     matched = compare(value, expr["op"], expr["value"])
+                    leaf_matches.append(matched)
                     proof = next(
                         (
                             row
@@ -691,6 +694,16 @@ class Scheduler:
 
                 fired = await evaluate(expr)
                 updated = {**cond, "counters": counters, **cutoff_stamp.fields("last_evaluated_at")}
+                if cond.get("rearmed_from") and not cond.get("cleared_at"):
+                    # A re-armed watch fires on an edge, not a level: it must be
+                    # seen false on available data once before it can fire again,
+                    # so a lasting state never re-fires every window (W1).
+                    # Cleared means the predicate itself is false in the current
+                    # window, not merely that persistence is not yet reached.
+                    available = all(row.get("data_available", True) for row in counters.values())
+                    if available and not unobserved and leaf_matches and not all(leaf_matches):
+                        updated.update(cutoff_stamp.fields("cleared_at"))
+                    fired = False
                 if fired:
                     updated.update(status="FIRED", **cutoff_stamp.fields("fired_at"))
                     async with self.repo.transaction():
@@ -752,6 +765,15 @@ class Scheduler:
     async def detect_late_data(self, now):
         marker = await self.repo.get("ops.scheduler_checkpoints", "reaction-capture-changes")
         since = marker["at"] if marker else None
+        # One queued late revision per checkpoint is enough: it measures with
+        # all data present when it runs (03 §8.6), so later changes coalesce.
+        queued = {
+            (job["payload"].get("event_id"), job["payload"].get("token_id"), job["payload"].get("checkpoint"))
+            async for job in self.repo.iter_all(
+                "ops.jobs", filters={"type": "REACTION_CAPTURE", "status": "QUEUED"}
+            )
+            if job["payload"].get("automatic_revision")
+        }
         async for change in self.market.capture_changes(
             since=since, end=iso(now + timedelta(microseconds=1))
         ):
@@ -772,6 +794,10 @@ class Scheduler:
                     continue
                 if parse_time(change["anchor"]) != parse_time(row["anchor"]["ts"]):
                     continue
+                target = (change["event_id"], change["token_id"], label)
+                if target in queued:
+                    continue
+                queued.add(target)
                 key = f"{change_id}:{label}"
                 await self.repo.enqueue(
                     "REACTION_CAPTURE",
@@ -915,6 +941,10 @@ class Scheduler:
             "spot_method": "TRADES" if spot.get("venues") else "NONE",
             "spot_coverage": spot.get("coverage"),
             "oi_native_chg_pct": sync.get("oi_native_chg_pct"),
+            # 01 FR-R-01: open interest in token units at each checkpoint.
+            "oi_native_start": sync.get("oi_native_start"),
+            "oi_native_end": sync.get("oi_native_end"),
+            "oi_venues": sync.get("venues"),
             "oi_class": sync.get("oi_class"),
             "funding": deriv.get("per_venue", []),
             "liquidations": deriv.get("liquidations"),
@@ -1334,6 +1364,7 @@ class Scheduler:
                 )
             if prune:
                 await self.retention(now, final)
+            await self.prune_snapshots(target)
             return {"status": "verified", "path": str(final), "retention": prune}
         staging = target / f".tank-{now.date()}.partial"
         if staging.exists():
@@ -1448,7 +1479,19 @@ class Scheduler:
         self._verified_backups[self.backup_identity(final, now.date())] = manifest
         if prune:
             await self.retention(now, final)
+        await self.prune_snapshots(target)
         return {"status": "created", "path": str(final), "retention": prune}
+
+    async def prune_snapshots(self, target):
+        """Keep the newest verified snapshots only (lead ruling 2026-10-20, thresholds)."""
+        from tank.backup import prune_backup_snapshots
+
+        removed = await asyncio.to_thread(
+            prune_backup_snapshots, target, int(self.threshold("backup_snapshots_kept", 3))
+        )
+        if removed:
+            log.info("Removed old backup snapshots: %s", ", ".join(removed))
+        return removed
 
     async def retention(self, now, backup):
         from pathlib import Path

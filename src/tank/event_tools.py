@@ -47,6 +47,62 @@ LAYERS = [
 IMPLEMENTATION = dict(zip(STATES, [0, 4, 6, 6, 7, 8, 10]))
 
 
+def _word(term, text):
+    import re
+
+    return bool(term) and re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", text, re.IGNORECASE)
+
+
+def resolve_entity(registry, name, entity_id=None, context=""):
+    """V3 (03 §2.11): registered aliases, whole and case-insensitive; a generic
+    word resolves only with its qualifier. Unknown names stay UNRESOLVED."""
+    rows = registry.get("entities", [])
+    if entity_id and any(row.get("entity_id") == entity_id for row in rows):
+        return entity_id
+    name = str(name or "").strip()
+    for row in rows:
+        qualified = {str(rule["alias"]).casefold() for rule in row.get("qualified_aliases") or []}
+        # An entity the agent named by its registry name or alias resolves; a
+        # generic word with a qualifier rule ("Lighter", "Plasma") needs it.
+        known = [row.get("name") or "", *row.get("names", []), *row.get("aliases", [])]
+        if name and any(
+            name.casefold() == str(v).casefold() and str(v).casefold() not in qualified for v in known
+        ):
+            return row["entity_id"]
+        for rule in row.get("qualified_aliases") or []:
+            if name.casefold() == str(rule["alias"]).casefold() or _word(rule["alias"], name):
+                if any(_word(q, name + " " + context) for q in rule.get("requires_any", [])):
+                    return row["entity_id"]
+    return "UNRESOLVED:" + name
+
+
+def resolve_token(registry, value, context=""):
+    """V3 for tokens: a token id, a ticker or $TICKER, or an alias of the
+    token's project resolves to its token_id; any other name stays
+    UNRESOLVED:<name>. An id outside the universe ("chain:TICKER") is kept."""
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    tokens = registry.get("tokens", [])
+    if text.startswith("UNRESOLVED:") or any(row["token_id"] == text for row in tokens):
+        return text
+    if ":" in text:
+        return text
+    ticker = text.removeprefix("$")
+    for row in tokens:
+        if ticker.casefold() == str(row.get("symbol", "")).casefold():
+            return row["token_id"]
+    entity = resolve_entity(registry, text, context=context)
+    for row in tokens:
+        if row.get("entity_id") == entity:
+            return row["token_id"]
+    return "UNRESOLVED:" + text
+
+
+def resolve_tokens(registry, values, context=""):
+    return list(dict.fromkeys(resolve_token(registry, value, context) for value in values or []))
+
+
 def normalized(s):
     return " ".join(str(s).split())
 
@@ -369,11 +425,19 @@ class EventToolService:
 
     async def list_open_events(self, a, c):
         q = a.get("entity_or_token", "").casefold()
+        # An event whose session failed is not open (03 §3.2 Failures): its
+        # analysis has stopped, so later news must not be merged into it.
+        statuses = {}
+        for session in await self.rows("ops.agent_sessions"):
+            if session.get("event_id"):
+                statuses.setdefault(session["event_id"], set()).add(session.get("status"))
+        failed = {eid for eid, seen in statuses.items() if seen == {"FAILED"}}
         return {
             "events": [
                 r
                 for r in await self.rows("evt.events")
                 if r["lifecycle"] not in {"CLOSED", "MERGED", "INVALIDATED"}
+                and r["event_id"] not in failed
                 and (not q or q in canonical_json(r).casefold())
             ]
         }
@@ -410,14 +474,39 @@ class EventToolService:
         } | {"dependency_map": self.settings.load_config("dependency_map")}
 
     async def get_token_facts(self, a, c):
+        """Stored fundamentals, supply and unlocks known at the analysis cutoff
+        (03 §3.2). Unlocks dated before the cutoff stay visible, labelled PAST,
+        so the agent can weigh a recent unlock; Tank draws no conclusion."""
         token = a["token"]
         registry = await self.get_registry({"entity_or_token": token}, c)
+        cutoff = utcnow()
+
+        def known(row):
+            stamp = row.get("observed_at") or row.get("captured_at")
+            return stamp is None or parse_time(stamp) <= cutoff
+
+        unlocks = []
+        for row in sorted(
+            (r for r in await self.rows("mkt.unlocks", filters={"token_id": token}) if known(r)),
+            key=lambda r: str(r.get("date") or ""),
+        ):
+            date = row.get("date")
+            unlocks.append(
+                dict(
+                    row,
+                    relative_to_cutoff=None
+                    if not date
+                    else "PAST"
+                    if parse_time(date) < cutoff
+                    else "UPCOMING",
+                )
+            )
         return {
             "registry": registry,
-            **{
-                t.split(".")[-1]: await self.rows(t, filters={"token_id": token})
-                for t in ["mkt.supply_obs", "mkt.unlocks", "evt.capture_chains"]
-            },
+            "analysis_cutoff": iso(cutoff),
+            "supply_obs": [r for r in await self.rows("mkt.supply_obs", filters={"token_id": token}) if known(r)],
+            "unlocks": unlocks,
+            "capture_chains": await self.rows("evt.capture_chains", filters={"token_id": token}),
         }
 
     def validate_evidence_url(self, url):
@@ -443,8 +532,7 @@ class EventToolService:
             getattr(self.settings, name, None)
             for name in [
                 "etherscan_api_key",
-                "typesafe_api_key",
-                "openrouter_api_key",
+                "opencode_api_key",
                 "openma_api_key",
                 "telegram_token",
                 "codex_gateway_key",
@@ -459,8 +547,7 @@ class EventToolService:
             getattr(self.settings, name, None)
             for name in [
                 "etherscan_api_key",
-                "typesafe_api_key",
-                "openrouter_api_key",
+                "opencode_api_key",
                 "openma_api_key",
                 "telegram_token",
                 "codex_gateway_key",
@@ -700,14 +787,6 @@ class EventToolService:
             accepted.append(claim)
         return accepted, []
 
-    async def bind_reservation(self, reservation_id, status, event_id=None):
-        async with self.repo.lock("reservation:" + reservation_id):
-            reservation = await self.require("ops.routing_reservations", reservation_id)
-            reservation["status"] = status
-            if event_id:
-                reservation["event_id"] = event_id
-            await self.repo.put("ops.routing_reservations", reservation_id, reservation)
-
     async def record_event(self, a, c):
         x = a.get("extraction", a)
         required = {
@@ -732,32 +811,25 @@ class EventToolService:
         if x["certainty"] not in {"LOW", "MEDIUM", "HIGH"} or not x["certainty_reason"]:
             raise ValueError("certainty and reason required")
         if not x["is_event"]:
-            if c.get("reservation_id"):
-                await self.bind_reservation(c["reservation_id"], "CLOSED")
             item["extraction_status"] = "SKIPPED"
             await self.repo.put("ingest.source_items", item["item_id"], item)
             return {"is_event": False}
         eid = new_id("evt")
         obs = new_id("obs")
         entities = []
-        registry = self.settings.load_config("registry").get("entities", [])
+        registry = self.settings.load_config("registry")
+        # Qualifiers ("Lighter" needs "LIT") may appear anywhere in the extraction.
+        context = " ".join(
+            [x["statement"], *[str(t) for t in x["tokens"]], *[str(e.get("name")) for e in x["entities"]]]
+        )
         for e in x["entities"]:
-            found = next(
-                (
-                    r
-                    for r in registry
-                    if e.get("entity_id") == r.get("entity_id")
-                    or e["name"].casefold()
-                    in [
-                        str(v).casefold()
-                        for v in [r.get("name", ""), *r.get("names", []), *r.get("aliases", [])]
-                    ]
-                ),
-                None,
-            )
             entities.append(
-                {"entity_id": found["entity_id"] if found else "UNRESOLVED:" + e["name"], "role": e["role"]}
+                {
+                    "entity_id": resolve_entity(registry, e["name"], e.get("entity_id"), context),
+                    "role": e["role"],
+                }
             )
+        tokens_mentioned = resolve_tokens(registry, x["tokens"], context)
         claims, dropped = await self.validate_claims(x["claims"], item, c, x["certainty"], obs, eid)
         primary_fact_basis = [claim["claim_id"] for claim in claims if claim["verified"]]
         certainty = x["certainty"]
@@ -771,7 +843,7 @@ class EventToolService:
             event_id=eid,
             statement=x["statement"],
             entities=entities,
-            tokens_mentioned=x["tokens"],
+            tokens_mentioned=tokens_mentioned,
             theme_tags=x.get("theme_tags", []),
             event_time=event_time,
             **propagate_timestamp({"public_at": x["public_at"]}, "public_at").fields("public_at"),
@@ -849,8 +921,6 @@ class EventToolService:
                 },
                 c,
             )
-        if c.get("reservation_id"):
-            await self.bind_reservation(c["reservation_id"], "BOUND", eid)
         return {"event_id": eid, "accepted_claims": claims, "dropped_claims": dropped}
 
     async def approval_rejection_targets(self, event, rejection):
@@ -1264,7 +1334,10 @@ class EventToolService:
             for edge in await self.rows("evt.beneficiary_edges", eid)
             if current_map and int(edge["map_version"]) == int(current_map["map_version"])
         ]
-        concerned = set(event.get("tokens_mentioned", [])) | {edge.get("token_id") for edge in current_edges}
+        registry = self.settings.load_config("registry")
+        concerned = set(resolve_tokens(registry, event.get("tokens_mentioned", []), event.get("statement") or "")) | {
+            edge.get("token_id") for edge in current_edges
+        }
         if not concerned.intersection(universe) and klass != "LOW":
             klass = "LOW"
             caps.append("NO_UNIVERSE_CONCERN")
@@ -1412,6 +1485,10 @@ class EventToolService:
         edges = []
         for raw in a["edges"]:
             e = copy.deepcopy(raw)
+            if e.get("token_id") is not None:
+                e["token_id"] = resolve_token(
+                    registry, e["token_id"], " ".join(str(e.get(k) or "") for k in ("entity_name", "entity_id"))
+                )
             if (
                 isinstance(e.get("exposure_score"), bool)
                 or not isinstance(e.get("exposure_score"), (int, float))
@@ -1745,8 +1822,17 @@ class EventToolService:
             ]
             ranks = {"NEGATIVE": 0, "UNPRICED": 1, "EARLY": 2, "SUBSTANTIAL": 3, "HEAVY": 4}
             candidates = []
+            # §4.7 step 9 ranks every credible beneficiary, so a call that refreshes
+            # one token uses the latest stored truth of the others (W6).
+            latest = {truth["token_id"]: truth for truth in truths}
             for edge in edges:
-                mt = next((t for t in truths if t["token_id"] == edge.get("token_id")), None)
+                token = edge.get("token_id")
+                if edge.get("credible") and token and token not in latest:
+                    stored = await self.latest_record("ana.market_truth", eid, token)
+                    if stored:
+                        latest[token] = stored
+            for edge in edges:
+                mt = latest.get(edge.get("token_id"))
                 if edge.get("credible") and mt and mt.get("liquidity", {}).get("liquidity_state") == "NORMAL":
                     relative = mt.get("relative", {})
                     band = relative.get("repricing_band")
@@ -1926,11 +2012,19 @@ class EventToolService:
         used = set()
         for proposed in result.get("conditions", []):
             signature = canonical_json({"role": proposed["role"], "expr": proposed["expr"]})
+            # Only an ARMED watch can still fire (§6.6). A fired watch is spent:
+            # the same expression is armed afresh and needs new evidence (W1).
             matches = [
                 old
                 for old in existing
-                if old.get("status") in {"ARMED", "FIRED"}
+                if old.get("status") == "ARMED"
                 and parse_time(old.get("expires_at", iso(expiry))) > now
+                and canonical_json({"role": old["role"], "expr": old["expr"]}) == signature
+            ]
+            spent = [
+                old
+                for old in existing
+                if old.get("status") == "FIRED"
                 and canonical_json({"role": old["role"], "expr": old["expr"]}) == signature
             ]
             if matches:
@@ -1960,6 +2054,9 @@ class EventToolService:
                     **deadline_stamp.fields("expires_at"),
                     **self.provenance(context),
                 )
+                if spent:
+                    predecessor = max(spent, key=lambda old: parse_time(old.get("fired_at", iso(now))))
+                    condition["rearmed_from"] = predecessor["cond_id"]
             used.add(condition["cond_id"])
             reconciled.append(condition)
             await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
@@ -2267,6 +2364,15 @@ class EventToolService:
                     source = await self.repo.get("reg.sources", source_id) if source_id else None
                     evidence_labels[item_id] = (source or {}).get("name") or source_id or "source"
         event["evidence_labels"] = evidence_labels
+        # Hard rule 16: the card names universe tokens by project and ticker.
+        # A captured config snapshot from before `project` falls back to `name`.
+        event["token_labels"] = {
+            row["token_id"]: str(row.get("project") or row.get("name") or row["token_id"])
+            + " ("
+            + str(row.get("symbol") or row["token_id"].rpartition(":")[2])
+            + ")"
+            for row in self.settings.load_config("registry").get("tokens", [])
+        }
         text = compose_card(
             event, assessment, beneficiaries, decisions, truths, kind=kind, verdict=verdict, why=why
         )
@@ -2300,21 +2406,9 @@ class EventToolService:
                     "delivery_not_before": previous.get("delivery_not_before"),
                 }
             )
-        if rate_limited and previous and last_sent and previous["version"] > last_sent["version"]:
-            # Reserve a due time in the existing durable delivery queue. Each
-            # accepted immutable update remains deliverable without a new item.
-            previous_due = previous.get("delivery_not_before")
-            if previous_due:
-                delivery_stamp = max(
-                    (
-                        delivery_stamp,
-                        offset_schedule(
-                            propagate_timestamp(previous, "delivery_not_before"),
-                            timedelta(seconds=event["thresholds"].get("update_rate_limit_s", 900)),
-                        ),
-                    ),
-                    key=lambda stamp: parse_time(stamp.value),
-                )
+        # A held update waits only for the 15-minute slot after the last sent
+        # card (§7.4). A newer version supersedes any older held one, which
+        # delivery then drops, so versions are never queued one slot apart (W2).
         delivery_not_before = delivery_stamp.value
         cutoff = iso()
         observations = await self.rows("evt.event_observations", eid)

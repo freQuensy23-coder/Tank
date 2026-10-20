@@ -7,6 +7,7 @@ from datetime import timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit
 
+from tank.analysis.decisions import POSITIVE_ACTIONS
 from tank.time_precision import bucket_duration, interval_bounds, propagate_timestamp
 from tank.util import parse_time, utcnow
 
@@ -118,7 +119,22 @@ def _na(value, reason="NOT_AVAILABLE"):
 
 
 def _token_label(value):
+    """The ticker alone: only for units (e.g. "-1.06M WLD"), never as identity."""
     return str(value).rsplit(":", 1)[-1]
+
+
+def token_name(token, labels=None):
+    """PRD hard rule 16: a token is named by its project and ticker, e.g.
+    "Lighter (LIT)", so Lighter and Litentry never both read "LIT"."""
+    if token is None:
+        return "n/a (token unavailable)"
+    token = str(token)
+    if labels and token in labels:
+        return labels[token]
+    if token.startswith("UNRESOLVED:"):
+        return token.removeprefix("UNRESOLVED:") + " (unresolved)"
+    project, _, ticker = token.rpartition(":")
+    return project + " (" + ticker + ")" if project else token
 
 
 def telegram_card_html(text):
@@ -293,6 +309,11 @@ def compose_card(
     dm = {d.get("token_id"): d for d in decisions}
     mm = {m.get("token_id"): m for m in market_truths}
     max_chars, _ = _limits(event)
+    token_labels = event.get("token_labels") or {}
+    universe = set(token_labels)
+
+    def name(token):
+        return token_name(token, token_labels)
     data_classes = [(m.get("data_confidence") or {}).get("class") for m in market_truths]
     header_data = (
         min(data_classes, key=lambda c: {"LOW": 0, "MEDIUM": 1, "HIGH": 2}.get(c, 0))
@@ -357,7 +378,7 @@ def compose_card(
         event.get("event_state", event.get("state"))
     )
     lines = [
-        f"{str(assessment.get('class', assessment.get('ems_class', 'UNKNOWN'))).replace('STRUCTURAL_SHOCK', 'STRUCTURAL SHOCK')} ({assessment.get('criterion', assessment.get('matched_criterion', 'n/a'))}) — {_na(verdict or event.get('statement'), 'neutral event statement unavailable')}",
+        f"{_na(assessment.get('class', assessment.get('ems_class')), 'class unavailable').replace('STRUCTURAL_SHOCK', 'STRUCTURAL SHOCK')} ({_na(assessment.get('criterion', assessment.get('matched_criterion')), 'criterion unavailable')}) — {_na(verdict or event.get('statement'), 'neutral event statement unavailable')}",
         scores,
         f"Stage: {stage} · Certainty: {_na(assessment.get('certainty', event.get('certainty')))} · Data {header_data}",
         f"Fresh: {_na(event.get('freshness'))} · public {_clock(event, 'public_at', publication=True)} · known {_clock(event, 'known_to_us_at')}",
@@ -374,7 +395,7 @@ def compose_card(
     def capture_text(beneficiary):
         token = beneficiary.get("token_id")
         text = (
-            _token_label(token)
+            name(token)
             + " "
             + str(beneficiary.get("capture_class", beneficiary.get("capture", "UNKNOWN"))).replace("_", "-")
             + " — "
@@ -409,6 +430,18 @@ def compose_card(
             if edge.get("token_id") is None or edge.get("tradable") is False
         ]
 
+        def outside_universe(edge):
+            # PRD §4.1: a beneficiary or loser outside the 22 tokens is named
+            # without a market block. Only edges the agent submitted with
+            # evidence count; dependency-map candidates are not named.
+            return bool(
+                universe
+                and edge.get("token_id")
+                and edge["token_id"] not in universe
+                and edge.get("evidence")
+                and not edge.get("dependency_ref")
+            )
+
         def identity(edge):
             return edge.get("token_id") or edge.get("entity_id") or edge.get("entity_name")
 
@@ -419,7 +452,7 @@ def compose_card(
             for edge in named_edges
             if edge.get("role") in {"PRIMARY", "LOSER"}
             or edge.get("role") == "SECONDARY"
-            and edge.get("credible")
+            and (edge.get("credible") or outside_universe(edge))
             and identity(edge) not in primary_identities
             and (not edge.get("entity_id") or edge.get("entity_id") not in primary_entities)
         ]
@@ -429,21 +462,23 @@ def compose_card(
             if identity(edge) in shown:
                 continue
             shown.add(identity(edge))
-            role = str(edge.get("role", "UNKNOWN")).lower()
-            name = (
-                _token_label(edge["token_id"])
+            role = _na(edge.get("role"), "role unavailable").lower()
+            label = (
+                name(edge["token_id"])
                 if edge.get("token_id")
                 else edge.get("entity_name") or edge.get("entity_id") or "n/a (entity unnamed)"
             )
-            item = role + " " + name
+            item = role + " " + label
             if edge.get("role") == "SECONDARY":
                 item += (
                     " ("
-                    + str(edge.get("layer", "UNKNOWN"))
+                    + _na(edge.get("layer"), "layer unavailable")
                     + ", "
                     + _integration_stage_label(edge, event, claims)
                     + ")"
                 )
+            if outside_universe(edge):
+                item += " — outside the token universe, no market block"
             who.append(item)
         if not any(edge.get("role") == "SECONDARY" and edge.get("credible") for edge in edges):
             reason = mapping.get("no_credible_secondary_reason")
@@ -451,7 +486,7 @@ def compose_card(
             if reason and reason.startswith(generic):
                 reason = reason[len(generic) :].strip()
             who.append("secondary none" + (" — " + reason if reason else ""))
-        lines += ["", "WHO: " + (" · ".join(who) or "—")]
+        lines += ["", "WHO: " + (" · ".join(who) or "n/a (no beneficiary recorded)")]
         if not any(edge.get("role") == "SECONDARY" for edge in edges):
             layer_names = {
                 "ISSUER_PRODUCT": "Issuer / product",
@@ -478,7 +513,7 @@ def compose_card(
                 raise ValueError("MISSING_DECISION: " + str(token))
             if decision.get("tracking_ended") or decision.get("actionable") is False:
                 lines.append(
-                    str(token)
+                    name(token)
                     + (
                         ": No longer following: token removed from current beneficiary map."
                         if decision.get("removed_from_analysis")
@@ -505,7 +540,11 @@ def compose_card(
                             _na(fact.get("value"), fact.get("reason", "NOT_AVAILABLE")) + " " + display_unit
                         )
                     )
-                    window = str(fact.get("window") or "—").removeprefix("W").lower()
+                    window = (
+                        str(fact["window"]).removeprefix("W").lower()
+                        if fact.get("window")
+                        else "n/a (window unavailable)"
+                    )
                     metric = {"spot.cvd": "spot net flow"}.get(fact.get("metric"), fact.get("metric", ""))
                     facts.append(window + ": " + metric.replace("_", " ") + " " + measured)
                 else:
@@ -526,6 +565,7 @@ def compose_card(
                 event_return.get(k) is not None for k in ("r_raw", "r_btc_adj")
             ):
                 market += f"\nPriced: {_na(relative.get('repricing_band'))} · EVENT {_percent(event_return.get('r_raw'))} raw; {_percent(event_return.get('r_btc_adj'))} net BTC"
+            market += "".join("\n• " + line for line in _market_breadth(truth, token))
             alternatives = (truth.get("divergence") or {}).get("unresolved", []) + truth.get(
                 "alternatives", []
             )
@@ -545,8 +585,12 @@ def compose_card(
             )
             scenarios = outlook.get("scenarios") or {}
             outlook_line = f"OUTLOOK: {_na(outlook.get('direction'), 'bias unavailable')} · {_na(outlook.get('potential'), 'potential unavailable')} · best {horizon}"
+            reasons = outlook.get("scenario_reasons") or {}
             outlook_line += "".join(
-                "\n• " + name.capitalize() + ": " + _na(scenarios.get(name), "scenario unavailable")
+                "\n• "
+                + name.capitalize()
+                + ": "
+                + _na(scenarios.get(name), reasons.get(name, "scenario unavailable"))
                 for name in ("base", "upside", "failure")
             )
             conditions = []
@@ -563,9 +607,9 @@ def compose_card(
             lines += [
                 "",
                 "── "
-                + _token_label(token)
+                + name(token)
                 + " ("
-                + str(beneficiary.get("role", "UNKNOWN"))
+                + _na(beneficiary.get("role"), "role unavailable")
                 + (
                     " · least-repriced"
                     if beneficiary.get("edge_id")
@@ -580,11 +624,15 @@ def compose_card(
                 "",
                 "WHAT TO DO: "
                 + str(decision["action"]).replace("DONT_CHASE", "DON'T CHASE").replace("_", " ")
-                + (" (tactical)" if decision.get("tactical") else "")
-                + f" — Thesis {decision.get('thesis_grade', 'n/a')} · Trade {decision.get('trade_grade', 'n/a')}",
+                + (
+                    " (tactical)"
+                    if decision.get("tactical") and decision["action"] in POSITIVE_ACTIONS
+                    else ""
+                )
+                + f" — Thesis {_na(decision.get('thesis_grade'), 'grade unavailable')} · Trade {_na(decision.get('trade_grade'), 'grade unavailable')}",
                 "WHAT CHANGES THE ACTION:\n" + "\n".join(conditions),
                 "",
-                f"CONFIDENCE: {outlook.get('confidence', 'LOW')} — main unknown: "
+                f"CONFIDENCE: {_na(outlook.get('confidence'), 'confidence unavailable')} — main unknown: "
                 + _unknown(truth.get("data_confidence") or {}),
             ]
     text = "\n".join(lines)
@@ -614,6 +662,53 @@ def compose_card(
         }
         raise ValueError("CARD_LENGTH: " + json.dumps(diagnostics, ensure_ascii=False))
     return text
+
+
+def _market_breadth(truth, token):
+    """Per-venue OI class with its price-markup share, and spot venue breadth,
+    each labelled with venue and window (01 hard rules 1 and 3, L1, L2, L8)."""
+    lines = []
+    derivatives = truth.get("derivatives") or {}
+    window = str(derivatives.get("window") or truth.get("primary_window") or "").removeprefix("W").lower()
+    venues = []
+    for row in derivatives.get("per_venue") or []:
+        if not isinstance(row, dict) or not row.get("oi_class"):
+            continue
+        venue = (row.get("coverage") or {}).get("venue") or row.get("venue") or "n/a (venue unknown)"
+        text = venue + " " + str(row["oi_class"])
+        if row.get("oi_native_chg_pct") is not None:
+            text += " " + format(Decimal(str(row["oi_native_chg_pct"])) * 100, "+.2f") + "% in " + _token_label(token)
+        share = (row.get("decomposition") or {}).get("pos_share")
+        if (row.get("decomposition") or {}).get("markup") is not None and share is not None:
+            text += (
+                " (position share "
+                + format(Decimal(str(share)) * 100, ".1f")
+                + "% of the OI value change; price-markup component present)"
+            )
+        venues.append(text)
+    if venues and window:
+        lines.append(window + ": open interest by venue: " + "; ".join(venues))
+    spot = (truth.get("spot") or {}).get(truth.get("primary_window", "W4H")) or {}
+    rows = [row for row in spot.get("venues") or [] if isinstance(row, dict) and row.get("complete")]
+    if rows:
+        spot_window = str(spot.get("window") or truth.get("primary_window") or "").removeprefix("W").lower()
+
+        def side(sign):
+            chosen = [r for r in rows if r.get("sign") == sign and r.get("volume_share") is not None]
+            return ", ".join(
+                str(r.get("venue")) + " " + format(Decimal(str(r["volume_share"])) * 100, ".1f") + "%"
+                for r in sorted(chosen, key=lambda r: -r["volume_share"])
+            ) or "none"
+
+        lines.append(
+            spot_window
+            + ": spot venues net buying: "
+            + side(1)
+            + "; net selling: "
+            + side(-1)
+            + " (share of spot volume)"
+        )
+    return lines
 
 
 def _integration_stage_label(subject, event, claims):
