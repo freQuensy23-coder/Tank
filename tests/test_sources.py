@@ -26,7 +26,9 @@ class Repo:
         self.jobs = []
 
     async def get(self, c, k):
-        return self.rows.get((c, k))
+        from copy import deepcopy
+
+        return deepcopy(self.rows.get((c, k)))
 
     async def put(self, c, k, v):
         self.rows[c, k] = dict(v)

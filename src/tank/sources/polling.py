@@ -64,7 +64,8 @@ class SourcePoller:
         )
 
     async def state(self, key):
-        return deepcopy(await self.service.repo.get("ops.source_checkpoints", key) or {})
+        # Repositories return a fresh document; S14 snapshots make a second copy costly.
+        return await self.service.repo.get("ops.source_checkpoints", key) or {}
 
     async def save(self, key, state):
         from tank.time_precision import collection_clock
@@ -83,8 +84,9 @@ class SourcePoller:
                 ):
                     if value.get(field):
                         value.update(collection_clock(value[field]).fields(field))
-                for child in list(value.values()):
-                    if isinstance(child, (list, dict)):
+                for name, child in list(value.items()):
+                    # Instrument snapshots hold no clock fields and are thousands of entries.
+                    if name != "instruments" and isinstance(child, (list, dict)):
                         annotate(child)
             elif isinstance(value, list):
                 for child in value:
