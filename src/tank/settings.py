@@ -135,10 +135,12 @@ class Settings(BaseSettings):
     codex_gateway_port: int = 8790
     codex_gateway_key: str | None = None
     codex_auth_path: Path = Field(default_factory=_default_codex_auth_path)
-    openrouter_api_key: str | None = Field(
+    # Jev through OpenCode System One (lead ruling 2026-10-20 17:55): jev-1.13 with this
+    # key, jev-1.13-free without it. Docker secret `opencode_api_key`.
+    opencode_api_key: str | None = Field(
         default=None,
         repr=False,
-        validation_alias=AliasChoices("TANK_OPENROUTER_API_KEY", "OPENROUTER_API_KEY", "openrouter_api_key"),
+        validation_alias=AliasChoices("TANK_OPENCODE_API_KEY", "OPENCODE_API_KEY", "opencode_api_key"),
     )
     telegram_token: str | None = None
     telegram_alerts_chat: str | None = None
@@ -176,7 +178,7 @@ class Settings(BaseSettings):
             )
             aliases = {
                 "openma_api_key": "oma_api_key",
-                "openrouter_api_key": "openrouter_api_key",
+                "opencode_api_key": "opencode_api_key",
                 "telegram_token": "telegram_bot_token",
                 "etherscan_api_key": "etherscan_api_key",
                 "codex_gateway_key": "codex_gateway_key",

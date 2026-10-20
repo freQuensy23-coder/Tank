@@ -155,18 +155,18 @@ def test_deployment_values_come_from_frozen_config_with_explicit_override(tmp_pa
     assert frozen.telegram_ops_chat == "-1000000000002"
 
 
-def test_openrouter_alias_secret_and_explicit_provider(tmp_path, monkeypatch):
-    monkeypatch.delenv("TANK_OPENROUTER_API_KEY", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    (tmp_path / "openrouter_api_key").write_text("FAKE-file-router\n")
-    assert Settings(_env_file=None, secrets_dir=tmp_path).openrouter_api_key == "FAKE-file-router"
-    monkeypatch.setenv("OPENROUTER_API_KEY", "FAKE-raw-router")
-    assert Settings(_env_file=None, secrets_dir=tmp_path).openrouter_api_key == "FAKE-raw-router"
-    monkeypatch.setenv("TANK_OPENROUTER_API_KEY", "FAKE-prefixed-router")
+def test_opencode_alias_and_secret(tmp_path, monkeypatch):
+    monkeypatch.delenv("TANK_OPENCODE_API_KEY", raising=False)
+    monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
+    (tmp_path / "opencode_api_key").write_text("FAKE-file-router\n")
+    assert Settings(_env_file=None, secrets_dir=tmp_path).opencode_api_key == "FAKE-file-router"
+    monkeypatch.setenv("OPENCODE_API_KEY", "FAKE-raw-router")
+    assert Settings(_env_file=None, secrets_dir=tmp_path).opencode_api_key == "FAKE-raw-router"
+    monkeypatch.setenv("TANK_OPENCODE_API_KEY", "FAKE-prefixed-router")
     settings = Settings(_env_file=None, secrets_dir=tmp_path)
-    assert settings.openrouter_api_key == "FAKE-prefixed-router"
+    assert settings.opencode_api_key == "FAKE-prefixed-router"
     assert "FAKE-prefixed-router" not in repr(settings)
-    assert Settings(_env_file=None, openrouter_api_key="FAKE-explicit").openrouter_api_key == "FAKE-explicit"
+    assert Settings(_env_file=None, opencode_api_key="FAKE-explicit").opencode_api_key == "FAKE-explicit"
     assert "jev_provider" not in Settings.model_fields
 
 
@@ -185,12 +185,12 @@ def test_codex_auth_default_only_resolves_path(tmp_path, monkeypatch):
     )
 
 
-def test_readiness_requires_only_openrouter_key(tmp_path):
+def test_readiness_checks_opencode_key(tmp_path):
     from tank.cli import readiness_checks
 
-    settings = Settings(_env_file=None, secrets_dir=tmp_path, openrouter_api_key="FAKE-ready-key")
+    settings = Settings(_env_file=None, secrets_dir=tmp_path, opencode_api_key="FAKE-ready-key")
     checks = {row["check"]: row for row in readiness_checks(settings)}
-    assert checks["openrouter_api_key"]["ok"]
+    assert checks["opencode_api_key"]["ok"]
     assert "jev_provider" not in checks
     assert "typesafe_api_key" not in checks
     assert "FAKE-ready-key" not in str(checks)
@@ -236,3 +236,7 @@ def test_user_agent_and_chats_from_configuration(tmp_path):
     assert "x_list_id" not in checks
     legacy = frozen.model_copy(update={"user_agent": "TankV0/1.0 contact=ops@example.org"})
     assert not {row["check"]: row for row in readiness_checks(legacy)}["user_agent_contact"]["ok"]
+
+
+def test_openrouter_key_is_gone():
+    assert "openrouter_api_key" not in Settings.model_fields

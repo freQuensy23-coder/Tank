@@ -376,18 +376,13 @@ def archive_fetch(symbol, date):
 @click.option(
     "--database-url", required=True, help="Dedicated empty replay database, distinct from production."
 )
-@click.option(
-    "--mode",
-    type=click.Choice(["fresh-session", "captured-tools"]),
-    default="fresh-session",
-    show_default=True,
-    help="Captured tools is a diagnostic only; full replay starts a fresh tank-replay session.",
-)
-def replay(fixture_id, database_url, mode):
+def replay(fixture_id, database_url):
+    """Replay a fixture in a fresh tank-replay session (03 §11.1)."""
+
     async def command(repo, settings):
         from tank.replay import replay_fixture
 
-        return await replay_fixture(repo, settings, fixture_id, mode=mode)
+        return await replay_fixture(repo, settings, fixture_id)
 
     run_db(command, database_url=database_url, replay=True)
 
@@ -447,7 +442,7 @@ def readiness_checks(settings):
         except Exception as exc:
             checks.append({"check": name + "_syntax", "ok": False, "reason": type(exc).__name__})
     checks.append(
-        {"check": "openrouter_api_key", "ok": configured(getattr(settings, "openrouter_api_key", None))}
+        {"check": "opencode_api_key", "ok": configured(getattr(settings, "opencode_api_key", None))}
     )
     for name in (
         "openma_api_key",

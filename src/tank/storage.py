@@ -1148,6 +1148,8 @@ async def _prune_market(self, before):
         "mkt.liq_obs": "ts",
         "mkt.tickers_24h": "ts",
         "mkt.supply_obs": "ts",
+        # Gaps describe the series above and share their retention (tank-market, W11).
+        "mkt.capture_gaps": "observed_at",
     }
     counts = {}
     async with self.lock("tank:market_retention"):
