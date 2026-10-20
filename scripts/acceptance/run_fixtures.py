@@ -16,7 +16,11 @@ acceptance-run-with-manual.json for the manifest.
 The replay DSN is built inside the container by tank-sessions' helper from the mounted secret (@REPLAY_DSN@);
 it is never printed or passed on argv.
 
-Usage (only after tank-platform says openma is live; never in parallel):
+Live traffic has priority (lead rule): each fixture waits until no live AGENT_MESSAGE/FILTER/ROUTE job is
+queued or running, and its window is appended to /srv/tank/data/qa/fixture-windows.jsonl so latency can be
+read with and without fixture load (latency.py --fixture-windows).
+
+Usage (never in parallel):
   python3 run_fixtures.py run --entries entries.json --fixtures F-17 --out /srv/tank/docs/verification/native-fixtures-2026-10-21
   python3 run_fixtures.py review --out DIR --fixture F-17 --review manual-review.json
 """
@@ -92,6 +96,35 @@ def reset_replay_db():
         raise SystemExit("tank_replay reset failed: " + str(out.stderr)[-500:])
 
 
+WINDOWS = Path(os.environ.get("TANK_FIXTURE_WINDOWS", "/srv/tank/data/qa/fixture-windows.jsonl"))
+LIVE_BUSY = """
+SELECT (SELECT count(*) FROM ops.jobs WHERE type = 'AGENT_MESSAGE' AND status IN ('QUEUED', 'RUNNING')) AS agent_jobs,
+       (SELECT count(*) FROM ops.jobs WHERE type IN ('FILTER_ITEM', 'ROUTE_ITEM') AND status IN ('QUEUED', 'RUNNING')) AS intake_jobs
+"""
+
+
+def wait_for_idle_live(max_wait_s):
+    """Lead rule: live traffic first. Start a fixture only when no live agent work is queued or running."""
+    import time
+
+    from common import query
+
+    deadline = time.monotonic() + max_wait_s
+    while True:
+        row = query(LIVE_BUSY)[0]
+        if row["agent_jobs"] == 0 and row["intake_jobs"] == 0:
+            return row
+        if time.monotonic() > deadline:
+            raise SystemExit(f"live queue never drained within {max_wait_s}s: {row}")
+        time.sleep(60)
+
+
+def mark_window(record):
+    WINDOWS.parent.mkdir(parents=True, exist_ok=True)
+    with open(WINDOWS, "a") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
 def run_one(fid, entry, out_dir, timeout):
     """One fresh native replay in its own process (`compose run`), never inside the live runtime.
 
@@ -118,6 +151,7 @@ def run_one(fid, entry, out_dir, timeout):
                           f"/data/replay/inputs/{fid}.json.superseded-{stamp}"])
         sh(COMPOSE + ["exec", "-T", "tank", "mkdir", "-p", "/data/replay/inputs"])
         sh(["docker", "cp", str(p), f"{tank}:/data/replay/inputs/{fid}.json"])
+    wait_for_idle_live(int(os.environ.get("TANK_FIXTURE_MAX_WAIT_S", "21600")))
     reset_replay_db()
     private = resolve(entry["private_name_map"]["path"])
     mask_path = hints.get("TANK_REPLAY_PRIVATE_MASK_PATH") or PRIVATE_IN_CONTAINER
@@ -143,6 +177,7 @@ def run_one(fid, entry, out_dir, timeout):
                         "tank", "replay", fid, "--database-url", "@REPLAY_DSN@"],
              check=False, timeout=timeout)
     finished = iso(utcnow())
+    mark_window({"fixture_id": fid, "event": "END", "at": finished, "exit_code": res.returncode})
     (d / "replay-stdout.json").write_text(res.stdout)
     (d / "replay-stderr.log").write_text(res.stderr[-20000:])
     # replay_fixture freezes under bundles/<digest of the packet JSON> (src/tank/replay.py replay_fixture).
