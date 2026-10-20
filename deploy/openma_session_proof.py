@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Deployment proof: read back registered OpenMA resources, then run one real session.
 
-The session must load the registered skills (the agent reports the skill version that
-exists only in tank-event-analyst/SKILL.md) and make one schema-bound custom tool call
+The session must load the registered skills (the agent answers from text that exists only
+in the inlined tank-event-analyst and tank-data SKILL.md bodies, without reading files) and make one schema-bound custom tool call
 (get_registry), answered with Tank's own EventToolService result. Read-only for Tank state.
 Usage: openma_session_proof.py OUT_DIR OPENMA_BASE_URL PROPOSED_OPENMA_YAML CONFIG_DIR
 """
 
 import hashlib
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -77,11 +78,19 @@ session.raise_for_status()
 session = session.json()
 sid = session["id"]
 save("session-created.json", session)
+# Progressive skill exposure lists SKILL.md paths; the agent reads them in its sandbox.
+READ_SKILLS = os.environ.get("TANK_PROOF_READ_SKILLS") == "1"
 prompt = (
     "Deployment check by the Tank operator, not a news item and not an event. Do exactly this: "
     "1) call the tool get_registry once with entity_or_token set to \"ETH\"; "
-    "2) then answer in one line: the version string from the front matter of your tank-event-analyst skill, "
-    "and how many entries the tool returned under tokens. Do not call any other tool and do not record anything."
+    + ("2) then read the SKILL.md files of your tank-event-analyst and tank-data skills at the paths listed in your "
+       "instructions (only those files), and answer in one line from them: "
+       if READ_SKILLS else
+       "2) then, without reading any file or calling any other tool, answer in one line from the skill text already "
+       "in your instructions: ")
+    + "(a) which claim rule number your tank-event-analyst skill says is not defined, "
+    + "(b) which reference file your tank-data skill says to read before queries, "
+    + "(c) how many entries the tool returned under tokens. Do not record anything."
 )
 posted = client.post(f"sessions/{sid}/events", json={"events": [
     {"type": "user.message", "content": [{"type": "text", "text": prompt}]}]})
@@ -122,8 +131,6 @@ while time.monotonic() < deadline and not finished:
     time.sleep(3)
 save("session-events.json", events)
 messages = [b.get("text", "") for e in events if e.get("type") == "agent.message" for b in e.get("content", [])]
-expected_version = next(l.split(":", 1)[1].strip() for l in
-                        (config_dir / "skills/tank-event-analyst/SKILL.md").read_text().splitlines() if l.startswith("version:"))
 summary = {
     "session_id": sid,
     "marker": marker,
@@ -132,11 +139,15 @@ summary = {
     "tool_calls_answered": answered,
     "final_event": finished,
     "agent_text": messages,
-    "expected_skill_version": expected_version,
-    "skill_version_reported": any(expected_version in m for m in messages),
+    "analyst_skill_applied": any("V6" in m for m in messages),
+    "data_skill_applied": any("DATA_GUIDE.md" in m for m in messages),
+    "other_tools_used": sorted({e.get("name") for e in events if e.get("type") in {"agent.tool_use", "agent.mcp_tool_use"}} - {None}),
+    "read_skills_mode": READ_SKILLS,
+    "builtin_tool_inputs": [e.get("input") for e in events if e.get("type") == "agent.tool_use"],
     "real_tool_call": any(a["tool"] == "get_registry" for a in answered),
 }
-summary["status"] = "PASS" if summary["skill_version_reported"] and summary["real_tool_call"] and finished and \
-    finished.get("type") == "session.status_idle" else "FAIL"
+summary["status"] = "PASS" if summary["analyst_skill_applied"] and summary["data_skill_applied"] \
+    and summary["real_tool_call"] and (READ_SKILLS or not summary["other_tools_used"]) and finished \
+    and finished.get("type") == "session.status_idle" else "FAIL"
 save("result.json", summary)
-print(json.dumps({k: summary[k] for k in ("status", "session_id", "skill_version_reported", "real_tool_call", "agent_text")}))
+print(json.dumps({k: summary[k] for k in ("status", "session_id", "analyst_skill_applied", "data_skill_applied", "real_tool_call", "other_tools_used", "agent_text")}))

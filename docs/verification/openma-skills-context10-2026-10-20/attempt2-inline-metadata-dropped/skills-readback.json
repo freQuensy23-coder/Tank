@@ -1,0 +1,34 @@
+[
+  {
+    "binding": {
+      "skill_id": "skill_gTZ1ZLSTKJ_q769l5bwDM",
+      "type": "custom",
+      "version": "1792518226007000"
+    },
+    "skill": {
+      "created_at": "2026-10-20T17:43:46.007Z",
+      "display_title": null,
+      "id": "skill_gTZ1ZLSTKJ_q769l5bwDM",
+      "latest_version": "1792518226007000",
+      "source": "custom",
+      "type": "skill",
+      "updated_at": "2026-10-20T17:43:46.007Z"
+    }
+  },
+  {
+    "binding": {
+      "skill_id": "skill_0QI_AppUxUA-3aylug1cn",
+      "type": "custom",
+      "version": "1792518226038000"
+    },
+    "skill": {
+      "created_at": "2026-10-20T17:43:46.038Z",
+      "display_title": null,
+      "id": "skill_0QI_AppUxUA-3aylug1cn",
+      "latest_version": "1792518226038000",
+      "source": "custom",
+      "type": "skill",
+      "updated_at": "2026-10-20T17:43:46.038Z"
+    }
+  }
+]

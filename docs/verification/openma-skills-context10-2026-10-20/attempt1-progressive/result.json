@@ -1,0 +1,49 @@
+{
+  "agent_text": [
+    "tank-event-analyst version: unverified (front matter not read); tokens: 15 entries."
+  ],
+  "expected_skill_version": "baseline-2.4-agent-workflow-context-10",
+  "final_event": {
+    "execution_id": "sevt_e1Kre0n5dlB13gYVHy1wD",
+    "id": "sevt_4cRQbOQ25Mm4Rqp13p4gI",
+    "processed_at": "2026-10-20T17:42:13.186Z",
+    "stop_reason": {
+      "type": "end_turn"
+    },
+    "type": "session.status_idle"
+  },
+  "marker": "tank-platform-deploy-proof-20261020T173939Z",
+  "real_tool_call": true,
+  "session_id": "session_ZnSLiSg8RQND5EWeTd5Ff",
+  "skill_version_reported": false,
+  "skills": [
+    {
+      "name": null,
+      "skill_id": "skill_gNwbM1kj7-dx0CHaz9pfg",
+      "type": "custom",
+      "version": "1792517972201000"
+    },
+    {
+      "name": null,
+      "skill_id": "skill_uJ-l5fddv6bs5tVAFa58i",
+      "type": "custom",
+      "version": "1792517972248000"
+    }
+  ],
+  "status": "FAIL",
+  "tool_calls_answered": [
+    {
+      "input": {
+        "entity_or_token": "ETH"
+      },
+      "tokens": 15,
+      "tool": "get_registry"
+    }
+  ],
+  "tool_check": {
+    "local_count": 18,
+    "names_match": true,
+    "remote_custom_count": 18,
+    "schemas_match": true
+  }
+}
