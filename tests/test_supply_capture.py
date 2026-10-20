@@ -330,3 +330,32 @@ async def test_failed_transfer_reads_do_not_become_observed_zero_flows(tmp_path)
     assert inventory["available"] is True and inventory["balances"][0]["qty_native"] == "0"
     assert flow["available"] is False and flow["reason"] == "SOURCE_FAILED"
     assert flow["transfer_queries_succeeded"] == 0
+
+
+async def test_chain_liquidity_maps_defillama_chain_names_and_isolates_chain_gaps(tmp_path):
+    paths = []
+
+    def transport(request):
+        paths.append(request.url.path)
+        if request.url.path.endswith("/Polygon"):
+            return httpx.Response(404, json={"error": "not found"})
+        return httpx.Response(
+            200, json=[{"date": "1792368000", "totalCirculatingUSD": {"peggedUSD": 7, "peggedEUR": 3}}]
+        )
+
+    token, market = lending_market(tmp_path, transport)
+    token["contracts"] = [
+        {"chain": chain, "address": "0x" + "1" * 40} for chain in ("BNB Chain", "Polygon", "Ethereum")
+    ]
+    await SupplyCapture(market).chain_liquidity(token)
+    await market.flush_market()
+    assert paths == [
+        "/stablecoincharts/BSC",
+        "/stablecoincharts/Ethereum",
+        "/stablecoincharts/Polygon",
+    ]
+    rows = {row["chain"]: row for row in await market.repo.list("mkt.supply_obs", limit=100)}
+    assert rows["BNB Chain"]["available"] and rows["BNB Chain"]["series"][0]["supply_usd"] == "10"
+    assert rows["Ethereum"]["available"]
+    assert rows["Polygon"]["available"] is False and "404" in rows["Polygon"]["reason"]
+    await market.http.aclose()

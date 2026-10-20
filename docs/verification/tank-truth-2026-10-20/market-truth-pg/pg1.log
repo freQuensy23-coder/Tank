@@ -1,0 +1,250 @@
+START 2026-10-20T16:51:52Z tests/test_market_capture_refresh.py tests/test_truth_condition_postgres.py tests/test_supply_capture.py tests/test_market_typed_capture.py tests/test_market_condition_snapshot.py tests/test_decisions.py tests/test_capture.py tests/test_scheduler_late_capture.py
+.........s.............s.......s........................................ [ 71%]
+............................F                                            [100%]
+=================================== FAILURES ===================================
+__ test_backfill_changes_append_reaction_revision_once_and_preserve_original ___
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-36/test_backfill_changes_append_r0')
+
+    @pytest.mark.asyncio
+    async def test_backfill_changes_append_reaction_revision_once_and_preserve_original(tmp_path):
+        anchor = utcnow().replace(second=0, microsecond=0) - timedelta(hours=2)
+        inst = {
+            "instrument_id": "binance:spot:TUSD",
+            "token_id": "test:T",
+            "venue": "binance",
+            "market_type": "SPOT",
+            "venue_symbol": "TUSD",
+            "quote_asset": "USD",
+            "active": True,
+            "contract_multiplier": "1",
+            "tick_size": ".01",
+            "lot_size": ".01",
+        }
+    
+        class FixtureSettings(Settings):
+            def load_config(self, name):
+                if name == "registry":
+                    return {"tokens": [{"token_id": "test:T", "symbol": "T"}], "instruments": [inst]}
+                if name == "semantics":
+                    return {"metrics": []}
+                return super().load_config(name)
+    
+        settings = FixtureSettings(
+            _env_file=None, data_dir=tmp_path, replay=True, config_version="fixture", code_version="fixture"
+        )
+        requests = []
+    
+        def external(req):
+            requests.append(req.url.path)
+            if req.url.path.endswith("aggTrades"):
+                if "fromId" in req.url.params:
+                    first = int(req.url.params["fromId"])
+                    return httpx.Response(
+                        200,
+                        json=[
+                            {"a": first + n, "p": "100", "q": "1", "T": (first + n) * 60000, "m": False}
+                            for n in range(int(req.url.params.get("limit", 1000)))
+                        ],
+                    )
+                end = int(req.url.params["endTime"])
+                start = int(req.url.params.get("startTime", end - 60000))
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "a": ms // 60000,
+                            "p": "100"
+                            if ms < int((anchor - timedelta(minutes=30)).timestamp() * 1000)
+                            else "110",
+                            "q": "1",
+                            "T": ms,
+                            "m": False,
+                        }
+                        for ms in range(start, end, 60000)
+                    ],
+                )
+            if req.url.path.endswith("klines"):
+                start = int(req.url.params["startTime"])
+                end = int(req.url.params["endTime"])
+                rows = []
+                for ms in range(start, end, 60000):
+                    close = "100" if ms < int((anchor - timedelta(minutes=30)).timestamp() * 1000) else "110"
+                    rows.append([ms, close, close, close, close, "0", ms + 59999, "0", 0, "0", "0", "0"])
+                return httpx.Response(200, json=rows)
+            raise AssertionError("Unexpected external endpoint: " + req.url.path)
+    
+        repo = MemoryRepository()
+        await repo.put(
+            "evt.events", "e", {"event_id": "e", "known_to_us_at": iso(anchor), "public_at": iso(anchor)}
+        )
+        async with httpx.AsyncClient(transport=httpx.MockTransport(external)) as http:
+            market = MarketService(repo, settings, http=http)
+            scheduler = Scheduler(repo, settings, market, None)
+            payload = {
+                "event_id": "e",
+                "token_id": "test:T",
+                "checkpoint": "PRE_1H",
+                "anchor": {"type": "T1", "ts": iso(anchor)},
+                "retro": True,
+            }
+            original = await scheduler.reaction_capture(payload)
+            assert original["r_raw"] is None and original["revision"] == 1
+            # The actual producer acquires historical HTTP data and persists terminal capture state.
+            await market._schedule_event_backfill("e", "test:T", iso(anchor))
+            async with asyncio.timeout(10):
+                while (await market.capture_readiness("e", "test:T", anchor=iso(anchor)))["status"] not in {
+                    "COMPLETE",
+                    "PARTIAL",
+                    "FAILED",
+                }:
+>                   await asyncio.sleep(0.005)
+
+tests/test_scheduler_late_capture.py:109: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+delay = 0.005, result = None
+
+    async def sleep(delay, result=None):
+        """Coroutine that completes after a given time (in seconds)."""
+        if delay <= 0:
+            await __sleep0()
+            return result
+    
+        loop = events.get_running_loop()
+        future = loop.create_future()
+        h = loop.call_later(delay,
+                            futures._set_result_unless_cancelled,
+                            future, result)
+        try:
+>           return await future
+                   ^^^^^^^^^^^^
+E           asyncio.exceptions.CancelledError
+
+/usr/lib/python3.12/asyncio/tasks.py:665: CancelledError
+
+The above exception was the direct cause of the following exception:
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-36/test_backfill_changes_append_r0')
+
+    @pytest.mark.asyncio
+    async def test_backfill_changes_append_reaction_revision_once_and_preserve_original(tmp_path):
+        anchor = utcnow().replace(second=0, microsecond=0) - timedelta(hours=2)
+        inst = {
+            "instrument_id": "binance:spot:TUSD",
+            "token_id": "test:T",
+            "venue": "binance",
+            "market_type": "SPOT",
+            "venue_symbol": "TUSD",
+            "quote_asset": "USD",
+            "active": True,
+            "contract_multiplier": "1",
+            "tick_size": ".01",
+            "lot_size": ".01",
+        }
+    
+        class FixtureSettings(Settings):
+            def load_config(self, name):
+                if name == "registry":
+                    return {"tokens": [{"token_id": "test:T", "symbol": "T"}], "instruments": [inst]}
+                if name == "semantics":
+                    return {"metrics": []}
+                return super().load_config(name)
+    
+        settings = FixtureSettings(
+            _env_file=None, data_dir=tmp_path, replay=True, config_version="fixture", code_version="fixture"
+        )
+        requests = []
+    
+        def external(req):
+            requests.append(req.url.path)
+            if req.url.path.endswith("aggTrades"):
+                if "fromId" in req.url.params:
+                    first = int(req.url.params["fromId"])
+                    return httpx.Response(
+                        200,
+                        json=[
+                            {"a": first + n, "p": "100", "q": "1", "T": (first + n) * 60000, "m": False}
+                            for n in range(int(req.url.params.get("limit", 1000)))
+                        ],
+                    )
+                end = int(req.url.params["endTime"])
+                start = int(req.url.params.get("startTime", end - 60000))
+                return httpx.Response(
+                    200,
+                    json=[
+                        {
+                            "a": ms // 60000,
+                            "p": "100"
+                            if ms < int((anchor - timedelta(minutes=30)).timestamp() * 1000)
+                            else "110",
+                            "q": "1",
+                            "T": ms,
+                            "m": False,
+                        }
+                        for ms in range(start, end, 60000)
+                    ],
+                )
+            if req.url.path.endswith("klines"):
+                start = int(req.url.params["startTime"])
+                end = int(req.url.params["endTime"])
+                rows = []
+                for ms in range(start, end, 60000):
+                    close = "100" if ms < int((anchor - timedelta(minutes=30)).timestamp() * 1000) else "110"
+                    rows.append([ms, close, close, close, close, "0", ms + 59999, "0", 0, "0", "0", "0"])
+                return httpx.Response(200, json=rows)
+            raise AssertionError("Unexpected external endpoint: " + req.url.path)
+    
+        repo = MemoryRepository()
+        await repo.put(
+            "evt.events", "e", {"event_id": "e", "known_to_us_at": iso(anchor), "public_at": iso(anchor)}
+        )
+        async with httpx.AsyncClient(transport=httpx.MockTransport(external)) as http:
+            market = MarketService(repo, settings, http=http)
+            scheduler = Scheduler(repo, settings, market, None)
+            payload = {
+                "event_id": "e",
+                "token_id": "test:T",
+                "checkpoint": "PRE_1H",
+                "anchor": {"type": "T1", "ts": iso(anchor)},
+                "retro": True,
+            }
+            original = await scheduler.reaction_capture(payload)
+            assert original["r_raw"] is None and original["revision"] == 1
+            # The actual producer acquires historical HTTP data and persists terminal capture state.
+            await market._schedule_event_backfill("e", "test:T", iso(anchor))
+>           async with asyncio.timeout(10):
+
+tests/test_scheduler_late_capture.py:103: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <Timeout [expired]>
+exc_type = <class 'asyncio.exceptions.CancelledError'>
+exc_val = CancelledError(), exc_tb = <traceback object at 0x710b1c1e5f00>
+
+    async def __aexit__(
+        self,
+        exc_type: Optional[Type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> Optional[bool]:
+        assert self._state in (_State.ENTERED, _State.EXPIRING)
+    
+        if self._timeout_handler is not None:
+            self._timeout_handler.cancel()
+            self._timeout_handler = None
+    
+        if self._state is _State.EXPIRING:
+            self._state = _State.EXPIRED
+    
+            if self._task.uncancel() <= self._cancelling and exc_type is exceptions.CancelledError:
+                # Since there are no new cancel requests, we're
+                # handling this.
+>               raise TimeoutError from exc_val
+E               TimeoutError
+
+/usr/lib/python3.12/asyncio/timeouts.py:115: TimeoutError
+=========================== short test summary info ============================
+FAILED tests/test_scheduler_late_capture.py::test_backfill_changes_append_reaction_revision_once_and_preserve_original
+1 failed, 97 passed, 3 skipped in 159.44s (0:02:39)
+EXIT 1 2026-10-20T16:54:33Z
