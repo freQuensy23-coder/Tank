@@ -1626,3 +1626,30 @@ async def test_unproven_minute_is_persisted_with_its_reason(setup, coverage):
     )
     assert service.flow.bars[key].get("gap_reason") is None  # a later proof can still complete it
     await service.close()
+
+
+@pytest.mark.asyncio
+async def test_bybit_window_beyond_its_1000_prints_is_a_named_source_limit(setup):
+    repo, settings, original = setup
+    instrument = dict(original, instrument_id="bybit:spot:ABCUSDT", venue="bybit", venue_symbol="ABCUSDT")
+    service = MarketService(repo, settings)
+
+    class Recent:
+        async def trades(self, **kwargs):
+            # The newest prints only: the window start is far older than the oldest listed one.
+            now = int(utcnow().timestamp() * 1000)
+            return [{"execId": "1", "price": "1", "size": "1", "side": "Buy", "time": str(now - 1000)}], None
+
+    async def no_klines(*args, **kwargs):
+        pass
+
+    service.adapter = lambda inst, **kwargs: Recent()
+    service._backfill_klines = no_klines
+    await service.backfill(instrument, utcnow())
+    reasons = [
+        g["reason"] for g in await repo.list("mkt.capture_gaps", limit=100) if g["kind"] == "PRE_EVENT_FLOW"
+    ]
+    assert len(reasons) == 3 and all(
+        "SOURCE_LIMIT: Bybit recent-trade lists only the last 1000" in r for r in reasons
+    )
+    await service.close()

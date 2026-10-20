@@ -191,6 +191,15 @@ class OrderBook:
             raise SemanticError("book checksum mismatch")
         return True
 
+    def frozen(self):
+        """A private copy of the current state, safe to summarize in another thread."""
+        copy = object.__new__(type(self))
+        copy.__dict__.update(self.__dict__)
+        copy.bids, copy.asks = dict(self.bids), dict(self.asks)
+        copy._prices = {side: list(prices) for side, prices in self._prices.items()}
+        copy._strings = {side: dict(strings) for side, strings in self._strings.items()}
+        return copy
+
     @precise
     def summary(self, *, received_ts=None):
         if not self.bids or not self.asks:
