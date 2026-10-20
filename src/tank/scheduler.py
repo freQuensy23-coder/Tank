@@ -840,7 +840,7 @@ class Scheduler:
             latest = {}
             async for row in self.repo.iter_metadata(
                 "out.reaction_checkpoints",
-                ["checkpoint", "revision", "captured_at", "anchor"],
+                ["checkpoint", "revision", "captured_at", "anchor", "window_end"],
                 filters={"event_id": change["event_id"], "token_id": change["token_id"]},
             ):
                 label = row["checkpoint"]
@@ -850,6 +850,14 @@ class Scheduler:
                 if parse_time(changed_at) < parse_time(row["captured_at"]):
                     continue
                 if parse_time(change["anchor"]) != parse_time(row["anchor"]["ts"]):
+                    continue
+                if (
+                    change.get("market_from")
+                    and row.get("window_end")
+                    and parse_time(row["window_end"]) < parse_time(change["market_from"])
+                ):
+                    # Late data that starts after a window's end cannot change
+                    # that window's values (03 §8.6): no revision.
                     continue
                 target = (change["event_id"], change["token_id"], label)
                 if target in queued:
@@ -894,6 +902,32 @@ class Scheduler:
                 await self.repo.put("ops.scheduler_checkpoints", key, row)
             return row["state"]["rwp_id"]
 
+    async def _latest_reaction_revision(self, payload):
+        """The newest stored revision of one checkpoint. Revisions are read as
+        metadata only and one full row is fetched: each row holds its whole
+        Market Truth (up to ~160 kB), and parsing every revision on the event
+        loop was ~5% of it on r102."""
+        filters = {
+            "event_id": payload["event_id"],
+            "token_id": payload["token_id"],
+            "checkpoint": payload["checkpoint"],
+        }
+        revisions = [
+            int(row.get("revision") or 1)
+            async for row in self.repo.iter_metadata("out.reaction_checkpoints", ["revision"], filters=filters)
+        ]
+        if not revisions:
+            return None
+        key = f"{payload['event_id']}:{payload['token_id']}:{payload['checkpoint']}:{max(revisions)}"
+        row = await self.repo.get("out.reaction_checkpoints", key)
+        if row is not None:
+            return row
+        latest = None  # A row stored under another key: fall back to the full scan.
+        async for previous in self.repo.iter_all("out.reaction_checkpoints", filters=filters):
+            if latest is None or previous.get("revision", 1) > latest.get("revision", 1):
+                latest = previous
+        return latest
+
     async def _reaction_plan(self, payload):
         payload = dict(payload)
         change_marker = (
@@ -903,17 +937,7 @@ class Scheduler:
             applied = await self.repo.get("ops.scheduler_checkpoints", change_marker)
             if applied:
                 return {"complete": True, "result": applied["state"]}
-            latest_auto = None
-            async for row in self.repo.iter_all(
-                "out.reaction_checkpoints",
-                filters={
-                    "event_id": payload["event_id"],
-                    "token_id": payload["token_id"],
-                    "checkpoint": payload["checkpoint"],
-                },
-            ):
-                if latest_auto is None or row.get("revision", 1) > latest_auto.get("revision", 1):
-                    latest_auto = row
+            latest_auto = await self._latest_reaction_revision(payload)
             if latest_auto is None:
                 raise ValueError("Automatic revision requires a captured checkpoint")
             payload["revision"] = latest_auto["revision"] + 1
@@ -926,17 +950,7 @@ class Scheduler:
             if revision > 1 and payload.get("reason") != existing.get("reason"):
                 raise ValueError("Immutable reaction revision already exists with another reason")
             return {"complete": True, "result": existing}
-        latest = None
-        async for previous in self.repo.iter_all(
-            "out.reaction_checkpoints",
-            filters={
-                "event_id": payload["event_id"],
-                "token_id": payload["token_id"],
-                "checkpoint": payload["checkpoint"],
-            },
-        ):
-            if latest is None or previous["revision"] > latest["revision"]:
-                latest = previous
+        latest = await self._latest_reaction_revision(payload)
         if revision > 1:
             if not str(payload.get("reason", "")).strip():
                 raise ValueError("Late-data reaction revision requires an explicit reason")
