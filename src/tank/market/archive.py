@@ -343,6 +343,7 @@ class TradeArchive(HourlyParquet):
         self._seen = {}
         self._minutes = {}
         self._loaded = set()
+        self._touched = {}
         self._paths = {}
         self._born = utcnow().replace(minute=0, second=0, microsecond=0)
         self._coverage = defaultdict(list)
@@ -413,6 +414,7 @@ class TradeArchive(HourlyParquet):
             return False
         seen.add(identity)
         self._minutes.setdefault(canonical, set()).add(iso(parse_time(row["ts"]).replace(second=0, microsecond=0)))
+        self._touched[canonical] = time.monotonic()
         self._add(canonical, row)
         return True
 
@@ -446,8 +448,14 @@ class TradeArchive(HourlyParquet):
         return sorted(rows.values(), key=lambda r: (parse_time(r["ts"]), str(r["trade_id"])))
 
     def take(self):
-        horizon = utcnow() - timedelta(hours=3)
-        for canonical in [c for c in self._seen if self.hour_of(c) < horizon]:
+        # Identities are kept for the current and previous hour only: live prints of
+        # older hours are rare and are deduplicated again when their hour is sealed.
+        horizon = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+        idle = time.monotonic() - 600  # a backfill still writing an old hour keeps its identities
+        for canonical in [
+            c for c in self._seen if self.hour_of(c) < horizon and self._touched.get(c, 0) < idle
+        ]:
+            self._touched.pop(canonical, None)
             self._seen.pop(canonical, None)
             self._minutes.pop(canonical, None)
             self._loaded.discard(canonical)
@@ -510,12 +518,15 @@ class TradeArchive(HourlyParquet):
             **collection_clock(observed_at).fields("observed_at"),
         }
         history = self._coverage[instrument_id]
+        last = history[-1] if history else None
         if (
-            history
-            and all(history[-1].get(k) == point.get(k) for k in ("start", "complete", "reason", "source"))
-            and parse_time(history[-1]["end"]) <= parse_time(end)
+            last
+            and all(last.get(k) == point.get(k) for k in ("complete", "reason", "source"))
+            and parse_time(last["start"]) <= parse_time(start) <= parse_time(last["end"])
         ):
-            history[-1] = point
+            # Contiguous proof of the same kind: extend it (one entry per unbroken span).
+            if parse_time(end) > parse_time(last["end"]):
+                last.update(end=point["end"], **{k: v for k, v in point.items() if k.startswith("observed_at")})
         else:
             history.append(point)
         horizon = utcnow() - timedelta(hours=self.COVERAGE_HOURS)
