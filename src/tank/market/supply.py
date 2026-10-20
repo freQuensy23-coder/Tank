@@ -407,77 +407,6 @@ class SupplyCapture:
                 )
             await self.record(token, "CHAIN_LIQUIDITY", available=bool(values), chain=chain, series=values)
 
-    async def resolve_fee_protocols(self, token):
-        """Resolve only exact token-contract or CoinGecko identity links in public catalog."""
-        cached = getattr(self.market, "_fees_catalog", None)
-        if cached is None or (utcnow() - cached[0]).total_seconds() >= 86400:
-            catalog = await self.request(token, "protocol_catalog", "https://api.llama.fi/protocols")
-            overview = await self.request(token, "fees_catalog", "https://api.llama.fi/overview/fees")
-            self.market._fees_catalog = (utcnow(), catalog, overview["protocols"])
-        _, catalog, fees = self.market._fees_catalog
-        addresses = {c["address"].lower() for c in token.get("contracts", [])}
-        matched = []
-        for protocol in catalog:
-            address = str(protocol.get("address") or "").split(":")[-1].lower()
-            exact_contract = bool(addresses and address in addresses)
-            exact_gecko = bool(
-                token.get("coingecko_id")
-                and protocol.get("gecko_id") == token["coingecko_id"]
-                and str(protocol.get("symbol")).upper() == token["symbol"].upper()
-            )
-            if exact_contract or exact_gecko:
-                matched.append(protocol)
-        ids = {str(r["id"]) for r in matched}
-        parents = {r.get("parentProtocol") for r in matched if r.get("parentProtocol")}
-        selected = [r for r in fees if str(r.get("defillamaId")) in ids or r.get("parentProtocol") in parents]
-        # Overview may expose both aggregate parents and children. Keep concrete adapters
-        # whenever present, so the parent total cannot double count its own versions.
-        parent_ids = {r.get("parentProtocol") for r in selected if r.get("parentProtocol")}
-        selected = [r for r in selected if str(r.get("defillamaId")) not in parent_ids]
-        evidence = {
-            "catalog_url": "https://api.llama.fi/protocols",
-            "fees_url": "https://api.llama.fi/overview/fees",
-            "catalog_sha256": sha256(catalog),
-            "fees_sha256": sha256(fees),
-            "matched_protocol_ids": sorted(ids),
-            "parent_ids": sorted(parents),
-            "match_method": "EXACT_CONTRACT_OR_GECKO_AND_SYMBOL",
-            "verified_at": iso(),
-        }
-        aggregates = {}
-        parent_probe_errors = []
-        for parent in parents:
-            candidates = {
-                r.get("parentProtocolSlug")
-                for r in matched
-                if r.get("parentProtocol") == parent and r.get("parentProtocolSlug")
-            }
-            if parent.startswith("parent#"):
-                candidates.add(parent.split("#", 1)[1])
-            for candidate in candidates:
-                try:
-                    summary = await self.request(
-                        token,
-                        "fees_parent_identity",
-                        "https://api.llama.fi/summary/fees/" + candidate,
-                        params={"dataType": "dailyFees"},
-                    )
-                    if str(summary.get("id")) == parent:
-                        aggregates[parent] = candidate
-                        break
-                except Exception as exc:  # noqa: BLE001 - preserve explicit unsupported parent evidence
-                    parent_probe_errors.append({"slug": candidate, "reason": str(exc)})
-        slugs = sorted(
-            set(aggregates.values())
-            | {r["slug"] for r in selected if r.get("parentProtocol") not in aggregates}
-        )
-        evidence["verified_aggregate_slugs"] = aggregates
-        evidence["parent_probe_errors"] = parent_probe_errors
-        token["defillama_protocol_slugs"] = slugs
-        token["fee_protocol_identity_evidence"] = evidence
-        await self.market._put("reg.tokens", token["token_id"], token)
-        return slugs, evidence
-
     @precise
     async def fundamentals(self, token):
         if token.get("fundamentals_status") == "NOT_SUPPORTED":
@@ -489,18 +418,17 @@ class SupplyCapture:
                 identity_evidence=token.get("fundamentals_evidence"),
                 inference_limits=["UNSUPPORTED_IS_NOT_ZERO_FEES"],
             )
+        # Slugs come only from the versioned registry; HLD §4.8 lists no catalog endpoint.
         slugs = token.get("defillama_protocol_slugs") or (
             [token["defillama_protocol_slug"]] if token.get("defillama_protocol_slug") else None
         )
-        evidence = token.get("fee_protocol_identity_evidence") or token.get("fundamentals_evidence")
-        if not slugs:
-            slugs, evidence = await self.resolve_fee_protocols(token)
+        evidence = token.get("fundamentals_evidence")
         if not slugs:
             return await self.record(
                 token,
                 "FUNDAMENTALS",
                 available=False,
-                reason="NO_PUBLIC_FEES_ADAPTER_MATCHING_TOKEN_IDENTITY",
+                reason="NO_REGISTERED_DEFILLAMA_PROTOCOL_SLUG",
                 identity_evidence=evidence,
             )
         protocols = {}

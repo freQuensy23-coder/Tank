@@ -275,7 +275,7 @@ def test_subscriptions_correct_futures_path_and_all_liquidations():
 
 
 @pytest.mark.asyncio
-async def test_fee_protocol_resolution_exact_identity_and_partial_holders_revenue(setup):
+async def test_fundamentals_use_registered_slugs_only_and_partial_holders_revenue(setup):
     from tank.market.supply import SupplyCapture
 
     repo, settings, _inst = setup
@@ -283,43 +283,15 @@ async def test_fee_protocol_resolution_exact_identity_and_partial_holders_revenu
         "token_id": "test:ABC",
         "symbol": "ABC",
         "contracts": [{"chain": "Ethereum", "address": "0xabc"}],
-        "coingecko_id": "abc-token",
+        "defillama_protocol_slugs": ["abc-v1", "abc-v2"],
     }
+    paths = []
 
     def handler(request):
         path = request.url.path
-        if path == "/protocols":
-            return httpx.Response(
-                200,
-                json=[
-                    {
-                        "id": "1",
-                        "address": "0xabc",
-                        "symbol": "ABC",
-                        "parentProtocol": "parent#abc",
-                        "slug": "abc-v1",
-                    },
-                    {
-                        "id": "9",
-                        "address": "0xother",
-                        "symbol": "ABC",
-                        "gecko_id": "another-coin",
-                        "slug": "wrong",
-                    },
-                ],
-            )
-        if path == "/overview/fees":
-            return httpx.Response(
-                200,
-                json={
-                    "protocols": [
-                        {"defillamaId": "parent#abc", "slug": "abc"},
-                        {"defillamaId": "1", "slug": "abc-v1", "parentProtocol": "parent#abc"},
-                        {"defillamaId": "2", "slug": "abc-v2", "parentProtocol": "parent#abc"},
-                        {"defillamaId": "9", "slug": "wrong"},
-                    ]
-                },
-            )
+        paths.append(path)
+        # HLD §4.8 lists only /summary/fees/{protocol}; no catalog lookups.
+        assert path.startswith("/summary/fees/")
         metric = request.url.params["dataType"]
         if path.endswith("abc-v2") and metric == "dailyHoldersRevenue":
             return httpx.Response(404, json={"error": "unsupported"})
@@ -331,13 +303,17 @@ async def test_fee_protocol_resolution_exact_identity_and_partial_holders_revenu
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     service = MarketService(repo, settings, http=http)
     capture = SupplyCapture(service)
-    slugs, evidence = await capture.resolve_fee_protocols(token)
-    assert slugs == ["abc-v1", "abc-v2"] and evidence["matched_protocol_ids"] == ["1"]
     result = await capture.fundamentals(token)
     assert result["metrics"]["dailyFees"]["total24h"] == "20"
     assert result["metrics"]["dailyHoldersRevenue"]["total24h"] == "3"
     assert not result["metrics"]["dailyHoldersRevenue"]["complete"]
     assert result["coverage_errors"][0]["metric"] == "dailyHoldersRevenue"
+    assert len(paths) == 6
+    paths.clear()
+    unregistered = await capture.fundamentals(dict(token, token_id="test:XYZ", defillama_protocol_slugs=[]))
+    assert unregistered["available"] is False
+    assert unregistered["reason"] == "NO_REGISTERED_DEFILLAMA_PROTOCOL_SLUG"
+    assert paths == []
     await http.aclose()
 
 
