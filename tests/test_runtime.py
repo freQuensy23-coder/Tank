@@ -370,13 +370,30 @@ def test_review_cli_forwards_period_paging_and_structured_checks(monkeypatch, tm
     assert (
         runner.invoke(
             cli.main,
-            ["review", "list", "--since", since, "--until", until, "--after", "cursor", "--limit", "20"],
+            [
+                "review",
+                "list",
+                "--since",
+                since,
+                "--until",
+                until,
+                "--after",
+                '["2026-10-01T00:00:00Z", "a:1"]',
+                "--limit",
+                "20",
+            ],
         ).exit_code
         == 0
     )
     assert calls[-1] == (
         "list",
-        {"start": since, "end": until, "limit": 20, "after": "cursor", "event_id": None},
+        {
+            "start": since,
+            "end": until,
+            "limit": 20,
+            "after": ["2026-10-01T00:00:00Z", "a:1"],
+            "event_id": None,
+        },
     )
     assert (
         runner.invoke(

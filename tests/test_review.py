@@ -109,7 +109,7 @@ async def test_outcome_immutable_revision_and_frozen_beta():
     a = await service.outcome(alert, decision, truth, now=END)
     b = await service.outcome(alert, decision, truth, now="2026-10-02T00:00:00Z")
     # Outcomes are computed on demand from stored evidence; qa.outcomes is gone (W11).
-    stable = lambda r: {k: v for k, v in r.items() if not k.startswith("computed_at")}  # noqa: E731
+    stable = lambda r: {k: v for k, v in r.items() if not k.startswith("computed_at")}
     assert stable(a) == stable(b) and "revision" not in a
     assert a["realized_return"] == pytest.approx(0.2)
     assert a["btc_adjusted_return"] == pytest.approx(0.18) and a["direction_correct"] is True
@@ -519,3 +519,41 @@ async def test_typed_boundaries_require_adjacent_pieces_and_never_slice_whole_ba
     await repo.put("mkt.flow_bars_1m", "end", dict(row, boundary_segments=[oversized]))
     result = await service.horizon_series("i", start, end, end + timedelta(minutes=1))
     assert result["coverage"]["exact"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_and_show_page_with_next_after_cursor():
+    repo = MemoryRepository()
+    service = ReviewService(repo)
+    for version in (1, 2, 3):
+        await repo.put(
+            "out.alerts",
+            f"a:{version}",
+            {
+                "alert_id": "a",
+                "version": version,
+                "event_id": "e",
+                "generated_at": f"2026-10-01T00:0{version}:00Z",
+            },
+            immutable=True,
+        )
+    first = await service.list(START, END, limit=2)
+    assert [r["version"] for r in first["cards"]] == [1, 2]
+    assert first["pagination"]["has_more"] and first["pagination"]["next_after"][1] == "a:2"
+    second = await service.list(START, END, limit=2, after=first["pagination"]["next_after"])
+    assert [r["version"] for r in second["cards"]] == [3]
+    assert second["pagination"] == {"limit": 2, "returned": 1, "has_more": False, "next_after": None}
+    shown = await service.show("a", limit=2, after=first["pagination"]["next_after"], now=END)
+    assert [v["alert"]["version"] for v in shown["versions"]] == [3]
+
+
+def test_cli_after_takes_the_printed_cursor():
+    import click
+
+    from tank.cli import page_cursor
+
+    assert page_cursor('["2026-10-01T00:02:00Z", "a:2"]') == ["2026-10-01T00:02:00Z", "a:2"]
+    assert page_cursor(None) is None
+    for bad in ("2026-10-01T00:02:00Z", "[1, 2]", '["x"]'):
+        with pytest.raises(click.BadParameter):
+            page_cursor(bad)

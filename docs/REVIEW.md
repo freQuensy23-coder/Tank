@@ -1,6 +1,15 @@
 # Shadow review and outcome evaluator
 
-`ReviewService(repo, settings)` runs only against saved records. It sends no messages and makes no model or external API calls. `list(start,end,limit,after,event_id)` uses repository keyset pagination. `show(subject,start=...,end=...,limit=...,after=...)` opens an alert or event with versions, validated frozen evidence payloads, per-version delivery ledger and outcomes. Period bounds are inclusive start, exclusive end. Repository cursors are `[timestamp, storage-key]` pairs.
+`ReviewService(repo, settings)` runs only against saved records. It sends no messages and makes no model or external API calls. Period bounds are inclusive start, exclusive end.
+
+The reviewer commands of 01 §7.4:
+
+- `tank review list --since ISO --until ISO [--event-id E] [--limit N] [--after CURSOR]` lists cards and updates generated in the period, oldest first. The output is `{"cards": [...], "pagination": {..., "next_after": [time, key]}}`. Pass `next_after` as `--after '["…", "…"]'` to get the next page.
+- `tank review show ALERT_OR_EVENT [--since/--until/--limit/--after]` opens a card or every card of an event. Each version comes with its validated frozen evidence, its delivery ledger and the realized move at the outlook horizon. Pagination works the same way as for `list`.
+- `tank review label SUBJECT LABEL --reviewer R [--version N] [--miss-reason REASON] [--notes …]` writes an append-only `qa.reviews` row:
+  - a card version gets CATCH, LATE, FALSE_ALARM or NOISE;
+  - an event without a card gets CORRECT_SILENCE, or MISS with a reason (`--miss-reason`).
+- `tank review metrics --since ISO --until ISO [--checks-file F]` reports S1–S9. Over a week, this together with `review list` and the MISS labels is the weekly miss audit (03 §11.5).
 
 `report(start,end,checks=None)` requires explicit bounds and reports S1–S9 with eligible population, observed denominator and coverage. Missing review or semantic evidence is UNVERIFIED, including an empty period. S1 public-to-known counts events known in the period linked to S01–S24 items; known-to-sent counts card versions generated in the period, using first successful delivery. S2 and S8 counts are card versions. S6 counts only published token blocks referenced by alert.decisions, excluding additional analyzed tokens in the evidence bundle. S7 counts distinct MAJOR+ card events and MAJOR+ events known during the period and excludes explicitly audited events where no secondary exists. Unknown existence reduces coverage. S9 requires hash-valid evidence, a delivery ledger record (including pending or failed delivery) and an explicit reproducibility audit. Successful delivery is measured separately by S1 latency. No report asserts 14-day live acceptance.
 
@@ -18,7 +27,7 @@ Outcomes use the frozen decision cutoff and best horizon, frozen Market Truth re
 
 Direction evaluation additionally requires frozen beta, the exact horizon's frozen normal range (`W1H/W4H/W12H/W24H/W3D/W7D`), and `relative.outcome_btc_reference={instrument_id,entry_ref_price}` in the frozen evidence. Market Truth now produces these references and `relative.normal_ranges[W*].value` from pre-event history; both are frozen by the real publication bundle. Older bundles or insufficient historical evidence remain explicitly unavailable. It never substitutes the EVENT normal range or estimates beta from later prices. BTC-adjusted return is raw return minus frozen beta times BTC horizon return; realized bias is BULLISH above the upper normal bound, BEARISH below the lower bound, NEUTRAL within it.
 
-Completed outcomes are immutable `qa.outcomes` records. A changed result or changed supporting market evidence receives another revision; identical evidence and results reuse the existing revision. Computed timestamps are not part of the content fingerprint. Outcomes with missing endpoint coverage are not persisted as completed. Neither outcomes nor reviewer checks alter decision thresholds.
+Outcomes are computed on demand each time `review show` runs, from the frozen evidence and the stored typed market data. They are not stored: there is no `qa.outcomes` table (HLD §7.1). `market_evidence_hash` identifies the market rows used. Neither outcomes nor reviewer checks alter decision thresholds.
 
 Public-to-known latency requires explicit EXACT source precision. BUCKET_1H/BUCKET_1D and legacy UNKNOWN timestamps contribute eligible counts but no invented point latency; precision_counts expose that coverage. S2 uses the entire possible public-time bucket: only ages wholly above 48 hours count stale, wholly at or below 48 hours count non-stale, and straddling/unknown ranges remain UNVERIFIED. Internal known-to-SENT timestamps retain their actual precision. These review rules do not alter event freshness or alert gates.
 

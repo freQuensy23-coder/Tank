@@ -1299,6 +1299,8 @@ async def _iter_range(self, collection, time_field, *, start=None, end=None, fil
 
 
 MemoryRepository.list_range = _list_range
+MemoryRepository.page_range = _range_page
+PostgresRepository.page_range = _range_page
 PostgresRepository.list_range = _list_range
 MemoryRepository.iter_range = _iter_range
 PostgresRepository.iter_range = _iter_range

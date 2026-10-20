@@ -77,17 +77,27 @@ class ReviewService:
         return [r async for r in self.repo.iter_range(table, field, start=start, end=end, filters=filters)]
 
     async def list(self, start=None, end=None, limit=100, after=None, event_id=None):
+        """Cards and updates generated in [start, end), oldest first, with a keyset cursor."""
         if not 1 <= limit <= 10000:
             raise ValueError("limit must be 1..10000")
-        return await self.repo.list_range(
+        page = await self.repo.page_range(
             "out.alerts",
             "generated_at",
             start=start,
             end=end,
             filters={"event_id": event_id} if event_id else None,
-            limit=limit,
+            limit=limit + 1,
             after=after,
         )
+        return {
+            "cards": [row for row, _ in page[:limit]],
+            "pagination": {
+                "limit": limit,
+                "returned": min(len(page), limit),
+                "has_more": len(page) > limit,
+                "next_after": list(page[limit - 1][1]) if len(page) > limit else None,
+            },
+        }
 
     async def evidence(self, alert):
         digest = alert.get("evidence_bundle_id")
@@ -105,9 +115,10 @@ class ReviewService:
             raise ValueError("limit must be 1..10000")
         event = await self.repo.get("evt.events", subject)
         filters = {"event_id": subject} if event else {"alert_id": subject}
-        alerts = await self.repo.list_range(
+        page = await self.repo.page_range(
             "out.alerts", "generated_at", start=start, end=end, filters=filters, limit=limit + 1, after=after
         )
+        alerts = [row for row, _ in page]
         result = []
         for alert in alerts[:limit]:
             evidence = await self.evidence(alert)
@@ -132,7 +143,12 @@ class ReviewService:
             "subject": subject,
             "versions": result,
             "reviews": await self.repo.list("qa.reviews", filters={"subject": subject}, limit=10000),
-            "pagination": {"limit": limit, "returned": len(result), "has_more": len(alerts) > limit},
+            "pagination": {
+                "limit": limit,
+                "returned": len(result),
+                "has_more": len(alerts) > limit,
+                "next_after": list(page[limit - 1][1]) if len(alerts) > limit else None,
+            },
         }
 
     async def horizon_series(self, instrument, start, end, now, *, extrema=True):

@@ -97,13 +97,29 @@ def review():
     """Shadow review cards, delivery and outcomes."""
 
 
+def page_cursor(value):
+    """--after takes the `next_after` pair printed by the previous page."""
+    if value is None:
+        return None
+    try:
+        cursor = json.loads(value)
+    except ValueError:
+        cursor = None
+    if not (isinstance(cursor, list) and len(cursor) == 2 and all(isinstance(v, str) for v in cursor)):
+        raise click.BadParameter("expects next_after of the previous page: a JSON [time, key] pair")
+    return cursor
+
+
 @review.command("list")
 @click.option("--limit", type=click.IntRange(1, 100000), default=100)
 @click.option("--event-id")
 @click.option("--since")
 @click.option("--until")
-@click.option("--after")
+@click.option("--after", help="next_after of the previous page.")
 def review_list(limit, event_id, since, until, after):
+    """List cards and updates generated in [--since, --until)."""
+    after = page_cursor(after)
+
     async def command(repo, settings):
         from tank.review import ReviewService
 
@@ -119,8 +135,11 @@ def review_list(limit, event_id, since, until, after):
 @click.option("--since")
 @click.option("--until")
 @click.option("--limit", type=click.IntRange(1, 100000), default=100)
-@click.option("--after")
+@click.option("--after", help="next_after of the previous page.")
 def review_show(subject, since, until, limit, after):
+    """Open a card or event: versions, evidence, delivery ledger, realized move at the outlook horizon."""
+    after = page_cursor(after)
+
     async def command(repo, settings):
         from tank.review import ReviewService
 
@@ -402,6 +421,8 @@ def readiness_checks(settings):
     """Report configuration readiness without exposing configuration/secret values."""
     import re
 
+    import yaml
+
     def configured(value):
         return bool(value) and not any(
             word in str(value).upper() for word in ("REPLACE_", "NOT CONFIGURED", "UNVERSIONED")
@@ -425,7 +446,9 @@ def readiness_checks(settings):
                     checks.append({"check": "openma_" + key, "ok": configured(config.get(key))})
         except Exception as exc:
             checks.append({"check": name + "_syntax", "ok": False, "reason": type(exc).__name__})
-    checks.append({"check": "openrouter_api_key", "ok": configured(getattr(settings, "openrouter_api_key", None))})
+    checks.append(
+        {"check": "openrouter_api_key", "ok": configured(getattr(settings, "openrouter_api_key", None))}
+    )
     for name in (
         "openma_api_key",
         "codex_gateway_key",
@@ -446,11 +469,15 @@ def readiness_checks(settings):
     if getattr(settings, "x_enabled", True):
         try:
             s29 = next(
-                (s for s in settings.load_config("sources").get("sources", []) if s.get("source_id") == "S29"),
+                (
+                    s
+                    for s in settings.load_config("sources").get("sources", [])
+                    if s.get("source_id") == "S29"
+                ),
                 {},
             )
             checks.append({"check": "s29_list_id", "ok": configured(s29.get("list_id"))})
-        except Exception as exc:
+        except (OSError, ValueError, yaml.YAMLError) as exc:
             checks.append({"check": "s29_list_id", "ok": False, "reason": type(exc).__name__})
         profile = Path(settings.x_profile_dir)
         try:
@@ -464,7 +491,9 @@ def readiness_checks(settings):
         {
             "check": "user_agent_contact",
             "ok": bool(
-                re.fullmatch(r"TankV0/1\.0 \([A-Za-z0-9_.+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\)", user_agent or "")
+                re.fullmatch(
+                    r"TankV0/1\.0 \([A-Za-z0-9_.+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\)", user_agent or ""
+                )
             ),
         }
     )
@@ -479,10 +508,13 @@ def doctor():
 
         settings = Settings()
         configure_logging(settings)
-        try:
+        import contextlib
+
+        import yaml
+
+        # An unreadable sources/delivery file is reported by readiness_checks.
+        with contextlib.suppress(OSError, ValueError, yaml.YAMLError):
             settings = settings.model_copy(update=configured_values(settings))
-        except Exception:
-            pass  # readiness_checks reports the unreadable configuration file.
         checks = readiness_checks(settings)
         from psycopg import AsyncConnection
 
@@ -521,19 +553,28 @@ def calibrate(input_path, output_dir):
     configure_logging(settings)
     try:
         result = asyncio.run(acquire(input_path, output_dir, settings=settings))
-        summary = {key: result[key] for key in (
-            "status", "counts", "selected", "routing_target_90_90_met", "rejection_reasons",
-        )}
+        summary = {
+            key: result[key]
+            for key in (
+                "status",
+                "counts",
+                "selected",
+                "routing_target_90_90_met",
+                "rejection_reasons",
+            )
+        }
         best = result["best_measured_routing"]
         summary["best_measured_routing"] = {
-            **best, "metrics": {key: value for key, value in best["metrics"].items() if key != "decisions"}
+            **best,
+            "metrics": {key: value for key, value in best["metrics"].items() if key != "decisions"},
         }
         output(summary)
     except (ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from None
     except (httpx.HTTPError, KeyError, TypeError, RuntimeError) as exc:
         raise click.ClickException(
-            "Calibration failed (" + type(exc).__name__
+            "Calibration failed ("
+            + type(exc).__name__
             + "); completed usage and failures are retained in the output directory"
         ) from None
 

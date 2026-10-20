@@ -80,6 +80,7 @@ def check_test_databases(environment):
     Each workstream uses its own database, e.g. tank_test_<session>, created on the
     shared cluster; the production databases tank, oma and tank_replay are refused.
     """
+    import psycopg
     from psycopg.conninfo import conninfo_to_dict
 
     for name in sorted(TEST_DATABASE_VARIABLES):
@@ -88,7 +89,7 @@ def check_test_databases(environment):
             continue
         try:
             database = conninfo_to_dict(value).get("dbname") or ""
-        except Exception:
+        except psycopg.Error:
             raise pytest.UsageError(f"{name} is not a valid PostgreSQL URL") from None
         if not database.startswith("tank_test"):
             raise pytest.UsageError(f"{name} must name a dedicated tank_test_* database, not {database!r}")

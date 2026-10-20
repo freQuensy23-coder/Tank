@@ -210,9 +210,7 @@ def test_x_disabled_is_explicit_readiness_scope_not_missing_credentials(tmp_path
     assert settings.x_profile_dir.exists() is False
 
 
-@pytest.mark.parametrize(
-    "name", ["TANK_USER_AGENT", "TANK_TELEGRAM_ALERTS_CHAT", "TANK_TELEGRAM_OPS_CHAT"]
-)
+@pytest.mark.parametrize("name", ["TANK_USER_AGENT", "TANK_TELEGRAM_ALERTS_CHAT", "TANK_TELEGRAM_OPS_CHAT"])
 def test_configuration_values_never_come_from_environment(monkeypatch, name):
     monkeypatch.setenv(name, "FAKE-environment-value")
     with pytest.raises(ValueError, match=name):
