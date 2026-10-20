@@ -866,7 +866,7 @@ sources:
     budget_fraction: 0.5
     unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
       acceptance.
-  list_id: null
+  list_id: '2112597716375060985'
   bucket: HIGH_VALUE_SOCIAL
   source_class: SOCIAL_LEAD
   cost_class: FREE_ACCOUNT
