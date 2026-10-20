@@ -4814,3 +4814,17 @@ async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(servi
             task.cancel()
     mapping = await service.repo.get("evt.beneficiary_maps", f"{eid}:1")
     assert mapping["least_repriced_edge"] == "edge-B"
+
+
+async def test_list_open_events_skips_events_whose_session_failed(service):
+    """03 §3.2 Failures: a failed session ends the event's analysis, so the agent
+    never sees it as open and never merges later news into it."""
+    for eid, status in [("live-event", "OPEN"), ("failed-event", "FAILED")]:
+        await service.repo.put(
+            "evt.events", eid, {"event_id": eid, "lifecycle": "ANALYZING", "statement": "World news"}
+        )
+        await service.repo.put(
+            "ops.agent_sessions", "session-" + eid, {"session_id": "session-" + eid, "event_id": eid, "status": status}
+        )
+    listed = await service.dispatch("list_open_events", {"entity_or_token": "world"}, {})
+    assert [row["event_id"] for row in listed["events"]] == ["live-event"]

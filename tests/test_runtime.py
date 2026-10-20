@@ -1031,8 +1031,18 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
                 runtime.handlers = {"DELIVER": handle}
                 await asyncio.wait_for(runtime.worker(stop), 3)
 
-            # Another worker owns the earlier network send. Repeated scheduling
-            # waits are not five failed HTTP attempts or a terminal queue error.
+            # Another worker owns the event's network send (the per-event lock).
+            # Repeated scheduling waits are not five failed HTTP attempts or a
+            # terminal queue error.
+            held, release = asyncio.Event(), asyncio.Event()
+
+            async def other_worker_send():
+                async with repo.lock("event:" + eid):
+                    held.set()
+                    await release.wait()
+
+            owner = asyncio.create_task(other_worker_send())
+            await held.wait()
             for _ in range(7):
                 await run_one()
                 postponed = await repo.get("ops.jobs", current["job_id"])
@@ -1042,24 +1052,15 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
                 clock[0] = parse_time(postponed["run_after"])
             assert not sent_requests
             assert not await repo.list("out.deliveries", filters={"alert_id": aid, "version": 3})
-            # An explicit terminal outcome of the older send cannot hold the
-            # remaining accepted versions forever. Preserve that outcome.
-            await repo.put(
-                "out.deliveries",
-                "terminal-" + aid,
-                {
-                    "alert_id": aid,
-                    "version": 2,
-                    "channel": "telegram:alerts",
-                    "status": "FAILED",
-                    "terminal": True,
-                    "attempt": 5,
-                    "at": iso(clock[0]),
-                },
-                immutable=True,
-            )
+            release.set()
+            await owner
+            # The other worker's older version is superseded by version 3 (W2,
+            # 03 §7.4): it ends without a send and never follows the newer card.
+            await delivery.deliver(older["payload"])
+            assert not sent_requests
+            assert not await repo.list("out.deliveries", filters={"alert_id": aid, "version": 2})
             old_job = await repo.get("ops.jobs", older["job_id"])
-            await repo.put("ops.jobs", older["job_id"], {**old_job, "status": "FAILED", "attempts": 5})
+            await repo.put("ops.jobs", older["job_id"], {**old_job, "status": "DONE"})
             await run_one()
             failed_http = await repo.get("ops.jobs", current["job_id"])
             assert failed_http["status"] == "QUEUED" and failed_http["attempts"] == 1
@@ -1074,7 +1075,6 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
             assert len(sent_requests) == 2
             ledger = await repo.list("out.deliveries", filters={"alert_id": aid, "version": 3})
             assert [row["status"] for row in ledger] == ["GENERATED", "FAILED", "GENERATED", "SENT"]
-            assert (await repo.get("out.deliveries", "terminal-" + aid))["terminal"]
     finally:
         await repo.close()
 

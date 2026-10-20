@@ -425,11 +425,19 @@ class EventToolService:
 
     async def list_open_events(self, a, c):
         q = a.get("entity_or_token", "").casefold()
+        # An event whose session failed is not open (03 §3.2 Failures): its
+        # analysis has stopped, so later news must not be merged into it.
+        statuses = {}
+        for session in await self.rows("ops.agent_sessions"):
+            if session.get("event_id"):
+                statuses.setdefault(session["event_id"], set()).add(session.get("status"))
+        failed = {eid for eid, seen in statuses.items() if seen == {"FAILED"}}
         return {
             "events": [
                 r
                 for r in await self.rows("evt.events")
                 if r["lifecycle"] not in {"CLOSED", "MERGED", "INVALIDATED"}
+                and r["event_id"] not in failed
                 and (not q or q in canonical_json(r).casefold())
             ]
         }
