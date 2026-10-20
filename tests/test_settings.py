@@ -255,3 +255,25 @@ def test_database_urls_from_compose_role_secrets(tmp_path, monkeypatch):
         Settings(_env_file=None, secrets_dir=tmp_path / "absent").database_url
         == "postgresql://explicit/tank_test_x"
     )
+
+
+def test_frozen_config_is_parsed_once_and_callers_get_copies(tmp_path, monkeypatch):
+    import yaml
+
+    import tank.settings as module
+
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "registry.yaml").write_text("tokens:\n- token_id: T\n")
+    frozen = resolve_versions(Settings(_env_file=None, config_dir=config, data_dir=tmp_path / "data"))
+    calls = []
+    original = yaml.load
+    monkeypatch.setattr(module.yaml, "load", lambda *a, **k: calls.append(1) or original(*a, **k))
+    first = frozen.load_config("registry")
+    first["tokens"].append({"token_id": "MUTATED"})
+    second = frozen.load_config("registry.yaml")
+    assert second == {"tokens": [{"token_id": "T"}]} and len(calls) == 1
+    (config / "registry.yaml").write_text("tokens: []\n")
+    assert frozen.load_config("registry") == {"tokens": [{"token_id": "T"}]}
+    unfrozen = Settings(_env_file=None, config_dir=config)
+    assert unfrozen.load_config("registry") == {"tokens": []}
