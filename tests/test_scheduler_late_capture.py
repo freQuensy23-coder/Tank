@@ -100,7 +100,8 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         assert original["r_raw"] is None and original["revision"] == 1
         # The actual producer acquires historical HTTP data and persists terminal capture state.
         await market._schedule_event_backfill("e", "test:T", iso(anchor))
-        async with asyncio.timeout(10):
+        # Bounds the memory-repo backfill (about 16 s on the shared host), not scheduler code.
+        async with asyncio.timeout(60):
             while (await market.capture_readiness("e", "test:T", anchor=iso(anchor)))["status"] not in {
                 "COMPLETE",
                 "PARTIAL",
