@@ -114,6 +114,8 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         assert jobs and all(job["payload"]["automatic_revision"] for job in jobs)
         for job in jobs:
             await scheduler.reaction_capture(job["payload"])
+            # As Runtime.worker does; a still-QUEUED revision would absorb the next change.
+            await repo.put("ops.jobs", job["job_id"], {**job, "status": "DONE"})
         revised = await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:2")
         assert revised["revision"] == 2 and revised["r_raw"] is not None
         assert revised["rwp_id"] == original["rwp_id"] and revised["rwp_id"].startswith("RWP-")

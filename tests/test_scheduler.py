@@ -82,9 +82,10 @@ async def test_pre_event_capture_uses_pre_window_and_is_immutable(monkeypatch):
         lambda snapshot, config: {"relative": {"windows": {"EVENT": {"r_raw": 0.01}}}},
     )
     scheduler = Scheduler(repo, SimpleNamespace(config_version="cfg", code_version="code"), market, None)
+    # An analysed token: BTC/ETH outside the analysis set follow the benchmark path instead.
     payload = {
         "event_id": "e",
-        "token_id": "bitcoin:BTC",
+        "token_id": "test:T",
         "checkpoint": "PRE_24H",
         "anchor": {"type": "T1", "ts": iso(now)},
         "retro": True,
@@ -92,7 +93,7 @@ async def test_pre_event_capture_uses_pre_window_and_is_immutable(monkeypatch):
     await scheduler.reaction_capture(payload)
     await scheduler.reaction_capture(payload)
     args, kwargs = market.snapshot.call_args
-    assert args[0] == "bitcoin:BTC"
+    assert args[0] == "test:T"
     assert args[1].value == iso(now)
     assert args[1].precision is None
     assert args[1].precision_reason == "INCOMPLETE"

@@ -19,6 +19,7 @@ CHECKPOINTS = {
     "POST_24H": 86400,
     "POST_72H": 259200,
 }
+BENCHMARK_TOKENS = frozenset({"bitcoin:BTC", "ethereum:ETH"})
 
 
 def field(record, path):
@@ -382,6 +383,10 @@ class Scheduler:
                     yield event
 
     async def analysis_tokens(self, event):
+        """The reaction pack scope: the analysis set plus the BTC and ETH benchmarks (03 §8.1)."""
+        return await self.analysis_set(event) | BENCHMARK_TOKENS
+
+    async def analysis_set(self, event):
         latest = None
         async for row in self.repo.iter_all("evt.beneficiary_maps", filters={"event_id": event["event_id"]}):
             if latest is None or row.get("map_version", 0) > latest.get("map_version", 0):
@@ -401,7 +406,7 @@ class Scheduler:
                 for row in edges
                 if row.get("token_id") and row.get("map_version", 0) == version
             }
-        return tokens | {"bitcoin:BTC", "ethereum:ETH"}
+        return tokens
 
     async def latest_assessment(self, event):
         if event.get("current_ems_id"):
@@ -900,7 +905,7 @@ class Scheduler:
     async def _measure_reaction(self, payload):
         payload = dict(payload)
         captured_stamp = collection_clock()
-        from tank.analysis.truth import compute_market_truth
+        from tank.analysis.truth import benchmark_reaction_values, compute_market_truth
 
         anchor_stamp = propagate_timestamp(payload["anchor"], "ts", precision_aliases=("precision",))
         payload["anchor"] = {**payload["anchor"], **anchor_stamp.fields("ts")}
@@ -951,6 +956,28 @@ class Scheduler:
             **start_stamp.fields("window_start"),
             **end_stamp.fields("window_end"),
         }
+        if payload["token_id"] in BENCHMARK_TOKENS:
+            event = await self.repo.get("evt.events", payload["event_id"]) or {"event_id": payload["event_id"]}
+            if payload["token_id"] not in await self.analysis_set(event):
+                # Lead ruling 2026-10-20 (03 §8.1): a benchmark outside the analysis set records the
+                # raw return from base-tier kline closes; trade/derivative values are NOT_APPLICABLE.
+                bench = benchmark_reaction_values(snapshot, start, end)
+                checkpoint_data.update(
+                    r_raw=bench["r_raw"],
+                    r_btc_adj=None,
+                    pctile=None,
+                    spot_cvd=None,
+                    spot_method="NOT_APPLICABLE",
+                    spot_coverage=None,
+                    oi_native_start=None,
+                    oi_native_end=None,
+                    oi_native_chg_pct=None,
+                    oi_class=None,
+                    oi_venues=None,
+                    funding=[],
+                    liquidations=None,
+                    benchmark=bench,
+                )
         return {
             "payload": payload,
             "captured_stamp": captured_stamp,

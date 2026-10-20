@@ -18,6 +18,7 @@ from tank.time_precision import (
     Timestamp,
     chosen_boundary,
     collection_clock,
+    interval_bounds,
     offset_schedule,
     propagate_timestamp,
 )
@@ -101,6 +102,17 @@ def resolve_token(registry, value, context=""):
 
 def resolve_tokens(registry, values, context=""):
     return list(dict.fromkeys(resolve_token(registry, value, context) for value in values or []))
+
+
+def known_at(row):
+    """When a stored fact became known. A late-receipt historical reconstruction
+    (lead rulings F-02, F-04) is known from the end of its schedule_as_of bucket,
+    the rule replay uses to admit it; other rows from their observation time."""
+    if row.get("evidence_mode") == "HISTORICAL_RECONSTRUCTION" and row.get("schedule_as_of"):
+        _, end = interval_bounds(propagate_timestamp(row, "schedule_as_of"))
+        return end if end is not None else parse_time(row.get("observed_at") or row["schedule_as_of"])
+    stamp = row.get("observed_at") or row.get("captured_at")
+    return parse_time(stamp) if stamp else None
 
 
 def normalized(s):
@@ -482,8 +494,8 @@ class EventToolService:
         cutoff = utcnow()
 
         def known(row):
-            stamp = row.get("observed_at") or row.get("captured_at")
-            return stamp is None or parse_time(stamp) <= cutoff
+            at = known_at(row)
+            return at is None or at <= cutoff
 
         unlocks = []
         for row in sorted(

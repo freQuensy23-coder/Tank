@@ -4777,4 +4777,17 @@ async def test_token_facts_show_unlocks_before_the_cutoff_and_nothing_after(serv
         )
     facts = await service.dispatch("get_token_facts", {"token": "layerzero:ZRO"}, {})
     assert [(u["label"], u["relative_to_cutoff"]) for u in facts["unlocks"]] == [("past", "PAST"), ("next", "UPCOMING")]
+    # A late-receipt reconstruction is known from the end of its schedule_as_of
+    # bucket, as replay admits it (lead rulings F-02, F-04).
+    from tank.event_tools import known_at
+
+    day = (now - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
+    reconstructed = {
+        "observed_at": iso(now + timedelta(days=1)),
+        "evidence_mode": "HISTORICAL_RECONSTRUCTION",
+        "schedule_as_of": iso(day),
+        "schedule_as_of_prec": "BUCKET(1d)",
+    }
+    assert known_at(reconstructed) == day + timedelta(days=1)
+    assert known_at({"observed_at": iso(day)}) == day
     assert facts["analysis_cutoff"] and "supply_obs" in facts and "capture_chains" in facts
