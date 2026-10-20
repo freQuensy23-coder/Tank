@@ -92,11 +92,12 @@ async def test_raw_projection_rebuilds_production_snapshot_without_future_trade(
         "token_id": "test:ABC",
         "venue": "binance",
         "market_type": "SPOT",
+        "venue_symbol": "ABCUSD",
         "quote_asset": "USD",
         "contract_multiplier": "1",
     }
     minute = parse_time("2026-10-17T12:00:00Z")
-    raw = TradeArchive(tmp_path / "original")
+    raw = TradeArchive(tmp_path / "original", grace_s=0)
     for tid, second in [(1, 10), (2, 50)]:
         raw.append(
             normalize.trade(
@@ -111,7 +112,8 @@ async def test_raw_projection_rebuilds_production_snapshot_without_future_trade(
             )
         )
     raw.coverage(instrument["instrument_id"], minute, minute + timedelta(minutes=2), complete=True)
-    archive = raw.flush(seal_before=minute + timedelta(hours=1))[0]
+    raw.write(raw.take(), now=minute + timedelta(hours=1))  # seals the finished hour
+    archive = raw.frozen_manifest(instrument["instrument_id"], minute)
     cutoff = "2026-10-17T12:00:17Z"
     inputs = SimpleNamespace(
         assembled_at="2099-01-01T00:00:00Z",
@@ -157,11 +159,12 @@ def test_same_guest_directory_exposes_only_each_message_prefix(tmp_path):
         "token_id": "test:ABC",
         "venue": "binance",
         "market_type": "SPOT",
+        "venue_symbol": "ABCUSD",
         "quote_asset": "USD",
         "contract_multiplier": "1",
     }
     start = parse_time("2026-10-17T12:00:00Z")
-    archive = TradeArchive(tmp_path / "private-source")
+    archive = TradeArchive(tmp_path / "private-source", grace_s=0)
     for tid, second in [(1, -10), (2, 30)]:
         archive.append(
             normalize.trade(
@@ -175,7 +178,11 @@ def test_same_guest_directory_exposes_only_each_message_prefix(tmp_path):
                 },
             )
         )
-    manifests = archive.flush(seal_before=start + timedelta(hours=2))
+    archive.write(archive.take(), now=start + timedelta(hours=2))
+    manifests = [
+        archive.frozen_manifest(instrument["instrument_id"], hour)
+        for hour in (start - timedelta(hours=1), start)
+    ]
     inputs = SimpleNamespace(
         assembled_at="2099-01-01T00:00:00Z",
         cutoff="2026-10-17T12:01:00Z",
