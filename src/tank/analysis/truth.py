@@ -1331,6 +1331,20 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         pa, pz = price(p, a), price(p, z)
         return pz / pa - 1 if pa and pz else None
 
+    def fresh_price(p, t):
+        """A benchmark/peer price at t only if its last point is within that series' own bar
+        spacing: a base-tier outage must not turn two copies of one old close into a 0 return."""
+        times = price_times.setdefault(id(p), sorted(p)) if id(p) not in price_times else price_times[id(p)]
+        index = bisect_right(times, t) - 1
+        if index < 0:
+            return None
+        step = (times[index] - times[index - 1]).total_seconds() if index > 0 else 60
+        return p[times[index]] if (t - times[index]).total_seconds() <= max(step, 60) else None
+
+    def bench_ret(p, a, z):
+        pa, pz = fresh_price(p, a), fresh_price(p, z)
+        return pz / pa - 1 if pa and pz else None
+
     historical_times = sorted(t for t in prices if t < start)
     deltas = [(b - a).total_seconds() for a, b in zip(historical_times, historical_times[1:]) if b > a]
     history_resolution_s = int(median(deltas)) if deltas else None
@@ -1414,8 +1428,8 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             if name == "EVENT"
             else ret(prices, a, end)
         )
-        rb = ret(btc, a, end)
-        re = ret(eth, a, end)
+        rb = bench_ret(btc, a, end)
+        re = bench_ret(eth, a, end)
         adj = r - bb * rb if r is not None and rb is not None else None
         h = hist(length)
         windows[name] = dict(
@@ -1488,7 +1502,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     not_applicable = sector == "IDENTITY_PAYMENTS"
     for name, length in dict(WINDOWS, EVENT=(end - start).total_seconds()).items():
         peer_returns = [
-            ret(peer_series(identity), end - timedelta(seconds=length), end) for identity in tradable
+            bench_ret(peer_series(identity), end - timedelta(seconds=length), end) for identity in tradable
         ]
         peer_returns = [v for v in peer_returns if v is not None]
         raw = windows[name]["r_raw"]
@@ -1508,7 +1522,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     dh = hist(86400)
     sign = -1 if snapshot.get("expected_direction") in ("BEARISH", "LOSER", -1) else 1
     eventr = windows["EVENT"]["r_btc_adj"]
-    br = ret(btc, end - timedelta(days=1), end)
+    br = bench_ret(btc, end - timedelta(days=1), end)
     bh = []
     rvhist = []
     rv = None
@@ -1550,7 +1564,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         rvhist = []
     context = market_context(br, rv, bh, rvhist)
     pre = ret(prices, start - timedelta(days=1), start)
-    preb = ret(btc, start - timedelta(days=1), start)
+    preb = bench_ret(btc, start - timedelta(days=1), start)
     ar = pre - bb * preb if pre is not None and preb is not None else None
     horizon_ranges = {}
     for name, length in (
