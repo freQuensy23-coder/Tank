@@ -1064,12 +1064,37 @@
           "historical_acceptance_claimed": false
         }
       ],
-      "readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+      "readiness": "EXECUTED_ACCEPTANCE_FAILED",
       "missing": [
-        "No final combined stronger-component snapshot exists. Full24h crossvenue baseline/reference-ranking, missing Bybit spot, historical USD/mark alignment, and books/liquidations remain absent.",
-        "Actual captured four-venue 4hCVD +186034.8441 yields NEUTRAL; full registered cohort INSUFFICIENT_DATA. Literal SELL is not established; do not modify normative formula or fit data."
+        "6 of 14 sealed predicates pass. Retained four-venue trades are complete (tank-market check); the Addendum 002-B spot CVD (4h -1.73M, 1h -1.06M) is not reproducible from them (4h +186,035, 1h -287,242 WLD). Known conflict with the lead/user: restate the clause or record the conflict."
       ],
-      "known_conflict": null
+      "known_conflict": null,
+      "acceptance_history": [
+        {
+          "readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+          "missing": [
+            "No final combined stronger-component snapshot exists. Full24h crossvenue baseline/reference-ranking, missing Bybit spot, historical USD/mark alignment, and books/liquidations remain absent.",
+            "Actual captured four-venue 4hCVD +186034.8441 yields NEUTRAL; full registered cohort INSUFFICIENT_DATA. Literal SELL is not established; do not modify normative formula or fit data."
+          ],
+          "superseded_reason": "Superseded 2026-10-20 by the r90 gen4 full packet at current config."
+        }
+      ],
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-11/inputs/input.json.zst",
+        "sha256": "6f63b65ff7aa7f7027a0d2e4541a73690511dc5da96c8b7fd7a07397947c77ad"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-11/private/map.json",
+        "sha256": "30ff8ece056fd15549e0c40b81b853e30419ea0a748491f64e0ab7e0e4d08c0d"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-11/sealed/outcomes.json",
+        "sha256": "1d3aa0527e386d07df882b37121fc1c95e126b3b832c9cfa48dd5a68b2e51f6b"
+      },
+      "acceptance_run": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-11/run/run.json",
+        "sha256": "0648774763320f86c3fce3a0bcbd1429f334b47d91b4cf8919f8eda867497ea0"
+      }
     },
     {
       "fixture_id": "F-12",
@@ -1174,11 +1199,32 @@
           "historical_acceptance_claimed": false
         }
       ],
-      "readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+      "readiness": "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
       "missing": [
-        "Historical spot/depth absent; native closing measured. Quoted hourly-close price uses another bound and must not replace strict cutoff."
+        "Machine predicates 4/4 on the formula run; the manual clause 'positions closing during the rise' needs a price move, which needs complete 1m spot flow bars (Binance spot QNTUSDT aggTrades 26-27 Sep, fetch requested from tank-market)."
       ],
-      "known_conflict": null
+      "known_conflict": null,
+      "acceptance_history": [
+        {
+          "readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+          "missing": [
+            "Historical spot/depth absent; native closing measured. Quoted hourly-close price uses another bound and must not replace strict cutoff."
+          ],
+          "superseded_reason": "Superseded 2026-10-20 by the r90 gen4 full packet at current config."
+        }
+      ],
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-14/inputs/input.json.zst",
+        "sha256": "7f123817632babe1422e0ba867540054cacedc0deb53c7f8812a932afff10a68"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-14/private/map.json",
+        "sha256": "ee636557eaca594bb3adb55353d2df31ada9a532dda66dee14a9571a17a578f3"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-14/sealed/outcomes.json",
+        "sha256": "1a1ec6abfbc6bf6f822a848a073d7bd1ea71026180690a46562176bab866dd92"
+      }
     },
     {
       "fixture_id": "F-15",
