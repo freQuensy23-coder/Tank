@@ -28,6 +28,21 @@ log = logging.getLogger(__name__)
 # Raw journals are appended and fsynced at most this often (seconds); typed rows of
 # the same prints follow in the same flush.
 RAW_FLUSH_S = 5
+# Streamed mark/index/funding/OI context is stored at the hot tier's summary cadence
+# (03 §5.1: book summaries every 10 s); the newest value is kept in memory between.
+CONTEXT_S = 10
+# Rows read only from public exchange endpoints never contain a Tank secret.
+PUBLIC_MARKET = frozenset(
+    {
+        "mkt.flow_bars_1m",
+        "mkt.klines_1m",
+        "mkt.book_summaries",
+        "mkt.oi_obs",
+        "mkt.funding_obs",
+        "mkt.liq_obs",
+        "mkt.tickers_24h",
+    }
+)
 COLLECTIONS = {
     "flow_bars": ("mkt.flow_bars_1m", "minute_start"),
     "klines": ("mkt.klines_1m", "open_time"),
@@ -67,6 +82,12 @@ class MarketService:
         self._raw_logged = time.monotonic()
         self._started = utcnow()
         self._hour_loads = {}
+        # Newest already-stored point of REST histories (OI history, settled funding)
+        # that every derivatives poll returns again in full.
+        self._history_marks = {}
+        self._context_due = {}
+        self._reads = {}  # host -> [succeeded, failed] REST reads since the last minute log
+        self._hot_since = {}  # hot token -> earliest anchor of its events
         self._pending_market = {}
         self._market_cache = {}
         self._market_flush_lock = asyncio.Lock()
@@ -161,7 +182,12 @@ class MarketService:
         if collection.startswith("mkt."):
             if collection == "mkt.trades":
                 raise ValueError("Individual trades belong only in normalized hourly Parquet")
-            row = self.provenance(jsonable(row))
+            row = jsonable(row)
+            row = (
+                dict(row, config_version=self.settings.config_version, code_version=self.settings.code_version)
+                if collection in PUBLIC_MARKET
+                else self.provenance(row)
+            )
             row.setdefault("recorded_at", iso())
             row.update(collection_clock(row["recorded_at"]).fields("recorded_at"))
             row["semantic_fingerprint"] = sha256(self._semantic_content(row))
@@ -395,6 +421,11 @@ class MarketService:
                 stats["max_write_s"],
                 stats["max_pending"],
             )
+            reads, self._reads = self._reads, {}
+            log.info(
+                "rest reads: %s",
+                " ".join(f"{host}={ok}/{failed}" for host, (ok, failed) in sorted(reads.items())),
+            )
             self._raw_logged = time.monotonic()
             self._raw_stats = {"rows": 0, "sealed": 0, "writes": 0, "max_write_s": 0.0, "max_pending": 0}
 
@@ -446,6 +477,17 @@ class MarketService:
             return body
 
     async def _request_live(self, method, url, **kwargs):
+        host = httpx.URL(url).host
+        counts = self._reads.setdefault(host, [0, 0])
+        try:
+            body = await self._request_once(method, url, **kwargs)
+        except Exception:
+            counts[1] += 1
+            raise
+        counts[0] += 1
+        return body
+
+    async def _request_once(self, method, url, **kwargs):
         priority = kwargs.pop("_priority", 0)
         host = httpx.URL(url).host
         interval = (
@@ -607,8 +649,13 @@ class MarketService:
                             "mark": mark,
                         },
                     )
-                    instrument["funding_interval_h"] = interval
-                    await self._put("reg.instruments", instrument_id, instrument)
+                    if instrument.get("funding_interval_h") != interval:
+                        instrument["funding_interval_h"] = interval
+                        await self._put("reg.instruments", instrument_id, instrument)
+                    histories = [r for r in oi if r.get("timestamp") is not None and "time" not in r]
+                    oi = [r for r in oi if r not in histories] + (
+                        self._fresh(instrument_id, "oi", histories, lambda r: r["timestamp"])[1]
+                    )
                     for raw in oi:
                         row = norm.oi(
                             instrument,
@@ -647,13 +694,19 @@ class MarketService:
                             else "COLLECTION_TIME",
                         )
                         await self._funding(instrument, current, "CURRENT_ESTIMATE", interval)
+                    predecessor, settled = self._fresh(
+                        instrument_id,
+                        "settled",
+                        settled,
+                        lambda r: r.get("fundingTime", r.get("fundingRateTimestamp", r.get("time"))),
+                    )
                     ordered = sorted(
                         settled,
                         key=lambda r: parse_time(
                             r.get("fundingTime", r.get("fundingRateTimestamp", r.get("time")))
                         ),
                     )
-                    previous = None
+                    previous = predecessor
                     for raw in ordered:
                         stamp = parse_time(
                             raw.get("fundingTime", raw.get("fundingRateTimestamp", raw.get("time")))
@@ -679,6 +732,29 @@ class MarketService:
             except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
                 await self._gap(instrument, kind.upper(), exc)
         await self.flush_market()
+
+    def _fresh(self, instrument_id, kind, rows, stamp):
+        """Points of a repeated REST history newer than those processed before, and the
+        time of the newest older one (a settled rate's interval starts at it)."""
+        key = (instrument_id, kind)
+        last = self._history_marks.get(key)
+        timed = [(parse_time(stamp(row)), row) for row in rows]
+        if timed:
+            newest = max(at for at, _ in timed)
+            self._history_marks[key] = newest if last is None else max(last, newest)
+        if last is None:
+            return None, list(rows)
+        older = [at for at, _ in timed if at <= last]
+        return (max(older) if older else None), [row for at, row in timed if at > last]
+
+    def context_due(self, instrument_id, kind):
+        """Stream context (mark, index, funding estimate, OI) is stored once per CONTEXT_S."""
+        now = time.monotonic()
+        key = (instrument_id, kind)
+        if self._context_due.get(key, 0) > now:
+            return False
+        self._context_due[key] = now + CONTEXT_S
+        return True
 
     async def _funding(self, instrument, raw, kind, interval, *, source="PUBLIC_REST"):
         row = norm.funding(instrument, raw, kind=kind, interval_h=interval)
@@ -962,7 +1038,8 @@ class MarketService:
         if self.trade_archive.needs_load(canonical):
             await self._load_trade_hour(canonical)
         late = bar_key not in self.flow.bars and self.trade_archive.minute_archived(iid, minute)
-        if not self.trade_archive.append(self.provenance(row)):
+        row.update(config_version=self.settings.config_version, code_version=self.settings.code_version)
+        if not self.trade_archive.append(row):
             return False
         if backfill:
             return True
@@ -1070,12 +1147,11 @@ class MarketService:
                     if not allow_recovery:
                         cursor += timedelta(minutes=1)
                         continue
-                    # A minute this process archived, or one begun before it started,
-                    # is rebuilt from its prints; any other unseen minute is empty.
+                    # A minute whose prints were archived but whose bar left memory is
+                    # rebuilt from them; any other unseen connected minute is empty.
                     rows = (
                         await self._archived_minute(iid, cursor)
                         if self.trade_archive.minute_archived(iid, cursor)
-                        or cursor < self._started + timedelta(minutes=1)
                         else []
                     )
                     self.flow.empty_minute(self.instruments[iid], cursor)
@@ -1254,7 +1330,7 @@ class MarketService:
             for slice_index, (lo, hi) in enumerate(slices):
                 cursor = (
                     int(checkpoint["last_trade_id"]) + 1
-                    if checkpoint and key.startswith("binance") and slice_index == 0
+                    if checkpoint and checkpoint.get("last_trade_id") and key.startswith("binance") and slice_index == 0
                     else None
                 )
                 exhausted = False
@@ -2070,11 +2146,12 @@ class MarketService:
         if not self.capture_only and time.monotonic() - self._last_hot_expiry_refresh >= 60:
             await self.refresh_hot_expiry()
             self._last_hot_expiry_refresh = time.monotonic()
-        hot = (
-            set()
-            if self.capture_only
-            else {r["token_id"] for r in await self.repo.list("mkt.hot_tokens", limit=10000)}
-        )
+        rows = [] if self.capture_only else await self.repo.list("mkt.hot_tokens", limit=10000)
+        hot = {r["token_id"] for r in rows}
+        self._hot_since = {}
+        for r in rows:
+            if r["token_id"] not in self._hot_since or r["since"] < self._hot_since[r["token_id"]]:
+                self._hot_since[r["token_id"]] = r["since"]
         desired = {}
         for iid, inst in self.instruments.items():
             if inst["token_id"] in hot:

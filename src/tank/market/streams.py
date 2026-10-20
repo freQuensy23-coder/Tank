@@ -5,6 +5,8 @@ import json
 import time
 from decimal import Decimal
 
+from datetime import timedelta
+
 from tank.util import iso, parse_time, sha256, utcnow
 
 from .books import OrderBook
@@ -105,8 +107,11 @@ async def process_frame(self, instrument, raw):
         elif event == "forceOrder":
             await save_liquidation(self, instrument, data)
         elif event == "markPriceUpdate":
-            await save_mark(self, instrument, data["p"], data["E"], index=data.get("i"), index_ts=data["E"])
-            if instrument.get("funding_interval_h"):
+            due = self.context_due(iid, "mark")
+            await save_mark(
+                self, instrument, data["p"], data["E"], index=data.get("i"), index_ts=data["E"], persist=due
+            )
+            if due and instrument.get("funding_interval_h"):
                 await save_funding(
                     self,
                     instrument,
@@ -123,6 +128,8 @@ async def process_frame(self, instrument, raw):
             book.snapshot(raw["bids"], raw["asks"], sequence=0, ts=iso(), ts_prec="COLLECTION_ONLY")
             await self._save_book(instrument)
         elif event == "l2update":
+            if book.sequence is None:
+                return  # updates before this subscription's snapshot belong to no book yet
             bids = [r[1:] for r in raw["changes"] if r[0] == "buy"]
             asks = [r[1:] for r in raw["changes"] if r[0] == "sell"]
             book.update(bids, asks, sequence=int(book.sequence) + 1, ts=raw["time"])
@@ -160,12 +167,14 @@ async def process_frame(self, instrument, raw):
                     )
                 await self._save_book(instrument)
             elif channel == "open-interest":
+                if not self.context_due(iid, "oi"):
+                    continue
                 row = oi(instrument, item)
                 await self._put("mkt.oi_obs", iid + ":" + row["metric_key"] + ":" + row["ts"], row)
             elif channel == "funding-rate":
                 prev = item.get("prevFundingTime")
                 cur = item.get("fundingTime")
-                if prev and cur:
+                if prev and cur and self.context_due(iid, "funding"):
                     await save_funding(
                         self,
                         instrument,
@@ -174,7 +183,9 @@ async def process_frame(self, instrument, raw):
                         (Decimal(cur) - Decimal(prev)) / 3600000,
                     )
             elif channel == "mark-price":
-                await save_mark(self, instrument, item["markPx"], item["ts"])
+                await save_mark(
+                    self, instrument, item["markPx"], item["ts"], persist=self.context_due(iid, "mark")
+                )
             elif channel == "index-tickers":
                 context = self._price_contexts.setdefault(iid, {})
                 context.update(index_price=item["idxPx"], index_ts=iso(item["ts"]))
@@ -186,6 +197,7 @@ async def process_frame(self, instrument, raw):
                         context["mark_ts"],
                         index=item["idxPx"],
                         index_ts=item["ts"],
+                        persist=self.context_due(iid, "mark"),
                     )
             elif channel == "liquidation-orders":
                 for detail in item.get("details", []):
@@ -219,8 +231,13 @@ async def process_frame(self, instrument, raw):
                     raw["ts"],
                     index=context.get("indexPrice"),
                     index_ts=raw["ts"],
+                    persist=self.context_due(iid, "mark"),
                 )
-            if data.get("fundingRate") and instrument.get("funding_interval_h"):
+            if (
+                data.get("fundingRate")
+                and instrument.get("funding_interval_h")
+                and self.context_due(iid, "funding")
+            ):
                 await save_funding(
                     self, instrument, data, "CURRENT_ESTIMATE", instrument["funding_interval_h"]
                 )
@@ -238,6 +255,8 @@ async def process_frame(self, instrument, raw):
                         ts=item.get("timestamp"),
                         checksum=item.get("checksum"),
                     )
+                elif book.sequence is None:
+                    continue  # updates before this subscription's snapshot belong to no book yet
                 else:
                     book.update(
                         item.get("bids", []),
@@ -264,10 +283,14 @@ async def process_frame(self, instrument, raw):
             await self._save_book(instrument)
         elif channel == "activeAssetCtx":
             ctx = data["ctx"]
-            row = oi(instrument, ctx)
-            await self._put("mkt.oi_obs", iid + ":" + row["metric_key"] + ":" + row["ts"], row)
-            await save_funding(self, instrument, ctx, "CURRENT_ESTIMATE", "1")
-            await save_mark(self, instrument, ctx["markPx"], iso(), index=ctx.get("oraclePx"), index_ts=iso())
+            due = self.context_due(iid, "context")
+            if due:
+                row = oi(instrument, ctx)
+                await self._put("mkt.oi_obs", iid + ":" + row["metric_key"] + ":" + row["ts"], row)
+                await save_funding(self, instrument, ctx, "CURRENT_ESTIMATE", "1")
+            await save_mark(
+                self, instrument, ctx["markPx"], iso(), index=ctx.get("oraclePx"), index_ts=iso(), persist=due
+            )
 
     if not (key == "binance.usdm" and data.get("e") == "depthUpdate"):
         record_stream_watermark(self, instrument, raw)
@@ -364,8 +387,10 @@ def subscription_messages(instruments, *, subscribe=True, endpoint=None):
                 item["args"] = [a for a in item["args"] if a["channel"] != "liquidation-orders"]
             messages.append(item)
     if venue.startswith(("okx", "bybit")):
-        args = {json.dumps(arg, sort_keys=True): arg for item in messages for arg in item["args"]}
-        return [{"op": action, "args": list(args.values())}] if args else []
+        args = list({json.dumps(arg, sort_keys=True): arg for item in messages for arg in item["args"]}.values())
+        # Bybit spot accepts at most 10 topics per subscribe request ("args size >10").
+        size = 10 if venue.startswith("bybit") else len(args) or 1
+        return [{"op": action, "args": args[i : i + size]} for i in range(0, len(args), size)]
     if venue.startswith("coinbase"):
         return [
             {
@@ -449,10 +474,17 @@ async def prepare_member(self, instrument, *, depth_only=False):
     await self._ensure_market_restore()
     previous = self._capture_checkpoints.get(iid)
     if previous:
+        # 03 §5.2: after a reconnect, backfill over REST from the last seen print.
         await self._gap(
             instrument, "RECONNECT", "REST reconciliation pending", start=previous["last_ts"], end=iso()
         )
-    # First escalation also needs the post-event interval before socket establishment.
+    else:
+        # First connection: the escalation backfills the pre-event windows up to the
+        # anchor (03 §5.1); this one covers the anchor up to the socket.
+        since = self._hot_since.get(instrument["token_id"])
+        if since is None or parse_time(since) >= utcnow():
+            return
+        previous = {"last_ts": iso(max(parse_time(since), utcnow() - timedelta(hours=24)))}
     task = asyncio.create_task(self.backfill(instrument, iso(), checkpoint=previous))
     self._background.add(task)
     task.add_done_callback(self._background.discard)
@@ -673,7 +705,9 @@ async def save_mark(
     source="WEBSOCKET",
     received_ts=None,
     index_clock_basis=None,
+    persist=True,
 ):
+    """Track the newest mark/index; store a point only when `persist` (stream cadence)."""
     iid = instrument["instrument_id"]
     context = self._price_contexts.setdefault(iid, {})
     received = iso(received_ts)
@@ -715,6 +749,8 @@ async def save_mark(
                 "clock_basis": index_clock_basis or mark_fact["clock_basis"],
             },
         )
+    if not persist:
+        return
     ts = context["mark_ts"]
     price = context["mark_price"]
     aligned = (

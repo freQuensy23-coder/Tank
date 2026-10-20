@@ -115,6 +115,8 @@ class OrderBook:
         self.exchange_ts_prec = "EXACT" if ts is not None else "COLLECTION_ONLY"
         if key.startswith("kraken"):
             for side, book in (("bid", self.bids), ("ask", self.asks)):
+                if len(book) <= 1000:
+                    continue
                 keep = set(sorted(book, reverse=side == "bid")[:1000])
                 for price in list(book):
                     if price not in keep:

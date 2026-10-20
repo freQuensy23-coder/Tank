@@ -241,3 +241,18 @@ def test_file_retention_by_path_keeps_event_days_and_recent_hours(tmp_path):
     )
     assert (tmp_path / f"raw/trades/binance/spot/ABCUSDT/{event_day}/12.parquet").exists()
     assert (tmp_path / f"raw/books/binance/ABCUSDT/{recent}").exists() and fresh.exists()
+
+
+@pytest.mark.asyncio
+async def test_repeated_rest_histories_are_processed_once_and_stream_context_once_per_10s(setup):
+    repo, settings, inst = setup
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        rows = [{"fundingTime": 1_700_000_000_000 + n * 28_800_000} for n in range(3)]
+        assert service._fresh("i", "settled", rows, lambda r: r["fundingTime"]) == (None, rows)
+        newer = rows + [{"fundingTime": rows[-1]["fundingTime"] + 28_800_000}]
+        predecessor, fresh = service._fresh("i", "settled", newer, lambda r: r["fundingTime"])
+        assert fresh == newer[-1:] and predecessor == parse_time(rows[-1]["fundingTime"])
+        assert service._fresh("i", "settled", newer, lambda r: r["fundingTime"])[1] == []
+        assert service.context_due("i", "mark") and not service.context_due("i", "mark")
+        assert service.context_due("i", "funding")  # each context kind has its own cadence
