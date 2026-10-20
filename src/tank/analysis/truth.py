@@ -2513,8 +2513,9 @@ def supply_truth(snapshot, start, end):
             )
             if pct is not None and nr and pct > nr[1]:
                 evidence = True
-    elif current:
-        unavailable["exchange_inventory"] = current.get("reason", "INCOMPLETE")
+    else:
+        # No observation is n/a with a reason, never an empty (FR-T-13, 03 §0).
+        unavailable["exchange_inventory"] = current.get("reason", "INCOMPLETE") if current else "INCOMPLETE"
     wallet = latest(("WALLET_FLOWS",))
     if wallet and wallet.get("available") is not False:
         available = True
@@ -2533,6 +2534,8 @@ def supply_truth(snapshot, start, end):
                 evidence = True
     elif wallet:
         unavailable["flows"] = wallet.get("reason", "INCOMPLETE")
+    elif not any(kind(r) in ("FLOW", "WALLET_FLOW") for r in rows):
+        unavailable["flows"] = "INCOMPLETE"
     for r in rows:
         if kind(r) in ("FLOW", "WALLET_FLOW") and r.get("available") is not False and start <= _time(r) < end:
             flow = dict(r)
@@ -2551,6 +2554,9 @@ def supply_truth(snapshot, start, end):
         schedules = unlock.get("unlocks", [])
     elif unlock:
         unavailable["unlocks"] = unlock.get("reason", "INCOMPLETE")
+    elif not any(kind(r) == "UNLOCK" for r in rows):
+        # No schedule read: an empty list would read as "no unlock scheduled".
+        unavailable["unlocks"] = "INCOMPLETE"
     schedules += [r for r in rows if kind(r) == "UNLOCK" and r.get("available") is not False]
     for u in schedules:
         stamp = u.get("date", u.get("ts"))
@@ -2593,10 +2599,14 @@ def supply_truth(snapshot, start, end):
             lending["reason"] = "APY_IS_NOT_APR"
     elif lend:
         unavailable["lending"] = lend.get("reason", "INCOMPLETE")
+    else:
+        unavailable["lending"] = "INCOMPLETE"
     chain_latest = {}
     for r in rows:
         if kind(r) in ("CHAIN_LIQUIDITY", "STABLECOIN_CHAIN"):
             chain_latest[r.get("chain")] = r
+    if not chain_latest:
+        unavailable["stablecoin_chain"] = "INCOMPLETE"
     for chain, r in chain_latest.items():
         if r.get("available") is False:
             unavailable["stablecoin_chain"] = r.get("reason", "INCOMPLETE")
