@@ -1,4 +1,3 @@
-import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -47,17 +46,11 @@ def test_sources_have_concrete_endpoints():
     assert len(next(x for x in s if x["source_id"] == "S25")["feeds"]) == 12
 
 
-def test_cutoffs_are_bound_to_recorded_calibration():
+def test_cutoffs_are_the_uncalibrated_midpoint_until_v0b_calibration():
+    # User decision 2026-10-20 (todo.md): launch at 0.5, calibrate on labeled real news later.
     t = load("thresholds")
-    evidence = t["calibration_evidence"]
-    path = C.parent / evidence["report"]
-    assert hashlib.sha256(path.read_bytes()).hexdigest() == evidence["report_sha256"]
-    report = json.loads(path.read_text())
-    assert report["selected"] == {key: t[key] for key in ("filter_cutoff", "routing_cutoff")}
-    assert report["routing_selection_objective"] == t["routing_selection_objective"]
-    retest = C.parent / evidence["independent_retest"]
-    assert hashlib.sha256(retest.read_bytes()).hexdigest() == evidence["independent_retest_sha256"]
-    assert json.loads(retest.read_text())["thresholds_tuned_after_retest"] is False
+    assert t["filter_cutoff"] == t["routing_cutoff"] == 0.5
+    assert not {"routing_selection_objective", "calibration_evidence"} & t.keys()
     assert t["market_context_rule"] == "normal_range"
     assert "known_f16_conflict" not in t
 
