@@ -985,3 +985,14 @@ async def test_metadata_pages_omit_large_document_payload(repo):
     assert all(
         set(r) == {"event_id", "token_id", "revision", "missing"} and r["missing"] is None for r in rows
     )
+
+
+async def test_postgres_pool_recycles_connections():
+    url = os.getenv("TANK_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Real PostgreSQL requires TANK_TEST_DATABASE_URL pointing at an isolated test database")
+    repo = await PostgresRepository(url).open()
+    try:
+        assert (repo._pool.max_size, repo._pool.max_idle, repo._pool.max_lifetime) == (16, 120, 600)
+    finally:
+        await repo.close()
