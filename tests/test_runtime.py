@@ -102,7 +102,7 @@ def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tm
     assert not by_name["openma_agent_id"] and not by_name["openma_scout_agent_id"]
     assert not by_name["openma_environment_id"] and not by_name["openma_replay_environment_id"]
     assert by_name["openma_api_key"]
-    assert not by_name["user_agent_contact"] and not by_name["x_profile"] and not by_name["x_list_id"]
+    assert not by_name["user_agent_contact"] and not by_name["x_profile"] and not by_name["s29_list_id"]
     assert "sensitive-secret" not in json.dumps(checks)
 
 

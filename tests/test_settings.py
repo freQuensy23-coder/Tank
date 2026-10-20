@@ -140,7 +140,7 @@ def test_deployment_values_come_from_frozen_config_with_explicit_override(tmp_pa
     config = tmp_path / "config"
     config.mkdir()
     (config / "delivery.yaml").write_text("alerts_chat_id: '-1000000000001'\nops_chat_id: '-1000000000002'\n")
-    (config / "sources.yaml").write_text("user_agent: 'TankV0/1.0 (test@example.invalid)'\n")
+    (config / "sources.yaml").write_text("contact_email: test@example.invalid\n")
     settings = Settings(
         config_dir=config,
         data_dir=tmp_path / "data",
@@ -165,13 +165,9 @@ def test_openrouter_alias_secret_and_explicit_provider(tmp_path, monkeypatch):
     monkeypatch.setenv("TANK_OPENROUTER_API_KEY", "FAKE-prefixed-router")
     settings = Settings(_env_file=None, secrets_dir=tmp_path)
     assert settings.openrouter_api_key == "FAKE-prefixed-router"
-    assert settings.jev_provider == "openrouter"
     assert "FAKE-prefixed-router" not in repr(settings)
     assert Settings(_env_file=None, openrouter_api_key="FAKE-explicit").openrouter_api_key == "FAKE-explicit"
-    with pytest.raises(ValueError):
-        Settings(_env_file=None, jev_provider="typesafe")
-    with pytest.raises(ValueError):
-        Settings(_env_file=None, jev_provider="automatic")
+    assert "jev_provider" not in Settings.model_fields
 
 
 def test_codex_auth_default_only_resolves_path(tmp_path, monkeypatch):
@@ -195,7 +191,7 @@ def test_readiness_requires_only_openrouter_key(tmp_path):
     settings = Settings(_env_file=None, secrets_dir=tmp_path, openrouter_api_key="FAKE-ready-key")
     checks = {row["check"]: row for row in readiness_checks(settings)}
     assert checks["openrouter_api_key"]["ok"]
-    assert checks["jev_provider"] == {"check": "jev_provider", "ok": True, "provider": "openrouter"}
+    assert "jev_provider" not in checks
     assert "typesafe_api_key" not in checks
     assert "FAKE-ready-key" not in str(checks)
 
@@ -210,5 +206,35 @@ def test_x_disabled_is_explicit_readiness_scope_not_missing_credentials(tmp_path
         "ok": True,
         "enabled": False,
     }
-    assert "x_list_id" not in checks and "x_profile" not in checks
+    assert "s29_list_id" not in checks and "x_profile" not in checks
     assert settings.x_profile_dir.exists() is False
+
+
+@pytest.mark.parametrize(
+    "name", ["TANK_USER_AGENT", "TANK_TELEGRAM_ALERTS_CHAT", "TANK_TELEGRAM_OPS_CHAT"]
+)
+def test_configuration_values_never_come_from_environment(monkeypatch, name):
+    monkeypatch.setenv(name, "FAKE-environment-value")
+    with pytest.raises(ValueError, match=name):
+        Settings(_env_file=None)
+    monkeypatch.setenv(name, "")
+    assert getattr(Settings(_env_file=None), name.removeprefix("TANK_").lower()) != ""
+
+
+def test_user_agent_and_chats_from_configuration(tmp_path):
+    from tank.cli import readiness_checks
+
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "delivery.yaml").write_text("alerts_chat_id: '-1001'\nops_chat_id: '-1002'\n")
+    (config / "sources.yaml").write_text(
+        "contact_email: ops@example.org\nsources:\n- source_id: S29\n  list_id: '12345'\n"
+    )
+    frozen = resolve_versions(Settings(_env_file=None, config_dir=config, data_dir=tmp_path / "data"))
+    assert frozen.user_agent == "TankV0/1.0 (ops@example.org)"
+    assert (frozen.telegram_alerts_chat, frozen.telegram_ops_chat) == ("-1001", "-1002")
+    checks = {row["check"]: row for row in readiness_checks(frozen)}
+    assert checks["user_agent_contact"]["ok"] and checks["s29_list_id"]["ok"]
+    assert "x_list_id" not in checks
+    legacy = frozen.model_copy(update={"user_agent": "TankV0/1.0 contact=ops@example.org"})
+    assert not {row["check"]: row for row in readiness_checks(legacy)}["user_agent_contact"]["ok"]

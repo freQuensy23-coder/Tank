@@ -8,7 +8,7 @@ from pathlib import Path
 import click
 
 from tank.logging import configure_logging
-from tank.settings import Settings, resolve_versions
+from tank.settings import Settings, configured_values, resolve_versions
 from tank.time_precision import collection_clock
 from tank.util import iso, jsonable, new_id
 
@@ -408,7 +408,7 @@ def readiness_checks(settings):
         )
 
     checks = []
-    for name in ("sources", "registry", "semantics", "dependency_map", "thresholds", "openma"):
+    for name in ("sources", "delivery", "registry", "semantics", "dependency_map", "thresholds", "openma"):
         try:
             config = settings.load_config(name)
             checks.append({"check": name + "_syntax", "ok": True})
@@ -425,8 +425,6 @@ def readiness_checks(settings):
                     checks.append({"check": "openma_" + key, "ok": configured(config.get(key))})
         except Exception as exc:
             checks.append({"check": name + "_syntax", "ok": False, "reason": type(exc).__name__})
-    provider = getattr(settings, "jev_provider", "openrouter")
-    checks.append({"check": "jev_provider", "ok": provider == "openrouter", "provider": provider})
     checks.append({"check": "openrouter_api_key", "ok": configured(getattr(settings, "openrouter_api_key", None))})
     for name in (
         "openma_api_key",
@@ -446,7 +444,14 @@ def readiness_checks(settings):
     except OSError as exc:
         checks.append({"check": "codex_auth_file_present", "ok": False, "reason": type(exc).__name__})
     if getattr(settings, "x_enabled", True):
-        checks.append({"check": "x_list_id", "ok": configured(getattr(settings, "x_list_id", None))})
+        try:
+            s29 = next(
+                (s for s in settings.load_config("sources").get("sources", []) if s.get("source_id") == "S29"),
+                {},
+            )
+            checks.append({"check": "s29_list_id", "ok": configured(s29.get("list_id"))})
+        except Exception as exc:
+            checks.append({"check": "s29_list_id", "ok": False, "reason": type(exc).__name__})
         profile = Path(settings.x_profile_dir)
         try:
             checks.append({"check": "x_profile", "ok": profile.is_dir() and any(profile.iterdir())})
@@ -458,8 +463,9 @@ def readiness_checks(settings):
     checks.append(
         {
             "check": "user_agent_contact",
-            "ok": configured(user_agent)
-            and bool(re.search(r"[A-Za-z0-9_.+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}", user_agent)),
+            "ok": bool(
+                re.fullmatch(r"TankV0/1\.0 \([A-Za-z0-9_.+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\)", user_agent or "")
+            ),
         }
     )
     return checks
@@ -473,6 +479,10 @@ def doctor():
 
         settings = Settings()
         configure_logging(settings)
+        try:
+            settings = settings.model_copy(update=configured_values(settings))
+        except Exception:
+            pass  # readiness_checks reports the unreadable configuration file.
         checks = readiness_checks(settings)
         from psycopg import AsyncConnection
 
