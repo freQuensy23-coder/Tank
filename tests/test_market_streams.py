@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 
 import httpx
 import pytest
@@ -13,8 +14,8 @@ from tank.storage import MemoryRepository
 from tank.util import utcnow
 
 
-@pytest.mark.asyncio
-async def test_multiplexed_endpoint_incremental_hot_membership_without_reconnect(tmp_path, monkeypatch):
+def binance_spot_service(tmp_path, monkeypatch):
+    """Two Binance spot products behind fake sockets; returns (service, repo, http, instruments, sockets)."""
     from tank.market import streams
 
     config = tmp_path / "config"
@@ -80,12 +81,18 @@ async def test_multiplexed_endpoint_incremental_hot_membership_without_reconnect
 
     monkeypatch.setattr("websockets.connect", connect)
     monkeypatch.setattr(streams, "prepare_member", prepare)
+    return service, repo, http, instruments, sockets
 
-    async def settle(predicate):
-        async with asyncio.timeout(2):
-            while not predicate():
-                await asyncio.sleep(0.005)
 
+async def settle(predicate):
+    async with asyncio.timeout(2):
+        while not predicate():
+            await asyncio.sleep(0.005)
+
+
+@pytest.mark.asyncio
+async def test_multiplexed_endpoint_incremental_hot_membership_without_reconnect(tmp_path, monkeypatch):
+    service, repo, http, instruments, sockets = binance_spot_service(tmp_path, monkeypatch)
     await repo.put(
         "mkt.hot_tokens",
         "test:ABC:e",
@@ -115,6 +122,46 @@ async def test_multiplexed_endpoint_incremental_hot_membership_without_reconnect
     }
     service._stop.set()
     await asyncio.wait_for(original, 2)
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_queued_frames_drain_without_an_event_loop_turn_each(tmp_path, monkeypatch):
+    # Production shares the loop with callbacks that hold it for seconds. One loop
+    # turn per frame let websockets' queue fill, pause reading and time out the pong.
+    from tank.market import streams
+
+    service, repo, http, _, sockets = binance_spot_service(tmp_path, monkeypatch)
+    processed = []
+
+    async def count(market, instrument, raw):
+        processed.append(raw)
+
+    monkeypatch.setattr(streams, "process_frame", count)
+    await repo.put(
+        "mkt.hot_tokens",
+        "test:ABC:e",
+        {"token_id": "test:ABC", "event_id": "e", "priority": 1, "since": "2026-01-01T00:00:00Z"},
+    )
+    await service._sync_streams()
+    await settle(lambda: bool(sockets) and bool(sockets[0][1].messages))
+    turns = [0]
+
+    async def hog():
+        while True:
+            turns[0] += 1
+            time.sleep(0.01)  # noqa: ASYNC251 - a callback holding the loop is the scenario
+            await asyncio.sleep(0)
+
+    hogging = asyncio.create_task(hog())
+    for n in range(300):
+        frame = {"stream": "abcusd@aggTrade", "data": {"e": "aggTrade", "s": "ABCUSD", "a": n}}
+        sockets[0][1].incoming.put_nowait(json.dumps(frame))
+    await settle(lambda: len(processed) == 300)
+    assert turns[0] < 30
+    hogging.cancel()
+    service._stop.set()
+    await asyncio.wait_for(next(iter(service.streams.values())), 2)
     await http.aclose()
 
 

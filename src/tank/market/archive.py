@@ -1,5 +1,6 @@
 """Hourly raw Parquet (HLD §7.2) and verified Binance historical archive ingestion."""
 
+import asyncio
 import csv
 import hashlib
 import io
@@ -14,7 +15,7 @@ from pathlib import Path
 from urllib.parse import quote
 
 from tank.time_precision import collection_clock
-from tank.util import canonical_json, iso, new_id, parse_time, utcnow
+from tank.util import canonical_json, iso, parse_time, utcnow
 
 
 class ArchiveIntegrityError(ValueError):
@@ -254,12 +255,16 @@ class HourlyParquet:
             with pq.ParquetWriter(temporary, schema, compression="zstd") as writer:
                 for batch in self._batches(canonical, journals):
                     columns = [
-                        batch.column(name) if name in batch.schema.names else pa.nulls(batch.num_rows, pa.string())
+                        batch.column(name)
+                        if name in batch.schema.names
+                        else pa.nulls(batch.num_rows, pa.string())
                         for name in schema.names
                     ]
                     table = pa.Table.from_arrays(columns, schema=schema)
                     keep = []
-                    for row in zip(*(table.column(name).to_pylist() for name in self.identity_fields), strict=True):
+                    for row in zip(
+                        *(table.column(name).to_pylist() for name in self.identity_fields), strict=True
+                    ):
                         key = self._identity(row)
                         keep.append(key not in seen)
                         seen.add(key)
@@ -361,9 +366,7 @@ class TradeArchive(HourlyParquet):
         instrument = self.instruments.get(instrument_id)
         if instrument is None:
             raise ArchiveIntegrityError("raw trade instrument is not in the registry: " + str(instrument_id))
-        venue, market, symbol = (
-            _component(instrument[k]) for k in ("venue", "market_type", "venue_symbol")
-        )
+        venue, market, symbol = (_component(instrument[k]) for k in ("venue", "market_type", "venue_symbol"))
         path = self.root / venue.lower() / market.lower() / symbol / stamp[:10] / (stamp[11:13] + ".parquet")
         if len(self._paths) > 100000:
             self._paths.clear()
@@ -374,7 +377,9 @@ class TradeArchive(HourlyParquet):
         """Event loop: the hour file of a print, registering a new instrument from the row."""
         iid = row["instrument_id"]
         if iid not in self.instruments and all(row.get(k) for k in ("venue", "market_type", "venue_symbol")):
-            self.instruments[iid] = {k: row[k] for k in ("instrument_id", "venue", "market_type", "venue_symbol")}
+            self.instruments[iid] = {
+                k: row[k] for k in ("instrument_id", "venue", "market_type", "venue_symbol")
+            }
         return self.path(iid, row["ts"])
 
     def needs_load(self, canonical):
@@ -413,7 +418,9 @@ class TradeArchive(HourlyParquet):
         if identity in seen:
             return False
         seen.add(identity)
-        self._minutes.setdefault(canonical, set()).add(iso(parse_time(row["ts"]).replace(second=0, microsecond=0)))
+        self._minutes.setdefault(canonical, set()).add(
+            iso(parse_time(row["ts"]).replace(second=0, microsecond=0))
+        )
         self._touched[canonical] = time.monotonic()
         self._add(canonical, row)
         return True
@@ -422,7 +429,9 @@ class TradeArchive(HourlyParquet):
         """Event loop: a print already on disk (restart warm-up), so it is not taken twice."""
         canonical = self.path(row["instrument_id"], row["ts"])
         self._seen.setdefault(canonical, set()).add(str(row["trade_id"]))
-        self._minutes.setdefault(canonical, set()).add(iso(parse_time(row["ts"]).replace(second=0, microsecond=0)))
+        self._minutes.setdefault(canonical, set()).add(
+            iso(parse_time(row["ts"]).replace(second=0, microsecond=0))
+        )
 
     def recent(self, instrument_id, since):
         """Worker thread: durable prints at or after `since`, oldest first."""
@@ -526,7 +535,9 @@ class TradeArchive(HourlyParquet):
         ):
             # Contiguous proof of the same kind: extend it (one entry per unbroken span).
             if parse_time(end) > parse_time(last["end"]):
-                last.update(end=point["end"], **{k: v for k, v in point.items() if k.startswith("observed_at")})
+                last.update(
+                    end=point["end"], **{k: v for k, v in point.items() if k.startswith("observed_at")}
+                )
         else:
             history.append(point)
         horizon = utcnow() - timedelta(hours=self.COVERAGE_HOURS)
@@ -542,7 +553,6 @@ class TradeArchive(HourlyParquet):
             if parse_time(point["start"]) < hi and parse_time(point["end"]) > lo
         ]
 
-
     def frozen_manifest(self, instrument_id, hour):
         """A replay reference to one sealed hour file: its path, checksum and known coverage."""
         canonical = self.path(instrument_id, hour)
@@ -554,7 +564,11 @@ class TradeArchive(HourlyParquet):
         lo = parse_time(hour).replace(minute=0, second=0, microsecond=0)
         hi = lo + timedelta(hours=1)
         coverage = [
-            dict(point, start=iso(max(lo, parse_time(point["start"]))), end=iso(min(hi, parse_time(point["end"]))))
+            dict(
+                point,
+                start=iso(max(lo, parse_time(point["start"]))),
+                end=iso(min(hi, parse_time(point["end"]))),
+            )
             for point in self._coverage.get(instrument_id, ())
             if parse_time(point["start"]) < hi and parse_time(point["end"]) > lo
         ]
@@ -764,7 +778,6 @@ class BookArchive(HourlyParquet):
         return row
 
 
-
 def prune_market_files(data_dir, now, windows, *, hot_days=30, archive_days=180, protected=()):
     """Raw market file retention of HLD §7.2, found by path alone.
 
@@ -805,10 +818,16 @@ def prune_market_files(data_dir, now, windows, *, hot_days=30, archive_days=180,
                 removed.append(str(directory))
     archive_cutoff = (now - timedelta(days=archive_days)).timestamp()
     for path in sorted((root / "archive" / "binance").rglob("*")):
-        if path.is_file() and not path.is_symlink() and not guarded(path) and path.stat().st_mtime < archive_cutoff:
+        if (
+            path.is_file()
+            and not path.is_symlink()
+            and not guarded(path)
+            and path.stat().st_mtime < archive_cutoff
+        ):
             path.unlink()
             removed.append(str(path))
     return removed
+
 
 def verify_binance_zip(payload, checksum_text, *, filename, kind, expected_unit=None, daily=True):
     parts = checksum_text.strip().split()
@@ -937,8 +956,6 @@ async def fetch_archive(
     """Download, verify and import a single Binance daily/monthly dataset."""
     import httpx
 
-    from .normalize import funding, kline, oi, trade
-
     if market is not None:
         await market.flush_market()
     own = http is None
@@ -970,7 +987,13 @@ async def fetch_archive(
         raise ValueError("archive instrument not present in registry")
     imported = await _imported_rows(repo, instrument, kind, date, archive_id)
     if imported is not None:
-        return {"archive_id": archive_id, "source_url": url, "rows": imported, "complete": True, "imported": True}
+        return {
+            "archive_id": archive_id,
+            "source_url": url,
+            "rows": imported,
+            "complete": True,
+            "imported": True,
+        }
     try:
         # A rejected file leaves nothing behind: the next daily bootstrap or event
         # backfill fetches it again (lead ruling 2026-10-20 18:30, no retry records).
@@ -979,7 +1002,9 @@ async def fetch_archive(
         checksum = await client.get(url + ".CHECKSUM")
         checksum.raise_for_status()
         expected = "MS" if futures or date < "2025-01" else "US"
-        verified = verify_binance_zip(
+        # Unzip, CSV parsing and normalization are CPU work: off the event loop (HLD §5).
+        verified = await asyncio.to_thread(
+            verify_binance_zip,
             response.content,
             checksum.text,
             filename=filename,
@@ -990,159 +1015,43 @@ async def fetch_archive(
         if not verified["complete"]:
             raise ArchiveIntegrityError("archive continuity incomplete")
         directory = Path(settings.data_dir) / "archive" / "binance" / prefix / kind
-        directory.mkdir(parents=True, exist_ok=True)
         path = directory / filename
-        tmp = path.with_suffix(".tmp")
-        tmp.write_bytes(response.content)
-        tmp.replace(path)
-        path.with_suffix(".zip.CHECKSUM").write_text(checksum.text)
+        await asyncio.to_thread(_store_archive, path, response.content, checksum.text)
         provenance = {"config_version": settings.config_version, "code_version": settings.code_version}
-        rows = verified["rows"]
-        header = verified["header"]
-        count = 0
-        flow = None
-        batches = {}
-
-        async def write_trades():
-            # Raw prints are durable before any bar derived from them reaches PostgreSQL.
-            import asyncio
-
-            if market is not None:
-                await market.flush_market(raw=True)
-            else:
-                await asyncio.to_thread(trades.write, trades.take())
-
-        async def batch(collection, key, record):
-            values = batches.setdefault(collection, {})
-            values[key] = record
-            if len(values) >= 1000:
-                if collection == "mkt.flow_bars_1m":
-                    await write_trades()
-                await repo.put_market_batch(collection, list(values.values()), keys=list(values))
-                values.clear()
-
+        iid = instrument["instrument_id"]
+        boundaries, references = {}, {}
+        if market is not None:
+            # The worker reads private copies; the loop keeps mutating the live ones.
+            boundaries = {k: set(v) for k, v in market.flow.boundaries.items() if k[0] == iid}
+            references = {k: v for k, v in market.flow.references.items() if k[0] == iid}
+        trades = None
         if kind == "aggTrades":
-            from .flow import FlowAccumulator
-
-            flow = FlowAccumulator()
-            if market is not None:
-                flow.boundaries = market.flow.boundaries
-                flow.references = market.flow.references
             trades = (
                 market.trade_archive
                 if market is not None
                 else TradeArchive(settings.data_dir, instruments=[instrument])
             )
-            previous_minute = None
-            next_minute = parse_time(date).replace(hour=0, minute=0, second=0, microsecond=0)
-
-        async def emit_bar(key):
-            minute = parse_time(key[1])
-            from datetime import timedelta
-
-            flow.prove_range(
-                instrument["instrument_id"],
-                minute,
-                minute + timedelta(minutes=1),
-                complete=verified["complete"],
-                source="VERIFIED_BINANCE_DAILY_ARCHIVE",
-            )
-            bar = flow.record(key, complete=verified["complete"])
+        chunks = _archive_records(
+            instrument, kind, verified, date, archive_id, provenance, boundaries, references
+        )
+        count = 0
+        while (chunk := await asyncio.to_thread(next, chunks, None)) is not None:
+            records, prints, points = chunk
+            if prints:
+                for row in prints:
+                    trades.append(row)
+                # Raw prints are durable before any bar derived from them reaches PostgreSQL.
+                if market is not None:
+                    await market.flush_market(raw=True)
+                else:
+                    await asyncio.to_thread(trades.write, trades.take())
             if market is not None:
-                for point in bar.get("reference_points", []):
-                    if point.get("complete") and point.get("last_trade"):
-                        market.flow.references[instrument["instrument_id"], point["boundary"]] = point
-            bar.update(
-                source_archive=archive_id,
-                **collection_clock().fields("received_ts"),
-                **collection_clock().fields("recorded_at"),
-                **provenance,
-            )
-            await batch("mkt.flow_bars_1m", key[0] + ":" + key[1], bar)
-            flow.bars.pop(key)
-
-        for raw in rows:
-            if kind == "klines":
-                record = kline(instrument, raw)
-                record["complete"] = bool(record["complete"] and verified["complete"])
-                collection = "mkt.klines_1m"
-                key = instrument["instrument_id"] + ":" + record["open_time"]
-            elif kind == "metrics":
-                source = dict(zip(header, raw))
-                record = oi(
-                    instrument,
-                    {
-                        "sumOpenInterest": source["sum_open_interest"],
-                        "sumOpenInterestValue": source["sum_open_interest_value"],
-                        "timestamp": iso(source["create_time"]),
-                    },
-                )
-                collection = "mkt.oi_obs"
-                key = instrument["instrument_id"] + ":" + record["metric_key"] + ":" + record["ts"]
-            elif kind == "aggTrades":
-                source = dict(zip(("a", "p", "q", "f", "l", "T", "m"), raw[:7]))
-                source["m"] = str(source["m"]).lower() == "true"
-                record = trade(instrument, source, source="ARCHIVE")
-                collection = None
-                key = instrument["instrument_id"] + ":" + record["trade_id"]
-                # Archive quantities remain quote/native; historic FX must be provided separately.
-            elif kind == "fundingRate":
-                source = (
-                    dict(zip(header, raw))
-                    if header
-                    else dict(zip(("calc_time", "funding_interval_hours", "last_funding_rate"), raw))
-                )
-                record = funding(
-                    instrument,
-                    {"fundingTime": source["calc_time"], "fundingRate": source["last_funding_rate"]},
-                    kind="SETTLED",
-                    interval_h=source["funding_interval_hours"],
-                )
-                collection = "mkt.funding_obs"
-                key = instrument["instrument_id"] + ":SETTLED:" + record["funding_time"]
-            else:
-                raise ValueError("unsupported archive kind " + kind)
-            record.update(source_archive=archive_id, **provenance)
-            record.update(collection_clock().fields("recorded_at"))
-            if flow is not None:
-                minute = iso(parse_time(record["ts"]).replace(second=0, microsecond=0))
-                from datetime import timedelta
-
-                if previous_minute is not None and minute != previous_minute:
-                    await emit_bar((instrument["instrument_id"], previous_minute))
-                    next_minute = parse_time(previous_minute) + timedelta(minutes=1)
-                if minute != previous_minute:
-                    while next_minute < parse_time(minute):
-                        flow.empty_minute(instrument, next_minute)
-                        await emit_bar((instrument["instrument_id"], iso(next_minute)))
-                        next_minute += timedelta(minutes=1)
-                trades.append(record)
-                flow.add(record, continuity=False)
-                previous_minute = minute
-            else:
-                await batch(collection, key, record)
-            count += 1
-        if flow is not None:
-            from datetime import timedelta
-
-            if previous_minute is not None:
-                await emit_bar((instrument["instrument_id"], previous_minute))
-            day = parse_time(date)
-            next_minute = (
-                parse_time(previous_minute) + timedelta(minutes=1) if previous_minute is not None else day
-            )
-            while next_minute < day + timedelta(days=1):
-                flow.empty_minute(instrument, next_minute)
-                await emit_bar((instrument["instrument_id"], iso(next_minute)))
-                next_minute += timedelta(minutes=1)
-            await write_trades()
-            if market is None:
-                import asyncio
-
-                await asyncio.to_thread(trades.close)
-        for collection, values in batches.items():
-            if values:
+                market.flow.references.update(points)
+            for collection, values in records.items():
                 await repo.put_market_batch(collection, list(values.values()), keys=list(values))
+            count += len(prints) if kind == "aggTrades" else sum(len(v) for v in records.values())
+        if market is None and trades is not None:
+            await asyncio.to_thread(trades.close)
         if market is not None and kind == "klines":
             # The service counts whole past days once; a newly imported day is counted again.
             market._kline_day_counts.pop((instrument["instrument_id"], parse_time(date)), None)
@@ -1159,6 +1068,140 @@ async def fetch_archive(
     finally:
         if own:
             await client.aclose()
+
+
+def _store_archive(path, payload, checksum_text):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_bytes(payload)
+    tmp.replace(path)
+    path.with_suffix(".zip.CHECKSUM").write_text(checksum_text)
+
+
+def _archive_records(instrument, kind, verified, date, archive_id, provenance, boundaries, references):
+    """Normalize a verified archive in a worker thread, yielding bounded chunks of
+    (records by collection, trade prints, reference points) for the loop to write."""
+    from .flow import FlowAccumulator
+    from .normalize import funding, kline, oi, trade
+
+    iid = instrument["instrument_id"]
+    header = verified["header"]
+    records = defaultdict(dict)
+    prints = []
+    points = {}
+    flow = None
+    if kind == "aggTrades":
+        flow = FlowAccumulator()
+        flow.boundaries = boundaries
+        flow.references = dict(references)
+        previous_minute = None
+        next_minute = parse_time(date).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    def emit_bar(key):
+        minute = parse_time(key[1])
+        flow.prove_range(
+            iid,
+            minute,
+            minute + timedelta(minutes=1),
+            complete=verified["complete"],
+            source="VERIFIED_BINANCE_DAILY_ARCHIVE",
+        )
+        bar = flow.record(key, complete=verified["complete"])
+        for point in bar.get("reference_points", []):
+            if point.get("complete") and point.get("last_trade"):
+                points[iid, point["boundary"]] = point
+        bar.update(
+            source_archive=archive_id,
+            **collection_clock().fields("received_ts"),
+            **collection_clock().fields("recorded_at"),
+            **provenance,
+        )
+        records["mkt.flow_bars_1m"][key[0] + ":" + key[1]] = bar
+        flow.bars.pop(key)
+
+    def full():
+        return len(prints) >= 50_000 or any(len(values) >= 1000 for values in records.values())
+
+    def take():
+        nonlocal records, prints, points
+        chunk = (records, prints, points)
+        records, prints, points = defaultdict(dict), [], {}
+        return chunk
+
+    for raw in verified["rows"]:
+        if kind == "klines":
+            record = kline(instrument, raw)
+            record["complete"] = bool(record["complete"] and verified["complete"])
+            collection = "mkt.klines_1m"
+            key = iid + ":" + record["open_time"]
+        elif kind == "metrics":
+            source = dict(zip(header, raw))
+            record = oi(
+                instrument,
+                {
+                    "sumOpenInterest": source["sum_open_interest"],
+                    "sumOpenInterestValue": source["sum_open_interest_value"],
+                    "timestamp": iso(source["create_time"]),
+                },
+            )
+            collection = "mkt.oi_obs"
+            key = iid + ":" + record["metric_key"] + ":" + record["ts"]
+        elif kind == "aggTrades":
+            source = dict(zip(("a", "p", "q", "f", "l", "T", "m"), raw[:7]))
+            source["m"] = str(source["m"]).lower() == "true"
+            record = trade(instrument, source, source="ARCHIVE")
+            collection = None
+            # Archive quantities remain quote/native; historic FX must be provided separately.
+        elif kind == "fundingRate":
+            source = (
+                dict(zip(header, raw))
+                if header
+                else dict(zip(("calc_time", "funding_interval_hours", "last_funding_rate"), raw))
+            )
+            record = funding(
+                instrument,
+                {"fundingTime": source["calc_time"], "fundingRate": source["last_funding_rate"]},
+                kind="SETTLED",
+                interval_h=source["funding_interval_hours"],
+            )
+            collection = "mkt.funding_obs"
+            key = iid + ":SETTLED:" + record["funding_time"]
+        else:
+            raise ValueError("unsupported archive kind " + kind)
+        record.update(source_archive=archive_id, **provenance)
+        record.update(collection_clock().fields("recorded_at"))
+        if flow is not None:
+            minute = iso(parse_time(record["ts"]).replace(second=0, microsecond=0))
+            if previous_minute is not None and minute != previous_minute:
+                emit_bar((iid, previous_minute))
+                next_minute = parse_time(previous_minute) + timedelta(minutes=1)
+            if minute != previous_minute:
+                while next_minute < parse_time(minute):
+                    flow.empty_minute(instrument, next_minute)
+                    emit_bar((iid, iso(next_minute)))
+                    next_minute += timedelta(minutes=1)
+            prints.append(record)
+            flow.add(record, continuity=False)
+            previous_minute = minute
+        else:
+            records[collection][key] = record
+        if full():
+            yield take()
+    if flow is not None:
+        if previous_minute is not None:
+            emit_bar((iid, previous_minute))
+        day = parse_time(date)
+        next_minute = (
+            parse_time(previous_minute) + timedelta(minutes=1) if previous_minute is not None else day
+        )
+        while next_minute < day + timedelta(days=1):
+            flow.empty_minute(instrument, next_minute)
+            emit_bar((iid, iso(next_minute)))
+            next_minute += timedelta(minutes=1)
+            if full():
+                yield take()
+    if records or prints or points:
+        yield take()
 
 
 class ArchiveClient:

@@ -1536,3 +1536,93 @@ async def test_bybit_legacy_temporal_proof_not_reused_by_condition_loader(setup)
     assert snapshot["semantics"][0]["timestamp_semantics"] == "EXCHANGE_EVENT_TIME"
     assert await repo.get("qa.reviews", "old-bybit-proof")  # old audit evidence remains immutable
     await service.close()
+
+
+@pytest.mark.asyncio
+async def test_series_counts_survive_an_import_evicting_a_counted_day(setup, monkeypatch):
+    from tank.market import service as service_module
+    from tank.util import iso
+
+    repo, settings, instrument = setup
+    service = MarketService(repo, settings)
+    iid = instrument["instrument_id"]
+    cutoff = utcnow().replace(hour=12, minute=0, second=0, microsecond=0)
+    start = cutoff - timedelta(days=3, hours=1)
+
+    async def day_counts(repo, ids, lo, hi, assembled):
+        return {(iid, lo + timedelta(days=n)): 1440 for n in range((hi - lo).days)}
+
+    async def edge_counts(ids, lo, hi, assembled):
+        service._kline_day_counts.clear()  # a klines archive import lands meanwhile
+        return {}
+
+    monkeypatch.setattr(service_module, "market_series_day_counts", day_counts)
+    monkeypatch.setattr(repo, "market_series_counts", edge_counts)
+    assert await service._series_counts([iid], start, cutoff, iso()) == {iid: 2 * 1440}
+    await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("age_h", [1, 24 * 30])
+async def test_fresh_binance_windows_never_parse_daily_archives(setup, monkeypatch, age_h):
+    from tank.market import archive
+
+    repo, settings, instrument = setup
+    service = MarketService(repo, settings)
+    fetched = []
+
+    class Failing:
+        async def trades(self, **kwargs):
+            raise RuntimeError("api.binance.com: HTTP 400")
+
+    async def fetch(repo, settings, symbol, date, **kwargs):
+        fetched.append(date)
+
+    async def no_klines(*args, **kwargs):
+        pass
+
+    service.adapter = lambda inst, **kwargs: Failing()
+    service._backfill_klines = no_klines
+    monkeypatch.setattr(archive, "fetch_archive", fetch)
+    await service.backfill(instrument, utcnow() - timedelta(hours=age_h))
+    gaps = await repo.list("mkt.capture_gaps", limit=100)
+    assert any(g["kind"] == "PRE_EVENT_FLOW" and "HTTP 400" in g["reason"] for g in gaps)
+    assert bool(fetched) == (age_h > 48)
+    await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("coverage", ["disconnected", "none"])
+async def test_unproven_minute_is_persisted_with_its_reason(setup, coverage):
+    from tank.util import iso
+
+    repo, settings, instrument = setup
+    service = MarketService(repo, settings)
+    service.instruments[instrument["instrument_id"]] = instrument
+    minute = utcnow().replace(second=0, microsecond=0) - timedelta(minutes=1)
+    key = (instrument["instrument_id"], iso(minute))
+    service.flow.empty_minute(instrument, minute)
+    service.flow.bars[key]["_coverage"] = (
+        [
+            {
+                "start": iso(minute),
+                "end": iso(minute + timedelta(seconds=30)),
+                "complete": False,
+                "reason": "STREAM_DISCONNECTED: keepalive ping timeout",
+            }
+        ]
+        if coverage == "disconnected"
+        else []
+    )
+    service.flow.dirty.add(key)
+    await service._flush_flow(allow_recovery=False)
+    await service.flush_market()
+    row = await repo.get("mkt.flow_bars_1m", key[0] + ":" + key[1])
+    assert row["complete"] is False
+    assert row["gap_reason"] == (
+        "STREAM_DISCONNECTED: keepalive ping timeout"
+        if coverage == "disconnected"
+        else "STREAM_COVERAGE_UNPROVEN"
+    )
+    assert service.flow.bars[key].get("gap_reason") is None  # a later proof can still complete it
+    await service.close()
