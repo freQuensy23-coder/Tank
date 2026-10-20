@@ -553,6 +553,8 @@ class SourcePoller:
                         if field in acquired:
                             current[field] = acquired[field]
                     current.pop("acquisition_error", None)
+                    if not any(batch["rows"] for batch in current.get("pending_batches", [])):
+                        current["article_errors"] = {}
                     count_read(current, "reads", ok=True)
                     current.update(
                         status="DEGRADED"
@@ -722,6 +724,18 @@ class SourcePoller:
                     await self.save(key, current)
                 state = await self.state(key)
             batches = deepcopy(state.get("pending_batches", []))
+            if not any(batch["rows"] for batch in batches) and state.get("article_errors"):
+                # Failed articles stay pending; with nothing pending there is no article failure.
+                async with self.lock(self.state_locks, key):
+                    current = await self.state(key)
+                    current["article_errors"] = {}
+                    if current.get("status") == "DEGRADED" and not (
+                        current.get("entry_errors")
+                        or current.get("history_gap")
+                        or current.get("acquisition_error")
+                    ):
+                        current.update(status="HEALTHY", error=None)
+                    await self.save(key, current)
             if not batches:
                 return {"items": 0, "errors": []}
             errors, completed, count, duplicates = [], {}, 0, []
