@@ -61,21 +61,21 @@ async def test_actual_batched_capture_restart_late_minute_and_no_sql_trades(setu
         assert Decimal(bars[0]["buy_qty"]) == 300
         assert Decimal(bars[0]["sell_qty"]) == 1
         assert Decimal(bars[0]["sum_sq_qty"]) == 901
-        assert bars[0]["capture_proof"]["cause"] == "LATE_BAR_RECOVERY"
         assert bars[0]["complete"] is False
 
 
-def test_verified_hour_versions_and_cutoff_projection(tmp_path):
+def test_sealed_hour_rebuilds_a_replay_window_from_frozen_file(tmp_path):
     inst = {
         "instrument_id": "binance:spot:ABCUSD",
         "token_id": "test:ABC",
         "venue": "binance",
         "market_type": "SPOT",
+        "venue_symbol": "ABCUSD",
         "quote_asset": "USD",
         "contract_multiplier": "1",
     }
     minute = parse_time("2026-10-17T12:00:00Z")
-    raw = TradeArchive(tmp_path)
+    raw = TradeArchive(tmp_path, instruments=[inst], grace_s=0)
     for tid, second in [(1, 10), (2, 50)]:
         raw.append(
             normalize.trade(
@@ -90,22 +90,19 @@ def test_verified_hour_versions_and_cutoff_projection(tmp_path):
             )
         )
     raw.coverage(inst["instrument_id"], minute, minute + timedelta(minutes=2), complete=True)
-    first = raw.flush(seal_before=minute + timedelta(hours=1))[0]
-    before = Path(first["path"]).read_bytes()
-    index_before = Path(first["integrity"]["index_path"]).read_bytes()
+    raw.write(raw.take(), now=minute + timedelta(hours=2))
+    frozen = raw.frozen_manifest(inst["instrument_id"], minute)
+    path, digest = Path(frozen["path"]), frozen["sha256"]
     replay = raw.rebuild_window(
-        [first], inst["instrument_id"], minute, minute + timedelta(seconds=17), instrument=inst
+        [frozen], inst["instrument_id"], minute, minute + timedelta(seconds=17), instrument=inst
     )
     assert replay["complete"] is True and replay["flow_bars"] == []
     assert any(
         s["end"] == iso(minute + timedelta(seconds=17)) and Decimal(s["buy_qty"]) == 1
         for s in replay["flow_segments"]
     )
-    assert all(
-        parse_time(p["boundary"]) <= minute + timedelta(seconds=17) for p in replay["reference_points"]
-    )
     zero = raw.rebuild_window(
-        [first],
+        [frozen],
         inst["instrument_id"],
         minute + timedelta(minutes=1),
         minute + timedelta(minutes=2),
@@ -113,36 +110,7 @@ def test_verified_hour_versions_and_cutoff_projection(tmp_path):
     )
     assert zero["complete"] and len(zero["flow_bars"]) == 1
     assert zero["flow_bars"][0]["n_buy"] == 0 and zero["flow_bars"][0]["complete"]
-    restarted = TradeArchive(tmp_path)
-    assert not restarted.append(
-        normalize.trade(
-            inst,
-            {
-                "a": 1,
-                "p": "1",
-                "q": "1",
-                "m": False,
-                "T": int((minute + timedelta(seconds=10)).timestamp() * 1000),
-            },
-        )
-    )
-    restarted.append(
-        normalize.trade(
-            inst,
-            {
-                "a": 3,
-                "p": "3",
-                "q": "1",
-                "m": False,
-                "T": int((minute + timedelta(seconds=15)).timestamp() * 1000),
-            },
-        )
-    )
-    second = restarted.flush(seal_before=minute + timedelta(hours=1))[0]
-    assert first["path"] != second["path"] and Path(first["path"]).read_bytes() == before
-    assert Path(first["integrity"]["index_path"]).read_bytes() == index_before
-    assert len(raw.read_verified(first["path"], first["sha256"])) == 2
-    assert len(raw.read_verified(second["path"], second["sha256"])) == 3
+    assert len(raw.read_verified(path, digest)) == 2
 
 
 @pytest.mark.asyncio
@@ -154,7 +122,8 @@ async def test_snapshot_does_not_rebuild_raw_windows(setup, monkeypatch):
         def forbidden(*args, **kwargs):
             raise AssertionError("ordinary snapshot cannot read raw evidence")
 
-        monkeypatch.setattr(service.trade_archive, "recover_minute", forbidden)
+        monkeypatch.setattr(service.trade_archive, "read_minutes", forbidden)
+        monkeypatch.setattr(service.trade_archive, "read_hour", forbidden)
         service._connected_since[inst["instrument_id"]] = utcnow() - timedelta(minutes=1)
         service._stream_watermarks[inst["instrument_id"]] = {"ts": iso()}
         snapshot = await service.snapshot(inst["token_id"], iso())
@@ -190,7 +159,7 @@ async def test_supervised_run_reuses_http_after_repository_failure(setup, monkey
         return None
 
     monkeypatch.setattr(service, "_sync_streams", noop)
-    for method in ("_instrument_loop", "_supply_loop", "_archive_maintenance", "bootstrap_history"):
+    for method in ("_instrument_loop", "_supply_loop", "bootstrap_history"):
         monkeypatch.setattr(service, method, idle)
     batch = repo.put_market_batch
     failed = False
@@ -307,17 +276,12 @@ async def test_verified_daily_trade_import_uses_parquet_and_multirow_aggregates(
     bars = await repo.list("mkt.flow_bars_1m", limit=2000)
     assert len(bars) == 1440 and all(row["complete"] for row in bars)
     assert sorted(count for family, count in writes if family == "mkt.flow_bars_1m") == [440, 1000]
-    manifests = await repo.list("mkt.raw_archives")
-    normalized = [
-        row for row in manifests if row["kind"] == "NORMALIZED_TRADES" and row["status"] == "SEALED"
-    ]
-    assert sum(row["row_count"] for row in normalized) == 2
-
-    decoded = [
-        point
-        for manifest in normalized
-        for point in TradeArchive.read_verified(manifest["path"], manifest["sha256"])
-    ]
+    registry = settings.load_config("registry")
+    archive = TradeArchive(settings.data_dir, instruments=registry["instruments"])
+    instrument = next(i for i in registry["instruments"] if i["venue_symbol"] == "ABCUSD")
+    path = archive.path(instrument["instrument_id"], day)
+    assert path.exists() and not list(path.parent.glob(".*.arrows"))  # finished hours are sealed
+    decoded = archive.read_hour(path)
     by_id = {point["trade_id"]: point for point in decoded}
     assert set(by_id) == {"1", "2"}
     for point in decoded:
@@ -369,7 +333,8 @@ async def test_proved_quiet_aligned_cutoff_retains_actual_prior_print_without_ra
         def forbidden(*args, **kwargs):
             raise AssertionError("Raw recovery is not an ordinary truth reader")
 
-        monkeypatch.setattr(restarted.trade_archive, "recover_minute", forbidden)
+        monkeypatch.setattr(restarted.trade_archive, "read_minutes", forbidden)
+        monkeypatch.setattr(restarted.trade_archive, "read_hour", forbidden)
         snapshot = await restarted.snapshot(inst["token_id"], end)
         point = flow_reference(snapshot, inst["instrument_id"], end)
         assert point["trade_id"] == "1" and point["price"] == "2.123456789012345678"
@@ -412,5 +377,5 @@ async def test_id_gap_invalidates_prior_and_intervening_minutes_and_nested_proof
             for point in first["reference_points"]
             if parse_time(point["boundary"]) > start + timedelta(seconds=10)
         )
-        audit = service.trade_archive.recover_minute(inst["instrument_id"], start, cause="LATE_BAR_RECOVERY")
-        assert not service.flow.covered(start, start + timedelta(minutes=1), audit["coverage"])
+        coverage = service.trade_archive.coverage_for(inst["instrument_id"], start)
+        assert not service.flow.covered(start, start + timedelta(minutes=1), coverage)

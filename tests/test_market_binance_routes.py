@@ -93,6 +93,8 @@ async def test_depth_initialization_owns_book_only_and_regular_reconnect_preserv
         assert calls == ["/fapi/v1/depth"] and service.books[iid].sequence == 100
         assert iid not in service._connected_since and not service._background
         book = service.books[iid]
+        # First connection of a hot token: backfill covers its anchor up to the socket.
+        service._hot_since[instrument["token_id"]] = iso(utcnow() - timedelta(minutes=5))
         await prepare_member(service, instrument)
         assert service.books[iid] is book and calls == ["/fapi/v1/depth"]
         assert iid in service._connected_since and len(service._background) == 1

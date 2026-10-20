@@ -50,6 +50,7 @@ def binance_request_weight(host, path, params):
     """
     limit = int(params.get("limit", 100))
     if host == "api.binance.com":
+        # exchangeInfo is read by the Binance listing source (tank.sources), not by market.
         fixed = {"/api/v3/exchangeInfo": 20, "/api/v3/aggTrades": 4, "/api/v3/klines": 2}
         if path in fixed:
             return fixed[path]
@@ -57,8 +58,6 @@ def binance_request_weight(host, path, params):
             return 5 if limit <= 100 else 25 if limit <= 500 else 50 if limit <= 1000 else 250
         if path == "/api/v3/ticker/24hr":
             return 2 if params.get("symbol") else 80
-        if path == "/api/v3/ticker/bookTicker":
-            return 2 if params.get("symbol") else 4
     elif host == "fapi.binance.com":
         fixed = {
             "/fapi/v1/exchangeInfo": 1,
@@ -79,18 +78,11 @@ def binance_request_weight(host, path, params):
             return 1 if params.get("symbol") else 40
         if path == "/fapi/v1/premiumIndex":
             return 1 if params.get("symbol") else 10
-        if path == "/fapi/v1/ticker/bookTicker":
-            return 2 if params.get("symbol") else 5
     raise ValueError("Unconfigured Binance request weight: " + path)
 
 
 def public_request_constraints(host, path, params, payload):
-    """Verified public provider budgets; keys include the documented scope.
-
-    Hyperliquid recentTrades has no documented maximum response count. Its
-    base is admitted here; actual returned-item surcharge is settled while
-    holding the provider slot. Strict precharge bounds remain unprovable.
-    """
+    """Verified public provider budgets; keys include the documented scope."""
     if host == "api.bybit.com":
         return [("bybit", 300, 5, 1)]
     if host in ("www.okx.com", "openapi.okx.com"):
@@ -106,8 +98,6 @@ def public_request_constraints(host, path, params, payload):
             "/api/v5/public/instruments": (10, "instrument_type"),
             "/api/v5/market/ticker": (10, "IP"),
             "/api/v5/market/tickers": (10, "IP"),
-            "/api/v5/market/index-tickers": (10, "IP"),
-            "/api/v5/public/mark-price": (5, "instrument"),
         }
         if path not in caps:
             raise ValueError("Unconfigured OKX request limit: " + path)
@@ -122,9 +112,7 @@ def public_request_constraints(host, path, params, payload):
         return [("okx:" + path + ":" + suffix, capacity, 2, 1)]
     if host == "api.hyperliquid.xyz":
         kind = payload.get("type")
-        if kind == "l2Book":
-            weight = 2
-        elif kind in ("meta", "metaAndAssetCtxs"):
+        if kind in ("meta", "metaAndAssetCtxs"):
             weight = 20
         elif kind == "fundingHistory":
             weight = 45  # 20 +ceil(documented500 time-range response rows/20).
@@ -135,8 +123,6 @@ def public_request_constraints(host, path, params, payload):
             else:
                 rows = 5000
             weight = 20 + (rows + 59) // 60
-        elif kind == "recentTrades":
-            weight = 20  # Actual returned-item surcharge is settled before releasing provider slot.
         else:
             raise ValueError("Unconfigured Hyperliquid request weight: " + str(kind))
         return [("hyperliquid", 600, 60, weight)]

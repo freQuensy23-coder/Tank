@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from decimal import Decimal
 
 from tank.util import iso, parse_time
 
@@ -40,94 +41,37 @@ class VenueAdapter:
         return body
 
     async def discover(self):
+        """Instrument units come from the semantics registry (03 §2.10); only the two
+        listed metadata endpoints are read: OKX ctVal and Hyperliquid meta (02 §4.4, §4.7)."""
         key = self.key
         s = self.symbol
-        if key.startswith("binance"):
-            base = "https://api.binance.com" if key.endswith("spot") else "https://fapi.binance.com"
-            path = "/api/v3/exchangeInfo" if key.endswith("spot") else "/fapi/v1/exchangeInfo"
-            body = await self.get(base, path, **({"symbol": s} if key.endswith("spot") else {}))
-            row = next(x for x in body["symbols"] if x["symbol"] == s)
-            filters = {x["filterType"]: x for x in row["filters"]}
+        if key == "okx.swap":
+            r = self.result(
+                await self.get("https://www.okx.com", "/api/v5/public/instruments", instType="SWAP", instId=s)
+            )[0]
+            if r["ctValCcy"] != s.split("-")[0]:
+                raise SemanticError("OKX contract value currency not base")
             return {
-                "tick_size": filters["PRICE_FILTER"]["tickSize"],
-                "lot_size": filters["LOT_SIZE"]["stepSize"],
-                "active": row["status"] == "TRADING",
-                "contract_multiplier": "1",
-                "metadata_status": "LIVE_VERIFIED",
-                "funding_interval_h": "8" if key.endswith("usdm") else None,
-            }
-        if key.startswith("okx"):
-            rows = self.result(
-                await self.get(
-                    "https://www.okx.com",
-                    "/api/v5/public/instruments",
-                    instType="SWAP" if key.endswith("swap") else "SPOT",
-                    instId=s,
-                )
-            )
-            r = rows[0]
-            result = {
                 "tick_size": r["tickSz"],
                 "lot_size": r["lotSz"],
                 "active": r["state"] == "live",
                 "metadata_status": "LIVE_VERIFIED",
+                "contract_multiplier": str(Decimal(r["ctVal"]) * Decimal(r.get("ctMult") or "1")),
             }
-            if key.endswith("swap"):
-                if r["ctValCcy"] != s.split("-")[0]:
-                    raise SemanticError("OKX contract value currency not base")
-                result["contract_multiplier"] = str(
-                    __import__("decimal").Decimal(r["ctVal"])
-                    * __import__("decimal").Decimal(r.get("ctMult") or "1")
-                )
-            return result
-        if key.startswith("bybit"):
-            r = self.result(
-                await self.get(
-                    "https://api.bybit.com",
-                    "/v5/market/instruments-info",
-                    category=key.split(".")[1],
-                    symbol=s,
-                )
-            )[0]
+        if key == "hyperliquid.perp":
+            meta, _ = await self.info({"type": "metaAndAssetCtxs"})
+            r = next(x for x in meta["universe"] if x["name"] == s)
             return {
-                "tick_size": r["priceFilter"]["tickSize"],
-                "lot_size": r["lotSizeFilter"].get("qtyStep", r["lotSizeFilter"].get("basePrecision")),
-                "active": r["status"] == "Trading",
+                "lot_size": str(10 ** -int(r["szDecimals"])),
                 "contract_multiplier": "1",
-                "funding_interval_h": str(__import__("decimal").Decimal(r["fundingInterval"]) / 60)
-                if r.get("fundingInterval")
-                else None,
+                "funding_interval_h": "1",
+                "active": not r.get("isDelisted", False),
                 "metadata_status": "LIVE_VERIFIED",
+                "tick_size": None,
+                "tick_size_reason": "SIGNIFICANT_FIGURES_AND_SIZE_DEPENDENT",
             }
-        if key.startswith("coinbase"):
-            r = await self.get("https://api.exchange.coinbase.com", "/products/" + s)
-            return {
-                "tick_size": r["quote_increment"],
-                "lot_size": r["base_increment"],
-                "active": r["status"] == "online",
-                "metadata_status": "LIVE_VERIFIED",
-            }
-        if key.startswith("kraken"):
-            rows = self.result(await self.get("https://api.kraken.com", "/0/public/AssetPairs", pair=s))
-            r = next(iter(rows.values()))
-            return {
-                "tick_size": str(10 ** -int(r["pair_decimals"])),
-                "lot_size": str(10 ** -int(r["lot_decimals"])),
-                "ws_symbol": r["wsname"].replace("XBT", "BTC"),
-                "active": r.get("status") == "online",
-                "metadata_status": "LIVE_VERIFIED",
-            }
-        meta, _ = await self.info({"type": "metaAndAssetCtxs"})
-        r = next(x for x in meta["universe"] if x["name"] == s)
-        return {
-            "lot_size": str(10 ** -int(r["szDecimals"])),
-            "contract_multiplier": "1",
-            "funding_interval_h": "1",
-            "active": not r.get("isDelisted", False),
-            "metadata_status": "LIVE_VERIFIED",
-            "tick_size": None,
-            "tick_size_reason": "SIGNIFICANT_FIGURES_AND_SIZE_DEPENDENT",
-        }
+        # Base-unit quantities by the semantics registry; no metadata endpoint is listed.
+        return {"contract_multiplier": "1", "metadata_status": "SEMANTICS_REGISTRY"}
 
     async def klines(self, *, start=None, end=None):
         k = self.key
@@ -264,15 +208,8 @@ class VenueAdapter:
             interval = str(
                 (__import__("decimal").Decimal(following) - __import__("decimal").Decimal(prev)) / 3600000
             )
-            mark = self.result(
-                await self.get("https://www.okx.com", "/api/v5/public/mark-price", instType="SWAP", instId=s)
-            )[0]["markPx"]
-            index = self.result(
-                await self.get(
-                    "https://www.okx.com", "/api/v5/market/index-tickers", instId=s.removesuffix("-SWAP")
-                )
-            )[0]
-            current = dict(current, markPrice=mark, indexPrice=index["idxPx"], index_time=index["ts"])
+            # Mark and index come from the listed WebSocket channels only (02 §4.4).
+            mark = None
             return oi, current, settled, interval, mark
         if k == "bybit.linear":
             oi = self.result(
@@ -362,5 +299,5 @@ class VenueAdapter:
                 params["since"] = int(parse_time(start).timestamp() * 1_000_000_000)
             rows = self.result(await self.get("https://api.kraken.com", "/0/public/Trades", pair=s, **params))
             return next(v for key, v in rows.items() if key != "last"), rows["last"]
-        rows = await self.info({"type": "recentTrades", "coin": s})
-        return rows, None
+        # 02 §4.7 lists no REST trade history: those minutes stay incomplete (03 §5.1).
+        raise SemanticError("NO_LISTED_TRADE_BACKFILL")

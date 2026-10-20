@@ -4,7 +4,7 @@ import zipfile
 
 import pytest
 
-from tank.market.archive import ArchiveIntegrityError, RawArchive, verify_binance_zip
+from tank.market.archive import ArchiveIntegrityError, verify_binance_zip
 from tank.market.supply import unlock_schedule
 
 
@@ -14,17 +14,6 @@ def zipped(rows):
         z.writestr("test.csv", rows)
     b = out.getvalue()
     return b, hashlib.sha256(b).hexdigest() + "  test.zip"
-
-
-def test_raw_parquet_hash_and_roundtrip(tmp_path):
-    archive = RawArchive(tmp_path)
-    row = archive.write("binance:spot:BTC", "trade", {"q": "0.00000000000000001"})
-    assert (
-        RawArchive.read_verified(row["path"], row["sha256"])[0]["payload_json"]
-        == '{"q":"0.00000000000000001"}'
-    )
-    with pytest.raises(ArchiveIntegrityError):
-        RawArchive.read_verified(row["path"], "0" * 64)
 
 
 def test_microsecond_archive_checks_checksum_units_and_gaps():
@@ -81,20 +70,6 @@ def test_unlock_delta_is_potential_supply_not_sale():
         unlock_schedule({"wrong": []})
 
 
-def test_hourly_segments_seal_and_prefix_survives_later_frames(tmp_path):
-    archive = RawArchive(tmp_path)
-    first = archive.write("venue:spot:T", "trade", {"id": 1}, received_ts="2026-01-01T01:01:00Z")
-    archive.write("venue:spot:T", "trade", {"id": 2}, received_ts="2026-01-01T01:59:00Z")
-    assert (
-        len(RawArchive.read_verified(first["path"], first["sha256"], byte_length=first["byte_length"])) == 1
-    )
-    sealed = archive.flush_expired("2026-01-01T02:00:00Z")
-    assert len(sealed) == 1 and sealed[0]["status"] == "SEALED"
-    assert sealed[0]["path"].endswith(".parquet")
-    assert len(RawArchive.read_verified(sealed[0]["path"], sealed[0]["sha256"])) == 2
-    assert archive.flush_all() == []
-
-
 @pytest.mark.asyncio
 async def test_archive_checksum_rejected_and_durable_hour_retry(tmp_path):
     from types import SimpleNamespace
@@ -139,28 +114,12 @@ async def test_archive_checksum_rejected_and_durable_hour_retry(tmp_path):
     async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
         with pytest.raises(ArchiveIntegrityError):
             await fetch_archive(repo, settings, "BTCUSDT", "2026-01-01", http=client)
-        retry = (await repo.list("qa.reviews"))[0]
-        assert retry["label"] == "PENDING" and retry["attempts"] == 1
-        assert (parse_time(retry["retry_at"]) - parse_time(retry["at"])).total_seconds() == 3600
-        assert not await repo.list("mkt.raw_archives")
-        assert len(downloads) == 1  # No immediate checksum retry.
+        # No retry record anywhere: nothing was imported, so the next pass fetches again.
+        assert not await repo.list("qa.reviews")
+        assert not (tmp_path / "archive").exists() or not list((tmp_path / "archive").rglob("*.zip"))
         with pytest.raises(ArchiveIntegrityError):
-            await fetch_archive(repo, settings, "BTCUSDT", "2026-01-01", http=client, _scheduled_retry=True)
-        final = max(await repo.list("qa.reviews"), key=lambda row: row["at"])
-        assert final["label"] == "FAILED" and final["attempts"] == 2
+            await fetch_archive(repo, settings, "BTCUSDT", "2026-01-01", http=client)
     assert len(downloads) == 2
-
-
-def test_restart_seals_immutable_versions_without_replacing_previous_evidence(tmp_path):
-    archive = RawArchive(tmp_path)
-    archive.write("venue:spot:T", "trade", {"id": 1}, received_ts="2026-01-01T01:01:00Z")
-    first = archive.flush_all()[0]
-    restarted = RawArchive(tmp_path)
-    restarted.write("venue:spot:T", "trade", {"id": 2}, received_ts="2026-01-01T01:20:00Z")
-    second = restarted.flush_all()[0]
-    assert first["path"] != second["path"] and first["archive_id"] != second["archive_id"]
-    assert len(RawArchive.read_verified(first["path"], first["sha256"])) == 1
-    assert len(RawArchive.read_verified(second["path"], second["sha256"])) == 2
 
 
 def metrics_csv(indices):

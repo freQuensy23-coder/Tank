@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import time
 import zlib
+from bisect import bisect_left, bisect_right, insort
 from decimal import Decimal
 
 from tank.time_precision import collection_clock
@@ -21,6 +23,10 @@ class OrderBook:
         self.gap_reason = "NO_SNAPSHOT"
         self.exchange_ts = None
         self.exchange_ts_prec = None
+        # Whether the venue checksum was verified on the current book state. Updates
+        # are verified at most once per VERIFY_S unless asked (a summary is due).
+        self.verified = True
+        self._next_verify = 0.0
         self.integrity_method = (
             "SEQUENCE"
             if venue_key(instrument).startswith(("binance", "okx"))
@@ -29,13 +35,18 @@ class OrderBook:
             else "DOCUMENTED_LEVEL2_DELIVERY"
         )
         self._strings = {"bid": {}, "ask": {}}
+        # Ascending prices per side, kept in step with bids/asks: best levels, the top
+        # levels of a checksum, depth trimming and the 2% window are slices, not sorts.
+        self._prices = {"bid": [], "ask": []}
 
     def _levels(self, side, levels, *, snapshot=False):
         book = self.bids if side == "bid" else self.asks
         strings = self._strings[side]
+        prices = self._prices[side]
         if snapshot:
             book.clear()
             strings.clear()
+            prices.clear()
         for level in levels:
             if isinstance(level, dict):
                 p, q = (
@@ -48,11 +59,16 @@ class OrderBook:
             if price <= 0 or size < 0:
                 raise SemanticError("invalid book level")
             if not size:
-                book.pop(price, None)
+                if book.pop(price, None) is not None:
+                    del prices[bisect_left(prices, price)]
                 strings.pop(price, None)
             else:
+                if price not in book and not snapshot:
+                    insort(prices, price)
                 book[price] = size
                 strings[price] = (p, q)
+        if snapshot:
+            prices[:] = sorted(book)
 
     def snapshot(self, bids, asks, *, sequence=None, ts=None, checksum=None, ts_prec="EXACT"):
         self._levels("bid", bids, snapshot=True)
@@ -62,7 +78,8 @@ class OrderBook:
         self.exchange_ts_prec = ts_prec if ts is not None else "COLLECTION_ONLY"
         self.integrity_ok = bool(self.bids and self.asks)
         self.gap_reason = None if self.integrity_ok else "EMPTY_BOOK"
-        self.pending_snapshot = jsonable(
+        # Serialized by the archive writer thread, not on the capture path.
+        self.pending_snapshot = (
             {
                 "instrument_id": self.instrument["instrument_id"],
                 "market_type": self.instrument["market_type"],
@@ -84,7 +101,11 @@ class OrderBook:
             else:
                 self.verify(checksum)
 
-    def update(self, bids, asks, *, sequence=None, previous=None, first=None, ts=None, checksum=None):
+    VERIFY_S = 1.0
+
+    def update(
+        self, bids, asks, *, sequence=None, previous=None, first=None, ts=None, checksum=None, verify=False
+    ):
         if self.sequence is None or not self.integrity_ok:
             raise SemanticError("book requires fresh snapshot")
         key = venue_key(self.instrument)
@@ -115,22 +136,37 @@ class OrderBook:
         self.exchange_ts_prec = "EXACT" if ts is not None else "COLLECTION_ONLY"
         if key.startswith("kraken"):
             for side, book in (("bid", self.bids), ("ask", self.asks)):
-                keep = set(sorted(book, reverse=side == "bid")[:1000])
-                for price in list(book):
-                    if price not in keep:
-                        book.pop(price)
-                        self._strings[side].pop(price)
+                excess = len(book) - 1000
+                if excess <= 0:
+                    continue
+                # Drop the levels farthest from mid (usually one or two per update).
+                prices = self._prices[side]
+                far = prices[:excess] if side == "bid" else prices[-excess:]
+                for price in far:
+                    book.pop(price)
+                    self._strings[side].pop(price)
+                if side == "bid":
+                    del prices[:excess]
+                else:
+                    del prices[-excess:]
         if checksum is not None:
             if venue_key(self.instrument).startswith("okx") and int(checksum) == 0:
                 self.integrity_method = "SEQ_ID_PREV_SEQ_ID_CHECKSUM_DEPRECATED_20260623"
-            else:
+                self.verified = True
+            elif verify or time.monotonic() >= self._next_verify:
                 self.verify(checksum)
+                self.verified = True
+                self._next_verify = time.monotonic() + self.VERIFY_S
+            else:
+                # A wrong state persists, so the next verification still catches it;
+                # nothing is summarized from an unverified state.
+                self.verified = False
         return True
 
     def verify(self, expected):
         key = venue_key(self.instrument)
-        bids = sorted(self.bids, reverse=True)
-        asks = sorted(self.asks)
+        bids = self._prices["bid"][-25:][::-1]  # checksums cover the top 25 (OKX) / 10 (Kraken)
+        asks = self._prices["ask"][:25]
         if key.startswith("okx"):
             parts = []
             for i in range(25):
@@ -159,7 +195,7 @@ class OrderBook:
     def summary(self, *, received_ts=None):
         if not self.bids or not self.asks:
             raise SemanticError("empty order book")
-        bid, ask = max(self.bids), min(self.asks)
+        bid, ask = self._prices["bid"][-1], self._prices["ask"][0]
         if ask <= bid:
             self.integrity_ok = False
             self.gap_reason = "CROSSED_BOOK"
@@ -181,21 +217,31 @@ class OrderBook:
         )
         depth = {}
         ranges = {}
+        levels = {}
+        bands = (("p0_5", Decimal(".5")), ("p1", Decimal(1)), ("p2", Decimal(2)))
         for side, book in (("bid", self.bids), ("ask", self.asks)):
-            far = min(book) if side == "bid" else max(book)
+            prices = self._prices[side]
+            far = prices[0] if side == "bid" else prices[-1]
             covered = abs(far / mid - 1) * 100
             ranges[side] = covered
+            # Only levels within 2% of mid are sorted (a full book can hold tens of
+            # thousands of levels); |p/mid - 1| <= x  <=>  p on the right side of mid(1 ∓ x).
+            if side == "bid":
+                near = prices[bisect_left(prices, mid * (1 - Decimal(".02"))) :][::-1]
+            else:
+                near = prices[: bisect_right(prices, mid * (1 + Decimal(".02")))]
+            levels[side] = [(p, book[p] * multiplier) for p in near]
             depth[side] = {}
-            for name, pct in (("p0_5", Decimal(".5")), ("p1", Decimal(1)), ("p2", Decimal(2))):
+            for name, pct in bands:
                 if covered < pct:
                     depth[side][name] = None
                     continue
-                levels = [(p, q * multiplier) for p, q in book.items() if abs(p / mid - 1) * 100 <= pct]
+                inside = [(p, q) for p, q in levels[side] if abs(p / mid - 1) * 100 <= pct]
                 depth[side][name] = {
-                    "native": sum((q for p, q in levels), Decimal(0)),
-                    "usd": sum((p * q * fx for p, q in levels), Decimal(0)) if fx is not None else None,
+                    "native": sum((q for p, q in inside), Decimal(0)),
+                    "usd": sum((p * q * fx for p, q in inside), Decimal(0)) if fx is not None else None,
                 }
-        return jsonable(
+        row = jsonable(
             {
                 "instrument_id": self.instrument["instrument_id"],
                 "token_id": self.instrument["token_id"],
@@ -206,16 +252,6 @@ class OrderBook:
                 "best_ask": ask,
                 "spread_bps": (ask - bid) / mid * 10000,
                 "depth": depth,
-                "bids": [
-                    [p, q * multiplier]
-                    for p, q in sorted(self.bids.items(), reverse=True)
-                    if abs(p / mid - 1) <= Decimal(".02")
-                ],
-                "asks": [
-                    [p, q * multiplier]
-                    for p, q in sorted(self.asks.items())
-                    if abs(p / mid - 1) <= Decimal(".02")
-                ],
                 "raw_levels_range_pct": "2",
                 "raw_levels_scope": "WITHIN_TWO_PERCENT_OF_MID",
                 "quote_asset": self.instrument.get("quote_asset"),
@@ -227,3 +263,6 @@ class OrderBook:
                 "gap_reason": self.gap_reason,
             }
         )
+        row["bids"] = [[str(p), str(q)] for p, q in levels["bid"]]
+        row["asks"] = [[str(p), str(q)] for p, q in levels["ask"]]
+        return row

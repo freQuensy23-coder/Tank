@@ -5,6 +5,8 @@ import json
 import time
 from decimal import Decimal
 
+from datetime import timedelta
+
 from tank.util import iso, parse_time, sha256, utcnow
 
 from .books import OrderBook
@@ -79,9 +81,12 @@ async def process_frame(self, instrument, raw):
         if event == "aggTrade":
             await self.ingest_trade(instrument, data)
         elif event == "depthUpdate":
-            if int(data["u"]) <= int(book.sequence):
+            bridging = self._book_initial_bridge.get(iid, True)
+            # Drop events the snapshot already contains: spot u <= lastUpdateId; the
+            # USDⓈ-M bridge event itself has u == lastUpdateId, so only u < lastUpdateId.
+            if int(data["u"]) < int(book.sequence) + (1 if not bridging or key.endswith("spot") else 0):
                 return
-            if self._book_initial_bridge.get(iid, True):
+            if bridging:
                 # Futures initial bridge includes lastUpdateId (spot lastUpdateId+1).
                 target = int(book.sequence) + (1 if key.endswith("spot") else 0)
                 if not int(data["U"]) <= target <= int(data["u"]):
@@ -105,8 +110,11 @@ async def process_frame(self, instrument, raw):
         elif event == "forceOrder":
             await save_liquidation(self, instrument, data)
         elif event == "markPriceUpdate":
-            await save_mark(self, instrument, data["p"], data["E"], index=data.get("i"), index_ts=data["E"])
-            if instrument.get("funding_interval_h"):
+            due = self.context_due(iid, "mark")
+            await save_mark(
+                self, instrument, data["p"], data["E"], index=data.get("i"), index_ts=data["E"], persist=due
+            )
+            if due and instrument.get("funding_interval_h"):
                 await save_funding(
                     self,
                     instrument,
@@ -123,6 +131,8 @@ async def process_frame(self, instrument, raw):
             book.snapshot(raw["bids"], raw["asks"], sequence=0, ts=iso(), ts_prec="COLLECTION_ONLY")
             await self._save_book(instrument)
         elif event == "l2update":
+            if book.sequence is None:
+                return  # updates before this subscription's snapshot belong to no book yet
             bids = [r[1:] for r in raw["changes"] if r[0] == "buy"]
             asks = [r[1:] for r in raw["changes"] if r[0] == "sell"]
             book.update(bids, asks, sequence=int(book.sequence) + 1, ts=raw["time"])
@@ -157,15 +167,18 @@ async def process_frame(self, instrument, raw):
                         previous=item["prevSeqId"],
                         ts=item["ts"],
                         checksum=item.get("checksum"),
+                        verify=self.summary_due(iid),
                     )
                 await self._save_book(instrument)
             elif channel == "open-interest":
+                if not self.context_due(iid, "oi"):
+                    continue
                 row = oi(instrument, item)
                 await self._put("mkt.oi_obs", iid + ":" + row["metric_key"] + ":" + row["ts"], row)
             elif channel == "funding-rate":
                 prev = item.get("prevFundingTime")
                 cur = item.get("fundingTime")
-                if prev and cur:
+                if prev and cur and self.context_due(iid, "funding"):
                     await save_funding(
                         self,
                         instrument,
@@ -174,7 +187,9 @@ async def process_frame(self, instrument, raw):
                         (Decimal(cur) - Decimal(prev)) / 3600000,
                     )
             elif channel == "mark-price":
-                await save_mark(self, instrument, item["markPx"], item["ts"])
+                await save_mark(
+                    self, instrument, item["markPx"], item["ts"], persist=self.context_due(iid, "mark")
+                )
             elif channel == "index-tickers":
                 context = self._price_contexts.setdefault(iid, {})
                 context.update(index_price=item["idxPx"], index_ts=iso(item["ts"]))
@@ -186,6 +201,7 @@ async def process_frame(self, instrument, raw):
                         context["mark_ts"],
                         index=item["idxPx"],
                         index_ts=item["ts"],
+                        persist=self.context_due(iid, "mark"),
                     )
             elif channel == "liquidation-orders":
                 for detail in item.get("details", []):
@@ -219,8 +235,13 @@ async def process_frame(self, instrument, raw):
                     raw["ts"],
                     index=context.get("indexPrice"),
                     index_ts=raw["ts"],
+                    persist=self.context_due(iid, "mark"),
                 )
-            if data.get("fundingRate") and instrument.get("funding_interval_h"):
+            if (
+                data.get("fundingRate")
+                and instrument.get("funding_interval_h")
+                and self.context_due(iid, "funding")
+            ):
                 await save_funding(
                     self, instrument, data, "CURRENT_ESTIMATE", instrument["funding_interval_h"]
                 )
@@ -238,6 +259,8 @@ async def process_frame(self, instrument, raw):
                         ts=item.get("timestamp"),
                         checksum=item.get("checksum"),
                     )
+                elif book.sequence is None:
+                    continue  # updates before this subscription's snapshot belong to no book yet
                 else:
                     book.update(
                         item.get("bids", []),
@@ -245,6 +268,7 @@ async def process_frame(self, instrument, raw):
                         sequence=int(book.sequence) + 1,
                         ts=item["timestamp"],
                         checksum=item.get("checksum"),
+                        verify=self.summary_due(iid),
                     )
                 # Kraken depth is maintained at subscribed depth before checksum.
                 await self._save_book(instrument)
@@ -264,17 +288,33 @@ async def process_frame(self, instrument, raw):
             await self._save_book(instrument)
         elif channel == "activeAssetCtx":
             ctx = data["ctx"]
-            row = oi(instrument, ctx)
-            await self._put("mkt.oi_obs", iid + ":" + row["metric_key"] + ":" + row["ts"], row)
-            await save_funding(self, instrument, ctx, "CURRENT_ESTIMATE", "1")
-            await save_mark(self, instrument, ctx["markPx"], iso(), index=ctx.get("oraclePx"), index_ts=iso())
+            due = self.context_due(iid, "context")
+            if due:
+                row = oi(instrument, ctx)
+                await self._put("mkt.oi_obs", iid + ":" + row["metric_key"] + ":" + row["ts"], row)
+                await save_funding(self, instrument, ctx, "CURRENT_ESTIMATE", "1")
+            await save_mark(
+                self, instrument, ctx["markPx"], iso(), index=ctx.get("oraclePx"), index_ts=iso(), persist=due
+            )
 
     if not (key == "binance.usdm" and data.get("e") == "depthUpdate"):
         record_stream_watermark(self, instrument, raw)
 
 
+WATERMARK_S = 0.25
+
+
 def record_stream_watermark(self, instrument, raw):
-    """Track observed publicsocket progress, never nextfunding/event timestamps."""
+    """Track observed publicsocket progress, never nextfunding/event timestamps.
+
+    Sampled at most every WATERMARK_S per instrument: the watermark only ever lags
+    the socket, so proofs built on it stay conservative.
+    """
+    iid = instrument["instrument_id"]
+    due = self.__dict__.setdefault("_watermark_due", {})
+    now = time.monotonic()
+    if due.get(iid, 0) > now:
+        return
     key = venue_key(instrument)
     data = raw.get("data", raw)
     stamps = []
@@ -299,9 +339,11 @@ def record_stream_watermark(self, instrument, raw):
         if raw.get("time"):
             stamps.append(raw["time"])
     elif key.startswith("kraken"):
-        stamps.extend(
-            r["timestamp"] for r in data if isinstance(r, dict) and r.get("timestamp")
-        ) if isinstance(data, list) else None
+        # One ISO format per feed: the latest string is the latest time (parse it once).
+        if isinstance(data, list):
+            latest = max((r["timestamp"] for r in data if isinstance(r, dict) and r.get("timestamp")), default=None)
+            if latest:
+                stamps.append(latest)
     elif isinstance(data, dict):
         if data.get("time") is not None:
             stamps.append(data["time"])
@@ -309,8 +351,8 @@ def record_stream_watermark(self, instrument, raw):
         stamps.extend(r["time"] for r in data if r.get("time") is not None)
     if not stamps:
         return
+    due[iid] = now + WATERMARK_S
     stamp = max(parse_time(t) for t in stamps)
-    iid = instrument["instrument_id"]
     previous = self._stream_watermarks.get(iid)
     if previous is None or stamp >= parse_time(previous["ts"]):
         self._stream_watermarks[iid] = {
@@ -364,8 +406,10 @@ def subscription_messages(instruments, *, subscribe=True, endpoint=None):
                 item["args"] = [a for a in item["args"] if a["channel"] != "liquidation-orders"]
             messages.append(item)
     if venue.startswith(("okx", "bybit")):
-        args = {json.dumps(arg, sort_keys=True): arg for item in messages for arg in item["args"]}
-        return [{"op": action, "args": list(args.values())}] if args else []
+        args = list({json.dumps(arg, sort_keys=True): arg for item in messages for arg in item["args"]}.values())
+        # Bybit spot accepts at most 10 topics per subscribe request ("args size >10").
+        size = 10 if venue.startswith("bybit") else len(args) or 1
+        return [{"op": action, "args": args[i : i + size]} for i in range(0, len(args), size)]
     if venue.startswith("coinbase"):
         return [
             {
@@ -380,41 +424,56 @@ def subscription_messages(instruments, *, subscribe=True, endpoint=None):
     return messages
 
 
+def routing_symbol(instrument):
+    """The product identity a venue's frames carry for this instrument."""
+    if venue_key(instrument).startswith("kraken"):
+        return instrument.get("ws_symbol", instrument["venue_symbol"].replace("XBT", "BTC"))
+    return instrument["venue_symbol"]
+
+
+def route_indexed(index, venue, raw):
+    """Route a frame by the product identity it names (index: symbol -> instrument)."""
+    data = raw.get("data", raw)
+    if venue == "binance":
+        symbol = data.get("s", data.get("o", {}).get("s")) if isinstance(data, dict) else None
+        instrument = index.get(symbol)
+        return [(instrument, raw)] if instrument else []
+    if venue == "coinbase":
+        instrument = index.get(raw.get("product_id"))
+        return [(instrument, raw)] if instrument else []
+    if venue == "bybit":
+        instrument = index.get(raw.get("topic", "").rsplit(".", 1)[-1])
+        return [(instrument, raw)] if instrument else []
+    if not isinstance(data, list):
+        if venue == "hyperliquid" and isinstance(data, dict):
+            instrument = index.get(data.get("coin"))
+            return [(instrument, raw)] if instrument else []
+        return []
+    groups = {}
+    if venue == "okx":
+        arg = raw.get("arg", {})
+        default = arg.get("instId")
+        for row in data:
+            symbol = row.get("instId", default)
+            if arg.get("channel") == "index-tickers":
+                symbol = (symbol or "") + "-SWAP"  # an index feeds its perpetual
+            groups.setdefault(symbol, []).append(row)
+    else:
+        field = "symbol" if venue == "kraken" else "coin"
+        for row in data:
+            groups.setdefault(row.get(field), []).append(row)
+    return [
+        (index[symbol], dict(raw, data=rows)) for symbol, rows in groups.items() if symbol in index
+    ]
+
+
 def route_frame(instruments, raw):
     """Route only exact product identities; split multi-product data arrays."""
-    for instrument in instruments:
-        key = venue_key(instrument)
-        symbol = instrument["venue_symbol"]
-        data = raw.get("data", raw)
-        if key.startswith("binance"):
-            if data.get("s", data.get("o", {}).get("s")) == symbol:
-                yield instrument, raw
-        elif key.startswith("coinbase"):
-            if raw.get("product_id") == symbol:
-                yield instrument, raw
-        elif key.startswith("bybit"):
-            if raw.get("topic", "").endswith("." + symbol):
-                yield instrument, raw
-        elif key.startswith("okx"):
-            rows = (
-                [r for r in data if r.get("instId", raw.get("arg", {}).get("instId")) == symbol]
-                if isinstance(data, list)
-                else []
-            )
-            if rows:
-                yield instrument, dict(raw, data=rows)
-        elif key.startswith("kraken"):
-            ws_symbol = instrument.get("ws_symbol", symbol.replace("XBT", "BTC"))
-            rows = [r for r in data if r.get("symbol") == ws_symbol] if isinstance(data, list) else []
-            if rows:
-                yield instrument, dict(raw, data=rows)
-        else:
-            if isinstance(data, list):
-                rows = [r for r in data if r.get("coin") == symbol]
-                if rows:
-                    yield instrument, dict(raw, data=rows)
-            elif isinstance(data, dict) and data.get("coin") == symbol:
-                yield instrument, raw
+    instruments = list(instruments)
+    if not instruments:
+        return iter(())
+    index = {routing_symbol(i): i for i in instruments}
+    return iter(route_indexed(index, venue_key(instruments[0]).split(".")[0], raw))
 
 
 async def prepare_member(self, instrument, *, depth_only=False):
@@ -449,10 +508,17 @@ async def prepare_member(self, instrument, *, depth_only=False):
     await self._ensure_market_restore()
     previous = self._capture_checkpoints.get(iid)
     if previous:
+        # 03 §5.2: after a reconnect, backfill over REST from the last seen print.
         await self._gap(
             instrument, "RECONNECT", "REST reconciliation pending", start=previous["last_ts"], end=iso()
         )
-    # First escalation also needs the post-event interval before socket establishment.
+    else:
+        # First connection: the escalation backfills the pre-event windows up to the
+        # anchor (03 §5.1); this one covers the anchor up to the socket.
+        since = self._hot_since.get(instrument["token_id"])
+        if since is None or parse_time(since) >= utcnow():
+            return
+        previous = {"last_ts": iso(max(parse_time(since), utcnow() - timedelta(hours=24)))}
     task = asyncio.create_task(self.backfill(instrument, iso(), checkpoint=previous))
     self._background.add(task)
     task.add_done_callback(self._background.discard)
@@ -484,6 +550,19 @@ async def stream_group_loop(self, endpoint):
                 close_timeout=5,
             ) as socket:
                 global_liqs = False
+                venue = venue_key(self.instruments[next(iter(self._stream_groups[endpoint]))]).split(".")[0]
+                index = {}
+                sent_at = [0.0]
+
+                async def send(message):
+                    # Binance closes a connection that receives more than 5 messages
+                    # a second; keep control messages at most 4 per second.
+                    if venue == "binance":
+                        wait = sent_at[0] + 0.25 - time.monotonic()
+                        if wait > 0:
+                            await asyncio.sleep(wait)
+                        sent_at[0] = time.monotonic()
+                    await socket.send(json.dumps(message))
 
                 async def membership(desired, active=active, preparing=preparing, pending=pending):
                     nonlocal global_liqs
@@ -492,7 +571,7 @@ async def stream_group_loop(self, endpoint):
                     for message in subscription_messages(
                         [self.instruments[i] for i in removed], subscribe=False, endpoint=endpoint
                     ):
-                        await socket.send(json.dumps(message))
+                        await send(message)
                     for iid in removed:
                         if iid in preparing:
                             old_task = preparing.pop(iid)
@@ -507,7 +586,7 @@ async def stream_group_loop(self, endpoint):
                     for message in subscription_messages(
                         [self.instruments[i] for i in added], endpoint=endpoint
                     ):
-                        await socket.send(json.dumps(message))
+                        await send(message)
                     for iid in added:
                         pending[iid] = []
                         preparing[iid] = asyncio.create_task(
@@ -515,6 +594,8 @@ async def stream_group_loop(self, endpoint):
                         )
                     active.difference_update(removed)
                     active.update(added)
+                    index.clear()
+                    index.update({routing_symbol(self.instruments[i]): self.instruments[i] for i in active})
                     want_liqs = endpoint.startswith("wss://ws.okx.com/") and any(
                         venue_key(self.instruments[i]) == "okx.swap" for i in active
                     )
@@ -550,9 +631,9 @@ async def stream_group_loop(self, endpoint):
                         old.cancel()
                         await asyncio.gather(old, return_exceptions=True)
                     for message in subscription_messages([inst], subscribe=False, endpoint=endpoint):
-                        await socket.send(json.dumps(message))
+                        await send(message)
                     for message in subscription_messages([inst], endpoint=endpoint):
-                        await socket.send(json.dumps(message))
+                        await send(message)
                     pending[iid] = []
 
                     async def delayed_prepare():
@@ -592,6 +673,7 @@ async def stream_group_loop(self, endpoint):
                         await membership(desired)
                     if recv in done:
                         frame = recv.result()
+                        self._frames[endpoint] = self._frames.get(endpoint, 0) + 1
                         last_message = time.monotonic()
                         last_observed = utcnow()
                         recv = None
@@ -604,9 +686,10 @@ async def stream_group_loop(self, endpoint):
                             or raw.get("type") == "error"
                         ):
                             raise SemanticError("subscription rejected " + str(raw))
-                        for instrument, payload in route_frame([self.instruments[i] for i in active], raw):
+                        for instrument, payload in route_indexed(index, venue, raw):
                             iid = instrument["instrument_id"]
-                            await self._raw(instrument, "websocket", raw)
+                            if venue == "coinbase" and raw.get("type") == "last_match":
+                                await self._raw(instrument, "websocket", raw)
                             if iid in preparing:
                                 pending[iid].append(payload)
                                 if len(pending[iid]) > 1024:
@@ -673,7 +756,9 @@ async def save_mark(
     source="WEBSOCKET",
     received_ts=None,
     index_clock_basis=None,
+    persist=True,
 ):
+    """Track the newest mark/index; store a point only when `persist` (stream cadence)."""
     iid = instrument["instrument_id"]
     context = self._price_contexts.setdefault(iid, {})
     received = iso(received_ts)
@@ -715,6 +800,8 @@ async def save_mark(
                 "clock_basis": index_clock_basis or mark_fact["clock_basis"],
             },
         )
+    if not persist:
+        return
     ts = context["mark_ts"]
     price = context["mark_price"]
     aligned = (
