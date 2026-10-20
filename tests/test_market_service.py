@@ -228,7 +228,6 @@ async def test_independent_rest_confirmation_returns_evidence_without_duplicate_
     unlisted = await service._independent_book(dict(inst, venue="okx"), {"mid": "100", "spread_bps": "200"})
     assert unlisted == {"second_path_confirmed": False, "second_path_reason": "NO_LISTED_SECOND_PATH"}
     await service.flush_market()
-    assert not await repo.list("mkt.raw_archives")
     assert out["independent_rest"]["mid"] == "100"
     assert not (settings.data_dir / "raw/market_frames").exists()
     await http.aclose()
@@ -323,7 +322,6 @@ async def test_market_transport_and_recursive_metadata_never_persist_api_key(set
     assert secret not in str(await repo.list("mkt.supply_obs"))
     await service._raw(inst, "sensitive_response", {"nested": [{"error": secret}]})
     await service.flush_market()
-    assert not await repo.list("mkt.raw_archives")
     assert not (settings.data_dir / "raw/market_frames").exists()
     await http.aclose()
 
@@ -364,7 +362,7 @@ async def test_hot_escalation_priority_age_repeat_and_event_specific_demote(setu
     await service.demote("bitcoin:BTC", "old")
     assert len(await repo.list("mkt.hot_tokens")) == 1
     # replay escalation has no external backfill/subscription effects.
-    assert not await repo.list("mkt.raw_archives") and not service.streams
+    assert not service.streams
     await http.aclose()
 
 

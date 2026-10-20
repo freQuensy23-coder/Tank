@@ -358,9 +358,9 @@ async def test_relocated_backup_recovers_source_web_replay_config_logs_and_both_
 async def test_market_file_retention_preserves_event_windows_and_permanent_evidence(monkeypatch, tmp_path):
     import asyncio
     import hashlib
+    import os
     from pathlib import Path
 
-    from tank.market.archive import RawArchive
     from tank.scheduler import resolve_backup_reference
 
     now = utcnow().replace(hour=8)
@@ -381,35 +381,21 @@ async def test_market_file_retention_preserves_event_windows_and_permanent_evide
     )
     await repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": "e", "class": "MAJOR"})
     await repo.put("ana.market_truth", "truth", {"mta_id": "truth", "event_id": "e", "token_id": "token:T"})
-    archive = RawArchive(data)
+    # Raw market files are found by their HLD §7.2 path; a UTC day overlapping the
+    # MAJOR event window is kept, other days go after 30 days.
     paths = {}
-    for key, age, kind, payload in [
-        ("event", 60, "websocket", {"T": int(anchor.timestamp() * 1000)}),
-        ("old", 70, "websocket", {"T": int((now - timedelta(days=70)).timestamp() * 1000)}),
-        ("new", 2, "websocket", {"T": int((now - timedelta(days=2)).timestamp() * 1000)}),
-        ("unknown", 70, "backfill_trades", {"historical_range": "not recorded"}),
-    ]:
-        result = archive.write("venue:instrument", kind, payload, received_ts=now - timedelta(days=age))
-        sealed = archive.flush_all()[0]
-        result.update(sealed, archive_id=key, token_id="token:T", kind=kind)
-        await repo.put("mkt.raw_archives", key, result)
-        paths[key] = Path(result["path"])
+    for key, age in [("event", 60), ("old", 70), ("new", 2)]:
+        day = (now - timedelta(days=age)).date().isoformat()
+        paths[key] = data / "raw/trades/venue/spot/T" / day / "08.parquet"
+        paths[key].parent.mkdir(parents=True)
+        paths[key].write_bytes(b"sealed hour")
     old_date = (now - timedelta(days=200)).date().isoformat()
-    cached = data / "market/binance/spot/klines" / f"TUSDT-1m-{old_date}.zip"
+    cached = data / "archive/binance/spot/klines" / f"TUSDT-1m-{old_date}.zip"
     cached.parent.mkdir(parents=True)
     cached.write_bytes(b"verified historical cache")
     cached.with_suffix(".zip.CHECKSUM").write_text(hashlib.sha256(cached.read_bytes()).hexdigest())
-    await repo.put(
-        "mkt.raw_archives",
-        "cache",
-        {
-            "archive_id": "cache",
-            "path": str(cached),
-            "token_id": "token:T",
-            "kind": "klines",
-            "received_ts": iso(now - timedelta(days=200)),
-        },
-    )
+    for target in (cached, cached.with_suffix(".zip.CHECKSUM")):
+        os.utime(target, ((now - timedelta(days=200)).timestamp(),) * 2)
     source = data / "raw/sources/permanent.gz"
     source.parent.mkdir(parents=True)
     source.write_bytes(b"permanent source")
@@ -434,24 +420,13 @@ async def test_market_file_retention_preserves_event_windows_and_permanent_evide
     scheduler = Scheduler(repo, settings, None, None)
     legacy_full_backup_fixture(settings, now)
     await scheduler.maintenance(now)
-    assert paths["event"].exists() and paths["new"].exists() and paths["unknown"].exists()
+    assert paths["event"].exists() and paths["new"].exists()
     assert (
         not paths["old"].exists() and not cached.exists() and not cached.with_suffix(".zip.CHECKSUM").exists()
     )
     assert source.exists()
     final = backup / f"tank-{now.date()}"
     assert resolve_backup_reference(final, str(paths["old"])).is_file()
-    import json
-
-    tombstones = [
-        json.loads(line) for line in (data / "retention/removed-market-files.jsonl").read_text().splitlines()
-    ]
-    assert len(tombstones) == 4
-    assert [row["status"] for row in tombstones].count("REMOVAL_COMPLETE") == 2
-    assert {row["archive_id"] for row in tombstones} == {"old", "cache"}
-    assert all(
-        row["removed_at"] == iso(now) and row["removed_at_prec"] == "COLLECTION_ONLY" for row in tombstones
-    )
     await scheduler.maintenance(now)
     repo.prune_jobs.assert_awaited_once()
 
@@ -937,10 +912,8 @@ async def test_raw_retention_never_opens_or_removes_subscription_auth_parent(mon
     import hashlib
     import json
 
-    import tank.scheduler as scheduler_module
-
     data = tmp_path / "data"
-    auth_dir = data / "market/raw/auth-volume"
+    auth_dir = data / "raw/trades/venue/spot/T" / (utcnow() - timedelta(days=90)).date().isoformat()
     auth_dir.mkdir(parents=True)
     auth = auth_dir / "auth.json"
     auth.write_text("FAKE_PRIVATE_AUTH")
@@ -962,22 +935,6 @@ async def test_raw_retention_never_opens_or_removes_subscription_auth_parent(mon
     (backup / "COMPLETE").write_text("complete")
     repo = MemoryRepository()
     now = utcnow()
-    await repo.put(
-        "mkt.raw_archives",
-        "credential-never-data",
-        {
-            "archive_id": "credential-never-data",
-            "path": str(possible_raw),
-            "token_id": "T",
-            "kind": "websocket",
-            "received_ts": iso(now - timedelta(days=90)),
-        },
-    )
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("Retention must not open protected credentials")
-
-    monkeypatch.setattr(scheduler_module, "raw_time_range", forbidden)
     settings = SimpleNamespace(
         data_dir=data, codex_auth_path=auth, load_config=lambda name: {"instruments": []}
     )

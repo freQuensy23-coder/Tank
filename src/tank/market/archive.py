@@ -765,18 +765,24 @@ class BookArchive(HourlyParquet):
 
 
 
-def prune_market_files(data_dir, now, windows, *, hot_days=30, archive_days=180):
+def prune_market_files(data_dir, now, windows, *, hot_days=30, archive_days=180, protected=()):
     """Raw market file retention of HLD §7.2, found by path alone.
 
     `raw/trades/{venue}/{market}/{symbol}/{day}/` and `raw/books/{venue}/{symbol}/{day}/`
     go after `hot_days` unless the UTC day overlaps an event window in `windows`
     (`(event_id, start, end)` of MAJOR+ events, kept permanently). Downloaded
     `archive/binance/...` files are a cache: they go `archive_days` after download.
-    Returns the removed paths.
+    Nothing inside or containing a `protected` path is touched. Returns the removed paths.
     """
     import shutil
 
     root = Path(data_dir)
+    protected = [Path(p).resolve() for p in protected]
+
+    def guarded(path):
+        path = path.resolve()
+        return any(path.is_relative_to(p) or p.is_relative_to(path) for p in protected)
+
     now = parse_time(now)
     hot_cutoff = (now - timedelta(days=hot_days)).date()
     kept_days = set()
@@ -792,14 +798,14 @@ def prune_market_files(data_dir, now, windows, *, hot_days=30, archive_days=180)
                 day = parse_time(directory.name + "T00:00:00Z").date()
             except ValueError:
                 continue
-            if directory.is_symlink() or not directory.is_dir():
+            if directory.is_symlink() or not directory.is_dir() or guarded(directory):
                 continue
             if day < hot_cutoff and day not in kept_days:
                 shutil.rmtree(directory)
                 removed.append(str(directory))
     archive_cutoff = (now - timedelta(days=archive_days)).timestamp()
     for path in sorted((root / "archive" / "binance").rglob("*")):
-        if path.is_file() and not path.is_symlink() and path.stat().st_mtime < archive_cutoff:
+        if path.is_file() and not path.is_symlink() and not guarded(path) and path.stat().st_mtime < archive_cutoff:
             path.unlink()
             removed.append(str(path))
     return removed

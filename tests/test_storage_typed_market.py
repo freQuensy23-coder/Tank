@@ -493,16 +493,9 @@ async def test_manifest_truncate_and_settlement_companion_upgrade(typed_repo, tm
     await repo.migrate(market_export_dir=tmp_path, legacy_bundle_dir=tmp_path / "bundles")
     row = await repo.get("mkt.funding_obs", "legacy")
     assert row["funding_time_prec"] == "EXACT" and row["settlement_time_prec"] == "EXACT"
-    await repo.put_market_batch(
-        "mkt.raw_archives",
-        [{"archive_id": "sealed", "status": "SEALED", "path": "/audit/example.parquet", "sha256": "a" * 64}],
-        keys=["sealed"],
-    )
-    for table in ("mkt.raw_archives", "ops.market_migration_exports"):
-        with pytest.raises(psycopg.errors.RaiseException, match="immutable legacy market evidence"):
-            async with repo.transaction():
-                await repo._conn().execute("TRUNCATE " + table)
-    assert (await repo.get("mkt.raw_archives", "sealed"))["status"] == "SEALED"
+    with pytest.raises(psycopg.errors.RaiseException, match="immutable legacy market evidence"):
+        async with repo.transaction():
+            await repo._conn().execute("TRUNCATE ops.market_migration_exports")
     assert len(await repo.list("ops.market_migration_exports")) == 2
 
 
