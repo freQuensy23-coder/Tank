@@ -1,4 +1,5 @@
 import base64
+import copy
 import hashlib
 import io
 import json
@@ -17,6 +18,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _PROCESS_CODE_VERSION: str | None = None
 _CONFIG_SUFFIXES = {".yaml", ".yml", ".json", ".md"}
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 # TDD §13, HLD §3: installation values kept in the versioned configuration
 # (sources.yaml contact e-mail, delivery.yaml chat IDs), never in the environment.
 CONFIG_OWNED_FIELDS = ("user_agent", "telegram_alerts_chat", "telegram_ops_chat")
@@ -164,6 +166,8 @@ class Settings(BaseSettings):
     market_retention_days: int = 90
     shutdown_grace_s: int = 30
     _config_snapshot: Any = PrivateAttr(default=None)
+    # Parsed files of the frozen snapshot, filled on first use; one dict per resolve_versions.
+    _parsed_config: Any = PrivateAttr(default=None)
 
     @classmethod
     def settings_customise_sources(
@@ -263,9 +267,16 @@ class Settings(BaseSettings):
 
     def load_config(self, name: str) -> dict[str, Any]:
         relative = name if name.endswith((".yaml", ".yml")) else name + ".yaml"
-        value = yaml.safe_load(self.read_config_bytes(relative))
+        cache = self._parsed_config if self._config_snapshot is not None else None
+        if cache is not None and relative in cache:
+            # The snapshot is immutable, so it is parsed once; callers get their own copy.
+            return copy.deepcopy(cache[relative])
+        value = yaml.load(self.read_config_bytes(relative), Loader=_YAML_LOADER)
         if not isinstance(value, dict):
             raise ValueError(f"Configuration must be a mapping: {relative}")
+        if cache is not None:
+            cache[relative] = value
+            return copy.deepcopy(value)
         return value
 
 
@@ -320,6 +331,7 @@ def resolve_versions(settings: Settings) -> Settings:
         _PROCESS_CODE_VERSION = _digest(_capture_tree(Path(__file__).parent, {".py", ".sql", ".json"}))
     resolved = settings.model_copy(update={"config_version": version, "code_version": _PROCESS_CODE_VERSION})
     resolved._config_snapshot = MappingProxyType(captured)
+    resolved._parsed_config = {}
     # Explicit constructor values (tests, replay) keep precedence; the environment
     # cannot set these fields.
     deployment_values = {
