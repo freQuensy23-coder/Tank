@@ -22,6 +22,28 @@ class VenueAdapter:
             params["pair"] = params["pair"].replace("/", "")
         return await self.request("GET", base + path, params=params)
 
+    async def oi_history(self, *, start, end, cursor=None):
+        """One page, newest first, of Bybit linear 5-min OI samples in [start, end] (02 §4.6);
+        the only listed OI history besides Binance openInterestHist."""
+        if self.key != "bybit.linear":
+            raise SemanticError("NO_LISTED_OI_HISTORY")
+        params = {
+            "startTime": int(parse_time(start).timestamp() * 1000),
+            "endTime": int(parse_time(end).timestamp() * 1000),
+        }
+        if cursor:
+            params["cursor"] = cursor
+        body = await self.get(
+            "https://api.bybit.com",
+            "/v5/market/open-interest",
+            category="linear",
+            symbol=self.symbol,
+            intervalTime="5min",
+            limit=200,
+            **params,
+        )
+        return self.result(body), body["result"].get("nextPageCursor") or None
+
     async def info(self, payload):
         return await self.request("POST", "https://api.hyperliquid.xyz/info", json=payload)
 

@@ -10,7 +10,7 @@ from tank.market.service import MarketService
 from tank.market.streams import connection
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.util import utcnow
+from tank.util import parse_time, utcnow
 
 
 def test_market_redaction_covers_nested_keys_and_values_and_current_credentials():
@@ -1812,3 +1812,60 @@ async def test_snapshot_keeps_book_levels_only_on_the_newest_rows(setup):
     assert all(b["depth"]["ask"]["p1"]["usd"] == "6" and b["mid"] == "2" for b in books)
     assert books[5]["asks"] == levels
     await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_bybit_oi_history_fills_only_before_the_first_live_sample(setup):
+    from tank.util import iso
+
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+    bybit = dict(
+        inst,
+        instrument_id="bybit:perp_linear:ABCUSDT",
+        venue="bybit",
+        market_type="PERP_LINEAR",
+        venue_symbol="ABCUSDT",
+    )
+    service.instruments = {bybit["instrument_id"]: bybit}
+    first_live = utcnow().replace(second=0, microsecond=0) - timedelta(days=2)
+    first_live -= timedelta(minutes=first_live.minute % 5)
+    await repo.put(
+        "mkt.oi_obs",
+        "live",
+        {
+            "instrument_id": bybit["instrument_id"],
+            "metric_key": "bybit.linear.open-interest",
+            "ts": iso(first_live),
+            "oi_native": "7",
+        },
+    )
+    pages = []
+
+    class Rest:
+        async def oi_history(self, *, start, end, cursor=None):
+            pages.append((parse_time(end), cursor))
+            stamps = [first_live - timedelta(minutes=5 * k) for k in ((1, 2) if cursor is None else (3,))]
+            rows = [
+                {
+                    "openInterest": "20",
+                    "singleOpenInterest": "10",
+                    "timestamp": str(int(t.timestamp() * 1000)),
+                }
+                for t in stamps
+            ]
+            return rows, ("next" if cursor is None else None)
+
+    service.adapter = lambda instrument, **kwargs: Rest()
+    await service._oi_history_pass(90)
+    assert len(pages) == 2 and pages[0][0] < first_live and pages[1][1] == "next"
+    rows = [
+        r
+        for r in await repo.list("mkt.oi_obs", limit=100)
+        if r.get("metric_key") == "bybit.linear.open-interest"
+    ]
+    assert sorted(r["ts"] for r in rows)[:3] == [
+        iso(first_live - timedelta(minutes=5 * k)) for k in (3, 2, 1)
+    ]
+    assert (await repo.get("mkt.oi_obs", "live"))["oi_native"] == "7"  # the live sample is untouched
+    await service.close()
