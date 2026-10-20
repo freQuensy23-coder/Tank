@@ -1,0 +1,53 @@
+{
+  "agent_text": [
+    "(a) V6 is not defined; (b) `references/DATA_GUIDE.md`; (c) 15 entries under `tokens`."
+  ],
+  "analyst_skill_applied": true,
+  "builtin_tool_inputs": [],
+  "data_skill_applied": true,
+  "final_event": {
+    "execution_id": "sevt_UROGdUgk9lFgMNoM_szF1",
+    "id": "sevt_hvBAkB1ucvI0DWzXlLPlV",
+    "processed_at": "2026-10-20T18:28:18.250Z",
+    "stop_reason": {
+      "type": "end_turn"
+    },
+    "type": "session.status_idle"
+  },
+  "first_request_input_tokens": 16499,
+  "marker": "tank-platform-deploy-proof-20261020T182805Z",
+  "other_tools_used": [],
+  "read_skills_mode": false,
+  "real_tool_call": true,
+  "session_id": "session_6XVRxsmBSPONHMBaxzjse",
+  "skills": [
+    {
+      "name": null,
+      "skill_id": "skill_MwupgmdNhfXYbRxsHH4ck",
+      "type": "custom",
+      "version": "1792520884680000"
+    },
+    {
+      "name": null,
+      "skill_id": "skill_5Gx3S0h0_aAufFAB7K3Lz",
+      "type": "custom",
+      "version": "1792520884711000"
+    }
+  ],
+  "status": "PASS",
+  "tool_calls_answered": [
+    {
+      "input": {
+        "entity_or_token": "ETH"
+      },
+      "tokens": 15,
+      "tool": "get_registry"
+    }
+  ],
+  "tool_check": {
+    "local_count": 18,
+    "names_match": true,
+    "remote_custom_count": 18,
+    "schemas_match": true
+  }
+}
