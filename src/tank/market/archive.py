@@ -829,7 +829,62 @@ def prune_market_files(data_dir, now, windows, *, hot_days=30, archive_days=180,
     return removed
 
 
-def verify_binance_zip(payload, checksum_text, *, filename, kind, expected_unit=None, daily=True):
+def _verify_agg_trades(csv_bytes, sha, expected_unit, window):
+    """aggTrades days hold a million rows: read and check continuity over the whole file
+    with pyarrow/numpy, and build Python rows only for the requested [lo, hi) window."""
+    import numpy as np
+    import pyarrow as pa
+    from pyarrow import csv as pacsv
+
+    text = csv_bytes.removeprefix(b"\xef\xbb\xbf")
+    header = None
+    if text[:1] and not text[:1].isdigit():
+        line, _, text = text.partition(b"\n")
+        header = line.decode().strip().split(",")
+    if not text.strip():
+        raise ArchiveIntegrityError("archive has no data rows" if header else "empty archive")
+    table = pacsv.read_csv(
+        io.BytesIO(text),
+        read_options=pacsv.ReadOptions(autogenerate_column_names=True),
+        convert_options=pacsv.ConvertOptions(
+            # Prices and quantities stay exact decimal text; ids and times are integers.
+            column_types={"f0": pa.int64(), "f1": pa.string(), "f2": pa.string(), "f5": pa.int64()}
+        ),
+    )
+    ids = table.column("f0").to_numpy()
+    stamps = table.column("f5").to_numpy()
+    unit = "US" if stamps[0] > 10**14 else "MS"
+    if expected_unit is not None and unit != expected_unit:
+        raise ArchiveIntegrityError(f"timestamp unit {unit} != semantics {expected_unit}")
+    step = np.diff(ids)
+    duplicates = ids[1:][step == 0].tolist()
+    gaps = [
+        {"after": int(ids[i]), "before": int(ids[i + 1])} for i in np.flatnonzero((step != 0) & (step != 1))
+    ]
+    # Rows keep the file's exact text; pyarrow keeps CSV order, so line i is table row i.
+    lines = [line for line in text.splitlines() if line.strip()]
+    if len(lines) != table.num_rows:
+        raise ArchiveIntegrityError("archive row count mismatch")
+    index = range(len(lines))
+    if window is not None:
+        scale = 1_000_000 if unit == "US" else 1000
+        lo, hi = (int(parse_time(t).timestamp()) * scale for t in window)
+        index = np.flatnonzero((stamps >= lo) & (stamps < hi))
+    return {
+        "rows": [lines[i].decode().split(",") for i in index],
+        "rows_in_file": len(lines),
+        "header": header,
+        "timestamp_unit": unit,
+        "gaps": gaps,
+        "duplicates": duplicates,
+        "complete": not gaps and not duplicates,
+        "sha256": sha,
+    }
+
+
+def verify_binance_zip(
+    payload, checksum_text, *, filename, kind, expected_unit=None, daily=True, window=None
+):
     parts = checksum_text.strip().split()
     if len(parts) != 2 or parts[1].lstrip("*") != filename:
         raise ArchiveIntegrityError("checksum filename mismatch")
@@ -840,7 +895,9 @@ def verify_binance_zip(payload, checksum_text, *, filename, kind, expected_unit=
         if len(members) != 1:
             raise ArchiveIntegrityError("archive must contain one CSV")
         csv_bytes = z.read(members[0])
-        rows = list(csv.reader(io.StringIO(csv_bytes.decode("utf-8-sig"))))
+    if kind == "aggTrades":
+        return _verify_agg_trades(csv_bytes, parts[0], expected_unit, window)
+    rows = list(csv.reader(io.StringIO(csv_bytes.decode("utf-8-sig"))))
     if not rows:
         raise ArchiveIntegrityError("empty archive")
     header = None
@@ -884,8 +941,7 @@ def verify_binance_zip(payload, checksum_text, *, filename, kind, expected_unit=
         step = None
         expected = None
     else:
-        index = 5 if kind == "aggTrades" else 0
-        stamps = [int(r[index]) for r in rows]
+        stamps = [int(r[0]) for r in rows]
         unit = "US" if stamps[0] > 10**14 else "MS"
         step = 60000000 if unit == "US" else 60000
         expected = 1440
@@ -893,14 +949,12 @@ def verify_binance_zip(payload, checksum_text, *, filename, kind, expected_unit=
         raise ArchiveIntegrityError(f"timestamp unit {unit} != semantics {expected_unit}")
     gaps = []
     duplicates = []
-    values = [int(r[0]) for r in rows] if kind == "aggTrades" else stamps
-    increment = 1 if kind == "aggTrades" else step
-    for previous, current in itertools.pairwise(values):
+    for previous, current in itertools.pairwise(stamps):
         if current == previous:
             duplicates.append(current)
-        elif increment is not None and current != previous + increment:
+        elif step is not None and current != previous + step:
             gaps.append({"after": previous, "before": current})
-    if daily and kind not in ("aggTrades", "fundingRate") and len(rows) != expected:
+    if daily and kind != "fundingRate" and len(rows) != expected:
         gaps.append({"expected_rows": expected, "actual_rows": len(rows)})
     return {
         "rows": rows,
@@ -922,18 +976,21 @@ _IMPORTED = {
 }
 
 
-async def _imported_rows(repo, instrument, kind, date, archive_id):
-    """Rows a verified daily file already left in PostgreSQL, or None if not imported."""
+async def _imported_rows(repo, instrument, kind, date, archive_id, span=None):
+    """Rows a verified daily file (or its imported span) already left in PostgreSQL,
+    or None if not imported."""
     if kind not in _IMPORTED:
         return None  # monthly funding: one small idempotent upsert
     collection, field, expected = _IMPORTED[kind]
-    start = parse_time(date)
+    start, end = span or (parse_time(date), parse_time(date) + timedelta(days=1))
+    if span:
+        expected = int((end - start).total_seconds() // 60)
     count = 0
     async for row in repo.iter_range(
         collection,
         field,
         start=start,
-        end=start + timedelta(days=1) - timedelta(microseconds=1),
+        end=end - timedelta(microseconds=1),
         filters={"instrument_id": instrument["instrument_id"]},
         batch_size=2000,
     ):
@@ -952,8 +1009,10 @@ async def fetch_archive(
     kind="klines",
     http=None,
     market=None,
+    window=None,
 ):
-    """Download, verify and import a single Binance daily/monthly dataset."""
+    """Download, verify and import a single Binance daily/monthly dataset. For aggTrades
+    a [start, end) window limits the import to the whole minutes it touches."""
     import httpx
 
     if market is not None:
@@ -985,7 +1044,17 @@ async def fetch_archive(
     )
     if instrument is None:
         raise ValueError("archive instrument not present in registry")
-    imported = await _imported_rows(repo, instrument, kind, date, archive_id)
+    span = None
+    if kind == "aggTrades" and window is not None:
+        day = parse_time(date)
+        lo = parse_time(window[0]).replace(second=0, microsecond=0)
+        hi = parse_time(window[1])
+        if hi != hi.replace(second=0, microsecond=0):
+            hi = hi.replace(second=0, microsecond=0) + timedelta(minutes=1)
+        span = (max(day, lo), min(day + timedelta(days=1), hi))
+        if span[1] <= span[0]:
+            raise ValueError("archive window does not overlap " + date)
+    imported = await _imported_rows(repo, instrument, kind, date, archive_id, span)
     if imported is not None:
         return {
             "archive_id": archive_id,
@@ -1011,6 +1080,7 @@ async def fetch_archive(
             kind=kind,
             expected_unit=expected if kind in ("klines", "aggTrades") else None,
             daily=not monthly,
+            window=span,
         )
         if not verified["complete"]:
             raise ArchiveIntegrityError("archive continuity incomplete")
@@ -1032,7 +1102,7 @@ async def fetch_archive(
                 else TradeArchive(settings.data_dir, instruments=[instrument])
             )
         chunks = _archive_records(
-            instrument, kind, verified, date, archive_id, provenance, boundaries, references
+            instrument, kind, verified, date, archive_id, provenance, boundaries, references, span
         )
         count = 0
         while (chunk := await asyncio.to_thread(next, chunks, None)) is not None:
@@ -1078,7 +1148,9 @@ def _store_archive(path, payload, checksum_text):
     path.with_suffix(".zip.CHECKSUM").write_text(checksum_text)
 
 
-def _archive_records(instrument, kind, verified, date, archive_id, provenance, boundaries, references):
+def _archive_records(
+    instrument, kind, verified, date, archive_id, provenance, boundaries, references, span=None
+):
     """Normalize a verified archive in a worker thread, yielding bounded chunks of
     (records by collection, trade prints, reference points) for the loop to write."""
     from .flow import FlowAccumulator
@@ -1095,7 +1167,8 @@ def _archive_records(instrument, kind, verified, date, archive_id, provenance, b
         flow.boundaries = boundaries
         flow.references = dict(references)
         previous_minute = None
-        next_minute = parse_time(date).replace(hour=0, minute=0, second=0, microsecond=0)
+        first, last = span or (parse_time(date), parse_time(date) + timedelta(days=1))
+        next_minute = first
 
     def emit_bar(key):
         minute = parse_time(key[1])
@@ -1190,11 +1263,10 @@ def _archive_records(instrument, kind, verified, date, archive_id, provenance, b
     if flow is not None:
         if previous_minute is not None:
             emit_bar((iid, previous_minute))
-        day = parse_time(date)
         next_minute = (
-            parse_time(previous_minute) + timedelta(minutes=1) if previous_minute is not None else day
+            parse_time(previous_minute) + timedelta(minutes=1) if previous_minute is not None else first
         )
-        while next_minute < day + timedelta(days=1):
+        while next_minute < last:
             flow.empty_minute(instrument, next_minute)
             emit_bar((iid, iso(next_minute)))
             next_minute += timedelta(minutes=1)
