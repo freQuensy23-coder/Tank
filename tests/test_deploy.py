@@ -92,6 +92,7 @@ def test_openma_preparation_is_offline_and_has_responses_model(tmp_path):
     assert card["provider"] == "tank-codex"
     agent = json.loads((tmp_path / "tank-event-analyst.json").read_text())
     assert agent["_oma"]["harness"] == "pi"
+    assert agent["metadata"] == {"skill_mount": "inline"}
     assert not any(t.get("type") == "mcp" for t in agent["tools"])
     replay = json.loads((tmp_path / "tank-replay.json").read_text())
     assert replay["config"]["networking"]["allowed_hosts"] == ["postgres"]

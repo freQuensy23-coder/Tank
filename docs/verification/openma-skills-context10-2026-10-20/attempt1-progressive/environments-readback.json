@@ -1,0 +1,81 @@
+{
+  "tank-analysis": {
+    "archived_at": null,
+    "config": {
+      "networking": {
+        "type": "unrestricted"
+      },
+      "packages": {
+        "apt": [
+          "postgresql-client"
+        ],
+        "cargo": [],
+        "gem": [],
+        "go": [],
+        "npm": [],
+        "pip": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "statsmodels",
+          "pyarrow",
+          "duckdb",
+          "psycopg[binary]",
+          "httpx",
+          "websockets"
+        ],
+        "type": "packages"
+      },
+      "type": "cloud"
+    },
+    "created_at": "2026-10-20T17:39:32.436Z",
+    "description": null,
+    "id": "env_fdT7i-O50b6mNm3fxIDbA",
+    "metadata": {},
+    "name": "tank-analysis",
+    "type": "environment",
+    "updated_at": "2026-10-20T17:39:32.436Z"
+  },
+  "tank-replay": {
+    "archived_at": null,
+    "config": {
+      "networking": {
+        "allow_mcp_servers": false,
+        "allow_package_managers": false,
+        "allowed_hosts": [
+          "postgres"
+        ],
+        "type": "limited"
+      },
+      "packages": {
+        "apt": [
+          "postgresql-client"
+        ],
+        "cargo": [],
+        "gem": [],
+        "go": [],
+        "npm": [],
+        "pip": [
+          "pandas",
+          "numpy",
+          "scipy",
+          "statsmodels",
+          "pyarrow",
+          "duckdb",
+          "psycopg[binary]",
+          "httpx",
+          "websockets"
+        ],
+        "type": "packages"
+      },
+      "type": "cloud"
+    },
+    "created_at": "2026-10-20T17:39:32.465Z",
+    "description": null,
+    "id": "env_EyOImC_RfG3TepHmD8-BA",
+    "metadata": {},
+    "name": "tank-replay",
+    "type": "environment",
+    "updated_at": "2026-10-20T17:39:32.465Z"
+  }
+}

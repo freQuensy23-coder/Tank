@@ -1,0 +1,30 @@
+{
+  "name": "tank-replay",
+  "config": {
+    "type": "cloud",
+    "packages": {
+      "pip": [
+        "pandas",
+        "numpy",
+        "scipy",
+        "statsmodels",
+        "pyarrow",
+        "duckdb",
+        "psycopg[binary]",
+        "httpx",
+        "websockets"
+      ],
+      "apt": [
+        "postgresql-client"
+      ]
+    },
+    "networking": {
+      "type": "limited",
+      "allowed_hosts": [
+        "postgres"
+      ],
+      "allow_mcp_servers": false,
+      "allow_package_managers": false
+    }
+  }
+}

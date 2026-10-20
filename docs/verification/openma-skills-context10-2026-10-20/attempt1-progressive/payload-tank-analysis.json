@@ -1,0 +1,25 @@
+{
+  "name": "tank-analysis",
+  "config": {
+    "type": "cloud",
+    "packages": {
+      "pip": [
+        "pandas",
+        "numpy",
+        "scipy",
+        "statsmodels",
+        "pyarrow",
+        "duckdb",
+        "psycopg[binary]",
+        "httpx",
+        "websockets"
+      ],
+      "apt": [
+        "postgresql-client"
+      ]
+    },
+    "networking": {
+      "type": "unrestricted"
+    }
+  }
+}
