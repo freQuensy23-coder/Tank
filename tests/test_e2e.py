@@ -172,17 +172,22 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         source = SourceService(repo, settings, http=http)
-        raw, sha = source.raw(b"Synthetic integration item")
+        item_id, seen = "item-e2e-one", "2026-10-17T00:00:01Z"
+        raw, sha = source.raw(
+            b"Synthetic integration item", source_id="S30", item_id=item_id, observed_at=seen
+        )
         item = await source.ingest(
             {"source_id": "S30"},
             {
+                "item_id": item_id,
+                "raw_ref": raw,
+                "raw_sha256": sha,
+                "observed_at": seen,
                 "external_id": "one",
                 "title": "Synthetic",
                 "text": "Synthetic crypto T approval",
                 "published_at": "2026-10-17T00:00:00Z",
             },
-            raw,
-            sha,
         )
         tool_event["input"] = {"item_id": item["item_id"]}
         pipeline = Pipeline(repo, settings, http=http)

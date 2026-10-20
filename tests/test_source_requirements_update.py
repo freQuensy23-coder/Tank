@@ -24,7 +24,6 @@ def config(tmp_path, sources):
         user_agent="Tank source regression",
         config_version="test",
         code_version="test",
-        capture_only=True,
         x_enabled=False,
         load_config=lambda name: {"sources": sources} if name == "sources" else {},
     )
@@ -77,12 +76,16 @@ async def test_dtcc_official_html_only_and_zero_links_stays_degraded(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_duplicate_preserves_capture_and_retains_each_real_observation(tmp_path):
+async def test_duplicate_preserves_capture_and_counts_one_observation(tmp_path):
     repo = MemoryRepository()
     source = {"source_id": "S30", "name": "Original publisher", "feeds": []}
     service = SourceService(repo, config(tmp_path, [source]))
     first_time, later = "2026-10-20T10:00:00Z", "2026-10-20T10:05:00Z"
-    ref, digest = service.raw(b"Original publication bytes", source_id="S30")
+
+    def captured(item_id, payload, item):
+        ref, digest = service.raw(payload, source_id="S30", item_id=item_id, observed_at=item["observed_at"])
+        return dict(item, item_id=item_id, raw_ref=ref, raw_sha256=digest)
+
     incoming = {
         "external_id": "one",
         "title": "Original title",
@@ -90,43 +93,29 @@ async def test_duplicate_preserves_capture_and_retains_each_real_observation(tmp
         "published_at": first_time,
         "published_at_precision": "EXACT",
         "observed_at": first_time,
-        "observation_id": "first",
     }
-    first = deepcopy(await service.ingest(source, incoming, ref, digest))
-    second_ref, second_digest = service.raw(b"Observed edited publication bytes", source_id="S30")
-    changed = {
-        **incoming,
-        "title": "Edited title",
-        "text": "Edited text",
-        "published_at": later,
-        "observed_at": later,
-        "observation_id": "second",
-    }
-    duplicate = await service.ingest(
-        {**source, "name": "New config name"}, changed, second_ref, second_digest
+    first = deepcopy(await service.ingest(source, captured("first", b"Original publication bytes", incoming)))
+    changed = captured(
+        "second",
+        b"Observed edited publication bytes",
+        {
+            **incoming,
+            "feed": "https://example.org/second-feed",
+            "title": "Edited title",
+            "text": "Edited text",
+            "published_at": later,
+            "observed_at": later,
+        },
     )
-    retry = await service.ingest(source, changed, second_ref, second_digest)
-    older = {**changed, "observed_at": "2026-10-20T09:59:00Z", "observation_id": "old-backlog"}
-    final = await service.ingest(source, older, second_ref, second_digest)
+    duplicate = await service.ingest({**source, "name": "New config name"}, changed)
+    replay = await service.ingest(source, captured("first", b"Original publication bytes", incoming))
     try:
-        tracking = {
-            "observation_count",
-            "last_observed_at",
-            "last_observed_at_prec",
-            "last_observed_at_precision",
-            "last_observed_at_prec_reason",
-            "last_observed_at_precision_reason",
-            "observation_watermarks",
-            "observation_evidence",
+        assert {k: v for k, v in duplicate.items() if k not in {"observation_count", "observed_feeds"}} == {
+            k: v for k, v in first.items() if k not in {"observation_count", "observed_feeds"}
         }
-        assert {k: v for k, v in final.items() if k not in tracking} == {
-            k: v for k, v in first.items() if k not in tracking
-        }
-        assert duplicate["item_id"] == retry["item_id"] == final["item_id"] == first["item_id"]
-        assert final["observation_count"] == 2
-        assert final["last_observed_at"] == later
-        assert final["observation_evidence"][-1]["raw_ref"] == second_ref
-        assert final["observation_evidence"][-1]["raw_sha256"] == second_digest
+        assert duplicate["item_id"] == replay["item_id"] == "first"
+        assert replay["observation_count"] == 2
+        assert not Path(changed["raw_ref"]).exists() and Path(first["raw_ref"]).exists()
         assert len(await repo.list("ingest.source_items")) == 1
     finally:
         await service.close()
@@ -148,6 +137,8 @@ async def test_poll_and_loop_never_reconstruct_legacy_binance_body_or_metadata(t
             }
         ).encode(),
         source_id="S09",
+        item_id="legacy",
+        observed_at="2026-10-14T03:30:09Z",
     )
     original = {
         "item_id": "legacy",
@@ -197,7 +188,9 @@ async def test_x_list_comes_only_from_source_config(tmp_path, monkeypatch):
 
     async def posts(list_id, checkpoint, **kwargs):
         calls.append(list_id)
-        service.xsensor.raw_pages = [{"raw_ref": "retained-dom", "raw_sha256": "retained-sha"}]
+        service.xsensor.pages = [
+            {"kind": "X_LIST_HTML", "url": "https://x.com/i/lists/1", "sha256": "page-sha"}
+        ]
         return [], None
 
     monkeypatch.setattr(service.xsensor, "posts", posts)

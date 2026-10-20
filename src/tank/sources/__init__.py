@@ -9,14 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import re
+import ssl
 from copy import deepcopy
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
+import certifi
 import httpx
-import zstandard
 
-from tank.util import iso, new_id, parse_time, sha256, utcnow
+from tank.util import iso, parse_time, sha256, utcnow
 
 from . import parsers
 from .browser import BrowserReader
@@ -24,19 +25,29 @@ from .rate_limits import shared_request_budgets
 from .xsensor import XSensor
 
 
+def tls_context():
+    """The TLS hello of Python's standard HTTPS client (http.client sets post_handshake_auth).
+
+    WordPress.com's bot check (S12 blog.kraken.com) answers httpx's default hello with
+    403/429 and the standard one with the feed.
+    """
+    context = ssl.create_default_context(cafile=certifi.where())
+    context.post_handshake_auth = True
+    return context
+
+
 class SourceService:
     def __init__(self, repo, settings, *, http=None):
         self.repo = repo
         self.settings = settings
         self.http = http or httpx.AsyncClient(
-            timeout=20, follow_redirects=True, headers={"User-Agent": settings.user_agent}
+            timeout=20,
+            follow_redirects=True,
+            headers={"User-Agent": settings.user_agent},
+            verify=tls_context(),
         )
         self.owns_http = http is None
-        self.xsensor = XSensor(
-            settings,
-            raw_capture=lambda payload: self.raw(payload, source_id="S29"),
-            shared_browser=bool(getattr(settings, "x_enabled", False)),
-        )
+        self.xsensor = XSensor(settings, shared_browser=bool(getattr(settings, "x_enabled", False)))
         self.browser = BrowserReader(
             settings, shared_sensor=self.xsensor if getattr(settings, "x_enabled", False) else None
         )
@@ -71,16 +82,11 @@ class SourceService:
 
         self.poller = SourcePoller(self)
 
-    def raw(self, payload, *, source_id=None, item_id=None, observed_at=None):
+    def raw(self, payload, *, source_id, item_id, observed_at):
+        """Store the raw payload of one captured item (02 §7.2); nothing else is stored raw."""
         from .raw_store import write_raw_item
 
-        if source_id is None:
-            if len(self.sources) != 1:
-                raise ValueError("Raw capture requires an explicit source_id")
-            source_id = next(iter(self.sources))
-        return write_raw_item(
-            self.settings.data_dir, source_id, item_id or new_id("item"), observed_at or iso(), payload
-        )
+        return write_raw_item(self.settings.data_dir, source_id, item_id, observed_at, payload)
 
     async def acquire_budget(self, feed):
         host = urlsplit(feed["url"]).hostname or ""
@@ -148,31 +154,26 @@ class SourceService:
                     return None, state
                 payload = response.content
                 received_at = iso()
-                source_match = re.search(r"(?:^|:)(S\d{2})(?=:|$)", key)
-                source_id = feed.get("source_id") or (source_match.group(1) if source_match else None)
-                ref, digest = self.raw(payload, source_id=source_id, observed_at=received_at)
-                # Persist transport evidence before any parser/status handling.
-                # Logical discovery coverage and HTTP validators remain owned by
-                # the ordered backlog completion path.
-                async with self.poller.lock(self.poller.state_locks, key):
-                    evidence = await self.poller.state(key)
-                    evidence.update(
-                        source_id=source_id or (next(iter(self.sources)) if len(self.sources) == 1 else None),
-                        raw_ref=ref,
-                        raw_sha256=digest,
-                        fetched_at=received_at,
-                        http_status=response.status_code,
-                        response_url=str(response.url),
-                    )
-                    await self.poller.save(key, evidence)
+                digest = sha256(payload)
+                # Transport evidence only; raw files are written for captured items.
+                if re.fullmatch(r"S\d{2}:\d+", key):
+                    async with self.poller.lock(self.poller.state_locks, key):
+                        evidence = await self.poller.state(key)
+                        evidence.update(
+                            payload_sha256=digest,
+                            fetched_at=received_at,
+                            http_status=response.status_code,
+                            response_url=str(response.url),
+                        )
+                        await self.poller.save(key, evidence)
                 response.raise_for_status()
                 state.update(
                     etag=response.headers.get("etag"),
                     last_modified=response.headers.get("last-modified"),
-                    raw_ref=ref,
-                    raw_sha256=digest,
+                    payload_sha256=digest,
                     fetched_at=received_at,
                     http_status=response.status_code,
+                    response_url=str(response.url),
                 )
                 return payload, state
             except (httpx.HTTPError, TimeoutError) as exc:
@@ -197,7 +198,30 @@ class SourceService:
                     await asyncio.sleep(delay)
         raise error
 
-    async def ingest(self, source, item, raw_ref, raw_hash):
+    async def captured(self, **filters):
+        """The stored item matching (source_id, external_id) or content_hash (03 §2.9)."""
+        rows = await self.repo.list("ingest.source_items", filters=filters, limit=1)
+        return rows[0] if rows else None
+
+    async def observe_known(self, source_id, external_id, feed):
+        """True when the item is already captured; a sighting in another feed counts once (03 §3.1)."""
+        item = await self.captured(source_id=source_id, external_id=str(external_id))
+        if not item:
+            return False
+        if feed not in item.get("observed_feeds", [item.get("feed")]):
+            async with self.repo.lock("ingest-dedup"), self.repo.transaction():
+                await self._count_observation(item["item_id"], feed)
+        return True
+
+    async def _count_observation(self, item_id, feed):
+        old = await self.repo.get("ingest.source_items", item_id)
+        old["observation_count"] = old.get("observation_count", 1) + 1
+        old["observed_feeds"] = old.get("observed_feeds", [old.get("feed")]) + [feed]
+        await self.repo.put("ingest.source_items", item_id, old)
+        return old
+
+    async def ingest(self, source, item):
+        """Store one captured item whose raw payload is already at item["raw_ref"]."""
         sid = source["source_id"]
         identity = item.get("external_id")
         if isinstance(identity, bool) or not isinstance(identity, (str, int)) or not str(identity).strip():
@@ -214,92 +238,25 @@ class SourceService:
             )
         )
         external = str(item["external_id"])
+        feed = item.get("feed") or source.get("feed") or sid
+        item_id = item["item_id"]
         async with self.repo.lock("ingest-dedup"), self.repo.transaction():
-            dedup = await self.repo.get(
-                "ops.source_dedup", sha256(sid + "|" + external)
-            ) or await self.repo.get("ops.source_dedup", "content:" + content_hash)
-            # Index entries can omit text for a previously captured full article.
-            # Preserve that durable evidence and count the real observation first.
-            if not dedup and not body and sid != "S29":
+            existing = await self.captured(source_id=sid, external_id=external) or await self.captured(
+                content_hash=content_hash
+            )
+            if not existing and not body and sid != "S29":
                 raise ValueError("Source entry has no normalized content")
-            if dedup:
-                old = await self.repo.get("ingest.source_items", dedup["item_id"])
-                from tank.time_precision import collection_clock
-
-                incoming_at = item.get("observed_at") or iso()
-                observation_key = sha256(sid + "|" + str(item.get("feed", sid)) + "|" + external)
-                watermark = old.get("observation_watermarks", {}).get(observation_key)
-                watermark = watermark.get("observed_at") if isinstance(watermark, dict) else watermark
-                # Backlog retries replay an existing acquisition, not a new sighting.
-                new_observation = (
-                    not item.get("observation_id")
-                    or not watermark
-                    or parse_time(incoming_at) > parse_time(watermark)
-                )
-                old["observation_count"] = old.get("observation_count", 1) + int(new_observation)
-                old["last_observed_at"] = max(
-                    old.get("last_observed_at") or old.get("observed_at") or incoming_at,
-                    incoming_at,
-                    key=parse_time,
-                )
-                if item.get("observation_id") and new_observation:
-                    old.setdefault("observation_watermarks", {})[observation_key] = collection_clock(
-                        incoming_at
-                    ).fields("observed_at")
-                if new_observation:
-                    old.setdefault("observation_evidence", []).append(
-                        {
-                            "source_id": sid,
-                            "feed": item.get("feed") or source.get("feed") or sid,
-                            "external_id": external,
-                            "raw_ref": raw_ref,
-                            "raw_sha256": raw_hash,
-                            **collection_clock(incoming_at).fields("observed_at"),
-                        }
-                    )
-                old["last_observed_at_precision"] = "COLLECTION_ONLY"
-                from tank.time_precision import collection_clock
-
-                old.update(collection_clock(old["last_observed_at"]).fields("last_observed_at"))
-                if sid == "S29" and old.get("source_id") == "S29":
-                    monitored = (
-                        item.get("monitored_author") or item.get("reposted_by") or item.get("author", "")
-                    )
-                    role_now = self.accounts.get(monitored.lower().lstrip("@"), {}).get("role")
-                    old.setdefault("monitored_account_evidence", {})[monitored] = {
-                        "raw_ref": raw_ref,
-                        "raw_sha256": raw_hash,
-                        "observed_at": iso(),
-                        "observed_at_precision": "COLLECTION_ONLY",
-                    }
-                    old["monitored_accounts"] = list(
-                        dict.fromkeys(old.get("monitored_accounts", []) + [monitored])
-                    )
-                    if role_now == "ORGANIZATION":
-                        old["deferrable"] = False
-                        old["relevance"] = {"decision": "ALWAYS"}
-                        if not getattr(self.settings, "capture_only", False):
-                            await self.repo.enqueue(
-                                "ROUTE_ITEM",
-                                {"item_id": old["item_id"]},
-                                old["item_id"],
-                                priority=1,
-                                max_attempts=2,
-                            )
-                await self.repo.put("ingest.source_items", old["item_id"], old)
-                # Content dedup can first encounter a different source identity.
-                # Remember that identity too, so later edits cannot create a
-                # second item for the same source/external-id pair.
-                await self.repo.put(
-                    "ops.source_dedup", sha256(sid + "|" + external), {"item_id": old["item_id"]}
-                )
-                return old
-            item_id = new_id("item")
+            if existing:
+                if existing["item_id"] == item_id:
+                    # Replay of an ingest that already committed.
+                    return existing
+                # Exact duplicate: no new item, one more observation per new feed (03 §3.1).
+                Path(item["raw_ref"]).unlink(missing_ok=True)
+                if feed in existing.get("observed_feeds", [existing.get("feed")]):
+                    return existing
+                return await self._count_observation(existing["item_id"], feed)
             observed_at = item.get("observed_at") or iso()
-            raw_payload = zstandard.ZstdDecompressor().decompress(Path(raw_ref).read_bytes())
-            if sha256(raw_payload) != raw_hash:
-                raise ValueError("Raw payload SHA does not match source item evidence")
-            raw_ref, raw_hash = self.raw(raw_payload, source_id=sid, item_id=item_id, observed_at=observed_at)
+            raw_ref, raw_hash = item["raw_ref"], item["raw_sha256"]
             account = self.accounts.get(
                 (item.get("monitored_author") or item.get("reposted_by") or item.get("author", ""))
                 .lower()
@@ -324,7 +281,7 @@ class SourceService:
                 item,
                 item_id=item_id,
                 source_id=sid,
-                feed=item.get("feed") or source.get("feed") or sid,
+                feed=feed,
                 source=source.get("name", sid),
                 source_name=source.get("name", sid),
                 author=item.get("author") or source.get("name", sid),
@@ -392,24 +349,14 @@ class SourceService:
             from tank.time_precision import collection_clock
 
             record.update(collection_clock(record["observed_at"]).fields("observed_at"))
-            if item.get("observation_id"):
-                record["observation_watermarks"] = {
-                    sha256(sid + "|" + str(item.get("feed", sid)) + "|" + external): collection_clock(
-                        record["observed_at"]
-                    ).fields("observed_at")
-                }
             await self.repo.put("ingest.source_items", item_id, record)
-            index = {"item_id": item_id}
-            await self.repo.put("ops.source_dedup", sha256(sid + "|" + external), index)
-            await self.repo.put("ops.source_dedup", "content:" + content_hash, index)
-            if not getattr(self.settings, "capture_only", False):
-                await self.repo.enqueue(
-                    "FILTER_ITEM" if filtered else "ROUTE_ITEM",
-                    {"item_id": item_id},
-                    item_id,
-                    priority=priority,
-                    max_attempts=2,
-                )
+            await self.repo.enqueue(
+                "FILTER_ITEM" if filtered else "ROUTE_ITEM",
+                {"item_id": item_id},
+                item_id,
+                priority=priority,
+                max_attempts=2,
+            )
             return record
 
     async def poll_once(self, source_id, *, due_only=False, escalated=False):

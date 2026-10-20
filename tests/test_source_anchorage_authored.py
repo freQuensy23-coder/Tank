@@ -101,9 +101,7 @@ async def test_normal_anchorage_poll_uses_actual_retained_bodies_and_source_inge
             200, content=index_html.encode() if str(request.url) == index_url else pages[str(request.url)]
         )
 
-    settings = Settings(
-        data_dir=tmp_path, capture_only=True, x_enabled=False, user_agent="Tank offline source regression"
-    )
+    settings = Settings(data_dir=tmp_path, x_enabled=False, user_agent="Tank offline source regression")
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         service = SourceService(repo, settings, http=http)

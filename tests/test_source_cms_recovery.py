@@ -24,7 +24,8 @@ def retained(name):
 
 
 def original():
-    return next(r for r in parsers.article_links(retained("index"), FEED) if r["url"] == OLD)
+    row = next(r for r in parsers.article_links(retained("index"), FEED) if r["url"] == OLD)
+    return dict(row, item_id="item-s13-recovery")
 
 
 def test_retained_cms_entry_declares_slug_without_replacing_canonical_identity():
@@ -81,7 +82,7 @@ async def test_retained_canonical_404_recovers_only_exact_same_cms_entry(tmp_pat
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         row = original()
         row["observed_at"] = "2026-10-19T07:59:02.218121Z"
-        batch = {"kind": "html", "raw_ref": "retained-index", "raw_sha256": sha256(retained("index"))}
+        batch = {"kind": "html"}
         if mismatch:
             with pytest.raises(ValueError, match="identity/content mismatch"):
                 await svc.poller._item(source, FEED, "S13:0", batch, row)
@@ -95,12 +96,9 @@ async def test_retained_canonical_404_recovers_only_exact_same_cms_entry(tmp_pat
             assert item["observed_at"] == row["observed_at"]
             recovery = item["publisher_cms_recovery"]
             assert recovery["status"] == "VERIFIED_SAME_CMS_ENTRY"
-            assert recovery["original_raw_sha256"] == sha256(retained("not-found"))
-            assert recovery["resolved_raw_sha256"] == sha256(detail)
-            assert Path(recovery["original_raw_ref"]).exists()
-            assert Path(recovery["resolved_raw_ref"]).exists()
-        recovery = await repo.get("ops.source_checkpoints", "S13:0:cms-recovery:" + sha256(OLD))
-        assert recovery["original_http_status"] == 404 and recovery["canonical_url"] == OLD
+            assert recovery["original_payload_sha256"] == sha256(retained("not-found"))
+            assert recovery["original_http_status"] == 404 and recovery["canonical_url"] == OLD
+            assert item["raw_sha256"] == sha256(detail) and Path(item["raw_ref"]).exists()
     assert calls == [OLD, NEW]
 
 
@@ -153,45 +151,3 @@ async def test_checkpoint_fallback_must_match_same_host_and_declared_slug(tmp_pa
         with pytest.raises(httpx.HTTPStatusError):
             await svc.poller._item(source, FEED, "S13:0", {"kind": "html"}, row)
     assert calls == [OLD]
-
-
-@pytest.mark.asyncio
-async def test_pending_old_index_row_gains_current_cms_binding_without_backdating_it(tmp_path):
-    from copy import deepcopy
-
-    def handle(request):
-        if str(request.url) == OLD:
-            return httpx.Response(404, content=retained("not-found"))
-        assert str(request.url) == NEW
-        return httpx.Response(200, content=retained("detail"))
-
-    source = {"source_id": "S13", "name": "Robinhood", "feeds": [FEED]}
-    repo = Repo()
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
-        ref, digest = svc.raw(retained("index"), source_id="S13")
-        first = "2026-10-18T12:00:00Z"
-        later = "2026-10-20T12:00:00Z"
-        old = deepcopy(original())
-        old.pop("publisher_cms_identity")
-        old.pop("publisher_cms_slug_url")
-        state = {}
-        captured = {"fetched_at": first, "raw_ref": ref, "raw_sha256": digest}
-        svc.poller.queue_rows(state, "S13:0", FEED, [old], captured, "html", {}, first)
-        svc.poller.queue_rows(
-            state, "S13:0", FEED, [original()], dict(captured, fetched_at=later), "html", {}, later
-        )
-        pending = state["pending_batches"][0]["rows"][0]
-        assert pending["observed_at"] == first
-        assert pending["observation_times"] == [first, later]
-        assert pending["publisher_cms_discovery"] == {
-            "observed_at": later,
-            "observed_at_prec": "COLLECTION_ONLY",
-            "raw_ref": ref,
-            "raw_sha256": digest,
-        }
-        await svc.poller._item(source, FEED, "S13:0", state["pending_batches"][0], pending)
-        item = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
-        assert item["url"] == NEW and item["external_id"] == OLD
-        assert item["observed_at"] == first
-        assert item["publisher_cms_recovery"]["status"] == "VERIFIED_SAME_CMS_ENTRY"
