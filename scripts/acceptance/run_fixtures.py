@@ -103,7 +103,11 @@ def run_one(fid, entry, out_dir, timeout):
     config_dir = resolve(entry["config_dir"]["path"]) if entry.get("config_dir") else ROOT / "config"
     raw = sh(["zstd", "-dc", str(resolve(entry["acceptance_input"]["path"]))]).stdout
     packet = json.loads(raw)
-    tank = container("tank")  # only to place the packet into the shared data volume
+    tank = container("tank")  # the running service must be up: openma's model card calls tank:8790
+    # load_inputs refuses unless the fixture's openma.yaml is byte-identical to the deployed one.
+    deployed = sh(COMPOSE + ["exec", "-T", "tank", "cat", "/config/openma.yaml"]).stdout
+    if (config_dir / "openma.yaml").read_text() != deployed:
+        raise SystemExit(f"{fid}: fixture config openma.yaml differs from the deployed /config/openma.yaml")
     with tempfile.TemporaryDirectory() as tmp:
         p = Path(tmp) / f"{fid}.json"
         p.write_text(raw)
@@ -116,6 +120,8 @@ def run_one(fid, entry, out_dir, timeout):
     reset_replay_db()
     private = resolve(entry["private_name_map"]["path"])
     started = iso(utcnow())
+    # No --use-aliases: the one-off replay process must not take the `tank` alias. Default volumes keep
+    # /data on tank-data, where evidence for the tank-replay sandbox lives (/data/replay/evidence/<RPL-id>).
     res = sh(COMPOSE + ["run", "--rm", "--no-deps", "-T",
                         "-v", f"{config_dir}:/config:ro",
                         "-v", f"{private}:{PRIVATE_IN_CONTAINER}:ro",
