@@ -1,0 +1,17 @@
+[
+  {
+    "hook": "NEW_MECHANISM",
+    "prp_id": "PRP-TANKOPS-CLI-1",
+    "overlap": "none",
+    "evidence": [],
+    "mechanism": "n/a",
+    "confidence": "LOW",
+    "definition": "evidence only",
+    "occurrences": 1,
+    "concept_name": "synthetic CLI check",
+    "human_action": null,
+    "recommendation": "TEST_MORE",
+    "adversarial_review": {},
+    "why_existing_fails": "n/a"
+  }
+]

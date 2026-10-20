@@ -1,0 +1,12 @@
+{
+  "review_id": "REV-01M5D61J5MZK0D4P1FGKV4HNYX",
+  "subject": "ALR-01M5D5G0QWMZCEEEYK6E95965P",
+  "version": 2,
+  "label": "FALSE_ALARM",
+  "miss_reason": null,
+  "notes": "",
+  "reviewer": "tank-ops",
+  "at": "2026-10-20T17:34:14.708485Z",
+  "at_prec": "COLLECTION_ONLY",
+  "at_prec_reason": null
+}

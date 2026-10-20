@@ -1,0 +1,10 @@
+{
+  "archive_id": "ARCH-2ece7fe40e7197dba7c5504a24d6ad43f15575eb3eb5e8db8b55fcd300e7de87",
+  "path": "/srv/tank-work/logs/tank-ops/cli-data/archive/binance/spot/klines/BTCUSDT-1m-2026-10-01.zip",
+  "source_url": "https://data.binance.vision/data/spot/daily/klines/BTCUSDT/1m/BTCUSDT-1m-2026-10-01.zip",
+  "rows": 1440,
+  "complete": true,
+  "gaps": [],
+  "duplicates": [],
+  "timestamp_unit": "US"
+}

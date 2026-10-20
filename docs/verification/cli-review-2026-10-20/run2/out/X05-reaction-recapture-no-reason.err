@@ -1,0 +1,4 @@
+Usage: python -m tank.cli reaction [OPTIONS] EVENT_ID
+Try 'python -m tank.cli reaction --help' for help.
+
+Error: --recapture requires --token-id and a nonempty --reason

@@ -1,0 +1,18 @@
+{
+  "hook": "NEW_MECHANISM",
+  "prp_id": "PRP-TANKOPS-CLI-1",
+  "overlap": "none",
+  "evidence": [],
+  "mechanism": "n/a",
+  "confidence": "LOW",
+  "definition": "evidence only",
+  "occurrences": 1,
+  "concept_name": "synthetic CLI check",
+  "human_action": "APPROVE_FOR_SANDBOX",
+  "recommendation": "TEST_MORE",
+  "adversarial_review": {},
+  "why_existing_fails": "n/a",
+  "decided_at": "2026-10-20T17:36:03.246528Z",
+  "decided_at_prec": "COLLECTION_ONLY",
+  "decided_at_prec_reason": null
+}
