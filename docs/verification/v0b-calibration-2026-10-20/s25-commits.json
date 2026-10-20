@@ -1,0 +1,402 @@
+[
+{
+"item_id": "ITM-01M59JRG442KMZJFGH9QPZ025A",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "002a7fbeb22adf4f6eea1ddc6f7cca232afaf938",
+"title": "Sui protocol code (#159)",
+"pulls": [
+159
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG47S26GD34B6R14DPCG",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "200cda254120375f40ed0a7e89931afb897b8891",
+"title": "feat: upgrade Solana programs to Anchor 0.31.1 (#155)",
+"pulls": [
+155
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG3G99JECJYZ0JVP17CY",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "2ff4988f85b5c94032eb71bbc4073e69c078179d",
+"title": "Solana: clarify V2 receive/compose docs (#169)",
+"pulls": [
+169
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG3DEV6X51SXYPWW4CJT",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "3801b9929281261b907eb3482a82364ad00d7868",
+"title": "Update SUI contract code (#170)",
+"pulls": [
+170
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG34W6TYA11RWXE60NWB",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "401e23dd928d3d27e80fda65e053ee311ed6a08e",
+"title": "Chore: upgrade Anchor to 0.32.1 (#178)",
+"pulls": [
+178
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG3NNKQCY0D1RF9QDRZ3",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "4645b5795185a196713263311f76a497a3267dcc",
+"title": "Update Move.lock and Move.toml files (#164)",
+"pulls": [
+164
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG4H5AEFNA1WBRJQX1XE",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "48976d1c51acb59131b921ec37362cefed1982d3",
+"title": "smol typo",
+"pulls": [
+132
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG3RE1GXSX292AQY2NW0",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "605a5c9b58ed688861240012a449d428243aa651",
+"title": "update Move.toml files to use 'main' branch (#163)",
+"pulls": [
+163
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG3BWVJHGG2W415B1T36",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "63a2e2b2c9900cdafc8cbc632a2754a051eea15b",
+"title": "IOTA L1 Contracts (#176)",
+"pulls": [
+176
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG4AGKYP7HMJ2JMNB11R",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "63bbd31584c588844de33678bf8dd61d879cba14",
+"title": "Merge pull request #154 from LayerZero-Labs/fix-ton-base",
+"pulls": [
+154
+],
+"parents": 2
+},
+{
+"item_id": "ITM-01M59JRG3YT1SYNCCB2GBRMHDG",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "71f0ecd85bd7f953eeaefb416aebb4d39198980f",
+"title": "chore: update Move.lock and Move.toml files to use 'main' branch for \u2026",
+"pulls": [
+161
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG4P8V8QWDEVPPSVJQST",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "84231ceeb0e090ea5941ed8ad88e7b2379065a55",
+"title": "resolving comments",
+"pulls": [
+142
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG4FQ7WSC3YFWYTHJ1BP",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "88428755be6caa71cb1d2926141d73c8989296b5",
+"title": "Sync DVN Program: Add extend_dvn_config instruction (#136)",
+"pulls": [
+136
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG4K3KCGD118DA3CNQTG",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "9a4049ae3a374e1c0ef01ac9fb53dd83f4257a68",
+"title": "Merge pull request #142 from AlexanderLiteplo/removing-old-move-vm-ofts",
+"pulls": [
+142
+],
+"parents": 2
+},
+{
+"item_id": "ITM-01M59JRG30R0R3M972FY96JTMH",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "9c741e7f9790639537b1710a203bcdfd73b0b9ac",
+"title": "sync modules (#202)",
+"pulls": [
+202
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG36P7CE4SFGWZV6R9NG",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "ab9b083410b9359285a5756807e1b6145d4711a7",
+"title": "chore: add testnet configuration to Move.lock for IOTA contracts (#177)",
+"pulls": [
+177
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG4CYJTR6MSA8NPPS2TT",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "c08ed5689042b42e517edf7f077afee4f3c4c0fc",
+"title": "fix ton base oapp",
+"pulls": [
+154
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG3KYH76N3WPE4RPGZKQ",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "c09287a8b1f236fcc057f474d8a773a0fb7758df",
+"title": "Feat(Solana): Implement `LzReceiveTypes V2` with Multi-Instruction an\u2026",
+"pulls": [
+152
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG42Y3N705PPX2NCEFXC",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "d411484d1908d2490d44a3d4ae1e210bffd7c842",
+"title": "chore: update Move.lock and Move.toml files to use 'main' branch for \u2026",
+"pulls": [
+160
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRG3WYV50C1N7XCBYXAGE",
+"repo": "LayerZero-Labs/LayerZero-v2",
+"sha": "e8ef3f3293bd9a68c2fa67f5e764e32e01790092",
+"title": "update Move.lock and Move.toml files to use 'main' branch for all dep\u2026",
+"pulls": [
+162
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRKB5689N72F8ZY2M66SH",
+"repo": "morpho-org/morpho-blue",
+"sha": "2a5d5eaced0ac4a065e06cc8a5d6fa98ac8eee4b",
+"title": "certora: summarize wTaylorCompounded NONDET to remove the accrual cub\u2026",
+"pulls": [
+788
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRKASWWQGG8CZS88HR8S5",
+"repo": "morpho-org/morpho-blue",
+"sha": "4418b82363e4a54a57a301bae057d83592a50a2f",
+"title": "Merge pull request #791 from morpho-org/hermes/pin-foundry-toolchain-\u2026",
+"pulls": [
+791
+],
+"parents": 2
+},
+{
+"item_id": "ITM-01M59JRK9TYENGV9YB6Z4QWVDP",
+"repo": "morpho-org/morpho-blue",
+"sha": "6f517e28ba7232f2583c2bc7506b3995434babb2",
+"title": "Merge pull request #797 from morpho-org/devin/1792071788-mit-license",
+"pulls": [
+797
+],
+"parents": 2
+},
+{
+"item_id": "ITM-01M59JRKAZKM5S0S23BKF1ADPN",
+"repo": "morpho-org/morpho-blue",
+"sha": "83184f257b46646ac9da5bae8c380302aed70d4d",
+"title": "certora: restrict the withdraw loss bound to by-assets and drop the h\u2026",
+"pulls": [
+788
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRKBAD3H82JZZWNR2T6DD",
+"repo": "morpho-org/morpho-blue",
+"sha": "8353237ab8c83722b18b4bb75d410193a477f1fc",
+"title": "certora: accrue interest up front instead of pinning lastUpdate, so t\u2026",
+"pulls": [
+788
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRKA5TRCHTSWPNT3QZNDK",
+"repo": "morpho-org/morpho-blue",
+"sha": "8c6f5aaaf720a55b50727f93ca2edd1306d15006",
+"title": "small changes",
+"pulls": [
+788
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRKBCAJ42QBP2EADB0RA5",
+"repo": "morpho-org/morpho-blue",
+"sha": "8d2d841e580d4bca0c0e850d37838eb034dfe6d6",
+"title": "certora: pin interest accrual off so the price bound holds at mint/burn",
+"pulls": [
+788
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRKA2A1QZ5PMMR2S5HB3J",
+"repo": "morpho-org/morpho-blue",
+"sha": "8e26ca6a8dbc5089edcd67fb576248810fd2870a",
+"title": "Merge pull request #788 from morpho-org/claude/certora-supply-loss-bo\u2026",
+"pulls": [
+788
+],
+"parents": 2
+},
+{
+"item_id": "ITM-01M59JRKAPHJ4BT0MNFM8SGTAB",
+"repo": "morpho-org/morpho-blue",
+"sha": "8f89ede29ec9d2cfa9688aa670346226a3571f06",
+"title": "chore: apply forge 1.8 formatting",
+"pulls": [
+793
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRKAW0PXXYRNN8VY6NABX",
+"repo": "morpho-org/morpho-blue",
+"sha": "967951883f43a5016f1c58b928c7f6a8efb42e93",
+"title": "ci: pin foundry-toolchain to v1.9.1",
+"pulls": [
+791
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRK9KTPC3M1F6GWH3ESNK",
+"repo": "morpho-org/morpho-blue",
+"sha": "9cf6d5b844625ba108e36d1cf911f5d2faf7c136",
+"title": "Merge pull request #798 from morpho-org/timeout-exact-math",
+"pulls": [
+798
+],
+"parents": 2
+},
+{
+"item_id": "ITM-01M59JRK9PG4Z5MJ9A3VGSK529",
+"repo": "morpho-org/morpho-blue",
+"sha": "a3c687d6ea90c826957905aa7250f125df3ae314",
+"title": "simpler conf",
+"pulls": [
+798
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRKA8YP169R8810T2RMPN",
+"repo": "morpho-org/morpho-blue",
+"sha": "a773e55d8f63608cca465321592a138ad4d4a6a3",
+"title": "Merge pull request #794 from morpho-org/claude/certora-no-fail-fast",
+"pulls": [
+794
+],
+"parents": 2
+},
+{
+"item_id": "ITM-01M59JRKB7DW73MHSMPMQARB9H",
+"repo": "morpho-org/morpho-blue",
+"sha": "af70c09811b71cf1a00b276a5e4f54131d442d8e",
+"title": "certora: add cross-mult hint to the withdraw loss bound to break the \u2026",
+"pulls": [
+788
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRKAB5BE9ZG42GY6J9SK9",
+"repo": "morpho-org/morpho-blue",
+"sha": "bc1bfca22949cfe01e8508c15a6ff1c8f462f0e6",
+"title": "Merge pull request #795 from morpho-org/ci/forge-build-locked",
+"pulls": [
+795
+],
+"parents": 2
+},
+{
+"item_id": "ITM-01M59JRKAKX026RKKS1SM1SE2E",
+"repo": "morpho-org/morpho-blue",
+"sha": "c3f327e49ddae623e2e3162f8468d58fbb79d1b8",
+"title": "Merge pull request #793 from morpho-org/claude/forge-1-8-fmt",
+"pulls": [
+793
+],
+"parents": 2
+},
+{
+"item_id": "ITM-01M59JRKAGMZ9D87V30XDHCF5E",
+"repo": "morpho-org/morpho-blue",
+"sha": "d89672fe0e2d1e2b82d4c8678ec3919a88b1e305",
+"title": "[certora] don't cancel sibling specs on first failure",
+"pulls": [
+794
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRK9Z0YFJGNPW4KDVAWVX",
+"repo": "morpho-org/morpho-blue",
+"sha": "e07f84529d55ede99ba0d69d340440cfe5e4282f",
+"title": "chore: license non-core files under MIT",
+"pulls": [
+797
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRKAEXE2KJFR8Z4FA26FA",
+"repo": "morpho-org/morpho-blue",
+"sha": "e691f5884817d264dcd245c5c228a6088087fb2c",
+"title": "[ci] check foundry.lock matches submodule pins",
+"pulls": [
+795
+],
+"parents": 1
+},
+{
+"item_id": "ITM-01M59JRKB224ARTBMMBNCRNC4M",
+"repo": "morpho-org/morpho-blue",
+"sha": "f1d5c90d6ebfc262c41c64d10598522e0bd69eb3",
+"title": "certora: bound block.timestamp so accrueInterest pins lastUpdate (fix\u2026",
+"pulls": [
+788
+],
+"parents": 1
+}
+]
