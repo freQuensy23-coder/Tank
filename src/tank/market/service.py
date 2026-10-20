@@ -2172,7 +2172,6 @@ class MarketService:
                 "reason": reason,
                 "capture_cadences": cadences,
             },
-            immutable=True,
         )
 
     async def _sync_streams(self):
