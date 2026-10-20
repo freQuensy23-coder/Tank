@@ -2772,6 +2772,59 @@ def supply_truth(snapshot, start, end):
     )
 
 
+def benchmark_reaction_values(snapshot, start, end):
+    """Reaction checkpoint values for a BTC/ETH benchmark outside the analysis set (03 §8.1).
+
+    Lead ruling 2026-10-20: the raw return comes from base-tier 1m kline closes of the
+    benchmark's largest-volume spot venue (trailing 24 h before the window end); spot CVD,
+    OI and funding are n/a NOT_APPLICABLE. No escalation, so no trades are needed.
+    """
+    token = snapshot.get("token_id")
+    rows = [
+        r
+        for r in snapshot.get("klines", [])
+        if _market(r) == "SPOT"
+        and r.get("complete") is True
+        and r.get("token_id", token) == token
+        and number(r.get("c", r.get("close")))
+    ]
+
+    def close_time(r):
+        return (
+            parse_time(r["close_time"])
+            if r.get("close_time")
+            else _time(r) + timedelta(seconds=int(r.get("interval_s", 60)))
+        )
+
+    volume = defaultdict(Decimal)
+    for r in rows:
+        if end - timedelta(hours=24) < close_time(r) <= end:
+            v = decimal(r.get("quote_volume_usd"))
+            volume[r["instrument_id"]] += v if v is not None else Decimal(0)
+    venue = max(volume, key=volume.get) if volume and max(volume.values()) > 0 else None
+
+    def last_close(bound):
+        eligible = [r for r in rows if r["instrument_id"] == venue and close_time(r) <= bound]
+        return max(eligible, key=close_time) if eligible else None
+
+    first, last = (last_close(start), last_close(end)) if venue else (None, None)
+    p0 = decimal((first or {}).get("c", (first or {}).get("close")))
+    p1 = decimal((last or {}).get("c", (last or {}).get("close")))
+    r_raw = float(p1 / p0 - 1) if p0 and p1 else None
+    return {
+        "r_raw": r_raw,
+        "r_raw_reason": None if r_raw is not None else "INCOMPLETE",
+        "r_raw_method": "BASE_KLINE_CLOSE_LARGEST_SPOT_VENUE",
+        "r_raw_venue": venue,
+        "price_start": p0,
+        "price_start_observed_at": iso(close_time(first)) if first else None,
+        "price_end": p1,
+        "price_end_observed_at": iso(close_time(last)) if last else None,
+        "not_applicable": ["r_btc_adj", "pctile", "spot_cvd", "oi", "funding", "liquidations"],
+        "reason": "NOT_APPLICABLE",
+    }
+
+
 def capture_cadence(snapshot, collection, row=None):
     row = row or {}
     metadata = snapshot.get("capture_metadata") or {}
