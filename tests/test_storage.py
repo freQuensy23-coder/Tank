@@ -491,10 +491,6 @@ def test_decisive_fact_projection_requires_canonical_text():
     assert _projection("ana.market_truth", {"decisive_facts": ["Positive"]})["decisive_facts"] == ["Positive"]
 
 
-
-
-
-
 async def test_uncapped_keyset_and_latest_outside_first_page(repo):
     prefix = new_id("scan")
     at = utcnow()
@@ -787,17 +783,26 @@ async def test_metadata_pages_omit_large_document_payload(repo):
     )
 
 
-
-
 async def test_capture_tier_transitions_follow_market_retention(repo):
     if not isinstance(repo, PostgresRepository):
-        pytest.skip("Memory repository keeps append-only rows until models.py drops the table from APPEND_ONLY")
+        pytest.skip(
+            "Memory repository keeps append-only rows until models.py drops the table from APPEND_ONLY"
+        )
     old, recent = new_id("tier"), new_id("tier")
     for key, at in ((old, utcnow() - timedelta(days=120)), (recent, utcnow() - timedelta(days=1))):
         await repo.put(
             "ops.capture_tier_transitions",
             key,
-            {"transition_id": key, "token_id": "retention:" + key, "effective_at": iso(at), "tier": "BASE"},
+            {
+                "transition_id": key,
+                "token_id": "retention:" + key,
+                "effective_at": iso(at),
+                "effective_at_prec": "COLLECTION_ONLY",
+                "reason": "retention test",
+                "config_version": "test",
+                "code_version": "test",
+                "tier": "BASE",
+            },
         )
     await repo.prune_market(utcnow() - timedelta(days=90))
     assert await repo.get("ops.capture_tier_transitions", old) is None

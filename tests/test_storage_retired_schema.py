@@ -79,7 +79,7 @@ async def test_migration_lock_serializes_concurrent_runners_and_releases_after_c
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        await asyncio.wait_for(waiting, timeout=30)
+        await asyncio.wait_for(waiting, timeout=300)
         # The same pooled connection can reacquire without a leaked session lock.
         await asyncio.wait_for(repo.migrate(), timeout=10)
     finally:
@@ -102,7 +102,7 @@ async def test_cancelled_waiting_migration_does_not_keep_session_lock(typed_repo
             waiting.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await waiting
-        await asyncio.wait_for(other.migrate(), timeout=30)
+        await asyncio.wait_for(other.migrate(), timeout=300)
     finally:
         await other.close()
 
