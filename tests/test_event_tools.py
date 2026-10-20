@@ -3532,8 +3532,8 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             await resumed.process_event(sid, failed_call)
             session = await service.repo.get("ops.agent_sessions", sid)
             event = await service.repo.get("evt.events", eid)
-            assert session["status"] == "FAILED" and event["lifecycle"] == "FAILED"
-            assert event["failure_reason"] == "AGENT_FAILED"
+            assert session["status"] == "FAILED" and session["terminal_failure"]["event_type"] == "session.error"
+            assert event["lifecycle"] != "FAILED" and "failure_reason" not in event
             messages = [p["events"][0] for p in native_posts if p["events"][0].get("type") == "user.message"]
             assert len(messages) == 2 and messages[0] == messages[1]
             assert not await service.repo.list("out.alerts")

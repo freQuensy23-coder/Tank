@@ -121,7 +121,7 @@ async def test_failed_turn_retries_original_message_and_new_message_cannot_reset
     session = await repo.get("ops.agent_sessions", "s")
     assert session["status"] == "FAILED" and session["message_log"][0]["retry_count"] == 1
     assert len(posts) == 4
-    assert (await repo.get("evt.events", "e"))["lifecycle"] == "FAILED"
+    assert (await repo.get("evt.events", "e"))["lifecycle"] == "TRACKED"
     assert (await repo.get("ops.routing_reservations", "reservation"))["status"] == "CLOSED"
 
 

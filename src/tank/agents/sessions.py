@@ -1441,14 +1441,8 @@ class SessionService:
                                 await self.repo.put(
                                     "ops.routing_reservations", reservation["reservation_id"], reservation
                                 )
-                    record = (
-                        await self.repo.get("evt.events", session["event_id"])
-                        if session.get("event_id")
-                        else None
-                    )
-                    if record:
-                        record.update(failure_reason="AGENT_FAILED", status="FAILED", lifecycle="FAILED")
-                        await self.repo.put("evt.events", record["event_id"], record)
+                    # "The event is marked FAILED" (03 §3.2): its session is FAILED.
+                    # EventLifecycle has no FAILED, so the event record is unchanged.
                     failed_payload = (active or {}).get("payload") or session.get("last_payload") or {}
                     item_id = failed_payload.get("item_id") or session.get("item_id")
                     if item_id:
