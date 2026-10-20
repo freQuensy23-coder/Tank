@@ -1,0 +1,51 @@
+{
+  "status": "PASS",
+  "scope": "ACTUAL_NATIVE_BRIDGE_ONLY_NOT_OPENMA_API_HISTORY",
+  "sessionId": "native_proof_2d5518e3de164484bc3686372dcfd0eb",
+  "nonce": "77b2ffa1-2130-4b6c-a3f6-f1878e645847",
+  "rootfsIndex": "906ee9fa0d54aebf7aa44a352bf2e8c001a846f7de58327ebf9d75c4924f8322",
+  "declaredHostImageId": "sha256:929d2a888318afd348e47ec22bafcb3ff6c1ed65f2667c771ffea0ed39e8c0ff",
+  "identity": "50b110dd1f37a6edee1ae5a80f104bbb772180725127ed44bc77e474c3e45641",
+  "cpus": 1,
+  "memoryMib": 2048,
+  "results": [
+    {
+      "phase": "first",
+      "status": 0,
+      "signal": null,
+      "spawnError": null,
+      "lastProgress": {
+        "stage": "after_idle",
+        "hostEpochMs": 1792517553757
+      },
+      "failureClassification": null
+    },
+    {
+      "phase": "resume",
+      "status": 0,
+      "signal": null,
+      "spawnError": null,
+      "lastProgress": {
+        "stage": "after_idle",
+        "hostEpochMs": 1792517570038
+      },
+      "failureClassification": null
+    },
+    {
+      "phase": "cleanup",
+      "status": 0,
+      "signal": null,
+      "spawnError": null
+    }
+  ],
+  "modelCalls": 0,
+  "externalRequests": 0,
+  "idleSessionArchiveOrRecreate": false,
+  "openmaSessionHistoryProofStillRequired": true,
+  "maximumPhaseWallSeconds": [
+    1080,
+    900,
+    60
+  ],
+  "failure": null
+}

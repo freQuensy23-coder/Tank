@@ -1,0 +1,85 @@
+{
+  "status": "PASS",
+  "id": "rEAHsoxscQWH",
+  "expectedName": "oma-6a020057db756e7de604b32e311e64fe",
+  "controllerPid": 90,
+  "fingerprint": "50b110dd1f37a6edee1ae5a80f104bbb772180725127ed44bc77e474c3e45641",
+  "workerSha256": "8e3881b1e4de68a0f53c88321adc48691bd2d8f44f6e915b8843062c3c49a988",
+  "nativePreparationMs": 2800.1567619999996,
+  "browserProof": {
+    "firstOpenMs": 6442.869314,
+    "domSha256": "7e48e55bbedd1dade3267ae3b7c8fafc903ecaa3bfd7266c494dabb42d0252eb",
+    "pngSha256": "861920aacc104ca0bea9aca7fc7cd59c2776f042a1586e6812d5affb193c7ddc",
+    "pngBytes": 11575,
+    "width": 1280,
+    "height": 900,
+    "observerScriptSha256": "910dec01b037465d0692050deea3604b62e6967e42f88869c5bb43de77cf3b0c",
+    "state": "/workspace/.tank-browser/bd8555bf098133e741080f27d3c17487"
+  },
+  "rootfsWorkspaceAndOutputRetained": true,
+  "actualChromiumCookieAndLocalStorageRetained": true,
+  "nativeInfo": {
+    "id": "rEAHsoxscQWH",
+    "state": {
+      "status": "running",
+      "running": true,
+      "pid": 108
+    },
+    "createdAt": "2026-10-20T17:30:24.392120453+00:00",
+    "image": "rootfs:/opt/tank-sandbox-oci",
+    "cpus": 1,
+    "memoryMib": 2048,
+    "network": {
+      "outbound": {
+        "mode": "disabled",
+        "allowNet": []
+      },
+      "inbound": {
+        "mode": "disabled",
+        "allowNet": []
+      },
+      "mode": "disabled",
+      "allowNet": [],
+      "publishedPorts": []
+    },
+    "autoStop": 0,
+    "autoDelete": 0,
+    "autoResume": true,
+    "healthStatus": {
+      "state": "None",
+      "failures": 0
+    },
+    "name": "oma-6a020057db756e7de604b32e311e64fe",
+    "startedAt": "2026-10-20T17:32:39.260492188+00:00"
+  },
+  "stop": {
+    "id": "rEAHsoxscQWH",
+    "state": {
+      "status": "stopped",
+      "running": false,
+      "exitCode": 0
+    },
+    "autoDelete": 0,
+    "oldProcess": {
+      "pid": 108,
+      "state": "S",
+      "startTime": "20045642",
+      "rssKiB": 148188
+    },
+    "oldProcessAfter": null,
+    "oldProcessMemoryReleased": true,
+    "runtimeMetrics": {
+      "boxesCreatedTotal": 0,
+      "boxesFailedTotal": 0,
+      "numRunningBoxes": 0,
+      "totalCommandsExecuted": 18,
+      "totalExecErrors": 0
+    }
+  },
+  "fingerprintMismatchRejected": true,
+  "foreignScopeRejected": true,
+  "competingOwnerRejected": false,
+  "noIdleArchiveOrRecreate": true,
+  "perExecFakeKeyRotation": true,
+  "openmaApiHistoryCertified": false
+}

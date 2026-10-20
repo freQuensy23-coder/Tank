@@ -60,10 +60,11 @@ for f in result.json run.json phase-first.json phase-resume.json phase-cleanup.j
   browser-first.html browser-first.png browser-resume.html browser-resume.png browser-first-freshness.json browser-resume-freshness.json; do
   docker cp "$LIFECYCLE:/proof/native-lifecycle/$f" "$EVIDENCE/lifecycle/$f" 2>/dev/null
 done
-docker cp "$LIFECYCLE:/proof/native-lifecycle/" "$EVIDENCE/lifecycle-tree-tmp" >/dev/null 2>&1 && {
-  find "$EVIDENCE/lifecycle-tree-tmp" \( -name 'progress-*.json' -o -name 'preparation-*-timeout.json' -o -name 'browser-*-failure.json' \
-    -o -name 'browser-*-phase.json' -o -name 'browser-*-observer.log' \) -exec cp {} "$EVIDENCE/lifecycle/" \;
-  rm -rf "$EVIDENCE/lifecycle-tree-tmp"; }
+# Copy only named receipts: the proof directory also holds the multi-GB BoxLite home.
+for f in $(docker run --rm --network none --mount "type=volume,src=$VOLUME,dst=/proof,readonly" --entrypoint sh "$image_id" \
+    -c 'cd /proof/native-lifecycle && ls progress-*.json preparation-*-timeout.json browser-*-failure.json 2>/dev/null'); do
+  docker cp "$LIFECYCLE:/proof/native-lifecycle/$f" "$EVIDENCE/lifecycle/$f"
+done
 docker rm "$LIFECYCLE" >/dev/null
 df -B1 / | tail -1 > "$EVIDENCE/disk-after-lifecycle.txt"
 docker run --rm --network none --mount "type=volume,src=$VOLUME,dst=/proof,readonly" --entrypoint du "$image_id" -sb /proof >> "$EVIDENCE/disk-after-lifecycle.txt"

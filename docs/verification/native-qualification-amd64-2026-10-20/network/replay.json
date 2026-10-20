@@ -1,0 +1,100 @@
+{
+  "name": "replay",
+  "policy": {
+    "mode": "enabled",
+    "allowNet": [
+      "172.30.60.2"
+    ]
+  },
+  "bootAndProbeMs": 6918,
+  "probe": {
+    "machine": {
+      "ok": true,
+      "value": "x86_64",
+      "ms": 0
+    },
+    "kernel": {
+      "ok": true,
+      "value": "6.12.87",
+      "ms": 0
+    },
+    "hypervisor_cpu_flag": {
+      "ok": true,
+      "value": true,
+      "ms": 1
+    },
+    "nameservers": [
+      "192.168.127.1"
+    ],
+    "dns_getaddrinfo_example.com": {
+      "ok": false,
+      "error": "gaierror: [Errno -3] Temporary failure in name resolution",
+      "ms": 26
+    },
+    "dns_getaddrinfo_openrouter.ai": {
+      "ok": false,
+      "error": "gaierror: [Errno -3] Temporary failure in name resolution",
+      "ms": 3
+    },
+    "dns_getaddrinfo_api.etherscan.io": {
+      "ok": false,
+      "error": "gaierror: [Errno -3] Temporary failure in name resolution",
+      "ms": 2
+    },
+    "dns_getaddrinfo_postgres": {
+      "ok": false,
+      "error": "gaierror: [Errno -3] Temporary failure in name resolution",
+      "ms": 5
+    },
+    "dns_udp_configured": {
+      "ok": false,
+      "error": "RuntimeError: rcode=5 answers=0",
+      "ms": 1
+    },
+    "dns_udp_public_1.1.1.1": {
+      "ok": false,
+      "error": "TimeoutError: timed out",
+      "ms": 4005
+    },
+    "tls_direct_ip_1.1.1.1": {
+      "ok": false,
+      "error": "ConnectionRefusedError: [Errno 111] Connection refused",
+      "ms": 8
+    },
+    "tls_direct_ip_8.8.8.8": {
+      "ok": false,
+      "error": "ConnectionRefusedError: [Errno 111] Connection refused",
+      "ms": 1
+    },
+    "https_example.com": {
+      "ok": false,
+      "error": "URLError: <urlopen error [Errno -3] Temporary failure in name resolution>",
+      "ms": 79
+    },
+    "https_openrouter_models": {
+      "ok": false,
+      "error": "URLError: <urlopen error [Errno -3] Temporary failure in name resolution>",
+      "ms": 4
+    },
+    "db_tcp": {
+      "ok": true,
+      "value": "172.30.60.2",
+      "ms": 3
+    },
+    "db_select": {
+      "ok": true,
+      "value": "tank_replay_agent tank_replay",
+      "ms": 295
+    },
+    "db_write_refused": {
+      "ok": false,
+      "error": "RuntimeError: ERROR:  cannot execute CREATE TABLE in a read-only transaction",
+      "ms": 93
+    },
+    "db_cross_database": {
+      "ok": false,
+      "error": "RuntimeError: psql: error: connection to server at \"172.30.60.2\", port 5432 failed: FATAL:  pg_hba.conf rejects connection for host \"172.30.60.10\", user \"tank_replay_agent\", database \"tank\", no encryption",
+      "ms": 44
+    }
+  }
+}

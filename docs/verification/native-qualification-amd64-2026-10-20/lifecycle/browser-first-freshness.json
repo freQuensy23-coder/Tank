@@ -1,0 +1,13 @@
+{
+  "statePath": "/workspace/.tank-browser/bd8555bf098133e741080f27d3c17487",
+  "profilePath": "/workspace/.tank-browser/bd8555bf098133e741080f27d3c17487/profile",
+  "initialState": {
+    "exists": false
+  },
+  "initialProfile": {
+    "exists": false
+  },
+  "publicCacheReused": false,
+  "beforeFirstBrowserOpen": true,
+  "observerScriptSha256": "910dec01b037465d0692050deea3604b62e6967e42f88869c5bb43de77cf3b0c"
+}

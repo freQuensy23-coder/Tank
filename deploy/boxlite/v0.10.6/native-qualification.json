@@ -1,0 +1,65 @@
+{
+  "amd64": {
+    "schema": "tank.boxlite-native-qualification.v1",
+    "status": "PASS",
+    "architecture": "amd64",
+    "date": "2026-10-20",
+    "host": {
+      "name": "openclaw-dp",
+      "machine": "x86_64",
+      "kernel": "6.8.0-147-generic",
+      "virtualization": "svm",
+      "kvm_module": "kvm_amd"
+    },
+    "shim_sha256": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+    "provenance_sha256": "101ec15464c6610b673e68ce7c80cc6695248221ad9410172501a8356ea7e172",
+    "openma_image": "sha256:929d2a888318afd348e47ec22bafcb3ff6c1ed65f2667c771ffea0ed39e8c0ff",
+    "runtime_identity": "50b110dd1f37a6edee1ae5a80f104bbb772180725127ed44bc77e474c3e45641",
+    "sandbox_oci_index_sha256": "906ee9fa0d54aebf7aa44a352bf2e8c001a846f7de58327ebf9d75c4924f8322",
+    "guest_resources": {
+      "lifecycle": {
+        "cpus": 1,
+        "memory_mib": 2048
+      },
+      "network": {
+        "cpus": 2,
+        "memory_mib": 2048
+      }
+    },
+    "checks": {
+      "kvm": "PASS",
+      "state_persistence": "PASS",
+      "dns": "PASS",
+      "replay_isolation": "PASS"
+    },
+    "scope": "native BoxLite bridge/provider lifecycle and LiteBoxSandbox network policies; not OpenMA API session history",
+    "evidence_root": "docs/verification/native-qualification-amd64-2026-10-20",
+    "evidence_sha256": {
+      "boxlite-cache-size.txt": "41d9f6fd730eabafcaa5737637c4a6eff9abdeab7eb67956e53c286cfb782cab",
+      "disk-after-lifecycle.txt": "864e77322b0bfef2923f995ab5a950520c76a9ca0a97b3aa1772bf7d0c9aab54",
+      "exit-codes.json": "81c7f0b9826da2bb3a1aadb434c811da7f4d2b261814605c7e1985fc6dd4344d",
+      "inputs.json": "1238bb33fb4e4612e83df59bf8928042d1eb295eb642ccdbcba635d05b064296",
+      "lifecycle/browser-first-freshness.json": "070dfb48b1872305300e6d701e67c5bce062bba3ba5c3a01cff46ca1b397b754",
+      "lifecycle/browser-first.html": "7e48e55bbedd1dade3267ae3b7c8fafc903ecaa3bfd7266c494dabb42d0252eb",
+      "lifecycle/browser-first.png": "861920aacc104ca0bea9aca7fc7cd59c2776f042a1586e6812d5affb193c7ddc",
+      "lifecycle/browser-resume-freshness.json": "2faec50b3de0f1a4538fba1c2f5dde9f3efca46bf41729454beffc5b5f0e9945",
+      "lifecycle/browser-resume.html": "7e48e55bbedd1dade3267ae3b7c8fafc903ecaa3bfd7266c494dabb42d0252eb",
+      "lifecycle/browser-resume.png": "861920aacc104ca0bea9aca7fc7cd59c2776f042a1586e6812d5affb193c7ddc",
+      "lifecycle/cleanup.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "lifecycle/first.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "lifecycle/phase-cleanup.json": "8e6acf60ba2b5ad88d3006d67812e8edfdf6f39e7ccb51364e193249b2995164",
+      "lifecycle/phase-first.json": "cadfdcb11eb6b3a954aab74d0f93c889235b0bc0bfd1e43f5ac4a78c298f3efa",
+      "lifecycle/phase-resume.json": "c0a7683520ba25962c64371b94a098bdddfc75b8cdeef17511e194b00aa3efe9",
+      "lifecycle/progress-first.json": "14f6227847cbb2d491b8c6b1fc0eeff2ce18b2e3158a3a940837c6c65bf50b6b",
+      "lifecycle/progress-resume.json": "55c7b33eb5a73ef546727169ead0d8e171af0ba5d69fefaa2e7248f08f24ced6",
+      "lifecycle/result.json": "4fc3feac25dba4adbd0303fe4f0c769c51bbbded5f2cb5142c2292caf826e2cc",
+      "lifecycle/resume.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "lifecycle/run.json": "a0f245d4bb5a0a492752a189ef073b86d27d8d81abace1caf9b407f41d136796",
+      "network/replay.json": "609877e152a2e19de5fd46f3325be4a622e2fe33a3ba7d0b2fb6a809e3eb8c1a",
+      "network/result.json": "5b05c2a89d44e81d4824fd53cd1c4f17a259746d2ef0e55adeb76617d8281bd1",
+      "network/unrestricted-after.json": "b52a45720927ae8417446ed76c52f702358143b66c4dc88900475b4fa1e64c73",
+      "network/unrestricted-before.json": "e53b3c3c181a2dc2834ac8e98a0ca1b26d982bdc8f59632d8a2d9f9e958660a6",
+      "run.log": "11a82ff1519f3ca6dda16ae01d4dc6e2ffed4e3d00b9e936f0c6527cae36bbc8"
+    }
+  }
+}

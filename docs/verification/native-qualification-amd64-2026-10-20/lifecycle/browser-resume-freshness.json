@@ -1,0 +1,25 @@
+{
+  "statePath": "/workspace/.tank-browser/bd8555bf098133e741080f27d3c17487",
+  "profilePath": "/workspace/.tank-browser/bd8555bf098133e741080f27d3c17487/profile",
+  "initialState": {
+    "exists": true,
+    "mode": 16832,
+    "size": 4096,
+    "mtime_ns": 1792517548329321200,
+    "inode": 75875,
+    "uid": 0,
+    "gid": 0
+  },
+  "initialProfile": {
+    "exists": true,
+    "mode": 16832,
+    "size": 4096,
+    "mtime_ns": 1792517549665321200,
+    "inode": 75876,
+    "uid": 0,
+    "gid": 0
+  },
+  "publicCacheReused": false,
+  "beforeFirstBrowserOpen": true,
+  "observerScriptSha256": "910dec01b037465d0692050deea3604b62e6967e42f88869c5bb43de77cf3b0c"
+}

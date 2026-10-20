@@ -1,0 +1,14 @@
+{
+  "status": "PASS",
+  "failed": [],
+  "checks": {
+    "kvm": "PASS",
+    "dns": "PASS",
+    "replay_isolation": "PASS"
+  },
+  "databaseIp": "172.30.60.2",
+  "imageId": "sha256:929d2a888318afd348e47ec22bafcb3ff6c1ed65f2667c771ffea0ed39e8c0ff",
+  "ociIndexSha256": "906ee9fa0d54aebf7aa44a352bf2e8c001a846f7de58327ebf9d75c4924f8322",
+  "shimSha256": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+  "finishedAt": "2026-10-20T17:34:17.004Z"
+}

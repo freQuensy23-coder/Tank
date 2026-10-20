@@ -1,0 +1,15 @@
+start 2026-10-20T17:30:17Z run=amd64-r86
+{"image": "tank-openma:server-r86-amd64", "image_id": "sha256:929d2a888318afd348e47ec22bafcb3ff6c1ed65f2667c771ffea0ed39e8c0ff", "runtime_identity": "50b110dd1f37a6edee1ae5a80f104bbb772180725127ed44bc77e474c3e45641",
+ "kvm_device": "crw-rw---- root:kvm a:e8", "kvm_gid": 994,
+ "host_kernel": "6.8.0-147-generic", "host_machine": "x86_64",
+ "host_cpu_virt": "svm", "kvm_module": "kvm_amd",
+ "oci_index_sha256": "906ee9fa0d54aebf7aa44a352bf2e8c001a846f7de58327ebf9d75c4924f8322",
+ "shim_sha256": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+ "database_ip": "172.30.60.2", "qualification_ip": "172.30.60.10"}
+lifecycle start 17:30:19
+{"status":"PASS","scope":"ACTUAL_NATIVE_BRIDGE_ONLY_NOT_OPENMA_API_HISTORY","sessionId":"native_proof_2d5518e3de164484bc3686372dcfd0eb","nonce":"77b2ffa1-2130-4b6c-a3f6-f1878e645847","rootfsIndex":"906ee9fa0d54aebf7aa44a352bf2e8c001a846f7de58327ebf9d75c4924f8322","declaredHostImageId":"sha256:929d2a888318afd348e47ec22bafcb3ff6c1ed65f2667c771ffea0ed39e8c0ff","identity":"50b110dd1f37a6edee1ae5a80f104bbb772180725127ed44bc77e474c3e45641","cpus":1,"memoryMib":2048,"results":[{"phase":"first","status":0,"signal":null,"spawnError":null,"lastProgress":{"stage":"after_idle","hostEpochMs":1792517553757},"failureClassification":null},{"phase":"resume","status":0,"signal":null,"spawnError":null,"lastProgress":{"stage":"after_idle","hostEpochMs":1792517570038},"failureClassification":null},{"phase":"cleanup","status":0,"signal":null,"spawnError":null}],"modelCalls":0,"externalRequests":0,"idleSessionArchiveOrRecreate":false,"openmaSessionHistoryProofStillRequired":true,"maximumPhaseWallSeconds":[1080,900,60],"failure":null}
+lifecycle rc=0 17:32:53
+network start 17:34:00
+{"status":"PASS","failed":[],"checks":{"kvm":"PASS","dns":"PASS","replay_isolation":"PASS"},"databaseIp":"172.30.60.2","imageId":"sha256:929d2a888318afd348e47ec22bafcb3ff6c1ed65f2667c771ffea0ed39e8c0ff","ociIndexSha256":"906ee9fa0d54aebf7aa44a352bf2e8c001a846f7de58327ebf9d75c4924f8322","shimSha256":"353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d","finishedAt":"2026-10-20T17:34:17.004Z"}
+network rc=0 17:34:17
+done lifecycle=0 network=0
