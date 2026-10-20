@@ -23,6 +23,16 @@ CHAIN_IDS = {
 DEFILLAMA_CHAINS = {"BNB Chain": "BSC"}
 
 
+# Poll step -> the observation kind whose time marks that step's last refresh.
+REFRESH_KINDS = {
+    "unlocks": "UNLOCKS",
+    "inventory": "EXCHANGE_INVENTORY",
+    "lending": "LENDING",
+    "chain_liquidity": "CHAIN_LIQUIDITY",
+    "fundamentals": "FUNDAMENTALS",
+}
+
+
 def supply_cadences(hot):
     """The implemented §5.6 refresh periods, shared by polling and snapshots."""
     return {
@@ -99,10 +109,28 @@ class SupplyCapture:
         await self.market._raw(self.instrument(token), kind, raw)
         return raw
 
+    async def resume_refresh_state(self, state, now):
+        """Restore the last refresh of each step from stored observations, so a restart
+        resumes the §5.6 cadences instead of restarting the cycle at the first token."""
+        for token_id in self.market.tokens:
+            for kind, observation in REFRESH_KINDS.items():
+                rows = await self.repo.list_latest(
+                    "mkt.supply_obs",
+                    "ts",
+                    filters={"token_id": token_id, "kind": observation},
+                    limit=1,
+                    start=iso(now - timedelta(seconds=max(supply_cadences(False).values()))),
+                )
+                if rows:
+                    state[token_id, kind] = parse_time(rows[0]["ts"])
+
     async def poll(self, hot):
         state = getattr(self.market, "_supply_refresh", {})
         self.market._supply_refresh = state
         now = utcnow()
+        if not getattr(self.market, "_supply_refresh_resumed", False):
+            await self.resume_refresh_state(state, now)
+            self.market._supply_refresh_resumed = True
         for token in self.market.tokens.values():
             token_id = token["token_id"]
             periods = supply_cadences(token_id in hot)
