@@ -298,8 +298,20 @@ async def process_frame(self, instrument, raw):
         record_stream_watermark(self, instrument, raw)
 
 
+WATERMARK_S = 0.25
+
+
 def record_stream_watermark(self, instrument, raw):
-    """Track observed publicsocket progress, never nextfunding/event timestamps."""
+    """Track observed publicsocket progress, never nextfunding/event timestamps.
+
+    Sampled at most every WATERMARK_S per instrument: the watermark only ever lags
+    the socket, so proofs built on it stay conservative.
+    """
+    iid = instrument["instrument_id"]
+    due = self.__dict__.setdefault("_watermark_due", {})
+    now = time.monotonic()
+    if due.get(iid, 0) > now:
+        return
     key = venue_key(instrument)
     data = raw.get("data", raw)
     stamps = []
@@ -336,8 +348,8 @@ def record_stream_watermark(self, instrument, raw):
         stamps.extend(r["time"] for r in data if r.get("time") is not None)
     if not stamps:
         return
+    due[iid] = now + WATERMARK_S
     stamp = max(parse_time(t) for t in stamps)
-    iid = instrument["instrument_id"]
     previous = self._stream_watermarks.get(iid)
     if previous is None or stamp >= parse_time(previous["ts"]):
         self._stream_watermarks[iid] = {
@@ -409,41 +421,56 @@ def subscription_messages(instruments, *, subscribe=True, endpoint=None):
     return messages
 
 
+def routing_symbol(instrument):
+    """The product identity a venue's frames carry for this instrument."""
+    if venue_key(instrument).startswith("kraken"):
+        return instrument.get("ws_symbol", instrument["venue_symbol"].replace("XBT", "BTC"))
+    return instrument["venue_symbol"]
+
+
+def route_indexed(index, venue, raw):
+    """Route a frame by the product identity it names (index: symbol -> instrument)."""
+    data = raw.get("data", raw)
+    if venue == "binance":
+        symbol = data.get("s", data.get("o", {}).get("s")) if isinstance(data, dict) else None
+        instrument = index.get(symbol)
+        return [(instrument, raw)] if instrument else []
+    if venue == "coinbase":
+        instrument = index.get(raw.get("product_id"))
+        return [(instrument, raw)] if instrument else []
+    if venue == "bybit":
+        instrument = index.get(raw.get("topic", "").rsplit(".", 1)[-1])
+        return [(instrument, raw)] if instrument else []
+    if not isinstance(data, list):
+        if venue == "hyperliquid" and isinstance(data, dict):
+            instrument = index.get(data.get("coin"))
+            return [(instrument, raw)] if instrument else []
+        return []
+    groups = {}
+    if venue == "okx":
+        arg = raw.get("arg", {})
+        default = arg.get("instId")
+        for row in data:
+            symbol = row.get("instId", default)
+            if arg.get("channel") == "index-tickers":
+                symbol = (symbol or "") + "-SWAP"  # an index feeds its perpetual
+            groups.setdefault(symbol, []).append(row)
+    else:
+        field = "symbol" if venue == "kraken" else "coin"
+        for row in data:
+            groups.setdefault(row.get(field), []).append(row)
+    return [
+        (index[symbol], dict(raw, data=rows)) for symbol, rows in groups.items() if symbol in index
+    ]
+
+
 def route_frame(instruments, raw):
     """Route only exact product identities; split multi-product data arrays."""
-    for instrument in instruments:
-        key = venue_key(instrument)
-        symbol = instrument["venue_symbol"]
-        data = raw.get("data", raw)
-        if key.startswith("binance"):
-            if data.get("s", data.get("o", {}).get("s")) == symbol:
-                yield instrument, raw
-        elif key.startswith("coinbase"):
-            if raw.get("product_id") == symbol:
-                yield instrument, raw
-        elif key.startswith("bybit"):
-            if raw.get("topic", "").endswith("." + symbol):
-                yield instrument, raw
-        elif key.startswith("okx"):
-            rows = (
-                [r for r in data if r.get("instId", raw.get("arg", {}).get("instId")) == symbol]
-                if isinstance(data, list)
-                else []
-            )
-            if rows:
-                yield instrument, dict(raw, data=rows)
-        elif key.startswith("kraken"):
-            ws_symbol = instrument.get("ws_symbol", symbol.replace("XBT", "BTC"))
-            rows = [r for r in data if r.get("symbol") == ws_symbol] if isinstance(data, list) else []
-            if rows:
-                yield instrument, dict(raw, data=rows)
-        else:
-            if isinstance(data, list):
-                rows = [r for r in data if r.get("coin") == symbol]
-                if rows:
-                    yield instrument, dict(raw, data=rows)
-            elif isinstance(data, dict) and data.get("coin") == symbol:
-                yield instrument, raw
+    instruments = list(instruments)
+    if not instruments:
+        return iter(())
+    index = {routing_symbol(i): i for i in instruments}
+    return iter(route_indexed(index, venue_key(instruments[0]).split(".")[0], raw))
 
 
 async def prepare_member(self, instrument, *, depth_only=False):
@@ -520,6 +547,8 @@ async def stream_group_loop(self, endpoint):
                 close_timeout=5,
             ) as socket:
                 global_liqs = False
+                venue = venue_key(self.instruments[next(iter(self._stream_groups[endpoint]))]).split(".")[0]
+                index = {}
 
                 async def membership(desired, active=active, preparing=preparing, pending=pending):
                     nonlocal global_liqs
@@ -551,6 +580,8 @@ async def stream_group_loop(self, endpoint):
                         )
                     active.difference_update(removed)
                     active.update(added)
+                    index.clear()
+                    index.update({routing_symbol(self.instruments[i]): self.instruments[i] for i in active})
                     want_liqs = endpoint.startswith("wss://ws.okx.com/") and any(
                         venue_key(self.instruments[i]) == "okx.swap" for i in active
                     )
@@ -641,9 +672,10 @@ async def stream_group_loop(self, endpoint):
                             or raw.get("type") == "error"
                         ):
                             raise SemanticError("subscription rejected " + str(raw))
-                        for instrument, payload in route_frame([self.instruments[i] for i in active], raw):
+                        for instrument, payload in route_indexed(index, venue, raw):
                             iid = instrument["instrument_id"]
-                            await self._raw(instrument, "websocket", raw)
+                            if venue == "coinbase" and raw.get("type") == "last_match":
+                                await self._raw(instrument, "websocket", raw)
                             if iid in preparing:
                                 pending[iid].append(payload)
                                 if len(pending[iid]) > 1024:
