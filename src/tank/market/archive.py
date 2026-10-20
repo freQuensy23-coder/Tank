@@ -79,6 +79,11 @@ class HourlyParquet:
     def _identity(self, row):
         raise NotImplementedError
 
+    @staticmethod
+    def _encode(row):
+        """Worker thread: final row fields (subclasses serialize nested payloads here)."""
+        return row
+
     def _add(self, canonical, row):
         self._buffer[canonical].append(row)
 
@@ -153,6 +158,7 @@ class HourlyParquet:
         for canonical, rows in buffer.items():
             if not rows:
                 continue
+            rows = [self._encode(row) for row in rows]
             names = sorted(set().union(*(row.keys() for row in rows)))
             state = self._journals.get(canonical)
             if state is not None and not set(names) <= set(state["names"]):
@@ -330,6 +336,7 @@ class TradeArchive(HourlyParquet):
         self._seen = {}
         self._minutes = {}
         self._loaded = set()
+        self._paths = {}
         self._born = utcnow().replace(minute=0, second=0, microsecond=0)
         self._coverage = defaultdict(list)
 
@@ -338,14 +345,22 @@ class TradeArchive(HourlyParquet):
         return tuple(row)
 
     def path(self, instrument_id, timestamp):
+        stamp = timestamp if isinstance(timestamp, str) and timestamp.endswith("Z") else iso(timestamp)
+        key = (instrument_id, stamp[:13])
+        cached = self._paths.get(key)
+        if cached is not None:
+            return cached
         instrument = self.instruments.get(instrument_id)
         if instrument is None:
             raise ArchiveIntegrityError("raw trade instrument is not in the registry: " + str(instrument_id))
-        stamp = iso(timestamp)
         venue, market, symbol = (
             _component(instrument[k]) for k in ("venue", "market_type", "venue_symbol")
         )
-        return self.root / venue.lower() / market.lower() / symbol / stamp[:10] / (stamp[11:13] + ".parquet")
+        path = self.root / venue.lower() / market.lower() / symbol / stamp[:10] / (stamp[11:13] + ".parquet")
+        if len(self._paths) > 100000:
+            self._paths.clear()
+        self._paths[key] = path
+        return path
 
     def canonical(self, row):
         """Event loop: the hour file of a print, registering a new instrument from the row."""
@@ -707,6 +722,7 @@ class BookArchive(HourlyParquet):
         )
 
     def add(self, instrument_id, kind, payload, received_ts):
+        """Event loop: buffer one book row; `payload` must not change afterwards."""
         ts = iso(received_ts)
         self._add(
             self.path(instrument_id, ts),
@@ -715,9 +731,17 @@ class BookArchive(HourlyParquet):
                 "market_type": self.instruments[instrument_id].get("market_type"),
                 "kind": kind,
                 **collection_clock(ts).fields("received_ts"),
-                "payload_json": canonical_json(payload),
+                "payload": payload,
             },
         )
+
+    @staticmethod
+    def _encode(row):
+        if "payload" not in row:
+            return row
+        row = dict(row)
+        row["payload_json"] = canonical_json(row.pop("payload"))
+        return row
 
 
 

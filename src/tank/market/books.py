@@ -62,7 +62,8 @@ class OrderBook:
         self.exchange_ts_prec = ts_prec if ts is not None else "COLLECTION_ONLY"
         self.integrity_ok = bool(self.bids and self.asks)
         self.gap_reason = None if self.integrity_ok else "EMPTY_BOOK"
-        self.pending_snapshot = jsonable(
+        # Serialized by the archive writer thread, not on the capture path.
+        self.pending_snapshot = (
             {
                 "instrument_id": self.instrument["instrument_id"],
                 "market_type": self.instrument["market_type"],

@@ -88,6 +88,7 @@ class MarketService:
         self._context_due = {}
         self._reads = {}  # host -> [succeeded, failed] REST reads since the last minute log
         self._hot_since = {}  # hot token -> earliest anchor of its events
+        self._frames = {}  # WebSocket endpoint -> frames received since the last minute log
         self._pending_market = {}
         self._market_cache = {}
         self._market_flush_lock = asyncio.Lock()
@@ -190,21 +191,20 @@ class MarketService:
             )
             row.setdefault("recorded_at", iso())
             row.update(collection_clock(row["recorded_at"]).fields("recorded_at"))
-            row["semantic_fingerprint"] = sha256(self._semantic_content(row))
             if collection in ("mkt.hot_tokens", "mkt.backfill_runs"):
                 changed = await self.repo.put_market_batch(collection, [row], keys=[str(key)])
                 return changed[0] if changed else row
-            cache = (
-                self._market_cache.setdefault(collection, {})
-                if collection in ("mkt.flow_bars_1m", "mkt.tickers_24h", "mkt.funding_obs")
-                else {}
-            )
-            old = cache.get(str(key))
-            if old and sha256(self._semantic_content(old)) == row["semantic_fingerprint"]:
-                return old
-            cache[str(key)] = row
-            if len(cache) > 10000:
-                cache.pop(next(iter(cache)))
+            # Repeated points of these series are dropped before PostgreSQL; the
+            # storage layer computes its own fingerprint for every written row.
+            if collection in ("mkt.flow_bars_1m", "mkt.tickers_24h", "mkt.funding_obs"):
+                cache = self._market_cache.setdefault(collection, {})
+                content = self._semantic_content(row)
+                old = cache.get(str(key))
+                if old and self._semantic_content(old) == content:
+                    return old
+                cache[str(key)] = row
+                if len(cache) > 10000:
+                    cache.pop(next(iter(cache)))
             self._pending_market.setdefault(collection, {})[str(key)] = row
             return row
         if collection == "qa.reviews" and await self.repo.get(collection, str(key)) is not None:
@@ -425,6 +425,11 @@ class MarketService:
             log.info(
                 "rest reads: %s",
                 " ".join(f"{host}={ok}/{failed}" for host, (ok, failed) in sorted(reads.items())),
+            )
+            frames, self._frames = self._frames, {}
+            log.info(
+                "ws frames: %s",
+                " ".join(f"{endpoint.split('//')[1]}={count}" for endpoint, count in sorted(frames.items())),
             )
             self._raw_logged = time.monotonic()
             self._raw_stats = {"rows": 0, "sealed": 0, "writes": 0, "max_write_s": 0.0, "max_pending": 0}

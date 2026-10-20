@@ -624,6 +624,7 @@ async def stream_group_loop(self, endpoint):
                         await membership(desired)
                     if recv in done:
                         frame = recv.result()
+                        self._frames[endpoint] = self._frames.get(endpoint, 0) + 1
                         last_message = time.monotonic()
                         last_observed = utcnow()
                         recv = None
