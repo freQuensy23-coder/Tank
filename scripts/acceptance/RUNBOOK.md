@@ -59,13 +59,15 @@ Start at the lead's go, with the stack untouched for the window:
 ```
 RUN=/srv/tank/data/qa/v0a-$(date -u +%Y%m%dT%H%MZ); mkdir -p $RUN
 python3 $A/v0a_health.py --snapshot $RUN/start.json
+nohup sh -c "$TANK_COMPOSE logs -f --timestamps --since 0s tank | grep --line-buffered 'rest reads:'" \
+  > $RUN/rest-reads.log 2> /srv/tank-work/logs/tank-acceptance/v0a-restlog.err &
 ```
 
 - Sources: every feed keeps cumulative `reads` (one poll after retries) and `detail_reads` (article/detail fetches) counters in `ops.source_checkpoints`, written by tank-sources and surviving restarts. The window is end minus start, so nothing has to sample. `python -m tank.sources.read_report` reads the same counters and can cross-check.
-- Each day and at 72 h: `python3 $A/v0a_health.py --start-snapshot $RUN/start.json --end-snapshot $RUN/end-dayN.json --out $RUN/day-N`. Also run `latency.py` over the same window.
+- Each day and at 72 h: `python3 $A/v0a_health.py --start-snapshot $RUN/start.json --end-snapshot $RUN/end-dayN.json --rest-log $RUN/rest-reads.log --out $RUN/day-N`. Also run `latency.py` over the same window.
 - Pass:
   - each of the 34 sources has reads, failed/(ok+failed) < 1% counting detail fetches, and its feeds were polled at ≥ 95% of their configured cadence (unattended, no stall);
-  - BASE market path: every active instrument misses < 1% of its 1m kline, OI and funding polls;
+  - BASE market path: < 1% failed REST reads per host, from the market service's per-minute `rest reads:` log lines (tank-market). Row coverage per instrument (1m klines, OI, funding as_of every 300 s) is a secondary check; Coinbase /candles omits trade-less minutes;
   - HOT path: streaming gap time < 1% of hot time.
   - The other V0-A clauses come from their owners: the X list holds exactly 86 accounts (tank-sources), the §2.10 meaning checks pass (tank-truth), and archive integrity holds for 5 tokens × 7 days (tank-market).
 - Any restart, manual fix or config change inside the window restarts the 72 h.

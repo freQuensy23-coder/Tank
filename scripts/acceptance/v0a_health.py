@@ -25,7 +25,7 @@ from common import iso, parse, query, seconds, utcnow, write_json  # noqa: E402
 
 LIMIT = 0.01
 # Gap kinds written by the streaming (HOT) path; history/backfill/FX gaps belong to other paths.
-HOT_GAP_PREFIXES = ("STREAM", "RECONNECT", "TRADE_INTEGRITY", "BOOK")
+HOT_GAP_PREFIXES = ("STREAM", "RECONNECT", "TRADE_INTEGRITY", "ORDER_BOOK_STREAM")  # tank-market, stream health
 
 KLINES = """
 SELECT instrument_id, count(DISTINCT open_time) AS minutes
@@ -117,6 +117,33 @@ def sources(start, end, intervals, window_s):
     return out
 
 
+def rest_reads(path, since, until):
+    """Sum the market service's per-minute "rest reads: <host>=<ok>/<failed>" lines (counters reset each line)."""
+    import re as _re
+
+    t0, t1 = parse(since), parse(until)
+    hosts = defaultdict(lambda: {"ok": 0, "failed": 0})
+    lines = 0
+    for line in open(path):
+        m = _re.search(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?).*rest reads:(.*)$", line)
+        if not m:
+            continue
+        at = parse(m.group(1) if m.group(1).endswith("Z") else m.group(1) + "Z")
+        if not (t0 <= at < t1):
+            continue
+        lines += 1
+        for host, ok, failed in _re.findall(r"(\S+)=(\d+)/(\d+)", m.group(2)):
+            hosts[host]["ok"] += int(ok)
+            hosts[host]["failed"] += int(failed)
+    rows = []
+    for host, c in sorted(hosts.items()):
+        total = c["ok"] + c["failed"]
+        ratio = c["failed"] / total if total else None
+        rows.append({"host": host, **c, "failed_ratio": ratio, "status": "PASS" if total and ratio < LIMIT else "FAIL"})
+    return {"log_lines": lines, "expected_lines": int(seconds(until, since) // 60), "hosts": rows,
+            "status": "PASS" if rows and all(r["status"] == "PASS" for r in rows) else "FAIL"}
+
+
 def market(since, until):
     p = {"since": since, "until": until}
     window_s = seconds(until, since)
@@ -193,6 +220,7 @@ if __name__ == "__main__":
     ap.add_argument("--start-snapshot", help="snapshot taken at the window start")
     ap.add_argument("--end-snapshot", help="write the end snapshot here (taken now)")
     ap.add_argument("--sources-yaml", default="/srv/tank/config/sources.yaml")
+    ap.add_argument("--rest-log", help="captured market log lines (`rest reads: host=ok/failed`) for the window")
     ap.add_argument("--out")
     a = ap.parse_args()
     if a.snapshot:
@@ -208,6 +236,12 @@ if __name__ == "__main__":
     expected = sorted({k.split(":")[0] for k in intervals})
     src = sources(start, end, intervals, seconds(a.until, a.since))
     mk = market(a.since, a.until)
+    if a.rest_log:
+        # Exact REST read counts from the market service are the BASE-path denominator (tank-market);
+        # row coverage stays as a secondary check (Coinbase /candles omits trade-less minutes).
+        mk["base"]["rest_reads"] = rest_reads(a.rest_log, a.since, a.until)
+        mk["base"]["row_coverage_status"] = mk["base"]["status"]
+        mk["base"]["status"] = mk["base"]["rest_reads"]["status"]
     passing = sum(1 for r in src if r["status"] == "PASS")
     res = {"window": {"since": a.since, "until": a.until, "hours": seconds(a.until, a.since) / 3600},
            "computed_at": iso(utcnow()), "sources_expected": len(expected), "sources_pass": passing,
