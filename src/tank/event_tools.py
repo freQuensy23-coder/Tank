@@ -507,8 +507,7 @@ class EventToolService:
             getattr(self.settings, name, None)
             for name in [
                 "etherscan_api_key",
-                "typesafe_api_key",
-                "openrouter_api_key",
+                "opencode_api_key",
                 "openma_api_key",
                 "telegram_token",
                 "codex_gateway_key",
@@ -523,8 +522,7 @@ class EventToolService:
             getattr(self.settings, name, None)
             for name in [
                 "etherscan_api_key",
-                "typesafe_api_key",
-                "openrouter_api_key",
+                "opencode_api_key",
                 "openma_api_key",
                 "telegram_token",
                 "codex_gateway_key",
@@ -764,14 +762,6 @@ class EventToolService:
             accepted.append(claim)
         return accepted, []
 
-    async def bind_reservation(self, reservation_id, status, event_id=None):
-        async with self.repo.lock("reservation:" + reservation_id):
-            reservation = await self.require("ops.routing_reservations", reservation_id)
-            reservation["status"] = status
-            if event_id:
-                reservation["event_id"] = event_id
-            await self.repo.put("ops.routing_reservations", reservation_id, reservation)
-
     async def record_event(self, a, c):
         x = a.get("extraction", a)
         required = {
@@ -796,8 +786,6 @@ class EventToolService:
         if x["certainty"] not in {"LOW", "MEDIUM", "HIGH"} or not x["certainty_reason"]:
             raise ValueError("certainty and reason required")
         if not x["is_event"]:
-            if c.get("reservation_id"):
-                await self.bind_reservation(c["reservation_id"], "CLOSED")
             item["extraction_status"] = "SKIPPED"
             await self.repo.put("ingest.source_items", item["item_id"], item)
             return {"is_event": False}
@@ -908,8 +896,6 @@ class EventToolService:
                 },
                 c,
             )
-        if c.get("reservation_id"):
-            await self.bind_reservation(c["reservation_id"], "BOUND", eid)
         return {"event_id": eid, "accepted_claims": claims, "dropped_claims": dropped}
 
     async def approval_rejection_targets(self, event, rejection):

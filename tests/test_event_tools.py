@@ -576,23 +576,6 @@ async def test_assessment_escalates_all_official_sources_in_consumer_table(servi
     assert not await sources.is_escalated("S01")
 
 
-@pytest.mark.parametrize("is_event,status", [(True, "BOUND"), (False, "CLOSED")])
-async def test_extraction_binds_or_closes_shared_routing_reservation(service, is_event, status):
-    x = await seed(service)
-    x["is_event"] = is_event
-    await service.repo.put(
-        "ops.routing_reservations",
-        "reservation",
-        {"reservation_id": "reservation", "status": "PENDING", "item_ids": ["i", "i2"], "first_item_id": "i"},
-    )
-    result = await service.dispatch("record_event", x, {"reservation_id": "reservation"})
-    reservation = await service.repo.get("ops.routing_reservations", "reservation")
-    assert reservation["status"] == status
-    assert reservation["item_ids"] == ["i", "i2"]
-    if is_event:
-        assert reservation["event_id"] == result["event_id"]
-
-
 async def test_structural_assessment_requires_agent_partial_without_parallel_publisher(service):
     x = await seed(service)
     x["tokens"] = ["world:WLD"]
@@ -3768,57 +3751,6 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             row["status"] != "PENDING" and row.get("returned_at")
             for row in await service.repo.list("ops.tool_calls", filters={"session_id": sid})
         )
-
-
-async def test_legacy_eventtool_reservation_binding_progresses_while_global_routing_lock_held(service):
-    import asyncio
-    import os
-
-    from tank.storage import PostgresRepository
-    from tank.util import new_id
-
-    url = os.getenv("TANK_TEST_DATABASE_URL")
-    if not url:
-        pytest.skip("Requires isolated TANK_TEST_DATABASE_URL for real advisory-lock concurrency")
-    previous = service.repo
-    repo = PostgresRepository(url)
-    await repo.open()
-    await repo.migrate()
-    service.repo = repo
-    held = asyncio.Event()
-    release = asyncio.Event()
-    holder = None
-    rid = new_id("reservation")
-
-    async def hold_old_routing_key():
-        async with repo.lock("routing"):
-            held.set()
-            await release.wait()
-
-    try:
-        await repo.put(
-            "ops.routing_reservations",
-            rid,
-            {
-                "reservation_id": rid,
-                "status": "PENDING",
-                "first_item_id": "legacy-item",
-                "item_ids": ["legacy-item", "legacy-second-item"],
-            },
-        )
-        holder = asyncio.create_task(hold_old_routing_key())
-        await asyncio.wait_for(held.wait(), 5)
-        await asyncio.wait_for(service.bind_reservation(rid, "CLOSED"), 5)
-        stored = await repo.get("ops.routing_reservations", rid)
-        assert stored["status"] == "CLOSED"
-        assert stored["item_ids"] == ["legacy-item", "legacy-second-item"]
-        assert stored["first_item_id"] == "legacy-item"
-    finally:
-        release.set()
-        if holder is not None:
-            await holder
-        service.repo = previous
-        await repo.close()
 
 
 async def test_trusted_reference_clock_changes_logical_age_only(service, tmp_path, monkeypatch):

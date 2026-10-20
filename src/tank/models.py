@@ -378,7 +378,6 @@ TABLE_COLUMNS = {
         "revision": "int",
     },
     "ops.source_checkpoints": {"source_id": "text", "cursor": "text", "updated_at": "timestamptz"},
-    "ops.source_dedup": {"item_id": "text"},
     "ops.source_escalations": {"source_id": "text", "expires_at": "timestamptz"},
     "qa.reviews": {"review_id": "text", "subject": "text", "label": "text", "at": "timestamptz"},
     "qa.fixtures": {"fixture_id": "text", "cutoff": "timestamptz"},
@@ -456,25 +455,6 @@ TABLE_COLUMNS["mkt.backfill_runs"] = {
     "reason": "text",
     "result": "jsonb",
 }
-TABLE_COLUMNS["ops.routing_reservations"] = {
-    "reservation_id": "text",
-    "first_item_id": "text",
-    "event_id": "text",
-    "session_id": "text",
-    "status": "text",
-    "created_at": "timestamptz",
-    "last_item_at": "timestamptz",
-}
-TABLE_COLUMNS["qa.outcomes"] = {
-    "outcome_id": "text",
-    "alert_id": "text",
-    "version": "int",
-    "dec_id": "text",
-    "computed_at": "timestamptz",
-    "revision": "int",
-    "input_hash": "text",
-}
-APPEND_ONLY = APPEND_ONLY | {"qa.outcomes"}
 # Daily spending caps were removed from the product; historical state is archived by migration014.
 TABLE_COLUMNS.pop("ops.budget_state", None)
 TABLE_COLUMNS["ops.scheduler_checkpoints"] = {"checkpoint_id": "text", "at": "timestamptz", "state": "jsonb"}
@@ -768,8 +748,6 @@ TIMESTAMP_PRECISION_FIELDS = {
         "started_at": "started_at_prec",
         "finished_at": "finished_at_prec",
     },
-    "ops.routing_reservations": {"created_at": "created_at_prec", "last_item_at": "last_item_at_prec"},
-    "qa.outcomes": {"computed_at": "computed_at_prec"},
     "ops.scheduler_checkpoints": {"at": "at_prec"},
     "ops.capture_tier_transitions": {"effective_at": "effective_at_prec"},
 }

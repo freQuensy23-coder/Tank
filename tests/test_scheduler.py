@@ -1528,3 +1528,45 @@ async def test_rearmed_persistent_watch_clears_only_on_an_observed_false_window(
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
     await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=355))})
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "FIRED"
+
+
+@pytest.mark.asyncio
+async def test_late_data_revisions_coalesce_to_one_queued_job_per_checkpoint():
+    """03 §8.6: one queued late revision per (event, token, checkpoint); later
+    capture changes do not pile up duplicate jobs ahead of live checkpoints."""
+    repo = MemoryRepository()
+    now = utcnow()
+    anchor = iso(now - timedelta(hours=2))
+    for label in ("PRE_24H", "POST_15M"):
+        await repo.put(
+            "out.reaction_checkpoints",
+            "e:t:" + label,
+            {
+                "event_id": "e",
+                "token_id": "t",
+                "checkpoint": label,
+                "revision": 1,
+                "captured_at": iso(now - timedelta(hours=1)),
+                "anchor": {"ts": anchor},
+            },
+        )
+
+    class Market:
+        def __init__(self):
+            self.round = 0
+
+        async def capture_changes(self, since, end):
+            self.round += 1
+            yield {
+                "change_id": "CAP-LIVE-" + str(self.round),
+                "event_id": "e",
+                "token_id": "t",
+                "anchor": anchor,
+                "observed_at": iso(now),
+            }
+
+    scheduler = Scheduler(repo, SimpleNamespace(), Market(), None)
+    for _ in range(3):
+        await scheduler.detect_late_data(now)
+    jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+    assert sorted(job["payload"]["checkpoint"] for job in jobs) == ["POST_15M", "PRE_24H"]
