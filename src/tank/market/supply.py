@@ -19,6 +19,8 @@ CHAIN_IDS = {
     "Polygon": 137,
     "Avalanche": 43114,
 }
+# Registry chain name -> DefiLlama stablecoincharts chain name, where they differ.
+DEFILLAMA_CHAINS = {"BNB Chain": "BSC"}
 
 
 def supply_cadences(hot):
@@ -389,11 +391,17 @@ class SupplyCapture:
                 token, "CHAIN_LIQUIDITY", available=False, reason="SETTLEMENT_CHAIN_UNCONFIGURED"
             )
         for chain in chains:
-            data = await self.request(
-                token, "chain_liquidity", "https://stablecoins.llama.fi/stablecoincharts/" + chain
-            )
-            if not isinstance(data, list):
-                raise SemanticError("stablecoin chart schema mismatch")
+            try:
+                data = await self.request(
+                    token,
+                    "chain_liquidity",
+                    "https://stablecoins.llama.fi/stablecoincharts/" + DEFILLAMA_CHAINS.get(chain, chain),
+                )
+                if not isinstance(data, list):
+                    raise SemanticError("stablecoin chart schema mismatch")
+            except Exception as exc:  # noqa: BLE001 - one chain's gap must not erase the other chains
+                await self.record(token, "CHAIN_LIQUIDITY", available=False, chain=chain, reason=str(exc))
+                continue
             values = []
             for row in data:
                 circulating = row.get("totalCirculatingUSD")
