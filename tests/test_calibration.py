@@ -115,8 +115,8 @@ async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_pat
     def jev(request):
         body = json.loads(request.content)
         calls.append(body)
-        assert str(request.url) == "https://openrouter.ai/api/v1/systemone"
-        assert set(body) == {"model", "state", "questions"} and body["model"] == "typesafe/jev-1.13"
+        assert str(request.url) == "https://opencode.ai/inference/systemone/v1/systemone"
+        assert set(body) == {"model", "state", "questions"} and body["model"] == "jev-1.13-free"
         name = next(iter(body["questions"]))
         assert body["questions"][name]["instructions"] == (FILTER if name == "relevant" else ROUTE)
         assert set(body["state"]) <= {"item", "event"}
@@ -127,7 +127,7 @@ async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_pat
         return httpx.Response(
             200,
             json={
-                "model": "typesafe/jev-1.13-20260917",
+                "model": "jev-1.13-free",
                 "usage": {"input_tokens": 9},
                 "answers": {name: {"type": "noul", "noul": score}},
             },
