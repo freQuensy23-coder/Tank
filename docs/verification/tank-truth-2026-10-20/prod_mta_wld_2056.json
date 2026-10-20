@@ -1,0 +1,168 @@
+{
+ "mta_id": "MTA-01M5DJ4C5KD7JKQ88R6VW1WW62",
+ "token": "world:WLD",
+ "window": [
+  "2026-10-20T19:56:00Z",
+  "2026-10-20T20:56:00Z"
+ ],
+ "data_confidence": {
+  "class": "LOW",
+  "limiting": {
+   "reason": "INCOMPLETE",
+   "condition": "spot_coverage"
+  }
+ },
+ "dc_failed": [
+  {
+   "reason": "INCOMPLETE",
+   "condition": "spot_coverage"
+  },
+  {
+   "reason": "INCOMPLETE",
+   "condition": "derivatives_coverage"
+  },
+  {
+   "reason": "INCOMPLETE",
+   "cadence_s": 60.0,
+   "condition": "freshness",
+   "collection": "funding",
+   "instrument_id": "bybit:perp_linear:WLDUSDT"
+  },
+  {
+   "age_s": 180.0,
+   "reason": "INCOMPLETE",
+   "cadence_s": 60.0,
+   "condition": "freshness",
+   "collection": "flow_bars",
+   "instrument_id": "kraken:spot:WLD/USD"
+  },
+  {
+   "age_s": 40.0,
+   "reason": "INCOMPLETE",
+   "cadence_s": 10.0,
+   "condition": "freshness",
+   "collection": "books",
+   "instrument_id": "coinbase:spot:WLD-USD"
+  },
+  {
+   "age_s": 39.998,
+   "reason": "INCOMPLETE",
+   "cadence_s": 10.0,
+   "condition": "freshness",
+   "collection": "books",
+   "instrument_id": "binance:perp_linear:WLDUSDT"
+  },
+  {
+   "age_s": 39.998,
+   "reason": "INCOMPLETE",
+   "cadence_s": 10.0,
+   "condition": "freshness",
+   "collection": "books",
+   "instrument_id": "okx:perp_linear:WLD-USDT-SWAP"
+  },
+  {
+   "age_s": 40.098,
+   "reason": "INCOMPLETE",
+   "cadence_s": 10.0,
+   "condition": "freshness",
+   "collection": "books",
+   "instrument_id": "okx:spot:WLD-USDT"
+  },
+  {
+   "age_s": 40.111,
+   "reason": "INCOMPLETE",
+   "cadence_s": 10.0,
+   "condition": "freshness",
+   "collection": "books",
+   "instrument_id": "binance:spot:WLDUSDT"
+  },
+  {
+   "age_s": 161.45,
+   "reason": "INCOMPLETE",
+   "cadence_s": 60.0,
+   "condition": "freshness",
+   "collection": "oi",
+   "instrument_id": "binance:perp_linear:WLDUSDT"
+  },
+  {
+   "age_s": 147.602335,
+   "reason": "INCOMPLETE",
+   "cadence_s": 60.0,
+   "condition": "freshness",
+   "collection": "funding",
+   "instrument_id": "bybit:perp_linear:WLDUSDT"
+  },
+  {
+   "age_s": 78.224,
+   "reason": "INCOMPLETE",
+   "cadence_s": 20.0,
+   "condition": "freshness",
+   "collection": "liquidations",
+   "instrument_id": "okx:perp_linear:WLD-USDT-SWAP"
+  }
+ ],
+ "venues": [
+  {
+   "venue": "binance",
+   "tank_cvd": null,
+   "tank_volume": null,
+   "hand_cvd": "1812685.10000000",
+   "hand_volume": "8994954.90000000",
+   "tank_complete": false
+  },
+  {
+   "venue": "coinbase",
+   "tank_cvd": null,
+   "tank_volume": null,
+   "hand_cvd": "1000490.41000000",
+   "hand_volume": "1793399.65000000",
+   "tank_complete": false
+  },
+  {
+   "venue": "okx",
+   "tank_cvd": null,
+   "tank_volume": null,
+   "hand_cvd": "-423525.180",
+   "hand_volume": "2364170.514",
+   "tank_complete": false
+  },
+  {
+   "venue": "kraken",
+   "tank_cvd": null,
+   "tank_volume": null,
+   "hand_cvd": "-17405.09820",
+   "hand_volume": "352689.29816",
+   "tank_complete": false
+  }
+ ],
+ "relative": {
+  "ref": null,
+  "r_raw": null,
+  "r_btc_adj": null,
+  "anchor": {
+   "ts": "2026-10-20T15:02:00Z",
+   "type": "T1",
+   "ts_prec": "EXACT",
+   "evidence": null,
+   "ref_price": null,
+   "price_reason": "INCOMPLETE",
+   "price_source": null,
+   "ts_prec_reason": null,
+   "price_observed_at": null,
+   "price_observed_at_prec": null,
+   "price_observed_at_prec_reason": "INCOMPLETE"
+  }
+ },
+ "oi_sync": {
+  "venues": [
+   "binance",
+   "bybit"
+  ],
+  "oi_native_start": "302321969.20000000",
+  "oi_native_end": "298303903.10000000",
+  "oi_native_chg_pct": -0.013290685128284088,
+  "oi_class": null,
+  "start_observed_at": "2026-10-20T19:55:00Z",
+  "end_observed_at": "2026-10-20T20:55:00Z"
+ }
+}
