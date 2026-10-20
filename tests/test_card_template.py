@@ -110,7 +110,12 @@ def card_inputs():
             {"metric": "price", "value": ".05", "unit": "DECIMAL_RETURN", "window": "W4H"},
             {"metric": "spot.cvd", "value": "2000", "unit": "NATIVE_TOKEN", "window": "W4H"},
         ],
-        "relative": {"repricing_band": "EARLY", "windows": {"EVENT": {"r_raw": ".03", "r_btc_adj": ".01"}}},
+        "relative": {
+            "repricing_band": "EARLY",
+            "windows": {"EVENT": {"r_raw": ".03", "r_btc_adj": ".01"}},
+            "market_context": "NEUTRAL",
+            "context_inputs": {"btc_return_24h": 0.01, "return_normal_range": [-0.02, 0.03]},
+        },
     }
     return event, assessment, beneficiary, decision, truth
 
@@ -185,6 +190,7 @@ OUTLOOK: BULLISH · MEDIUM · best 4h
 • Upside: Deployment verified
 • Failure: Approval reversed
 
+Market context: NEUTRAL — BTC 24h +1.00% vs normal -2.00% to +3.00%
 WHAT TO DO: WAIT — Thesis A · Trade B
 WHAT CHANGES THE ACTION:
 ↑ Spot BUY persists
@@ -808,3 +814,33 @@ def test_no_event_premise_prints_scenario_reason_and_no_accumulation_word():
     assert outlook["scenarios"]["failure"] is None
     assert outlook["scenario_reasons"]["failure"] == "no event premise"
     assert all("accumulation" not in c["human_text"].lower() for c in result["conditions"])
+
+
+def test_market_context_and_trade_notch_are_printed():
+    """F-16 (03 §5.7, §4.9): STRESS with its BTC input, and the notch reason."""
+    values = card_inputs()
+    values[4]["relative"].update(
+        market_context="STRESS",
+        context_inputs={"btc_return_24h": -0.0322, "return_normal_range": [-0.0239, 0.0487]},
+    )
+    values[3].update(trade_rule="B", trade_grade="C", trade_reasons=["TRADE_BASE_B", "CONTEXT_STRESS"])
+    card = render(values)
+    assert (
+        "Market context: STRESS — BTC 24h -3.22% vs normal -2.39% to +4.87% · Trade B → C for market context STRESS"
+        in card
+    )
+    values[3].update(trade_rule="D", trade_grade="D", trade_reasons=["TRADE_BASE_D"])
+    assert "· Trade not lowered: already D" in render(values)
+
+
+def test_falling_native_oi_is_stated_as_positions_closing():
+    """F-14 (03 §11.3): native OI down is positions closing, in native units."""
+    values = card_inputs()
+    values[4]["derivatives"] = {
+        "window": "EVENT",
+        "synchronized": {"oi_native_chg_pct": -0.3036, "oi_class": "MIXED"},
+        "per_venue": [],
+    }
+    values[4]["relative"]["windows"]["EVENT"]["r_raw"] = "0.54"
+    market = render(values).split("MARKET TRUTH:", 1)[1].split("OUTLOOK:", 1)[0]
+    assert "event: open positions (synchronized native OI) -30.36% in WLD while price rose +54.00%: positions closing" in market
