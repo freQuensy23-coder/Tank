@@ -20,6 +20,11 @@ CHECKPOINTS = {
     "POST_72H": 259200,
 }
 BENCHMARK_TOKENS = frozenset({"bitcoin:BTC", "ethereum:ETH"})
+# Reaction measurements run full Market Truth and serialize on the market flush;
+# more at once only hold the 8 workers that items, sessions and EVAL_CONDITIONS
+# need (03 §3.8). A job finding no free slot is re-queued without an attempt.
+REACTION_MEASUREMENT_SLOTS = 2
+REACTION_RETRY_S = 30
 
 
 def field(record, path):
@@ -60,6 +65,7 @@ class Scheduler:
         self.closing = False
         self._verified_backups = {}
         self._raw_retention_lock = asyncio.Lock()
+        self._reaction_slots = asyncio.Semaphore(REACTION_MEASUREMENT_SLOTS)
 
     def threshold(self, name, fixture_default):
         if not hasattr(self.settings, "load_config"):
@@ -772,7 +778,14 @@ class Scheduler:
                     return plan["result"]
             # Capturing market buffers and computing history must not keep a
             # database transaction (and its market row locks) open for minutes.
-            measured = await self._measure_reaction(plan["payload"])
+            if self._reaction_slots.locked():
+                from tank.delivery import DeliveryDeferred
+
+                raise DeliveryDeferred(
+                    offset_schedule(collection_clock(), timedelta(seconds=REACTION_RETRY_S))
+                )
+            async with self._reaction_slots:
+                measured = await self._measure_reaction(plan["payload"])
             async with self.repo.lock(lock):
                 current = await self._reaction_plan(payload)
                 if current["complete"]:

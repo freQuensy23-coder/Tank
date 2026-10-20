@@ -1587,3 +1587,38 @@ async def test_queued_duplicate_late_revision_is_skipped_at_run_time():
     result = await scheduler.reaction_capture(dict(payload, change_id="older"))
     assert result == {"coalesced_into": queued["job_id"]}
     market.snapshot.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_reaction_measurements_are_limited_and_extra_jobs_requeue():
+    """At most REACTION_MEASUREMENT_SLOTS measurements run at once; another job
+    is deferred (re-queued without an attempt) instead of holding a worker."""
+    import asyncio
+
+    from tank.delivery import DeliveryDeferred
+    from tank.scheduler import REACTION_MEASUREMENT_SLOTS
+
+    scheduler = Scheduler(MemoryRepository(), SimpleNamespace(), None, None)
+    release = asyncio.Event()
+    started = []
+
+    async def plan(payload):
+        return {"complete": False, "payload": payload, "key": payload["checkpoint"]}
+
+    async def measure(payload):
+        started.append(payload["checkpoint"])
+        await release.wait()
+        return {}
+
+    async def commit(plan, measured):
+        return {"committed": plan["key"]}
+
+    scheduler._reaction_plan, scheduler._measure_reaction, scheduler._commit_reaction = plan, measure, commit
+    payloads = [{"event_id": "e", "token_id": "t", "checkpoint": f"C{n}"} for n in range(3)]
+    running = [asyncio.create_task(scheduler.reaction_capture(p)) for p in payloads[:REACTION_MEASUREMENT_SLOTS]]
+    await asyncio.sleep(0)
+    with pytest.raises(DeliveryDeferred):
+        await scheduler.reaction_capture(payloads[-1])
+    release.set()
+    assert [r["committed"] for r in await asyncio.gather(*running)] == ["C0", "C1"]
+    assert await scheduler.reaction_capture(payloads[-1]) == {"committed": "C2"}
