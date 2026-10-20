@@ -758,3 +758,53 @@ def test_card_length_diagnostics_preserve_full_preview_and_structured_guidance()
     assert inputs == original
     inputs[0]["thresholds"] = {"card_max_chars": 100000}
     assert render(inputs) == diagnostic["preview"]
+
+
+def test_market_truth_names_venue_oi_class_markup_and_spot_breadth():
+    """F-11 (03 §11.3): per-venue OI class with the markup component and the
+    spot venues on each side are printed, each with venue and window."""
+    values = card_inputs()
+    truth = values[4]
+    truth["derivatives"] = {
+        "window": "W4H",
+        "per_venue": [
+            {
+                "coverage": {"venue": "binance"},
+                "oi_class": "REAL_NATIVE",
+                "oi_native_chg_pct": 0.1037,
+                "decomposition": {"markup": "6530100.97", "pos_share": 0.5734},
+            },
+            {"coverage": {"venue": "bybit"}, "oi_class": None},
+        ],
+    }
+    truth["spot"] = {
+        "W4H": {
+            "window": "W4H",
+            "venues": [
+                {"venue": "binance", "complete": True, "sign": 0, "volume_share": 0.656},
+                {"venue": "kraken", "complete": True, "sign": 1, "volume_share": 0.028},
+            ],
+        }
+    }
+    market = render(values).split("MARKET TRUTH:", 1)[1].split("OUTLOOK:", 1)[0]
+    assert "4h: open interest by venue: binance REAL_NATIVE +10.37% in WLD (position share 57.3%" in market
+    assert "price-markup component present" in market and "bybit" not in market
+    assert "4h: spot venues net buying: kraken 2.8%; net selling: none" in market
+
+
+def test_no_event_premise_prints_scenario_reason_and_no_accumulation_word():
+    """03 §7.5: the template never names a missing event and never writes
+    "accumulation" (L11) in its own condition texts."""
+    from tank.analysis.decisions import DecisionEngine
+
+    truth = {
+        "token_id": "T",
+        "move_class": "UNKNOWN",
+        "data_confidence": {"class": "HIGH"},
+        "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL"},
+    }
+    result = DecisionEngine().evaluate({}, {}, {"token_id": "T", "role": "UNKNOWN"}, truth)
+    outlook = result["outlook"]
+    assert outlook["scenarios"]["failure"] is None
+    assert outlook["scenario_reasons"]["failure"] == "no event premise"
+    assert all("accumulation" not in c["human_text"].lower() for c in result["conditions"])

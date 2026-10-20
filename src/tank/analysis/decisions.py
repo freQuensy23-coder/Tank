@@ -368,6 +368,14 @@ class DecisionEngine:
                 "upside": "Move extends if spot demand strengthens without crowding.",
                 "failure": "Thesis fails on denial or loss of the event anchor.",
             }
+        # A scenario never names an event the analysis does not have (03 §7.5):
+        # with no event premise, event-dependent texts print n/a with a reason.
+        scenario_reasons = {}
+        if not event.get("event_id") and not event.get("statement"):
+            for name, text in list(scenarios.items()):
+                if "event" in text.casefold():
+                    scenarios[name] = None
+                    scenario_reasons[name] = "no event premise"
         # FR-O-03 / §4.8 row C: weak capture labels only a positive action or a
         # positive outlook as tactical; WAIT, DON'T CHASE, REDUCE and EXIT are not.
         tactical = thesis == "C" and action in POSITIVE_ACTIONS
@@ -401,6 +409,7 @@ class DecisionEngine:
                 "caps": {"data": data, "event": certainty, "market_truth": class_conf},
                 "tactical": outlook_tactical,
                 "scenarios": scenarios,
+                "scenario_reasons": scenario_reasons,
             },
             "thresholds_version": self.thresholds.get("version", "unversioned"),
             "config_version": getattr(
@@ -440,7 +449,7 @@ class DecisionEngine:
         elif action == "WAIT":
             up = _condition(
                 "UPGRADE",
-                "Data HIGH and class resolves to spot led accumulation or organic mixed.",
+                "Data HIGH and the move class resolves to spot-led buying (aggressor side and price response checked) or organic mixed.",
                 _expr("dc.class", "==", "HIGH"),
                 _expr("mt.move_class", "in", ["SPOT_LED_ACCUMULATION", "ORGANIC_MIXED"]),
             )

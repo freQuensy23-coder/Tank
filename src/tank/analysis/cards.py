@@ -565,6 +565,7 @@ def compose_card(
                 event_return.get(k) is not None for k in ("r_raw", "r_btc_adj")
             ):
                 market += f"\nPriced: {_na(relative.get('repricing_band'))} · EVENT {_percent(event_return.get('r_raw'))} raw; {_percent(event_return.get('r_btc_adj'))} net BTC"
+            market += "".join("\n• " + line for line in _market_breadth(truth, token))
             alternatives = (truth.get("divergence") or {}).get("unresolved", []) + truth.get(
                 "alternatives", []
             )
@@ -584,8 +585,12 @@ def compose_card(
             )
             scenarios = outlook.get("scenarios") or {}
             outlook_line = f"OUTLOOK: {_na(outlook.get('direction'), 'bias unavailable')} · {_na(outlook.get('potential'), 'potential unavailable')} · best {horizon}"
+            reasons = outlook.get("scenario_reasons") or {}
             outlook_line += "".join(
-                "\n• " + name.capitalize() + ": " + _na(scenarios.get(name), "scenario unavailable")
+                "\n• "
+                + name.capitalize()
+                + ": "
+                + _na(scenarios.get(name), reasons.get(name, "scenario unavailable"))
                 for name in ("base", "upside", "failure")
             )
             conditions = []
@@ -657,6 +662,53 @@ def compose_card(
         }
         raise ValueError("CARD_LENGTH: " + json.dumps(diagnostics, ensure_ascii=False))
     return text
+
+
+def _market_breadth(truth, token):
+    """Per-venue OI class with its price-markup share, and spot venue breadth,
+    each labelled with venue and window (01 hard rules 1 and 3, L1, L2, L8)."""
+    lines = []
+    derivatives = truth.get("derivatives") or {}
+    window = str(derivatives.get("window") or truth.get("primary_window") or "").removeprefix("W").lower()
+    venues = []
+    for row in derivatives.get("per_venue") or []:
+        if not isinstance(row, dict) or not row.get("oi_class"):
+            continue
+        venue = (row.get("coverage") or {}).get("venue") or row.get("venue") or "n/a (venue unknown)"
+        text = venue + " " + str(row["oi_class"])
+        if row.get("oi_native_chg_pct") is not None:
+            text += " " + format(Decimal(str(row["oi_native_chg_pct"])) * 100, "+.2f") + "% in " + _token_label(token)
+        share = (row.get("decomposition") or {}).get("pos_share")
+        if (row.get("decomposition") or {}).get("markup") is not None and share is not None:
+            text += (
+                " (position share "
+                + format(Decimal(str(share)) * 100, ".1f")
+                + "% of the OI value change; price-markup component present)"
+            )
+        venues.append(text)
+    if venues and window:
+        lines.append(window + ": open interest by venue: " + "; ".join(venues))
+    spot = (truth.get("spot") or {}).get(truth.get("primary_window", "W4H")) or {}
+    rows = [row for row in spot.get("venues") or [] if isinstance(row, dict) and row.get("complete")]
+    if rows:
+        spot_window = str(spot.get("window") or truth.get("primary_window") or "").removeprefix("W").lower()
+
+        def side(sign):
+            chosen = [r for r in rows if r.get("sign") == sign and r.get("volume_share") is not None]
+            return ", ".join(
+                str(r.get("venue")) + " " + format(Decimal(str(r["volume_share"])) * 100, ".1f") + "%"
+                for r in sorted(chosen, key=lambda r: -r["volume_share"])
+            ) or "none"
+
+        lines.append(
+            spot_window
+            + ": spot venues net buying: "
+            + side(1)
+            + "; net selling: "
+            + side(-1)
+            + " (share of spot volume)"
+        )
+    return lines
 
 
 def _integration_stage_label(subject, event, claims):
