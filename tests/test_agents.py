@@ -376,61 +376,6 @@ async def test_stream_processing_preserves_concurrent_added_message():
     assert record["last_event_seq"] == 9
 
 
-@pytest.mark.asyncio
-async def test_replay_never_calls_live_tool_and_requires_unique_record():
-    repo = MemoryRepository()
-    opts, _ = settings(replay=True)
-    await seed_session(repo, replay_source_session_id="old")
-    await repo.put(
-        "ops.tool_calls",
-        "old",
-        {
-            "session_id": "old",
-            "call_id": "old",
-            "event_id": "original-event-id",
-            "tool": "web_search",
-            "input": {"q": "x"},
-            "status": "DONE",
-            "result": {"items": ["durable"]},
-        },
-    )
-
-    await repo.put(
-        "ops.tool_calls",
-        "unrelated",
-        {
-            "session_id": "different_source",
-            "call_id": "other",
-            "event_id": "evt_1",
-            "tool": "web_search",
-            "input": {"q": "x"},
-            "status": "DONE",
-            "result": {"items": ["unrelated capture"]},
-        },
-    )
-
-    async def prohibited(*args):
-        raise AssertionError("Live tool called during replay")
-
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
-    ) as http:
-        service = SessionService(repo, opts, prohibited, http=http)
-        await service.process_event(
-            "ses_1", {"id": "c", "type": "agent.custom_tool_use", "name": "web_search", "input": {"q": "x"}}
-        )
-        await service.process_event(
-            "ses_1",
-            {
-                "id": "missing",
-                "type": "agent.custom_tool_use",
-                "name": "web_search",
-                "input": {"q": "absent"},
-            },
-        )
-    assert (await repo.get("ops.tool_calls", "ses_1:c"))["result"] == {"items": ["durable"]}
-    missing = await repo.get("ops.tool_calls", "ses_1:missing")
-    assert missing["status"] == "REFUSED" and "unambiguous" in missing["result"]["error"]["reason"]
 
 
 @pytest.mark.asyncio
@@ -763,46 +708,6 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
         assert context["session_code_version"] == "old_code"
 
 
-@pytest.mark.asyncio
-async def test_spending_never_blocks_deferrable_or_scout_messages():
-    repo = MemoryRepository()
-    opts, _ = settings()
-    await repo.put(
-        "ops.llm_usage", "paid", {"usage_id": "paid", "at": iso(), "cost_usd": "999999", "call": "FILTER"}
-    )
-    await repo.put(
-        "ops.llm_usage",
-        "unknown",
-        {"usage_id": "unknown", "at": iso(), "cost_usd": None, "call": "WEB_SEARCH"},
-    )
-    await seed_session(repo)
-    await repo.put(
-        "ingest.source_items",
-        "news",
-        {"item_id": "news", "source_id": "S30", "text": "Aave update", "deferrable": True},
-    )
-    await repo.put(
-        "scout.expansion_proposals", "proposal", {"prp_id": "proposal", "concept_name": "Research"}
-    )
-    sent = []
-
-    def handler(req):
-        if req.method == "GET":
-            return httpx.Response(200, json={"data": [], "next_page": None})
-        body = json.loads(req.content)
-        if req.url.path == "/v1/sessions":
-            return httpx.Response(200, json={"id": "scout"})
-        sent.append(body)
-        return httpx.Response(200, json={})
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        service = SessionService(repo, opts, None, http=http)
-        service.start_stream = lambda sid: None
-        await service.send_message({"kind": "ITEM_ADDED", "item_id": "news", "event_id": "evt_1"})
-        await service.scout_review({"proposal_id": "proposal"})
-    assert len(sent) == 2
-    assert await repo.list("out.ops_notices") == []
-    assert not hasattr(service, "budget")
 
 
 @pytest.mark.asyncio

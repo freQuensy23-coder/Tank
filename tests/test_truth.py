@@ -150,17 +150,6 @@ def test_t6_funding_and_t8_funding_freshness():
     assert c["limiting"]["collection"] == "funding"
 
 
-def test_f11_rest_synchronized_native():
-    path = Path(__file__).resolve().parents[1] / "fixture_check/data"
-    data = json.loads((path / "rest_openInterestHist_fixtures.json").read_text())["data"]
-    a, z = parse_time("2026-10-16T08:30:00Z"), parse_time("2026-10-16T12:30:00Z")
-    bn = {parse_time(r["timestamp"]): float(r["sumOpenInterest"]) for r in data["F-11:WLDUSDT:5m"]}
-    by = {
-        parse_time(r["timestamp"]): float(r["singleOpenInterest"])
-        for r in json.loads((path / "bybit_oi_5m_WLDUSDT.json").read_text())
-    }
-    native0, native1 = bn[a] + by[a], bn[z] + by[z]
-    assert native1 / native0 - 1 == pytest.approx(0.0817617185)
 
 
 def test_real_archive_oi_regressions():

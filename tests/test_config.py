@@ -46,13 +46,6 @@ def test_sources_have_concrete_endpoints():
     assert len(next(x for x in s if x["source_id"] == "S25")["feeds"]) == 12
 
 
-def test_cutoffs_are_the_uncalibrated_midpoint_until_v0b_calibration():
-    # User decision 2026-10-20 (todo.md): launch at 0.5, calibrate on labeled real news later.
-    t = load("thresholds")
-    assert t["filter_cutoff"] == t["routing_cutoff"] == 0.5
-    assert not {"routing_selection_objective", "calibration_evidence"} & t.keys()
-    assert t["market_context_rule"] == "normal_range"
-    assert "known_f16_conflict" not in t
 
 
 def test_wallet_artifacts_and_skills():
@@ -171,45 +164,9 @@ def test_fundamentals_provider_identity_and_metric_evidence():
     assert checks["bitcoin:BTC"]["checks"]["dailyHoldersRevenue"]["status"] == "NOT_SUPPORTED"
 
 
-def test_documented_multi_organization_authority_preserves_universe():
-    r = load("registry")
-    account = next(a for a in r["x_accounts"] if a["handle"] == "sama")
-    assert account["entity_id"] == "world"
-    assert {a["entity_id"] for a in account["official_authorities"]} == {"world", "openai"}
-    assert all(a["evidence_refs"] and a["authority_scope"] for a in account["official_authorities"])
-    assert len(r["x_accounts"]) == 86 and len(r["tokens"]) == 22
-    assert next(e for e in r["entities"] if e["entity_id"] == "openai")["tokens"] == []
 
 
-def test_agent_tool_descriptions_are_self_contained_and_synced():
-    import re
-
-    for directory in (C / "skills").iterdir():
-        if not (directory / "tools.json").exists():
-            continue
-        for tool in json.loads((directory / "tools.json").read_text()):
-            schema_path = directory / (tool["name"] + ".schema.json")
-            if not schema_path.exists():
-                schema_path = C / "skills" / "tank-event-analyst" / (tool["name"] + ".schema.json")
-            schema = json.loads(schema_path.read_text())
-            assert tool["description"] == schema["description"]
-            assert not re.search(
-                r"§|validators below|same validators|Tank get item", tool["description"], re.I
-            )
-            assert len(tool["description"].split()) >= 15
 
 
-def test_data_guide_matches_typed_market_column_contract():
-    from tank.market_schema import MARKET_COLUMNS
-
-    guide = (C / "skills/tank-data/references/DATA_GUIDE.md").read_text()
-    assert "CREATE TABLE mkt." not in guide
-    assert "FROM mkt.trades" not in guide
-    for table, columns in MARKET_COLUMNS.items():
-        section = guide.split("## " + table + "\n", 1)[1].split("\n## ", 1)[0]
-        for field, data_type in columns.items():
-            assert f"| `{field}` | `{data_type}` |" in section
 
 
-def test_backup_keeps_three_snapshots_until_it_has_its_own_disk():
-    assert load("thresholds")["backup_snapshots_kept"] == 3

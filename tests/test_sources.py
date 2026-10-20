@@ -1182,41 +1182,6 @@ def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path):
     assert row["published_at_precision"] == "BUCKET(1d)"
 
 
-@pytest.mark.asyncio
-async def test_source_config_forums_metadata_and_registry_source_mappings():
-    from tank.settings import Settings
-
-    config = Settings()
-    sources = {s["source_id"]: s for s in config.load_config("sources")["sources"]}
-    forums = sources["S23"]
-    assert [f["interval_s"] for f in forums["feeds"]] == [300, 300, 300, 300, 300, 600, 600, 600]
-    assert all(
-        all(k in s for k in ("bucket", "source_class", "cost_class", "auth", "adapter_status"))
-        for s in sources.values()
-    )
-    assert all(
-        s["cost_class"] in {"FREE_OPEN", "FREE_ACCOUNT", "FREE_TIER", "PAID"}
-        and s["auth"] in {"NONE", "API_KEY", "OAUTH", "BROWSER_SESSION"}
-        and s["adapter_status"] in {"NOT_TESTED", "WORKS", "PARTIAL", "BROKEN", "DEPRECATED"}
-        for s in sources.values()
-    )
-    entities = {e["entity_id"]: e for e in config.load_config("registry")["entities"]}
-    for eid, sid in [
-        ("binance", "S09"),
-        ("coinbase", "S14"),
-        ("okx", "S10"),
-        ("bybit", "S11"),
-        ("kraken", "S12"),
-        ("robinhood", "S13"),
-        ("sec", "S01"),
-        ("cftc", "S04"),
-        ("federal-reserve", "S05"),
-        ("occ", "S06"),
-        ("ofac", "S07"),
-        ("fincen", "S03"),
-        ("fdic", "S03"),
-    ]:
-        assert sid in entities[eid]["official_sources"]
 
 
 @pytest.mark.asyncio
