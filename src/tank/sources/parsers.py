@@ -349,7 +349,7 @@ def article(payload, *, source_id=None):
 
 def json_items(payload, source_id):
     data = json.loads(payload) if isinstance(payload, (str, bytes)) else payload
-    if source_id in {"S03", "S08"}:
+    if source_id == "S03":
         rows = data["results"]
 
         def single(row):
@@ -411,34 +411,6 @@ def json_items(payload, source_id):
 
 def _json_items(payload, source_id):
     data = json.loads(payload) if isinstance(payload, (str, bytes)) else payload
-    if source_id == "S08":
-        rows = []
-        for row in data["results"]:
-            url = row["clickUri"]
-            if not _dtcc_release_url(url):
-                continue
-            raw = row.get("raw", {})
-            rows.append(
-                {
-                    "external_id": url,
-                    "url": url,
-                    "title": raw.get("news_full_name") or row["title"],
-                    "text": row.get("excerpt", ""),
-                    **timestamp_fields(raw.get("news_date"), date_only=True),
-                    **(
-                        {
-                            "observed_at": row["tank_discovery_observed_at"],
-                            "discovery_raw_ref": row["tank_discovery_raw_ref"],
-                            "discovery_raw_sha256": row["tank_discovery_raw_sha256"],
-                        }
-                        if row.get("tank_discovery_observed_at")
-                        else {}
-                    ),
-                }
-            )
-        if data["results"] and not rows:
-            raise ValueError("DTCC search returned no release URLs")
-        return rows
     if source_id == "S03":
         rows = data["results"]
         return [

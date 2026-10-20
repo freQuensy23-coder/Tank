@@ -15,9 +15,17 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
-from tank.util import canonical_json, parse_time, sha256
+from tank.util import new_id, parse_time, sha256
 
 from . import parsers
+
+ARTICLE_KINDS = {"html", "rendered", "rendered_html", "html_diff"}
+
+
+def count_read(state, name, *, ok, n=1):
+    """Cumulative per-feed read counters for the V0-A failed-read rate (01 §10)."""
+    counters = state.setdefault(name, {"ok": 0, "failed": 0})
+    counters["ok" if ok else "failed"] += n
 
 
 class SourcePoller:
@@ -63,8 +71,6 @@ class SourcePoller:
 
         def annotate(value):
             if isinstance(value, dict):
-                if value.get("observation_times"):
-                    value["observation_times_prec"] = "COLLECTION_ONLY"
                 for field in (
                     "observed_at",
                     "acquired_at",
@@ -106,71 +112,63 @@ class SourcePoller:
                 state[field + "_precision"] = "COLLECTION_ONLY"
         await self.service.repo.put("ops.source_checkpoints", key, state)
 
-    def queue_rows(self, current, key, feed, rows, acquired, kind, coverage, token):
-        first_seen = acquired.get("fetched_at") or self.stamp()
+    @staticmethod
+    def needs_detail(sid, kind):
+        """The item's raw payload is its article/detail page, fetched in the backlog."""
+        return kind in ARTICLE_KINDS or sid in {"S01", "S09", "S19"}
+
+    async def queue_rows(self, current, key, source, feed, rows, kind, coverage, token, acquired_at):
+        """Queue only items not yet captured; write raw now unless a detail page is still due."""
+        svc, sid = self.service, source["source_id"]
         pending = {
-            str(row["external_id"]): row
-            for batch in current.get("pending_batches", [])
-            for row in batch["rows"]
+            str(row["external_id"]) for batch in current.get("pending_batches", []) for row in batch["rows"]
         }
         fresh = []
         for original in rows:
-            row = deepcopy(original)
+            row = dict(original)
+            payload = row.pop("_payload", None)
+            external = str(row["external_id"])
             row.setdefault("feed", feed["url"])
-            row.setdefault("observed_at", first_seen)
-            row.setdefault("discovery_config_version", self.service.settings.config_version)
-            row.setdefault("discovery_code_version", self.service.settings.code_version)
-            row["observation_id"] = sha256(key + "|" + str(row["external_id"]) + "|" + row["observed_at"])
-            existing = pending.get(str(row["external_id"]))
-            if existing:
-                times = existing.setdefault("observation_times", [existing["observed_at"]])
-                if row["observed_at"] not in times:
-                    times.append(row["observed_at"])
-                # Pending rows may predate CMS identity extraction. Keep their
-                # original observation, but retain the newly observed descriptor
-                # so a canonical 404 can use the publisher's verified own slug.
-                if row.get("publisher_cms_identity") and not existing.get("publisher_cms_identity"):
-                    existing.update(
-                        publisher_cms_identity=deepcopy(row["publisher_cms_identity"]),
-                        publisher_cms_slug_url=row["publisher_cms_slug_url"],
-                        publisher_cms_discovery={
-                            "observed_at": first_seen,
-                            "observed_at_prec": "COLLECTION_ONLY",
-                            "raw_ref": acquired["raw_ref"],
-                            "raw_sha256": acquired["raw_sha256"],
-                        },
-                    )
-            else:
-                row["observation_times"] = [row["observed_at"]]
-                fresh.append(row)
-                pending[str(row["external_id"])] = row
+            row.setdefault("observed_at", acquired_at)
+            if external in pending or await svc.observe_known(sid, external, row["feed"]):
+                continue
+            if sid == "S02" and not svc.filing_matches(row):
+                continue
+            row["item_id"] = new_id("item")
+            row.setdefault("discovery_config_version", svc.settings.config_version)
+            row.setdefault("discovery_code_version", svc.settings.code_version)
+            if not self.needs_detail(sid, kind):
+                row["raw_ref"], row["raw_sha256"] = svc.raw(
+                    payload, source_id=sid, item_id=row["item_id"], observed_at=row["observed_at"]
+                )
+            pending.add(external)
+            fresh.append(row)
         current.setdefault("pending_batches", []).append(
             {
                 "batch_id": sha256(key + "|" + token),
-                "acquired_at": first_seen,
+                "acquired_at": acquired_at,
                 "acquired_at_precision": "COLLECTION_ONLY",
                 "kind": kind,
                 "rows": fresh,
                 "coverage": coverage,
-                "raw_ref": acquired["raw_ref"],
-                "raw_sha256": acquired["raw_sha256"],
             }
         )
 
-    async def retain_page(self, key, feed, rows, page_state, *, kind="json"):
+    async def retain_page(self, key, source, feed, rows, page_state, *, kind="json"):
         # Commit each available page before requesting the next. A later timeout
         # must not leave already discovered originals only in a volatile coroutine.
         async with self.lock(self.state_locks, key):
             current = await self.state(key)
-            self.queue_rows(
+            await self.queue_rows(
                 current,
                 key,
+                source,
                 feed,
                 rows,
-                page_state,
                 kind,
                 {},
-                "page:" + page_state["raw_sha256"] + "|" + str(page_state.get("fetched_at")),
+                "page:" + page_state["payload_sha256"] + "|" + str(page_state.get("fetched_at")),
+                page_state.get("fetched_at") or self.stamp(),
             )
             await self.save(key, current)
 
@@ -190,22 +188,18 @@ class SourcePoller:
                 state.get("status_id"),
                 known_ids=state.get("recent_status_ids", []),
             )
-            captures = svc.xsensor.raw_pages
+            captures = svc.xsensor.pages
             if not captures:
-                raise ValueError("X browser captured no raw HTML evidence")
+                raise ValueError("X browser captured no list page")
             state.update(
-                raw_ref=captures[0]["raw_ref"],
-                raw_sha256=captures[0]["raw_sha256"],
+                payload_sha256=captures[0]["sha256"],
+                fetched_at=self.stamp(),
                 scan_status=svc.xsensor.scan_status,
             )
-            for row in rows:
-                row["browser_raw_refs"] = captures
             return rows, state, kind
         if sid == "S19":
             payload = await svc.browser.html(feed["url"])
-            received_at = self.stamp()
-            ref, digest = svc.raw(payload, source_id=sid)
-            fetched = dict(state, raw_ref=ref, raw_sha256=digest, fetched_at=received_at)
+            fetched = dict(state, payload_sha256=sha256(payload), fetched_at=self.stamp())
         else:
             payload, fetched = await svc.fetch(feed, key, on_start=lambda: self.mark_request_start(key))
         state.update(fetched)
@@ -214,15 +208,8 @@ class SourcePoller:
         state["entry_errors"] = []
         if sid == "S14":
             snapshot = parsers.instruments(payload, feed)
-            raw_pages = [{"raw_ref": state["raw_ref"], "raw_sha256": state["raw_sha256"]}]
-            evidence = {
-                symbol: {
-                    "observed_at": state.get("fetched_at") or self.stamp(),
-                    "discovery_raw_ref": state["raw_ref"],
-                    "discovery_raw_sha256": state["raw_sha256"],
-                }
-                for symbol in snapshot
-            }
+            pages = [(payload, state.get("fetched_at") or self.stamp())]
+            found_on = dict.fromkeys(snapshot, 0)
             if str(feed.get("venue", "")).lower() == "bybit":
                 cursor = json.loads(payload).get("result", {}).get("nextPageCursor")
                 cursors = set()
@@ -243,22 +230,10 @@ class SourcePoller:
                         raise ValueError("Unexpected conditional paginated response")
                     page_snapshot = parsers.instruments(page, feed)
                     snapshot.update(page_snapshot)
-                    raw_pages.append(
-                        {"raw_ref": page_state["raw_ref"], "raw_sha256": page_state["raw_sha256"]}
-                    )
-                    evidence.update(
-                        {
-                            symbol: {
-                                "observed_at": page_state.get("fetched_at") or self.stamp(),
-                                "discovery_raw_ref": page_state["raw_ref"],
-                                "discovery_raw_sha256": page_state["raw_sha256"],
-                            }
-                            for symbol in page_snapshot
-                        }
-                    )
+                    found_on.update(dict.fromkeys(page_snapshot, len(pages)))
+                    pages.append((page, page_state.get("fetched_at") or self.stamp()))
                     cursor = json.loads(page).get("result", {}).get("nextPageCursor")
-            # Pending snapshots are durable discovered evidence, not completed
-            # coverage. Compare against the newest to preserve successive changes.
+            # Diff against the newest snapshot, including one still pending.
             previous = state.get("instruments")
             for batch in state.get("pending_batches", []):
                 if "instruments" in batch["coverage"]:
@@ -271,9 +246,6 @@ class SourcePoller:
                     if symbol in snapshot and "status_flags" not in old:
                         old["status_flags"] = snapshot[symbol].get("status_flags", {})
             state["instrument_snapshot_schema_version"] = 2
-            manifest_ref, manifest_hash = svc.raw(
-                canonical_json({"raw_pages": raw_pages}).encode(), source_id=sid
-            )
             completed_at = self.stamp()
             rows = []
             if previous is not None:
@@ -284,18 +256,21 @@ class SourcePoller:
                             {
                                 "external_id": f"{feed.get('venue')}|{feed.get('market_type')}|{symbol}|{sha256(current)}",
                                 "title": f"{symbol} instrument change",
-                                "text": canonical_json({"before": old, "after": current}),
+                                "text": json.dumps({"before": old, "after": current}, sort_keys=True),
                                 "url": feed["url"],
                                 "published_at": None,
-                                **evidence.get(
-                                    symbol,
+                                # A removal is proven by the absence from every page.
+                                **(
                                     {
+                                        "observed_at": pages[found_on[symbol]][1],
+                                        "_payload": pages[found_on[symbol]][0],
+                                    }
+                                    if symbol in found_on
+                                    else {
                                         "observed_at": completed_at,
-                                        "discovery_raw_ref": manifest_ref,
-                                        "discovery_raw_sha256": manifest_hash,
-                                    },
+                                        "_payload": b"\n".join(p for p, _ in pages),
+                                    }
                                 ),
-                                "instrument_snapshot_raw_pages": raw_pages,
                                 "change": "REMOVED"
                                 if current is None
                                 else "ADDED"
@@ -307,10 +282,11 @@ class SourcePoller:
         elif kind in {"rss", "atom", "feed"}:
             rows = parsers.feeds(payload, sid, feed)
             state["entry_errors"] = [
-                {**error, "raw_ref": state["raw_ref"], "raw_sha256": state["raw_sha256"]}
-                for error in rows.errors
+                {**error, "payload_sha256": state["payload_sha256"]} for error in rows.errors
             ]
-        elif kind in {"html", "rendered", "rendered_html", "html_diff"} or sid == "S19":
+            for row in rows:
+                row["_payload"] = payload
+        elif kind in ARTICLE_KINDS or sid == "S19":
             rows = parsers.article_links(payload, feed)
         else:
             rows, state = await self._json_history(source, feed, key, payload, state)
@@ -339,8 +315,7 @@ class SourcePoller:
         while True:
             parsed = parsers.json_items(page, sid)
             entry_errors.extend(
-                {**error, "raw_ref": page_state["raw_ref"], "raw_sha256": page_state["raw_sha256"]}
-                for error in parsed.errors
+                {**error, "payload_sha256": page_state["payload_sha256"]} for error in parsed.errors
             )
 
             def identity(row):
@@ -349,8 +324,7 @@ class SourcePoller:
             retained = []
             for row in parsed:
                 row.setdefault("observed_at", page_state.get("fetched_at") or self.stamp())
-                row["discovery_raw_ref"] = page_state["raw_ref"]
-                row["discovery_raw_sha256"] = page_state["raw_sha256"]
+                row["_payload"] = page
                 if identity(row) == checkpoint:
                     found = True
                     # Include the boundary itself: proposal state may have changed.
@@ -360,7 +334,7 @@ class SourcePoller:
                 rows.append(row)
                 retained.append(row)
             if sid in {"S03", "S09", "S24"}:
-                await self.retain_page(key, feed, retained, page_state)
+                await self.retain_page(key, source, feed, retained, page_state)
             if not checkpoint or found or sid not in {"S03", "S09", "S24"}:
                 break
             data = json.loads(page)
@@ -423,16 +397,12 @@ class SourcePoller:
                 if head is not None:
                     head_rows = parsers.json_items(head, sid)
                     entry_errors.extend(
-                        {**error, "raw_ref": head_state["raw_ref"], "raw_sha256": head_state["raw_sha256"]}
+                        {**error, "payload_sha256": head_state["payload_sha256"]}
                         for error in head_rows.errors
                     )
                     for row in head_rows:
-                        row.update(
-                            observed_at=head_state.get("fetched_at") or self.stamp(),
-                            discovery_raw_ref=head_state["raw_ref"],
-                            discovery_raw_sha256=head_state["raw_sha256"],
-                        )
-                    await self.retain_page(key, feed, head_rows, head_state)
+                        row.update(observed_at=head_state.get("fetched_at") or self.stamp(), _payload=head)
+                    await self.retain_page(key, source, feed, head_rows, head_state)
             page, page_state = await svc.fetch(
                 page_feed,
                 key
@@ -479,16 +449,14 @@ class SourcePoller:
                     existing = {r["external_id"] for r in rows}
                     extra_rows = parsers.json_items(extra, sid)
                     state["entry_errors"].extend(
-                        {**error, "raw_ref": extra_state["raw_ref"], "raw_sha256": extra_state["raw_sha256"]}
+                        {**error, "payload_sha256": extra_state["payload_sha256"]}
                         for error in extra_rows.errors
                     )
                     returned_ids.update(row["proposal_id"] for row in extra_rows)
                     for row in extra_rows:
                         if row["external_id"] not in existing:
                             row.update(
-                                proposal_raw_ref=extra_state["raw_ref"],
-                                proposal_raw_sha256=extra_state["raw_sha256"],
-                                observed_at=extra_state.get("fetched_at") or self.stamp(),
+                                observed_at=extra_state.get("fetched_at") or self.stamp(), _payload=extra
                             )
                             rows.append(row)
             missing = set(pending) - returned_ids
@@ -496,8 +464,7 @@ class SourcePoller:
                 {
                     "reason": "PENDING_PROPOSAL_UNAVAILABLE",
                     "proposal_id": proposal_id,
-                    "raw_ref": pending_evidence[proposal_id].get("raw_ref"),
-                    "raw_sha256": pending_evidence[proposal_id].get("raw_sha256"),
+                    "payload_sha256": pending_evidence[proposal_id].get("payload_sha256"),
                 }
                 for proposal_id in sorted(missing)
             )
@@ -559,10 +526,19 @@ class SourcePoller:
                                     )
                                 )[:500],
                             )
-                        self.queue_rows(current, key, feed, rows, acquired, kind, coverage, attempted)
+                        await self.queue_rows(
+                            current,
+                            key,
+                            source,
+                            feed,
+                            rows,
+                            kind,
+                            coverage,
+                            attempted,
+                            acquired.get("fetched_at") or self.stamp(),
+                        )
                     for field in (
-                        "raw_ref",
-                        "raw_sha256",
+                        "payload_sha256",
                         "fetched_at",
                         "http_status",
                         "scan_status",
@@ -572,6 +548,7 @@ class SourcePoller:
                         if field in acquired:
                             current[field] = acquired[field]
                     current.pop("acquisition_error", None)
+                    count_read(current, "reads", ok=True)
                     current.update(
                         status="DEGRADED"
                         if current.get("article_errors")
@@ -592,6 +569,7 @@ class SourcePoller:
                     current = await self.state(key)
                     current.pop("etag", None)
                     current.pop("last_modified", None)
+                    count_read(current, "reads", ok=False)
                     current.update(
                         status="DEGRADED",
                         acquisition_error=str(exc),
@@ -601,161 +579,120 @@ class SourcePoller:
                     await self.save(key, current)
                 return {"items": 0, "errors": [str(exc)]}
 
+    def _empty_body(self, url, detail_state):
+        return {
+            "url": url,
+            "http_status": detail_state.get("http_status"),
+            "payload_sha256": detail_state.get("payload_sha256"),
+            "observed_at": self.stamp(),
+            "observed_at_precision": "COLLECTION_ONLY",
+            "reason": "EMPTY_ARTICLE_BODY",
+        }
+
+    async def _article(self, source, feed, key, item):
+        """Fetch the article page; S13 may fall back to the publisher's own CMS slug URL."""
+        svc, sid = self.service, source["source_id"]
+        try:
+            return await svc.fetch(
+                {"url": item["url"], "source_limits": source.get("limits", {})},
+                key + ":" + sha256(item["url"]),
+            )
+        except httpx.HTTPStatusError as exc:
+            binding = item.get("publisher_cms_identity")
+            fallback = item.get("publisher_cms_slug_url")
+            origin = urlsplit(feed["url"])
+            candidate = urlsplit(fallback or "")
+            if not (
+                sid == "S13"
+                and exc.response.status_code == 404
+                and isinstance(binding, dict)
+                and re.fullmatch(r"[A-Za-z0-9-]+", binding.get("slug", ""))
+                and candidate.scheme == origin.scheme
+                and candidate.netloc == origin.netloc
+                and candidate.path == origin.path.rstrip("/") + "/" + binding["slug"] + "/"
+                and not candidate.query
+                and not candidate.fragment
+                and fallback != item["url"]
+            ):
+                raise
+            article, detail_state = await svc.fetch(
+                {"url": fallback, "source_limits": source.get("limits", {})},
+                key + ":" + sha256(fallback),
+            )
+            if article is None or binding not in parsers.publisher_cms_entries(article):
+                raise ValueError("Publisher CMS fallback identity/content mismatch") from None
+            if urlsplit(detail_state.get("response_url") or fallback).netloc != origin.netloc:
+                raise ValueError("Publisher CMS fallback left official host") from None
+            item["publisher_cms_recovery"] = {
+                "status": "VERIFIED_SAME_CMS_ENTRY",
+                "canonical_url": item["url"],
+                "resolved_url": fallback,
+                "original_http_status": 404,
+                "original_response_url": str(exc.response.url),
+                "original_payload_sha256": sha256(exc.response.content),
+                "observed_at": self.stamp(),
+                "publisher_cms_identity": binding,
+            }
+            item["publisher_url_aliases"] = [item["url"], fallback]
+            item["url"] = fallback
+            return article, detail_state
+
     async def _item(self, source, feed, key, batch, original):
         svc, sid = self.service, source["source_id"]
         item = deepcopy(original)
-        if sid == "S02" and not svc.filing_matches(item):
-            return False
-        seen = await svc.repo.get("ops.source_dedup", sha256(sid + "|" + str(item["external_id"])))
-        needs_article = batch["kind"] in {
-            "html",
-            "rendered",
-            "rendered_html",
-            "html_diff",
-        } or sid in {"S01", "S19"}
-        if needs_article and not seen:
-            if sid == "S19":
-                article = await svc.browser.html(item["url"])
-                ref, digest = svc.raw(article, source_id=sid)
-                detail_state = {"raw_ref": ref, "raw_sha256": digest, "http_status": 200}
-            else:
-                try:
-                    article, detail_state = await svc.fetch(
-                        {"url": item["url"], "source_limits": source.get("limits", {})},
-                        key + ":" + sha256(item["url"]),
-                    )
-                except httpx.HTTPStatusError as exc:
-                    binding = item.get("publisher_cms_identity")
-                    fallback = item.get("publisher_cms_slug_url")
-                    origin = urlsplit(feed["url"])
-                    candidate = urlsplit(fallback or "")
-                    if not (
-                        sid == "S13"
-                        and exc.response.status_code == 404
-                        and isinstance(binding, dict)
-                        and re.fullmatch(r"[A-Za-z0-9-]+", binding.get("slug", ""))
-                        and candidate.scheme == origin.scheme
-                        and candidate.netloc == origin.netloc
-                        and candidate.path == origin.path.rstrip("/") + "/" + binding["slug"] + "/"
-                        and not candidate.query
-                        and not candidate.fragment
-                        and fallback != item["url"]
-                    ):
-                        raise
-                    ref, digest = svc.raw(exc.response.content, source_id=sid)
-                    recovery = {
-                        "status": "PENDING",
-                        "canonical_url": item["url"],
-                        "resolved_url": fallback,
-                        "original_http_status": 404,
-                        "original_response_url": str(exc.response.url),
-                        "original_raw_ref": ref,
-                        "original_raw_sha256": digest,
-                        "observed_at": self.stamp(),
-                        "publisher_cms_identity": binding,
-                    }
-                    recovery_key = key + ":cms-recovery:" + sha256(item["url"])
-                    await self.save(recovery_key, recovery)
-                    article, detail_state = await svc.fetch(
-                        {"url": fallback, "source_limits": source.get("limits", {})},
-                        key + ":" + sha256(fallback),
-                    )
-                    if article is None or binding not in parsers.publisher_cms_entries(article):
-                        raise ValueError("Publisher CMS fallback identity/content mismatch")
-                    if urlsplit(detail_state.get("response_url") or fallback).netloc != origin.netloc:
-                        raise ValueError("Publisher CMS fallback left official host")
-                    recovery.update(
-                        status="VERIFIED_SAME_CMS_ENTRY",
-                        resolved_raw_ref=detail_state["raw_ref"],
-                        resolved_raw_sha256=detail_state["raw_sha256"],
-                    )
-                    await self.save(recovery_key, recovery)
-                    item["publisher_cms_recovery"] = recovery
-                    item["publisher_url_aliases"] = [item["url"], fallback]
-                    item["url"] = fallback
-            if article is None:
-                raise ValueError("Article returned 304 without a durable source item")
-            detail = parsers.article(article, source_id=sid)
-            if not detail["text"].strip():
-                return {
-                    "url": item["url"],
-                    "http_status": detail_state.get("http_status"),
-                    "raw_ref": detail_state["raw_ref"],
-                    "raw_sha256": detail_state["raw_sha256"],
-                    "observed_at": self.stamp(),
-                    "observed_at_precision": "COLLECTION_ONLY",
-                    "reason": "EMPTY_ARTICLE_BODY",
-                }
-            # A detail page with no publication value must not erase the index's
-            # actual source timestamp or its known precision.
-            item.update(
-                {
-                    k: v
-                    for k, v in detail.items()
-                    if v
-                    and not (
-                        k.startswith("published_")
-                        and not detail.get("published_at")
-                        and item.get("published_at")
-                    )
-                }
-            )
-            item.update(
-                article_raw_ref=detail_state["raw_ref"], article_raw_sha256=detail_state["raw_sha256"]
-            )
-        if sid == "S09" and not seen:
-            payload, detail_state = await svc.fetch(
-                {
-                    "url": "https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode="
-                    + item["external_id"]
-                },
-                key + ":detail:" + item["external_id"],
-            )
-            if payload is None:
-                raise ValueError("Binance article returned 304 without a durable source item")
-            detail_object = json.loads(payload)["data"]
-            if not item.get("published_at") and detail_object.get("publishDate"):
-                item.update(
-                    parsers.timestamp_fields(detail_object["publishDate"]),
-                    published_at_basis="BINANCE_CMS_DETAIL_PUBLISH_DATE",
+        if self.needs_detail(sid, batch["kind"]):
+            if sid == "S09":
+                payload, detail_state = await svc.fetch(
+                    {
+                        "url": "https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode="
+                        + item["external_id"]
+                    },
+                    key + ":detail:" + item["external_id"],
                 )
-            item.update(
-                text=parsers.binance_body(detail_object.get("body", "")),
-                detail_raw_ref=detail_state["raw_ref"],
-                detail_raw_sha256=detail_state["raw_sha256"],
+                if payload is None:
+                    raise ValueError("Binance article returned 304 without a durable source item")
+                detail_object = json.loads(payload)["data"]
+                if not item.get("published_at") and detail_object.get("publishDate"):
+                    item.update(
+                        parsers.timestamp_fields(detail_object["publishDate"]),
+                        published_at_basis="BINANCE_CMS_DETAIL_PUBLISH_DATE",
+                    )
+                item["text"] = parsers.binance_body(detail_object.get("body", ""))
+                if not item["text"].strip():
+                    return self._empty_body(item["url"], detail_state)
+            else:
+                if sid == "S19":
+                    payload = await svc.browser.html(item["url"])
+                    detail_state = {"payload_sha256": sha256(payload), "http_status": 200}
+                else:
+                    payload, detail_state = await self._article(source, feed, key, item)
+                if payload is None:
+                    raise ValueError("Article returned 304 without a durable source item")
+                detail = parsers.article(payload, source_id=sid)
+                if not detail["text"].strip():
+                    return self._empty_body(item["url"], detail_state)
+                # A detail page with no publication value must not erase the index's
+                # actual source timestamp or its known precision.
+                item.update(
+                    {
+                        k: v
+                        for k, v in detail.items()
+                        if v
+                        and not (
+                            k.startswith("published_")
+                            and not detail.get("published_at")
+                            and item.get("published_at")
+                        )
+                    }
+                )
+            item["raw_ref"], item["raw_sha256"] = svc.raw(
+                payload, source_id=sid, item_id=item["item_id"], observed_at=item["observed_at"]
             )
-            if not item["text"].strip():
-                return {
-                    "url": item["url"],
-                    "http_status": detail_state.get("http_status"),
-                    "raw_ref": detail_state["raw_ref"],
-                    "raw_sha256": detail_state["raw_sha256"],
-                    "observed_at": self.stamp(),
-                    "observed_at_precision": "COLLECTION_ONLY",
-                    "reason": "EMPTY_ARTICLE_BODY",
-                }
-        times = item.pop("observation_times", [item["observed_at"]])
-        item.pop("observation_times_prec", None)
-        for observed_at in times:
-            item["observed_at"] = observed_at
-            await svc.ingest(
-                source,
-                item,
-                item.get("article_raw_ref")
-                or item.get("detail_raw_ref")
-                or item.get("proposal_raw_ref")
-                or item.get("discovery_raw_ref")
-                or batch["raw_ref"],
-                item.get("article_raw_sha256")
-                or item.get("detail_raw_sha256")
-                or item.get("proposal_raw_sha256")
-                or item.get("discovery_raw_sha256")
-                or batch["raw_sha256"],
-            )
+        await svc.ingest(source, item)
         return None
 
     async def drain(self, source, index, *, force=False, escalated=False):
-        svc, sid = self.service, source["source_id"]
+        sid = source["source_id"]
         key, feed = f"{sid}:{index}", self.feed(source, index)
         async with self.lock(self.processing_locks, key):
             state = await self.state(key)
@@ -779,8 +716,6 @@ class SourcePoller:
                     async with self.details:
                         try:
                             error = await self._item(source, feed, key, current_batch, row)
-                            if error is False:
-                                return None
                             if error:
                                 article_errors[row["url"]] = error
                                 errors.append("Article parse failure (empty visible text): " + row["url"])
@@ -788,12 +723,10 @@ class SourcePoller:
                             count += 1
                             return None
                         except httpx.HTTPStatusError as exc:
-                            ref, digest = svc.raw(exc.response.content, source_id=sid)
                             article_errors[row.get("url", row["external_id"])] = {
                                 "url": row.get("url"),
                                 "http_status": exc.response.status_code,
-                                "raw_ref": ref,
-                                "raw_sha256": digest,
+                                "payload_sha256": sha256(exc.response.content),
                                 "observed_at": self.stamp(),
                                 "observed_at_precision": "COLLECTION_ONLY",
                                 "reason": "PUBLISHER_ARTICLE_NOT_FOUND"
@@ -808,27 +741,19 @@ class SourcePoller:
 
                 remaining = await asyncio.gather(*(process(row) for row in batch["rows"]))
                 completed[batch["batch_id"]] = {
-                    row["observation_id"]: set(row.get("observation_times", [row["observed_at"]]))
+                    row["item_id"]
                     for row, failed in zip(batch["rows"], remaining, strict=True)
                     if failed is None
                 }
             async with self.lock(self.state_locks, key):
                 current = await self.state(key)
+                done_count = sum(len(ids) for ids in completed.values())
+                count_read(current, "detail_reads", ok=True, n=done_count)
+                count_read(current, "detail_reads", ok=False, n=len(errors))
                 for batch in current.get("pending_batches", []):
                     if batch["batch_id"] in completed:
-                        retained = []
-                        for row in batch["rows"]:
-                            done = completed[batch["batch_id"]].get(row["observation_id"], set())
-                            times = [
-                                at
-                                for at in row.get("observation_times", [row["observed_at"]])
-                                if at not in done
-                            ]
-                            if times:
-                                row["observation_times"] = times
-                                row["observed_at"] = times[0]
-                                retained.append(row)
-                        batch["rows"] = retained
+                        done = completed[batch["batch_id"]]
+                        batch["rows"] = [row for row in batch["rows"] if row["item_id"] not in done]
                 # Advance coverage strictly in acquisition order. Empty newer
                 # batches remain behind a failed older original, despite siblings
                 # already being safely ingested.

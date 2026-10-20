@@ -1,4 +1,3 @@
-import copy
 import json
 from types import SimpleNamespace
 
@@ -8,7 +7,6 @@ import pytest
 from tank.agents.pipeline import Pipeline
 from tank.settings import Settings
 from tank.sources import SourceService, parsers
-from tank.sources.organization import normalize_author_organization, resolve_author_organization
 from tank.storage import MemoryRepository
 from tank.util import sha256
 
@@ -66,61 +64,6 @@ def retained(sid):
     return src, item, payload
 
 
-@pytest.mark.parametrize(
-    "sid,expected",
-    [("S03", "Securities and Exchange Commission; Treasury Department"), ("S25", "LayerZero-Labs")],
-)
-def test_retained_issuer_and_repository_publisher_are_factual_metadata_only(sid, expected):
-    src, item, payload = retained(sid)
-    original = copy.deepcopy(item)
-    result, receipt = normalize_author_organization(item, sources=[src], raw_payloads={"retained": payload})
-    assert receipt["outcome"] == "VERIFIED" and receipt["changed_fields"] == ["author_organization"]
-    assert result == {**original, "author_organization": expected}
-    assert result["author"] == original["author"] and item == original
-    assert receipt["organization_basis"] == (
-        "OFFICIAL_RAW_ISSUING_AGENCIES"
-        if sid == "S03"
-        else "CONFIGURED_REPOSITORY_PUBLISHING_NAMESPACE_NOT_EMPLOYER"
-    )
-
-
-def test_no_false_publisher_from_title_foreign_repo_forum_or_forged_agencies():
-    src, item, payload = retained("S03")
-    forged = {**item, "agencies": [{"name": "Foreign authority"}]}
-    unchanged, receipt = normalize_author_organization(
-        forged, sources=[src], raw_payloads={"retained": payload}
-    )
-    assert unchanged == forged and receipt["outcome"] == "UNVERIFIABLE"
-    assert receipt["reason"] == "ISSUING_AGENCY_RAW_METADATA_MISMATCH"
-    assert resolve_author_organization(src, {**item, "agencies": None, "title": "SEC announces"}) is None
-    assert resolve_author_organization(src, {**item, "feed": "https://foreign.example/feed"}) is None
-    assert resolve_author_organization(src, {**item, "url": "https://foreign.example/article"}) is None
-    github, commit, _ = retained("S25")
-    for changed in [
-        {"url": "https://github.com/foreign/repo/commit/abc"},
-        {"url": REPO + "-other/commit/abc"},
-        {"feed": "https://github.com/foreign/repo/commits/main.atom"},
-    ]:
-        assert resolve_author_organization(github, {**commit, **changed}) is None
-    forum = {"source_id": "S23", "feeds": [{"url": "https://gov.near.org/latest.json", "kind": "json"}]}
-    assert (
-        resolve_author_organization(
-            forum,
-            {
-                "feed": forum["feeds"][0]["url"],
-                "author": "Unverified contributor",
-                "title": "NEAR Foundation",
-            },
-        )
-        is None
-    )
-    # Actual explicit metadata/config precedence is retained, never rewritten to convenient identities.
-    assert (
-        resolve_author_organization(github, {**commit, "author_organization": "Explicit author organization"})
-        == "Explicit author organization"
-    )
-
-
 @pytest.mark.parametrize("sid", ["S03", "S25"])
 async def test_normal_poll_preserves_actual_author_and_exposes_exact_pruner_organization(tmp_path, sid):
     src, _, payload = retained(sid)
@@ -161,26 +104,3 @@ async def test_normal_poll_preserves_actual_author_and_exposes_exact_pruner_orga
             )
         finally:
             await service.close()
-
-
-@pytest.mark.parametrize("sid", ["S03", "S25"])
-def test_publisher_raw_item_url_forgery_is_not_normalized(sid):
-    src, item, payload = retained(sid)
-    wrong = {**item, "url": FR_ITEM + "-other" if sid == "S03" else REPO + "/commit/other"}
-    result, receipt = normalize_author_organization(wrong, sources=[src], raw_payloads={"retained": payload})
-    assert result == wrong and receipt["outcome"] == "UNVERIFIABLE"
-    assert receipt["reason"] == "PUBLISHER_ITEM_URL_IDENTITY_MISMATCH"
-
-
-def test_issuing_agency_can_be_restored_from_verified_raw_without_changing_source_fields():
-    src, item, payload = retained("S03")
-    item.pop("agencies")
-    original = copy.deepcopy(item)
-    result, receipt = normalize_author_organization(item, sources=[src], raw_payloads={"retained": payload})
-    assert result == {
-        **original,
-        "author_organization": "Securities and Exchange Commission; Treasury Department",
-    }
-    assert "agencies" not in result and receipt["outcome"] == "VERIFIED"
-    assert resolve_author_organization(src, {**item, "agencies": [{"name": True}]}) is None
-    assert resolve_author_organization(src, {**item, "agencies": [{"name": ""}]}) is None

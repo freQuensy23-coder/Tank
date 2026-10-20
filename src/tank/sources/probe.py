@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from tank.time_precision import collection_clock
-from tank.util import iso
+from tank.util import iso, sha256
 
 from . import parsers
 
@@ -56,19 +56,14 @@ async def probe_feeds(service, *, include_browser=False):
                         feed.get("method", "GET"),
                         feed["url"],
                         json=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
-                        headers={"User-Agent": service.settings.user_agent},
                         timeout=20,
                     )
                     result["http_status"] = response.status_code
                     result["response_content_type"] = response.headers.get("content-type")
-                    # Raw evidence is retained for successful and failed server responses.
                     payload = response.content
-                    ref, digest = service.raw(payload, source_id=sid)
-                    result.update(raw_ref=ref, raw_sha256=digest, response_bytes=len(payload))
+                    result.update(payload_sha256=sha256(payload), response_bytes=len(payload))
                     response.raise_for_status()
-                if "raw_ref" not in result:
-                    ref, digest = service.raw(payload, source_id=sid)
-                    result.update(raw_ref=ref, raw_sha256=digest, response_bytes=len(payload))
+                result.update(payload_sha256=sha256(payload), response_bytes=len(payload))
                 kind = feed["kind"]
                 if kind in {"rss", "atom"}:
                     items = parsers.feeds(payload, sid, feed)

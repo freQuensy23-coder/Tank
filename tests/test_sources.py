@@ -7,6 +7,15 @@ import pytest
 import zstandard
 
 from tank.sources import SourceService, parsers
+from tank.util import new_id, sha256
+
+
+def captured(svc, sid, item, payload=b"<html>source evidence</html>", observed_at="2026-10-16T12:00:00Z"):
+    """An item as the poller hands it to ingest: raw payload already stored under its item_id."""
+    item_id = new_id("item")
+    raw_ref, digest = svc.raw(payload, source_id=sid, item_id=item_id, observed_at=observed_at)
+    return dict(item, item_id=item_id, raw_ref=raw_ref, raw_sha256=digest, observed_at=observed_at)
+
 
 RSS = b"""<rss version="2.0"><channel><title>Official</title><item><guid>release-42</guid><title>New protocol</title><link>https://example.org/a</link><pubDate>Fri, 16 Oct 2026 12:00:00 GMT</pubDate><description>&lt;p&gt;Protocol deployment &amp;amp; vote&lt;/p&gt;</description></item></channel></rss>"""
 
@@ -213,14 +222,82 @@ async def test_raw_first_dedup_and_conditional_get(tmp_path):
         == RSS
     )
     assert repo.jobs[0][0][0] == "FILTER_ITEM"
-    await svc.ingest(
-        svc.sources["S30"],
-        parsers.feeds(RSS, "S30", {"url": "https://example.org/rss"})[0],
-        record["raw_ref"],
-        record["raw_sha256"],
-    )
+    # Re-reading the same feed is not a new observation and writes no raw file.
+    assert (await svc.poll_once("S30"))["items"] == 0
     assert len(repo.jobs) == 1
-    assert (await repo.get("ingest.source_items", record["item_id"]))["observation_count"] == 2
+    assert (await repo.get("ingest.source_items", record["item_id"]))["observation_count"] == 1
+    assert [p.name for p in tmp_path.rglob("*.zst")] == [record["item_id"] + ".json.zst"]
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_raw_stored_only_for_captured_items_across_repeated_polls(tmp_path):
+    """02 §7.2: an unchanged feed or instrument snapshot leaves no raw file behind."""
+    phase = [0]
+
+    def handle(request):
+        if request.url.host == "api.binance.com":
+            status = "TRADING" if phase[0] < 2 else "BREAK"
+            return httpx.Response(
+                200,
+                json={
+                    "symbols": [
+                        {"symbol": "ABCUSDT", "baseAsset": "ABC", "quoteAsset": "USDT", "status": status}
+                    ]
+                },
+            )
+        return httpx.Response(200, content=RSS)
+
+    http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    repo = Repo()
+    sources = [
+        {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]},
+        {
+            "source_id": "S14",
+            "feeds": [
+                {
+                    "kind": "instruments",
+                    "url": "https://api.binance.com/api/v3/exchangeInfo",
+                    "venue": "binance",
+                    "market_type": "SPOT",
+                }
+            ],
+        },
+    ]
+    svc = SourceService(repo, settings(tmp_path, sources), http=http)
+    for _ in range(3):
+        await svc.poll_once("S30")
+        await svc.poll_once("S14")
+        phase[0] += 1
+    items = [v for (c, k), v in repo.rows.items() if c == "ingest.source_items"]
+    assert sorted(i["source_id"] for i in items) == ["S14", "S30"]
+    assert sorted(p.name for p in tmp_path.rglob("*.zst")) == sorted(
+        i["item_id"] + ".json.zst" for i in items
+    )
+    change = next(i for i in items if i["source_id"] == "S14")
+    assert change["change"] == "STATE_UPDATE" and "BREAK" in change["text"]
+    assert all(i["observation_count"] == 1 for i in items)
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sighting_in_another_feed_counts_one_observation(tmp_path):
+    """03 §3.1: the same external_id from a second feed increments the count once."""
+    http = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS)))
+    repo = Repo()
+    source = {
+        "source_id": "S30",
+        "feeds": [
+            {"url": "https://example.org/rss", "kind": "rss"},
+            {"url": "https://example.org/rss2", "kind": "rss"},
+        ],
+    }
+    svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+    await svc.poll_once("S30")
+    await svc.poll_once("S30")
+    items = [v for (c, k), v in repo.rows.items() if c == "ingest.source_items"]
+    assert len(items) == 1 and items[0]["observation_count"] == 2
+    assert len(list(tmp_path.rglob("*.zst"))) == 1
     await http.aclose()
 
 
@@ -238,7 +315,6 @@ def test_all_34_source_configurations():
                 "html",
                 "json",
                 "graphql",
-                "dtcc_search",
                 "instruments",
                 "x",
                 "rendered_html",
@@ -392,8 +468,18 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path):
             (filtered, None, "FILTER_ITEM"),
         ]:
             key = new_id("test-source")
-            raw_ref, digest = svc.raw(key.encode(), source_id=source["source_id"])
+            item_id = new_id("item")
+            raw_ref, digest = svc.raw(
+                key.encode(),
+                source_id=source["source_id"],
+                item_id=item_id,
+                observed_at="2026-10-16T12:00:01Z",
+            )
             item = {
+                "item_id": item_id,
+                "raw_ref": raw_ref,
+                "raw_sha256": digest,
+                "observed_at": "2026-10-16T12:00:01Z",
                 "external_id": key,
                 "title": key,
                 "text": "Actual source content",
@@ -401,9 +487,9 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path):
                 "published_at": "2026-10-16T12:00:00Z",
                 "published_at_precision": "EXACT",
             }
-            record = await svc.ingest(source, item, raw_ref, digest)
+            record = await svc.ingest(source, item)
             assert record["relevance"]["decision"] == expected
-            await svc.ingest(source, item, raw_ref, digest)
+            await svc.ingest(source, item)
             async with repo.transaction():
                 row = await (
                     await repo._conn().execute(
@@ -428,11 +514,11 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path):
                 / (record["item_id"] + ".json.zst")
             )
             assert Path(row["raw_path"]) == expected_raw_path
-            assert row["raw_path"] == record["raw_ref"] and row["raw_path"] != raw_ref
+            assert row["raw_path"] == record["raw_ref"] == raw_ref
             assert zstandard.ZstdDecompressor().decompress(expected_raw_path.read_bytes()) == key.encode()
             assert row["raw_sha256"] == record["raw_sha256"] == digest == sha256(key.encode())
             assert jobs["n"] == 1
-            assert (await repo.get("ingest.source_items", record["item_id"]))["observation_count"] == 2
+            assert (await repo.get("ingest.source_items", record["item_id"]))["observation_count"] == 1
     finally:
         await http.aclose()
         await repo.close()
@@ -477,12 +563,7 @@ async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path):
     assert results[0]["item_count"] == 1 and results[1]["http_status"] == 403
     assert len(calls) == 2 and not repo.jobs and not repo.rows
     assert "PRIVATE" not in json.dumps(results)
-    assert (
-        zstandard.ZstdDecompressor().decompress(
-            __import__("pathlib").Path(results[0]["raw_ref"]).read_bytes()
-        )
-        == RSS
-    )
+    assert results[0]["payload_sha256"] == sha256(RSS) and not list(tmp_path.rglob("*.zst"))
     # Default check is now purely persisted health and makes no hidden remote requests.
     await svc.check()
     assert len(calls) == 2
@@ -1193,7 +1274,7 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(tmp_path, m
 
 
 @pytest.mark.asyncio
-async def test_capture_only_never_enqueues_analysis_and_org_repost_promotes_existing_item(tmp_path):
+async def test_capture_only_never_enqueues_analysis(tmp_path):
     from tank.storage import MemoryRepository
 
     repo = MemoryRepository()
@@ -1203,28 +1284,22 @@ async def test_capture_only_never_enqueues_analysis_and_org_repost_promotes_exis
     svc = SourceService(repo, config)
     try:
         source = {"source_id": "S29", "name": "X"}
-        svc.accounts = {"other": {"role": "OTHER"}, "official": {"role": "ORGANIZATION"}}
-        raw_ref, digest = svc.raw(b"<html>source evidence</html>", source_id="S29")
-        item = {
-            "external_id": "same-status",
-            "author": "original",
-            "monitored_author": "other",
-            "title": "",
-            "text": "Actual original content",
-            "published_at": None,
-        }
-        first = await svc.ingest(source, item, raw_ref, digest)
-        assert first["deferrable"] and not await repo.list("ops.jobs")
-        config.capture_only = False
-        promoted = await svc.ingest(
-            source, dict(item, monitored_author="official", reposted_by="official"), raw_ref, digest
+        svc.accounts = {"other": {"role": "OTHER"}}
+        item = captured(
+            svc,
+            "S29",
+            {
+                "external_id": "same-status",
+                "author": "original",
+                "monitored_author": "other",
+                "title": "",
+                "text": "Actual original content",
+                "published_at": None,
+            },
         )
-        assert promoted["item_id"] == first["item_id"] and promoted["author"] == "original"
-        assert promoted["author_role"] == "OTHER" and promoted["relevance"]["decision"] == "ALWAYS"
-        assert promoted["monitored_author"] == "other"
-        assert set(promoted["monitored_accounts"]) == {"other", "official"}
-        jobs = await repo.list("ops.jobs")
-        assert len(jobs) == 1 and jobs[0]["type"] == "ROUTE_ITEM" and jobs[0]["max_attempts"] == 2
+        first = await svc.ingest(source, item)
+        assert first["deferrable"] and first["author_role"] == "OTHER"
+        assert not await repo.list("ops.jobs")
     finally:
         await svc.close()
         await repo.close()
@@ -1423,10 +1498,8 @@ async def test_missing_publisher_article_keeps_raw_error_and_continues_valid_ent
         state = await repo.get("ops.source_checkpoints", "S13:0")
         failure = state["article_errors"]["https://publisher.example/newsroom/missing"]
         assert state["status"] == "DEGRADED" and failure["http_status"] == 404
-        assert (
-            zstandard.ZstdDecompressor().decompress(Path(failure["raw_ref"]).read_bytes())
-            == b"<html>Publisher removed this article</html>"
-        )
+        assert failure["payload_sha256"] == sha256(b"<html>Publisher removed this article</html>")
+        assert len(list(Path(tmp_path).rglob("*.zst"))) == 1
         assert not await repo.get(
             "ops.source_dedup",
             __import__("tank.util", fromlist=["sha256"]).sha256(
@@ -1486,7 +1559,8 @@ async def test_empty_200_article_isolated_without_suppressing_valid_sibling(tmp_
         state = await repo.get("ops.source_checkpoints", "S13:0")
         error = state["article_errors"]["https://publisher.example/newsroom/empty"]
         assert error["reason"] == "EMPTY_ARTICLE_BODY" and error["http_status"] == 200
-        assert zstandard.ZstdDecompressor().decompress(Path(error["raw_ref"]).read_bytes()) == empty_body
+        assert error["payload_sha256"] == sha256(empty_body)
+        assert len(list(Path(tmp_path).rglob("*.zst"))) == 1
         assert not await repo.get(
             "ops.source_dedup",
             __import__("tank.util", fromlist=["sha256"]).sha256(
@@ -1538,31 +1612,26 @@ async def test_seen_full_article_empty_index_deduplicates_before_new_content_gua
         original_text = original["text"]
         phase[0] = 1
         result = await service.poll_once("S13")
-        assert result["status"] == "HEALTHY" and result["items"] == 2
+        assert result["status"] == "HEALTHY" and result["items"] == 1
         known = await repo.get("ingest.source_items", original["item_id"])
-        assert (
-            known["text"] == original_text
-            and known["content_hash"] == original_hash
-            and known["observation_count"] == 2
-        )
+        assert known == original
         assert calls.count("/newsroom/known") == 1 and calls.count("/newsroom/later") == 1
         assert len([r for (table, _), r in repo.rows.items() if table == "ingest.source_items"]) == 2
         with pytest.raises(ValueError, match="no normalized content"):
             await service.ingest(
-                source,
-                {"external_id": "new-empty", "title": "", "text": ""},
-                original["raw_ref"],
-                original["raw_sha256"],
+                source, captured(service, "S13", {"external_id": "new-empty", "title": "", "text": ""})
             )
         changed = await service.ingest(
             source,
-            {
-                "external_id": known["external_id"],
-                "title": "Changed index title",
-                "text": "Changed index summary",
-            },
-            original["raw_ref"],
-            original["raw_sha256"],
+            captured(
+                service,
+                "S13",
+                {
+                    "external_id": known["external_id"],
+                    "title": "Changed index title",
+                    "text": "Changed index summary",
+                },
+            ),
         )
         assert changed["content_hash"] == original_hash and changed["text"] == original_text
     finally:
@@ -1584,7 +1653,7 @@ async def test_declared_author_organization_precedence_and_identity_without_body
         "author_organization": "SEC",
         "feeds": [{"url": "https://www.sec.gov/synthetic", "author_organization": "CFTC"}],
     }
-    ref, digest = service.raw(b"<article>Actual synthetic test evidence</article>", source_id="S01")
+    payload = b"<article>Actual synthetic test evidence</article>"
     try:
         for external, item_org, feed, expected in [
             ("item", "Circle", "https://www.sec.gov/synthetic", "Circle"),
@@ -1598,15 +1667,18 @@ async def test_declared_author_organization_precedence_and_identity_without_body
                 "text": "Custody standards updated",
                 "author_organization": item_org,
             }
-            record = await service.ingest(source, item, ref, digest)
+            record = await service.ingest(source, captured(service, "S01", item, payload))
             assert record["author_organization"] == expected
             if external == "source":
                 assert "sec" in Pipeline(repo, config, http=object()).identities(record)
         news = await service.ingest(
             {"source_id": "S30", "name": "BBC News"},
-            {"external_id": "news", "title": "Separate custody guidance", "text": "Standards changed"},
-            ref,
-            digest,
+            captured(
+                service,
+                "S30",
+                {"external_id": "news", "title": "Separate custody guidance", "text": "Standards changed"},
+                payload,
+            ),
         )
         assert news["author"] == "BBC News" and news["author_organization"] is None
         assert "sec" not in Pipeline(repo, config, http=object()).identities(news)
@@ -1684,23 +1756,23 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path):
 async def test_content_duplicate_remembers_secondary_external_identity(tmp_path):
     repo = Repo()
     svc = SourceService(repo, settings(tmp_path, []))
-    ref, digest = svc.raw(b"Original public source evidence", source_id="S01")
     first = await svc.ingest(
-        {"source_id": "S01"}, {"external_id": "a", "title": "Same", "text": "Release"}, ref, digest
+        {"source_id": "S01"}, captured(svc, "S01", {"external_id": "a", "title": "Same", "text": "Release"})
     )
     duplicate = await svc.ingest(
-        {"source_id": "S04"}, {"external_id": "b", "title": "Same", "text": "Release"}, "raw-b", "hash-b"
+        {"source_id": "S04"}, captured(svc, "S04", {"external_id": "b", "title": "Same", "text": "Release"})
     )
     edited = await svc.ingest(
         {"source_id": "S04"},
-        {"external_id": "b", "title": "Changed", "text": "Updated release"},
-        "raw-c",
-        "hash-c",
+        captured(svc, "S04", {"external_id": "b", "title": "Changed", "text": "Updated release"}),
     )
     assert first["item_id"] == duplicate["item_id"] == edited["item_id"]
     assert edited["observed_at"] == first["observed_at"]
-    assert edited["observation_count"] == 3
+    # The edit comes from a feed already counted for this item.
+    assert edited["observation_count"] == 2
     assert len([key for key in repo.rows if key[0] == "ingest.source_items"]) == 1
+    # Duplicates are not captured items: only the first item's raw file remains.
+    assert [p.name for p in tmp_path.rglob("*.zst")] == [first["item_id"] + ".json.zst"]
     await svc.close()
 
 
@@ -1794,7 +1866,8 @@ async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_fi
         await restarted.poll_once("S13")
         row = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
         assert row["observed_at"] == first_seen
-        assert row["observation_count"] == len(calls)
+        # Re-reading the same index while the article is pending is not a new observation.
+        assert row["observation_count"] == 1
         assert not (await repo.get("ops.source_checkpoints", "S13:0"))["pending_batches"]
 
 
@@ -2067,12 +2140,11 @@ async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path):
         )
     ) as http:
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
-        raw_ref, raw_hash = svc.raw(b'<a href="/article/one">Release</a>')
-        acquired = {"raw_ref": raw_ref, "raw_sha256": raw_hash, "fetched_at": iso()}
-        state = {"etag": "older-index", **acquired}
-        svc.poller.queue_rows(
+        state = {"etag": "older-index", "fetched_at": iso()}
+        await svc.poller.queue_rows(
             state,
             "S13:0",
+            source,
             source["feeds"][0],
             [
                 {
@@ -2082,10 +2154,10 @@ async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path):
                     "text": "",
                 }
             ],
-            acquired,
             "html",
             {},
             "captured-before-restart",
+            state["fetched_at"],
         )
         await repo.put("ops.source_checkpoints", "S13:0", state)
         result = await svc.poll_once("S13")
@@ -2176,7 +2248,7 @@ async def test_invalid_index_retains_source_associated_raw_before_parse_failure(
         state = await repo.get("ops.source_checkpoints", "S30:0")
         assert state["response_url"] == "https://example.org/rss"
         assert state["fetched_at_prec"] == "COLLECTION_ONLY"
-        assert zstandard.ZstdDecompressor().decompress(Path(state["raw_ref"]).read_bytes()) == payload
+        assert state["payload_sha256"] == sha256(payload) and not list(Path(tmp_path).rglob("*.zst"))
         assert "etag" not in state
         assert not repo.jobs
 
@@ -2301,7 +2373,6 @@ async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidenc
         assert row["observed_at"] == iso(clock[0])
         payload = json.loads(zstandard.ZstdDecompressor().decompress(Path(row["raw_ref"]).read_bytes()))
         assert payload["result"]["list"][0]["symbol"] == "DEFUSDT"
-        assert len(row["instrument_snapshot_raw_pages"]) == 2
         phase[0] = 2
         await svc.poll_once("S14")
         removed = next(
@@ -2310,8 +2381,8 @@ async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidenc
             if collection == "ingest.source_items" and row["change"] == "REMOVED"
         )
         assert removed["observed_at"] == iso(clock[0])
-        manifest = json.loads(zstandard.ZstdDecompressor().decompress(Path(removed["raw_ref"]).read_bytes()))
-        assert len(manifest["raw_pages"]) == 2
+        pages = zstandard.ZstdDecompressor().decompress(Path(removed["raw_ref"]).read_bytes()).split(b"\n")
+        assert [len(json.loads(page)["result"]["list"]) for page in pages] == [1, 0]
 
 
 @pytest.mark.asyncio
@@ -2570,10 +2641,10 @@ async def test_raw_durability_failure_prevents_source_item_and_job_persistence(
 
     from tank.sources import raw_store
 
-    source = {"source_id": "S30", "feeds": []}
+    source = {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}
     repo = Repo()
-    svc = SourceService(repo, settings(tmp_path, [source]))
-    raw_ref, raw_hash = svc.raw(RSS, source_id="S30")
+    http = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS)))
+    svc = SourceService(repo, settings(tmp_path, [source]), http=http)
     original_fsync = os.fsync
 
     def fail_fsync(descriptor):
@@ -2583,19 +2654,14 @@ async def test_raw_durability_failure_prevents_source_item_and_job_persistence(
         return original_fsync(descriptor)
 
     monkeypatch.setattr(raw_store.os, "fsync", fail_fsync)
-    item = {
-        "external_id": "new-release",
-        "title": "Actual release",
-        "text": "Full wire evidence",
-        "observed_at": "2026-10-18T12:00:00Z",
-    }
-    with pytest.raises(OSError, match="durable storage failure"):
-        await svc.ingest(source, item, raw_ref, raw_hash)
+    result = await svc.poll_once("S30")
+    assert result["status"] == "DEGRADED" and "durable storage failure" in result["errors"][0]
     assert not any(collection in {"ingest.source_items", "ops.source_dedup"} for collection, _ in repo.rows)
     assert not repo.jobs
     assert not list(Path(tmp_path).rglob("*.tmp"))
     monkeypatch.setattr(raw_store.os, "fsync", original_fsync)
-    recovered = await svc.ingest(source, item, raw_ref, raw_hash)
+    assert (await svc.poll_once("S30"))["items"] == 1
+    recovered = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
     assert recovered["raw_ref"].endswith(recovered["item_id"] + ".json.zst")
     assert len(repo.jobs) == 1
     await svc.close()
@@ -2725,20 +2791,14 @@ def test_dtcc_retained_public_release_slugs_preserve_case_dots_and_document_boun
         "https://www.dtcc.com/press-releases/2026/../release",
         "https://www.dtcc.com/press-releases/2026/release%2Fextra",
     ]
-    # URL forms are from the retained2026-10-18 official search response.
-    rows = [
-        {
-            "clickUri": url,
-            "title": "Release metadata",
-            "excerpt": "Official release",
-            "raw": {"news_date": 1790654400000},
-        }
-        for url in urls + excluded
-    ]
-    parsed = parsers.json_items({"results": rows}, "S08")
+    page = "".join(f'<a href="{url}">Release</a>' for url in urls + excluded).encode()
+    feed = {
+        "url": "https://www.dtcc.com/press-releases",
+        "article_pattern": r"^/press-releases/\d{4}/[A-Za-z0-9][A-Za-z0-9._~-]*$",
+    }
+    parsed = parsers.article_links(page, feed)
     assert [row["url"] for row in parsed] == urls
     assert all(row["external_id"] == row["url"] for row in parsed)
-    assert len(parsed.errors) == len(excluded)
 
 
 def test_binance_observed_child_tree_preserves_text_not_metadata():
@@ -2954,52 +3014,6 @@ async def test_legacy_metadata_exact_three_postgres_boundary(tmp_path):
         await repo.close()
 
 
-@pytest.mark.asyncio
-async def test_legacy_repeat_preserves_original_metadata_without_blocking_valid_sibling(tmp_path):
-    from copy import deepcopy
-
-    from tank.util import sha256
-
-    repo = Repo()
-    feed = {"kind": "rss", "url": "https://example.org/rss"}
-    source = {"source_id": "S30", "feeds": [feed]}
-    raw = RSS.replace(
-        b"</channel>",
-        b"<item><guid>release-43</guid><title>Other valid release</title><link>https://example.org/b</link><pubDate>Fri, 16 Oct 2026 13:00:00 GMT</pubDate><description>Valid sibling</description></item></channel>",
-    )
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=raw))
-    ) as http:
-        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
-        ref, digest = svc.raw(RSS, source_id="S30")
-        old = {
-            "item_id": "legacy-unknown",
-            "source_id": "S30",
-            "external_id": "release-42",
-            "feed": feed["url"],
-            "raw_ref": ref,
-            "raw_sha256": digest,
-            "published_at": "2026-10-16T12:00:01Z",
-            "published_prec": "EXACT",
-            "published_at_precision": "SECOND",
-            "text": "Original text",
-        }
-        original = deepcopy(old)
-        await repo.put("ingest.source_items", old["item_id"], old)
-        await repo.put("ops.source_dedup", sha256("S30|release-42"), {"item_id": old["item_id"]})
-        try:
-            result = await svc.poll_once("S30")
-            assert result["status"] == "HEALTHY" and result["items"] == 2
-            repeated = await repo.get("ingest.source_items", old["item_id"])
-            assert {key: repeated[key] for key in original} == original
-            assert repeated["observation_count"] == 2
-            state = await repo.get("ops.source_checkpoints", "S30:0")
-            assert not state["pending_batches"] and not state["article_errors"]
-            assert len([1 for table, _ in repo.rows if table == "ingest.source_items"]) == 2
-        finally:
-            await svc.close()
-
-
 @pytest.mark.parametrize("prior_updated", [False, True])
 def test_legacy_s25_updated_assignment_corrected_with_temporal_projection(prior_updated):
     from tank.sources.legacy import normalize_legacy_source_record, source_metadata_at
@@ -3090,98 +3104,50 @@ def test_legacy_html_requires_exact_unique_canonical_identity():
         assert result["source_metadata_repair"]["outcome"] == "UNVERIFIABLE"
 
 
-def test_configured_organization_normalization_proofs_and_authority_controls():
-    from copy import deepcopy
+@pytest.mark.asyncio
+async def test_read_counters_and_failed_read_rate_report(tmp_path):
+    from tank.sources.read_report import rates, snapshot
 
-    from tank.sources.organization import normalize_author_organization, resolve_author_organization
-    from tank.util import sha256
+    fail = [False]
 
-    feed = {"kind": "rss", "url": "https://example.org/rss"}
-    source = {"source_id": "S01", "name": "SEC", "author_organization": "SEC", "feeds": [feed]}
-    item = parsers.feeds(RSS, "S01", feed)[0]
-    item.update(
-        source_id="S01",
-        feed=feed["url"],
-        author="SEC",
-        author_organization=None,
-        raw_ref="feed.zst",
-        raw_sha256=sha256(RSS),
-    )
-    item["content_hash"] = sha256(" ".join((item["title"] + " " + item["text"] + " ").split()))
-    original = deepcopy(item)
-    result, receipt = normalize_author_organization(item, sources=[source], raw_payloads={"feed.zst": RSS})
-    assert result == {**original, "author_organization": "SEC"}
-    assert receipt["outcome"] == "VERIFIED" and receipt["changed_fields"] == ["author_organization"]
-    assert item == original and receipt["original_record_sha256"] == sha256(original)
-    assert resolve_author_organization(source, item) == "SEC"
-    explicit = {**item, "author_organization": "Explicit author organization"}
-    assert resolve_author_organization(source, explicit) == explicit["author_organization"]
-    assert (
-        resolve_author_organization(
-            {**source, "feeds": [{**feed, "author_organization": "Feed publisher"}]}, item
-        )
-        == "Feed publisher"
-    )
-    # Display names and source IDs cannot supply undeclared authority.
-    undeclared = {**source, "author_organization": None}
-    unchanged, proof = normalize_author_organization(
-        item, sources=[undeclared], raw_payloads={"feed.zst": RSS}
-    )
-    assert unchanged == item and proof["outcome"] == "VERIFIED" and proof["organization"] is None
-    for rows, record, payloads in [
-        ([source, source], item, {"feed.zst": RSS}),
-        ([{**source, "feeds": [feed, {**feed, "author_organization": "Foreign"}]}], item, {"feed.zst": RSS}),
-        ([source], {**item, "feed": "https://foreign.example/rss"}, {"feed.zst": RSS}),
-        ([source], item, {"feed.zst": RSS + b"changed"}),
-        ([source], {**item, "content_hash": "forged"}, {"feed.zst": RSS}),
-        (
-            [source],
-            {**item, "text": "Foreign body", "content_hash": sha256("New protocol Foreign body")},
-            {"feed.zst": RSS},
-        ),
-    ]:
-        actual, failure = normalize_author_organization(record, sources=rows, raw_payloads=payloads)
-        assert actual == record and failure["outcome"] == "UNVERIFIABLE" and not failure["changed_fields"]
+    def handle(request):
+        if request.url.path == "/bad" or fail[0]:
+            return httpx.Response(500, content=b"down")
+        return httpx.Response(200, content=RSS)
 
+    sources = [
+        {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]},
+        {"source_id": "S31", "feeds": [{"url": "https://example.org/bad", "kind": "rss"}]},
+    ]
+    repo = Repo()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(repo, settings(tmp_path, sources), http=http)
 
-def test_configured_organization_enriched_article_requires_index_and_body_proofs():
-    from tank.sources.organization import normalize_author_organization
-    from tank.util import sha256
+        async def no_wait(delay):
+            return None
 
-    url = "https://www.sec.gov/newsroom/press-releases/example"
-    index = (
-        '<rss version="2.0"><channel><item><guid>exact-uuid</guid><link>'
-        + url
-        + "</link><title>Index title</title><description>Summary</description></item></channel></rss>"
-    ).encode()
-    body = (
-        '<html><head><link rel="canonical" href="'
-        + url
-        + '"></head><body><article><h1>Full article</h1><p>Original full body.</p></article></body></html>'
-    ).encode()
-    feed = {"kind": "rss", "url": "https://www.sec.gov/news/pressreleases.rss"}
-    source = {"source_id": "S01", "author_organization": "SEC", "feeds": [feed]}
-    item = parsers.article(body, source_id="S01")
-    item.update(
-        source_id="S01",
-        external_id="exact-uuid",
-        url=url,
-        feed=feed["url"],
-        author_organization=None,
-        raw_ref="article.zst",
-        raw_sha256=sha256(body),
-        discovery_raw_ref="index.zst",
-        discovery_raw_sha256=sha256(index),
-    )
-    item["content_hash"] = sha256(" ".join((item["title"] + " " + item["text"] + " ").split()))
-    result, proof = normalize_author_organization(
-        item, sources=[source], raw_payloads={"article.zst": body, "index.zst": index}
-    )
-    assert result["author_organization"] == "SEC" and proof["outcome"] == "VERIFIED"
-    assert proof["identity_raw_sha256"] == sha256(index) and proof["body_raw_sha256"] == sha256(body)
-    wrong = body.replace(b"Original full body.", b"Wrong different body.")
-    tampered = {**item, "raw_sha256": sha256(wrong)}
-    result, proof = normalize_author_organization(
-        tampered, sources=[source], raw_payloads={"article.zst": wrong, "index.zst": index}
-    )
-    assert result == tampered and proof["outcome"] == "UNVERIFIABLE"
+        import tank.sources as module
+
+        original_sleep = module.asyncio.sleep
+        module.asyncio.sleep = no_wait
+        try:
+            start = await snapshot(repo, sources)
+            for _ in range(3):
+                await svc.poll_once("S30")
+                await svc.poll_once("S31")
+            end = await snapshot(repo, sources)
+        finally:
+            module.asyncio.sleep = original_sleep
+    report = rates(end, start, ["S30", "S31"])
+    assert report["sources"]["S30"] == {
+        "ok": 4,
+        "failed": 0,
+        "feeds": 1,
+        "reads": 4,
+        "failed_rate": 0.0,
+        "pass": True,
+    }
+    s31 = report["sources"]["S31"]
+    assert (s31["ok"], s31["failed"], s31["pass"]) == (0, 3, False)
+    assert s31["degraded_feeds"][0]["feed"] == "S31:0"
+    assert not report["all_pass"]

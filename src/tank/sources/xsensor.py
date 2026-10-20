@@ -1,4 +1,4 @@
-"""Dedicated read-only X sensor: operator session, bounded list capture, and raw DOM evidence."""
+"""Dedicated read-only X sensor: operator session and bounded list capture (02 §3.7)."""
 
 from __future__ import annotations
 
@@ -8,19 +8,18 @@ import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from tank.util import iso, utcnow
+from tank.util import iso, sha256, utcnow
 
 
 class XSensor:
-    def __init__(self, settings, *, raw_capture=None, shared_browser=False):
+    def __init__(self, settings, *, shared_browser=False):
         self.settings = settings
         self.shared_browser = shared_browser
         self.open_lock = asyncio.Lock()
         self.context = None
         self.driver = None
         self.lock = asyncio.Lock()
-        self.raw_capture = raw_capture
-        self.raw_pages = []
+        self.pages = []
         self.scan_status = "COMPLETE"
 
     async def _open_context(self):
@@ -142,9 +141,7 @@ class XSensor:
 
     async def capture_page(self, page, kind):
         payload = (await page.content()).encode()
-        if self.raw_capture:
-            ref, digest = self.raw_capture(payload)
-            self.raw_pages.append({"kind": kind, "url": page.url, "raw_ref": ref, "raw_sha256": digest})
+        self.pages.append({"kind": kind, "url": page.url, "sha256": sha256(payload)})
         return payload
 
     async def posts(self, list_id, checkpoint=None, *, known_ids=None):
@@ -155,7 +152,7 @@ class XSensor:
             page = await self.context.new_page()
             result = {}
             reached = False
-            self.raw_pages = []
+            self.pages = []
             self.scan_status = "COMPLETE"
             known_ids = set(known_ids or [])
             scan_started = asyncio.get_running_loop().time()
@@ -241,6 +238,8 @@ class XSensor:
                             "url": f"https://x.com/{handle}/status/{status_id}",
                             "published_at": await time.get_attribute("datetime"),
                             "published_at_precision": "EXACT",
+                            # The post's own DOM is its raw payload (02 §7.2).
+                            "_payload": (await node.evaluate("n => n.outerHTML")).encode(),
                         }
                     if reached:
                         break
