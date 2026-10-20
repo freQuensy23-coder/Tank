@@ -269,6 +269,10 @@ class VenueAdapter:
         if k.startswith("okx"):
             if cursor:
                 params["after"] = cursor
+            elif end is not None:
+                # The first page starts at end by time (records earlier than `after`); later
+                # pages follow exact trade IDs, so a repair never walks back from now.
+                params.update(type=2, after=int(parse_time(end).timestamp() * 1000) + 1)
             rows = self.result(
                 await self.get(
                     "https://www.okx.com", "/api/v5/market/history-trades", instId=s, limit=100, **params

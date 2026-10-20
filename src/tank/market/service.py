@@ -34,6 +34,14 @@ CONTEXT_S = 10
 # Pre-event windows ending within this span are filled from venue REST only; a missing
 # REST range stays an explicit gap instead of a whole-day archive parse.
 REST_ONLY_WINDOW = timedelta(hours=48)
+# Listed REST that cannot page trade history (03 §5.1): unproven minutes there keep this
+# reason instead of a request. Bybit recent-trade lists only the last 1000 prints, so only
+# minutes this recent are worth a request.
+NO_TRADE_HISTORY = {"hyperliquid": "NO_LISTED_TRADE_BACKFILL"}
+BYBIT_RECENT = timedelta(hours=1)
+BYBIT_LIMIT = "SOURCE_LIMIT: Bybit recent-trade lists only the last 1000 prints"
+# Analysis windows around an anchor: PRE24 before it, reaction checkpoints up to 72 h after.
+WINDOW_BEFORE, WINDOW_AFTER = timedelta(hours=24), timedelta(hours=72)
 # Rows read only from public exchange endpoints never contain a Tank secret.
 PUBLIC_MARKET = frozenset(
     {
@@ -1663,6 +1671,99 @@ class MarketService:
         await self._backfill_klines(instrument, start, end, include_reference=not checkpoint)
         await self.flush_market()
 
+    async def repair_windows(self, token_id, start, end, *, budget_s=None):
+        """Repair every incomplete or missing persisted minute of [start, end) for a token's
+        instruments over REST from the last proven print (03 §5.1 fill order, §5.2 step 2),
+        within budget_s. Minutes REST cannot reach stay incomplete with their reason.
+        Returns {instrument_id: {"incomplete_before", "incomplete_after"}}."""
+        deadline = time.monotonic() + budget_s if budget_s else None
+        lo = parse_time(start).replace(second=0, microsecond=0)
+        hi = min(parse_time(end), utcnow() - timedelta(minutes=1)).replace(second=0, microsecond=0)
+        instruments = [
+            i for i in self.instruments.values() if i["token_id"] == token_id and i.get("active", True)
+        ]
+        results = await asyncio.gather(
+            *(self._repair_instrument(inst, lo, hi, deadline) for inst in instruments)
+        )
+        return {inst["instrument_id"]: result for inst, result in zip(instruments, results, strict=True)}
+
+    async def _incomplete_runs(self, iid, lo, hi):
+        """Contiguous [start, end) runs of minutes without a complete persisted bar, and the
+        bars of [lo - 1 min, hi) by minute."""
+        rows = await self._range(
+            "mkt.flow_bars_1m",
+            "minute_start",
+            start=lo - timedelta(minutes=1),
+            end=hi - timedelta(microseconds=1),
+            filters={"instrument_id": iid},
+        )
+        bars = {parse_time(r["minute_start"]): r for r in rows}
+        runs, minute = [], lo
+        while minute < hi:
+            if not (bars.get(minute) or {}).get("complete"):
+                if runs and runs[-1][1] == minute:
+                    runs[-1][1] = minute + timedelta(minutes=1)
+                else:
+                    runs.append([minute, minute + timedelta(minutes=1)])
+            minute += timedelta(minutes=1)
+        return runs, bars
+
+    async def _repair_instrument(self, instrument, lo, hi, deadline):
+        iid = instrument["instrument_id"]
+        if hi <= lo:
+            return {"incomplete_before": 0, "incomplete_after": 0}
+        runs, bars = await self._incomplete_runs(iid, lo, hi)
+        before = sum((b - a) // timedelta(minutes=1) for a, b in runs)
+        venue = instrument["venue"]
+        for start, end in runs:
+            if venue in NO_TRADE_HISTORY or (venue == "bybit" and end < utcnow() - BYBIT_RECENT):
+                continue
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
+                break
+            checkpoint = {"instrument_id": iid, "last_ts": iso(start)}
+            previous = bars.get(start - timedelta(minutes=1)) or {}
+            if previous.get("complete") and (previous.get("last_trade") or {}).get("trade_id"):
+                checkpoint.update(
+                    last_trade_id=previous["last_trade"]["trade_id"], last_trade=previous["last_trade"]
+                )
+            elif venue == "kraken":
+                checkpoint.update(await self._kraken_predecessor(instrument, start))
+            try:
+                await asyncio.wait_for(self.backfill(instrument, iso(end), checkpoint=checkpoint), remaining)
+            except TimeoutError:
+                break
+        runs, bars = await self._incomplete_runs(iid, lo, hi)
+        reason = NO_TRADE_HISTORY.get(venue) or (
+            BYBIT_LIMIT if venue == "bybit" else "REST_REPAIR_INCOMPLETE"
+        )
+        for start, end in runs:
+            minute = start
+            while minute < end:
+                bar = bars.get(minute)
+                if bar is not None and not bar.get("gap_reason"):
+                    # An unproven minute always says why (never a null reason).
+                    await self._put("mkt.flow_bars_1m", iid + ":" + iso(minute), dict(bar, gap_reason=reason))
+                minute += timedelta(minutes=1)
+        await self.flush_market()
+        return {
+            "incomplete_before": before,
+            "incomplete_after": sum((b - a) // timedelta(minutes=1) for a, b in runs),
+        }
+
+    async def _kraken_predecessor(self, instrument, start):
+        """The last Kraken print before start, found by a `since` page that crosses start:
+        consecutive per-pair IDs then prove the repaired prefix."""
+        adapter = self.adapter(instrument, priority=0)
+        for minutes in (2, 10, 60, 240):
+            rows, _ = await adapter.trades(start=start - timedelta(minutes=minutes))
+            points = [norm.trade(instrument, raw, source="REST") for raw in rows]
+            earlier = [p for p in points if parse_time(p["ts"]) < start]
+            if earlier and any(parse_time(p["ts"]) >= start for p in points):
+                point = max(earlier, key=lambda p: int(p["trade_id"]))
+                return {"last_trade_id": point["trade_id"], "last_trade": self.flow.trade_point(point)}
+        return {}
+
     async def _backfill_klines(self, instrument, start, end, *, include_reference=True):
         """Actual closed candles, including the close at/before a return anchor."""
         start, end = parse_time(start), parse_time(end)
@@ -1950,6 +2051,15 @@ class MarketService:
                         {i["instrument_id"] for i in instruments}, cutoff, {"ts": begin}
                     )
                 await asyncio.gather(*(self.backfill(inst, anchor) for inst in instruments))
+                # Whatever REST enumeration left unproven, and the post-anchor windows so far.
+                try:
+                    await self.repair_windows(
+                        token_id,
+                        parse_time(anchor) - WINDOW_BEFORE,
+                        iso(min(utcnow(), parse_time(anchor) + WINDOW_AFTER)),
+                    )
+                except Exception as exc:  # noqa: BLE001 - repair leaves explicit gaps; capture still completes
+                    log.warning("window repair for %s failed: %s", token_id, type(exc).__name__)
                 coverage = await asyncio.gather(
                     *(self._capture_window_coverage(inst, anchor) for inst in instruments)
                 )
@@ -4288,6 +4398,14 @@ class MarketService:
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), 60)
 
+    async def _repair_on_start(self, repairs):
+        for token_id, start, end in repairs:
+            try:
+                result = await self.repair_windows(token_id, start, end)
+                log.info("startup repair %s: %s", token_id, result)
+            except Exception as exc:  # noqa: BLE001 - one token's repair failure leaves explicit gaps
+                log.warning("startup repair %s failed: %s", token_id, type(exc).__name__)
+
     async def run(self, stop):
         self._stop = stop
         if self.settings.replay:
@@ -4304,6 +4422,23 @@ class MarketService:
                     )
             await self._ensure_market_restore()
             await self._sync_streams()
+            started = iso()
+            earliest = {}
+            for hot in await self.repo.list("mkt.hot_tokens", limit=10000):
+                event = await self.repo.get("evt.events", hot["event_id"]) or {}
+                at = parse_time(event_anchor(event)["ts"] if event else hot["since"])
+                span = earliest.setdefault(hot["token_id"], [at - WINDOW_BEFORE, at + WINDOW_AFTER])
+                span[0], span[1] = min(span[0], at - WINDOW_BEFORE), max(span[1], at + WINDOW_AFTER)
+            if earliest:
+                # A restart is a reconnect (03 §5.2 step 2): repair each hot token's windows
+                # from the last persisted print up to this start; streams cover from here on.
+                repairs = [
+                    (token_id, start, iso(min(parse_time(started), end)))
+                    for token_id, (start, end) in earliest.items()
+                ]
+                task = asyncio.create_task(self._repair_on_start(repairs))
+                self._background.add(task)
+                task.add_done_callback(self._background.discard)
             for hot in await self.repo.list("mkt.hot_tokens", limit=10000):
                 event = await self.repo.get("evt.events", hot["event_id"]) or {}
                 await self._schedule_event_backfill(

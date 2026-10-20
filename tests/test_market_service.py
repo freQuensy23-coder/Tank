@@ -1,3 +1,4 @@
+import asyncio
 from datetime import timedelta
 from decimal import Decimal
 
@@ -1656,3 +1657,120 @@ async def test_bybit_window_beyond_its_1000_prints_is_a_named_source_limit(setup
         "SOURCE_LIMIT: Bybit recent-trade lists only the last 1000" in r for r in reasons
     )
     await service.close()
+
+
+@pytest.mark.asyncio
+async def test_repair_windows_fills_incomplete_minutes_from_the_last_proven_print(setup):
+    from tank.util import iso
+
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+    iid = inst["instrument_id"]
+    m0 = utcnow().replace(second=0, microsecond=0) - timedelta(minutes=10)
+    last = {"trade_id": "10", "price": "2", "ts": iso(m0 + timedelta(seconds=30))}
+    await repo.put(
+        "mkt.flow_bars_1m",
+        iid + ":" + iso(m0),
+        {
+            "instrument_id": iid,
+            "token_id": "test:ABC",
+            "minute_start": iso(m0),
+            "complete": True,
+            "last_trade": last,
+        },
+    )
+    await repo.put(
+        "mkt.flow_bars_1m",
+        iid + ":" + iso(m0 + timedelta(minutes=1)),
+        {
+            "instrument_id": iid,
+            "token_id": "test:ABC",
+            "minute_start": iso(m0 + timedelta(minutes=1)),
+            "complete": False,
+            "gap_reason": None,
+        },
+    )
+    requests = []
+
+    class Rest:
+        async def trades(self, *, start=None, end=None, cursor=None):
+            requests.append(cursor)
+            return [
+                {
+                    "a": n,
+                    "p": "2",
+                    "q": "1",
+                    "T": int((m0 + timedelta(minutes=n - 10, seconds=5)).timestamp() * 1000),
+                    "m": False,
+                }
+                for n in (11, 12)
+            ], None
+
+    async def no_klines(*args, **kwargs):
+        pass
+
+    service.adapter = lambda instrument, **kwargs: Rest()
+    service._backfill_klines = no_klines
+    result = await service.repair_windows("test:ABC", m0 + timedelta(minutes=1), m0 + timedelta(minutes=3))
+    assert requests[0] == 11  # Binance fromId continues from the last proven print
+    assert result[iid] == {"incomplete_before": 2, "incomplete_after": 0}
+    bars = {r["minute_start"]: r for r in await repo.list("mkt.flow_bars_1m", limit=100)}
+    assert all(bars[iso(m0 + timedelta(minutes=k))]["complete"] for k in (1, 2))
+    await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "venue, budget, reason",
+    [("hyperliquid", None, "NO_LISTED_TRADE_BACKFILL"), ("binance", 0.05, "REST_REPAIR_INCOMPLETE")],
+)
+async def test_unrepairable_minutes_keep_a_reason(setup, venue, budget, reason):
+    from tank.util import iso
+
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+    iid = inst["instrument_id"]
+    service.instruments[iid] = dict(inst, venue=venue)
+    minute = utcnow().replace(second=0, microsecond=0) - timedelta(minutes=5)
+    await repo.put(
+        "mkt.flow_bars_1m",
+        iid + ":" + iso(minute),
+        {
+            "instrument_id": iid,
+            "token_id": "test:ABC",
+            "minute_start": iso(minute),
+            "complete": False,
+            "gap_reason": None,
+        },
+    )
+    requests = []
+
+    class Slow:
+        async def trades(self, **kwargs):
+            requests.append(kwargs)
+            await asyncio.sleep(10)
+
+    service.adapter = lambda instrument, **kwargs: Slow()
+    result = await service.repair_windows("test:ABC", minute, minute + timedelta(minutes=1), budget_s=budget)
+    assert result[iid]["incomplete_after"] == 1
+    assert (await repo.get("mkt.flow_bars_1m", iid + ":" + iso(minute)))["gap_reason"] == reason
+    assert bool(requests) == (venue == "binance")
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_okx_trade_repair_starts_at_window_end_then_follows_trade_ids():
+    from tank.market.adapters import VenueAdapter
+
+    calls = []
+
+    async def request(method, url, *, params):
+        calls.append(dict(params))
+        return {"code": "0", "data": [{"tradeId": "900", "ts": "1792533600000"}]}
+
+    inst = {"venue": "okx", "market_type": "PERP_LINEAR", "venue_symbol": "BTC-USDT-SWAP"}
+    adapter = VenueAdapter(inst, request)
+    _, cursor = await adapter.trades(start="2026-10-20T19:00:00Z", end="2026-10-20T22:06:59.999Z")
+    await adapter.trades(start="2026-10-20T19:00:00Z", end="2026-10-20T22:06:59.999Z", cursor=cursor)
+    assert calls[0]["type"] == 2 and calls[0]["after"] == 1792534020000
+    assert calls[1]["after"] == "900" and "type" not in calls[1]
