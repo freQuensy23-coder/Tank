@@ -2835,6 +2835,15 @@ def capture_cadence(snapshot, collection, row=None):
     return None, "CADENCE_NOT_CONFIGURED"
 
 
+def observed_through(snapshot, collection, instrument_id):
+    """Capture watermark: the source was polled successfully through this time (e.g. a venue
+    that publishes no candle for a minute without trades). Never a value, only availability."""
+    entry = ((snapshot.get("capture_metadata") or {}).get("collections") or {}).get(collection) or {}
+    marks = entry.get("observed_through", {}) if isinstance(entry, dict) else {}
+    mark = marks.get(instrument_id) if isinstance(marks, dict) else marks
+    return parse_time(mark) if mark else None
+
+
 def available_field_freshness(snapshot, end):
     """Latest point per source field; old history does not make a fresh series stale."""
     checks = []
@@ -2866,6 +2875,9 @@ def available_field_freshness(snapshot, end):
                     continue
                 row = max(completed, key=lambda r: _time(r) + timedelta(seconds=int(r.get("interval_s", 60))))
                 stamp = _time(row) + timedelta(seconds=int(row.get("interval_s", 60)))
+                mark = observed_through(snapshot, collection, row.get("instrument_id"))
+                if mark is not None and stamp < mark <= end:
+                    stamp = mark
             if collection == "funding" and row.get("kind") == "SETTLED" and number(row.get("interval_h")):
                 cadence = number(row["interval_h"]) * 3600
                 source = "SETTLEMENT_INTERVAL"
@@ -3003,6 +3015,9 @@ def data_confidence(snapshot, spot, derivatives, end):
             if collection == "funding" and (number(r.get("rate")) is None or not number(r.get("interval_h"))):
                 continue
             valid.append(stamp)
+        mark = observed_through(snapshot, collection, iid) if collection == "klines" and valid else None
+        if mark is not None and max(valid) < mark <= end:
+            valid.append(mark)
         cadence, cadence_source = capture_cadence(
             snapshot, collection, rows[-1] if rows else {"instrument_id": iid}
         )
