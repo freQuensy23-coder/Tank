@@ -26,6 +26,7 @@ TIMEOUTS = {
 }
 
 
+ADMISSION_TIMEOUT_S = 10
 CAPTURE_WAIT_S = 15  # Included in the 90s numerical job; leaves 75s for the actual assessment.
 
 
@@ -213,9 +214,12 @@ class Runtime:
                 kind = job["type"]
                 if kind not in self.handlers:
                     raise ValueError(f"Unregistered durable job kind: {kind}")
-                async with asyncio.timeout(TIMEOUTS[kind]):
-                    if kind in ADMITTED_JOB_TYPES and hasattr(getattr(self, "sessions", None), "admit"):
+                if kind in ADMITTED_JOB_TYPES and hasattr(getattr(self, "sessions", None), "admit"):
+                    # Admission is scheduling, not the job's work: it has its own bound
+                    # and does not spend the 03 §3.8 timeout of the message itself.
+                    async with asyncio.timeout(ADMISSION_TIMEOUT_S):
                         await self.sessions.admit(job)
+                async with asyncio.timeout(TIMEOUTS[kind]):
                     result = await self.handlers[kind](job["payload"])
                 async with self.repo.transaction():
                     await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
