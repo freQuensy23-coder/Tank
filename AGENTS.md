@@ -10,3 +10,7 @@ Updated 2026-10-20, from the human user in the original Tank conversation.
 - Do not access the user's personal Chrome. X authorization was supplied as /Users/a.mametyev/.config/tank/x-session.json; preserve the original and keep secrets out of output.
 
 Read-only original-agent handoff: `/srv/tank/data/qa/original-agent-handoff-20261020T162237Z/snapshot.json`. It records current evidence and unfinished work; it does not override the lead agent.
+
+## Lead coordination
+
+The rules, workstreams and file ownership of the lead session are in /srv/tank-work/COORDINATION.md. Original-agent followers stay read-only: do not edit /srv/tank or /srv/tank-work.
