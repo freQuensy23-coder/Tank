@@ -13,7 +13,8 @@ from .books import OrderBook
 from .normalize import SemanticError, liquidation, oi, venue_key
 
 STREAM_PING_INTERVAL_S = 20
-STREAM_PING_TIMEOUT_S = 20
+# The client closes with 1011 when a pong is late; the loop on prod stalls for seconds.
+STREAM_PING_TIMEOUT_S = 60
 
 
 def connection(instrument, *, depth_only=False):
@@ -341,7 +342,9 @@ def record_stream_watermark(self, instrument, raw):
     elif key.startswith("kraken"):
         # One ISO format per feed: the latest string is the latest time (parse it once).
         if isinstance(data, list):
-            latest = max((r["timestamp"] for r in data if isinstance(r, dict) and r.get("timestamp")), default=None)
+            latest = max(
+                (r["timestamp"] for r in data if isinstance(r, dict) and r.get("timestamp")), default=None
+            )
             if latest:
                 stamps.append(latest)
     elif isinstance(data, dict):
@@ -406,7 +409,9 @@ def subscription_messages(instruments, *, subscribe=True, endpoint=None):
                 item["args"] = [a for a in item["args"] if a["channel"] != "liquidation-orders"]
             messages.append(item)
     if venue.startswith(("okx", "bybit")):
-        args = list({json.dumps(arg, sort_keys=True): arg for item in messages for arg in item["args"]}.values())
+        args = list(
+            {json.dumps(arg, sort_keys=True): arg for item in messages for arg in item["args"]}.values()
+        )
         # Bybit spot accepts at most 10 topics per subscribe request ("args size >10").
         size = 10 if venue.startswith("bybit") else len(args) or 1
         return [{"op": action, "args": args[i : i + size]} for i in range(0, len(args), size)]
@@ -462,9 +467,7 @@ def route_indexed(index, venue, raw):
         field = "symbol" if venue == "kraken" else "coin"
         for row in data:
             groups.setdefault(row.get(field), []).append(row)
-    return [
-        (index[symbol], dict(raw, data=rows)) for symbol, rows in groups.items() if symbol in index
-    ]
+    return [(index[symbol], dict(raw, data=rows)) for symbol, rows in groups.items() if symbol in index]
 
 
 def route_frame(instruments, raw):
@@ -519,6 +522,13 @@ async def prepare_member(self, instrument, *, depth_only=False):
         if since is None or parse_time(since) >= utcnow():
             return
         previous = {"last_ts": iso(max(parse_time(since), utcnow() - timedelta(hours=24)))}
+    if self._active_backfills.get(iid):
+        # One REST repair per instrument at a time; keep the earliest unrepaired print.
+        # service.backfill starts it when the running one ends.
+        pending = self._pending_reconnects
+        if iid not in pending or parse_time(previous["last_ts"]) < parse_time(pending[iid]["last_ts"]):
+            pending[iid] = previous
+        return
     task = asyncio.create_task(self.backfill(instrument, iso(), checkpoint=previous))
     self._background.add(task)
     task.add_done_callback(self._background.discard)
@@ -536,9 +546,6 @@ async def stream_group_loop(self, endpoint):
         active = set()
         preparing = {}
         pending = {}
-        recv = None
-        change = None
-        stop_task = None
         try:
             url = endpoint
             async with websockets.connect(
@@ -644,7 +651,6 @@ async def stream_group_loop(self, endpoint):
 
                 await membership(self._stream_groups[endpoint])
                 retry = 1
-                stop_task = asyncio.create_task(self._stop.wait())
                 last_message = time.monotonic()
                 while active and not self._stop.is_set():
                     if time.monotonic() - last_message > float(self.thresholds.get("quiet_socket_s", 30)):
@@ -658,47 +664,49 @@ async def stream_group_loop(self, endpoint):
                                     await process_frame(self, self.instruments[iid], queued)
                             except Exception as exc:  # noqa: BLE001 - isolate one instrument's metadata/book failure
                                 await reset_member(iid, exc)
-                    if recv is None:
-                        recv = asyncio.create_task(socket.recv())
-                    if change is None:
-                        change = asyncio.create_task(control.get())
-                    done, _ = await asyncio.wait(
-                        [recv, change, stop_task], timeout=0.1, return_when=asyncio.FIRST_COMPLETED
-                    )
-                    if stop_task in done:
+                    # Poll membership changes and stop instead of awaiting them beside recv():
+                    # a recv task plus asyncio.wait costs a full event-loop turn per frame,
+                    # so a busy loop drains fewer frames than arrive, websockets pauses
+                    # reading at max_queue and the unread pong ends in a keepalive timeout.
+                    if self._stop.is_set():
                         break
-                    if change in done:
-                        desired = change.result()
-                        change = None
+                    try:
+                        desired = control.get_nowait()
+                    except asyncio.QueueEmpty:
+                        pass
+                    else:
                         await membership(desired)
-                    if recv in done:
-                        frame = recv.result()
-                        self._frames[endpoint] = self._frames.get(endpoint, 0) + 1
-                        last_message = time.monotonic()
-                        last_observed = utcnow()
-                        recv = None
-                        if frame == "pong":
-                            continue
-                        raw = json.loads(frame, parse_float=Decimal)
-                        if (
-                            raw.get("event") == "error"
-                            or raw.get("success") is False
-                            or raw.get("type") == "error"
-                        ):
-                            raise SemanticError("subscription rejected " + str(raw))
-                        for instrument, payload in route_indexed(index, venue, raw):
-                            iid = instrument["instrument_id"]
-                            if venue == "coinbase" and raw.get("type") == "last_match":
-                                await self._raw(instrument, "websocket", raw)
-                            if iid in preparing:
-                                pending[iid].append(payload)
-                                if len(pending[iid]) > 1024:
-                                    await reset_member(iid, "initial book buffer exhausted")
-                            else:
-                                try:
-                                    await process_frame(self, instrument, payload)
-                                except Exception as exc:  # noqa: BLE001 - bad product book must not disconnect unrelated products
-                                    await reset_member(iid, exc)
+                    try:
+                        # recv() returns without yielding while frames are queued; canceling it is safe.
+                        async with asyncio.timeout(0.1):
+                            frame = await socket.recv()
+                    except TimeoutError:
+                        continue
+                    self._frames[endpoint] = self._frames.get(endpoint, 0) + 1
+                    last_message = time.monotonic()
+                    last_observed = utcnow()
+                    if frame == "pong":
+                        continue
+                    raw = json.loads(frame, parse_float=Decimal)
+                    if (
+                        raw.get("event") == "error"
+                        or raw.get("success") is False
+                        or raw.get("type") == "error"
+                    ):
+                        raise SemanticError("subscription rejected " + str(raw))
+                    for instrument, payload in route_indexed(index, venue, raw):
+                        iid = instrument["instrument_id"]
+                        if venue == "coinbase" and raw.get("type") == "last_match":
+                            await self._raw(instrument, "websocket", raw)
+                        if iid in preparing:
+                            pending[iid].append(payload)
+                            if len(pending[iid]) > 1024:
+                                await reset_member(iid, "initial book buffer exhausted")
+                        else:
+                            try:
+                                await process_frame(self, instrument, payload)
+                            except Exception as exc:  # noqa: BLE001 - bad product book must not disconnect unrelated products
+                                await reset_member(iid, exc)
                     # The market supervisor batches flow once per second.
                     # A frame only ingests its updates; rebuilding every bar
                     # here multiplies work by the WebSocket message rate.
@@ -722,13 +730,9 @@ async def stream_group_loop(self, endpoint):
                         self.instruments[iid], last_observed, iso(), "STREAM_DISCONNECTED: " + str(exc)
                     )
         finally:
-            for task in [*preparing.values(), recv, change, stop_task]:
-                if task is not None:
-                    task.cancel()
-            await asyncio.gather(
-                *(t for t in [*preparing.values(), recv, change, stop_task] if t is not None),
-                return_exceptions=True,
-            )
+            for task in preparing.values():
+                task.cancel()
+            await asyncio.gather(*preparing.values(), return_exceptions=True)
             if not depth_only:
                 for iid in active:
                     self._connected_since.pop(iid, None)

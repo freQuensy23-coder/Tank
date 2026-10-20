@@ -31,6 +31,9 @@ RAW_FLUSH_S = 5
 # Streamed mark/index/funding/OI context is stored at the hot tier's summary cadence
 # (03 §5.1: book summaries every 10 s); the newest value is kept in memory between.
 CONTEXT_S = 10
+# Pre-event windows ending within this span are filled from venue REST only; a missing
+# REST range stays an explicit gap instead of a whole-day archive parse.
+REST_ONLY_WINDOW = timedelta(hours=48)
 # Rows read only from public exchange endpoints never contain a Tank secret.
 PUBLIC_MARKET = frozenset(
     {
@@ -101,6 +104,8 @@ class MarketService:
         self._capture_checkpoints = {}
         self._recovery_pending = set()
         self._active_backfills = {}
+        # Earliest unrepaired checkpoint per instrument while its repair is running.
+        self._pending_reconnects = {}
         self.flow = FlowAccumulator()
         self.books = {}
         self.streams = {}
@@ -190,7 +195,9 @@ class MarketService:
             # Book summaries arrive JSON-ready (OrderBook.summary); re-walking their levels is waste.
             row = dict(row) if collection == "mkt.book_summaries" else jsonable(row)
             row = (
-                dict(row, config_version=self.settings.config_version, code_version=self.settings.code_version)
+                dict(
+                    row, config_version=self.settings.config_version, code_version=self.settings.code_version
+                )
                 if collection in PUBLIC_MARKET
                 else self.provenance(row)
             )
@@ -565,7 +572,8 @@ class MarketService:
                     self._last_request[host] = time.monotonic() + min(max(delay, 1), 60)
                     continue
                 if response.is_error:
-                    raise RuntimeError(f"{host}: HTTP {response.status_code}")
+                    # The venue's error code/message is the gap evidence (bodies carry no credentials).
+                    raise RuntimeError(f"{host}: HTTP {response.status_code} {response.text[:200]}")
                 # Binance reports whole-IP usage (including sandbox traffic). Tank
                 # separately enforces its own half via shared_request_budgets.
                 weight = response.headers.get("X-MBX-USED-WEIGHT-1M")
@@ -636,7 +644,9 @@ class MarketService:
                     for raw in rows:
                         row = norm.kline(instrument, raw)
                         await self._store_kline(instrument, row)
-                    self._klines_polled[instrument_id] = (self._klines_polled.get(instrument_id, []) + [polled])[-5:]
+                    self._klines_polled[instrument_id] = (
+                        self._klines_polled.get(instrument_id, []) + [polled]
+                    )[-5:]
                 elif kind == "ticker":
                     await self._ticker(instrument, await adapter.ticker())
                 else:
@@ -1207,7 +1217,9 @@ class MarketService:
                         source="CONTINUOUS_STREAM",
                         reason=bar.get("gap_reason"),
                     )
-                    self.trade_archive.coverage(iid, start, end, complete=complete, reason=bar.get("gap_reason"))
+                    self.trade_archive.coverage(
+                        iid, start, end, complete=complete, reason=bar.get("gap_reason")
+                    )
                 cursor += timedelta(minutes=1)
             self._zero_cursor[iid] = max(
                 since.replace(second=0, microsecond=0),
@@ -1218,10 +1230,21 @@ class MarketService:
         for key, bar in list(self.flow.bars.items()):
             minute = parse_time(key[1])
             if key in dirty:
-                complete = self.flow.covered(
-                    minute, minute + timedelta(minutes=1), bar.get("_coverage", [])
-                ) and not bar.get("gap_reason")
+                coverage = bar.get("_coverage", [])
+                covered = self.flow.covered(minute, minute + timedelta(minutes=1), coverage)
+                complete = covered and not bar.get("gap_reason")
                 row = self.flow.record(key, complete=complete)
+                if not covered and not row.get("gap_reason"):
+                    # Persist why the minute is unproven (stream down, REST repair pending);
+                    # the in-memory bar keeps gap_reason None so a later proof completes it.
+                    row["gap_reason"] = next(
+                        (
+                            p["reason"]
+                            for p in reversed(coverage)
+                            if p.get("complete") is not True and p.get("reason")
+                        ),
+                        "STREAM_COVERAGE_UNPROVEN",
+                    )
                 await self._put("mkt.flow_bars_1m", key[0] + ":" + key[1], row)
             if minute + timedelta(minutes=3) < now:
                 self.flow.bars.pop(key, None)
@@ -1263,10 +1286,15 @@ class MarketService:
             key = (iid, iso(minute))
             accumulator.empty_minute(instrument, minute)
             gap = None
+            consecutive = norm.venue_key(instrument).split(".")[0] in ("binance", "coinbase", "kraken")
+            if consecutive:
+                # Check continuity in ID order: the archive's (ts, str id) order misplaces ids
+                # across a digit boundary, or when WS and REST prints differ in ts precision.
+                audit["rows"].sort(key=lambda r: int(r["trade_id"]))
             for point in audit["rows"]:
                 if (
                     previous
-                    and norm.venue_key(instrument).split(".")[0] in ("binance", "coinbase", "kraken")
+                    and consecutive
                     and point["trade_id"] != previous["trade_id"]
                     and int(point["trade_id"]) != int(previous["trade_id"]) + 1
                 ):
@@ -1333,6 +1361,11 @@ class MarketService:
             if not self._active_backfills[iid]:
                 self._active_backfills.pop(iid)
             await self.flush_market()
+            queued = self._pending_reconnects.pop(iid, None)
+            if queued and not self._active_backfills.get(iid) and not (self._stop and self._stop.is_set()):
+                task = asyncio.create_task(self.backfill(instrument, iso(), checkpoint=queued))
+                self._background.add(task)
+                task.add_done_callback(self._background.discard)
 
     async def _backfill(self, instrument, anchor, *, checkpoint=None):
         """Page immutable prints. Unproven endpoints/retention remain explicit gaps."""
@@ -1343,7 +1376,9 @@ class MarketService:
         # print strictly before start. Keep the analysis window unchanged.
         capture_start = start if checkpoint else start - timedelta(minutes=1)
         self._register_capture_boundaries({instrument["instrument_id"]}, end, {"ts": start})
-        adapter = self.adapter(instrument, priority=1)
+        # A reconnect repair is short and completes live minutes; behind base polling
+        # (priority 0) it never got a Kraken slot (1 req/s) on prod.
+        adapter = self.adapter(instrument, priority=0 if checkpoint else 1)
         cursor = None
         seen = set()
         times = []
@@ -1365,7 +1400,10 @@ class MarketService:
             for slice_index, (lo, hi) in enumerate(slices):
                 cursor = (
                     int(checkpoint["last_trade_id"]) + 1
-                    if checkpoint and checkpoint.get("last_trade_id") and key.startswith("binance") and slice_index == 0
+                    if checkpoint
+                    and checkpoint.get("last_trade_id")
+                    and key.startswith("binance")
+                    and slice_index == 0
                     else None
                 )
                 exhausted = False
@@ -1441,7 +1479,9 @@ class MarketService:
             await self._gap(instrument, "PRE_EVENT_FLOW", exc, start=start, end=end)
         # Verified Binance print archives cover only fully published historical days.
         # Retention/ID gaps are retained as evidence even if an archive repairs coverage.
-        if not checkpoint and key.startswith("binance"):
+        # Fresh windows come from REST only (03 §5.1, lead ruling 2026-10-20): whole daily
+        # archives are parsed only for replays of windows older than REST_ONLY_WINDOW.
+        if not checkpoint and key.startswith("binance") and end < utcnow() - REST_ONLY_WINDOW:
             missing = not self._ranges_cover(proven_ranges, start, end)
             if missing:
                 from .archive import fetch_archive
@@ -2218,7 +2258,10 @@ class MarketService:
             )
         elif key == "coinbase.spot":
             raw = await self._request(
-                "GET", "https://api.exchange.coinbase.com/products/" + s + "/book", params={"level": 2}, _priority=2
+                "GET",
+                "https://api.exchange.coinbase.com/products/" + s + "/book",
+                params={"level": 2},
+                _priority=2,
             )
         else:
             return {"second_path_confirmed": False, "second_path_reason": "NO_LISTED_SECOND_PATH"}
@@ -3621,18 +3664,22 @@ class MarketService:
             return await self.repo.market_series_counts(instrument_ids, start, cutoff, assembled)
         cache = self._kline_day_counts
         days = [first + timedelta(days=n) for n in range((last - first).days)]
-        missing = [day for day in days if any((iid, day) not in cache for iid in instrument_ids)]
+        # Read the cache before any await: an archive import evicts a recounted day meanwhile.
+        counts = {
+            (iid, day): cache[iid, day] for day in days for iid in instrument_ids if (iid, day) in cache
+        }
+        missing = [day for day in days if any((iid, day) not in counts for iid in instrument_ids)]
         if missing:
             found = await market_series_day_counts(
                 self.repo, instrument_ids, missing[0], missing[-1] + timedelta(days=1), assembled
             )
             for day in missing:
                 for iid in instrument_ids:
-                    cache[iid, day] = found.get((iid, day), 0)
+                    counts[iid, day] = cache[iid, day] = found.get((iid, day), 0)
         head = await self.repo.market_series_counts(instrument_ids, start, first, assembled)
         tail = await self.repo.market_series_counts(instrument_ids, last, cutoff, assembled)
         return {
-            iid: head.get(iid, 0) + tail.get(iid, 0) + sum(cache[iid, day] for day in days)
+            iid: head.get(iid, 0) + tail.get(iid, 0) + sum(counts[iid, day] for day in days)
             for iid in instrument_ids
         }
 
@@ -3708,7 +3755,14 @@ class MarketService:
                 if name == "oi" and recent_start > history_start:
                     rows = (
                         await sampled_market_history(
-                            self.repo, collection, field, ("metric_key",), [iid], history_start, recent_start, 300
+                            self.repo,
+                            collection,
+                            field,
+                            ("metric_key",),
+                            [iid],
+                            history_start,
+                            recent_start,
+                            300,
                         )
                         + rows
                     )
@@ -3783,7 +3837,14 @@ class MarketService:
         if len(same_sector) < 2 and sector != "IDENTITY_PAYMENTS":
             same_sector |= {
                 identity
-                for name in ("DEX_EXECUTION", "LENDING_CREDIT", "PERP_DEX", "RWA", "INTEROPERABILITY", "SYNTHETIC_DOLLAR")
+                for name in (
+                    "DEX_EXECUTION",
+                    "LENDING_CREDIT",
+                    "PERP_DEX",
+                    "RWA",
+                    "INTEROPERABILITY",
+                    "SYNTHETIC_DOLLAR",
+                )
                 for identity in members.get(name, ())
             }
         peers = {
