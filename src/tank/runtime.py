@@ -17,17 +17,17 @@ TIMEOUTS = {
     "ROUTE_ITEM": 20,
     "AGENT_MESSAGE": 10,
     "ESCALATE_TOKENS": 10,
-    "RUN_MARKET_TRUTH": 90,
+    "RUN_MARKET_TRUTH": 999,  # user decision 2026-10-20 (was 90 s)
     "DELIVER": 10,
     "EVAL_CONDITIONS": 20,
     "MILESTONE_CHECK": 90,
-    "REACTION_CAPTURE": 120,
+    "REACTION_CAPTURE": 999,  # user decision 2026-10-20 (was 120 s)
     "SCOUT_REVIEW": 300,
 }
 
 
 ADMISSION_TIMEOUT_S = 10
-CAPTURE_WAIT_S = 15  # Included in the 90s numerical job; leaves 75s for the actual assessment.
+CAPTURE_WAIT_S = 15  # Included in the RUN_MARKET_TRUTH job time.
 
 
 class Runtime:

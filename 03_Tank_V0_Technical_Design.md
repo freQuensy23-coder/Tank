@@ -977,11 +977,11 @@ STRUCTURAL_SHOCK sends a PARTIAL card from SCORED (as soon as the class and cert
 | ROUTE_ITEM | New item of another source, or FILTER_ITEM found it relevant | 1 (deferrable: 2) | `item_id` | 20 s | 2 | 6 h |
 | AGENT_MESSAGE | ROUTE_ITEM, EVAL_CONDITIONS, MILESTONE_CHECK, call expiry | 1 (deferrable: 2) | `session_or_item:message` | 10 s | 3 | 24 h |
 | ESCALATE_TOKENS | `get_market_truth` | 0 | `token:event_id` | 10 s | 3 | — |
-| RUN_MARKET_TRUTH | `get_market_truth` | 1 | `event:token:cutoff_minute` | 90 s | 2 | 30 min |
+| RUN_MARKET_TRUTH | `get_market_truth` | 1 | `event:token:cutoff_minute` | 999 s | 2 | 30 min |
 | DELIVER | `publish_card` or ops notice | 0 | `alert:version:channel` or `notice:notice_id` | 10 s | 5 | 24 h |
 | EVAL_CONDITIONS | Scheduler, every minute | 2 | `batch:minute` | 20 s | 2 | 5 min |
 | MILESTONE_CHECK | Scheduler, at the milestone's time (`schedule_milestone`) | 1 | `event:milestone` | — | — | Milestone window |
-| REACTION_CAPTURE | Scheduler, at each checkpoint | 2 | `event:token:checkpoint` | 120 s | 5 | Checkpoint + 6 h |
+| REACTION_CAPTURE | Scheduler, at each checkpoint | 2 | `event:token:checkpoint` | 999 s | 5 | Checkpoint + 6 h |
 | SCOUT_REVIEW | Proposal created | 4 | `proposal_id` | 300 s | 2 | 7 d |
 
 ### 3.9 Latency budget (targets, verified at V0-G)
