@@ -2891,3 +2891,41 @@ async def test_pending_rows_without_item_id_are_dropped_and_rediscovered(tmp_pat
         await svc.poller.drain(source, 0, force=True)
         assert not (await repo.get("ops.source_checkpoints", "S30:0"))["pending_batches"]
         assert (await svc.poll_once("S30"))["items"] == 1
+
+
+@pytest.mark.asyncio
+async def test_stale_article_errors_clear_when_nothing_is_pending(tmp_path):
+    source = {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}
+    repo = Repo()
+    stale = {"https://example.org/old": {"reason": "METADATA_UNVERIFIABLE"}}
+    await repo.put(
+        "ops.source_checkpoints",
+        "S30:0",
+        {"source_id": "S30", "status": "DEGRADED", "article_errors": stale, "pending_batches": []},
+    )
+    svc = SourceService(repo, settings(tmp_path, [source]))
+    await svc.poller.drain(source, 0, force=True)
+    state = await repo.get("ops.source_checkpoints", "S30:0")
+    assert state["article_errors"] == {} and state["status"] == "HEALTHY"
+
+
+@pytest.mark.asyncio
+async def test_poll_clears_stale_article_errors(tmp_path):
+    source = {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}
+    repo = Repo()
+    await repo.put(
+        "ops.source_checkpoints",
+        "S30:0",
+        {
+            "source_id": "S30",
+            "status": "DEGRADED",
+            "article_errors": {"https://example.org/old": {}},
+            "pending_batches": [],
+        },
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(304))
+    ) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        await svc.poller.acquire(source, 0)
+        assert (await repo.get("ops.source_checkpoints", "S30:0"))["article_errors"] == {}
