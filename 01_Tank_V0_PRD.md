@@ -335,7 +335,7 @@ Each requirement describes behavior the operator can observe or a test can check
 | FR-A-03 | Tank MUST send a new card only for MAJOR or STRUCTURAL SHOCK events of HIGH or MEDIUM certainty that are not STALE and not cancelled; a card about a MEDIUM fact MUST say in words what is verified and what is not. LOW-certainty facts never produce cards. A STRUCTURAL SHOCK MUST produce a first card within 3 min of Tank learning about it, completed by a full card in the same thread. |
 | FR-A-04 | Updates MUST be replies in the card's thread, sent only when an action, the event grade, the stage or its verification, or a decisive condition changes, when the event is denied, or when Tank stops following a call, at most one per event per 15 min — START, EXIT and broken theses go immediately. LOW and MATERIAL events, STALE facts and repeated coverage of a known event never produce cards. |
 | FR-A-05 | A card MUST follow §7.1, be at most 3,500 characters and cover at most 3 tokens: the tradable primary, the least-repriced credible secondary, then the next most relevant secondary or loser; updates follow these tokens. |
-| FR-A-06 | Before sending, Tank MUST check every card against the hard rules in §8: a sentence that breaks one is rewritten once, then removed. |
+| FR-A-06 | Every card MUST follow the hard rules in §8: the agent writes its verdict and WHY lines by them, and the card template's own text never breaks them. Tank does not check the wording before sending; a broken rule is found in the daily review. |
 | FR-A-07 | Every card version MUST be kept unchanged with the evidence it was based on and its delivery status. |
 
 ### 6.8 Reaction record
