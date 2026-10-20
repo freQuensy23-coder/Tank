@@ -1137,6 +1137,9 @@ async def fetch_archive(
         for collection, values in batches.items():
             if values:
                 await repo.put_market_batch(collection, list(values.values()), keys=list(values))
+        if market is not None and kind == "klines":
+            # The service counts whole past days once; a newly imported day is counted again.
+            market._kline_day_counts.pop((instrument["instrument_id"], parse_time(date)), None)
         return {
             "archive_id": archive_id,
             "path": str(path),
