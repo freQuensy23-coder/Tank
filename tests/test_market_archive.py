@@ -170,3 +170,20 @@ def test_non_metrics_reordering_is_not_silently_normalized():
     result = verify_binance_zip(payload, checksum, filename="test.zip", kind="aggTrades")
     assert not result["complete"] and result["rows"][0][0] == "2"
     assert "order_changed" not in result and "normalization" not in result
+
+
+def test_aggtrade_window_keeps_file_continuity_and_returns_only_its_rows():
+    header = "agg_trade_id,price,quantity,first_trade_id,last_trade_id,transact_time,is_buyer_maker\n"
+    rows = "".join(f"{i},1.50,2,3,4,{1767225600000 + i * 30000},false\n" for i in range(1, 7))
+    b, c = zipped(header + rows)
+    r = verify_binance_zip(
+        b, c, filename="test.zip", kind="aggTrades", window=("2026-01-01T00:01:00Z", "2026-01-01T00:02:00Z")
+    )
+    assert r["complete"] and r["rows_in_file"] == 6 and r["header"][0] == "agg_trade_id"
+    assert [row[:2] for row in r["rows"]] == [["2", "1.50"], ["3", "1.50"]]  # exact file text
+    # A gap outside the window still leaves the file unverified.
+    b, c = zipped(header + rows.replace("4,1.50", "5,1.50"))
+    window = ("2026-01-01T00:00:00Z", "2026-01-01T00:01:00Z")
+    gapped = verify_binance_zip(b, c, filename="test.zip", kind="aggTrades", window=window)
+    assert not gapped["complete"]
+    assert gapped["gaps"] == [{"after": 3, "before": 5}] and gapped["duplicates"] == [5]

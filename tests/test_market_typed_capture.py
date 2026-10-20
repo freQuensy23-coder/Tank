@@ -379,3 +379,50 @@ async def test_id_gap_invalidates_prior_and_intervening_minutes_and_nested_proof
         )
         coverage = service.trade_archive.coverage_for(inst["instrument_id"], start)
         assert not service.flow.covered(start, start + timedelta(minutes=1), coverage)
+
+
+@pytest.mark.asyncio
+async def test_windowed_trade_import_covers_only_the_minutes_it_touches(setup):
+    import hashlib
+    import io
+    import zipfile
+
+    from tank.market.archive import fetch_archive
+
+    repo, settings, _inst = setup
+    day = parse_time("2026-01-01T00:00:00Z")
+    content = io.BytesIO()
+    with zipfile.ZipFile(content, "w") as zipped:
+        zipped.writestr(
+            "ABCUSD.csv",
+            "".join(
+                f"{n},2,3,{n},{n},{int((day + timedelta(minutes=n)).timestamp() * 1000000)},false\n"
+                for n in range(1, 6)
+            ),
+        )
+    payload = content.getvalue()
+    filename = "ABCUSD-aggTrades-2026-01-01.zip"
+    downloads = []
+
+    def response(request):
+        downloads.append(request.url.path)
+        if request.url.path.endswith("CHECKSUM"):
+            return httpx.Response(200, text=hashlib.sha256(payload).hexdigest() + "  " + filename)
+        return httpx.Response(200, content=payload)
+
+    window = ("2026-01-01T00:01:30Z", "2026-01-01T00:03:10Z")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as http:
+        result = await fetch_archive(
+            repo, settings, "ABCUSD", "2026-01-01", kind="aggTrades", http=http, window=window
+        )
+        again = await fetch_archive(
+            repo, settings, "ABCUSD", "2026-01-01", kind="aggTrades", http=http, window=window
+        )
+    bars = sorted(await repo.list("mkt.flow_bars_1m", limit=2000), key=lambda r: r["minute_start"])
+    assert [b["minute_start"] for b in bars] == [
+        "2026-01-01T00:01:00Z",
+        "2026-01-01T00:02:00Z",
+        "2026-01-01T00:03:00Z",
+    ]
+    assert all(b["complete"] for b in bars) and result["rows"] == 3
+    assert again["imported"] and len(downloads) == 2  # the span is already in PostgreSQL

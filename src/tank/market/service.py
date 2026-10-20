@@ -1499,6 +1499,7 @@ class MarketService:
                                 kind="aggTrades",
                                 http=self.http,
                                 market=self,
+                                window=(capture_start, end),
                             )
                         except Exception as exc:  # noqa: BLE001 - archive absence preserves explicit missing historical coverage
                             await self._gap(
