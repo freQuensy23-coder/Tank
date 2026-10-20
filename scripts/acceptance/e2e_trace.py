@@ -221,16 +221,24 @@ if __name__ == "__main__":
     if not ids:
         print(json.dumps({"status": "NO_EVENT_WITH_SENT_CARD_SINCE", "since": a.since}))
         sys.exit(2)
-    t = trace(ids[0])
-    d = os.path.join(a.out, ids[0])
-    write_json(os.path.join(d, "trace.json"), {k: v for k, v in t.items() if k != "rows"})
-    for name, rows in t["rows"].items():
-        with open(os.path.join(d, f"{name}.jsonl"), "w") as fh:
-            for r in rows:
-                fh.write(json.dumps(r, sort_keys=True, default=str) + "\n")
-    with open(os.path.join(d, "trace.md"), "w") as fh:
-        fh.write(render(t))
-    write_json(os.path.join(d, "receipt.json"), {"written_at": iso(utcnow()), "files": {
-        f: hashlib.sha256(open(os.path.join(d, f), "rb").read()).hexdigest() for f in sorted(os.listdir(d))}})
-    print(render(t)[:4000])
-    sys.exit(0 if t["chain_complete"] and all(t["within_limits"].values()) and not t["recovered_by_operator"] else 1)
+    if not a.event_id:  # watcher mode: trace every new candidate once
+        ids = [i for i in ids if not os.path.exists(os.path.join(a.out, i, "trace.json"))] or []
+        if not ids:
+            print(json.dumps({"status": "NO_NEW_EVENT_WITH_SENT_CARD", "since": a.since}))
+            sys.exit(2)
+    passed = False
+    for event_id in ids:
+        t = trace(event_id)
+        d = os.path.join(a.out, event_id)
+        write_json(os.path.join(d, "trace.json"), {k: v for k, v in t.items() if k != "rows"})
+        for name, rows in t["rows"].items():
+            with open(os.path.join(d, f"{name}.jsonl"), "w") as fh:
+                for r in rows:
+                    fh.write(json.dumps(r, sort_keys=True, default=str) + "\n")
+        with open(os.path.join(d, "trace.md"), "w") as fh:
+            fh.write(render(t))
+        write_json(os.path.join(d, "receipt.json"), {"written_at": iso(utcnow()), "files": {
+            f: hashlib.sha256(open(os.path.join(d, f), "rb").read()).hexdigest() for f in sorted(os.listdir(d))}})
+        print(render(t)[:2000])
+        passed = passed or (t["chain_complete"] and all(t["within_limits"].values()) and not t["recovered_by_operator"])
+    sys.exit(0 if passed else 1)
