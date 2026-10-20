@@ -738,6 +738,49 @@ def oi_temporally_admissible(row):
 
 
 @precise
+def _oi_rows(snapshot, instrument_id):
+    """The instrument's OI rows; a row without oi_usd gets oi_native x mark (03 §5.4 table:
+    Binance oi_native x mark, Bybit singleOpenInterest x markPrice) from its own mark or the
+    nearest ticker mark of the instrument within the sync tolerance. Input rows are not
+    modified; the derived list is built once per assessment and shared by all windows."""
+    rows = _instrument_rows(snapshot, "oi", instrument_id)
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("oi_rows", {}) if inputs is not None else None
+    if memo is not None and memo.get(id(rows), (None,))[0] is rows:
+        return memo[id(rows)][1]
+    tolerance = float(parameter("oi_sync_tolerance_s", 60))
+    marks = sorted(
+        (_time(t), decimal(t["mark_price"]))
+        for t in _instrument_rows(snapshot, "tickers", instrument_id)
+        if t.get("mark_price") is not None and _time(t) is not None and decimal(t["mark_price"])
+    )
+    mark_times = [t for t, _ in marks]
+    out = []
+    for row in rows:
+        native = decimal(row.get("oi_native"))
+        if row.get("oi_usd") is not None or native is None:
+            out.append(row)
+            continue
+        mark, source = decimal(row.get("mark_price")), "OI_NATIVE_X_ROW_MARK"
+        if not mark:
+            t = _time(row)
+            i = bisect_left(mark_times, t)
+            near = [
+                (abs((mark_times[j] - t).total_seconds()), j)
+                for j in (i - 1, i)
+                if 0 <= j < len(marks) and abs((mark_times[j] - t).total_seconds()) <= tolerance
+            ]
+            mark, source = (marks[min(near)[1]][1], "OI_NATIVE_X_TICKER_MARK") if near else (None, None)
+        if not mark:
+            out.append(row)
+            continue
+        exact_context(native, mark)
+        out.append(dict(row, oi_usd=native * mark, oi_usd_reason=None, oi_usd_source=source))
+    if memo is not None:
+        memo[id(rows)] = (rows, out)
+    return out
+
+
 def _oi_split(rows):
     """(admissible rows, inadmissible rows, admissible (time, index) order) of one row list,
     built once per assessment for a list shared across windows."""
@@ -796,13 +839,21 @@ def _oi_stats(rows, start, end, *, history_identity=None):
         )
     )
     length = _time(z) - _time(a)
+    # 03 §0/§5.4: the window's change is judged against the same-length changes in history.
+    # Pairs use the requested window length; the earlier point is the nearest observation
+    # within half the history's cadence (base tier: 300 s), never only an exact offset.
+    window = end - start
     bytime = {_time(r): r for r in rows if start - timedelta(days=lookback_days()) <= _time(r) < start}
+    history_times = sorted(bytime)
+    gaps = sorted((b - a).total_seconds() for a, b in zip(history_times, history_times[1:]) if b > a)
+    pair_tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0)
     cache = _BASELINE_CACHE.get()
     dependency = _BASELINE_DEPENDENCY.get()
     history_key = (
         (
             "oi",
-            length.total_seconds(),
+            window.total_seconds(),
+            pair_tolerance,
             parameter("history_min_days", 7),
             tuple(parameter("normal_range_quantiles", [0.025, 0.975])),
             (dependency, history_identity or tuple(sorted({r.get("instrument_id", "") for r in rows})))
@@ -823,7 +874,15 @@ def _oi_stats(rows, start, end, *, history_identity=None):
             and (max(bytime) - min(bytime)).total_seconds() >= float(parameter("history_min_days", 7)) * 86400
         ):
             for t, r in bytime.items():
-                old = bytime.get(t - length)
+                target = t - window
+                i = bisect_left(history_times, target)
+                near = [
+                    (abs((history_times[j] - target).total_seconds()), j)
+                    for j in (i - 1, i)
+                    if 0 <= j < len(history_times)
+                    and abs((history_times[j] - target).total_seconds()) <= pair_tolerance
+                ]
+                old = bytime[history_times[min(near)[1]]] if near else None
                 if old:
                     nn, oo = decimal(r.get("oi_native")), decimal(old.get("oi_native"))
                     uu, ou = decimal(r.get("oi_usd")), decimal(old.get("oi_usd"))
@@ -976,8 +1035,8 @@ def derivatives_truth(snapshot, start, end):
                 instruments.setdefault(iid, row)
                 groups.setdefault(iid, [])
     for iid in groups:
-        # The indexed list itself (read-only here), so its split is shared by all windows.
-        groups[iid] = _instrument_rows(snapshot, "oi", iid)
+        # One list per instrument per assessment (read-only here), so its split is shared.
+        groups[iid] = _oi_rows(snapshot, iid)
     sem = {(s.get("instrument_id"), s["metric_key"]): s for s in snapshot.get("semantics", [])}
     per = []
     sync = []
@@ -2985,14 +3044,23 @@ def observed_through(snapshot, collection, instrument_id):
 
 
 def available_field_freshness(snapshot, end):
-    """Latest point per source field; old history does not make a fresh series stale."""
+    """Latest point per source field; old history does not make a fresh series stale.
+    Only the assessed token's fields count (§5.10): benchmark and sector-peer closes in the
+    snapshot are inputs of the relative block, not fields of this token."""
     checks = []
     metadata = (snapshot.get("capture_metadata") or {}).get("collections", {})
+    token = snapshot.get("token_id")
+    owners = {
+        r["instrument_id"]: r["token_id"]
+        for r in snapshot.get("instruments", [])
+        if r.get("instrument_id") and r.get("token_id")
+    }
     for collection in ("flow_bars", "klines", "books", "oi", "funding", "liquidations", "tickers", "supply"):
         groups = defaultdict(list)
         for r in snapshot.get(collection, []):
             if (
-                r.get("available") is False
+                r.get("token_id", owners.get(r.get("instrument_id"), token)) != token
+                or r.get("available") is False
                 or _time(r) is None
                 or _time(r) > end
                 or not _available(r, snapshot)
@@ -3021,11 +3089,20 @@ def available_field_freshness(snapshot, end):
             if collection == "funding" and row.get("kind") == "SETTLED" and number(row.get("interval_h")):
                 cadence = number(row["interval_h"]) * 3600
                 source = "SETTLEMENT_INTERVAL"
+            stream = None
             if collection == "liquidations":
+                # An event stream is fresh while its socket is proven connected (watermark of
+                # the shared public socket); a quiet market has no events and is not stale.
+                # Without a watermark only the last event proves the connection.
                 entry = metadata.get(collection, {}) or {}
                 watermarks = entry.get("observed_through", {}) if isinstance(entry, dict) else {}
                 watermark = (
                     watermarks.get(row.get("instrument_id")) if isinstance(watermarks, dict) else watermarks
+                )
+                states = entry.get("coverage_status_by_instrument", {}) if isinstance(entry, dict) else {}
+                stream = dict(
+                    freshness_basis="STREAM_WATERMARK" if watermark is not None else "LAST_EVENT",
+                    coverage_status=states.get(row.get("instrument_id")) if isinstance(states, dict) else None,
                 )
                 if watermark is not None:
                     stamp = parse_time(watermark)
@@ -3063,6 +3140,16 @@ def available_field_freshness(snapshot, end):
                     age_s=age,
                     fresh=fresh,
                     reason=None if fresh else "NOT_ESTIMABLE" if cadence is None else "INCOMPLETE",
+                    **(
+                        dict(
+                            stream,
+                            detail=None
+                            if fresh or stream["freshness_basis"] == "STREAM_WATERMARK"
+                            else "STREAM_CONNECTION_UNPROVEN",
+                        )
+                        if stream
+                        else {}
+                    ),
                 )
             )
     return checks
@@ -3078,10 +3165,12 @@ def data_confidence(snapshot, spot, derivatives, end):
         for r in snapshot.get("instruments", [])
         if r.get("instrument_id") and r.get("token_id", snapshot.get("token_id")) == snapshot.get("token_id")
     }
+    owners = {r["instrument_id"]: r.get("token_id") for r in snapshot.get("instruments", []) if r.get("instrument_id")}
     for collection in ("flow_bars", "books", "oi", "funding", "klines"):
         for r in snapshot.get(collection, []):
             iid = r.get("instrument_id")
-            if iid and (r.get("token_id", snapshot.get("token_id")) == snapshot.get("token_id")):
+            owner = r.get("token_id", owners.get(iid) or snapshot.get("token_id"))
+            if iid and owner == snapshot.get("token_id"):
                 instruments.setdefault(iid, r)
     required = []
     for iid, inst in instruments.items():
