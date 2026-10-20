@@ -89,7 +89,8 @@ async def test_filter_requires_calibration_and_logs_typed_usage():
         await pipe.filter_item({"item_id": "i"})
         await pipe.filter_item({"item_id": "i"})
     assert len(calls) == 1
-    assert set(calls[0]["state"]) == {"source", "author", "text", "quoted"}
+    assert set(calls[0]["state"]) == {"item"}
+    assert set(calls[0]["state"]["item"]) <= {"source", "author", "title", "text", "quoted"}
     jobs = await repo.list("ops.jobs")
     assert len(jobs) == 1 and jobs[0]["type"] == "ROUTE_ITEM"
     usage = await repo.list("ops.llm_usage")
@@ -298,7 +299,7 @@ async def test_canonical_event_routing_and_added_message():
         posted.append(body)
         if req.url.host == "openrouter.ai":
             assert req.url.path == "/api/v1/systemone"
-            assert body["state"]["event"]["stage"] == "LIVE"
+            assert body["state"]["event"]["stage"] == "live"
             assert body["state"]["event"]["tokens"] == ["AAVE"]
             return httpx.Response(
                 200,

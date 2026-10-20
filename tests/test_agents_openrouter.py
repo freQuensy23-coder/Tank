@@ -7,7 +7,7 @@ import pytest
 
 from tank.agents import ConfigurationError, Pipeline
 from tank.agents.jev import classify
-from tank.agents.pipeline import FILTER
+from tank.agents.pipeline import FILTER, FILTER_CRITERIA
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 
@@ -51,7 +51,7 @@ async def test_plain_http_openrouter_wire_and_billed_cost_are_retained(tmp_path)
                 "relevant": {
                     "type": "noul",
                     "instructions": FILTER,
-                    "criteria": {"true": "About crypto", "false": "Not about crypto"},
+                    "criteria": FILTER_CRITERIA,
                 }
             },
         }

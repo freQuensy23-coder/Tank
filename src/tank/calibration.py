@@ -49,7 +49,9 @@ def load_packet(packet):
     if packet.get("status") != "FROZEN" or not all(
         packet.get(k) for k in ("dataset_id", "labeler", "labeled_at", "items", "events")
     ):
-        raise CalibrationError("Require a FROZEN labeled packet with dataset_id, labeler, labeled_at, items, events")
+        raise CalibrationError(
+            "Require a FROZEN labeled packet with dataset_id, labeler, labeled_at, items, events"
+        )
     events = {}
     for event in packet["events"]:
         if not event.get("event_id") or event["event_id"] in events or not event.get("statement"):
@@ -68,7 +70,9 @@ def load_packet(packet):
         seen.add(row["item_id"])
         routed = row["relevant"] or not requires_filter(item)
         if row.get("event_id") is not None and (not routed or row["event_id"] not in events):
-            raise CalibrationError(f"{row['item_id']}: only routed items (crypto or ALWAYS) carry a known event_id")
+            raise CalibrationError(
+                f"{row['item_id']}: only routed items (crypto or ALWAYS) carry a known event_id"
+            )
         rows.append({**row, "index": index, "at": clock, "filtered": requires_filter(item), "routed": routed})
     rows.sort(key=lambda r: (r["at"], r["index"]))
     window = timedelta(days=packet.get("routing_window_days", 3))
@@ -81,14 +85,20 @@ def load_packet(packet):
         previous = history.get(event_id)
         if previous:
             if row["at"] - previous["last_at"] > window:
-                raise CalibrationError(f"{row['item_id']}: joins {event_id} after the routing window (FR-E-02)")
+                raise CalibrationError(
+                    f"{row['item_id']}: joins {event_id} after the routing window (FR-E-02)"
+                )
             row["expected_event_id"] = event_id
             row["cross_source_repeat"] = row["source_id"] not in previous["sources"]
             previous["last_at"] = row["at"]
             previous["sources"].add(row["source_id"])
         else:
-            history[event_id] = {"opened_by": row["item_id"], "known_at": row["at"], "last_at": row["at"],
-                                 "sources": {row["source_id"]}}
+            history[event_id] = {
+                "opened_by": row["item_id"],
+                "known_at": row["at"],
+                "last_at": row["at"],
+                "sources": {row["source_id"]},
+            }
     for event_id, opened in history.items():
         events[event_id] = {**events[event_id], "known_to_us_at": iso(opened["known_at"])}
     return rows, events, window
@@ -117,16 +127,31 @@ def routing_metrics(rows, cutoff):
         fp += best is not None and best != target
         fn += target is not None and best != target
         if best != target:
-            errors.append({"item_id": row["item_id"], "predicted": best, "expected": target,
-                           "predicted_score": best_score if best else None})
-    return {"cutoff": cutoff, "true_positive": tp, "false_positive": fp, "false_negative": fn,
-            "precision": tp / (tp + fp) if tp + fp else None,
-            "recall": tp / (tp + fn) if tp + fn else None, "errors": errors}
+            errors.append(
+                {
+                    "item_id": row["item_id"],
+                    "predicted": best,
+                    "expected": target,
+                    "predicted_score": best_score if best else None,
+                }
+            )
+    return {
+        "cutoff": cutoff,
+        "true_positive": tp,
+        "false_positive": fp,
+        "false_negative": fn,
+        "precision": tp / (tp + fp) if tp + fp else None,
+        "recall": tp / (tp + fn) if tp + fn else None,
+        "errors": errors,
+    }
 
 
 def routing_cutoff(curve):
-    passing = [m["cutoff"] for m in curve
-               if (m["precision"] or 0) >= ROUTING_TARGET and (m["recall"] or 0) >= ROUTING_TARGET]
+    passing = [
+        m["cutoff"]
+        for m in curve
+        if (m["precision"] or 0) >= ROUTING_TARGET and (m["recall"] or 0) >= ROUTING_TARGET
+    ]
     return max(passing) if passing else None
 
 
@@ -155,8 +180,15 @@ def report(packet, rows, generation):
     }
     reasons = [name for name, ok in checks.items() if not ok]
     status = "PASS" if not reasons else "FAIL"
-    best_f1 = max(curve, key=lambda m: (2 * m["true_positive"] / max(1, 2 * m["true_positive"]
-                                        + m["false_positive"] + m["false_negative"]), m["cutoff"]))
+    best_f1 = max(
+        curve,
+        key=lambda m: (
+            2
+            * m["true_positive"]
+            / max(1, 2 * m["true_positive"] + m["false_positive"] + m["false_negative"]),
+            m["cutoff"],
+        ),
+    )
     return {
         "dataset_id": packet["dataset_id"],
         "generation": generation,
@@ -171,8 +203,9 @@ def report(packet, rows, generation):
             "relevant_passed": sum(r["filter_score"] >= f_cut for r in crypto),
             "relevant": len(crypto),
             "crypto_reaching_full_analysis": reached,
-            "filter_path_irrelevant_skipped": sum(r["filtered"] and not r["relevant"] and r["filter_score"] < f_cut
-                                                  for r in rows),
+            "filter_path_irrelevant_skipped": sum(
+                r["filtered"] and not r["relevant"] and r["filter_score"] < f_cut for r in rows
+            ),
             "filter_path_irrelevant": sum(r["filtered"] and not r["relevant"] for r in rows),
         },
         "routing": selected,
@@ -253,11 +286,15 @@ async def acquire(input_path, output_dir, *, settings=None, http=None):
         for event_id, last_at in sessions.items():
             if last_at >= row["at"] - window:
                 await repository.put("evt.events", event_id, {**events[event_id], "lifecycle": "OPEN"})
-                await repository.put("ops.agent_sessions", event_id,
-                                     {"session_id": event_id, "event_id": event_id, "last_item_at": iso(last_at)})
+                await repository.put(
+                    "ops.agent_sessions",
+                    event_id,
+                    {"session_id": event_id, "event_id": event_id, "last_item_at": iso(last_at)},
+                )
         selector = Pipeline(repository, settings, http=http)
         found = await selector._candidate_events(
-            selector.identities(row["source_item"]), iso(row["at"] - window), row["at"])
+            selector.identities(row["source_item"]), iso(row["at"] - window), row["at"]
+        )
         return [event["event_id"] for event in found]
 
     try:
@@ -271,9 +308,12 @@ async def acquire(input_path, output_dir, *, settings=None, http=None):
         async def score_row(row):
             item = row["source_item"]
             row["filter_score"] = await score(row, "relevant", Pipeline.state(item))
-            scores = await asyncio.gather(*(
-                score(row, "same_event", Pipeline.routing_state(item, events[event_id]))
-                for event_id in row["candidate_ids"]))
+            scores = await asyncio.gather(
+                *(
+                    score(row, "same_event", scorer.routing_state(item, events[event_id]))
+                    for event_id in row["candidate_ids"]
+                )
+            )
             row["candidates"] = [{"event_id": e, "score": s} for e, s in zip(row["candidate_ids"], scores)]
 
         tasks = [asyncio.create_task(score_row(row)) for row in rows]
@@ -290,12 +330,32 @@ async def acquire(input_path, output_dir, *, settings=None, http=None):
             await http.aclose()
     result = report(packet, rows, generation)
     output.mkdir(parents=True, exist_ok=True)
-    (output / "scored-items.json").write_text(json.dumps([
-        {k: (iso(v) if k == "at" else v) for k, v in row.items() if k not in {"source_item", "candidate_ids"}}
-        for row in rows], indent=1) + "\n")
+    (output / "scored-items.json").write_text(
+        json.dumps(
+            [
+                {
+                    k: (iso(v) if k == "at" else v)
+                    for k, v in row.items()
+                    if k not in {"source_item", "candidate_ids"}
+                }
+                for row in rows
+            ],
+            indent=1,
+        )
+        + "\n"
+    )
     (output / "calibration-report.json").write_text(json.dumps(result, indent=2) + "\n")
-    proposal = {"status": result["status"], "packet_sha256": generation["packet_sha256"],
-                **({"filter_cutoff": result["selected"]["filter_cutoff"],
-                    "routing_cutoff": result["selected"]["routing_cutoff"]} if result["status"] == "PASS" else {})}
+    proposal = {
+        "status": result["status"],
+        "packet_sha256": generation["packet_sha256"],
+        **(
+            {
+                "filter_cutoff": result["selected"]["filter_cutoff"],
+                "routing_cutoff": result["selected"]["routing_cutoff"],
+            }
+            if result["status"] == "PASS"
+            else {}
+        ),
+    }
     (output / "thresholds.proposed.yaml").write_text(yaml.safe_dump(proposal, sort_keys=False))
     return result
