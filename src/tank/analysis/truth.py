@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import pickle
 from array import array
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
@@ -660,6 +661,16 @@ def spot_truth(
     )
 
 
+def history_fingerprint(items):
+    """Exact in-process cache key for history rows (datetime/Decimal tuples).
+
+    fingerprint() serializes through iso()/jsonable/json and cost ~3 s per assessment on
+    90 days of prod history; pickling the same values is equality-preserving and C-fast.
+    Keys never leave the process.
+    """
+    return hashlib.blake2b(pickle.dumps(items, protocol=5), digest_size=32).hexdigest()
+
+
 def fingerprint(value):
     return hashlib.sha256(
         json.dumps(
@@ -681,10 +692,19 @@ def oi_temporally_admissible(row):
     raw = row.get("ts")
     if "ts_bucket_anchor" not in row and not (isinstance(raw, dict) and "bucket_anchor" in raw):
         return True
-    return (
+    # Each OI row is judged once per assessment, not once per window (5 windows x ~60k rows).
+    inputs = _ASSESSMENT_INPUTS.get()
+    memo = inputs.setdefault("oi_admissible", {}) if inputs is not None else None
+    identity = id(row)
+    if memo is not None and identity in memo:
+        return memo[identity][1]
+    value = (
         propagate_timestamp(row, "ts", precision_aliases=("timestamp_precision", "precision")).bucket_anchor
         != "UNSPECIFIED"
     )
+    if memo is not None:
+        memo[identity] = (row, value)
+    return value
 
 
 @precise
@@ -736,8 +756,8 @@ def _oi_stats(rows, start, end, *, history_identity=None):
             tuple(parameter("normal_range_quantiles", [0.025, 0.975])),
             (dependency, history_identity or tuple(sorted({r.get("instrument_id", "") for r in rows})))
             if dependency is not None
-            else fingerprint(
-                [(iso(t), r.get("oi_native"), r.get("oi_usd")) for t, r in sorted(bytime.items())]
+            else history_fingerprint(
+                [(t, r.get("oi_native"), r.get("oi_usd")) for t, r in sorted(bytime.items())]
             ),
         )
         if cache is not None
@@ -1280,8 +1300,8 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     cache = _BASELINE_CACHE.get()
     history_head = snapshot.get("relative_history_dependency_fingerprint")
     if history_head is None and cache is not None:
-        history_head = fingerprint(
-            [(iid, [(iso(t), v) for t, v in rows.items() if t < start]) for iid, rows in groups.items()]
+        history_head = history_fingerprint(
+            [(iid, [(t, v) for t, v in rows.items() if t < start]) for iid, rows in groups.items()]
         )
     elif history_head is not None and not isinstance(history_head, str):
         history_head = fingerprint(history_head)
@@ -4550,12 +4570,14 @@ def _compute_market_truth(snapshot, *, config=None):
     return jsonable(result)
 
 
-def compute_market_truth(snapshot, *, config=None):
+def compute_market_truth(snapshot, *, config=None, baseline_cache=None):
+    """baseline_cache: a dict the caller keeps per token across assessments. Its keys carry
+    exact history fingerprints (and config), so a reused entry is the same computation."""
     config = config or {}
     if config.get("market_context_rule", "normal_range") != "normal_range":
         raise ValueError("Only the approved §5.7 normal_range market context rule is supported")
     token = _PARAMETERS.set(config)
-    baselines = _BASELINE_CACHE.set({})
+    baselines = _BASELINE_CACHE.set(baseline_cache if baseline_cache is not None else {})
     dependency = _BASELINE_DEPENDENCY.set(None)
     inputs = _ASSESSMENT_INPUTS.set({})
     try:
@@ -5202,6 +5224,9 @@ class MarketTruthService:
         self.repo, self.settings, self.market = repo, settings, market
         self._condition_cache = {}
         self._condition_baselines = {}
+        # Per-token normal-range/baseline caches reused across assessments (exact keys).
+        self._assessment_baselines = {}
+        self._assessment_locks = {}
 
     async def condition_values(self, event_id, token_id, cutoff, requirements):
         event = await self.repo.get("evt.events", event_id) if event_id else None
@@ -5270,7 +5295,14 @@ class MarketTruthService:
         knobs = dict(
             knobs, config_version=self.settings.config_version, code_version=self.settings.code_version
         )
-        result = await asyncio.to_thread(compute_market_truth, snapshot, config=knobs)
+        lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
+        async with lock:  # one thread at a time per token cache
+            result = await asyncio.to_thread(
+                compute_market_truth,
+                snapshot,
+                config=knobs,
+                baseline_cache=self._assessment_baselines.setdefault(token_id, {}),
+            )
         result["mta_id"] = new_id("MTA")
         await self.repo.put("ana.market_truth", result["mta_id"], result, immutable=True)
         return result
