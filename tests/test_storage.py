@@ -361,6 +361,19 @@ async def test_decision_structured_condition_projection(repo):
         assert result["trade_reasons"] == ["DATA_LOW"]
 
 
+async def test_expired_source_escalations_follow_job_retention(repo):
+    expired, active = new_id("esc"), new_id("esc")
+    for key, expires in ((expired, utcnow() - timedelta(days=31)), (active, utcnow() + timedelta(hours=1))):
+        await repo.put(
+            "ops.source_escalations",
+            key,
+            {"escalation_id": key, "source_id": "S01", "status": "ACTIVE", "expires_at": iso(expires)},
+        )
+    await repo.prune_jobs(utcnow() - timedelta(days=30))
+    assert await repo.get("ops.source_escalations", expired) is None
+    assert (await repo.get("ops.source_escalations", active))["source_id"] == "S01"
+
+
 async def test_terminal_job_retention_keeps_dependencies_and_pending(repo):
     old = iso(utcnow() - timedelta(days=40))
     removable = await repo.enqueue("RETENTION_TEST", {}, new_id("idem"))

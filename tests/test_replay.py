@@ -1116,7 +1116,7 @@ def test_operator_cli_defaults_to_fresh_session_and_diagnostic_is_explicit(monke
 
     seen = []
 
-    async def fixture(repo, settings, identifier, *, mode):
+    async def fixture(repo, settings, identifier, *, mode="fresh-session"):
         seen.append(("fixture", identifier, mode))
 
     async def reproduce(repo, settings, identifier, *, mode):
@@ -1135,11 +1135,16 @@ def test_operator_cli_defaults_to_fresh_session_and_diagnostic_is_explicit(monke
     for args in (
         ["replay", "F-01"],
         ["bundle", "reproduce", "a" * 64],
-        ["replay", "F-01", "--mode", "captured-tools"],
     ):
         result = runner.invoke(cli.main, args + ["--database-url", "postgresql://replay/isolated"])
         assert result.exit_code == 0, result.output
-    assert [row[2] for row in seen] == ["fresh-session", "fresh-session", "captured-tools"]
+    assert [row[2] for row in seen] == ["fresh-session", "fresh-session"]
+    # Fixture replay has only the 03 §11.1 path (lead ruling 2026-10-20 17:20).
+    result = runner.invoke(
+        cli.main,
+        ["replay", "F-01", "--mode", "captured-tools", "--database-url", "postgresql://replay/isolated"],
+    )
+    assert result.exit_code == 2
 
 
 @pytest.mark.parametrize("timer_divergence", [False, True])

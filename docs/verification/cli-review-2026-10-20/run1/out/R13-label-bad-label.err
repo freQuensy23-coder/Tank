@@ -1,0 +1,5 @@
+Usage: python -m tank.cli review label [OPTIONS] SUBJECT {CATCH|LATE|FALSE_ALA
+                                       RM|NOISE|CORRECT_SILENCE|MISS}
+Try 'python -m tank.cli review label --help' for help.
+
+Error: Invalid value for '{CATCH|LATE|FALSE_ALARM|NOISE|CORRECT_SILENCE|MISS}': 'GOOD' is not one of 'CATCH', 'LATE', 'FALSE_ALARM', 'NOISE', 'CORRECT_SILENCE', 'MISS'.

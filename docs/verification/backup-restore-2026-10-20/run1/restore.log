@@ -1,0 +1,20 @@
+2026-10-20T17:03:11Z start backup=/var/backups/tank/tank-2026-10-20
+/var/run/postgresql:5432 - accepting connections
+CREATE ROLE
+CREATE ROLE
+CREATE ROLE
+CREATE ROLE
+CREATE DATABASE
+CREATE DATABASE
+2026-10-20T17:03:14Z verify backup manifest hashes
+{"files": 14, "mismatched": []}
+2026-10-20T17:03:15Z restore oma (full)
+2026-10-20T17:03:17Z restore tank (all but klines_1m/oi_obs daily partition data)
+   7127 /tmp/full.list
+   6961 /tmp/restore.list
+  14088 total
+2026-10-20T17:03:49Z restored; sizes
+tank|982465559
+oma|22289431
+{"tables":393,"match":393,"mismatch":0,"prod_rows":4920781}
+2026-10-20T17:07:22Z done

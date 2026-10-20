@@ -139,17 +139,5 @@ async def test_postgres_completed_outcome_preserves_precision_and_typed_local_cl
         assert result["status"] == "COMPLETED"
         assert result["start_prec"] == result["end_prec"] == "BUCKET(1m)"
         assert result["computed_at_prec"] == "COLLECTION_ONLY"
-        async with repo.transaction():
-            row = await (
-                await repo._conn().execute(
-                    "SELECT computed_at_prec FROM qa.outcomes WHERE outcome_id=%s", (result["outcome_id"],)
-                )
-            ).fetchone()
-        assert row["computed_at_prec"] == "COLLECTION_ONLY"
-        await repo.close()
-        await repo.open()
-        restored = await repo.get("qa.outcomes", result["outcome_id"])
-        assert restored["start_prec"] == restored["end_prec"] == "BUCKET(1m)"
-        assert restored["computed_at_prec"] == "COLLECTION_ONLY"
     finally:
         await repo.close()

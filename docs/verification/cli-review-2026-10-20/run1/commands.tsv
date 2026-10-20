@@ -1,0 +1,37 @@
+id	expect	exit	command
+R01-list-period	ok	0	tank review list --since 2026-10-18T00:00:00Z --until 2026-10-21T00:00:00Z
+R02-list-event	ok	0	tank review list --event-id EVT-01M5D5FWWET2R21F7J4N30JGC1
+R03-list-page1	ok	0	tank review list --since 2026-10-18T00:00:00Z --until 2026-10-21T00:00:00Z --limit 1
+R03b-list-page2	ok	0	tank review list --since 2026-10-18T00:00:00Z --until 2026-10-21T00:00:00Z --limit 1 --after ["2026-10-18T17:24:00Z", "ALR-01M5D5G0QWMZCEEEYK6E95965P:1"]
+R03c-list-bad-cursor	fail	2	tank review list --since 2026-10-18T00:00:00Z --until 2026-10-21T00:00:00Z --after cursor
+R04-show-card	ok	0	tank review show ALR-01M5D5G0QWMZCEEEYK6E95965P
+R05-show-event	ok	0	tank review show EVT-01M5D5FWWET2R21F7J4N30JGC1
+R06-label-catch-v1	ok	0	tank review label ALR-01M5D5G0QWMZCEEEYK6E95965P CATCH --version 1 --reviewer tank-ops --notes first card
+R07-label-late-v2	ok	0	tank review label ALR-01M5D5G0QWMZCEEEYK6E95965P LATE --version 2 --reviewer tank-ops
+R08-label-false-alarm	ok	0	tank review label ALR-01M5D5G0QWMZCEEEYK6E95965P FALSE_ALARM --version 2 --reviewer tank-ops
+R09-label-noise	ok	0	tank review label ALR-01M5D5G0QWMZCEEEYK6E95965P NOISE --version 1 --reviewer tank-ops
+R10-label-correct-silence	ok	0	tank review label EVT-01M5D5FWWET2R21F7J4N30JGC1 CORRECT_SILENCE --reviewer tank-ops
+R11-label-miss	ok	0	tank review label EVT-01M5D5FWWET2R21F7J4N30JGC1 MISS --miss-reason SOURCE_NOT_COVERED --reviewer tank-ops --notes weekly miss audit
+R12-label-miss-no-reason	fail	2	tank review label EVT-01M5D5FWWET2R21F7J4N30JGC1 MISS --reviewer tank-ops
+R13-label-bad-label	fail	2	tank review label ALR-01M5D5G0QWMZCEEEYK6E95965P GOOD --reviewer tank-ops
+R14-label-unknown-subject	fail	1	tank review label EVT-UNKNOWN NOISE --reviewer tank-ops
+R15-label-bad-version	fail	1	tank review label ALR-01M5D5G0QWMZCEEEYK6E95965P CATCH --version 9 --reviewer tank-ops
+R16-show-after-labels	ok	0	tank review show ALR-01M5D5G0QWMZCEEEYK6E95965P
+R17-weekly-metrics	ok	0	tank review metrics --since 2026-10-14T00:00:00Z --until 2026-10-21T00:00:00Z
+R18-reaction	ok	0	tank reaction EVT-01M5D5FWWET2R21F7J4N30JGC1
+R19-scout-list	ok	0	tank scout list
+R20-scout-decide-unknown	fail	1	tank scout decide PRP-UNKNOWN REJECT
+O01-db-migrate	ok	0	tank db migrate
+O02-sources-check	ok	0	tank sources check
+O03-coverage	ok	0	tank coverage
+O04-replay-same-db-refused	fail	1	tank replay F-01 --database-url <test-db>
+O05-replay-isolated-no-packet	fail	1	tank replay F-01 --database-url <replay-db> --mode captured-tools
+O06-bundle-reproduce-no-packet	fail	1	tank bundle reproduce d16b73c2b707ee199e377ba89ae7b8250a10afc9629c73c5ba2018498c5258fe --database-url <replay-db> --mode captured-tools
+O07-bundle-reproduce-bad-sha	fail	1	tank bundle reproduce not-a-sha --database-url <replay-db>
+O08-doctor	fail	1	tank doctor
+O09-backup-no-dir	fail	1	tank backup
+P01-prod-review-list	ok	0	tank review list --since 2026-10-01T00:00:00Z --until 2026-10-21T00:00:00Z
+P02-prod-metrics	ok	0	tank review metrics --since 2026-10-14T00:00:00Z --until 2026-10-21T00:00:00Z
+P03-prod-scout-list	ok	0	tank scout list
+P04-prod-sources-check	ok	0	tank sources check
+P05-prod-coverage	ok	0	tank coverage

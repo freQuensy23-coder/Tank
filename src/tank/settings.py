@@ -2,12 +2,13 @@ import base64
 import hashlib
 import io
 import json
+import logging
 import os
 import subprocess
 import tempfile
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any
 
 import yaml
 from pydantic import AliasChoices, Field, PrivateAttr
@@ -15,6 +16,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _PROCESS_CODE_VERSION: str | None = None
 _CONFIG_SUFFIXES = {".yaml", ".yml", ".json", ".md"}
+# TDD §13, HLD §3: installation values kept in the versioned configuration
+# (sources.yaml contact e-mail, delivery.yaml chat IDs), never in the environment.
+CONFIG_OWNED_FIELDS = ("user_agent", "telegram_alerts_chat", "telegram_ops_chat")
 
 
 def _capture_tree(root: Path, suffixes: set[str]) -> dict[str, bytes]:
@@ -132,11 +136,12 @@ class Settings(BaseSettings):
     codex_gateway_port: int = 8790
     codex_gateway_key: str | None = None
     codex_auth_path: Path = Field(default_factory=_default_codex_auth_path)
-    jev_provider: Literal["openrouter"] = "openrouter"
-    openrouter_api_key: str | None = Field(
+    # Jev through OpenCode System One (lead ruling 2026-10-20 17:55): jev-1.13 with this
+    # key, jev-1.13-free without it. Docker secret `opencode_api_key`.
+    opencode_api_key: str | None = Field(
         default=None,
         repr=False,
-        validation_alias=AliasChoices("TANK_OPENROUTER_API_KEY", "OPENROUTER_API_KEY", "openrouter_api_key"),
+        validation_alias=AliasChoices("TANK_OPENCODE_API_KEY", "OPENCODE_API_KEY", "opencode_api_key"),
     )
     telegram_token: str | None = None
     telegram_alerts_chat: str | None = None
@@ -174,7 +179,7 @@ class Settings(BaseSettings):
             )
             aliases = {
                 "openma_api_key": "oma_api_key",
-                "openrouter_api_key": "openrouter_api_key",
+                "opencode_api_key": "opencode_api_key",
                 "telegram_token": "telegram_bot_token",
                 "etherscan_api_key": "etherscan_api_key",
                 "codex_gateway_key": "codex_gateway_key",
@@ -191,7 +196,29 @@ class Settings(BaseSettings):
                 values["x_storage_state_path"] = root / "x_session"
             return values
 
-        return init_settings, env_settings, dotenv_settings, docker_secrets, file_secret_settings
+        def without_config_owned(source):
+            def read():
+                values = source()
+                present = sorted(name for name in CONFIG_OWNED_FIELDS if values.get(name))
+                if present:
+                    # The configuration is the only source (TDD §13); environment values
+                    # are ignored, never used, and named so the operator removes them.
+                    logging.getLogger("tank.settings").warning(
+                        "Ignoring %s from the environment: set sources.yaml contact_email and "
+                        "delivery.yaml chat IDs instead",
+                        ", ".join("TANK_" + name.upper() for name in present),
+                    )
+                return {k: v for k, v in values.items() if k not in CONFIG_OWNED_FIELDS}
+
+            return read
+
+        return (
+            init_settings,
+            without_config_owned(env_settings),
+            without_config_owned(dotenv_settings),
+            docker_secrets,
+            file_secret_settings,
+        )
 
     @staticmethod
     def _config_name(relative: str) -> str:
@@ -227,6 +254,21 @@ class Settings(BaseSettings):
         if not isinstance(value, dict):
             raise ValueError(f"Configuration must be a mapping: {relative}")
         return value
+
+
+def configured_values(settings: Settings) -> dict[str, str]:
+    """User-Agent and Telegram chats from the configuration (TDD §13, HLD §3)."""
+    values = {}
+    if settings.has_config("delivery.yaml"):
+        delivery = settings.load_config("delivery")
+        for field, key in (("telegram_alerts_chat", "alerts_chat_id"), ("telegram_ops_chat", "ops_chat_id")):
+            if delivery.get(key) is not None:
+                values[field] = str(delivery[key])
+    if settings.has_config("sources.yaml"):
+        contact = settings.load_config("sources").get("contact_email")
+        if contact:
+            values["user_agent"] = f"TankV0/1.0 ({contact})"
+    return values
 
 
 def resolve_versions(settings: Settings) -> Settings:
@@ -265,16 +307,13 @@ def resolve_versions(settings: Settings) -> Settings:
         _PROCESS_CODE_VERSION = _digest(_capture_tree(Path(__file__).parent, {".py", ".sql", ".json"}))
     resolved = settings.model_copy(update={"config_version": version, "code_version": _PROCESS_CODE_VERSION})
     resolved._config_snapshot = MappingProxyType(captured)
-    deployment_values = {}
-    if resolved.has_config("delivery.yaml"):
-        delivery = resolved.load_config("delivery")
-        for field, key in (("telegram_alerts_chat", "alerts_chat_id"), ("telegram_ops_chat", "ops_chat_id")):
-            if not getattr(resolved, field) and delivery.get(key) is not None:
-                deployment_values[field] = str(delivery[key])
-    if resolved.has_config("sources.yaml") and "operator contact not configured" in resolved.user_agent:
-        source_agent = resolved.load_config("sources").get("user_agent")
-        if source_agent:
-            deployment_values["user_agent"] = source_agent
+    # Explicit constructor values (tests, replay) keep precedence; the environment
+    # cannot set these fields.
+    deployment_values = {
+        field: value
+        for field, value in configured_values(resolved).items()
+        if field not in settings.model_fields_set or getattr(settings, field) is None
+    }
     if deployment_values:
         resolved = resolved.model_copy(update=deployment_values)
     # Persist exact inputs for recovery/replay. Environment credentials never enter

@@ -1,0 +1,4 @@
+Usage: python -m tank.cli archive fetch [OPTIONS] SYMBOL [%Y-%m-%d]
+Try 'python -m tank.cli archive fetch --help' for help.
+
+Error: Invalid value for '[%Y-%m-%d]': '2026-13-01' does not match the format '%Y-%m-%d'.
