@@ -1,17 +1,29 @@
 """Explicit first fixture reconstruction, never a historical live-run claim."""
 
 import base64
+import gzip
 import json
 import re
 from datetime import UTC, date, datetime, timedelta
 from importlib.resources import files
 from pathlib import Path
 
-from tank.sources.legacy import retained_source_payload
+import zstandard
+
 from tank.time_precision import Timestamp, interval_bounds, propagate_timestamp
 from tank.util import canonical_json, parse_time, sha256
 
 MODE = "FIXTURE_REFERENCE_RECONSTRUCTION"
+
+
+def retained_source_payload(raw_ref):
+    """Read retained transport bytes exactly; frozen fixture evidence predates the zstd-only raw store."""
+    data = Path(raw_ref).read_bytes()
+    if data.startswith(b"\x28\xb5\x2f\xfd"):
+        return zstandard.ZstdDecompressor().decompress(data)
+    if data.startswith(b"\x1f\x8b"):
+        return gzip.decompress(data)
+    return data
 
 
 def validate(packet, market_record, *, private_mask_path=None, input_path=None):
