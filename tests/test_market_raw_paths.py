@@ -2,6 +2,7 @@
 
 # ruff: noqa: F811
 import asyncio
+from decimal import Decimal
 import json
 import time
 from datetime import timedelta
@@ -272,3 +273,25 @@ def test_checksum_books_verify_once_per_second_or_when_a_summary_is_due(monkeypa
     assert calls == [1, 2] and not book.verified  # within 1 s: not summarized from this state
     book.update([["1", "4"]], [], sequence=3, ts=iso(HOUR), checksum=4, verify=True)
     assert calls == [1, 2, 4] and book.verified  # a due summary forces verification
+
+
+def test_book_price_index_stays_in_step_with_levels_and_kraken_depth():
+    import random
+
+    from tank.market.books import OrderBook
+
+    rng = random.Random(7)
+    book = OrderBook(dict(SPOT, instrument_id="kraken:spot:ABC/USD", venue="kraken", venue_symbol="ABC/USD"))
+    bids = [[f"{99 - i * 0.01:.2f}", "1"] for i in range(1200)]
+    asks = [[f"{101 + i * 0.01:.2f}", "1"] for i in range(10)]
+    book.snapshot(bids, asks, sequence=0, ts=iso(HOUR))
+    for n in range(500):
+        price = f"{rng.uniform(80, 99.99):.2f}" if n % 2 else f"{rng.uniform(101, 110):.2f}"
+        side = [[price, rng.choice(["0", "2"])]]
+        book.update(side if n % 2 else [], [] if n % 2 else side, sequence=n + 1, ts=iso(HOUR))
+        assert book._prices["bid"] == sorted(book.bids) and book._prices["ask"] == sorted(book.asks)
+        assert len(book.bids) <= 1000 and len(book.asks) <= 1000  # Kraken depth is trimmed
+    summary = book.summary()
+    assert summary["best_bid"] == str(max(book.bids)) and summary["best_ask"] == str(min(book.asks))
+    edge = Decimal(summary["mid"]) * Decimal(".98")
+    assert [row[0] for row in summary["bids"]] == [str(p) for p in sorted(book.bids, reverse=True) if p >= edge]

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import heapq
 import time
 import zlib
+from bisect import bisect_left, bisect_right, insort
 from decimal import Decimal
 
 from tank.time_precision import collection_clock
@@ -35,13 +35,18 @@ class OrderBook:
             else "DOCUMENTED_LEVEL2_DELIVERY"
         )
         self._strings = {"bid": {}, "ask": {}}
+        # Ascending prices per side, kept in step with bids/asks: best levels, the top
+        # levels of a checksum, depth trimming and the 2% window are slices, not sorts.
+        self._prices = {"bid": [], "ask": []}
 
     def _levels(self, side, levels, *, snapshot=False):
         book = self.bids if side == "bid" else self.asks
         strings = self._strings[side]
+        prices = self._prices[side]
         if snapshot:
             book.clear()
             strings.clear()
+            prices.clear()
         for level in levels:
             if isinstance(level, dict):
                 p, q = (
@@ -54,11 +59,16 @@ class OrderBook:
             if price <= 0 or size < 0:
                 raise SemanticError("invalid book level")
             if not size:
-                book.pop(price, None)
+                if book.pop(price, None) is not None:
+                    del prices[bisect_left(prices, price)]
                 strings.pop(price, None)
             else:
+                if price not in book and not snapshot:
+                    insort(prices, price)
                 book[price] = size
                 strings[price] = (p, q)
+        if snapshot:
+            prices[:] = sorted(book)
 
     def snapshot(self, bids, asks, *, sequence=None, ts=None, checksum=None, ts_prec="EXACT"):
         self._levels("bid", bids, snapshot=True)
@@ -130,10 +140,15 @@ class OrderBook:
                 if excess <= 0:
                     continue
                 # Drop the levels farthest from mid (usually one or two per update).
-                far = heapq.nsmallest(excess, book) if side == "bid" else heapq.nlargest(excess, book)
+                prices = self._prices[side]
+                far = prices[:excess] if side == "bid" else prices[-excess:]
                 for price in far:
                     book.pop(price)
                     self._strings[side].pop(price)
+                if side == "bid":
+                    del prices[:excess]
+                else:
+                    del prices[-excess:]
         if checksum is not None:
             if venue_key(self.instrument).startswith("okx") and int(checksum) == 0:
                 self.integrity_method = "SEQ_ID_PREV_SEQ_ID_CHECKSUM_DEPRECATED_20260623"
@@ -150,8 +165,8 @@ class OrderBook:
 
     def verify(self, expected):
         key = venue_key(self.instrument)
-        bids = heapq.nlargest(25, self.bids)  # checksums cover the top 25 (OKX) / 10 (Kraken)
-        asks = heapq.nsmallest(25, self.asks)
+        bids = self._prices["bid"][-25:][::-1]  # checksums cover the top 25 (OKX) / 10 (Kraken)
+        asks = self._prices["ask"][:25]
         if key.startswith("okx"):
             parts = []
             for i in range(25):
@@ -180,7 +195,7 @@ class OrderBook:
     def summary(self, *, received_ts=None):
         if not self.bids or not self.asks:
             raise SemanticError("empty order book")
-        bid, ask = max(self.bids), min(self.asks)
+        bid, ask = self._prices["bid"][-1], self._prices["ask"][0]
         if ask <= bid:
             self.integrity_ok = False
             self.gap_reason = "CROSSED_BOOK"
@@ -205,17 +220,16 @@ class OrderBook:
         levels = {}
         bands = (("p0_5", Decimal(".5")), ("p1", Decimal(1)), ("p2", Decimal(2)))
         for side, book in (("bid", self.bids), ("ask", self.asks)):
-            far = min(book) if side == "bid" else max(book)
+            prices = self._prices[side]
+            far = prices[0] if side == "bid" else prices[-1]
             covered = abs(far / mid - 1) * 100
             ranges[side] = covered
             # Only levels within 2% of mid are sorted (a full book can hold tens of
             # thousands of levels); |p/mid - 1| <= x  <=>  p on the right side of mid(1 ∓ x).
             if side == "bid":
-                edge = mid * (1 - Decimal(".02"))
-                near = sorted((p for p in book if p >= edge), reverse=True)
+                near = prices[bisect_left(prices, mid * (1 - Decimal(".02"))) :][::-1]
             else:
-                edge = mid * (1 + Decimal(".02"))
-                near = sorted(p for p in book if p <= edge)
+                near = prices[: bisect_right(prices, mid * (1 + Decimal(".02")))]
             levels[side] = [(p, book[p] * multiplier) for p in near]
             depth[side] = {}
             for name, pct in bands:
