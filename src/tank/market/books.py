@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import heapq
+import time
 import zlib
 from decimal import Decimal
 
@@ -22,6 +23,10 @@ class OrderBook:
         self.gap_reason = "NO_SNAPSHOT"
         self.exchange_ts = None
         self.exchange_ts_prec = None
+        # Whether the venue checksum was verified on the current book state. Updates
+        # are verified at most once per VERIFY_S unless asked (a summary is due).
+        self.verified = True
+        self._next_verify = 0.0
         self.integrity_method = (
             "SEQUENCE"
             if venue_key(instrument).startswith(("binance", "okx"))
@@ -86,7 +91,11 @@ class OrderBook:
             else:
                 self.verify(checksum)
 
-    def update(self, bids, asks, *, sequence=None, previous=None, first=None, ts=None, checksum=None):
+    VERIFY_S = 1.0
+
+    def update(
+        self, bids, asks, *, sequence=None, previous=None, first=None, ts=None, checksum=None, verify=False
+    ):
         if self.sequence is None or not self.integrity_ok:
             raise SemanticError("book requires fresh snapshot")
         key = venue_key(self.instrument)
@@ -128,8 +137,15 @@ class OrderBook:
         if checksum is not None:
             if venue_key(self.instrument).startswith("okx") and int(checksum) == 0:
                 self.integrity_method = "SEQ_ID_PREV_SEQ_ID_CHECKSUM_DEPRECATED_20260623"
-            else:
+                self.verified = True
+            elif verify or time.monotonic() >= self._next_verify:
                 self.verify(checksum)
+                self.verified = True
+                self._next_verify = time.monotonic() + self.VERIFY_S
+            else:
+                # A wrong state persists, so the next verification still catches it;
+                # nothing is summarized from an unverified state.
+                self.verified = False
         return True
 
     def verify(self, expected):

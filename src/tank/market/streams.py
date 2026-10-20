@@ -164,6 +164,7 @@ async def process_frame(self, instrument, raw):
                         previous=item["prevSeqId"],
                         ts=item["ts"],
                         checksum=item.get("checksum"),
+                        verify=self.summary_due(iid),
                     )
                 await self._save_book(instrument)
             elif channel == "open-interest":
@@ -264,6 +265,7 @@ async def process_frame(self, instrument, raw):
                         sequence=int(book.sequence) + 1,
                         ts=item["timestamp"],
                         checksum=item.get("checksum"),
+                        verify=self.summary_due(iid),
                     )
                 # Kraken depth is maintained at subscribed depth before checksum.
                 await self._save_book(instrument)
@@ -322,9 +324,11 @@ def record_stream_watermark(self, instrument, raw):
         if raw.get("time"):
             stamps.append(raw["time"])
     elif key.startswith("kraken"):
-        stamps.extend(
-            r["timestamp"] for r in data if isinstance(r, dict) and r.get("timestamp")
-        ) if isinstance(data, list) else None
+        # One ISO format per feed: the latest string is the latest time (parse it once).
+        if isinstance(data, list):
+            latest = max((r["timestamp"] for r in data if isinstance(r, dict) and r.get("timestamp")), default=None)
+            if latest:
+                stamps.append(latest)
     elif isinstance(data, dict):
         if data.get("time") is not None:
             stamps.append(data["time"])

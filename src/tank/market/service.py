@@ -1105,8 +1105,13 @@ class MarketService:
             rows.setdefault(str(row["trade_id"]), row)
         return sorted(rows.values(), key=lambda r: (r["ts"], str(r["trade_id"])))
 
+    def summary_due(self, instrument_id):
+        return self._book_due.get(instrument_id, 0) <= time.time()
+
     async def _save_book(self, instrument):
         iid = instrument["instrument_id"]
+        if not self.books[iid].verified:
+            return  # summarize only a checksum-verified state (the next one is <= 1 s away)
         # 10 s summaries on a fixed wall-clock grid (:00, :10, ...), from the first
         # update at or after each grid point, so a cutoff finds one at most 10 s old.
         now = time.time()

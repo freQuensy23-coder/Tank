@@ -256,3 +256,19 @@ async def test_repeated_rest_histories_are_processed_once_and_stream_context_onc
         assert service._fresh("i", "settled", newer, lambda r: r["fundingTime"])[1] == []
         assert service.context_due("i", "mark") and not service.context_due("i", "mark")
         assert service.context_due("i", "funding")  # each context kind has its own cadence
+
+
+def test_checksum_books_verify_once_per_second_or_when_a_summary_is_due(monkeypatch):
+    from tank.market.books import OrderBook
+
+    book = OrderBook(dict(SPOT, instrument_id="kraken:spot:ABC/USD", venue="kraken", venue_symbol="ABC/USD"))
+    calls = []
+    monkeypatch.setattr(book, "verify", lambda expected: calls.append(expected) or True)
+    book.snapshot([["1", "1"]], [["2", "1"]], sequence=0, ts=iso(HOUR), checksum=1)
+    assert calls == [1] and book.verified
+    book.update([["1", "2"]], [], sequence=1, ts=iso(HOUR), checksum=2)
+    assert calls == [1, 2] and book.verified  # first update after the snapshot interval
+    book.update([["1", "3"]], [], sequence=2, ts=iso(HOUR), checksum=3)
+    assert calls == [1, 2] and not book.verified  # within 1 s: not summarized from this state
+    book.update([["1", "4"]], [], sequence=3, ts=iso(HOUR), checksum=4, verify=True)
+    assert calls == [1, 2, 4] and book.verified  # a due summary forces verification
