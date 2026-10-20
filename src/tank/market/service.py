@@ -61,7 +61,6 @@ class MarketService:
         self.settings = settings
         self.http = http or httpx.AsyncClient(timeout=30, headers={"User-Agent": settings.user_agent})
         self._owns_http = http is None
-        self.capture_only = getattr(settings, "capture_only", False)
         registry = settings.load_config("registry")
         self.tokens = {r["token_id"]: r for r in registry["tokens"]}
         self.sector_baskets = deepcopy(registry.get("sector_baskets", []))
@@ -137,7 +136,7 @@ class MarketService:
                 "etherscan_api_key",
                 "tavily_api_key",
                 "typesafe_api_key",
-                "openrouter_api_key",
+                "opencode_api_key",
                 "openma_api_key",
                 "codex_gateway_key",
                 "telegram_token",
@@ -565,21 +564,7 @@ class MarketService:
                 if weight and int(weight) >= (2400 if host == "fapi.binance.com" else 6000):
                     self._last_request[host] = time.monotonic() + 60
                 # JSON floats must never enter native quantity or monetary arithmetic.
-                body = json.loads(response.content, parse_float=Decimal)
-                if host == "api.hyperliquid.xyz" and kwargs.get("json", {}).get("type") == "recentTrades":
-                    if not isinstance(body, list):
-                        raise norm.SemanticError("Hyperliquid recentTrades response is not a list")
-                    # No documented maximum response count: serialize requests and
-                    # debit actual surcharge before this provider slot is released.
-                    # This cannot promise a mathematical precharge size bound.
-                    from tank.sources.rate_limits import shared_request_budgets
-
-                    extra = (len(body) + 19) // 20
-                    while extra:
-                        charge = min(extra, 600)
-                        await shared_request_budgets.acquire("hyperliquid", 600, 60, weight=charge)
-                        extra -= charge
-                return body
+                return json.loads(response.content, parse_float=Decimal)
         raise RuntimeError(f"{host}: rate limited after bounded retries")
 
     def adapter(self, instrument, *, priority=0):
@@ -598,16 +583,19 @@ class MarketService:
             instrument.update(
                 quote_usd_rate=cached["rate"],
                 quote_usd_rate_as_of=cached["ts"],
-                quote_usd_rate_as_of_prec="EXACT",
+                quote_usd_rate_as_of_prec="COLLECTION_ONLY",
             )
             return
         if quote not in ("USDT", "USDC"):
             return
-        body = await self._request("GET", f"https://api.exchange.coinbase.com/products/{quote}-USD/ticker")
-        rate = str(norm.decimal(body["price"]))
-        ts = iso(body["time"])
+        # The listed Coinbase 24h stats (02 §4.3) carry the last price but no clock.
+        body = await self._request("GET", f"https://api.exchange.coinbase.com/products/{quote}-USD/stats")
+        rate = str(norm.decimal(body["last"]))
+        ts = iso()
         self._fx[quote] = {"rate": rate, "ts": ts}
-        instrument.update(quote_usd_rate=rate, quote_usd_rate_as_of=ts, quote_usd_rate_as_of_prec="EXACT")
+        instrument.update(
+            quote_usd_rate=rate, quote_usd_rate_as_of=ts, quote_usd_rate_as_of_prec="COLLECTION_ONLY"
+        )
 
     async def discover(self, instrument):
         iid = instrument["instrument_id"]
@@ -682,7 +670,7 @@ class MarketService:
                         await self._put(
                             "mkt.oi_obs", instrument_id + ":" + row["metric_key"] + ":" + row["ts"], row
                         )
-                    if current:
+                    if current and mark is not None:
                         from .streams import save_mark
 
                         await save_mark(
@@ -698,6 +686,7 @@ class MarketService:
                             if current.get("index_time")
                             else "COLLECTION_TIME",
                         )
+                    if current:
                         await self._funding(instrument, current, "CURRENT_ESTIMATE", interval)
                     predecessor, settled = self._fresh(
                         instrument_id,
@@ -1113,9 +1102,13 @@ class MarketService:
             self.book_archive.add(iid, "BOOK_SNAPSHOT", pending_snapshot, pending_snapshot["received_ts"])
             self.books[iid].pending_snapshot = None
         key = iid + ":" + row["exchange_ts"]
-        row.update(second_path_confirmed=False, second_path_reason="REST_CONFIRMATION_PENDING")
+        listed = norm.venue_key(instrument) in ("binance.spot", "coinbase.spot")
+        row.update(
+            second_path_confirmed=False,
+            second_path_reason="REST_CONFIRMATION_PENDING" if listed else "NO_LISTED_SECOND_PATH",
+        )
         await self._put("mkt.book_summaries", key, row)
-        if not row["integrity_ok"]:
+        if not row["integrity_ok"] or not listed:
             return
         previous = self._book_confirmations.get(iid)
         if previous is not None and not previous.done():
@@ -1650,8 +1643,6 @@ class MarketService:
         return result
 
     async def escalate(self, event_id, tokens):
-        if self.capture_only:
-            raise RuntimeError("Token escalation is disabled in capture-only phase")
         async with self.repo.lock("market-hot-set"), self.repo.transaction():
             now = iso()
             event = await self.repo.get("evt.events", event_id) or {}
@@ -2148,10 +2139,10 @@ class MarketService:
         )
 
     async def _sync_streams(self):
-        if not self.capture_only and time.monotonic() - self._last_hot_expiry_refresh >= 60:
+        if time.monotonic() - self._last_hot_expiry_refresh >= 60:
             await self.refresh_hot_expiry()
             self._last_hot_expiry_refresh = time.monotonic()
-        rows = [] if self.capture_only else await self.repo.list("mkt.hot_tokens", limit=10000)
+        rows = await self.repo.list("mkt.hot_tokens", limit=10000)
         hot = {r["token_id"] for r in rows}
         self._hot_since = {}
         for r in rows:
@@ -2182,42 +2173,21 @@ class MarketService:
 
     @norm.precise
     async def _independent_book(self, instrument, stream):
+        """Second path (03 §5.9): only the listed REST book snapshots (02 §4.1, §4.3)."""
         key = norm.venue_key(instrument)
         s = instrument["venue_symbol"]
-        adapter = self.adapter(instrument, priority=2)
-        if key.startswith("binance"):
+        if key == "binance.spot":
             raw = await self._request(
-                "GET",
-                (
-                    "https://api.binance.com/api/v3/ticker/bookTicker"
-                    if key.endswith("spot")
-                    else "https://fapi.binance.com/fapi/v1/ticker/bookTicker"
-                ),
-                params={"symbol": s},
-                _priority=2,
+                "GET", "https://api.binance.com/api/v3/depth", params={"symbol": s, "limit": 5}, _priority=2
             )
-            bid, ask = raw["bidPrice"], raw["askPrice"]
-            ts = raw.get("time", iso())
-        elif key.startswith("okx"):
-            raw = await adapter.ticker()
-            bid, ask = raw["bidPx"], raw["askPx"]
-            ts = raw["ts"]
-        elif key.startswith("bybit"):
-            raw = await adapter.ticker()
-            bid, ask = raw["bid1Price"], raw["ask1Price"]
-            ts = iso()
-        elif key.startswith("coinbase"):
-            raw = await self._request("GET", "https://api.exchange.coinbase.com/products/" + s + "/ticker")
-            bid, ask = raw["bid"], raw["ask"]
-            ts = iso()
-        elif key.startswith("kraken"):
-            raw = await adapter.ticker()
-            bid, ask = raw["b"][0], raw["a"][0]
-            ts = iso()
+        elif key == "coinbase.spot":
+            raw = await self._request(
+                "GET", "https://api.exchange.coinbase.com/products/" + s + "/book", params={"level": 2}, _priority=2
+            )
         else:
-            raw = await adapter.info({"type": "l2Book", "coin": s})
-            bid, ask = raw["levels"][0][0]["px"], raw["levels"][1][0]["px"]
-            ts = raw["time"]
+            return {"second_path_confirmed": False, "second_path_reason": "NO_LISTED_SECOND_PATH"}
+        bid, ask = raw["bids"][0][0], raw["asks"][0][0]
+        ts = iso()  # neither listed snapshot carries a clock
         await self._raw(instrument, "independent_rest_book", raw)
         bid, ask = norm.decimal(bid), norm.decimal(ask)
         if bid <= 0 or ask <= bid:
@@ -2237,11 +2207,7 @@ class MarketService:
                     "mid": mid,
                     "spread_bps": spread,
                     "ts": iso(ts),
-                    "ts_prec": "EXACT"
-                    if key.startswith(("okx", "hyperliquid"))
-                    or key.startswith("binance")
-                    and raw.get("time") is not None
-                    else "COLLECTION_ONLY",
+                    "ts_prec": "COLLECTION_ONLY",
                     "received_ts": iso(),
                     "received_ts_prec": "COLLECTION_ONLY",
                     "source": "PUBLIC_REST",
@@ -4007,11 +3973,7 @@ class MarketService:
         previous_hot = False
         while not self._stop.is_set():
             started = time.monotonic()
-            hot = not self.capture_only and bool(
-                await self.repo.list(
-                    "mkt.hot_tokens", filters={"token_id": instrument["token_id"]}, limit=100
-                )
-            )
+            hot = instrument["token_id"] in self._hot_since  # hot set, refreshed by _sync_streams
             if hot and not previous_hot:
                 deriv_due = min(deriv_due, started)
             previous_hot = hot
@@ -4040,7 +4002,17 @@ class MarketService:
                 )
 
     async def bootstrap_history(self, *, days=90):
-        """Durable background bootstrap, newest days first; failures remain visible gaps."""
+        """Daily: import missing verified archive days, newest first; failures remain visible
+        gaps and are fetched again on the next pass (the filesystem and the imported rows
+        are the only state)."""
+        while self._stop is None or not self._stop.is_set():
+            await self._bootstrap_pass(days)
+            if self._stop is None:
+                return
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), 86400)
+
+    async def _bootstrap_pass(self, days):
         from .archive import fetch_archive
 
         instruments = [i for i in self.instruments.values() if norm.venue_key(i).startswith("binance")]
@@ -4079,56 +4051,13 @@ class MarketService:
 
         capture = SupplyCapture(self)
         while not self._stop.is_set():
-            hot = (
-                set()
-                if self.capture_only
-                else {r["token_id"] for r in await self.repo.list("mkt.hot_tokens", limit=10000)}
-            )
+            hot = set(self._hot_since)
             try:
                 await capture.poll(hot)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
                 log.warning("supply capture failed: %s", type(exc).__name__)
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._stop.wait(), 60)
-
-    async def _archive_maintenance(self):
-        from .archive import fetch_archive
-
-        while not self._stop.is_set():
-            latest_retries = {}
-            for record in await self.repo.list(
-                "qa.reviews", filters={"subject": "ARCHIVE_RETRY"}, limit=100000
-            ):
-                group = sha256(record.get("args", {}))
-                if group not in latest_retries or record["at"] > latest_retries[group]["at"]:
-                    latest_retries[group] = record
-            for retry in latest_retries.values():
-                if retry.get("label") != "PENDING":
-                    continue
-                if parse_time(retry["retry_at"]) > utcnow():
-                    continue
-                try:
-                    await fetch_archive(
-                        self.repo,
-                        self.settings,
-                        http=self.http,
-                        _scheduled_retry=True,
-                        market=self,
-                        **retry["args"],
-                    )
-                    retry.update(label="COMPLETE", completed_at=iso(), at=iso())
-                except Exception as exc:  # noqa: BLE001 - durable retry survives provider failures
-                    retry.update(
-                        label="FAILED",
-                        at=iso(),
-                        reason=type(exc).__name__,
-                        retry_at=iso(
-                            utcnow() + timedelta(seconds=self.thresholds.get("archive_retry_s", 3600))
-                        ),
-                    )
-                await self._put("qa.reviews", retry["review_id"], retry)
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), 60)
 
@@ -4139,25 +4068,22 @@ class MarketService:
         workers = []
         try:
             async with self.repo.lock("market-hot-set"), self.repo.transaction():
-                active_tokens = (
-                    set()
-                    if self.capture_only
-                    else {row["token_id"] for row in await self.repo.list("mkt.hot_tokens", limit=10000)}
-                )
+                active_tokens = {
+                    row["token_id"] for row in await self.repo.list("mkt.hot_tokens", limit=10000)
+                }
                 for token_id in self.tokens:
                     await self._record_capture_tier(
                         token_id, "HOT" if token_id in active_tokens else "BASE", "CAPTURE_POLICY_STARTED"
                     )
             await self._ensure_market_restore()
             await self._sync_streams()
-            for hot in [] if self.capture_only else await self.repo.list("mkt.hot_tokens", limit=10000):
+            for hot in await self.repo.list("mkt.hot_tokens", limit=10000):
                 event = await self.repo.get("evt.events", hot["event_id"]) or {}
                 await self._schedule_event_backfill(
                     hot["event_id"], hot["token_id"], event_anchor(event)["ts"] if event else hot["since"]
                 )
             workers = [asyncio.create_task(self._instrument_loop(inst)) for inst in self.instruments.values()]
             workers.append(asyncio.create_task(self._supply_loop()))
-            workers.append(asyncio.create_task(self._archive_maintenance()))
             workers.append(
                 asyncio.create_task(
                     self.bootstrap_history(days=int(self.thresholds.get("historical_lookback_days", 90)))

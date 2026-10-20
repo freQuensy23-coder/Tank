@@ -906,7 +906,6 @@ async def fetch_archive(
     market_type="SPOT",
     kind="klines",
     http=None,
-    _scheduled_retry=False,
     market=None,
 ):
     """Download, verify and import a single Binance daily/monthly dataset."""
@@ -947,43 +946,23 @@ async def fetch_archive(
     if imported is not None:
         return {"archive_id": archive_id, "source_url": url, "rows": imported, "complete": True, "imported": True}
     try:
-        for attempt in range(1):
-            response = await client.get(url)
-            response.raise_for_status()
-            checksum = await client.get(url + ".CHECKSUM")
-            checksum.raise_for_status()
-            expected = "MS" if futures or date < "2025-01" else "US"
-            try:
-                verified = verify_binance_zip(
-                    response.content,
-                    checksum.text,
-                    filename=filename,
-                    kind=kind,
-                    expected_unit=expected if kind in ("klines", "aggTrades") else None,
-                    daily=not monthly,
-                )
-                if not verified["complete"]:
-                    raise ArchiveIntegrityError("archive continuity incomplete")
-                break
-            except ArchiveIntegrityError as exc:
-                from datetime import timedelta
-
-                delay = settings.load_config("thresholds").get("archive_retry_s", 3600)
-                rejected_at = iso()
-                retry = {
-                    "review_id": "archive-retry:" + archive_id,
-                    "subject": "ARCHIVE_RETRY",
-                    "label": "FAILED" if _scheduled_retry else "PENDING",
-                    "at": rejected_at,
-                    "retry_at": iso(parse_time(rejected_at) + timedelta(seconds=delay)),
-                    "args": {"symbol": symbol, "date": date, "market_type": market_type, "kind": kind},
-                    "reason": str(exc),
-                    "attempts": 2 if _scheduled_retry else 1,
-                }
-                if await repo.get("qa.reviews", retry["review_id"]) is not None:
-                    retry["review_id"] += ":" + new_id("REV")
-                await repo.put("qa.reviews", retry["review_id"], retry)
-                raise
+        # A rejected file leaves nothing behind: the next daily bootstrap or event
+        # backfill fetches it again (lead ruling 2026-10-20 18:30, no retry records).
+        response = await client.get(url)
+        response.raise_for_status()
+        checksum = await client.get(url + ".CHECKSUM")
+        checksum.raise_for_status()
+        expected = "MS" if futures or date < "2025-01" else "US"
+        verified = verify_binance_zip(
+            response.content,
+            checksum.text,
+            filename=filename,
+            kind=kind,
+            expected_unit=expected if kind in ("klines", "aggTrades") else None,
+            daily=not monthly,
+        )
+        if not verified["complete"]:
+            raise ArchiveIntegrityError("archive continuity incomplete")
         directory = Path(settings.data_dir) / "archive" / "binance" / prefix / kind
         directory.mkdir(parents=True, exist_ok=True)
         path = directory / filename

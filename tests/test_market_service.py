@@ -203,7 +203,8 @@ async def test_polling_venue_error_preserves_gap_not_zero(setup):
     service = MarketService(repo, settings, http=http)
     await service.poll_once(inst["instrument_id"])
     gaps = await repo.list("mkt.capture_gaps")
-    assert {g["kind"] for g in gaps} >= {"METADATA", "KLINES", "TICKER"}
+    # Binance metadata comes from the semantics registry (no request); klines and ticker fail.
+    assert {g["kind"] for g in gaps} >= {"KLINES", "TICKER"}
     assert not await repo.list("mkt.klines_1m") and not await repo.list("mkt.oi_obs")
     await http.aclose()
 
@@ -212,13 +213,19 @@ async def test_polling_venue_error_preserves_gap_not_zero(setup):
 async def test_independent_rest_confirmation_returns_evidence_without_duplicate_frame(setup):
     repo, settings, inst = setup
 
+    paths = []
+
     def handler(request):
-        return httpx.Response(200, json={"symbol": "ABCUSD", "bidPrice": "99", "askPrice": "101"})
+        paths.append(request.url.path)
+        return httpx.Response(200, json={"lastUpdateId": 1, "bids": [["99", "1"]], "asks": [["101", "1"]]})
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     service = MarketService(repo, settings, http=http)
     out = await service._independent_book(inst, {"mid": "100", "spread_bps": "200"})
+    assert paths == ["/api/v3/depth"]  # the listed snapshot, not bookTicker (audit W10)
     assert out["second_path_confirmed"] and out["independent_rest"]["source"] == "PUBLIC_REST"
+    unlisted = await service._independent_book(dict(inst, venue="okx"), {"mid": "100", "spread_bps": "200"})
+    assert unlisted == {"second_path_confirmed": False, "second_path_reason": "NO_LISTED_SECOND_PATH"}
     await service.flush_market()
     assert not await repo.list("mkt.raw_archives")
     assert out["independent_rest"]["mid"] == "100"
@@ -1162,36 +1169,12 @@ def test_documented_provider_scopes_and_hyperliquid_base_reservation():
     a = budgets("www.okx.com", "/api/v5/public/funding-rate", {"instId": "BTC-USDT-SWAP"})
     b = budgets("www.okx.com", "/api/v5/public/funding-rate", {"instId": "ETH-USDT-SWAP"})
     assert a[0][0] != b[0][0] and a[0][1:] == (5, 2, 1)
-    assert budgets("api.hyperliquid.xyz", payload={"type": "l2Book"}) == [("hyperliquid", 600, 60, 2)]
-    assert budgets("api.hyperliquid.xyz", payload={"type": "recentTrades"}) == [("hyperliquid", 600, 60, 20)]
+    with pytest.raises(ValueError):  # unlisted endpoints are not admitted (audit W10)
+        budgets("api.hyperliquid.xyz", payload={"type": "recentTrades"})
     candle = {"type": "candleSnapshot", "req": {"interval": "1m", "startTime": 0, "endTime": 180000}}
     assert budgets("api.hyperliquid.xyz", payload=candle) == [("hyperliquid", 600, 60, 21)]
     with pytest.raises(ValueError):
         budgets("www.okx.com", "/new-undocumented-path")
-
-
-@pytest.mark.asyncio
-async def test_hyperliquid_actual_response_surcharge_is_settled_in_provider_slot(setup, monkeypatch):
-    from tank.sources.rate_limits import shared_request_budgets
-
-    repo, settings, _ = setup
-    charged = []
-
-    async def acquire(key, capacity, window_s, *, weight=1):
-        charged.append((key, capacity, window_s, weight))
-
-    monkeypatch.setattr(shared_request_budgets, "acquire", acquire)
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(200, json=[{"tid": i} for i in range(41)])
-        )
-    ) as client:
-        service = MarketService(repo, settings, http=client)
-        result = await service._request(
-            "POST", "https://api.hyperliquid.xyz/info", json={"type": "recentTrades", "coin": "BTC"}
-        )
-    assert len(result) == 41
-    assert charged == [("hyperliquid", 600, 60, 20), ("hyperliquid", 600, 60, 3)]
 
 
 @pytest.mark.asyncio

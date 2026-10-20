@@ -159,7 +159,7 @@ async def test_supervised_run_reuses_http_after_repository_failure(setup, monkey
         return None
 
     monkeypatch.setattr(service, "_sync_streams", noop)
-    for method in ("_instrument_loop", "_supply_loop", "_archive_maintenance", "bootstrap_history"):
+    for method in ("_instrument_loop", "_supply_loop", "bootstrap_history"):
         monkeypatch.setattr(service, method, idle)
     batch = repo.put_market_batch
     failed = False

@@ -114,14 +114,11 @@ async def test_archive_checksum_rejected_and_durable_hour_retry(tmp_path):
     async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
         with pytest.raises(ArchiveIntegrityError):
             await fetch_archive(repo, settings, "BTCUSDT", "2026-01-01", http=client)
-        retry = (await repo.list("qa.reviews"))[0]
-        assert retry["label"] == "PENDING" and retry["attempts"] == 1
-        assert (parse_time(retry["retry_at"]) - parse_time(retry["at"])).total_seconds() == 3600
-        assert len(downloads) == 1  # No immediate checksum retry.
+        # No retry record anywhere: nothing was imported, so the next pass fetches again.
+        assert not await repo.list("qa.reviews")
+        assert not (tmp_path / "archive").exists() or not list((tmp_path / "archive").rglob("*.zip"))
         with pytest.raises(ArchiveIntegrityError):
-            await fetch_archive(repo, settings, "BTCUSDT", "2026-01-01", http=client, _scheduled_retry=True)
-        final = max(await repo.list("qa.reviews"), key=lambda row: row["at"])
-        assert final["label"] == "FAILED" and final["attempts"] == 2
+            await fetch_archive(repo, settings, "BTCUSDT", "2026-01-01", http=client)
     assert len(downloads) == 2
 
 

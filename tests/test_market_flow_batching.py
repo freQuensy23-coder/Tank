@@ -81,6 +81,7 @@ async def test_stream_frame_does_not_run_whole_flow_flush(monkeypatch):
         books={},
         _connected_since={},
         _stream_watermarks={},
+        _frames={},
         _raw=AsyncMock(),
         _gap=AsyncMock(),
         mark_capture_gap=AsyncMock(),
