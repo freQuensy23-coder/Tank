@@ -157,10 +157,12 @@ class XSensor:
             known_ids = set(known_ids or [])
             scan_started = asyncio.get_running_loop().time()
             try:
-                await page.goto(
+                response = await page.goto(
                     f"https://x.com/i/lists/{list_id}", wait_until="domcontentloaded", timeout=20000
                 )
-                if re.search(r"/(?:i/flow/login|login)(?:[/?#]|$)", page.url):
+                if (response is not None and response.status in {401, 403}) or re.search(
+                    r"/(?:i/flow/login|login)(?:[/?#]|$)", page.url
+                ):
                     raise RuntimeError("X session unavailable or expired; operator session renewal required")
                 await page.wait_for_selector("article", timeout=20000)
                 stalled = 0
@@ -254,10 +256,13 @@ class XSensor:
                             self.scan_status = "GAP_LIMIT"
                         break
                     if asyncio.get_running_loop().time() - scan_started >= 30:
-                        self.scan_status = "GAP_LIMIT"
+                        # Without a stored checkpoint (first scan) there is no gap to report.
+                        if checkpoint:
+                            self.scan_status = "GAP_LIMIT"
                         break
                 else:
-                    self.scan_status = "GAP_LIMIT"
+                    if checkpoint:
+                        self.scan_status = "GAP_LIMIT"
                 # Fetch quote/repost status pages because list quote cards truncate long text.
                 detail = await self.context.new_page()
                 try:
