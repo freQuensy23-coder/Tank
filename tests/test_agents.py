@@ -705,7 +705,6 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
         repeated = await pipe.route_item({"item_id": "second"})
         await service.send_message(repeated["routing_message"])
     assert len(creates) == len(messages) == 2
-    assert await repo.list("ops.routing_reservations") == []
 
 
 @pytest.mark.asyncio
@@ -874,7 +873,7 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages():
 
     class TinyPages(MemoryRepository):
         async def list(self, collection, **kwargs):
-            if collection in {"evt.events", "ops.agent_sessions", "ops.routing_reservations"}:
+            if collection in {"evt.events", "ops.agent_sessions"}:
                 raise AssertionError("Permanent history must use scoped paged reads")
             return await super().list(collection, **kwargs)
 
@@ -905,11 +904,6 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages():
                 "last_item_at": iso(utcnow() - timedelta(days=10)),
             },
         )
-        await repo.put(
-            "ops.routing_reservations",
-            eid,
-            {"reservation_id": eid, "status": "CLOSED", "last_item_at": iso(utcnow() - timedelta(days=10))},
-        )
     await repo.put(
         "evt.events",
         "zz_event",
@@ -928,18 +922,6 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages():
     )
     await repo.put(
         "ingest.source_items", "pending_item", {"item_id": "pending_item", "text": "Aave pending candidate"}
-    )
-    await repo.put(
-        "ops.routing_reservations",
-        "zz_reservation",
-        {
-            "reservation_id": "zz_reservation",
-            "first_item_id": "pending_item",
-            "status": "CLOSED",
-            "entities": ["aave"],
-            "tokens": [],
-            "last_item_at": iso(),
-        },
     )
     await repo.put(
         "ingest.source_items", "incoming", {"item_id": "incoming", "text": "Aave confirms late event"}

@@ -93,13 +93,8 @@ async def test_refused_tool_reason_survives_lost_reply_and_does_not_stall():
 @pytest.mark.asyncio
 async def test_failed_turn_retries_original_message_and_new_message_cannot_reset_retry():
     repo = MemoryRepository()
-    await seed(repo, runtime_status="IDLE", reservation_id="reservation")
+    await seed(repo, runtime_status="IDLE")
     await repo.put("evt.events", "e", {"event_id": "e", "lifecycle": "TRACKED"})
-    await repo.put(
-        "ops.routing_reservations",
-        "reservation",
-        {"reservation_id": "reservation", "first_item_id": "one", "status": "PENDING", "last_item_at": iso()},
-    )
     posts = []
     await repo.put("ingest.source_items", "one", {"item_id": "one", "text": "first"})
     await repo.put("ingest.source_items", "two", {"item_id": "two", "text": "second"})
@@ -122,7 +117,6 @@ async def test_failed_turn_retries_original_message_and_new_message_cannot_reset
     assert session["status"] == "FAILED" and session["message_log"][0]["retry_count"] == 1
     assert len(posts) == 4
     assert (await repo.get("evt.events", "e"))["lifecycle"] == "TRACKED"
-    assert (await repo.get("ops.routing_reservations", "reservation"))["status"] == "CLOSED"
 
 
 @pytest.mark.asyncio
@@ -556,12 +550,7 @@ async def test_control_result_progresses_while_independent_sse_request_remains_o
 @pytest.mark.asyncio
 async def test_unbound_terminal_turn_failure_retries_once_then_marks_source_failed_after_restart():
     repo = MemoryRepository()
-    await seed(repo, event_id=None, runtime_status="IDLE", reservation_id="legacy-failed")
-    await repo.put(
-        "ops.routing_reservations",
-        "legacy-failed",
-        {"reservation_id": "legacy-failed", "first_item_id": "one", "status": "PENDING"},
-    )
+    await seed(repo, event_id=None, runtime_status="IDLE")
     await repo.put(
         "ingest.source_items",
         "one",
@@ -592,35 +581,6 @@ async def test_unbound_terminal_turn_failure_retries_once_then_marks_source_fail
     assert session["message_log"][0]["turn_status"] == "FAILED"
     assert (await repo.get("ingest.source_items", "one"))["extraction_status"] == "FAILED"
     assert len(posts) == 2 and not await repo.list("ops.tool_calls")
-    assert (await repo.get("ops.routing_reservations", "legacy-failed"))["status"] == "CLOSED"
-
-
-@pytest.mark.asyncio
-async def test_legacy_reservation_binding_never_acquires_global_routing_lock():
-    repo = MemoryRepository()
-    await repo.put(
-        "ops.routing_reservations",
-        "legacy",
-        {"reservation_id": "legacy", "first_item_id": "item", "status": "PENDING"},
-    )
-    posts = []
-
-    def transport(request):
-        if request.method == "GET":
-            return httpx.Response(200, json={"data": []})
-        posts.append(json.loads(request.content))
-        return httpx.Response(201, json={"id": "legacy-session"})
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
-        service = SessionService(repo, settings(), None, http=http)
-        async with repo.lock("routing"), repo.lock("reservation:unrelated"):
-            session = await asyncio.wait_for(
-                service.resolve({"reservation_id": "legacy", "item_id": "item"}), timeout=1
-            )
-        assert session["session_id"] == "legacy-session"
-        assert (await repo.get("ops.routing_reservations", "legacy"))["session_id"] == "legacy-session"
-        assert len(posts) == 1
-        assert len(await repo.list("ops.routing_reservations")) == 1
 
 
 @pytest.mark.parametrize("http_status", [404, 503])

@@ -161,17 +161,10 @@ class SessionService:
             if replay_run_id and session.get("replay_run_id") != replay_run_id:
                 raise ValueError("Replay cannot reuse an original session")
             return session
-        reservation_id = payload.get("reservation_id")
-        reservation = (
-            await self.repo.get("ops.routing_reservations", reservation_id) if reservation_id else None
-        )
-        if reservation_id and reservation is None:
-            raise KeyError(reservation_id)
-        event_id = payload.get("event_id") or (reservation or {}).get("event_id")
+        event_id = payload.get("event_id")
         item_id = payload.get("item_id")
         identifiers = [
             ("event_id", event_id),
-            ("reservation_id", reservation_id),
             ("item_id", item_id if not event_id else None),
             ("proposal_id", payload.get("proposal_id")),
         ]
@@ -201,7 +194,7 @@ class SessionService:
                         break
             if not item_id:
                 raise ValueError("Event session has no durable opening source item")
-        identity = reservation_id or event_id or item_id or payload.get("proposal_id")
+        identity = event_id or item_id or payload.get("proposal_id")
         if not identity:
             raise ValueError("Session needs event, item or proposal identity")
         # Session creation does not promise idempotency. Reconcile the durable
@@ -271,12 +264,11 @@ class SessionService:
         session = {
             "session_id": sid,
             "event_id": event_id,
-            "reservation_id": reservation_id,
             "replay_run_id": replay_run_id,
             "replay_source_session_id": payload.get("replay_source_session_id"),
             "replay_evidence_sha256": payload.get("replay_evidence_sha256"),
             "replay_cutoff": payload.get("replay_cutoff"),
-            "item_id": (reservation or {}).get("first_item_id", item_id),
+            "item_id": item_id,
             "proposal_id": payload.get("proposal_id"),
             "opened_by_item": item_id,
             **opened.fields("opened_at"),
@@ -306,11 +298,6 @@ class SessionService:
         session["agent_version_reason"] = session["missing_fields"].get("agent_version")
         session["last_item_at_reason"] = session["missing_fields"].get("last_item_at")
         await self.repo.put("ops.agent_sessions", sid, session)
-        if reservation:
-            async with self.repo.lock("reservation:" + reservation_id):
-                reservation = await self.repo.get("ops.routing_reservations", reservation_id)
-                reservation["session_id"] = sid
-                await self.repo.put("ops.routing_reservations", reservation_id, reservation)
         return session
 
     async def send_message(self, payload):
@@ -319,7 +306,6 @@ class SessionService:
         )
         mapping_identity = (
             payload.get("session_id")
-            or payload.get("reservation_id")
             or payload.get("event_id")
             or payload.get("proposal_id")
             or payload.get("item_id")
@@ -742,7 +728,6 @@ class SessionService:
                 "event_id",
                 "item_id",
                 "proposal_id",
-                "reservation_id",
                 "model_id",
                 "prompt_version",
                 "prompt_version_basis",
@@ -1431,18 +1416,6 @@ class SessionService:
                     if active:
                         active["turn_status"] = "FAILED"
                         active["terminal_failure"] = copy.deepcopy(terminal_failure)
-                    if session.get("reservation_id"):
-                        async with self.repo.lock("reservation:" + session["reservation_id"]):
-                            reservation = await self.repo.get(
-                                "ops.routing_reservations", session["reservation_id"]
-                            )
-                            if reservation and reservation.get("status") == "PENDING":
-                                reservation["status"] = "CLOSED"
-                                await self.repo.put(
-                                    "ops.routing_reservations", reservation["reservation_id"], reservation
-                                )
-                    # "The event is marked FAILED" (03 §3.2): its session is FAILED.
-                    # EventLifecycle has no FAILED, so the event record is unchanged.
                     failed_payload = (active or {}).get("payload") or session.get("last_payload") or {}
                     item_id = failed_payload.get("item_id") or session.get("item_id")
                     if item_id:
