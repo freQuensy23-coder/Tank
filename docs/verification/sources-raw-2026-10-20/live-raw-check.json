@@ -1,0 +1,221 @@
+{
+ "user_agent": "TankV0/1.0 (contact pending)",
+ "rounds": [
+  {
+   "round": 1,
+   "results": {
+    "S01": {
+     "items": 50,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S09": {
+     "items": 60,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S10": {
+     "items": 60,
+     "status": "DEGRADED",
+     "errors": [
+      "Client error '400 Bad Request' for url 'https://www.okx.com/api/v5/support/announcements?annType=latest-events'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/400"
+     ]
+    },
+    "S12": {
+     "items": 0,
+     "status": "DEGRADED",
+     "errors": [
+      "Client error '403 Forbidden' for url 'https://blog.kraken.com/feed'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403"
+     ]
+    },
+    "S14": {
+     "items": 0,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S24": {
+     "items": 20,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S30": {
+     "items": 74,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S33": {
+     "items": 25,
+     "status": "HEALTHY",
+     "errors": []
+    }
+   },
+   "items_total": 282,
+   "raw_files_total": 282,
+   "raw_files_by_source": {
+    "S01": 50,
+    "S09": 60,
+    "S10": 60,
+    "S24": 20,
+    "S33": 25,
+    "S30": 67
+   },
+   "items_by_source": {
+    "S01": 50,
+    "S09": 60,
+    "S10": 60,
+    "S24": 20,
+    "S30": 67,
+    "S33": 25
+   },
+   "every_raw_file_is_an_item": true,
+   "observation_counts": {
+    "1": 275,
+    "2": 7
+   }
+  },
+  {
+   "round": 2,
+   "results": {
+    "S01": {
+     "items": 0,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S09": {
+     "items": 0,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S10": {
+     "items": 0,
+     "status": "DEGRADED",
+     "errors": [
+      "Client error '400 Bad Request' for url 'https://www.okx.com/api/v5/support/announcements?annType=latest-events'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/400"
+     ]
+    },
+    "S12": {
+     "items": 0,
+     "status": "DEGRADED",
+     "errors": [
+      "Client error '403 Forbidden' for url 'https://blog.kraken.com/feed'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403"
+     ]
+    },
+    "S14": {
+     "items": 0,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S24": {
+     "items": 0,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S30": {
+     "items": 0,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S33": {
+     "items": 0,
+     "status": "HEALTHY",
+     "errors": []
+    }
+   },
+   "items_total": 282,
+   "raw_files_total": 282,
+   "raw_files_by_source": {
+    "S01": 50,
+    "S09": 60,
+    "S10": 60,
+    "S24": 20,
+    "S33": 25,
+    "S30": 67
+   },
+   "items_by_source": {
+    "S01": 50,
+    "S09": 60,
+    "S10": 60,
+    "S24": 20,
+    "S30": 67,
+    "S33": 25
+   },
+   "every_raw_file_is_an_item": true,
+   "observation_counts": {
+    "1": 275,
+    "2": 7
+   }
+  },
+  {
+   "round": 3,
+   "results": {
+    "S01": {
+     "items": 0,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S09": {
+     "items": 0,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S10": {
+     "items": 0,
+     "status": "DEGRADED",
+     "errors": [
+      "Client error '400 Bad Request' for url 'https://www.okx.com/api/v5/support/announcements?annType=latest-events'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/400"
+     ]
+    },
+    "S12": {
+     "items": 0,
+     "status": "DEGRADED",
+     "errors": [
+      "Client error '403 Forbidden' for url 'https://blog.kraken.com/feed'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/403"
+     ]
+    },
+    "S14": {
+     "items": 0,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S24": {
+     "items": 0,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S30": {
+     "items": 0,
+     "status": "HEALTHY",
+     "errors": []
+    },
+    "S33": {
+     "items": 0,
+     "status": "HEALTHY",
+     "errors": []
+    }
+   },
+   "items_total": 282,
+   "raw_files_total": 282,
+   "raw_files_by_source": {
+    "S01": 50,
+    "S09": 60,
+    "S10": 60,
+    "S24": 20,
+    "S33": 25,
+    "S30": 67
+   },
+   "items_by_source": {
+    "S01": 50,
+    "S09": 60,
+    "S10": 60,
+    "S24": 20,
+    "S30": 67,
+    "S33": 25
+   },
+   "every_raw_file_is_an_item": true,
+   "observation_counts": {
+    "1": 275,
+    "2": 7
+   }
+  }
+ ]
+}

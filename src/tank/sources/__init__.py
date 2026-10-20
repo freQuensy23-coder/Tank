@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import asyncio
 import re
+import ssl
 from copy import deepcopy
 from pathlib import Path
 from urllib.parse import parse_qsl, urlsplit
 
+import certifi
 import httpx
 
 from tank.util import iso, parse_time, sha256, utcnow
@@ -23,12 +25,26 @@ from .rate_limits import shared_request_budgets
 from .xsensor import XSensor
 
 
+def tls_context():
+    """The TLS hello of Python's standard HTTPS client (http.client sets post_handshake_auth).
+
+    WordPress.com's bot check (S12 blog.kraken.com) answers httpx's default hello with
+    403/429 and the standard one with the feed.
+    """
+    context = ssl.create_default_context(cafile=certifi.where())
+    context.post_handshake_auth = True
+    return context
+
+
 class SourceService:
     def __init__(self, repo, settings, *, http=None):
         self.repo = repo
         self.settings = settings
         self.http = http or httpx.AsyncClient(
-            timeout=20, follow_redirects=True, headers={"User-Agent": settings.user_agent}
+            timeout=20,
+            follow_redirects=True,
+            headers={"User-Agent": settings.user_agent},
+            verify=tls_context(),
         )
         self.owns_http = http is None
         self.xsensor = XSensor(settings, shared_browser=bool(getattr(settings, "x_enabled", False)))

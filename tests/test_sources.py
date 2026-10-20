@@ -3151,3 +3151,11 @@ async def test_read_counters_and_failed_read_rate_report(tmp_path):
     assert (s31["ok"], s31["failed"], s31["pass"]) == (0, 3, False)
     assert s31["degraded_feeds"][0]["feed"] == "S31:0"
     assert not report["all_pass"]
+
+
+def test_source_http_client_uses_standard_tls_hello(tmp_path):
+    from tank.sources import tls_context
+
+    assert tls_context().post_handshake_auth is True
+    svc = SourceService(Repo(), settings(tmp_path, []))
+    assert svc.http._transport._pool._ssl_context.post_handshake_auth is True
