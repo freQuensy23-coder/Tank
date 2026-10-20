@@ -465,9 +465,9 @@
           "status": "PREPARED_VERSIONED_SOURCE_NOT_RUN"
         }
       ],
-      "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
       "missing": [
-        "Sealed capture-class assertion failed (UNKNOWN versus NARRATIVE_ONLY); retained without reroll."
+        "Fresh native run at the current config is still required for V0-C (lead ruling 17:20 UTC: packets re-assembled at current config)."
       ],
       "known_conflict": null,
       "acceptance_input": {
@@ -485,7 +485,16 @@
       "acceptance_run": {
         "path": "docs/verification/replay-batch-r56-2026-10-20/F-05/acceptance-run.json",
         "sha256": "fdd8c5c91ff5db01ac7b6d86c9a29860f6a99818a8b8024761aa2432725fe282"
-      }
+      },
+      "acceptance_history": [
+        {
+          "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+          "missing": [
+            "Sealed capture-class assertion failed (UNKNOWN versus NARRATIVE_ONLY); retained without reroll."
+          ],
+          "superseded_reason": "Stale label: the referenced r56 acceptance_run passes check_ready and check_completed (all 7 sealed assertions; capture UNKNOWN with mechanism evidence, thesis D, WAIT A1). Re-verified 2026-10-20 by tank-acceptance; lead ruling 17:20 UTC."
+        }
+      ]
     },
     {
       "fixture_id": "F-06",
