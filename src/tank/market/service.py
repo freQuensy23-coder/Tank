@@ -1134,7 +1134,12 @@ class MarketService:
             return
         interval = float(self.thresholds.get("book_interval_s", 10))
         self._book_due[iid] = (now // interval + 1) * interval
-        row = self.books[iid].summary()
+        # Summarize a frozen copy in the thread pool; a crossed book found there is
+        # recorded on the live book exactly as an in-place summary would.
+        frozen = self.books[iid].frozen()
+        row = await asyncio.to_thread(frozen.summary)
+        if not frozen.integrity_ok and self.books[iid].integrity_ok:
+            self.books[iid].integrity_ok, self.books[iid].gap_reason = False, frozen.gap_reason
         self.book_archive.add(
             iid,
             "BOOK_SUMMARY",
@@ -1629,13 +1634,20 @@ class MarketService:
                 proven_ranges.extend(kraken_forward_ranges)
         if checkpoint and not self._ranges_cover(proven_ranges, start, end):
             await self._gap(instrument, "RECONNECT", "CHECKPOINT_RANGE_NOT_EXHAUSTED", start=start, end=end)
+        # Bybit lists only its last 1000 public prints (03 §5.1): older windows are a
+        # source limit, recorded as such rather than as a collection failure.
+        limit = (
+            " (SOURCE_LIMIT: Bybit recent-trade lists only the last 1000 prints)"
+            if key.startswith("bybit")
+            else ""
+        )
         for hours in () if checkpoint else (24, 4, 1):
             lo = end - timedelta(hours=hours)
             if not self._ranges_cover(proven_ranges, lo, end):
                 await self._gap(
                     instrument,
                     "PRE_EVENT_FLOW",
-                    f"{hours}h window not fully covered by retained REST trades",
+                    f"{hours}h window not fully covered by retained REST trades{limit}",
                     start=lo,
                     end=end,
                 )

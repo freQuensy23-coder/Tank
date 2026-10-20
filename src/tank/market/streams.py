@@ -15,6 +15,25 @@ from .normalize import SemanticError, liquidation, oi, venue_key
 STREAM_PING_INTERVAL_S = 20
 # The client closes with 1011 when a pong is late; the loop on prod stalls for seconds.
 STREAM_PING_TIMEOUT_S = 60
+# Frames read from the socket but not yet processed. The reader keeps draining the socket
+# (so keepalive pongs are always read); a backlog this deep is an overload and resets the
+# connection with a recorded gap rather than letting websockets stop reading.
+STREAM_BACKLOG_FRAMES = 20000
+
+
+async def drain_socket(socket, inbox):
+    """Move every received frame into inbox at once; end with the exception that stopped it."""
+    try:
+        while True:
+            inbox.put_nowait(await socket.recv())
+            if inbox.qsize() > STREAM_BACKLOG_FRAMES:
+                raise SemanticError(
+                    f"STREAM_BACKLOG_EXCEEDED: over {STREAM_BACKLOG_FRAMES} unprocessed frames"
+                )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - handed to the consumer, which runs the gap path
+        inbox.put_nowait(exc)
 
 
 def connection(instrument, *, depth_only=False):
@@ -546,6 +565,7 @@ async def stream_group_loop(self, endpoint):
         active = set()
         preparing = {}
         pending = {}
+        reader = None
         try:
             url = endpoint
             async with websockets.connect(
@@ -651,6 +671,8 @@ async def stream_group_loop(self, endpoint):
 
                 await membership(self._stream_groups[endpoint])
                 retry = 1
+                inbox = asyncio.Queue()
+                reader = asyncio.create_task(drain_socket(socket, inbox))
                 last_message = time.monotonic()
                 while active and not self._stop.is_set():
                     if time.monotonic() - last_message > float(self.thresholds.get("quiet_socket_s", 30)):
@@ -664,10 +686,9 @@ async def stream_group_loop(self, endpoint):
                                     await process_frame(self, self.instruments[iid], queued)
                             except Exception as exc:  # noqa: BLE001 - isolate one instrument's metadata/book failure
                                 await reset_member(iid, exc)
-                    # Poll membership changes and stop instead of awaiting them beside recv():
-                    # a recv task plus asyncio.wait costs a full event-loop turn per frame,
-                    # so a busy loop drains fewer frames than arrive, websockets pauses
-                    # reading at max_queue and the unread pong ends in a keepalive timeout.
+                    # Poll membership changes and stop instead of awaiting them beside the
+                    # inbox: a get task plus asyncio.wait costs a full event-loop turn per frame,
+                    # so a busy loop drained fewer frames than arrived (1011 on prod r101).
                     if self._stop.is_set():
                         break
                     try:
@@ -677,11 +698,13 @@ async def stream_group_loop(self, endpoint):
                     else:
                         await membership(desired)
                     try:
-                        # recv() returns without yielding while frames are queued; canceling it is safe.
+                        # get() returns without yielding while frames are queued.
                         async with asyncio.timeout(0.1):
-                            frame = await socket.recv()
+                            frame = await inbox.get()
                     except TimeoutError:
                         continue
+                    if isinstance(frame, BaseException):
+                        raise frame
                     self._frames[endpoint] = self._frames.get(endpoint, 0) + 1
                     last_message = time.monotonic()
                     last_observed = utcnow()
@@ -730,9 +753,10 @@ async def stream_group_loop(self, endpoint):
                         self.instruments[iid], last_observed, iso(), "STREAM_DISCONNECTED: " + str(exc)
                     )
         finally:
-            for task in preparing.values():
+            tasks = [*preparing.values(), *([reader] if reader else [])]
+            for task in tasks:
                 task.cancel()
-            await asyncio.gather(*preparing.values(), return_exceptions=True)
+            await asyncio.gather(*tasks, return_exceptions=True)
             if not depth_only:
                 for iid in active:
                     self._connected_since.pop(iid, None)
