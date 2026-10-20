@@ -61,7 +61,11 @@ def resolve(p):
 
 def entries(path, fixtures):
     data = json.load(open(path))
-    rows = data["fixtures"] if isinstance(data, dict) and "fixtures" in data else data
+    if isinstance(data, dict) and all(isinstance(v, dict) and "manifest_entry" in v for v in data.values()):
+        # assemble_packets.py output: {F-xx: {manifest_entry, container, ...}}
+        rows = [{**v["manifest_entry"], "fixture_id": k, "container": v.get("container", {})} for k, v in data.items()]
+    else:
+        rows = data["fixtures"] if isinstance(data, dict) and "fixtures" in data else data
     found = {r["fixture_id"]: r for r in rows if r.get("fixture_id") in fixtures}
     missing = [f for f in fixtures if f not in found]
     if missing:
@@ -100,7 +104,8 @@ def run_one(fid, entry, out_dir, timeout):
     """
     d = Path(out_dir) / fid
     d.mkdir(parents=True, exist_ok=False)
-    config_dir = resolve(entry["config_dir"]["path"]) if entry.get("config_dir") else ROOT / "config"
+    hints = entry.get("container") or {}
+    config_dir = Path(hints["TANK_CONFIG_PATH"]) if hints.get("TANK_CONFIG_PATH") else ROOT / "config"
     raw = sh(["zstd", "-dc", str(resolve(entry["acceptance_input"]["path"]))]).stdout
     packet = json.loads(raw)
     tank = container("tank")  # the running service must be up: openma's model card calls tank:8790
@@ -119,13 +124,24 @@ def run_one(fid, entry, out_dir, timeout):
         sh(["docker", "cp", str(p), f"{tank}:/data/replay/inputs/{fid}.json"])
     reset_replay_db()
     private = resolve(entry["private_name_map"]["path"])
+    mask_path = hints.get("TANK_REPLAY_PRIVATE_MASK_PATH") or PRIVATE_IN_CONTAINER
+    mounts = ["-v", f"{config_dir}:/config:ro"]
+    if hints.get("TANK_REPLAY_PRIVATE_MASK_PATH"):
+        # The map and packet reference absolute /srv/tank paths: bind them read-only at the same paths.
+        for path in hints.get("bind_same_path_read_only", []):
+            mounts += ["-v", f"{path}:{path}:ro"]
+        if not any(str(private).startswith(b) for b in hints.get("bind_same_path_read_only", [])):
+            mounts += ["-v", f"{private}:{mask_path}:ro"]
+    else:
+        mounts += ["-v", f"{private}:{mask_path}:ro"]
+    if mask_path.startswith("/data/"):
+        raise SystemExit("private map must stay outside /data")
     started = iso(utcnow())
     # No --use-aliases: the one-off replay process must not take the `tank` alias. Default volumes keep
     # /data on tank-data, where evidence for the tank-replay sandbox lives (/data/replay/evidence/<RPL-id>).
     res = sh(COMPOSE + ["run", "--rm", "--no-deps", "-T",
-                        "-v", f"{config_dir}:/config:ro",
-                        "-v", f"{private}:{PRIVATE_IN_CONTAINER}:ro",
-                        "-e", f"TANK_REPLAY_PRIVATE_MASK_PATH={PRIVATE_IN_CONTAINER}",
+                        *mounts,
+                        "-e", f"TANK_REPLAY_PRIVATE_MASK_PATH={mask_path}",
                         "tank", "sh", "-c", DSN_SH + f' && tank replay {fid} --database-url "$DSN"'],
              check=False, timeout=timeout)
     finished = iso(utcnow())
