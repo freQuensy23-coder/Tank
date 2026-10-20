@@ -18,7 +18,7 @@ from itertools import pairwise
 from pathlib import Path
 
 from tank.market_schema import MARKET_COLUMNS
-from tank.time_precision import Timestamp, propagate_timestamp
+from tank.time_precision import Timestamp, interval_bounds, propagate_timestamp
 from tank.util import canonical_json, iso, parse_time
 
 
@@ -94,11 +94,13 @@ def _market_record(row):
 
 
 def _late_unlock(row, cutoff):
-    """An unlock tranche captured after the cutoff (lead ruling, F-02).
+    """An unlock row captured after the cutoff (lead rulings F-02, F-04).
 
     Unlock schedules are public history: a later capture may enter as a historical
-    reconstruction under the market-row rules (tranche time <= cutoff, receipt <=
-    assembled_at). Calendars captured before the cutoff keep their own availability.
+    reconstruction when the schedule holding the tranche was known by the cutoff
+    (schedule_as_of <= cutoff; the tranche itself may fall before or after it) and
+    every receipt is <= assembled_at. Calendars captured before the cutoff keep their
+    own availability.
     """
     if row.get("collection") != "mkt.unlocks":
         return False
@@ -107,8 +109,13 @@ def _late_unlock(row, cutoff):
 
 
 def _unlock_time(row):
-    stamp = _market_timestamp(row["record"], "date")
-    return [parse_time(stamp.value)] if stamp.value is not None else []
+    """When the schedule holding this tranche was known: the end of its declared bucket."""
+    if row["record"].get("schedule_as_of") is None:
+        raise ReplayError("late unlock capture requires schedule_as_of")
+    _, known = interval_bounds(propagate_timestamp(row["record"], "schedule_as_of"))
+    if known is None:
+        raise ReplayError("late unlock schedule_as_of requires EXACT or BUCKET(size) precision")
+    return [known]
 
 
 def _market_timestamp(value, key):
