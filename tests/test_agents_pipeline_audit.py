@@ -411,9 +411,9 @@ def test_item_view_sends_title_and_body_once_without_mutating_capture(title, bod
 
 
 def test_long_body_is_cut_at_a_sentence():
-    body = "First sentence is here. " * 200
+    body = "First sentence is here. " * 1000
     text = Pipeline.item_view({"source": "SEC", "title": "Speech", "text": body})["text"]
-    assert len(text) <= 2002 and text.endswith(". …")
+    assert len(text) <= 12002 and text.endswith(". …")
 
 
 def test_routing_state_names_item_and_event_with_readable_identities():

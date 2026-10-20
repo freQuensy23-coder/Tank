@@ -27,7 +27,7 @@ ROUTE_CRITERIA = {
     "true": "The same event, or a development of it: a confirmation, denial, stage change, new detail or new party.",
     "false": "A different event, even one about the same project, company, exchange or token.",
 }
-TEXT_LIMIT = 2000  # characters of item body sent to Jev
+TEXT_LIMIT = 12000  # characters of item body; Jev 1.13 leaves its accurate mode above ~32 KB of text
 
 
 def _clean(value):
