@@ -212,7 +212,7 @@ class SourcePoller:
             return None, state, kind
         state["entry_errors"] = []
         if sid == "S14":
-            snapshot = parsers.instruments(payload, feed)
+            snapshot = await asyncio.to_thread(parsers.instruments, payload, feed)
             pages = [(payload, state.get("fetched_at") or self.stamp())]
             found_on = dict.fromkeys(snapshot, 0)
             if str(feed.get("venue", "")).lower() == "bybit":
@@ -233,7 +233,7 @@ class SourcePoller:
                     page, page_state = await svc.fetch(next_feed, key + ":cursor:" + sha256(cursor))
                     if page is None:
                         raise ValueError("Unexpected conditional paginated response")
-                    page_snapshot = parsers.instruments(page, feed)
+                    page_snapshot = await asyncio.to_thread(parsers.instruments, page, feed)
                     snapshot.update(page_snapshot)
                     found_on.update(dict.fromkeys(page_snapshot, len(pages)))
                     pages.append((page, page_state.get("fetched_at") or self.stamp()))
@@ -285,14 +285,14 @@ class SourcePoller:
                         )
             state["instruments"] = snapshot
         elif kind in {"rss", "atom", "feed"}:
-            rows = parsers.feeds(payload, sid, feed)
+            rows = await asyncio.to_thread(parsers.feeds, payload, sid, feed)
             state["entry_errors"] = [
                 {**error, "payload_sha256": state["payload_sha256"]} for error in rows.errors
             ]
             for row in rows:
                 row["_payload"] = payload
         elif kind in ARTICLE_KINDS or sid == "S19":
-            rows = parsers.article_links(payload, feed)
+            rows = await asyncio.to_thread(parsers.article_links, payload, feed)
         else:
             rows, state = await self._json_history(source, feed, key, payload, state)
         return rows, state, kind
@@ -318,7 +318,7 @@ class SourcePoller:
         page_number = int(dict(parse_qsl(urlsplit(feed["url"]).query)).get("pageNo", 1))
         last_head_check = parse_time(state.get("fetched_at") or self.stamp())
         while True:
-            parsed = parsers.json_items(page, sid)
+            parsed = await asyncio.to_thread(parsers.json_items, page, sid)
             entry_errors.extend(
                 {**error, "payload_sha256": page_state["payload_sha256"]} for error in parsed.errors
             )
@@ -400,7 +400,7 @@ class SourcePoller:
                 head, head_state = await svc.fetch(feed, key, on_start=lambda: self.mark_request_start(key))
                 last_head_check = self.now()
                 if head is not None:
-                    head_rows = parsers.json_items(head, sid)
+                    head_rows = await asyncio.to_thread(parsers.json_items, head, sid)
                     entry_errors.extend(
                         {**error, "payload_sha256": head_state["payload_sha256"]}
                         for error in head_rows.errors
@@ -452,7 +452,7 @@ class SourcePoller:
                     pending_evidence[proposal_id] = extra_state
                 if extra:
                     existing = {r["external_id"] for r in rows}
-                    extra_rows = parsers.json_items(extra, sid)
+                    extra_rows = await asyncio.to_thread(parsers.json_items, extra, sid)
                     state["entry_errors"].extend(
                         {**error, "payload_sha256": extra_state["payload_sha256"]}
                         for error in extra_rows.errors
@@ -675,7 +675,7 @@ class SourcePoller:
                     payload, detail_state = await self._article(source, feed, key, item)
                 if payload is None:
                     raise ValueError("Article returned 304 without a durable source item")
-                detail = parsers.article(payload, source_id=sid)
+                detail = await asyncio.to_thread(parsers.article, payload, source_id=sid)
                 if not detail["text"].strip():
                     return self._empty_body(item["url"], detail_state)
                 # A detail page with no publication value must not erase the index's

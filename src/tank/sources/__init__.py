@@ -362,17 +362,14 @@ class SourceService:
     async def poll_once(self, source_id, *, due_only=False, escalated=False):
         return await self.poller.poll_once(source_id, due_only=due_only, escalated=escalated)
 
-    def filing_matches(self, item):
-        value = (item.get("title", "") + " " + item.get("text", "")).lower()
+    def _filing_pattern(self):
+        """One compiled pattern of registry names per configuration version (S02 filter)."""
+        cached = getattr(self, "_filing_cache", None)
+        if cached and cached[0] == self.settings.config_version:
+            return cached[1]
         registry = self.settings.load_config("registry")
         ambiguous = {"near", "world", "curve", "quant", "cow", "lit", "lighter", "plasma"}
-        crypto_context = bool(
-            re.search(
-                r"\b(?:crypto(?:currency|currencies|assets?)?|digital\s+assets?|bitcoin|ether(?:eum)?|blockchain|tokens?|tokenized|stablecoins?|defi|decentralized)\b",
-                value,
-            )
-        )
-        qualified = [
+        candidates = [
             "Curve Finance",
             "Curve DAO",
             "CoW Protocol",
@@ -394,11 +391,6 @@ class SourceService:
             "World ID",
             "Tools for Humanity",
         ]
-        candidates = list(qualified)
-        if re.search(r"\blighter\b", value) and re.search(r"\blit\b", value):
-            return True
-        if re.search(r"\bplasma\b", value) and re.search(r"\bxpl\b", value):
-            return True
         for token in registry.get("tokens", []):
             candidates.extend([token.get("name", ""), token.get("symbol", "")])
         for entity in registry.get("entities", []):
@@ -408,14 +400,26 @@ class SourceService:
             candidates.extend(
                 alias for alias in entity.get("aliases", []) if '"' not in alias and " only " not in alias
             )
-        for name in candidates:
-            if not name:
-                continue
-            if name.casefold() in ambiguous:
-                continue
-            if re.search(r"(?<!\w)" + re.escape(name.casefold()) + r"(?!\w)", value):
-                return True
-        return bool(re.search(r"\b(?:trust|etf)\b", value)) and crypto_context
+        names = sorted(
+            {n.casefold() for n in candidates if n and n.casefold() not in ambiguous}, key=len, reverse=True
+        )
+        pattern = re.compile(r"(?<!\w)(?:" + "|".join(re.escape(n) for n in names) + r")(?!\w)")
+        self._filing_cache = (self.settings.config_version, pattern)
+        return pattern
+
+    def filing_matches(self, item):
+        value = (item.get("title", "") + " " + item.get("text", "")).lower()
+        if re.search(r"\blighter\b", value) and re.search(r"\blit\b", value):
+            return True
+        if re.search(r"\bplasma\b", value) and re.search(r"\bxpl\b", value):
+            return True
+        if self._filing_pattern().search(value):
+            return True
+        crypto_context = re.search(
+            r"\b(?:crypto(?:currency|currencies|assets?)?|digital\s+assets?|bitcoin|ether(?:eum)?|blockchain|tokens?|tokenized|stablecoins?|defi|decentralized)\b",
+            value,
+        )
+        return bool(re.search(r"\b(?:trust|etf)\b", value)) and bool(crypto_context)
 
     async def check(self, *, probe=False, include_browser=False, check_accounts=False):
         if probe:
