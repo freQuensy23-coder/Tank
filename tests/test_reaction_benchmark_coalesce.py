@@ -28,11 +28,15 @@ def klines(token, iid, end, minutes=180):
 
 
 class KlineMarket:
+    instruments = {"binance:spot:BTCUSDT": {"token_id": "bitcoin:BTC"}, "binance:perp:BTCUSDT": {"token_id": "bitcoin:BTC"}}
+
     def __init__(self, end):
         self.end = end
         self.changes = []
+        self.snapshots = 0
 
     async def snapshot(self, token_id, cutoff, *, anchor=None):
+        self.snapshots += 1
         return {"token_id": token_id, "klines": klines(token_id, "binance:spot:BTCUSDT", self.end)}
 
     async def capture_changes(self, since=None, end=None):
@@ -52,7 +56,11 @@ async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(t
     repo = MemoryRepository()
     await seed(repo, anchor, ["test:T", "bitcoin:BTC"] if in_analysis_set else ["test:T"])
     monkeypatch.setattr(truth_module, "compute_market_truth", lambda snapshot, config=None: {})
-    scheduler = Scheduler(repo, Settings(_env_file=None, data_dir=tmp_path), KlineMarket(end), None)
+    market = KlineMarket(end)
+    for row in klines("bitcoin:BTC", "binance:spot:BTCUSDT", end):
+        row = {k: v for k, v in row.items() if k != "token_id"}
+        await repo.put("mkt.klines_1m", row["instrument_id"] + ":" + row["open_time"], row)
+    scheduler = Scheduler(repo, Settings(_env_file=None, data_dir=tmp_path), market, None)
     payload = {
         "event_id": "e",
         "token_id": "bitcoin:BTC",
@@ -65,6 +73,7 @@ async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(t
         assert "benchmark" not in data and data["spot_method"] == "NONE"
     else:
         assert data["spot_method"] == "NOT_APPLICABLE" and data["spot_cvd"] is None
+        assert market.snapshots == 0  # klines only, never a full BTC/ETH snapshot
         assert data["benchmark"]["r_raw_venue"] == "binance:spot:BTCUSDT"
         # Close at the anchor (bar 59 of 180) to close at anchor + 1 h (bar 119).
         assert data["r_raw"] == pytest.approx((100 + 119) / (100 + 59) - 1)
