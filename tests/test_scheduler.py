@@ -1268,7 +1268,8 @@ async def test_reaction_creation_registers_only_five_post_jobs_and_starts_pre_wi
     started, release = asyncio.Event(), asyncio.Event()
     captured = []
 
-    async def capture(payload):
+    async def capture(payload, *, wait_for_slot=False):
+        assert wait_for_slot  # background PRE capture waits for a slot
         captured.append(payload)
         started.set()
         await release.wait()
@@ -1351,7 +1352,7 @@ async def test_reaction_pre_error_retries_missing_windows_and_close_cancels_owne
     assert scheduler.reaction_capture.await_count == 1
     started = asyncio.Event()
 
-    async def block(payload):
+    async def block(payload, **_):
         started.set()
         await asyncio.Event().wait()
 
@@ -1619,6 +1620,11 @@ async def test_reaction_measurements_are_limited_and_extra_jobs_requeue():
     await asyncio.sleep(0)
     with pytest.raises(DeliveryDeferred):
         await scheduler.reaction_capture(payloads[-1])
+    # A background PRE capture waits for a slot instead of deferring.
+    waiting = asyncio.create_task(scheduler.reaction_capture(payloads[-1], wait_for_slot=True))
+    await asyncio.sleep(0)
+    assert not waiting.done() and len(started) == REACTION_MEASUREMENT_SLOTS
     release.set()
     assert [r["committed"] for r in await asyncio.gather(*running)] == ["C0", "C1"]
+    assert (await waiting) == {"committed": "C2"}
     assert await scheduler.reaction_capture(payloads[-1]) == {"committed": "C2"}
