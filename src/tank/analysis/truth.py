@@ -2034,8 +2034,9 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
             prev_buy = prev_sell = Decimal(0)
             prev_valid = bool(previous)
             for r in previous:
+                # A bar without a historical USD rate has size_buckets = None (flow.py).
                 for k in large_buckets:
-                    bucket = r.get("size_buckets", {}).get(k, {})
+                    bucket = (r.get("size_buckets") or {}).get(k) or {}
                     if bucket.get("buy_notional") is None or bucket.get("sell_notional") is None:
                         prev_valid = False
                         break
