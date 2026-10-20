@@ -45,3 +45,12 @@ The commands were run in the Compose `tank` service (`docker compose -p tank …
 - Finding, now fixed: the database URLs came only from `deploy/tank_entrypoint.py`. `exec` skips the entrypoint, so every CLI command in the container failed to reach PostgreSQL (`database: OperationalError`). Settings now builds the same `postgresql://tank:…@postgres:5432/tank` and oma URLs from the mounted `tank_db_password` and `oma_db_password` secrets. The environment still overrides them.
 - `doctor`: 25/26 checks ok ([doctor.json](container-2026-10-20/doctor.json)). They cover the database and schema, OpenCode key, OpenMA ids, Telegram token and both chats from delivery.yaml, `User-Agent TankV0/1.0 (inbox@ai.com)`, S29 list_id, backup dir and codex auth. The failing check is `x_profile`: the X browser profile in `/browser` is still empty, and xsensor seeds it on its first start.
 - `review list`, `review metrics` (week), `review show EVENT`, `reaction EVENT`, `scout list`, `coverage` and `sources check` all exit 0 against production ([commands.tsv](container-2026-10-20/commands.tsv)). Production has no cards yet (0 alerts).
+
+## Live `tank serve` (18:55Z, [serve-2026-10-20/](serve-2026-10-20/))
+
+`tank serve` has run in `tank-tank-1` since 18:50:41Z, from main 64192b0 (which includes 0d3baa8). The commands use exactly the operator form of HLD §9: `docker compose … exec -T tank tank …`.
+
+- `doctor`: **ready, 26/26** ([doctor.json](serve-2026-10-20/doctor.json)).
+- `review list` (period, no cards yet), `review show EVENT`, `review metrics` (week), `reaction EVENT`, `scout list`, `coverage` and `sources check`: exit 0.
+- `review label` with an unknown subject is refused. `replay` without a reachable isolated database fails closed ([commands.tsv](serve-2026-10-20/commands.tsv)).
+- W12 live: the container environment has no TANK_USER_AGENT, TANK_TELEGRAM_*_CHAT, TANK_JEV_PROVIDER or OpenRouter variable. The process resolves `TankV0/1.0 (inbox@ai.com)` and both chat IDs of delivery.yaml. It also has the OpenCode key from its secret, and the database URL from the role secret. No "Ignoring TANK_…" warning is logged.
