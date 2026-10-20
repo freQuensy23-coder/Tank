@@ -274,8 +274,9 @@ class Scheduler:
             if missing_pre and self.market is not None:
 
                 async def capture_pre(payloads=missing_pre):
+                    # A background task, not a worker: it waits for a slot.
                     for payload in payloads:
-                        await self.reaction_capture(payload)
+                        await self.reaction_capture(payload, wait_for_slot=True)
 
                 self.launch(f"reaction-pre:{event['event_id']}:{token}", capture_pre)
 
@@ -755,7 +756,7 @@ class Scheduler:
             else "Accepted primary evidence resolved the scheduled milestone.",
         )
 
-    async def reaction_capture(self, payload):
+    async def reaction_capture(self, payload, *, wait_for_slot=False):
         if payload.get("automatic_revision"):
             # 03 §8.6: a later queued revision of the same checkpoint measures all
             # the data this one would; running both only repeats the capture.
@@ -778,7 +779,7 @@ class Scheduler:
                     return plan["result"]
             # Capturing market buffers and computing history must not keep a
             # database transaction (and its market row locks) open for minutes.
-            if self._reaction_slots.locked():
+            if self._reaction_slots.locked() and not wait_for_slot:
                 from tank.delivery import DeliveryDeferred
 
                 raise DeliveryDeferred(
