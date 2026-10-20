@@ -4,11 +4,11 @@ Both Jev cutoffs are calibrated offline, before the service first starts (03 §3
 `config/thresholds.yaml` at a checkpoint (01 D6). One command does the whole pass:
 
 ```sh
-TANK_SECRETS_DIR=/etc/tank/secrets uv run tank calibrate packet.json --output-dir runs/<name>
+uv run tank calibrate packet.json --output-dir runs/<name>
 ```
 
-It starts no service, session, collector or delivery. It calls only `POST https://openrouter.ai/api/v1/systemone`
-with the pinned `typesafe/jev-1.13` binding, through the service's own `Pipeline`: same item state, same
+It starts no service, session, collector or delivery. It calls only `POST https://opencode.ai/inference/systemone/v1/systemone`
+with `jev-1.13-free`, or `jev-1.13` when an OpenCode key is configured, through the service's own `Pipeline`: same item state, same
 questions, same registry identities, same candidate builder. Production configuration is never changed.
 
 ## Packet

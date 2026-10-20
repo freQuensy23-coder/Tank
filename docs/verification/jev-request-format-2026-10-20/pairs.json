@@ -1,0 +1,1046 @@
+{
+ "route": [
+  {
+   "item_id": "ITM-01M59JX2D2J5N8T9JSYSMH1N6D",
+   "event_id": "V2EV-3fc84dc73b078167fa0f0830-0",
+   "same": true,
+   "v1_openrouter": 0.59,
+   "v1": 0.58,
+   "v2": 0.81
+  },
+  {
+   "item_id": "ITM-01M59JRG4K3KCGD118DA3CNQTG",
+   "event_id": "REF-GLOBAL-bb7bae8d50f4e80a2e5f75d6",
+   "same": true,
+   "v1_openrouter": 0.25,
+   "v1": 0.24,
+   "v2": 0.22
+  },
+  {
+   "item_id": "ITM-01M59JRG4AGKYP7HMJ2JMNB11R",
+   "event_id": "V2EV-7a7abcbb05c580da33ff8e4d-0",
+   "same": true,
+   "v1_openrouter": 0.66,
+   "v1": 0.67,
+   "v2": 0.87
+  },
+  {
+   "item_id": "ITM-01M57EPAQPAKQNA7857VWJRCRR",
+   "event_id": "V2EV-35bdd0b155d883a5c237a2c0-0",
+   "same": true,
+   "v1_openrouter": 0.91,
+   "v1": 0.91,
+   "v2": 0.94
+  },
+  {
+   "item_id": "ITM-01M57EPAQ2H2VDW15WR6QT8K27",
+   "event_id": "V2EV-898f59d9bea42328c6660351-0",
+   "same": true,
+   "v1_openrouter": 0.92,
+   "v1": 0.92,
+   "v2": 0.96
+  },
+  {
+   "item_id": "ITM-01M59JRJS7YDBFN1SRYAXHDAT3",
+   "event_id": "REF-GLOBAL-97fa11fb43d1d694dd99b934",
+   "same": true,
+   "v1_openrouter": 0.38,
+   "v1": 0.39,
+   "v2": 0.24
+  },
+  {
+   "item_id": "ITM-01M59JRVRJ456E51670ST4QE3V",
+   "event_id": "V2EV-258a74bfeacff56015f21440-0",
+   "same": true,
+   "v1_openrouter": 0.85,
+   "v1": 0.83,
+   "v2": 0.88
+  },
+  {
+   "item_id": "ITM-01M57DMJCGRXRB2TF5VCRNJ856",
+   "event_id": "OFFREF-afc95d069cb581f3348d2f34",
+   "same": true,
+   "v1_openrouter": 0.91,
+   "v1": 0.9,
+   "v2": 0.96
+  },
+  {
+   "item_id": "ITM-01M57DMJC2ACHVPAC55JRHV9VE",
+   "event_id": "OFFREF-fd6497cb7a8b64722bd3fb00",
+   "same": true,
+   "v1_openrouter": 0.86,
+   "v1": 0.86,
+   "v2": 0.84
+  },
+  {
+   "item_id": "ITM-01M57DMJC1NN7GAM58ZWQFV573",
+   "event_id": "OFFREF-8ae2dac8501a237b7ce4bfe8",
+   "same": true,
+   "v1_openrouter": 0.86,
+   "v1": 0.86,
+   "v2": 0.88
+  },
+  {
+   "item_id": "ITM-01M59JRKBAD3H82JZZWNR2T6DD",
+   "event_id": "REF-GLOBAL-2fb681567379ad3079d01a30",
+   "same": true,
+   "v1_openrouter": 0.69,
+   "v1": 0.7,
+   "v2": 0.7
+  },
+  {
+   "item_id": "ITM-01M59JRKB7DW73MHSMPMQARB9H",
+   "event_id": "REF-GLOBAL-2fb681567379ad3079d01a30",
+   "same": true,
+   "v1_openrouter": 0.55,
+   "v1": 0.54,
+   "v2": 0.36
+  },
+  {
+   "item_id": "ITM-01M59JRKB5689N72F8ZY2M66SH",
+   "event_id": "REF-GLOBAL-2fb681567379ad3079d01a30",
+   "same": true,
+   "v1_openrouter": 0.74,
+   "v1": 0.74,
+   "v2": 0.66
+  },
+  {
+   "item_id": "ITM-01M59JRKB224ARTBMMBNCRNC4M",
+   "event_id": "REF-GLOBAL-2fb681567379ad3079d01a30",
+   "same": true,
+   "v1_openrouter": 0.75,
+   "v1": 0.78,
+   "v2": 0.81
+  },
+  {
+   "item_id": "ITM-01M59JRKAZKM5S0S23BKF1ADPN",
+   "event_id": "REF-GLOBAL-2fb681567379ad3079d01a30",
+   "same": true,
+   "v1_openrouter": 0.64,
+   "v1": 0.64,
+   "v2": 0.4
+  },
+  {
+   "item_id": "ITM-01M59JRKASWWQGG8CZS88HR8S5",
+   "event_id": "V2EV-149bb5cfa903c7b111e97dbd-0",
+   "same": true,
+   "v1_openrouter": 0.63,
+   "v1": 0.64,
+   "v2": 0.65
+  },
+  {
+   "item_id": "ITM-01M59JRKAKX026RKKS1SM1SE2E",
+   "event_id": "V2EV-56902ee48356f658eb9af9fd-0",
+   "same": true,
+   "v1_openrouter": 0.57,
+   "v1": 0.58,
+   "v2": 0.81
+  },
+  {
+   "item_id": "ITM-01M59JQSWV364ZXRAVXA4DJWP6",
+   "event_id": "OFFREF-934ee6ab99f44c31acc176b4",
+   "same": true,
+   "v1_openrouter": 0.86,
+   "v1": 0.86,
+   "v2": 0.92
+  },
+  {
+   "item_id": "ITM-01M59JRKAB5BE9ZG42GY6J9SK9",
+   "event_id": "V2EV-7d83a4607a4b9b709e06aed3-0",
+   "same": true,
+   "v1_openrouter": 0.68,
+   "v1": 0.66,
+   "v2": 0.89
+  },
+  {
+   "item_id": "ITM-01M59JRKA8YP169R8810T2RMPN",
+   "event_id": "V2EV-cfa9471b61a6de8f4de4fac8-0",
+   "same": true,
+   "v1_openrouter": 0.74,
+   "v1": 0.73,
+   "v2": 0.89
+  },
+  {
+   "item_id": "ITM-01M57D8QZSBA38H4JQ1WDY46WY",
+   "event_id": "V2EV-00dae6de84cddb44563e1abd-0",
+   "same": true,
+   "v1_openrouter": 0.91,
+   "v1": 0.89,
+   "v2": 0.94
+  },
+  {
+   "item_id": "ITM-01M59JRF9WVNF8BFA2S6CA681E",
+   "event_id": "V2EV-a9a6703eef4be569c2986fed-0",
+   "same": true,
+   "v1_openrouter": 0.89,
+   "v1": 0.88,
+   "v2": 0.98
+  },
+  {
+   "item_id": "ITM-01M57D8VD791EJS2ZKWAWS9HV1",
+   "event_id": "V2EV-ICY-390d188dc4b991321455-0",
+   "same": true,
+   "v1_openrouter": 0.8,
+   "v1": 0.79,
+   "v2": 0.83
+  },
+  {
+   "item_id": "ITM-01M59JR0XC25WZ121WM8YAE7E5",
+   "event_id": "V2EV-a294be0b7126aa34038761a2-0",
+   "same": true,
+   "v1_openrouter": 0.64,
+   "v1": 0.61,
+   "v2": 0.78
+  },
+  {
+   "item_id": "ITM-01M59JRFTNKSY5AZNSPMKY2538",
+   "event_id": "V2EV-f2cd16fcd6b2788f4aab83ad-0",
+   "same": true,
+   "v1_openrouter": 0.9,
+   "v1": 0.89,
+   "v2": 0.93
+  },
+  {
+   "item_id": "ITM-01M57D8QZRY4KKZCEM5DB31TF3",
+   "event_id": "V2EV-4f2039a6268437267e4b69f3-0",
+   "same": true,
+   "v1_openrouter": 0.81,
+   "v1": 0.8,
+   "v2": 0.87
+  },
+  {
+   "item_id": "ITM-01M59JRJTHBWNT32TNZW8C752W",
+   "event_id": "V2EV-7ab78bff973660aef922604d-0",
+   "same": true,
+   "v1_openrouter": 0.89,
+   "v1": 0.88,
+   "v2": 0.05
+  },
+  {
+   "item_id": "ITM-01M59JRTZR6SXZ22TF5K2FDMW6",
+   "event_id": "REF-GLOBAL-5f27f8a684213e64e628b46d",
+   "same": true,
+   "v1_openrouter": 0.71,
+   "v1": 0.73,
+   "v2": 0.75
+  },
+  {
+   "item_id": "ITM-01M57D95P9RK3V4PRM0MJKE4G4",
+   "event_id": "V2EV-8ed478ef2aac1066970e5768-0",
+   "same": true,
+   "v1_openrouter": 0.93,
+   "v1": 0.94,
+   "v2": 0.87
+  },
+  {
+   "item_id": "ITM-01M57D950SN2DD56TBZ2JXYCBE",
+   "event_id": "V2EV-8ed478ef2aac1066970e5768-0",
+   "same": true,
+   "v1_openrouter": 0.91,
+   "v1": 0.92,
+   "v2": 0.97
+  },
+  {
+   "item_id": "ITM-01M59JQSQ0ZWB98CV0A2PDEZ33",
+   "event_id": "REF-GLOBAL-fc2a1771ed6c8758d9db0559",
+   "same": true,
+   "v1_openrouter": 0.89,
+   "v1": 0.89,
+   "v2": 0.92
+  },
+  {
+   "item_id": "ITM-01M59JRG3YT1SYNCCB2GBRMHDG",
+   "event_id": "REF-GLOBAL-e05fc0458545e1d0cd3b7ed9",
+   "same": false,
+   "v1_openrouter": 0.68,
+   "v1": 0.7,
+   "v2": 0.78
+  },
+  {
+   "item_id": "ITM-01M59JRG3WYV50C1N7XCBYXAGE",
+   "event_id": "REF-GLOBAL-bb5317daddc097e74e438ed9",
+   "same": false,
+   "v1_openrouter": 0.73,
+   "v1": 0.72,
+   "v2": 0.74
+  },
+  {
+   "item_id": "ITM-01M59JRG3WYV50C1N7XCBYXAGE",
+   "event_id": "REF-GLOBAL-e05fc0458545e1d0cd3b7ed9",
+   "same": false,
+   "v1_openrouter": 0.55,
+   "v1": 0.51,
+   "v2": 0.52
+  },
+  {
+   "item_id": "ITM-01M59JRG3RE1GXSX292AQY2NW0",
+   "event_id": "REF-GLOBAL-71a444d9d216dee856037ce7",
+   "same": false,
+   "v1_openrouter": 0.65,
+   "v1": 0.64,
+   "v2": 0.83
+  },
+  {
+   "item_id": "ITM-01M59JRG3RE1GXSX292AQY2NW0",
+   "event_id": "REF-GLOBAL-bb5317daddc097e74e438ed9",
+   "same": false,
+   "v1_openrouter": 0.59,
+   "v1": 0.59,
+   "v2": 0.71
+  },
+  {
+   "item_id": "ITM-01M59JRG3RE1GXSX292AQY2NW0",
+   "event_id": "REF-GLOBAL-e05fc0458545e1d0cd3b7ed9",
+   "same": false,
+   "v1_openrouter": 0.61,
+   "v1": 0.57,
+   "v2": 0.65
+  },
+  {
+   "item_id": "ITM-01M59JRG3NNKQCY0D1RF9QDRZ3",
+   "event_id": "REF-GLOBAL-42fedbc4709a26d6acdb14c8",
+   "same": false,
+   "v1_openrouter": 0.6,
+   "v1": 0.6,
+   "v2": 0.76
+  },
+  {
+   "item_id": "ITM-01M59JRG3NNKQCY0D1RF9QDRZ3",
+   "event_id": "REF-GLOBAL-71a444d9d216dee856037ce7",
+   "same": false,
+   "v1_openrouter": 0.57,
+   "v1": 0.6,
+   "v2": 0.75
+  },
+  {
+   "item_id": "ITM-01M59JRG3NNKQCY0D1RF9QDRZ3",
+   "event_id": "REF-GLOBAL-ba7f835997b6540928b29528",
+   "same": false,
+   "v1_openrouter": 0.52,
+   "v1": 0.47,
+   "v2": 0.52
+  },
+  {
+   "item_id": "ITM-01M59JRG3NNKQCY0D1RF9QDRZ3",
+   "event_id": "REF-GLOBAL-bb5317daddc097e74e438ed9",
+   "same": false,
+   "v1_openrouter": 0.58,
+   "v1": 0.54,
+   "v2": 0.71
+  },
+  {
+   "item_id": "ITM-01M59JRG3NNKQCY0D1RF9QDRZ3",
+   "event_id": "REF-GLOBAL-e05fc0458545e1d0cd3b7ed9",
+   "same": false,
+   "v1_openrouter": 0.57,
+   "v1": 0.55,
+   "v2": 0.71
+  },
+  {
+   "item_id": "ITM-01M57EPP5JR9HG4F1NRZMZ9GCN",
+   "event_id": "V2EV-ffd2ded9fefbe9c12cb30f07-1",
+   "same": false,
+   "v1_openrouter": 0.51,
+   "v1": 0.47,
+   "v2": 0.58
+  },
+  {
+   "item_id": "ITM-01M59JRWA1C3QR1RMWG0HWAH9T",
+   "event_id": "REF-GLOBAL-5db666e0b3f34ee97c04c3df",
+   "same": false,
+   "v1_openrouter": 0.62,
+   "v1": 0.58,
+   "v2": 0.67
+  },
+  {
+   "item_id": "ITM-01M59JRFPG04DF84SH5Q6S7ZB5",
+   "event_id": "REF-GLOBAL-0e49bf4592d2f042f53cd6c7",
+   "same": false,
+   "v1_openrouter": 0.7,
+   "v1": 0.69,
+   "v2": 0.92
+  },
+  {
+   "item_id": "ITM-01M59JRFV9XQWMS7CZSQKAVJPZ",
+   "event_id": "REF-GLOBAL-bbeca38c7c94522b79ca0f47",
+   "same": false,
+   "v1_openrouter": 0.58,
+   "v1": 0.58,
+   "v2": 0.52
+  },
+  {
+   "item_id": "ITM-01M59JRFP9VM0JVS83Z92Q1FPS",
+   "event_id": "REF-GLOBAL-378a815134df892769fd1fc4",
+   "same": false,
+   "v1_openrouter": 0.66,
+   "v1": 0.65,
+   "v2": 0.77
+  },
+  {
+   "item_id": "ITM-01M59JRW1FKFQ8G4PDXCT7JRR8",
+   "event_id": "REF-GLOBAL-cc489e3de3e87f617846d8f2",
+   "same": false,
+   "v1_openrouter": 0.7,
+   "v1": 0.65,
+   "v2": 0.57
+  },
+  {
+   "item_id": "ITM-01M59JRFNTWH82DRR1NCRVWQ6N",
+   "event_id": "REF-GLOBAL-1526d50adbb22ce3c777c9da",
+   "same": false,
+   "v1_openrouter": 0.52,
+   "v1": 0.51,
+   "v2": 0.43
+  },
+  {
+   "item_id": "ITM-01M59JRFNTWH82DRR1NCRVWQ6N",
+   "event_id": "V2EV-babd95383bf5edfe07d5d5a4-0",
+   "same": false,
+   "v1_openrouter": 0.67,
+   "v1": 0.65,
+   "v2": 0.86
+  },
+  {
+   "item_id": "ITM-01M59JRFNRSSCJYAZEPQEB4VX1",
+   "event_id": "REF-GLOBAL-4a52d93f4600cb0bbe65418b",
+   "same": false,
+   "v1_openrouter": 0.7,
+   "v1": 0.7,
+   "v2": 0.58
+  },
+  {
+   "item_id": "ITM-01M59JRFNNJSQBCX12H7WKRPV6",
+   "event_id": "REF-GLOBAL-dccb641f98cafcd194e7a972",
+   "same": false,
+   "v1_openrouter": 0.72,
+   "v1": 0.77,
+   "v2": 0.6
+  },
+  {
+   "item_id": "ITM-01M59JQSRXJ9H7DCFTFQ1RWF38",
+   "event_id": "REF-GLOBAL-9621d466d931a4b3bd2b9f63",
+   "same": false,
+   "v1_openrouter": 0.89,
+   "v1": 0.88,
+   "v2": 0.93
+  },
+  {
+   "item_id": "ITM-01M59JQSRQ2R10BX073TXM7MCX",
+   "event_id": "REF-GLOBAL-9621d466d931a4b3bd2b9f63",
+   "same": false,
+   "v1_openrouter": 0.89,
+   "v1": 0.89,
+   "v2": 0.94
+  },
+  {
+   "item_id": "ITM-01M59JRFXXPQ4HEW6D3NVFR428",
+   "event_id": "REF-GLOBAL-bc831405cf0d0f03d2991378",
+   "same": false,
+   "v1_openrouter": 0.6,
+   "v1": 0.59,
+   "v2": 0.31
+  },
+  {
+   "item_id": "ITM-01M59JRV48VHY1HQKC6JT29M8P",
+   "event_id": "REF-GLOBAL-20d62ca4de5c48ccf630362b",
+   "same": false,
+   "v1_openrouter": 0.71,
+   "v1": 0.72,
+   "v2": 0.8
+  },
+  {
+   "item_id": "ITM-01M59JQY4888GNRQQEB4P8TJAH",
+   "event_id": "REF-GLOBAL-c98e77aa752eb1fda10f5a11",
+   "same": false,
+   "v1_openrouter": 0.55,
+   "v1": 0.47,
+   "v2": 0.39
+  },
+  {
+   "item_id": "ITM-01M59JRFXC66G84STQG7ZD58YB",
+   "event_id": "REF-GLOBAL-29a2ccf84d5491b099e76f80",
+   "same": false,
+   "v1_openrouter": 0.6,
+   "v1": 0.59,
+   "v2": 0.43
+  },
+  {
+   "item_id": "ITM-01M59JRFXAEC45ND2MSYTFX576",
+   "event_id": "REF-GLOBAL-d0142e42deee42f73ca81cc0",
+   "same": false,
+   "v1_openrouter": 0.73,
+   "v1": 0.72,
+   "v2": 0.58
+  },
+  {
+   "item_id": "ITM-01M59JQSQQGHKNED4HFKMGCM0D",
+   "event_id": "REF-GLOBAL-9c145980ae2293224ba2ceb3",
+   "same": false,
+   "v1_openrouter": 0.52,
+   "v1": 0.42,
+   "v2": 0.36
+  },
+  {
+   "item_id": "ITM-01M57D8RJ4RGX9AAC0H0GQAD9B",
+   "event_id": "REF-GLOBAL-2ea4e39ca0b28863943b876b",
+   "same": false,
+   "v1_openrouter": 0.72,
+   "v1": 0.68,
+   "v2": 0.69
+  },
+  {
+   "item_id": "ITM-01M57D8QZRY4KKZCEM5DB31TF3",
+   "event_id": "REF-GLOBAL-2ea4e39ca0b28863943b876b",
+   "same": false,
+   "v1_openrouter": 0.68,
+   "v1": 0.69,
+   "v2": 0.77
+  },
+  {
+   "item_id": "ITM-01M59JRFX76MR4WRSY0372Y7J1",
+   "event_id": "REF-GLOBAL-d0142e42deee42f73ca81cc0",
+   "same": false,
+   "v1_openrouter": 0.62,
+   "v1": 0.64,
+   "v2": 0.39
+  },
+  {
+   "item_id": "ITM-01M59JQPACJ25J5MKP5YMHHZ3H",
+   "event_id": "REF-GLOBAL-497f098a3b0df3860edba002",
+   "same": false,
+   "v1_openrouter": 0.5,
+   "v1": 0.48,
+   "v2": 0.36
+  },
+  {
+   "item_id": "ITM-01M59JRFTF3HJAJCN0VDGV42FZ",
+   "event_id": "REF-GLOBAL-a39662dfdf6af9611e886cc8",
+   "same": false,
+   "v1_openrouter": 0.68,
+   "v1": 0.68,
+   "v2": 0.73
+  },
+  {
+   "item_id": "ITM-01M59JQP40PA89WAA5CQ4VZYBJ",
+   "event_id": "REF-GLOBAL-488a92977d8897f377f389b2",
+   "same": false,
+   "v1_openrouter": 0.53,
+   "v1": 0.55,
+   "v2": 0.53
+  },
+  {
+   "item_id": "ITM-01M59JQSW2A2YGTF9V23GSHQXX",
+   "event_id": "OFFREF-9d30128c353e4050869bcc41",
+   "same": false,
+   "v1_openrouter": 0.58,
+   "v1": 0.56,
+   "v2": 0.57
+  },
+  {
+   "item_id": "ITM-01M57D8P6Y5FDW9J9TJWFX85FX",
+   "event_id": "OFFREF-ba862e26ff43fb8dbc74b8a0",
+   "same": false,
+   "v1_openrouter": 0.75,
+   "v1": 0.75,
+   "v2": 0.86
+  },
+  {
+   "item_id": "ITM-01M57D8P6YWZFMPA1SE6R39TYH",
+   "event_id": "OFFREF-43fee6fc0a8530c5d47a543b",
+   "same": false,
+   "v1_openrouter": 0.8,
+   "v1": 0.79,
+   "v2": 0.94
+  },
+  {
+   "item_id": "ITM-01M57D8P6YWZFMPA1SE6R39TYH",
+   "event_id": "OFFREF-ba862e26ff43fb8dbc74b8a0",
+   "same": false,
+   "v1_openrouter": 0.77,
+   "v1": 0.75,
+   "v2": 0.59
+  },
+  {
+   "item_id": "ITM-01M59JR5Y1BHETM8B7VSGQ3JTJ",
+   "event_id": "OFFREF-89d2d2cdb976288b20631189",
+   "same": false,
+   "v1_openrouter": 0.05,
+   "v1": 0.04,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M57D8QZRY4KKZCEM5DB31TF3",
+   "event_id": "REF-GLOBAL-35b92a280e123e83a1668b03",
+   "same": false,
+   "v1_openrouter": 0.03,
+   "v1": 0.03,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M59JR5WSY7DMR7PNH0HQ8F1R",
+   "event_id": "REF-GLOBAL-279a57ed4aaa5f0d176406ee",
+   "same": false,
+   "v1_openrouter": 0.04,
+   "v1": 0.03,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M59JQQ4G56ZME1WZDK6DZ3RW",
+   "event_id": "REF-GLOBAL-9214a4d9bbdf3126ba1a74a6",
+   "same": false,
+   "v1_openrouter": 0.04,
+   "v1": 0.04,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M59JQNBKTF54TH8G7G4KAMV5",
+   "event_id": "REF-GLOBAL-2f61a5d1b991e76859c050fe",
+   "same": false,
+   "v1_openrouter": 0.03,
+   "v1": 0.03,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M59JQQK8TQ52F1WAT8CXYAQX",
+   "event_id": "REF-GLOBAL-a6989a18337e0138f15c8313",
+   "same": false,
+   "v1_openrouter": 0.42,
+   "v1": 0.4,
+   "v2": 0.28
+  },
+  {
+   "item_id": "ITM-01M59JQQR3RY3TWX6AHEJ48E8N",
+   "event_id": "REF-GLOBAL-2afe9008ece5af9cea3c32e0",
+   "same": false,
+   "v1_openrouter": 0.06,
+   "v1": 0.06,
+   "v2": 0.04
+  },
+  {
+   "item_id": "ITM-01M57D8QZPM4CQXG1JPH6BCVC2",
+   "event_id": "V2EV-ee81d467225ad844412e8a96-1",
+   "same": false,
+   "v1_openrouter": 0.02,
+   "v1": 0.02,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M59JRVRXCGF5SGS1E3JM9SH4",
+   "event_id": "V2EV-eea169d5d1e53d86d91d64f3-0",
+   "same": false,
+   "v1_openrouter": 0.04,
+   "v1": 0.04,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M59JQQ4G56ZME1WZDK6DZ3RW",
+   "event_id": "REF-GLOBAL-8b188d36db9156bfd0635cbb",
+   "same": false,
+   "v1_openrouter": 0.03,
+   "v1": 0.03,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M59JQV66ADZ449S74THZ7PV2",
+   "event_id": "REF-GLOBAL-ade437d64e8990a6d1afe07c",
+   "same": false,
+   "v1_openrouter": 0.03,
+   "v1": 0.02,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M59JQPJE2QJ03EEEZ74M3BSC",
+   "event_id": "REF-GLOBAL-2f61a5d1b991e76859c050fe",
+   "same": false,
+   "v1_openrouter": 0.03,
+   "v1": 0.03,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M59JRF9HTT6CNVT67CP6C05A",
+   "event_id": "OFFREF-ed23af115a141d02e02d2657",
+   "same": false,
+   "v1_openrouter": 0.02,
+   "v1": 0.02,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M59JRWCR472CEVFGV6R3FA4P",
+   "event_id": "REF-GLOBAL-31d3741ad6c39325f0d77e1b",
+   "same": false,
+   "v1_openrouter": 0.04,
+   "v1": 0.04,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M59JRVMVDBQ20DJ6Y1NE139X",
+   "event_id": "V2EV-141f8ac97f089f0e67d0b9c3-1",
+   "same": false,
+   "v1_openrouter": 0.04,
+   "v1": 0.04,
+   "v2": 0.03
+  },
+  {
+   "item_id": "ITM-01M57EPP5HXBX2SESXPDDTV326",
+   "event_id": "V2EV-91c277b4e7497fe7ea3a6989-1",
+   "same": false,
+   "v1_openrouter": 0.04,
+   "v1": 0.04,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M59JRVKZMTV225SJC2YCANJ4",
+   "event_id": "REF-GLOBAL-36445df1a710472322c7d5c9",
+   "same": false,
+   "v1_openrouter": 0.03,
+   "v1": 0.04,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M57D998G3PEFVVS16EZAF9MR",
+   "event_id": "REF-GLOBAL-cd53e4462af3d643d0efb0e8",
+   "same": false,
+   "v1_openrouter": 0.02,
+   "v1": 0.02,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M59JQQRQ035H97Z8KBZSDSCY",
+   "event_id": "REF-GLOBAL-dbb2e8dbe3f32c104bd34e43",
+   "same": false,
+   "v1_openrouter": 0.1,
+   "v1": 0.11,
+   "v2": 0.06
+  },
+  {
+   "item_id": "ITM-01M59JRVRJ456E51670ST4QE3V",
+   "event_id": "V2EV-eea169d5d1e53d86d91d64f3-1",
+   "same": false,
+   "v1_openrouter": 0.03,
+   "v1": 0.03,
+   "v2": 0.02
+  }
+ ],
+ "filter": [
+  {
+   "item_id": "ITM-01M59JRHA6N6XTM55KE78T76KM",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.98,
+   "v1": 0.98,
+   "v2": 0.98
+  },
+  {
+   "item_id": "ITM-01M57D8P1NV0VZEEZB0KA1XS88",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.96,
+   "v1": 0.96,
+   "v2": 0.97
+  },
+  {
+   "item_id": "ITM-01M59JRHAGCAWTEH6N6KYNQMZB",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.97,
+   "v1": 0.97,
+   "v2": 0.96
+  },
+  {
+   "item_id": "ITM-01M57D8NSQ60YRCZVFNCCHBQF6",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.99,
+   "v1": 0.99,
+   "v2": 0.99
+  },
+  {
+   "item_id": "ITM-01M59JRHCCB1D4G8REY1XPJGXH",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.98,
+   "v1": 0.98,
+   "v2": 0.98
+  },
+  {
+   "item_id": "ITM-01M59JRVX2KN027X3RFGDST70C",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.98,
+   "v1": 0.98,
+   "v2": 0.98
+  },
+  {
+   "item_id": "ITM-01M59JRK9PG4Z5MJ9A3VGSK529",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.05,
+   "v1": 0.03,
+   "v2": 0.04
+  },
+  {
+   "item_id": "ITM-01M59JRHAD0J69EN7XW0HE3VHD",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.98,
+   "v1": 0.98,
+   "v2": 0.98
+  },
+  {
+   "item_id": "ITM-01M59JRG3YT1SYNCCB2GBRMHDG",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.43,
+   "v1": 0.4,
+   "v2": 0.62
+  },
+  {
+   "item_id": "ITM-01M59JRH9YXPNQYDPG45FCJSJE",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.98,
+   "v1": 0.98,
+   "v2": 0.99
+  },
+  {
+   "item_id": "ITM-01M59JRHCGYEQE46BD9DD0KKSY",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.99,
+   "v1": 0.99,
+   "v2": 0.99
+  },
+  {
+   "item_id": "ITM-01M59JRG3WYV50C1N7XCBYXAGE",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.41,
+   "v1": 0.43,
+   "v2": 0.61
+  },
+  {
+   "item_id": "ITM-01M59JRHDAHV3FQTCHCXG4C81F",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.97,
+   "v1": 0.97,
+   "v2": 0.96
+  },
+  {
+   "item_id": "ITM-01M59JRHEYPXTH3F70H2TDAGJQ",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.99,
+   "v1": 0.99,
+   "v2": 0.99
+  },
+  {
+   "item_id": "ITM-01M57D8P1JVB6QEVN8J31PGVQD",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.98,
+   "v1": 0.98,
+   "v2": 0.98
+  },
+  {
+   "item_id": "ITM-01M57D8NSVND13F9XBR6JBND2E",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.98,
+   "v1": 0.98,
+   "v2": 0.99
+  },
+  {
+   "item_id": "ITM-01M59JRHBPT0AB14RTWDQ00WA9",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.93,
+   "v1": 0.92,
+   "v2": 0.78
+  },
+  {
+   "item_id": "ITM-01M59JRHAA22J21XBXGC9QC4YR",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.98,
+   "v1": 0.98,
+   "v2": 0.97
+  },
+  {
+   "item_id": "ITM-01M57D8P1MZMHB6Q8EZFF3X8VV",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.98,
+   "v1": 0.98,
+   "v2": 0.98
+  },
+  {
+   "item_id": "ITM-01M59JRKAW0PXXYRNN8VY6NABX",
+   "relevant": true,
+   "filtered": true,
+   "v1_openrouter": 0.14,
+   "v1": 0.13,
+   "v2": 0.29
+  },
+  {
+   "item_id": "ITM-01M57D8NR9PRER631R48X9ZWZ8",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M57D8NXNN29W3J2GWPZM09V8",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M59JRW0BTVQ7DGNZCTD8PHBB",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M59JRW09BA5PC0EC1BQG1GHS",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M57D8NXP41JGBFBXR9PZA6FM",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.03,
+   "v1": 0.03,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M59JRGRB2CSXMTCFEEMRQM0D",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M57D8NRETJ79PNJTK4X6K76T",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M57D8NR8JNDWAPFRDFY3DYFY",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M57D8P5R4PDBC2GQMS2PNYYE",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.02,
+   "v1": 0.02,
+   "v2": 0.03
+  },
+  {
+   "item_id": "ITM-01M57D8P4Q2ZY0S7YQK57RYWR2",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M57D8NXMEN5T8JW9GNPNS0KR",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.02,
+   "v1": 0.02,
+   "v2": 0.02
+  },
+  {
+   "item_id": "ITM-01M57D8P4VWVXHKDN9BTM4DRV3",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.02,
+   "v1": 0.02,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M59JRGSW1EJRCMZJQB43GMQQ",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M59JRVZT1Y1YNCGRVYM4N3J2",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M59JRH79Y2DTQ7S03G5XP8H3",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M57D8NRFX4GG84XEHQ3N4QAS",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M57D8NR5J5Z6Y834JVSNEWDP",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M59JRGTW6RFPB9RBCW5DV30W",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M57D8NR93JZ1XJV978WV0HPX",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.01,
+   "v1": 0.01,
+   "v2": 0.01
+  },
+  {
+   "item_id": "ITM-01M57D8P4NH901XE01MQBQJ04Y",
+   "relevant": false,
+   "filtered": true,
+   "v1_openrouter": 0.02,
+   "v1": 0.02,
+   "v2": 0.02
+  }
+ ]
+}

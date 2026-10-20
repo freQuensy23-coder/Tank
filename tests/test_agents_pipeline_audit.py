@@ -145,7 +145,7 @@ async def test_pending_extraction_is_not_a_candidate_then_real_event_is_scored(s
         return httpx.Response(
             200,
             json={
-                "model": "typesafe/jev-1.13-20260917",
+                "model": "jev-1.13-free",
                 "usage": {},
                 "answers": {"same_event": {"type": "noul", "noul": same}},
             },
@@ -259,7 +259,7 @@ async def test_official_repost_promotion_during_filter_request_preserves_latest_
         return httpx.Response(
             200,
             json={
-                "model": "typesafe/jev-1.13-20260917",
+                "model": "jev-1.13-free",
                 "usage": {},
                 "answers": {"relevant": {"type": "noul", "noul": 0.1}},
             },
@@ -296,7 +296,7 @@ async def test_failed_event_is_not_a_routing_candidate():
         "failed",
         {
             "event_id": "failed",
-            "lifecycle": "FAILED",
+            "lifecycle": "DETECTED",
             "entities": ["aave"],
         },
     )
@@ -307,6 +307,7 @@ async def test_failed_event_is_not_a_routing_candidate():
             "session_id": "s",
             "event_id": "failed",
             "last_item_at": iso(),
+            "status": "FAILED",
         },
     )
     # object() deliberately cannot issue HTTP: terminal events are never scored.
@@ -410,9 +411,9 @@ def test_item_view_sends_title_and_body_once_without_mutating_capture(title, bod
 
 
 def test_long_body_is_cut_at_a_sentence():
-    body = "First sentence is here. " * 200
+    body = "First sentence is here. " * 1000
     text = Pipeline.item_view({"source": "SEC", "title": "Speech", "text": body})["text"]
-    assert len(text) <= 2002 and text.endswith(". …")
+    assert len(text) <= 12002 and text.endswith(". …")
 
 
 def test_routing_state_names_item_and_event_with_readable_identities():

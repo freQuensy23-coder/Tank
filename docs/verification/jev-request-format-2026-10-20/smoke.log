@@ -1,0 +1,2 @@
+FILTER {"score": 0.98, "requested_model_id": "jev-1.13", "resolved_model_id": "jev-1.13", "jev_provider": "opencode", "endpoint": "https://opencode.ai/inference/systemone/v1/systemone", "input_tokens": 444, "cost_usd": null, "billing_basis": "OPENCODE_REPORTED"}
+ROUTE {"score": 0.95, "requested_model_id": "jev-1.13", "resolved_model_id": "jev-1.13", "jev_provider": "opencode", "endpoint": "https://opencode.ai/inference/systemone/v1/systemone", "input_tokens": 442, "cost_usd": null, "billing_basis": "OPENCODE_REPORTED"}

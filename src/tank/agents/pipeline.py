@@ -10,7 +10,7 @@ import httpx
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, sha256, utcnow
 
-from .jev import BINDING, MODEL, classify
+from .jev import MODEL, binding, classify
 
 JEV_PROMPT_VERSION = "jev-v2"
 
@@ -27,7 +27,7 @@ ROUTE_CRITERIA = {
     "true": "The same event, or a development of it: a confirmation, denial, stage change, new detail or new party.",
     "false": "A different event, even one about the same project, company, exchange or token.",
 }
-TEXT_LIMIT = 2000  # characters of item body sent to Jev
+TEXT_LIMIT = 12000  # characters of item body; Jev 1.13 leaves its accurate mode above ~32 KB of text
 
 
 def _clean(value):
@@ -115,25 +115,25 @@ class Pipeline:
                 "criteria": FILTER_CRITERIA if name == "relevant" else ROUTE_CRITERIA,
             }
         }
-        binding = BINDING
+        pinned = binding(getattr(self.settings, "opencode_api_key", None))
         state_fingerprint = sha256(state)
         question_fingerprint = sha256(questions)
-        request_fingerprint = sha256({"model": binding.request_model, "state": state, "questions": questions})
+        request_fingerprint = sha256({"model": pinned.request_model, "state": state, "questions": questions})
         key = sha256(
             {
                 "item_id": item["item_id"],
-                "model": binding.request_model,
-                "provider": binding.provider,
-                "base_url": binding.base_url,
+                "model": pinned.request_model,
+                "provider": pinned.provider,
+                "base_url": pinned.base_url,
                 "prompt_version": JEV_PROMPT_VERSION,
                 "questions": questions,
                 "state_fingerprint": state_fingerprint,
             }
         )
-        return key, questions, binding, state_fingerprint, question_fingerprint, request_fingerprint
+        return key, questions, pinned, state_fingerprint, question_fingerprint, request_fingerprint
 
     async def _score_record(self, item, name, state):
-        key, questions, binding, state_fingerprint, question_fingerprint, request_fingerprint = (
+        key, questions, pinned, state_fingerprint, question_fingerprint, request_fingerprint = (
             self.score_identity(item, name, state)
         )
         cached = await self.repo.get("ops.llm_usage", key)
@@ -143,22 +143,20 @@ class Pipeline:
             raise ValueError(
                 "Replay requires stored Jev score for the exact wire question and state; live classification is disabled"
             )
-        api_key = getattr(self.settings, "openrouter_api_key", None)
-        if not api_key:
-            raise ConfigurationError("Jev requires OPENROUTER_API_KEY or TANK_OPENROUTER_API_KEY")
+        api_key = getattr(self.settings, "opencode_api_key", None)
         data = await classify(self.http, api_key=api_key, state=state, questions=questions)
         score = float(data["answers"][name]["noul"])
-        if not 0 <= score <= 1 or data.get("model") not in binding.resolved_models:
+        if not 0 <= score <= 1 or data.get("model") not in pinned.resolved_models:
             raise ValueError("Jev returned invalid score or unexpected resolved model")
         usage = data.get("usage", {})
         tokens = usage.get("input_tokens")
         reported_cost = usage.get("cost")
         amount = Decimal(str(reported_cost)) if reported_cost is not None else None
         if amount is not None and (not amount.is_finite() or amount < 0):
-            raise ValueError("Invalid OpenRouter reported Jev cost")
+            raise ValueError("Invalid provider-reported Jev cost")
         cost = str(amount) if amount is not None else None
-        cost_reason = None if amount is not None else "OpenRouter omitted billed usage.cost"
-        billing_basis = "OPENROUTER_REPORTED"
+        cost_reason = None if amount is not None else "OpenCode does not report usage.cost"
+        billing_basis = "OPENCODE_REPORTED"
         completed_at = collection_clock()
         record = await self.repo.put(
             "ops.llm_usage",
@@ -169,13 +167,13 @@ class Pipeline:
                 "call": "FILTER" if name == "relevant" else "ROUTE",
                 "model_id": data["model"],
                 "semantic_model_id": MODEL,
-                "requested_model_id": binding.request_model,
-                "jev_provider": binding.provider,
-                "endpoint": binding.base_url + "/v1/systemone",
+                "requested_model_id": pinned.request_model,
+                "jev_provider": pinned.provider,
+                "endpoint": pinned.base_url + "/v1/systemone",
                 "resolved_model_id": data["model"],
                 "response_id": data.get("id"),
                 "upstream_provider": data.get("provider"),
-                "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed",
+                "model_pin_evidence": "OpenCode serves Jev 1.13 under this model name; no dated snapshot or patch suffix is exposed",
                 "billing_basis": billing_basis,
                 "billing_currency": "USD",
                 "prompt_version": JEV_PROMPT_VERSION,
@@ -351,7 +349,8 @@ class Pipeline:
             async for row in self.repo.iter_range(
                 "ops.agent_sessions", "last_item_at", start=since, end=iso(now + timedelta(microseconds=1))
             )
-            if row.get("event_id")
+            # An event whose session failed is not open (03 §3.2).
+            if row.get("event_id") and row.get("status") != "FAILED"
         }
         events = []
         # Preserve stable event-key order, including the production tie rule.
@@ -361,7 +360,6 @@ class Pipeline:
                 "CLOSED",
                 "MERGED",
                 "INVALIDATED",
-                "FAILED",
             ):
                 continue
             event_ids = {

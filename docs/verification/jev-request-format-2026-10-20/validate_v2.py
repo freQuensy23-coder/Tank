@@ -1,17 +1,15 @@
-"""Compare jev-v1 (cached scores) and jev-v2 on the same real pairs from the V0-B packet.
+"""Compare the jev-v1 and jev-v2 request formats on the same real pairs from the V0-B packet.
+
+Both formats are scored on the current Jev binding (OpenCode); the earlier OpenRouter jev-v1 scores
+(cache in V1_USAGE_DIR) choose the pairs and are reported for reference.
 
 Usage: validate_v2.py PACKET V1_USAGE_DIR OUT_DIR [--score]
-Without --score it only lists the pairs and counts the v2 requests (no network).
+Without --score it only lists the pairs and counts the requests (no network).
 """
-import asyncio
-import json
-import random
-import sys
+import asyncio, json, random, sys, time
 from pathlib import Path
-
 import httpx
-
-from tank.agents.jev import BINDING
+from tank.agents.jev import JevBinding, classify
 from tank.agents.pipeline import Pipeline
 from tank.calibration import _CachedConfig, _Ledger, load_packet
 from tank.settings import Settings, resolve_versions
@@ -35,12 +33,19 @@ def v1_routing_state(item, event):
             "stage": event.get("event_state", event.get("stage")), "known_to_us_at": event.get("known_to_us_at")}}
 
 
+def v1_questions(name):
+    return {name: {"type": "noul", "instructions": V1_FILTER if name == "relevant" else V1_ROUTE,
+                   "criteria": {"true": "About crypto" if name == "relevant" else "Same event or a development of it",
+                                "false": "Not about crypto" if name == "relevant" else "A different event"}}}
+
+
 def v1_score(usage, item, name, state):
     questions = {name: {"type": "noul", "instructions": V1_FILTER if name == "relevant" else V1_ROUTE,
                         "criteria": {"true": "About crypto" if name == "relevant" else "Same event or a development of it",
                                      "false": "Not about crypto" if name == "relevant" else "A different event"}}}
-    key = sha256({"item_id": item["item_id"], "model": BINDING.request_model, "provider": BINDING.provider,
-                  "base_url": BINDING.base_url, "prompt_version": "jev-v1", "questions": questions,
+    old = JevBinding(provider="openrouter", base_url="https://openrouter.ai/api", request_model="typesafe/jev-1.13")
+    key = sha256({"item_id": item["item_id"], "model": old.request_model, "provider": old.provider,
+                  "base_url": old.base_url, "prompt_version": "jev-v1", "questions": questions,
                   "state_fingerprint": sha256(state)})
     f = usage / (key + ".json")
     return json.loads(f.read_text())["score"] if f.exists() else None
@@ -75,30 +80,81 @@ async def main():
         rnd.sample([f for f in filters if f["filtered"] and not f["relevant"] and f["v1"] is not None], 20)
     chosen = positives + hard + easy
     print("route pairs: positives", len(positives), "hard negatives (v1>=0.5)", len(hard), "easy negatives", len(easy),
-          "| filter items", len(fsel), "| v2 requests", len(chosen) + len(fsel))
+          "| filter items", len(fsel), "| requests (v1 + v2 formats)", 2 * (len(chosen) + len(fsel)))
     if "--score" not in sys.argv:
         return
     by_id = {r["item_id"]: r for r in rows}
-    async with httpx.AsyncClient(timeout=30) as http:
-        pipe = Pipeline(_Ledger(out / "usage"), settings, http=http)
-        sem = asyncio.Semaphore(8)
-
-        async def v2(p, name):
-            item = by_id[p["item_id"]]["source_item"]
-            state = pipe.state(item) if name == "relevant" else pipe.routing_state(item, events[p["event_id"]])
-            async with sem:
-                p["v2"] = (await pipe._score_record(item, name, state))["score"]
-
-        await asyncio.gather(*(v2(p, "same_event") for p in chosen), *(v2(f, "relevant") for f in fsel))
     out.mkdir(parents=True, exist_ok=True)
+    cache_path = out / "responses.jsonl"
+    cache = {}
+    if cache_path.exists():
+        for line in cache_path.read_text().splitlines():
+            row = json.loads(line)
+            cache[row["key"]] = row
+    log = {"requests": 0, "status": {}, "latency_s": [], "retries_429": 0}
+    async with httpx.AsyncClient(timeout=60) as http:
+        sem = asyncio.Semaphore(4)
+
+        async def ask(fmt, name, item, state, questions):
+            key = sha256({"fmt": fmt, "item": item["item_id"], "state": state, "questions": questions})
+            if key in cache:
+                return cache[key]["score"]
+            async with sem:
+                for attempt in range(6):
+                    started = time.monotonic()
+                    try:
+                        data = await classify(http, api_key=None, state=state, questions=questions)
+                    except httpx.HTTPStatusError as error:
+                        code = error.response.status_code
+                        log["status"][code] = log["status"].get(code, 0) + 1
+                        if code == 429:
+                            log["retries_429"] += 1
+                            await asyncio.sleep(2 ** attempt)
+                            continue
+                        raise
+                    log["requests"] += 1
+                    log["status"][200] = log["status"].get(200, 0) + 1
+                    log["latency_s"].append(round(time.monotonic() - started, 2))
+                    score = data["answers"][name]["noul"]
+                    row = {"key": key, "fmt": fmt, "item_id": item["item_id"], "name": name, "score": score,
+                           "model": data["model"], "usage": data["usage"]}
+                    cache[key] = row
+                    with cache_path.open("a") as stream:
+                        stream.write(json.dumps(row) + "\n")
+                    return score
+                raise RuntimeError("rate limited after retries")
+
+        pipe = Pipeline(None, settings, http=None)
+
+        async def both(p, name):
+            item = by_id[p["item_id"]]["source_item"]
+            if name == "relevant":
+                s1, s2 = v1_state(item), pipe.state(item)
+            else:
+                s1, s2 = v1_routing_state(item, events[p["event_id"]]), pipe.routing_state(item, events[p["event_id"]])
+            p["v1_openrouter"] = p.pop("v1", p.get("v1_openrouter"))
+            p["v1"] = await ask("v1", name, item, s1, v1_questions(name))
+            p["v2"] = await ask("v2", name, item, s2, pipe.score_identity(item, name, s2)[1])
+
+        await asyncio.gather(*(both(p, "same_event") for p in chosen), *(both(f, "relevant") for f in fsel))
     (out / "pairs.json").write_text(json.dumps({"route": chosen, "filter": fsel}, indent=1))
-    for version in ("v1", "v2"):
-        pos = [p[version] for p in positives]; neg = [p[version] for p in hard + easy]
+    lat = sorted(log["latency_s"]) or [0]
+    log["latency_p50_s"], log["latency_max_s"] = lat[len(lat) // 2], lat[-1]
+    del log["latency_s"]
+    (out / "provider-log.json").write_text(json.dumps(log, indent=1))
+    print("provider", json.dumps(log))
+    for version in ("v1_openrouter", "v1", "v2"):
+        pos = [p[version] for p in positives]
+        neg = [p[version] for p in hard + easy]
         auc = sum((a > b) + 0.5 * (a == b) for a in pos for b in neg) / (len(pos) * len(neg))
-        print(version, "route: mean same", round(sum(pos) / len(pos), 3), "mean different", round(sum(neg) / len(neg), 3),
-              "pairwise separation", round(auc, 3), "| at 0.5: same passed", sum(s >= 0.5 for s in pos), "/", len(pos),
-              "different passed", sum(s >= 0.5 for s in neg), "/", len(neg))
-        rel = [f[version] for f in fsel if f["relevant"]]; irr = [f[version] for f in fsel if not f["relevant"]]
+        line = [version, "route: mean same", round(sum(pos) / len(pos), 3), "mean different", round(sum(neg) / len(neg), 3),
+                "separation (P[same > different])", round(auc, 3)]
+        for cut in (0.5, 0.7):
+            line += [f"| at {cut}: same passed", sum(s >= cut for s in pos), "/", len(pos), "different passed",
+                     sum(s >= cut for s in neg), "/", len(neg)]
+        print(*line)
+        rel = [f[version] for f in fsel if f["relevant"]]
+        irr = [f[version] for f in fsel if not f["relevant"]]
         print(version, "filter at 0.5: crypto passed", sum(s >= 0.5 for s in rel), "/", len(rel),
               "non-crypto passed", sum(s >= 0.5 for s in irr), "/", len(irr))
 

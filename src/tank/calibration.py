@@ -2,7 +2,7 @@
 
 One pass over one frozen labeled packet (docs/OFFLINE_CALIBRATION.md). Every
 item is scored exactly as the service scores it - Pipeline state, questions,
-registry identities, candidate builder and the pinned OpenRouter Jev binding -
+registry identities, candidate builder and the pinned OpenCode Jev binding -
 at the item's historical clock, against the labeled event history before it.
 Production configuration is never changed: the command writes a report and a
 proposed thresholds patch, which is recorded in config by a D6 checkpoint.
@@ -249,7 +249,7 @@ async def acquire(input_path, output_dir, *, settings=None, http=None):
     """Score the frozen packet with Jev and write the calibration report and proposal."""
     import httpx
 
-    from tank.agents.jev import BINDING
+    from tank.agents.jev import binding
     from tank.agents.pipeline import JEV_PROMPT_VERSION, Pipeline
     from tank.settings import Settings, resolve_versions
     from tank.storage import MemoryRepository
@@ -261,6 +261,7 @@ async def acquire(input_path, output_dir, *, settings=None, http=None):
     if settings.load_config("thresholds").get("routing_window_days", 3) != window.days:
         raise CalibrationError("Packet routing window differs from config routing_window_days")
     output = Path(output_dir)
+    pinned = binding(getattr(settings, "opencode_api_key", None))
     generation = {
         "packet_sha256": hashlib.sha256(raw).hexdigest(),
         "code_version": settings.code_version,
@@ -268,9 +269,9 @@ async def acquire(input_path, output_dir, *, settings=None, http=None):
         "prompt_version": JEV_PROMPT_VERSION,
         "registry_sha256": sha256(settings.load_config("registry")),
         "routing_window_days": window.days,
-        "jev_endpoint": BINDING.base_url + "/v1/systemone",
-        "jev_request_model": BINDING.request_model,
-        "jev_resolved_models": list(BINDING.resolved_models),
+        "jev_endpoint": pinned.base_url + "/v1/systemone",
+        "jev_request_model": pinned.request_model,
+        "jev_resolved_models": list(pinned.resolved_models),
     }
     owned = http is None
     http = http or httpx.AsyncClient(timeout=30)
