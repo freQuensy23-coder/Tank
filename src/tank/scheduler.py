@@ -24,6 +24,10 @@ BENCHMARK_TOKENS = frozenset({"bitcoin:BTC", "ethereum:ETH"})
 # more at once only hold the 8 workers that items, sessions and EVAL_CONDITIONS
 # need (03 §3.8). A job finding no free slot is re-queued without an attempt.
 REACTION_MEASUREMENT_SLOTS = 2
+# EVAL_CONDITIONS has 20 s (03 §3.8). Under a loaded database a batch stops
+# starting new conditions after this budget and completes; the next minute
+# continues with those evaluated longest ago, so no condition starves.
+EVAL_CONDITIONS_BUDGET_S = 15
 REACTION_RETRY_S = 30
 
 
@@ -510,7 +514,22 @@ class Scheduler:
             requirement_sets.setdefault(key, set()).update(
                 (item["metric"], item["window"]) for item in self.condition_requirements(condition["expr"])
             )
-        for cond in conditions:
+        # Invalidation (EXIT) first, then the least recently evaluated.
+        conditions.sort(
+            key=lambda c: (c.get("role") != "INVALIDATION", str(c.get("last_evaluated_at") or ""))
+        )
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        event_cache = {}
+        for position, cond in enumerate(conditions):
+            if loop.time() - started > EVAL_CONDITIONS_BUDGET_S:
+                log.warning(
+                    "EVAL_CONDITIONS budget of %ss reached; %s of %s conditions continue next minute",
+                    EVAL_CONDITIONS_BUDGET_S,
+                    len(conditions) - position,
+                    len(conditions),
+                )
+                break
             async with self.repo.lock("condition:" + cond["cond_id"]):
                 cond = await self.repo.get("ana.watch_conditions", cond["cond_id"])
                 if cond["status"] != "ARMED":
@@ -528,13 +547,18 @@ class Scheduler:
                 expr = cond["expr"]
                 if "milestone" in expr:
                     continue
-                event = await self.repo.get("evt.events", cond["event_id"])
-                contradictions = [
-                    row
-                    async for row in self.repo.iter_all(
-                        "ana.contradictions", filters={"event_id": cond["event_id"], "type": "FATAL"}
+                if cond["event_id"] not in event_cache:
+                    # One read per event per batch, not per condition.
+                    event_cache[cond["event_id"]] = (
+                        await self.repo.get("evt.events", cond["event_id"]),
+                        [
+                            row
+                            async for row in self.repo.iter_all(
+                                "ana.contradictions", filters={"event_id": cond["event_id"], "type": "FATAL"}
+                            )
+                        ],
                     )
-                ]
+                event, contradictions = event_cache[cond["event_id"]]
                 event = {
                     **event,
                     "contradiction_fatal": any(
