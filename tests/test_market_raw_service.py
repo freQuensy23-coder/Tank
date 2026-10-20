@@ -29,7 +29,6 @@ async def test_six_venue_trade_frames_are_not_duplicated_in_raw_frame_journals(s
         service = MarketService(repo, settings, http=http)
         await service._raw(inst, "websocket", frame)
         await service.flush_market()
-        assert not await repo.list("mkt.raw_archives")
         assert not list(settings.data_dir.rglob("*.jsonl"))
 
 
@@ -41,7 +40,6 @@ async def test_backfill_source_payload_is_kept_by_normalized_trade_without_frame
         service = MarketService(repo, settings, http=http)
         await service._raw(inst, "backfill_trades", {"request": {"fromId": 1}, "response": rows})
         await service.flush_market()
-        assert not await repo.list("mkt.raw_archives")
         assert not (settings.data_dir / "raw/market_frames").exists()
         point = normalize.trade(inst, rows[0], source="REST")
         assert json.loads(point["source_payload_json"]) == rows[0]

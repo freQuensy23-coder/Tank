@@ -191,33 +191,28 @@ async def test_conditions_share_truth_for_identical_event_token_cutoff():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "relative",
-    ["raw/trades", "raw/books", "raw/market_frames", "market/raw", "archive/binance", "market/binance"],
+    ["raw/trades/v/spot/T/{day}", "raw/books/v/T/{day}", "raw/market_frames/{day}", "archive/binance/spot/klines"],
 )
-async def test_raw_retention_accepts_canonical_and_legacy_roots_with_verified_backup(tmp_path, relative):
+async def test_raw_retention_by_path_with_verified_backup(tmp_path, relative):
     import hashlib
     import json
+    import os
     import shutil
-
-    import pyarrow as pa
-    import pyarrow.parquet as pq
 
     from tank.scheduler import verify_backup
 
     data = tmp_path / "data"
     backup = tmp_path / "backup"
-    directory = data / relative
+    archive = relative.startswith("archive/")
+    stamp = NOW - timedelta(days=200 if archive else 70)
+    directory = data / relative.format(day=stamp.date().isoformat())
     directory.mkdir(parents=True)
     saved_root = backup / "data"
     saved_root.mkdir(parents=True)
-    archive = "binance" in relative
-    age = 200 if archive else 70
-    stamp = NOW - timedelta(days=age)
-    path = directory / (f"T-1m-{stamp.date()}.zip" if archive else "typed.parquet")
+    path = directory / (f"T-1m-{stamp.date()}.zip" if archive else "12.parquet")
+    path.write_bytes(b"verified market bytes")
     if archive:
-        path.write_bytes(b"verified archive bytes")
-    else:
-        field = "exchange_ts" if relative.endswith("books") else "ts"
-        pq.write_table(pa.Table.from_pylist([{field: iso(stamp), "instrument_id": "v:T"}]), path)
+        os.utime(path, (stamp.timestamp(),) * 2)
     saved = saved_root / path.relative_to(data)
     saved.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(path, saved)
@@ -230,38 +225,12 @@ async def test_raw_retention_accepts_canonical_and_legacy_roots_with_verified_ba
     (backup / "manifest.json").write_text(json.dumps(manifest))
     (backup / "COMPLETE").write_text(iso(NOW))
     verify_backup(backup)
-    repo = MemoryRepository()
-    await repo.put(
-        "mkt.raw_archives",
-        "old",
-        {
-            "archive_id": "old",
-            "path": str(path),
-            "token_id": "T",
-            "kind": "trades",
-            "received_ts": iso(stamp),
-        },
-    )
     scheduler = Scheduler(
-        repo, SimpleNamespace(data_dir=data, load_config=lambda name: {"instruments": []}), None, None
+        MemoryRepository(), SimpleNamespace(data_dir=data, load_config=lambda name: {"instruments": []}), None, None
     )
     removed = await scheduler.prune_raw_files(NOW, backup)
-    assert [row["archive_id"] for row in removed] == ["old"]
+    assert [row["path"] for row in removed] == [str(path if archive else directory)]
     assert not path.exists() and saved.is_file()
-
-
-def test_typed_raw_unknown_range_is_retained(tmp_path):
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
-    from tank.scheduler import raw_time_range
-
-    path = tmp_path / "unknown.parquet"
-    pq.write_table(pa.Table.from_pylist([{"instrument_id": "v:T", "historical_range": "not recorded"}]), path)
-    assert raw_time_range(path, {"kind": "trades", "received_ts": iso(NOW - timedelta(days=70))}, NOW) == (
-        None,
-        None,
-    )
 
 
 @pytest.mark.asyncio
@@ -295,7 +264,7 @@ async def test_bundles_only_backup_allows_raw_ttl_and_preserves_permanent_eviden
     import pyarrow.parquet as pq
 
     data, backup = tmp_path / "data", tmp_path / "backup"
-    raw = data / "raw/trades/old.parquet"
+    raw = data / "raw/trades/v/spot/T" / (NOW - timedelta(days=70)).date().isoformat() / "12.parquet"
     raw.parent.mkdir(parents=True)
     pq.write_table(pa.Table.from_pylist([{"ts": iso(NOW - timedelta(days=70)), "instrument_id": "v:T"}]), raw)
     permanent = {
@@ -315,22 +284,11 @@ async def test_bundles_only_backup_allows_raw_ttl_and_preserves_permanent_eviden
     )
     (backup / "COMPLETE").write_text(iso(NOW))
     repo = MemoryRepository()
-    await repo.put(
-        "mkt.raw_archives",
-        "old",
-        {
-            "archive_id": "old",
-            "token_id": "T",
-            "path": str(raw),
-            "kind": "trades",
-            "received_ts": iso(NOW - timedelta(days=70)),
-        },
-    )
     scheduler = Scheduler(
         repo, SimpleNamespace(data_dir=data, load_config=lambda name: {"instruments": []}), None, None
     )
     removed = await scheduler.prune_raw_files(NOW, backup)
-    assert [row["path"] for row in removed] == [str(raw)]
+    assert [row["path"] for row in removed] == [str(raw.parent)]
     assert not raw.exists()
     assert {path: path.read_bytes() for path in permanent} == permanent
     assert (backup / "tank.dump").read_bytes() == b"fixture dump"

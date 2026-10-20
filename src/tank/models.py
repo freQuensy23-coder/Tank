@@ -406,20 +406,6 @@ TABLE_COLUMNS = {
         "reason": "text",
         "observed_at": "timestamptz",
     },
-    "mkt.raw_archives": {
-        "archive_id": "text",
-        "instrument_id": "text",
-        "kind": "text",
-        "path": "text",
-        "sha256": "text",
-        "received_ts": "timestamptz",
-    },
-    "mkt.capture_state": {
-        "instrument_id": "text",
-        "last_trade_id": "text",
-        "last_ts": "timestamptz",
-        "updated_at": "timestamptz",
-    },
 }
 APPEND_ONLY = frozenset(
     [
@@ -741,8 +727,6 @@ TIMESTAMP_PRECISION_FIELDS = {
     "scout.expansion_proposals": {"decided_at": "decided_at_prec"},
     "mkt.trades": {"ts": "ts_prec", "received_ts": "received_ts_prec", "recorded_at": "recorded_at_prec"},
     "mkt.capture_gaps": {"start": "start_prec", "end": "end_prec", "observed_at": "observed_at_prec"},
-    "mkt.raw_archives": {"received_ts": "received_ts_prec"},
-    "mkt.capture_state": {"last_ts": "last_ts_prec", "updated_at": "updated_at_prec"},
     "mkt.backfill_runs": {
         "anchor": "anchor_prec",
         "started_at": "started_at_prec",

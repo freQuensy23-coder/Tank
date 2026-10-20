@@ -198,7 +198,7 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
     # Forward migration import can target a historical typed schema. Ordinary
     # production writes always use the entire current explicit column contract.
     columns = MARKET_COLUMNS[collection] if _columns is None else _columns
-    from psycopg import errors, sql
+    from psycopg import sql
     from psycopg.types.json import Jsonb
 
     records = list(records)
@@ -256,10 +256,6 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
                 if old and collection in ("mkt.funding_obs", "mkt.tickers_24h"):
                     value = merge_point(collection, old, value)
                 if old.get("semantic_fingerprint") != value["semantic_fingerprint"]:
-                    if collection == "mkt.raw_archives" and old.get("status") == "SEALED":
-                        from tank.storage import ImmutableRecordError
-
-                        raise ImmutableRecordError("Immutable sealed raw archive")
                     if previous is not None and previous != key:
                         rows.pop(previous)
                     rows[key] = value
@@ -327,15 +323,8 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
             merged,
             merged,
         )
-    try:
-        async with self.transaction():
-            rows = await (await self._conn().execute(query, arrays)).fetchall()
-    except errors.RaiseException as error:
-        if str(error).startswith("immutable sealed raw archive"):
-            from tank.storage import ImmutableRecordError
-
-            raise ImmutableRecordError(str(error)) from error
-        raise
+    async with self.transaction():
+        rows = await (await self._conn().execute(query, arrays)).fetchall()
     return [decode(collection, r) for r in rows]
 
 
