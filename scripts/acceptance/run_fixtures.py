@@ -44,7 +44,7 @@ COMPOSE = shlex.split(os.environ.get(
     " -f /srv/tank/docs/verification/server-recovery-bootstrap-2026-10-20/pg.resources.yaml --env-file /etc/tank/compose.env"))
 # tank-sessions owns the per-run tank_replay reset and the DSN helper (password never on argv or stdout).
 RESET = os.environ.get("TANK_REPLAY_RESET", "/srv/tank-work/ts/reset_tank_replay.sh")
-DSN_HELPER = os.environ.get("TANK_REPLAY_DSN_HELPER", "/srv/tank-work/ts/replay_dsn_exec.py")
+DSN_HELPER = os.environ.get("TANK_REPLAY_DSN_HELPER", str(Path(__file__).resolve().parent / "replay_dsn_exec.py"))
 PRIVATE_IN_CONTAINER = "/replay-private/map.json"  # read-only bind mount outside /data
 
 
