@@ -230,9 +230,13 @@ class Pipeline:
         text = " ".join(
             str(item.get(k) or "") for k in ("title", "text", "body", "quoted", "author_organization")
         )
-        result = {e["entity_id"] if isinstance(e, dict) else e for e in item.get("entities", [])} | set(
-            item.get("tokens_mentioned", item.get("tokens", []))
-        )
+        raw_tokens = item.get("tokens_mentioned", item.get("tokens", []))
+        result = {e["entity_id"] if isinstance(e, dict) else e for e in item.get("entities", [])} | set(raw_tokens)
+        # Events store registry token ids (V3): a bare ticker or $TICKER on the item resolves to one.
+        symbols = {str(row.get("symbol", "")).casefold(): row["token_id"] for row in registry.get("tokens", [])}
+        for value in raw_tokens:
+            if isinstance(value, str) and value.removeprefix("$").casefold() in symbols:
+                result.add(symbols[value.removeprefix("$").casefold()])
 
         def matches(name):
             return name and re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.IGNORECASE)

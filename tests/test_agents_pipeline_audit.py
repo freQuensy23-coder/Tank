@@ -423,3 +423,9 @@ async def test_event_with_resolved_token_id_is_a_candidate_for_alias_or_ticker(t
     assert "uniswap:UNI" in pipe.identities({"title": text})
     events = await pipe._candidate_events(pipe.identities({"title": text}), iso(now), now)
     assert [event["event_id"] for event in events] == ["e"]
+
+
+def test_bare_item_ticker_resolves_to_registry_token_id():
+    opts, _ = options()
+    ids = Pipeline(MemoryRepository(), opts, http=object()).identities({"title": "fee switch", "tokens": ["UNI"]})
+    assert {"uniswap:UNI", "uniswap"} <= ids
