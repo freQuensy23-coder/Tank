@@ -6,6 +6,9 @@ from tank.time_precision import propagate_timestamp
 from tank.util import new_id
 
 
+POSITIVE_ACTIONS = frozenset({"START", "WATCH_TO_START", "ADD", "HOLD"})
+
+
 def _enum(value, default="UNKNOWN"):
     return str(value or default).upper().replace(" ", "_").replace("-", "_")
 
@@ -365,7 +368,10 @@ class DecisionEngine:
                 "upside": "Move extends if spot demand strengthens without crowding.",
                 "failure": "Thesis fails on denial or loss of the event anchor.",
             }
-        tactical = thesis == "C"
+        # FR-O-03 / §4.8 row C: weak capture labels only a positive action or a
+        # positive outlook as tactical; WAIT, DON'T CHASE, REDUCE and EXIT are not.
+        tactical = thesis == "C" and action in POSITIVE_ACTIONS
+        outlook_tactical = thesis == "C" and bias == "BULLISH"
         return {
             "dec_id": new_id("DEC"),
             "event_id": event.get("event_id"),
@@ -393,7 +399,7 @@ class DecisionEngine:
                 "horizon_reason": reason,
                 "confidence": confidence,
                 "caps": {"data": data, "event": certainty, "market_truth": class_conf},
-                "tactical": tactical,
+                "tactical": outlook_tactical,
                 "scenarios": scenarios,
             },
             "thresholds_version": self.thresholds.get("version", "unversioned"),

@@ -1401,3 +1401,67 @@ async def test_older_completion_callback_preserves_same_name_replacement_until_s
     assert current is not original and not current.done()
     await scheduler.close()
     assert current.cancelled() and not scheduler.background
+
+
+@pytest.mark.asyncio
+async def test_rearmed_market_watch_needs_a_window_after_it_was_armed():
+    """W1: a re-armed watch never fires on the evidence that fired its predecessor."""
+    repo = MemoryRepository()
+    armed = utcnow().replace(minute=5, second=0, microsecond=0)
+    await repo.put("evt.events", "e", {"event_id": "e"})
+    await repo.put(
+        "ana.watch_conditions",
+        "c2",
+        {
+            "cond_id": "c2",
+            "event_id": "e",
+            "token_id": "t",
+            "role": "INVALIDATION",
+            "status": "ARMED",
+            "rearmed_from": "c1",
+            "created_at": iso(armed),
+            "expires_at": iso(armed + timedelta(days=1)),
+            "expr": {"metric": "price.close_vs_level", "window": "W1H", "op": "<", "value": "10"},
+        },
+    )
+    truth = SimpleNamespace(assess=AsyncMock(return_value={"relative": {"close_1h_price": "9"}}))
+    scheduler = Scheduler(repo, SimpleNamespace(), None, truth)
+    await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=10))})
+    assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
+    await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=61))})
+    assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "FIRED"
+
+
+@pytest.mark.asyncio
+async def test_rearmed_instant_watch_fires_again_only_after_it_cleared():
+    """W1: an instant predicate (event.*, milestone.*) re-arms on an edge, so a
+    lasting fact does not re-fire every tick."""
+    repo = MemoryRepository()
+    now = utcnow()
+    await repo.put("evt.events", "e", {"event_id": "e"})
+    await repo.put(
+        "ana.watch_conditions",
+        "c2",
+        {
+            "cond_id": "c2",
+            "event_id": "e",
+            "token_id": "t",
+            "role": "INVALIDATION",
+            "status": "ARMED",
+            "rearmed_from": "c1",
+            "created_at": iso(now),
+            "expires_at": iso(now + timedelta(days=1)),
+            "expr": {"metric": "event.contradiction_fatal", "window": "W1H", "op": "==", "value": True},
+        },
+    )
+    fatal = {"contradiction_id": "f1", "event_id": "e", "type": "FATAL"}
+    await repo.put("ana.contradictions", "f1", fatal)
+    scheduler = Scheduler(repo, SimpleNamespace(), None, SimpleNamespace(assess=AsyncMock(return_value={})))
+    await scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=1))})
+    assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
+    await repo.put("ana.contradictions", "f1", {**fatal, "resolved_at": iso(now)})
+    await scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=2))})
+    assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
+    await repo.put("ana.contradictions", "f2", {**fatal, "contradiction_id": "f2"})
+    await scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=3))})
+    assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "FIRED"

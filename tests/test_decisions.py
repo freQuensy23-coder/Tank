@@ -701,3 +701,25 @@ def test_unverified_stage_does_not_suppress_an_independent_start(prior_stage):
         decisions=[{"token_id": "T", "action": "START"}],
         now="2026-10-17T00:01:00Z",
     ) == (True, "UPDATE")
+
+
+@pytest.mark.parametrize("move,expect", [("UNKNOWN", False), ("SPOT_LED_ACCUMULATION", True)])
+def test_tactical_only_for_positive_action_on_weak_capture(move, expect):
+    """W9 (FR-O-03, 03 §4.8 row C): thesis C labels only a positive action."""
+    from tank.analysis.decisions import POSITIVE_ACTIONS, DecisionEngine
+
+    result = DecisionEngine().evaluate(
+        {"event_state": "APPROVED", "state_verified": True},
+        {"class": "STRUCTURAL_SHOCK", "certainty": "HIGH"},
+        {"token_id": "T", "role": "PRIMARY", "credible": True, "capture_class": "INDIRECT"},
+        {
+            "token_id": "T",
+            "move_class": move,
+            "data_confidence": {"class": "HIGH"},
+            "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL"},
+            "liquidity": {"liquidity_state": "NORMAL"},
+        },
+    )
+    assert result["thesis_grade"] == "C"
+    assert result["tactical"] is (result["action"] in POSITIVE_ACTIONS)
+    assert result["tactical"] is expect, result["action"]

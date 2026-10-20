@@ -297,7 +297,10 @@ async def test_expiry_notice_never_reopens_frozen_start_and_consumes_only_delive
 
 
 @pytest.mark.asyncio
-async def test_accepted_scheduled_update_survives_restart_and_later_exit(monkeypatch):
+async def test_held_update_is_never_sent_after_a_newer_immediate_exit(monkeypatch):
+    """W2: a held DON'T CHASE update must not reach the operator after the EXIT
+    that superseded it was sent at once."""
+    import json
     from datetime import timedelta
 
     import tank.delivery as delivery_module
@@ -397,11 +400,9 @@ async def test_accepted_scheduled_update_survives_restart_and_later_exit(monkeyp
         clock[0] = base + timedelta(minutes=20)
         await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
         await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
-        assert len(requests) == 2
-    ledger = await repo.list("out.deliveries", filters={"alert_id": "a", "version": 2})
-    assert [row["status"] for row in ledger] == ["GENERATED", "SENT"]
-    import json
-
+        assert len(requests) == 1
+        assert json.loads(requests[0].content)["text"] == "<b>EXIT official denial</b>"
+    assert not await repo.list("out.deliveries", filters={"alert_id": "a", "version": 2})
     assert all(json.loads(request.content)["reply_parameters"] == {"message_id": 42} for request in requests)
     assert (await repo.get("ana.calls", "call"))["status"] == "CLOSED"
 
@@ -853,7 +854,10 @@ async def test_historical_suppression_is_preserved_without_censoring_explicit_re
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_queued_updates_keep_actual_sent_spacing_through_late_send_and_restart(monkeypatch, backend):
+async def test_newer_held_update_supersedes_older_and_keeps_spacing_through_restart(monkeypatch, backend):
+    """W2 (03 §7.4, FR-A-04): every version carries the whole card, so an older
+    held update is never sent once a newer version exists; the newest one waits
+    for its own slot and survives a restart."""
     import copy
     import json
     import os
@@ -948,25 +952,27 @@ async def test_queued_updates_keep_actual_sent_spacing_through_late_send_and_res
         )
         frozen = copy.deepcopy(await repo.get("out.alerts", f"{aid}:3"))
         async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+            # Version 2 is due, but version 3 already exists: it is dropped.
             await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 2})
-            assert len(requests) == 1
-            clock[0] = base + timedelta(minutes=30)
+            assert requests == []
+            assert not await repo.list("out.deliveries", filters={"alert_id": aid, "version": 2})
             with pytest.raises(DeliveryError) as deferred:
                 await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 3})
-            assert deferred.value.retry_after == 10 * 60
-            assert len(requests) == 1
-            assert not await repo.list("out.deliveries", filters={"alert_id": aid, "version": 3})
+            assert deferred.value.retry_after == 5 * 60
+            assert requests == []
             if backend == "postgres":
                 await repo.close()
                 repo = PostgresRepository(database_url)
                 await repo.open()
-            clock[0] = base + timedelta(minutes=40)
+            clock[0] = base + timedelta(minutes=30)
             await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 3})
             await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 3})
-            assert len(requests) == 2
-            assert all(request["reply_parameters"] == {"message_id": 42} for request in requests)
+            await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 2})
+            assert len(requests) == 1
+            assert requests[0]["text"] == "<b>Accepted immutable version 3</b>"
+            assert requests[0]["reply_parameters"] == {"message_id": 42}
             sent = await repo.list("out.deliveries", filters={"alert_id": aid, "status": "SENT"})
-            assert [row["version"] for row in sorted(sent, key=lambda row: row["at"])] == [1, 2, 3]
+            assert [row["version"] for row in sorted(sent, key=lambda row: row["at"])] == [1, 3]
             assert await repo.get("out.alerts", f"{aid}:3") == frozen
     finally:
         await repo.close()

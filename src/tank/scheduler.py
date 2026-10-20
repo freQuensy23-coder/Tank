@@ -575,9 +575,14 @@ class Scheduler:
                     seconds = window_seconds(expr)
                     window_id = int(parse_time(evaluation_cutoff).timestamp()) // seconds
                     previous = counters.get(path, {})
+                    created = cond.get("created_at")
                     if market_metric and required > 1:
-                        created = cond.get("created_at")
                         if created and parse_time(evaluation_cutoff) <= parse_time(created):
+                            return False
+                    if market_metric and cond.get("rearmed_from") and created:
+                        # A re-armed watch fires only on windows that start after it
+                        # was armed, never on the evidence that fired its predecessor.
+                        if parse_time(evaluation_cutoff) - timedelta(seconds=seconds) < parse_time(created):
                             return False
                     truth = {}
                     if market_metric:
@@ -613,14 +618,22 @@ class Scheduler:
                         else None,
                     }
                     if required == 1 or not market_metric:
+                        # An instant predicate of a re-armed watch must clear once
+                        # before it can fire again (edge, not level).
+                        cleared = (
+                            True
+                            if market_metric or not cond.get("rearmed_from")
+                            else bool(previous.get("cleared")) or (value is not None and not matched)
+                        )
                         counters[path] = {
                             "window": window_id,
                             "count": int(matched),
                             "value": value,
+                            "cleared": cleared,
                             **availability,
                             **evaluation_stamp.fields("cutoff"),
                         }
-                        return matched
+                        return matched and cleared
                     # Retain only explicitly evaluated non-overlapping windows.
                     # Re-evaluate retained endpoints through the selective reader:
                     # changed dependency heads can complete/correct a closed hour.

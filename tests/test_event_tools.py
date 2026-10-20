@@ -362,7 +362,98 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service):
     assert consumed["consumed_by"] == fired["dec_id"]
     again = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
     assert again["action"] == "HOLD"
-    assert len(await service.repo.list("ana.watch_conditions")) == len(first["conditions"])
+    # W1 (03 §6.6, §7.2): the spent watch is not reused or shown again; the same
+    # expression is re-armed afresh, so a later upgrade can still produce ADD.
+    rearmed = next(c for c in again["conditions"] if c["role"] == "UPGRADE")
+    assert rearmed["cond_id"] != same["cond_id"] and rearmed["status"] == "ARMED"
+    assert rearmed["rearmed_from"] == same["cond_id"] and "counters" not in rearmed
+    assert same["cond_id"] not in again["conditions_shown"]
+    assert (await service.repo.get("ana.watch_conditions", same["cond_id"]))["status"] == "FIRED"
+    assert len(await service.repo.list("ana.watch_conditions")) == len(first["conditions"]) + 1
+    rearmed.update(status="FIRED", fired_at=iso())
+    await service.repo.put("ana.watch_conditions", rearmed["cond_id"], rearmed)
+    await service.repo.put(
+        "ana.market_truth",
+        "condition-truth-second",
+        {**truth, "mta_id": "condition-truth-second", "cutoff": rearmed["fired_at"]},
+    )
+    second_add = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    assert second_add["action"] == "ADD"
+
+
+async def test_start_condition_is_rearmed_for_the_open_call(service):
+    """W1: the upgrade that led to START is spent; once the call is open the
+    same expression is armed again, so ADD stays reachable."""
+    from tank.analysis.decisions import DecisionEngine
+
+    service.engine = DecisionEngine()
+    eid, token = "start-event", "T"
+    await service.repo.put(
+        "evt.events",
+        eid,
+        {"event_id": eid, "current_ems_id": "start-ems", "event_state": "APPROVED", "state_verified": True},
+    )
+    await service.repo.put(
+        "evt.ems_assessments",
+        "start-ems",
+        {"ems_id": "start-ems", "event_id": eid, "class": "MAJOR", "certainty": "HIGH"},
+    )
+    await service.repo.put(
+        "evt.beneficiary_maps", "start-map", {"event_id": eid, "map_version": 1, "analysis_set": [token]}
+    )
+    await service.repo.put(
+        "evt.beneficiary_edges",
+        "start-edge",
+        {
+            "edge_id": "start-edge",
+            "event_id": eid,
+            "map_version": 1,
+            "token_id": token,
+            "role": "PRIMARY",
+            "credible": True,
+            "capture_class": "DIRECT",
+        },
+    )
+    truth = {
+        "mta_id": "start-truth",
+        "event_id": eid,
+        "token_id": token,
+        "cutoff": iso(),
+        "move_class": "ORGANIC_MIXED",
+        "data_confidence": {"class": "MEDIUM"},
+        "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL", "anchor": {"ref_price": "10"}},
+        "liquidity": {"liquidity_state": "NORMAL"},
+    }
+    await service.repo.put("ana.market_truth", "start-truth", truth)
+    watch = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    assert watch["action"] == "WATCH_TO_START"
+    upgrade = next(c for c in watch["conditions"] if c["role"] == "UPGRADE")
+    upgrade.update(status="FIRED", fired_at=iso())
+    await service.repo.put("ana.watch_conditions", upgrade["cond_id"], upgrade)
+    await service.repo.put(
+        "ana.market_truth",
+        "start-truth-2",
+        {**truth, "mta_id": "start-truth-2", "cutoff": iso(), "data_confidence": {"class": "HIGH"}},
+    )
+    start = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    assert start["action"] == "START"
+    await service.repo.put(
+        "ana.calls",
+        "start-call",
+        {
+            "call_id": "start-call",
+            "event_id": eid,
+            "token_id": token,
+            "status": "OPEN",
+            "opened_at": iso(),
+            "invalidation_price": "9",
+        },
+    )
+    hold = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+    assert hold["action"] == "HOLD"
+    add_watch = next(c for c in hold["conditions"] if c["role"] == "UPGRADE")
+    assert add_watch["status"] == "ARMED" and add_watch["cond_id"] != upgrade["cond_id"]
+    assert add_watch["expr"] == upgrade["expr"]
 
 
 async def test_agent_confirmation_certainty_and_reason_are_preserved(service):
@@ -4632,3 +4723,94 @@ async def test_each_layer_needs_agent_reason_when_primary_does_not_supply_a_seco
         assert "world:WLD" in result["analysis_set"]
     if role == "SECONDARY":
         assert result["no_credible_secondary_reason"] is None
+
+
+async def test_tokens_and_entities_resolve_to_registry_ids(service):
+    """W5 (03 §2.11, V3): tickers, $TICKER and registered aliases resolve to the
+    token id the universe check and routing use; other names stay UNRESOLVED."""
+    from tank.event_tools import resolve_entity, resolve_token
+
+    registry = service.settings.load_config("registry")
+    assert resolve_token(registry, "UNI") == "uniswap:UNI"
+    assert resolve_token(registry, "$uni") == "uniswap:UNI"
+    assert resolve_token(registry, "Uniswap Labs") == "uniswap:UNI"
+    assert resolve_token(registry, "uniswap:UNI") == "uniswap:UNI"
+    assert resolve_token(registry, "litentry:LIT") == "litentry:LIT"
+    assert resolve_token(registry, "Lighter") == "UNRESOLVED:Lighter"
+    assert resolve_token(registry, "Lighter", context="Lighter (LIT) lists") == "lighter:LIT"
+    assert resolve_token(registry, "Foo") == "UNRESOLVED:Foo"
+    assert resolve_entity(registry, "Plasma") == "UNRESOLVED:Plasma"
+    assert resolve_entity(registry, "Plasma", context="XPL") == "plasma"
+    assert resolve_entity(registry, "Ava Labs") == "avalanche"
+    assert resolve_entity(registry, "", None) == "UNRESOLVED:"
+    x = await seed(service)
+    x.update(
+        tokens=["UNI", "$UNI", "Foo"],
+        entities=[{"name": "Uniswap Labs", "entity_id": None, "role": "ACTOR"}],
+    )
+    eid = (await service.dispatch("record_event", x, {}))["event_id"]
+    event = await service.repo.get("evt.events", eid)
+    assert event["tokens_mentioned"] == ["uniswap:UNI", "UNRESOLVED:Foo"]
+    assert event["entities"] == [{"entity_id": "uniswap", "role": "ACTOR"}]
+
+
+async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(service):
+    """W6 (03 §4.7 step 9): refreshing one token's truth keeps ranking every
+    credible beneficiary from its latest stored truth."""
+    import asyncio
+
+    eid = "least-event"
+    await service.repo.put("evt.events", eid, {"event_id": eid, "current_ems_id": "least-ems"})
+    await service.repo.put(
+        "evt.ems_assessments", "least-ems", {"ems_id": "least-ems", "event_id": eid, "class": "MAJOR"}
+    )
+    await service.repo.put(
+        "evt.beneficiary_maps",
+        f"{eid}:1",
+        {"event_id": eid, "map_version": 1, "analysis_set": ["A", "B"]},
+    )
+    for token in ["A", "B"]:
+        await service.repo.put(
+            "evt.beneficiary_edges",
+            "edge-" + token,
+            {
+                "edge_id": "edge-" + token,
+                "event_id": eid,
+                "map_version": 1,
+                "token_id": token,
+                "role": "SECONDARY",
+                "credible": True,
+                "exposure_score": 6,
+            },
+        )
+
+    def truth(token, band, pctile, cutoff):
+        return {
+            "mta_id": "mta-" + token + cutoff,
+            "event_id": eid,
+            "token_id": token,
+            "cutoff": cutoff,
+            "liquidity": {"liquidity_state": "NORMAL"},
+            "relative": {"repricing_band": band, "windows": {"EVENT": {"pctile": pctile}}},
+        }
+
+    earlier = iso(utcnow() - timedelta(minutes=5))
+    await service.repo.put("ana.market_truth", "mta-B", truth("B", "UNPRICED", 0.2, earlier))
+    fresh = truth("A", "HEAVY", 0.9, iso())
+    task = asyncio.create_task(service.dispatch("get_market_truth", {"event_id": eid, "tokens": ["A"]}, {}))
+    try:
+        while not task.done():
+            job = await service.repo.claim_job()
+            if job:
+                if job["type"] == "RUN_MARKET_TRUTH":
+                    stored = await service.repo.get("ops.jobs", job["job_id"])
+                    stored["result"] = fresh
+                    await service.repo.put("ops.jobs", job["job_id"], stored)
+                await service.repo.finish_job(job["job_id"])
+            await asyncio.sleep(0.01)
+        await task
+    finally:
+        if not task.done():
+            task.cancel()
+    mapping = await service.repo.get("evt.beneficiary_maps", f"{eid}:1")
+    assert mapping["least_repriced_edge"] == "edge-B"

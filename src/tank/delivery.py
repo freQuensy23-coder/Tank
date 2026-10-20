@@ -175,6 +175,16 @@ class DeliveryService:
                 raise ValueError("Delivery subject does not exist")
             if not notice:
                 prior = await self._all("out.alerts", filters={"event_id": record["event_id"]})
+                if record.get("kind") == "UPDATE" and any(
+                    row["alert_id"] == record["alert_id"] and row["version"] > record["version"]
+                    for row in prior
+                ):
+                    # Each version carries the whole current card. Once a newer
+                    # version exists, an unsent older update is superseded and is
+                    # never sent after it (§7.4, FR-A-04): the operator would get
+                    # an old state. Its ledger stays GENERATED; the newer version
+                    # records supersedes_version.
+                    return None
                 ids = {r["alert_id"] for r in prior}
                 sent = []
                 for alert_id in ids:
@@ -200,36 +210,6 @@ class DeliveryService:
                                 timedelta(seconds=limits.get("update_rate_limit_s", 900)),
                             )
                         )
-                    delivery_jobs = None
-                    # A delayed retry must not let a later accepted ordinary
-                    # version overtake it. Immediate cards retain their bypass.
-                    for older in prior:
-                        if older["alert_id"] != record["alert_id"] or older["version"] >= record["version"]:
-                            continue
-                        older_ledger = await self._all(
-                            "out.deliveries",
-                            filters={
-                                "alert_id": older["alert_id"],
-                                "version": older["version"],
-                                "channel": channel,
-                            },
-                        )
-                        if any(row["status"] == "SENT" or row.get("terminal") for row in older_ledger):
-                            continue
-                        if delivery_jobs is None:
-                            delivery_jobs = await self._all("ops.jobs", filters={"type": "DELIVER"})
-                        active = [
-                            job
-                            for job in delivery_jobs
-                            if job["status"] in {"QUEUED", "RUNNING"}
-                            and job["payload"].get("alert_id") == older["alert_id"]
-                            and job["payload"].get("version") == older["version"]
-                        ]
-                        if active:
-                            boundaries.append(
-                                offset_schedule(collection_clock(utcnow()), timedelta(seconds=1))
-                            )
-                            boundaries.extend(propagate_timestamp(job, "run_after") for job in active)
                 if boundaries:
                     due = max(boundaries, key=lambda stamp: parse_time(stamp.value))
                     if utcnow() < parse_time(due.value):
