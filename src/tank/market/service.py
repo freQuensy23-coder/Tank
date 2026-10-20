@@ -2012,7 +2012,14 @@ class MarketService:
             anchor = row["anchor"]["ts"] if isinstance(row["anchor"], dict) else row["anchor"]
             key = (row["event_id"], row["token_id"], iso(anchor))
             target = targets.setdefault(
-                key, {"windows": [], "digest": hashlib.sha256(), "count": 0, "highwater": None}
+                key,
+                {
+                    "windows": [],
+                    "digest": hashlib.sha256(),
+                    "count": 0,
+                    "highwater": None,
+                    "market_from": None,
+                },
             )
             target["windows"].append((parse_time(row["window_end"]), parse_time(row["captured_at"])))
         max_cutoff = max(parse_time(row["window_end"]) for row in latest.values())
@@ -2075,6 +2082,10 @@ class MarketService:
                     target["highwater"] = (
                         max(target["highwater"], arrival) if target["highwater"] else arrival
                     )
+                    # Earliest market time touched: windows ending before it are unchanged.
+                    target["market_from"] = (
+                        min(target["market_from"], stamp) if target["market_from"] else stamp
+                    )
         for (event_id, token_id, anchor), target in targets.items():
             if target["count"]:
                 fingerprint = target["digest"].hexdigest()
@@ -2096,6 +2107,7 @@ class MarketService:
                         }
                     ),
                     "source_count": target["count"],
+                    "market_from": iso(target["market_from"]),
                     "semantic_fingerprint": fingerprint,
                     "reason": "Actual late normalized data became available after frozen reaction capture",
                 }
