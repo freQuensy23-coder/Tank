@@ -29,6 +29,34 @@ DEFAULT_MAX_RUNNING_SESSIONS = 2
 ADMITTED_JOB_TYPES = ("AGENT_MESSAGE", "SCOUT_REVIEW")
 # A deferred turn sleeps this long unless wake_waiting() schedules it earlier.
 ADMISSION_SLEEP_S = 60
+# Stream events that can change Tank state. Everything else (agent text, thinking,
+# built-in sandbox tools, span starts, echoes) is inert: it needs no session write.
+MATERIAL_EVENT_TYPES = {
+    "agent.custom_tool_use",
+    "user.custom_tool_result",
+    "session.status_running",
+    "session.status_idle",
+    "session.status_rescheduled",
+    "session.status_terminated",
+    "session.error",
+    "agent.refusal",
+    "execution.status_failed",
+    "span.model_request_end",
+    "host.analysis_incomplete",
+}
+# Verified idle sessions are re-checked for archiving on this many run-loop ticks.
+IDLE_RECHECK_TICKS = 60
+
+
+def material_event(event):
+    """Whether a stream event can change Tank state (a refusal can arrive in any message)."""
+    if event.get("type") in MATERIAL_EVENT_TYPES or event.get("finish_reason") == "content-filter":
+        return True
+    return any(
+        isinstance(block, dict) and block.get("type") == "refusal" for block in event.get("content") or []
+    )
+
+
 # Admission reads only these fields: full session documents carry long message logs.
 SESSION_ADMISSION_FIELDS = ("session_id", "status", "runtime_status", "active_message_id")
 JOB_ADMISSION_FIELDS = ("job_id", "status", "priority", "payload", "slot_waiting_since", "slot_admitted")
@@ -86,6 +114,8 @@ class SessionService:
         self.send_locks = {}
         self.execution_polls = {}
         self.history_polls = {}
+        self.pending_seq = {}
+        self.seen_events = {}
         self.closed = False
 
     def clock_timestamp(self):
@@ -1160,6 +1190,13 @@ class SessionService:
     async def process_event(self, sid, event, seq=None):
         if event.get("type") in ("event_start", "event_delta") or not event.get("id"):
             return
+        if not material_event(event) or event["id"] in self.seen_events.get(sid, ()):
+            # Inert or already handled by this process: no session read or write. The
+            # resume cursor advances with the next material write; replaying inert
+            # events after a restart is harmless.
+            if seq is not None:
+                self.pending_seq[sid] = max(int(seq), self.pending_seq.get(sid, 0))
+            return
         key = sid + ":" + event["id"]
         async with self.event_locks.setdefault(sid, asyncio.Lock()):
             # Full durable payload is kept in the tool ledger; marker is stored
@@ -1259,6 +1296,7 @@ class SessionService:
                                 session["native_execution_receipts"][event["id"]]
                             )
                         await self.repo.put("ops.agent_sessions", sid, current)
+                self.seen_events.setdefault(sid, set()).add(event["id"])
                 return
             if kind in {
                 "session.status_running",
@@ -1475,12 +1513,14 @@ class SessionService:
                             {key: value for key, value in row.items() if key not in old or old[key] != value}
                         )
                 current.setdefault("processed_events", []).append(event["id"])
-                if seq is not None:
-                    current["last_event_seq"] = max(int(current.get("last_event_seq", 0)), int(seq))
+                cursor = max(int(seq) if seq is not None else 0, self.pending_seq.pop(sid, 0))
+                if cursor:
+                    current["last_event_seq"] = max(int(current.get("last_event_seq", 0)), cursor)
                 current["last_event_id"] = event["id"]
                 current.update(self.event_timestamp(event).fields("last_event_at"))
                 current.update(propagate_timestamp(event, "processed_at").fields("processed_at"))
                 await self.repo.put("ops.agent_sessions", sid, current)
+            self.seen_events.setdefault(sid, set()).add(event["id"])
 
     async def catch_up(self, sid):
         # Scan from the beginning: provider page tokens may be ephemeral, while
@@ -1768,12 +1808,22 @@ class SessionService:
         return await self.send_message({"kind": "SCOUT_REVIEW", "proposal_id": proposal_id})
 
     async def run(self, stop):
+        tick = 0
         while not stop.is_set() and not self.closed:
-            async for session in self.repo.iter_all("ops.agent_sessions", filters={"status": "OPEN"}):
+            async for session in self.repo.iter_metadata(
+                "ops.agent_sessions", SESSION_ADMISSION_FIELDS, filters={"status": "OPEN"}
+            ):
                 sid = session["session_id"]
+                settled = session.get("runtime_status") == "IDLE" and not session.get("active_message_id")
+                following = sid in self.tasks and not self.tasks[sid].done()
+                # A verified idle session has nothing to follow; it is only re-checked
+                # now and then for archiving (its event may have closed meanwhile).
+                if settled and not following and tick % IDLE_RECHECK_TICKS:
+                    continue
                 if await self.finish_if_idle(sid):
                     continue
                 self.start_stream(sid)
+            tick += 1
             await self.wake_waiting()
             try:
                 await asyncio.wait_for(stop.wait(), timeout=5)
