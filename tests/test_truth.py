@@ -1304,6 +1304,27 @@ def test_hourly_archive_bars_with_binance_close_time_join_minute_bars_on_the_hou
     assert len(hourly) == 2
 
 
+def test_benchmark_gap_leaves_btc_adjusted_return_na_not_raw():
+    """Prod 20 Oct (WLD): BTC base klines missing 10:00-15:28 made r_btc_adj equal r_raw (BTC return 0)."""
+    from runpy import run_path
+
+    snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
+        "synthetic_start_snapshot"
+    ]()
+    end = parse_time(snapshot["cutoff"])
+    whole = compute_market_truth(snapshot)["relative"]["windows"]["W1H"]
+    assert whole["r_btc_adj"] is not None and whole["r_raw"] is not None
+    btc = [r for r in snapshot["klines"] if "BTC" in r["instrument_id"]]
+    assert btc
+    snapshot["klines"] = [
+        r for r in snapshot["klines"]
+        if not ("BTC" in r["instrument_id"] and parse_time(r["open_time"]) >= end - timedelta(hours=2))
+    ]
+    gap = compute_market_truth(snapshot)["relative"]["windows"]["W1H"]
+    assert gap["r_raw"] == whole["r_raw"]
+    assert gap["r_btc_adj"] is None
+
+
 def test_null_measurements_have_companion_context_without_wrapping_literal_fields():
     from runpy import run_path
 
