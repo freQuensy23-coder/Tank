@@ -48,6 +48,11 @@ MATERIAL_EVENT_TYPES = {
 IDLE_RECHECK_TICKS = 60
 
 
+def seen_key(event):
+    """Identity of a handled stream event, including the execution correlation it carried."""
+    return event["id"] + "|" + str(event.get("execution_id") or "")
+
+
 def material_event(event):
     """Whether a stream event can change Tank state (a refusal can arrive in any message)."""
     if event.get("type") in MATERIAL_EVENT_TYPES or event.get("finish_reason") == "content-filter":
@@ -1190,10 +1195,11 @@ class SessionService:
     async def process_event(self, sid, event, seq=None):
         if event.get("type") in ("event_start", "event_delta") or not event.get("id"):
             return
-        if not material_event(event) or event["id"] in self.seen_events.get(sid, ()):
+        if not material_event(event) or seen_key(event) in self.seen_events.get(sid, ()):
             # Inert or already handled by this process: no session read or write. The
             # resume cursor advances with the next material write; replaying inert
-            # events after a restart is harmless.
+            # events after a restart is harmless. A copy carrying an execution_id the
+            # handled one lacked (SSE vs history) is not skipped: it records the receipt.
             if seq is not None:
                 self.pending_seq[sid] = max(int(seq), self.pending_seq.get(sid, 0))
             return
@@ -1296,7 +1302,7 @@ class SessionService:
                                 session["native_execution_receipts"][event["id"]]
                             )
                         await self.repo.put("ops.agent_sessions", sid, current)
-                self.seen_events.setdefault(sid, set()).add(event["id"])
+                self.seen_events.setdefault(sid, set()).add(seen_key(event))
                 return
             if kind in {
                 "session.status_running",
@@ -1520,7 +1526,7 @@ class SessionService:
                 current.update(self.event_timestamp(event).fields("last_event_at"))
                 current.update(propagate_timestamp(event, "processed_at").fields("processed_at"))
                 await self.repo.put("ops.agent_sessions", sid, current)
-            self.seen_events.setdefault(sid, set()).add(event["id"])
+            self.seen_events.setdefault(sid, set()).add(seen_key(event))
 
     async def catch_up(self, sid):
         # Scan from the beginning: provider page tokens may be ephemeral, while

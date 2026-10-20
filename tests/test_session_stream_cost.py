@@ -62,3 +62,23 @@ async def test_inert_events_skip_session_io_and_cursor_advances_with_next_materi
         await service.process_event("ses_1", {"id": "m52", "type": "agent.message", "content": []}, 52)
         await service.process_event("ses_1", {"id": "idle", "type": "session.status_idle"}, 53)
         assert (await repo.get("ops.agent_sessions", "ses_1"))["last_event_seq"] == 53
+
+
+@pytest.mark.asyncio
+async def test_history_copy_with_execution_id_records_the_receipt_the_stream_copy_lacked():
+    repo = CountingRepository()
+    opts, _ = settings()
+    await seed_session(repo)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
+    ) as http:
+        service = SessionService(repo, opts, None, http=http)
+        idle = {"id": "idle-1", "type": "session.status_idle", "stop_reason": {"type": "end_turn"}}
+        await service.process_event("ses_1", idle, 5)
+        assert not (await repo.get("ops.agent_sessions", "ses_1")).get("native_execution_receipts")
+        await service.process_event("ses_1", dict(idle, execution_id="exec-1"))
+        receipts = (await repo.get("ops.agent_sessions", "ses_1"))["native_execution_receipts"]
+        assert receipts["idle-1"]["execution_id"] == "exec-1"
+        puts = repo.session_puts
+        await service.process_event("ses_1", dict(idle, execution_id="exec-1"))
+        assert repo.session_puts == puts
