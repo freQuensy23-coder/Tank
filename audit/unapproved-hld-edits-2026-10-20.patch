@@ -1,0 +1,152 @@
+diff --git a/02_Tank_V0_HLD.md b/02_Tank_V0_HLD.md
+index 8b24a7f..7d557c2 100644
+--- a/02_Tank_V0_HLD.md
++++ b/02_Tank_V0_HLD.md
+@@ -25,7 +25,7 @@ One Linux host runs everything in Docker Compose: the Tank service — one async
+ ## 2. Design rules
+ 
+ 1. Adapters isolate each source; everything downstream reads canonical rows from PostgreSQL.
+-2. Raw first: every payload is written to disk with SHA-256 before parsing.
++2. Raw information-source payloads are written to disk with SHA-256 before parsing. Market trades and books use the raw Parquet retention contract in §7.2; other market responses persist normalized typed fields under TDD §14, not a byte-exact REST-response archive. This specific storage contract and the latest requirement to retire extra raw paths govern the broader raw-first rule.
+ 3. Native units and per-venue data first; venue fields are read by the semantics registry (03 §2.10), and composites combine only fields of the same meaning and unit.
+ 4. One frozen cutoff per analysis; every value carries observation time and precision.
+ 5. Missing is never zero; exclusions carry reasons.
+@@ -43,7 +43,7 @@ One Linux host runs everything in Docker Compose: the Tank service — one async
+ 
+ Common to all HTTP sources: header `User-Agent: TankV0/1.0 (<operator contact e-mail>)`; conditional GET (`If-None-Match` / `If-Modified-Since`) where the server returns `ETag` / `Last-Modified`; timeout 20 s; 3 retries with 2/4/8 s backoff; escalated interval 15 s (01 FR-D-02). Each payload is stored raw with SHA-256 before parsing; items are deduplicated by the item key in the tables below.
+ 
+-HTML page sources: Tank collects every link on the page that matches the source's article pattern below, resolves it to an absolute URL, and treats each URL not seen before as a new item; the article page is then fetched for its full text. Zero matches on a successful fetch marks the source DEGRADED (layout change). S19 is the only page that needs rendering in headless Chrome, so `tank-xsensor` polls it; all others work from plain HTTP in `tank-ingest`.
++HTML page sources: Tank collects every link on the page that matches the source's article pattern below, resolves it to an absolute URL, and treats each URL not seen before as a new item; the article page is then fetched for its full text. Zero matches on a successful fetch marks the source DEGRADED (layout change). S19 needs headless Chromium rendering through the shared `xsensor` browser module; other article sources use the `sources` HTTP module. Both run inside the single `tank` asyncio service, not separate services or processes.
+ 
+ ### 3.1 Regulators and market structure (CORE)
+ 
+@@ -111,7 +111,7 @@ GitHub evidence is SOURCE_SIDE_SUPPORT: it can raise an integration claim to BUI
+ 
+ - Local development may run without X: leave out the Compose overlay `compose.x.yaml` (it mounts the secret `x_session`), and Tank starts and runs every other source. Production and V0-A run with X.
+ - Account set: the 86 handles in 01 §4.3, held in one private X List "tank-v0" on the operator's X account; the list ID is stored in `sources.yaml`.
+-- Reader: the `xsensor` module, Playwright (async API) persistent context with Chromium inside the `tank` container; the profile lives in the volume `tank-browser` and is signed in to X once from the operator's session (a Playwright storage-state file exported on the operator's own computer and supplied as the Docker secret `x_session`); headless (`--headless=new`). If X blocks headless mode, running it headed under a virtual display (Xvfb) in the same container is the operator's decision. The same browser renders S19.
++- Reader: the `xsensor` module, Playwright (async API) persistent context with Chromium inside the `tank` container; the profile lives in the volume `tank-browser` and is signed in to X once from the operator's session (a Playwright storage-state file exported on the operator's own computer and supplied as the Docker secret `x_session`); headless (`--headless=new`). If X blocks headless mode, running it headed under a virtual display (Xvfb) in the same container is the operator's decision. The same browser process renders S19 in an isolated context without X cookies or localStorage.
+ - Every 60 s: open `https://x.com/i/lists/{list_id}`, read `article` elements top-down until the last stored status ID; per post store status ID (from the `/status/{id}` link), author handle, text, `time[datetime]`, quoted/reposted status IDs, and the full post URL.
+ - Handle check: `tank sources check` calls `https://publish.twitter.com/oembed?url=https://x.com/{handle}` for each handle (follows the redirect to `publish.x.com`; HTTP 200 = exists) and confirms the owner from the profile bio (`https://syndication.twitter.com/srv/timeline-profile/screen-name/{handle}`, rate-limited to a few requests per minute) or from the person's IQ.wiki, Wikidata or GitHub profile; all 86 passed on 16–17 Oct 2026 (e.g. @el33th4xor bio: "Founder and CEO @avalabs"; @vnovakovski: IQ.wiki "founder and CEO of Lighter"; @fleupold_: Devcon speaker page and GitHub bio "Technical lead at CowProtocol"). Organization handles were taken from the project's own website, docs or GitHub organization; people's handles from the official team page, IQ.wiki, Wikidata, GitHub or reputable news. Handles that must not be used: wrong person — @nathanallman (an unrelated account; Ondo's founder Nathan Allman used @nathanlallman and died on 25 May 2026); unconfirmed or squatted — @fleupold (Felix Leupold is @fleupold_), @CoWDAO, @HyperFoundation, @HyperliquidLabs, @worldcoin (re-registered in Mar 2026); HTTP 404 — @aerodromefi, @OndoFinance, @quant_network, @ethena_labs, @eulerlabs. Left out because no official source confirms the owner: @iliensinc (Hyperliquid co-founder), @MathisGD_ (Morpho co-founder), @chef_mochi (PancakeSwap). Left out as dormant or no longer at the project: @nearfoundation, @k06a, @PaoloTasca, @kevinsekniqi, @Tederminant, @John1wu.
+ - Terms: automated reading of the X web UI carries terms-of-service risk (recorded in `terms_notes`).
+@@ -221,7 +221,7 @@ Tank-side request budgets are set at ≤ 50% of each venue's documented limit. B
+ | Source | Endpoint | Use |
+ |---|---|---|
+ | Binance public data archive | `https://data.binance.vision/data/spot/daily/klines/{S}/1m/{S}-1m-{YYYY-MM-DD}.zip`, `…/spot/daily/aggTrades/{S}/{S}-aggTrades-{date}.zip`, `…/futures/um/daily/klines/{S}/1m/…`, `…/futures/um/daily/metrics/{S}/{S}-metrics-{date}.zip` (5m OI), `…/futures/um/monthly/fundingRate/{S}/{S}-fundingRate-{YYYY-MM}.zip`; each with `.CHECKSUM` = `"<sha256>  <file name>"` | Pre-event windows older than REST retention, retro reaction checkpoints, fixture replay (03 §5.2) |
+-| DefiLlama API | `https://api.llama.fi/summary/fees/{protocol}?dataType=dailyFees` / `dailyRevenue` / `dailyHoldersRevenue` (`total24h`, `total30d`, `totalDataChart`); `https://stablecoins.llama.fi/stablecoincharts/{chain}`; `https://yields.llama.fi/lendBorrow` (DefiLlama shuts down the free yield endpoints `/pools` and `/chart/{pool}` on 13 Nov 2026, moving them to the paid API; Tank uses only `/lendBorrow`, which the notice does not name and which still answered on 19 Oct 2026) | Capture chain, stablecoin supply of the settlement chain, lending utilization |
++| DefiLlama API | `https://api.llama.fi/summary/fees/{protocol}?dataType=dailyFees` / `dailyRevenue` / `dailyHoldersRevenue` (`total24h`, `total30d`, `totalDataChart`); `https://stablecoins.llama.fi/stablecoincharts/{chain}`; `https://yields.llama.fi/lendBorrow` (DefiLlama shuts down the free yield endpoints `/pools` and `/chart/{pool}` on 13 Nov 2026, moving them to the paid API; Tank uses only `/lendBorrow`, which the notice does not name and which still answered on 19 Oct 2026) | Capture chain, stablecoin supply of the settlement chain, lending utilization; pool UUID identity comes from versioned `registry.yaml` `lending_pool_catalog`, not a runtime `/pools` fetch |
+ | DefiLlama unlock datasets | `https://defillama-datasets.llama.fi/emissions/{slug}` (list: `…/emissionsProtocolsList`, 371 protocols on 16 Oct 2026); slugs per token in 03 §2.11; none published for 1INCH, ZRX, QNT | `unlocks` for supply context, refreshed daily |
+ | Exchange wallets | DefiLlama-Adapters `projects/binance/index.js` at commit `4a6ef31a4eed4f24882a7d82bff50306b40b6d6c` (17 EVM addresses) and `projects/okex/index.js` at commit `b70f0fb4dc9ff463866d676c14d21b0ed0930d76` (323 EVM addresses) → `exchange_addresses.yaml` | Exchange inventory and wallet flows (Bybit, Coinbase, Kraken: no public list → n/a) |
+ | Etherscan API v2 (free key) | `https://api.etherscan.io/v2/api?chainid={id}&module=account&action=tokenbalance&contractaddress={token}&address={wallet}&apikey={key}`; `action=tokentx` for transfers | Balances and transfers of the wallets above for EVM tokens of the universe |
+@@ -333,11 +333,11 @@ Inside `market`, one task per WebSocket connection: messages → per-venue parse
+ 
+ ### 6.3 Re-evaluation
+ 
+-A new item about the event reaches its session as ITEM_ADDED; a fired watch condition, a milestone outcome or an expiring call reaches it as CONDITION_FIRED, MILESTONE or CALL_EXPIRED. The agent calls `get_market_truth` at a new cutoff when it needs one, then `get_decision` and `publish_card` UPDATE; the update policy sends a threaded update only on a material change (01 FR-A-04).
++A new item about the event reaches its session as ITEM_ADDED; the agent may decide it adds nothing and record no observation without failing the event or abandoning its calls; a fired watch condition, a milestone outcome or an expiring call reaches it as CONDITION_FIRED, MILESTONE or CALL_EXPIRED. The agent calls `get_market_truth` at a new cutoff when it needs one, then `get_decision` and `publish_card` UPDATE; the update policy sends a threaded update only on a material change (01 FR-A-04).
+ 
+ ### 6.4 Reaction windows
+ 
+-A MAJOR+ class from the agent's `set_assessment` → pre-event windows computed from base tier + archive → `REACTION_CAPTURE` jobs at +15m, +1h, +4h, +24h, +72h from the anchor (created by the scheduler, run by the job workers, no LLM) → frozen checkpoint rows.
++A MAJOR+ class from the agent's `set_assessment` → PRE_24H, PRE_4H and PRE_1H computed immediately from base tier + archive (no PRE jobs) → `REACTION_CAPTURE` jobs at +15m, +1h, +4h, +24h, +72h from the anchor (created by the scheduler, run by the job workers, no LLM) → frozen checkpoint rows.
+ 
+ ---
+ 
+@@ -364,12 +364,14 @@ DDL for the core tables is in 03 §14.
+ 
+ | Path | Content | Retention |
+ |---|---|---|
+-| `raw/items/{source_id}/{yyyy}/{mm}/{dd}/{item_id}.json.zst` | Raw payloads | Permanent |
++| `raw/items/{source_id}/{yyyy}/{mm}/{dd}/{item_id}.json.zst` | Immutable payload captured once; polling/startup never rewrites the stored item or reassembles its text | Permanent |
+ | `raw/trades/{venue}/{market}/{symbol}/{yyyy-mm-dd}/{hh}.parquet` | Hot-tier normalized trades | 30 days; event windows permanent |
+ | `raw/books/{venue}/{symbol}/{yyyy-mm-dd}/{hh}.parquet` | 10 s book summaries + snapshots | 30 days; event windows permanent |
+ | `archive/binance/…` | Downloaded archive files + `.CHECKSUM` | Cache, 180 days |
+ | `bundles/{sha256}.json.zst` | Evidence bundles | Permanent |
+ 
++Legacy SQL `archive` tables retire through migrations032–035 only after a fully fsynced, hashed and read-back-verified full-row export (including column types) under permanent `bundles/<sha>.json.zst`; unexpected dependencies abort rather than CASCADE. No new `raw/market_frames` files are written. Previously retained raw-frame manifests remain subject to their 30-day TTL and permanent event-window/bundle pins during a bounded transition. An operator-reviewed retirement must verify and relocate pinned evidence into the existing §7.2 paths and expire only unpinned data before removing the old directory; this physical retirement is not performed by the SQL migration and remains an explicit operational step, not a permanent new allowed path. Migration does not delete historical evidence.
++
+ Sizing estimate: raw trades ≈ 0.5 GB/day compressed at 15 hot tokens; books ≈ 0.3 GB/day; base-tier tables ≈ 30 MB/day. A 1 TB SSD holds well over a year at this rate.
+ 
+ ---
+@@ -378,17 +380,68 @@ Sizing estimate: raw trades ≈ 0.5 GB/day compressed at 15 hot tokens; books 
+ 
+ | Item | V0 setting |
+ |---|---|
+-| Host | Any Linux server (x86-64 or arm64) with Docker Engine, Compose v2 and KVM (`/dev/kvm`) for OpenMA's sandboxes; 32 GB RAM, 1 TB SSD, wired network |
++| Host | Linux x86-64 or arm64 with Docker Engine, Compose v2 and KVM (`/dev/kvm`); build Tank, sandbox OCI and BoxLite for the same architecture. 32 GB RAM, 1 TB SSD. Architecture-specific native qualification is required; existing ARM evidence does not qualify x86-64, wired network |
+ | Services | `compose.yaml` with three services, each `restart: unless-stopped`: `tank` runs `tank serve`, `openma` runs the OpenMA server, `postgres` runs PostgreSQL; logs through Docker's logging driver with rotation |
+-| Database | Image `postgres:16`, data in the volume `pg-data`: the service and OpenMA connect over the Compose network; the read-only role `tank_agent` connects from the sandboxes on the address they reach (`pg_hba.conf`: that role, that subnet, SCRAM); no port is published outside the host |
++| Database | Image `postgres:16`, data in the volume `pg-data`: the service and OpenMA connect over the Compose network; the read-only role `tank_agent` connects only to `tank` and `tank_replay_agent` only to `tank_replay` from the observed sandbox source subnet (`pg_hba.conf`: exact role/database/subnet, SCRAM); no port is published outside the host |
+ | OpenMA | Container `openma` built by Compose from the upstream `open-managed-agents` source at the pinned commit `85d5361f535c7221de975838dc48444e468cc02e` with Tank's overlay applied by `deploy/prepare_openma_source.py` (each edit is checked against the original file's SHA-256 and match count, so a different commit is refused). The pinned upstream does not run Tank as released, and the overlay fixes exactly that: PostgreSQL 16 (untyped nullable query parameters, epoch timestamps stored as strings); tool arguments renamed by the case mapper (`item_id` → `itemId`); the agent tool config that cannot enable `browser` or disable the `schedule` tools; the browser running inside the session sandbox; an environment's network policy and credentials passed to the sandbox (upstream ignores networking, so the replay sandbox would have internet); custom-tool results that resume the model on the first result of a group (the session waits for every result of the tools called in one step, then resumes the model once; messages that arrive meanwhile queue in order and survive an OpenMA restart); BoxLite's file transfer, which refuses paths under the sandbox's mounts (`/tmp`, `/mnt/session/outputs`, `/replay/evidence`) because it writes to the image beneath them (OpenMA's file reads and writes run as a process inside the VM instead, BoxLite's own workaround, so the VM's mounts and permissions apply); a Dockerfile built on Node 22 although its pnpm needs Node 24; the console build, skipped with `SKIP_CONSOLE=1`. The litebox runtime is BoxLite v0.10.6 built from `deploy/boxlite`; `DATABASE_URL` = database `oma` on `postgres`; `SANDBOX_PROVIDER=litebox` with `/dev/kvm` passed into the container (one libkrun microVM per session); the Model Card for `gpt-6.1-sol` is a custom provider (`pi_config.api: openai-responses`) whose `base_url` is Tank's `codex_gateway` (`http://tank:8790/v1`), called with the internal key `codex_gateway_key`; OpenMA never holds the ChatGPT sign-in; port 8787 on the Compose network only; agents and skills uploaded from the config repository on deploy |
+ | Agent sandbox | Environment `tank-analysis`: image `tank-analysis`, built from `deploy/sandbox.Dockerfile` and exported as a local OCI layout (the OpenMA API takes no image per environment): Python 3.12 with `pandas`, `numpy`, `scipy`, `statsmodels`, `pyarrow`, `duckdb`, `psycopg[binary]`, `httpx`, `websockets`; `postgresql-client`, Node.js for the pi harness tools, Playwright 1.64.0 with its Chromium and Tank's browser worker; no network allowlist or denylist; env `TANK_DB_URL` (role `tank_agent`), `ETHERSCAN_API_KEY` and `OPENROUTER_API_KEY` — in V0 the keys sit in the environment and the skill forbids printing them or sending them anywhere but their own API; a credential vault comes with production. Environment `tank-replay` for fixture replays: the same image; the only reachable address is the replay database (its resolved private IP is the single allowlist entry), and `TANK_DB_URL` points at it (03 §11.1) |
+ | Image | `tank`, built from the repository's `Dockerfile`: Python 3.12, `asyncio`, dependencies pinned in `uv.lock`, Playwright Chromium; volumes `tank-data` (`/data`), `tank-browser` (the X profile), `codex-auth` (the ChatGPT sign-in) and `backup` (an external disk on the host) |
+-| Configuration | Git repository on the host, mounted read-only at `/config`: `sources.yaml` (incl. article patterns of §3), `semantics.yaml`, `registry.yaml` (tokens, identities, aliases, instruments, sector baskets), `dependency_map.yaml`, `exchange_addresses.yaml`, `thresholds.yaml`, `skills/` (the agents' skills and tool schemas), `templates/`; loaded on start and on `SIGHUP` (`docker compose kill -s HUP tank`); commit hash stored as `config_version` on every output |
+-| Secrets | Docker Compose secrets — files outside the repository, readable only by the operator, mounted read-only into the containers that use them: `oma_api_key`, `oma_root_secret`, `openrouter_api_key`, `telegram_bot_token`, `etherscan_api_key`, `tank_agent_db_password`, `x_session`, `codex_gateway_key`; the ChatGPT sign-in sits in the `tank` volume `codex-auth` (writable: the gateway saves refreshed tokens there), the Etherscan and OpenRouter keys and the `tank_agent` password also by the environment `tank-analysis`; never written to logs or bundles |
++| Configuration | Git repository on the host, mounted read-only at `/config`: `sources.yaml` (incl. article patterns of §3), `semantics.yaml`, `registry.yaml` (tokens, identities, aliases, instruments, sector baskets, versioned lending-pool identities), `dependency_map.yaml`, `exchange_addresses.yaml`, `thresholds.yaml`, `skills/` (the agents' skills and tool schemas), `templates/`; loaded on start and on `SIGHUP` (`docker compose kill -s HUP tank`); commit hash stored as `config_version` on every output |
++| Secrets | Complete service/secret inventory below. Files live outside the repository and are mounted read-only only into their consumers; permissions must allow each service UID to read its files. ChatGPT OAuth state is separate in the writable `codex-auth` volume. No credentials in Compose env examples, logs or evidence bundles |
+ | Time | The host's NTP client (e.g. `chrony`); containers use the host clock |
+ | Backups | Nightly `pg_dump` + `bundles/` copy to the volume `backup` (an external disk on the host) |
+ 
++### 8.1 Complete deployment inventory
++
++`compose.yaml` defines the following secrets; `compose.x.yaml` adds only `x_session`. Names below are exact file names under `TANK_SECRETS_DIR`. PostgreSQL owner passwords and sandbox read-only passwords are distinct; `oma_root_secret` and `oma_auth_secret` are separate keys.
++
++| Secret | Consumer services | Purpose |
++|---|---|---|
++| `postgres_password` | `postgres` | PostgreSQL administrator initialization |
++| `tank_db_password` | `tank`, `postgres` | `tank` database owner |
++| `oma_db_password` | `tank`, `openma`, `postgres` | `oma` application/history owner; explicit maintenance route |
++| `oma_api_key` | `tank`, `openma` | Authenticated internal OpenMA API |
++| `oma_root_secret` | `openma` | OpenMA root secret |
++| `oma_auth_secret` | `openma` | OpenMA authentication secret |
++| `openrouter_api_key` | `tank`, `openma` | Jev OpenRouter System One; curated analysis-sandbox provider credential |
++| `telegram_bot_token` | `tank` | Telegram delivery |
++| `etherscan_api_key` | `tank`, `openma` | Public chain evidence; curated analysis-sandbox provider credential |
++| `tank_agent_db_password` | `openma`, `postgres` | Sandbox SELECT-only role for `tank` |
++| `tank_replay_agent_db_password` | `openma`, `postgres` | Sandbox SELECT-only role for `tank_replay` |
++| `codex_gateway_key` | `tank` | Internal Model Card gateway key, supplied to OpenMA during registration |
++| `x_session` | `tank` through `compose.x.yaml` | Operator-exported X browser state; private List ID is `sources.yaml` S29 `list_id` |
++
++| Named volume | Consumer mount(s) | Content and handling |
++|---|---|---|
++| `pg-data` | `postgres:/var/lib/postgresql/data` | Persistent Tank/replay/OpenMA databases; database retention §7.1 and protected `pg_dump` backups |
++| `tank-data` | `tank:/data` | Raw evidence and bundles under §7.2; never mounted into an agent VM |
++| `tank-browser` | `tank:/browser` | Shared source browser persistent X profile; public S19 uses an isolated context in the same process, without X cookies |
++| `codex-auth` | `tank:/codex-auth` | Operator ChatGPT sign-in, writable for refresh; never mounted in OpenMA or guests |
++| `openma-data` | `openma:/app/data` | OpenMA files, outputs, sandbox workspaces and native HOME; retain across controller restarts; archive owned sessions through the API before scoped reclamation |
++| `sealed-replay-evidence` | `tank:/data/replay/evidence`, `openma:/app/replay-evidence:ro` | Prepared current replay prefixes only; guest receives only its verified run child at `/replay/evidence:ro`, never the common root, private future prefixes or evaluator outcomes |
++| `backup` | `tank:/backup` | External host directory `TANK_BACKUP_PATH`; nightly protected database dumps and bundle copies, operator retention policy |
++
++Additional read-only bind mounts are `/config` from `TANK_CONFIG_PATH`, verified architecture-matched sandbox OCI at OpenMA `/opt/tank-sandbox-oci` from `TANK_SANDBOX_OCI_PATH`, PostgreSQL HBA at `/etc/postgresql/tank-pg_hba.conf` from `TANK_PG_HBA_PATH`, and `deploy/postgres-init.sh` for first initialization. Generate HBA from the selected unused `TANK_COMPOSE_CIDR` and the **observed** native source CIDR; do not guess a broad subnet. No service publishes host ports. The optional X overlay enables X and mounts its state; it does not supply the list ID.
++
++Copy `deploy/compose.env.example` outside the repository, fill the nonsecret paths/contact/chats/KVM GID, and create the above secret files with per-service-readable ownership. Validate `docker compose --env-file <file> -f compose.yaml [-f compose.x.yaml] config --quiet`. Bring up PostgreSQL and OpenMA, migrate the separate Tank/replay databases, apply `deploy/read_only_role.sql`, and register reviewed resources with `deploy/prepare_openma.py`; registration creates no model sessions. Record resource IDs in `config/openma.yaml` and regenerate the config manifest using `deploy/prepare_config.py`. Run the normal offline `tank calibrate` command before the first `tank serve`; never substitute a partial capture mode. Calibration and service startup remain separate operator steps.
++
++### 8.2 Required OpenMA preparation and compatibility
++
++Use the single public `deploy/prepare_openma_source.py` entrypoint, which delegates to `deploy/prepare_openma_deployment.py`. Each stage is source-hash guarded against pinned upstream commit `85d5361f535c7221de975838dc48444e468cc02e`; the complete source maps and composition/runtime identities are recorded in `tank-overlay.json` and `tank-deployment-composition.json`. A partial stage output is not a deployment candidate. Required order and purpose:
++
++| Stage | Required compatibility behavior |
++|---|---|
++| Pinned base/browser/replay/SKILL | PostgreSQL null/bigint representation, opaque custom-tool arguments/configs, browser through SandboxPort, compiled skill manifest, read-only replay-prefix mount and curated credentials; Node24/pnpm and headless console build |
++| `openma_lifecycle` / direct SDK | Declared BoxLite0.10.6 dependency; retain the same native VM/workspace across turns/controller restart, scope/fingerprint guards and SQL fences, idle stop/resume and exact archive cleanup |
++| `openma_execution` | Expose scoped execution IDs/status so Tank waits for actual accepted-input settlement and end-turn rather than HTTP202 or an intermediate idle boundary |
++| `openma_skill_aliases` | Stable `/home/user/.skills/<compiled-name>/` paths for registered skill versions |
++| `openma_file_io` | Bounded binary reads/writes through a process inside the guest so mounted evidence/output permissions apply; no host filesystem bypass |
++| `openma_replay_network` | Replay permits only the resolved private PostgreSQL IP and required native DNS handling, with no internet/provider credentials |
++| `openma_continuation` | Same-session queued custom-tool callback continuation, without creating an arbitrary user turn |
++| `openma_tool_kind` | Registered custom tools keep their custom kind instead of being misrouted as native tools |
++
++The native BoxLite/Go/Rust runtime and sandbox OCI are built separately for `linux/arm64` or `linux/amd64`, using platform-specific pinned downloads, ELF/loader checks and matching OCI architecture. A source rebuild produces `UNQUALIFIED_REBUILD`, never inherited hardware acceptance. Current retained replay-DNS native qualification is ARM-specific; x86-64 deployment requires its own KVM/runtime/browser/network qualification. The setup supports an x86 build path, but does not claim that an ARM binary runs on x86 or that an unperformed x86 hardware test passed. See `deploy/OPENMA_PREPARATION.md` and `deploy/boxlite/v0.10.6/README.md` for exact commands and artifact checks.
++
+ Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a thread pool; sessions run in parallel inside OpenMA, one per event; `publish_card` takes one lock per event.
+ 
+ ---
+@@ -412,7 +465,7 @@ Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a
+ |---|---|---|
+ | Venue WebSocket disconnect | Socket closed / no message 30 s / ID gap | Reconnect with backoff; REST backfill by trade ID; minutes without full backfill marked incomplete; the venue drops out of composites for those windows. |
+ | Binance archive checksum mismatch or gap | SHA-256 vs `.CHECKSUM`; continuity check | File rejected; window marked incomplete; re-download once after 1 h. |
+-| Agent turn error or refusal | `session.error` in the session stream | The message is sent again once; then the event is marked FAILED; no card content generated from it. |
++| Native OpenMA session failure | Authenticated `session.error` or failed execution settlement | One idempotent native retry, then FAILED; no fabricated card content. A successful turn without `add_observation`, class or card is not a failure. |
+ | DuckDuckGo rate limit or block | `ddgs` rate-limit, block or timeout error | Retries after 5, 15 and 45 s; then `web_search` returns the error to the agent, and a fact it could not confirm stays MEDIUM. No other engine is used. DuckDuckGo blocks some cloud IP ranges, so a test search runs from the host before launch. |
+ | Telegram failure | Ledger FAILED after 5 attempts | DELIVERY_FAILED notice; the card stays GENERATED. |
+ 
