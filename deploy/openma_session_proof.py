@@ -143,11 +143,16 @@ summary = {
     "data_skill_applied": any("DATA_GUIDE.md" in m for m in messages),
     "other_tools_used": sorted({e.get("name") for e in events if e.get("type") in {"agent.tool_use", "agent.mcp_tool_use"}} - {None}),
     "read_skills_mode": READ_SKILLS,
+    # Progressive exposure measured 7,619 input tokens on the first request; the inlined
+    # tank-event-analyst SKILL.md alone is ~37 kB (~9-10k tokens).
+    "first_request_input_tokens": next((e.get("model_usage", {}).get("input_tokens") for e in events
+                                        if e.get("type") == "span.model_request_end"), None),
     "builtin_tool_inputs": [e.get("input") for e in events if e.get("type") == "agent.tool_use"],
     "real_tool_call": any(a["tool"] == "get_registry" for a in answered),
 }
 summary["status"] = "PASS" if summary["analyst_skill_applied"] and summary["data_skill_applied"] \
     and summary["real_tool_call"] and (READ_SKILLS or not summary["other_tools_used"]) and finished \
+    and (READ_SKILLS or (summary["first_request_input_tokens"] or 0) >= 15000) \
     and finished.get("type") == "session.status_idle" else "FAIL"
 save("result.json", summary)
-print(json.dumps({k: summary[k] for k in ("status", "session_id", "analyst_skill_applied", "data_skill_applied", "real_tool_call", "other_tools_used", "agent_text")}))
+print(json.dumps({k: summary[k] for k in ("status", "session_id", "analyst_skill_applied", "data_skill_applied", "real_tool_call", "other_tools_used", "first_request_input_tokens", "agent_text")}))
