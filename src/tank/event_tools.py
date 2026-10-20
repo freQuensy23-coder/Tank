@@ -2822,7 +2822,33 @@ def validate_schema(value, schema, path="$"):
     ):
         raise ValueError(f"{path}: invalid type")
     if "enum" in schema and value not in schema["enum"]:
-        raise ValueError(f"{path}: invalid enum")
+        raise ValueError(f"{path}: invalid enum; allowed: {schema['enum']}")
+    if "anyOf" in schema:
+        errors = []
+        for option in schema["anyOf"]:
+            try:
+                validate_schema(value, option, path)
+                break
+            except ValueError as exc:
+                errors.append(str(exc).removeprefix(path + ": "))
+        else:
+            raise ValueError(f"{path}: matches none of the allowed forms: " + " | ".join(errors))
+    if isinstance(value, str):
+        import re
+
+        if "pattern" in schema and not re.search(schema["pattern"], value):
+            raise ValueError(f"{path}: does not match pattern {schema['pattern']}")
+        if len(value) < schema.get("minLength", 0):
+            raise ValueError(f"{path}: shorter than {schema['minLength']}")
+    if isinstance(value, list) and len(value) < schema.get("minItems", 0):
+        raise ValueError(f"{path}: fewer than {schema['minItems']} items")
+    if (
+        "exclusiveMinimum" in schema
+        and isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and value <= schema["exclusiveMinimum"]
+    ):
+        raise ValueError(f"{path}: must be greater than {schema['exclusiveMinimum']}")
     if isinstance(value, dict):
         for key in schema.get("required", []):
             if key not in value:

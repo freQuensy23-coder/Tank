@@ -4243,7 +4243,11 @@ async def test_immediate_access_uses_agent_structured_fact_and_effective_time(se
         assessment["impact_horizon"]["immediate_market_access"].update(
             claim_id=report_claim["claim_id"], quote=report_quote
         )
-    if case not in {"wrong_claim", "future_date"}:
+    if case == "missing_quote":
+        # The declared schema requires a non-empty quote (minLength 1).
+        with pytest.raises(ValueError, match="immediate_market_access.quote: shorter than 1"):
+            await service.dispatch("set_assessment", dict(event_id=eid, assessment=assessment), {})
+    elif case not in {"wrong_claim", "future_date"}:
         result = await service.dispatch("set_assessment", dict(event_id=eid, assessment=assessment), {})
         assert (await service.repo.get("evt.ems_assessments", result["ems_id"]))["impact_horizon"][
             "impact_start"
@@ -4791,3 +4795,20 @@ async def test_token_facts_show_unlocks_before_the_cutoff_and_nothing_after(serv
     assert known_at(reconstructed) == day + timedelta(days=1)
     assert known_at({"observed_at": iso(day)}) == day
     assert facts["analysis_cutoff"] and "supply_obs" in facts and "capture_chains" in facts
+
+
+def test_schema_refusal_names_allowed_cutoff_precisions():
+    """A precision outside the declared schema is refused at the schema with the
+    allowed forms, not deep in the tool (live 19:07Z: cutoff_prec "MINUTE")."""
+    import json
+    from pathlib import Path
+
+    schema = json.loads(
+        (Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/get_market_truth.schema.json").read_text()
+    )
+    args = {"event_id": "e", "tokens": ["T"], "cutoff": "2026-10-20T19:07:00Z"}
+    validate_schema(dict(args, cutoff_prec="BUCKET(1m)"), schema)
+    validate_schema(dict(args, cutoff_prec="EXACT"), schema)
+    with pytest.raises(ValueError) as refused:
+        validate_schema(dict(args, cutoff_prec="MINUTE"), schema)
+    assert "$.cutoff_prec" in str(refused.value) and "EXACT" in str(refused.value) and "BUCKET" in str(refused.value)
