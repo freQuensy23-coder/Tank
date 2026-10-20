@@ -1,0 +1,85 @@
+{
+  "image": "sha256:aeff9822a0a29414e5563f05c3f0e1b05fb222e30331cb0ff71f99c654a81402",
+  "source_candidate_sha256": "99f06d57cbec7380c256da59ca41750f411b17258d62c692f3fce441a430ff39",
+  "status": "PASS",
+  "result": {
+    "status": "PASS",
+    "code_version": "43977ae5a00fed630eb80aa1a482312f9dcb6a544cb0c87be0837d9bb4af92b8",
+    "sessions_source_sha256": "7238bbdf4a5afd4d1b6116fe7cdd46265f6a812d4480b2f9c28cb8ceba252653",
+    "actual_database": "owned isolated PostgreSQL16 canonical migrations default64",
+    "remote_http": "all synthetic",
+    "production_mutations": false,
+    "blocked_external_tools": 24,
+    "pool_max_size": 16,
+    "dispatches_entered": 24,
+    "pool_stats_while_blocked": {
+      "connections_num": 8,
+      "connections_ms": 19,
+      "requests_num": 83,
+      "requests_queued": 47,
+      "requests_wait_ms": 330,
+      "pool_min": 1,
+      "pool_max": 16,
+      "pool_size": 8,
+      "pool_available": 8,
+      "requests_waiting": 0
+    },
+    "eight_unrelated_normal_queue_workers_done_before_release": [
+      {
+        "job_id": "JOB-01M5CG45VQ0C5HYS8EZDRH5WXQ",
+        "seconds": 0.011469422999653034
+      },
+      {
+        "job_id": "JOB-01M5CG45VZH4NJSQNWG04WSDMA",
+        "seconds": 0.011828042999695754
+      },
+      {
+        "job_id": "JOB-01M5CG45W9JFACRPRFW3A8P0EC",
+        "seconds": 0.012787570998625597
+      },
+      {
+        "job_id": "JOB-01M5CG45VV54WRTMYDTZK16VN8",
+        "seconds": 0.01010225400023046
+      },
+      {
+        "job_id": "JOB-01M5CG45WDJH4AN42RWC1X201N",
+        "seconds": 0.013130412000464275
+      },
+      {
+        "job_id": "JOB-01M5CG45W2D9V5MXYSKE8YBMF5",
+        "seconds": 0.011285348002274986
+      },
+      {
+        "job_id": "JOB-01M5CG45WGNT3TKSTVZX9MSTG9",
+        "seconds": 0.013121641000907402
+      },
+      {
+        "job_id": "JOB-01M5CG45W5SSVKZWGW0XJETH6F",
+        "seconds": 0.01353016299981391
+      }
+    ],
+    "completed_tool_ledgers": 24,
+    "native_acks": 24,
+    "duplicate_events_no_refetch_or_ack": true,
+    "actual_postgres_error_lost_ack_cases": [
+      {
+        "http_status": 404,
+        "dispatch_calls": 1,
+        "ack_attempts": 2,
+        "durable_status": "ERROR",
+        "session_status": "OPEN",
+        "ordinal_count": 1
+      },
+      {
+        "http_status": 503,
+        "dispatch_calls": 1,
+        "ack_attempts": 2,
+        "durable_status": "ERROR",
+        "session_status": "OPEN",
+        "ordinal_count": 1
+      }
+    ]
+  },
+  "initial_harness_failure_preserved": "r82-image-session-pool-postgres.log; synthetic config omitted before any tool exercise, corrected in isolated harness only",
+  "production_mutations": false
+}

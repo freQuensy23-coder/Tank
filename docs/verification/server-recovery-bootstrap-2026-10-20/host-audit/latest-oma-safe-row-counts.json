@@ -1,0 +1,101 @@
+{
+  "mode": "READ_ONLY_COPY_COUNTS_SAFE_TABLES",
+  "excluded": "credential/vault/authentication tables; no document bodies retained",
+  "tables": {
+    "public.managed_agent_versions": {
+      "rows": 0,
+      "ids": []
+    },
+    "public.managed_agents": {
+      "rows": 8,
+      "ids": [
+        "agent_HcrCIViOAABeLWT9y18vT",
+        "agent_Kik8FYPGQZDI8YNBQiTwG",
+        "agent_NHYARkZKpHguOLbiXbmF7",
+        "agent_x_sLj6SKqcaBZIB-Tl-P8",
+        "agent_FZ3jZlci40bcPWPdzxmTU",
+        "agent_MXWs5wR3Cei9eD8AA85CB",
+        "agent_83uiz-zZxc7JcB4wVeJUr",
+        "agent_FBAkTrRT8_eroI3T4dkFe"
+      ],
+      "created_ms": {
+        "min": "2026-10-18T12:15:34.458000+00:00",
+        "max": "2026-10-20T00:39:47.140000+00:00"
+      },
+      "updated_ms": {
+        "min": "2026-10-18T12:15:34.458000+00:00",
+        "max": "2026-10-20T00:39:47.140000+00:00"
+      }
+    },
+    "public.managed_environment_work": {
+      "rows": 0,
+      "ids": []
+    },
+    "public.managed_files": {
+      "rows": 0,
+      "ids": []
+    },
+    "public.managed_session_events": {
+      "rows": 1349,
+      "ids": []
+    },
+    "public.managed_session_executions": {
+      "rows": 296,
+      "ids": []
+    },
+    "public.managed_session_initial_events": {
+      "rows": 0,
+      "ids": []
+    },
+    "public.managed_sessions": {
+      "rows": 126,
+      "ids": [],
+      "created_ms": {
+        "min": "2026-10-18T12:54:58.232000+00:00",
+        "max": "2026-10-20T01:37:52.943000+00:00"
+      },
+      "updated_ms": {
+        "min": "2026-10-18T13:00:09.804000+00:00",
+        "max": "2026-10-20T02:01:31.090000+00:00"
+      }
+    },
+    "public.managed_skill_versions": {
+      "rows": 10,
+      "ids": [],
+      "created_ms": {
+        "min": "2026-10-18T12:15:34.408000+00:00",
+        "max": "2026-10-20T00:39:47.128000+00:00"
+      }
+    },
+    "public.managed_skills": {
+      "rows": 10,
+      "ids": [
+        "skill_PgJI9xNX22RB5Er4tfXEV",
+        "skill_0rxWkfcX-dswg1RI6S4qz",
+        "skill_XIs60H0YtbfrBEgNdQvQa",
+        "skill_xcN1Qeyx7CvX8t5W0E7yw",
+        "skill_CIJYmPra_G4TgJz9kXZSW",
+        "skill_IJFyhQqo2pdlg_nUAkLtR",
+        "skill_SjkQSWiKXgKJlngIiBBb1",
+        "skill_6xrzfy0OEnv3A__MZN0qK",
+        "skill_EsIFhAODV6KRCt4Z5Zk5h",
+        "skill_DBceVYZvZwK2Lx0MLdtLl"
+      ],
+      "created_ms": {
+        "min": "2026-10-18T12:15:34.408000+00:00",
+        "max": "2026-10-20T00:39:47.128000+00:00"
+      },
+      "updated_ms": {
+        "min": "2026-10-18T12:15:34.408000+00:00",
+        "max": "2026-10-20T00:39:47.128000+00:00"
+      }
+    },
+    "public.runtime_resource_fences": {
+      "rows": 64,
+      "ids": []
+    }
+  },
+  "returncode": 0,
+  "complete": true,
+  "stderr": ""
+}

@@ -15,5 +15,5 @@
     "event_id",
     "token"
   ],
-  "description": "Outlook (\u00a76), grades (\u00a74.8\u20134.9), action (\u00a77.1\u20137.2), conditions (\u00a76.6). Returns: Action, grades, outlook, conditions, decisive facts."
+  "description": "Compute the deterministic token decision from the event assessment, beneficiary/capture evidence and current Market Truth. Returns action, economic/market/final grades, outlook, conditions, decisive facts and data limitations. Use these stored outputs for card numbers; independent sandbox calculations may inform judgment but do not replace authoritative decision or Market Truth figures."
 }

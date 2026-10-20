@@ -1,0 +1,9 @@
+{
+  "approved_script_sha256": "f693ba45fbd7bc59b46ed79a4b1b6f7983f7aef70a0663491e428f3a9a3de49a",
+  "archive_sha256": "05c78ec775744ad0d6f2938c7c829208baa2e931f8c9776d1682ca1c8849f8a0",
+  "at": "2026-10-20T10:58:14.001174+00:00",
+  "expires_at": "2026-11-19T10:57:40.325942+00:00",
+  "file_count": 19500,
+  "status": "RETIRED",
+  "target": "/backup/legacy-market-frames/primary-r79-2026-10-20T10-51-46.203303_00-00"
+}

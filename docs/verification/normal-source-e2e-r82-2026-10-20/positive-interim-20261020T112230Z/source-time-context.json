@@ -1,0 +1,22 @@
+{
+  "source_item_id": "ITM-01M5CG85DD42M60DQD77ZZDFGZ",
+  "article_item_id": "web-4ec7dd01480acee20a364b363465f057",
+  "source_url": "https://www.coindesk.com/markets/2026/10/20/live-updates-market-jitters-persist-as-the-ai-selloff-deepens",
+  "feed_original_published_at": "2026-10-20T10:14:19Z",
+  "feed_original_published_prec": "EXACT",
+  "feed_first_observed_at": "2026-10-20T11:13:22.280104Z",
+  "article_fetched_at": "2026-10-20T11:15:26.605658Z",
+  "actual_captured_live_entry_time_context": "rticle Copy link X icon X (Twitter) LinkedIn Facebook Email 7 minutes ago  · 7:07 a.m. EDT Jamie Crawley Share Share this post Copy link X icon X (Twitter) LinkedIn Facebook Email Switzerland's FINMA approves first bitcoin ETF",
+  "display_timezone": "EDT (UTC-04:00)",
+  "display_entry_time_interpretation_utc": "2026-10-20T11:07:00Z, minute precision, from captured 7:07 a.m. EDT; interpretation only, no product field changed",
+  "agent_recorded_public_at": "2026-10-20T11:00:00Z",
+  "agent_recorded_public_at_prec": "BUCKET(1h)",
+  "agent_recorded_public_at_basis": "Fetched live-blog entry stamped 7:07 a.m. EDT on October 20; hour bucket preserves source timing without inventing approval occurrence time. Original feed timestamp predates this added entry.",
+  "known_to_us_at": "2026-10-20T11:13:22.280104Z",
+  "known_to_us_at_prec": "COLLECTION_ONLY",
+  "time_bucket_contains_actual_entry": true,
+  "original_source_and_event_fields_unchanged": true,
+  "captured_raw_uncompressed_sha256": "d82ac6b92c2002a81e8f1f08b96b802aadbd18f797a5f78e943a17e7ae8e6348",
+  "original_captured_article_ref": "docs/verification/normal-source-e2e-r82-2026-10-20/positive-interim-20261020T112230Z/original-files/raw/items/WEB/2026/10/20/web-4ec7dd01480acee20a364b363465f057.json.zst",
+  "telegram_returned_text_pending_final_driver_result": true
+}

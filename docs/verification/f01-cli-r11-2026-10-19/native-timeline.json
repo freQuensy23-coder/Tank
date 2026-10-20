@@ -1,0 +1,195 @@
+[
+  {
+    "id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0",
+    "type": "user.message",
+    "processedAt": "2026-10-18T23:49:18.902Z",
+    "source_position": {
+      "revision": 2,
+      "index": 0
+    }
+  },
+  {
+    "id": "sevt_fvDktag_NH-lQQPwhupwH",
+    "type": "session.status_running",
+    "processedAt": "2026-10-18T23:49:26.932Z",
+    "source_position": {
+      "revision": 3,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    }
+  },
+  {
+    "id": "sevt-pdxonwpgwqxvt7pl",
+    "type": "span.model_request_start",
+    "processedAt": "2026-10-18T23:49:26.983Z",
+    "source_position": {
+      "revision": 4,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    }
+  },
+  {
+    "id": "call_ae427229e4044f84bffe97b13edc1437|fc_0f2b9d02acd901dc016ad55b0902c081918f21f1483868ba0b",
+    "type": "agent.tool_use",
+    "processedAt": "2026-10-18T23:49:30.316Z",
+    "source_position": {
+      "revision": 5,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    },
+    "name": "read"
+  },
+  {
+    "id": "sevt_ksC16vlFBjo06wWVzlR_-",
+    "type": "span.model_request_end",
+    "processedAt": "2026-10-18T23:49:30.317Z",
+    "source_position": {
+      "revision": 6,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    },
+    "finishReason": "toolUse",
+    "modelRequestStartId": "sevt-pdxonwpgwqxvt7pl"
+  },
+  {
+    "id": "sevt_jyopAuknNEWkavDhSmDdQ",
+    "type": "session.usage",
+    "processedAt": "2026-10-18T23:49:30.318Z",
+    "source_position": {
+      "revision": 7,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    }
+  },
+  {
+    "id": "sevt_kmEAh5Ie_IW6OzG6tMTq9",
+    "type": "agent.tool_result",
+    "processedAt": "2026-10-18T23:49:30.347Z",
+    "source_position": {
+      "revision": 8,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    },
+    "toolUseId": "call_ae427229e4044f84bffe97b13edc1437|fc_0f2b9d02acd901dc016ad55b0902c081918f21f1483868ba0b"
+  },
+  {
+    "id": "sevt-4xpgpxwlq34rq27d",
+    "type": "span.model_request_start",
+    "processedAt": "2026-10-18T23:49:30.348Z",
+    "source_position": {
+      "revision": 9,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    }
+  },
+  {
+    "id": "call_79bdbdd16738442a8f44a9c71359efe5|fc_0f2b9d02acd901dc016ad55b0bfd688191bfb082e45dbdd6b8",
+    "type": "agent.tool_use",
+    "processedAt": "2026-10-18T23:49:32.658Z",
+    "source_position": {
+      "revision": 10,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    },
+    "name": "read"
+  },
+  {
+    "id": "sevt_L1ugKwb3UDIRzkGcwu3Nx",
+    "type": "span.model_request_end",
+    "processedAt": "2026-10-18T23:49:32.659Z",
+    "source_position": {
+      "revision": 11,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    },
+    "finishReason": "toolUse",
+    "modelRequestStartId": "sevt-4xpgpxwlq34rq27d"
+  },
+  {
+    "id": "sevt_QXCg39empTEYcyX1E1ffS",
+    "type": "session.usage",
+    "processedAt": "2026-10-18T23:49:32.660Z",
+    "source_position": {
+      "revision": 12,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    }
+  },
+  {
+    "id": "sevt_AwklYqvR2sR3lLO4riwKE",
+    "type": "agent.tool_result",
+    "processedAt": "2026-10-18T23:49:32.673Z",
+    "source_position": {
+      "revision": 13,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    },
+    "toolUseId": "call_79bdbdd16738442a8f44a9c71359efe5|fc_0f2b9d02acd901dc016ad55b0bfd688191bfb082e45dbdd6b8"
+  },
+  {
+    "id": "sevt-6iccfuhmks0rajlq",
+    "type": "span.model_request_start",
+    "processedAt": "2026-10-18T23:49:32.674Z",
+    "source_position": {
+      "revision": 14,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    }
+  },
+  {
+    "id": "call_4fb315e14b8042b68f2883e71b125c94|fc_0f2b9d02acd901dc016ad55b0e12308191956934bf5a6042dd",
+    "type": "agent.custom_tool_use",
+    "processedAt": "2026-10-18T23:49:34.479Z",
+    "source_position": {
+      "revision": 15,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    },
+    "name": "get_item"
+  },
+  {
+    "id": "sevt_0tUks7gu8l3vavY7dUoCl",
+    "type": "span.model_request_end",
+    "processedAt": "2026-10-18T23:49:34.480Z",
+    "source_position": {
+      "revision": 16,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    },
+    "finishReason": "toolUse",
+    "modelRequestStartId": "sevt-6iccfuhmks0rajlq"
+  },
+  {
+    "id": "sevt_SqgCkkvSGR77P-ov_qzat",
+    "type": "session.usage",
+    "processedAt": "2026-10-18T23:49:34.481Z",
+    "source_position": {
+      "revision": 17,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    }
+  },
+  {
+    "id": "sevt_PbuOrzvUZwe-MraxuLpE6",
+    "type": "session.status_idle",
+    "processedAt": "2026-10-18T23:49:34.482Z",
+    "source_position": {
+      "revision": 18,
+      "index": 0,
+      "execution_id": "sevt_req_b61dd8847752c223b36f545d3260ea9af62d332f08df2437c10cf5f45bffe374_0"
+    },
+    "stopReason": {
+      "type": "end_turn"
+    }
+  },
+  {
+    "id": "sevt_req_3f14bbbcb586f9528b677844d1d15646b4a861f1eaaba9cbf2f49509ba636256_0",
+    "type": "user.custom_tool_result",
+    "processedAt": "2026-10-18T23:49:34.500Z",
+    "source_position": {
+      "revision": 19,
+      "index": 0
+    },
+    "customToolUseId": "call_4fb315e14b8042b68f2883e71b125c94|fc_0f2b9d02acd901dc016ad55b0e12308191956934bf5a6042dd"
+  }
+]

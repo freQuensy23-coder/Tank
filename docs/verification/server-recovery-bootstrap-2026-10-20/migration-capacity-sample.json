@@ -1,0 +1,44 @@
+{
+  "free_bytes": 11300319232,
+  "files": [
+    {
+      "name": "f3659bf154ccf66f05475b1e5caef9904a7dbfeb6be037ececdddc1b8cbad0b1.json.zst",
+      "bytes": 3878,
+      "pending": false
+    },
+    {
+      "name": "b36659929c24208332ac55d842a00fabdb962bb9b48f45cbb6089d54984c66e9.json.zst",
+      "bytes": 1073992,
+      "pending": false
+    },
+    {
+      "name": ".legacy-sql-mvjy_hak.pending",
+      "bytes": 206955586,
+      "pending": true,
+      "collection": "archive.klines_1m",
+      "declared_rows": 2112634,
+      "partial_complete_line_count": 2112636,
+      "projected_final_bytes_at_observed_ratio": 206955390
+    },
+    {
+      "name": "261c4fa0b592db7ac007a0073394ee89ef8c90d6e9cbb239131f07d396385285.json.zst",
+      "bytes": 2791194,
+      "pending": false
+    },
+    {
+      "name": "0fc66667aa44c68339bd811c82db0046c48678d08ae40cc1ac76ae1a20e0a7a0.json.zst",
+      "bytes": 1679601,
+      "pending": false
+    },
+    {
+      "name": "f01e8159b03191437656aeacda83cf28d13ee5515a6497ea2c72e896651889f6.json.zst",
+      "bytes": 697,
+      "pending": false
+    },
+    {
+      "name": "950dc204b5e20a2bd71d8aca988eb28bde4fe03c33b7c77537617fffc6f37c13.json.zst",
+      "bytes": 369447,
+      "pending": false
+    }
+  ]
+}

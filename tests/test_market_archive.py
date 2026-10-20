@@ -161,3 +161,53 @@ def test_restart_seals_immutable_versions_without_replacing_previous_evidence(tm
     assert first["path"] != second["path"] and first["archive_id"] != second["archive_id"]
     assert len(RawArchive.read_verified(first["path"], first["sha256"])) == 1
     assert len(RawArchive.read_verified(second["path"], second["sha256"])) == 2
+
+
+def metrics_csv(indices):
+    from datetime import UTC, datetime, timedelta
+
+    day = datetime(2026, 1, 1, tzinfo=UTC)
+    return "create_time,symbol,sum_open_interest,sum_open_interest_value\n" + "\n".join(
+        f"{(day + timedelta(minutes=index * 5)).strftime('%Y-%m-%d %H:%M:%S')},BTCUSDT,{ordinal},100"
+        for ordinal, index in enumerate(indices)
+    )
+
+
+def test_metrics_permuted_full_day_canonicalizes_only_memory_and_records_provenance():
+    csv_text = metrics_csv([(i * 37) % 288 for i in range(288)])
+    payload, checksum = zipped(csv_text)
+    original = bytes(payload)
+    result = verify_binance_zip(payload, checksum, filename="test.zip", kind="metrics")
+    assert result["complete"] and result["gaps"] == result["duplicates"] == []
+    assert result["order_changed"] and result["normalization"]["rows_preserved"] == 288
+    assert result["normalization"]["original_csv_sha256"] == hashlib.sha256(csv_text.encode()).hexdigest()
+    assert result["rows"][0][0] == "2026-01-01 00:00:00" and result["rows"][-1][0] == "2026-01-01 23:55:00"
+    assert payload == original and hashlib.sha256(payload).hexdigest() == checksum.split()[0]
+
+
+def test_metrics_missing_bucket_remains_incomplete_after_stable_sort():
+    payload, checksum = zipped(metrics_csv([i for i in reversed(range(288)) if i != 123]))
+    result = verify_binance_zip(payload, checksum, filename="test.zip", kind="metrics")
+    assert not result["complete"] and result["order_changed"]
+    assert {"after": 1767225600000 + 122 * 300000, "before": 1767225600000 + 124 * 300000} in result["gaps"]
+    assert {"expected_rows": 288, "actual_rows": 287} in result["gaps"]
+    assert result["duplicates"] == []
+
+
+def test_metrics_separated_duplicate_is_detected_and_stable_values_are_not_dropped():
+    indices = list(range(288))
+    indices[200] = 0
+    payload, checksum = zipped(metrics_csv(indices))
+    result = verify_binance_zip(payload, checksum, filename="test.zip", kind="metrics")
+    assert not result["complete"] and result["order_changed"]
+    assert result["duplicates"] == [1767225600000]
+    assert len(result["rows"]) == 288
+    assert [row[2] for row in result["rows"][:2]] == ["0", "200"]
+    assert {"after": 1767225600000 + 199 * 300000, "before": 1767225600000 + 201 * 300000} in result["gaps"]
+
+
+def test_non_metrics_reordering_is_not_silently_normalized():
+    payload, checksum = zipped("2,1,2,3,4,1767225600001,false\n1,1,2,3,4,1767225600000,true\n")
+    result = verify_binance_zip(payload, checksum, filename="test.zip", kind="aggTrades")
+    assert not result["complete"] and result["rows"][0][0] == "2"
+    assert "order_changed" not in result and "normalization" not in result

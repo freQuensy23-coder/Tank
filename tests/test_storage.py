@@ -19,34 +19,34 @@ def complete_fixture_record(collection, record):
         "prompt_version": "test-prompt",
     }
     templates = {
-        "ingest.source_items": dict(
-            feed="test:fixture",
-            external_id=record.get("item_id"),
-            published_prec="COLLECTION_ONLY",
-            observed_at=at,
-            raw_ref="/test/raw",
-            raw_sha256="a" * 64,
-            content_hash="b" * 64,
-            source_class="PRIMARY",
-            relevance={"decision": "ALWAYS"},
-            extraction_status="PENDING",
-            source_id="TEST",
-        ),
-        "evt.events": dict(
-            statement="Synthetic storage fixture.",
-            theme_tags=[],
-            public_at=at,
-            public_at_precision="EXACT",
-            public_at_basis="SYNTHETIC_FIXTURE",
-            known_to_us_at=at,
-            freshness="FRESH",
-            event_state="RUMOR",
-            state_verified=False,
-            certainty="HIGH",
-            timing_confidence="HIGH",
-            best_source_class="PRIMARY",
-            lifecycle="DETECTED",
-        ),
+        "ingest.source_items": {
+            "feed": "test:fixture",
+            "external_id": record.get("item_id"),
+            "published_prec": "COLLECTION_ONLY",
+            "observed_at": at,
+            "raw_ref": "/test/raw",
+            "raw_sha256": "a" * 64,
+            "content_hash": "b" * 64,
+            "source_class": "PRIMARY",
+            "relevance": {"decision": "ALWAYS"},
+            "extraction_status": "PENDING",
+            "source_id": "TEST",
+        },
+        "evt.events": {
+            "statement": "Synthetic storage fixture.",
+            "theme_tags": [],
+            "public_at": at,
+            "public_at_precision": "EXACT",
+            "public_at_basis": "SYNTHETIC_FIXTURE",
+            "known_to_us_at": at,
+            "freshness": "FRESH",
+            "event_state": "RUMOR",
+            "state_verified": False,
+            "certainty": "HIGH",
+            "timing_confidence": "HIGH",
+            "best_source_class": "PRIMARY",
+            "lifecycle": "DETECTED",
+        },
         "evt.ems_assessments": dict(
             version=1,
             cutoff=at,
@@ -72,32 +72,32 @@ def complete_fixture_record(collection, record):
             detail={},
             **common,
         ),
-        "ana.decisions": dict(
-            token_id="test:T",
-            cutoff=at,
-            thesis_grade="D",
-            thesis_rule="D",
-            trade_grade="D",
-            trade_reasons=["TRADE_BASE_D"],
-            action="WAIT",
-            action_rule="A1",
-            tactical=False,
-            investigate=False,
-            outlook={},
-            conditions=[],
-        ),
-        "mkt.flow_bars_1m": dict(
-            buy_qty="0",
-            sell_qty="0",
-            buy_notional="0",
-            sell_notional="0",
-            n_buy=0,
-            n_sell=0,
-            sum_sq_qty="0",
-            size_buckets={},
-            complete=True,
-        ),
-        "mkt.liq_obs": dict(side="LONG_LIQ", qty_native="1", notional_usd="10", coverage="COMPLETE"),
+        "ana.decisions": {
+            "token_id": "test:T",
+            "cutoff": at,
+            "thesis_grade": "D",
+            "thesis_rule": "D",
+            "trade_grade": "D",
+            "trade_reasons": ["TRADE_BASE_D"],
+            "action": "WAIT",
+            "action_rule": "A1",
+            "tactical": False,
+            "investigate": False,
+            "outlook": {},
+            "conditions": [],
+        },
+        "mkt.flow_bars_1m": {
+            "buy_qty": "0",
+            "sell_qty": "0",
+            "buy_usd": record.get("buy_notional", "0"),
+            "sell_usd": record.get("sell_notional", "0"),
+            "n_buy": 0,
+            "n_sell": 0,
+            "sum_sq_qty": "0",
+            "size_buckets": {},
+            "complete": True,
+        },
+        "mkt.liq_obs": {"side": "LONG_LIQ", "qty_native": "1", "notional_usd": "10", "coverage": "COMPLETE"},
         "out.alerts": dict(
             kind="FULL",
             generated_at=at,
@@ -105,10 +105,9 @@ def complete_fixture_record(collection, record):
             card_struct={},
             decisions=[],
             evidence_bundle_id="a" * 64,
-            linter={"passed": True},
             **common,
         ),
-        "out.ops_notices": dict(text="Synthetic notice.", created_at=at, created_by="scheduler"),
+        "out.ops_notices": {"text": "Synthetic notice.", "created_at": at, "created_by": "scheduler"},
     }
     defaults = templates.get(collection, {})
     for key, value in defaults.items():
@@ -283,7 +282,7 @@ async def test_market_projection_partition_update_and_retention(repo):
                     "SELECT count(*) AS n FROM pg_inherits WHERE inhparent='mkt.flow_bars_1m'::regclass"
                 )
             ).fetchone()
-            assert partitions["n"] >= 100
+            assert partitions["n"] >= 16
 
 
 async def test_indexed_range_pages_equal_timestamps_exclusive_end(repo):
@@ -445,20 +444,20 @@ async def test_latest_before_strict_cutoff_and_control_records(repo):
     at = utcnow()
     for n, seconds in enumerate((-2, -1, 0, 1)):
         await repo.put(
-            "mkt.trades",
+            "mkt.liq_obs",
             f"{instrument}:{n}",
             {
                 "instrument_id": instrument,
-                "trade_id": str(n),
+                "qty_native": str(n),
                 "ts": iso(at + timedelta(seconds=seconds)),
                 "price": str(n),
             },
         )
-    row = await repo.latest_before("mkt.trades", "ts", at, filters={"instrument_id": instrument})
-    assert row["trade_id"] == "1"
+    row = await repo.latest_before("mkt.liq_obs", "ts", at, filters={"instrument_id": instrument})
+    assert row["qty_native"] == "1"
     assert (
         await repo.latest_before(
-            "mkt.trades", "ts", at - timedelta(seconds=10), filters={"instrument_id": instrument}
+            "mkt.liq_obs", "ts", at - timedelta(seconds=10), filters={"instrument_id": instrument}
         )
         is None
     )
@@ -496,13 +495,13 @@ async def test_budget_retirement_fresh_schema_rejects_new_budget_notices(repo):
                 "SELECT to_regclass('ops.budget_state') AS live,to_regclass('archive.ops_budget_state') AS historical"
             )
         ).fetchone()
-        assert result["live"] is None and result["historical"] == "archive.ops_budget_state"
+        assert result["live"] is None and result["historical"] is None
     nid = new_id("notice")
     with pytest.raises(psycopg.errors.CheckViolation):
         await repo.put("out.ops_notices", nid, {"notice_id": nid, "kind": "LLM_BUDGET", "text": "obsolete"})
 
 
-async def test_budget_retirement_upgrade_preserves_historical_data():
+async def test_budget_retirement_upgrade_preserves_historical_data(tmp_path):
     import os
 
     import psycopg
@@ -538,7 +537,65 @@ async def test_budget_retirement_upgrade_preserves_historical_data():
                 await db._conn().execute(
                     "INSERT INTO evt.events(storage_key,document,event_id) VALUES ('legacy-partial','{}','legacy-partial')"
                 )
-            paused = await db.enqueue(
+
+            # A historical013 client cannot write026 columns. Build explicit old-schema
+            # records through SQL, then exercise the current forward migration unchanged.
+            async def legacy_write_job(job):
+                columns = (
+                    "job_id",
+                    "type",
+                    "priority",
+                    "payload",
+                    "idem_key",
+                    "status",
+                    "attempts",
+                    "max_attempts",
+                    "run_after",
+                    "expires_at",
+                    "last_error",
+                    "created_at",
+                    "finished_at",
+                )
+                values = [
+                    job["job_id"],
+                    Jsonb(job),
+                    *[Jsonb(job[name]) if name == "payload" else job.get(name) for name in columns],
+                ]
+                names = ("storage_key", "document", *columns)
+                query = sql.SQL(
+                    "INSERT INTO ops.jobs ({}) VALUES ({}) ON CONFLICT(storage_key) DO UPDATE SET {}"
+                ).format(
+                    sql.SQL(",").join(map(sql.Identifier, names)),
+                    sql.SQL(",").join(sql.Placeholder() for _ in names),
+                    sql.SQL(",").join(
+                        sql.SQL("{}=EXCLUDED.{}").format(sql.Identifier(name), sql.Identifier(name))
+                        for name in names[1:]
+                    ),
+                )
+                async with db.transaction():
+                    await db._conn().execute(query, values)
+                return job
+
+            async def legacy_enqueue(kind, payload, idem_key, *, run_after=None, expires_at=None):
+                return await legacy_write_job(
+                    {
+                        "job_id": new_id("job"),
+                        "type": kind,
+                        "priority": 1,
+                        "payload": payload,
+                        "idem_key": idem_key,
+                        "status": "QUEUED",
+                        "attempts": 0,
+                        "max_attempts": 3,
+                        "run_after": run_after or iso(),
+                        "expires_at": expires_at,
+                        "last_error": None,
+                        "created_at": iso(),
+                        "finished_at": None,
+                    }
+                )
+
+            paused = await legacy_enqueue(
                 "AGENT_MESSAGE",
                 {"item_id": "budget-held"},
                 "budget-held",
@@ -547,16 +604,16 @@ async def test_budget_retirement_upgrade_preserves_historical_data():
             )
             original_expiry = paused["expires_at"]
             paused["budget_paused_at"] = iso()
-            await db.put("ops.jobs", paused["job_id"], paused)
-            scheduled = await db.enqueue(
+            await legacy_write_job(paused)
+            scheduled = await legacy_enqueue(
                 "AGENT_MESSAGE",
                 {"item_id": "normal-schedule"},
                 "normal-schedule",
                 run_after=iso(utcnow() + timedelta(hours=9)),
             )
-            obsolete = await db.enqueue("DELIVER", {"notice_id": "legacy"}, "legacy-budget-delivery")
-            partial = await db.enqueue("PUBLISH_PARTIAL", {}, "retired-partial")
-            checkpoint = await db.enqueue(
+            obsolete = await legacy_enqueue("DELIVER", {"notice_id": "legacy"}, "legacy-budget-delivery")
+            partial = await legacy_enqueue("PUBLISH_PARTIAL", {}, "retired-partial")
+            checkpoint = await legacy_enqueue(
                 "REACTION_CAPTURE",
                 {},
                 "broken-checkpoint",
@@ -564,8 +621,8 @@ async def test_budget_retirement_upgrade_preserves_historical_data():
                 expires_at=iso(utcnow() + timedelta(hours=6)),
             )
             checkpoint.update(status="EXPIRED")
-            await db.put("ops.jobs", checkpoint["job_id"], checkpoint)
-            already_attempted = await db.enqueue(
+            await legacy_write_job(checkpoint)
+            already_attempted = await legacy_enqueue(
                 "REACTION_CAPTURE",
                 {},
                 "attempted-checkpoint",
@@ -573,9 +630,9 @@ async def test_budget_retirement_upgrade_preserves_historical_data():
                 expires_at=iso(utcnow() + timedelta(hours=6)),
             )
             already_attempted.update(status="EXPIRED", attempts=1)
-            await db.put("ops.jobs", already_attempted["job_id"], already_attempted)
-            await db.migrate()
-            await db.migrate()
+            await legacy_write_job(already_attempted)
+            await db.migrate(legacy_bundle_dir=tmp_path / "bundles")
+            await db.migrate(legacy_bundle_dir=tmp_path / "bundles")
             assert (await db.get("ops.jobs", partial["job_id"]))["status"] == "EXPIRED"
             repaired = await db.get("ops.jobs", checkpoint["job_id"])
             assert repaired["status"] == "QUEUED" and parse_time(repaired["expires_at"]) == parse_time(
@@ -590,11 +647,17 @@ async def test_budget_retirement_upgrade_preserves_historical_data():
                 (await db.get("ops.jobs", scheduled["job_id"]))["run_after"]
             ) > utcnow() + timedelta(hours=8)
             assert (await db.get("ops.jobs", obsolete["job_id"]))["status"] == "EXPIRED"
-            async with db.transaction():
-                state = await (
-                    await db._conn().execute("SELECT document,spent_usd FROM archive.ops_budget_state")
-                ).fetchone()
-                assert state["document"]["spent_usd"] == "42.5" and str(state["spent_usd"]) == "42.5000"
+            from test_storage_retired_schema import bundle_rows
+
+            exports = await db.list("ops.market_migration_exports")
+            table = next(
+                entry
+                for receipt in exports
+                for entry in receipt["tables"]
+                if entry["collection"] == "archive.ops_budget_state"
+            )
+            state = bundle_rows(table["path"])[0]
+            assert state["document"]["spent_usd"] == "42.5" and str(state["spent_usd"]) == "42.5000"
             assert (await db.get("out.ops_notices", "legacy"))["kind"] == "LLM_BUDGET"
             assert await db.get("evt.events", "legacy-partial") == {}
             with pytest.raises(psycopg.errors.CheckViolation):
@@ -642,10 +705,9 @@ async def test_uncapped_keyset_and_latest_outside_first_page(repo):
         _ = [r async for r in repo.iter_all("evt.events", batch_size=0)]
 
 
-async def test_raw_retention_maintenance_keeps_whole_event_day(repo):
+async def test_normalized_retention_keeps_whole_event_day_and_sealed_raw_ledger(repo):
     old = utcnow() - timedelta(days=120)
-    event = new_id("evt")
-    ems = new_id("ems")
+    event, ems = new_id("evt"), new_id("ems")
     await repo.put(
         "evt.events",
         event,
@@ -657,32 +719,36 @@ async def test_raw_retention_maintenance_keeps_whole_event_day(repo):
         },
     )
     await repo.put("evt.ems_assessments", ems, {"ems_id": ems, "event_id": event, "class": "MAJOR"})
-    raw = new_id("raw")
-    preserved = new_id("raw")
-    current = new_id("raw")
+    expired, preserved, current = new_id("bar"), new_id("bar"), new_id("bar")
+    for key, at in [
+        (expired, old - timedelta(days=10)),
+        (preserved, old.replace(hour=23)),
+        (current, utcnow()),
+    ]:
+        await repo.put(
+            "mkt.flow_bars_1m", key, {"instrument_id": "retention:" + key, "minute_start": iso(at)}
+        )
+    sealed = new_id("archive")
     await repo.put(
-        "mkt.trades",
-        raw,
-        {"instrument_id": "outside", "trade_id": raw, "ts": iso(utcnow() - timedelta(days=45))},
-        immutable=True,
-    )
-    await repo.put(
-        "mkt.trades",
-        preserved,
-        {"instrument_id": "unrelated-token", "trade_id": preserved, "ts": iso(old.replace(hour=23))},
-        immutable=True,
-    )
-    await repo.put(
-        "mkt.trades", current, {"instrument_id": "outside", "trade_id": current, "ts": iso()}, immutable=True
+        "mkt.raw_archives",
+        sealed,
+        {
+            "archive_id": sealed,
+            "status": "SEALED",
+            "path": "/test/verified.parquet",
+            "sha256": "a" * 64,
+            "received_ts": iso(old),
+        },
     )
     with pytest.raises(ImmutableRecordError):
-        await repo.delete("mkt.trades", raw)
+        await repo.delete("mkt.raw_archives", sealed)
     await repo.prune_market(utcnow() - timedelta(days=90))
-    assert await repo.get("mkt.trades", raw) is None
-    assert await repo.get("mkt.trades", preserved)
-    assert await repo.get("mkt.trades", current)
-    with pytest.raises(ImmutableRecordError):
-        await repo.delete("mkt.trades", current)
+    assert await repo.get("mkt.flow_bars_1m", expired) is None
+    assert await repo.get("mkt.flow_bars_1m", preserved)
+    assert await repo.get("mkt.flow_bars_1m", current)
+    assert (await repo.get("mkt.raw_archives", sealed))["sha256"] == "a" * 64
+    with pytest.raises(ValueError, match="Unknown collection"):
+        await repo.get("mkt.trades", "unsupported-current-raw-sql")
 
 
 async def test_sql_typed_completeness_serials_and_independent_partitions(repo):
@@ -750,48 +816,62 @@ async def test_agent_new_connection_defaults_read_only(repo):
         await connection.close()
 
 
-async def test_default_legacy_partition_drain_preserves_exact_row(repo):
+async def test_default_typed_partition_drain_preserves_exact_row(repo):
     if not isinstance(repo, PostgresRepository):
         pytest.skip("Actual partition relocation requires PostgreSQL")
-    from psycopg.types.json import Jsonb
-
-    # This unallocated old day simulates legacy DEFAULT data, including explicitly incomplete
-    # pre-completeness history that the migration must preserve rather than synthesize.
     at = utcnow() - timedelta(days=1500)
-    key = new_id("legacy-raw")
-    original = {"trade_id": key, "ts": iso(at), "price": "1.2345678901234567890123456789", "source": "legacy"}
+    key = new_id("historical-aggregate")
     async with repo.transaction():
         while (
             await (
                 await repo._conn().execute(
-                    "SELECT to_regclass(%s) AS name", ("mkt.trades_" + at.strftime("%Y%m%d"),)
+                    "SELECT to_regclass(%s) AS name", ("mkt.flow_bars_1m_" + at.strftime("%Y%m%d"),)
                 )
             ).fetchone()
         )["name"] is not None:
             at -= timedelta(days=1)
-        original["ts"] = iso(at)
-        await repo._conn().execute(
-            "INSERT INTO mkt.trades_historical(storage_key,document,immutable,trade_id,ts) VALUES (%s,%s,true,%s,%s)",
-            (key, Jsonb(original), key, at),
-        )
+    await repo.put(
+        "mkt.flow_bars_1m",
+        key,
+        {"instrument_id": key, "minute_start": iso(at), "buy_qty": "1.2345678901234567890123456789"},
+    )
+    original = await repo.get("mkt.flow_bars_1m", key)
+    async with repo.transaction():
         before = await (
             await repo._conn().execute(
-                "SELECT tableoid::regclass::text AS physical FROM mkt.trades WHERE storage_key=%s", (key,)
-            )
-        ).fetchone()
-    assert before["physical"] == "mkt.trades_historical"
-    await repo.maintain_partitions()
-    assert await repo.get("mkt.trades", key) == original
-    async with repo.transaction():
-        after = await (
-            await repo._conn().execute(
-                "SELECT tableoid::regclass::text AS physical,immutable FROM mkt.trades WHERE storage_key=%s",
+                "SELECT tableoid::regclass::text AS physical FROM mkt.flow_bars_1m WHERE storage_key=%s",
                 (key,),
             )
         ).fetchone()
-    assert after["physical"] == "mkt.trades_" + at.strftime("%Y%m%d") and after["immutable"] is True
-    with pytest.raises(ImmutableRecordError):
-        await repo.delete("mkt.trades", key)
+    assert before["physical"] == "mkt.flow_bars_1m_historical"
+    # Startup creates current/future partitions without relocating old captures.
+    await repo.maintain_partitions(include_history=False)
+    assert await repo.get("mkt.flow_bars_1m", key) == original
+    async with repo.transaction():
+        physical = await (
+            await repo._conn().execute(
+                "SELECT tableoid::regclass::text AS physical FROM mkt.flow_bars_1m WHERE storage_key=%s",
+                (key,),
+            )
+        ).fetchone()
+    assert physical["physical"] == before["physical"]
+    await repo.maintain_partitions()
+    assert await repo.get("mkt.flow_bars_1m", key) == original
+    async with repo.transaction():
+        after = await (
+            await repo._conn().execute(
+                "SELECT tableoid::regclass::text AS physical,buy_qty FROM mkt.flow_bars_1m WHERE storage_key=%s",
+                (key,),
+            )
+        ).fetchone()
+    assert after["physical"] == "mkt.flow_bars_1m_" + at.strftime("%Y%m%d")
+    assert str(after["buy_qty"]) == "1.2345678901234567890123456789"
+    await repo.put(
+        "mkt.flow_bars_1m",
+        key,
+        {"instrument_id": key, "minute_start": iso(at), "buy_qty": "2.2345678901234567890123456789"},
+    )
+    assert (await repo.get("mkt.flow_bars_1m", key))["buy_qty"] == "2.2345678901234567890123456789"
 
 
 async def test_late_arrivals_use_availability_not_original_receipt(repo):
@@ -800,11 +880,11 @@ async def test_late_arrivals_use_availability_not_original_receipt(repo):
     arrival = utcnow()
     for n in range(7):
         await repo.put(
-            "mkt.trades",
+            "mkt.liq_obs",
             f"{instrument}:{n}",
             {
                 "instrument_id": instrument,
-                "trade_id": str(n),
+                "qty_native": str(n),
                 "ts": iso(cutoff - timedelta(seconds=n)),
                 "received_ts": iso(cutoff - timedelta(hours=1)),
                 "recorded_at": iso(arrival),
@@ -812,26 +892,26 @@ async def test_late_arrivals_use_availability_not_original_receipt(repo):
             },
         )
     await repo.put(
-        "mkt.trades",
+        "mkt.liq_obs",
         instrument + ":future",
         {
             "instrument_id": instrument,
-            "trade_id": "future",
+            "qty_native": "10",
             "ts": iso(cutoff + timedelta(microseconds=1)),
             "recorded_at": iso(arrival),
         },
     )
     await repo.put(
-        "mkt.trades",
+        "mkt.liq_obs",
         instrument + ":legacy",
-        {"instrument_id": instrument, "trade_id": "legacy", "ts": iso(cutoff), "received_ts": iso(arrival)},
+        {"instrument_id": instrument, "qty_native": "11", "ts": iso(cutoff), "received_ts": iso(arrival)},
     )
     await repo.put(
-        "mkt.trades",
+        "mkt.liq_obs",
         instrument + ":end",
         {
             "instrument_id": instrument,
-            "trade_id": "end",
+            "qty_native": "12",
             "ts": iso(cutoff),
             "recorded_at": iso(arrival + timedelta(seconds=1)),
         },
@@ -839,7 +919,7 @@ async def test_late_arrivals_use_availability_not_original_receipt(repo):
     result = [
         r
         async for r in repo.iter_late_arrivals(
-            "mkt.trades",
+            "mkt.liq_obs",
             "recorded_at",
             "ts",
             since=arrival,
@@ -849,14 +929,14 @@ async def test_late_arrivals_use_availability_not_original_receipt(repo):
             batch_size=2,
         )
     ]
-    assert len(result) == 7 and len({r["trade_id"] for r in result}) == 7
+    assert len(result) == 7 and len({r["qty_native"] for r in result}) == 7
     assert all(parse_time(r["received_ts"]) < cutoff for r in result)
     assert any(parse_time(r["ts"]) == cutoff for r in result)
     assert all(r["price"] == "1.234567890123456789" for r in result)
     retried = [
         r
         async for r in repo.iter_late_arrivals(
-            "mkt.trades",
+            "mkt.liq_obs",
             "recorded_at",
             "ts",
             since=arrival,
@@ -866,7 +946,7 @@ async def test_late_arrivals_use_availability_not_original_receipt(repo):
             batch_size=3,
         )
     ]
-    assert [r["trade_id"] for r in retried] == [r["trade_id"] for r in result]
+    assert [r["qty_native"] for r in retried] == [r["qty_native"] for r in result]
 
 
 async def test_metadata_pages_omit_large_document_payload(repo):

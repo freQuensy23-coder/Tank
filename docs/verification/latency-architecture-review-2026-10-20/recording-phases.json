@@ -1,0 +1,2933 @@
+{
+  "scope": "READ_ONLY_DERIVED_PHASE_REVIEW; no model, native, browser or product calls; no run/DB mutations",
+  "source_timeline": "docs/verification/normal-source-e2e-r82-2026-10-20/live-record-event-timeline-20261020T111842Z.json",
+  "source_sha256": "b06c797eefc9f41cbc9854e98fd04a6cde34eeec25d603cf1e760788ef152cc9",
+  "model_duration_semantics": "Paired durable model_request_start/end wall time; not pure accelerator compute",
+  "queue_semantics": "Union of clipped admitted\u2192claimed intervals, not sum of overlapping queued requests. Native-active intervals may overlap queue/tool/model intervals; do not add phase totals. queued_with_no_execution_running subtracts native-active union from queued union. No invented residual model duration.",
+  "events": [
+    {
+      "event_id": "EVT-01M5CGBTWQ56T8XKJZ467KHJBZ",
+      "session_id": "session_yb-uIBDFVpsVHzmL6Dxlj",
+      "source_observed_at": "2026-10-20T11:13:22.280104Z",
+      "record_event_requested_at": "2026-10-20T11:15:22.637247Z",
+      "source_to_record_returned_seconds": 120.574759,
+      "initial_queue_seconds": 0.116,
+      "initial_native_claimed_at": "2026-10-20T11:13:28.232000Z",
+      "first_model_request_start_at": "2026-10-20T11:14:14.449000Z",
+      "claim_to_first_model_seconds": 46.217,
+      "model_request_sum_seconds": 26.08,
+      "model_requests": [
+        {
+          "start_id": "sevt-exz41khrs6ivsu91",
+          "end_id": "sevt_bT5GC0FBV8XCVNPx-ul0g",
+          "start_at": "2026-10-20T11:14:14.449000Z",
+          "end_at": "2026-10-20T11:14:17.927000Z",
+          "elapsed_seconds": 3.478,
+          "input_tokens": 8276,
+          "output_tokens": 66
+        },
+        {
+          "start_id": "sevt-91sv2gy19arikr5a",
+          "end_id": "sevt_BuUSb-enwWXtVmHj_ABiS",
+          "start_at": "2026-10-20T11:14:18.586000Z",
+          "end_at": "2026-10-20T11:14:22.308000Z",
+          "elapsed_seconds": 3.722,
+          "input_tokens": 8757,
+          "output_tokens": 115
+        },
+        {
+          "start_id": "sevt-1xhfipmcdkf8w6ty",
+          "end_id": "sevt_TaePmvkKCYiwPmfobCBUU",
+          "start_at": "2026-10-20T11:14:23.873000Z",
+          "end_at": "2026-10-20T11:14:27.560000Z",
+          "elapsed_seconds": 3.687,
+          "input_tokens": 13499,
+          "output_tokens": 102
+        },
+        {
+          "start_id": "sevt-z695obwabsp1aqt7",
+          "end_id": "sevt_XfgMrXQFzyCbMKGe2Rz8d",
+          "start_at": "2026-10-20T11:15:07.435000Z",
+          "end_at": "2026-10-20T11:15:22.628000Z",
+          "elapsed_seconds": 15.193,
+          "input_tokens": 19301,
+          "output_tokens": 633
+        }
+      ],
+      "native_queue_union_seconds": 39.477,
+      "continuation_queue_union_seconds": 39.361,
+      "queued_with_no_execution_running_seconds": 38.994,
+      "native_active_union_seconds": 73.7992470703125,
+      "native_executions": [
+        {
+          "id": "sevt_req_7c7b4b435711838c34e266546f0ea61eb337e1567a2ed32f404a837e2cee5bdc_0",
+          "session_id": "session_yb-uIBDFVpsVHzmL6Dxlj",
+          "event_types": [
+            "user.message"
+          ],
+          "claimed_at_ms": 1792494808232,
+          "settled_at_ms": 1792494862904,
+          "admitted_at_ms": 1792494808116
+        },
+        {
+          "id": "sevt_req_d265ef63d467192d576033f721af6d06cead860cd58443a9b0e2e68b74329346_0",
+          "session_id": "session_yb-uIBDFVpsVHzmL6Dxlj",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494863775,
+          "settled_at_ms": 1792494863793,
+          "admitted_at_ms": 1792494862528
+        },
+        {
+          "id": "sevt_req_b9c37d4566b22a19b699a7530b15acefb8789c2883f93e7130f5231d23bac589_0",
+          "session_id": "session_yb-uIBDFVpsVHzmL6Dxlj",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494863794,
+          "settled_at_ms": 1792494863813,
+          "admitted_at_ms": 1792494862627
+        },
+        {
+          "id": "sevt_req_40617dabb763111977d059d20faa85747c3eaebfc1790b0d25badc5da25177c0_0",
+          "session_id": "session_yb-uIBDFVpsVHzmL6Dxlj",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494863814,
+          "settled_at_ms": 1792494863833,
+          "admitted_at_ms": 1792494862702
+        },
+        {
+          "id": "sevt_req_5cdde37adb025e4936a05993d16d0771d71c401772ef7eadbd396f2c8fe3eb2d_0",
+          "session_id": "session_yb-uIBDFVpsVHzmL6Dxlj",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494863834,
+          "settled_at_ms": 1792494867610,
+          "admitted_at_ms": 1792494863409
+        },
+        {
+          "id": "sevt_req_fbc6f2329b063b7faaabafe163f31b8f0ac0217ed3b1cf6e624b926969233824_0",
+          "session_id": "session_yb-uIBDFVpsVHzmL6Dxlj",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494904141,
+          "settled_at_ms": 1792494904192,
+          "admitted_at_ms": 1792494869338
+        },
+        {
+          "id": "sevt_req_6e24281bf5e72cdac087b810c0234781abcc7a91ba83a6f1754ce59da8672a72_0",
+          "session_id": "session_yb-uIBDFVpsVHzmL6Dxlj",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494907393,
+          "settled_at_ms": 1792494922652,
+          "admitted_at_ms": 1792494870501
+        }
+      ],
+      "external_host_tool_wall_seconds": 2.564862,
+      "external_checks": [
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:27.643192Z",
+          "answered_at": "2026-10-20T11:14:29.062457Z",
+          "returned_at": "2026-10-20T11:14:29.422503Z",
+          "seconds_from_source": 65.363088,
+          "tool_duration_seconds": 1.779311,
+          "public_url": "https://www.coindesk.com/policy/2026/10/19/u-s-cftc-rebuffs-cme-legal-stance-in-consequential-fight-over-perpetual-futures"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:29.906304Z",
+          "answered_at": "2026-10-20T11:14:30.417048Z",
+          "returned_at": "2026-10-20T11:14:30.691855Z",
+          "seconds_from_source": 67.6262,
+          "tool_duration_seconds": 0.785551,
+          "public_url": "https://www.cftc.gov/PressRoom/PressReleases"
+        }
+      ],
+      "all_pre_record_tools": [
+        {
+          "tool": "get_item",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:22.299594Z",
+          "answered_at": "2026-10-20T11:14:22.440292Z",
+          "returned_at": "2026-10-20T11:14:22.560547Z",
+          "seconds_from_source": 60.01949,
+          "tool_duration_seconds": 0.260953
+        },
+        {
+          "tool": "list_open_events",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:22.603166Z",
+          "answered_at": "2026-10-20T11:14:22.615202Z",
+          "returned_at": "2026-10-20T11:14:22.634248Z",
+          "seconds_from_source": 60.323062,
+          "tool_duration_seconds": 0.031082
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:22.643637Z",
+          "answered_at": "2026-10-20T11:14:22.691879Z",
+          "returned_at": "2026-10-20T11:14:22.712225Z",
+          "seconds_from_source": 60.363533,
+          "tool_duration_seconds": 0.068588,
+          "search_query": "CME perpetual"
+        },
+        {
+          "tool": "get_registry",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:22.725079Z",
+          "answered_at": "2026-10-20T11:14:23.290353Z",
+          "returned_at": "2026-10-20T11:14:23.440476Z",
+          "seconds_from_source": 60.444975,
+          "tool_duration_seconds": 0.715397
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:27.643192Z",
+          "answered_at": "2026-10-20T11:14:29.062457Z",
+          "returned_at": "2026-10-20T11:14:29.422503Z",
+          "seconds_from_source": 65.363088,
+          "tool_duration_seconds": 1.779311,
+          "public_url": "https://www.coindesk.com/policy/2026/10/19/u-s-cftc-rebuffs-cme-legal-stance-in-consequential-fight-over-perpetual-futures"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:29.906304Z",
+          "answered_at": "2026-10-20T11:14:30.417048Z",
+          "returned_at": "2026-10-20T11:14:30.691855Z",
+          "seconds_from_source": 67.6262,
+          "tool_duration_seconds": 0.785551,
+          "public_url": "https://www.cftc.gov/PressRoom/PressReleases"
+        },
+        {
+          "tool": "record_event",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:22.637247Z",
+          "answered_at": "2026-10-20T11:15:22.835053Z",
+          "returned_at": "2026-10-20T11:15:22.854863Z",
+          "seconds_from_source": 120.357143,
+          "tool_duration_seconds": 0.217616
+        }
+      ]
+    },
+    {
+      "event_id": "EVT-01M5CGC1D2EZW87QC0CZRPG1TP",
+      "session_id": "session_KkBYaMzEpWdCr_pdZokjw",
+      "source_observed_at": "2026-10-20T11:13:22.280104Z",
+      "record_event_requested_at": "2026-10-20T11:15:29.299386Z",
+      "source_to_record_returned_seconds": 127.202306,
+      "initial_queue_seconds": 0.01,
+      "initial_native_claimed_at": "2026-10-20T11:13:27.954000Z",
+      "first_model_request_start_at": "2026-10-20T11:14:12.635000Z",
+      "claim_to_first_model_seconds": 44.681,
+      "model_request_sum_seconds": 25.01,
+      "model_requests": [
+        {
+          "start_id": "sevt-tsvn5q9lcoun2g6b",
+          "end_id": "sevt_5HDOD5vAn0h_rAaSjdgTJ",
+          "start_at": "2026-10-20T11:14:12.635000Z",
+          "end_at": "2026-10-20T11:14:15.858000Z",
+          "elapsed_seconds": 3.223,
+          "input_tokens": 1624,
+          "output_tokens": 66
+        },
+        {
+          "start_id": "sevt-asasv3953m5mlzjg",
+          "end_id": "sevt_HyzZNHXvWwznRZzydY2CF",
+          "start_at": "2026-10-20T11:14:16.527000Z",
+          "end_at": "2026-10-20T11:14:19.808000Z",
+          "elapsed_seconds": 3.281,
+          "input_tokens": 8592,
+          "output_tokens": 116
+        },
+        {
+          "start_id": "sevt-f5ihlqm9yumz6sg8",
+          "end_id": "sevt_QvFf5PY8hPFNyNIbAYCgL",
+          "start_at": "2026-10-20T11:14:23.024000Z",
+          "end_at": "2026-10-20T11:14:27.357000Z",
+          "elapsed_seconds": 4.333,
+          "input_tokens": 13515,
+          "output_tokens": 117
+        },
+        {
+          "start_id": "sevt-1905jqbc15r01f6b",
+          "end_id": "sevt_OxUErJRK15hb8G-xHli47",
+          "start_at": "2026-10-20T11:15:15.120000Z",
+          "end_at": "2026-10-20T11:15:29.293000Z",
+          "elapsed_seconds": 14.173,
+          "input_tokens": 23365,
+          "output_tokens": 514
+        }
+      ],
+      "native_queue_union_seconds": 49.265,
+      "continuation_queue_union_seconds": 49.255,
+      "queued_with_no_execution_running_seconds": 49.093,
+      "native_active_union_seconds": 70.96838598632813,
+      "native_executions": [
+        {
+          "id": "sevt_req_381f6005f9c1adf44f5ed095da0a48bbe4ee86277f7d16e0ca12f3aea1a34fd6_0",
+          "session_id": "session_KkBYaMzEpWdCr_pdZokjw",
+          "event_types": [
+            "user.message"
+          ],
+          "claimed_at_ms": 1792494807954,
+          "settled_at_ms": 1792494860127,
+          "admitted_at_ms": 1792494807944
+        },
+        {
+          "id": "sevt_req_3afa8ca03ccaf8b1c76c1e9ba7c38790fa90af982d41a5f593ab8308b4748c8a_0",
+          "session_id": "session_KkBYaMzEpWdCr_pdZokjw",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494862905,
+          "settled_at_ms": 1792494862930,
+          "admitted_at_ms": 1792494860657
+        },
+        {
+          "id": "sevt_req_b1ac5464d7df9e2f82dea447a2013abc37afa9ab2ebdd9ec111b5e8c2ce41825_0",
+          "session_id": "session_KkBYaMzEpWdCr_pdZokjw",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494862931,
+          "settled_at_ms": 1792494862953,
+          "admitted_at_ms": 1792494860812
+        },
+        {
+          "id": "sevt_req_5634cb6b473ea9937d408126bf985c237a076d940e858b9a9049f3333a3e7d83_0",
+          "session_id": "session_KkBYaMzEpWdCr_pdZokjw",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494862954,
+          "settled_at_ms": 1792494862973,
+          "admitted_at_ms": 1792494860874
+        },
+        {
+          "id": "sevt_req_8b1ca7b32b0868a90139972f59f080d20ccb241cc36a456e083ce305c400bec1_0",
+          "session_id": "session_KkBYaMzEpWdCr_pdZokjw",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494862977,
+          "settled_at_ms": 1792494867392,
+          "admitted_at_ms": 1792494861651
+        },
+        {
+          "id": "sevt_req_5b286e7735ada86433de43d2803b541c860713679cd0e5bd605ce3da983d146c_0",
+          "session_id": "session_KkBYaMzEpWdCr_pdZokjw",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494904073,
+          "settled_at_ms": 1792494904138,
+          "admitted_at_ms": 1792494868156
+        },
+        {
+          "id": "sevt_req_3e754d54092a0deccc6dae4cfaaeb3966972dd35f05ea13859a3d4daa6666dab_0",
+          "session_id": "session_KkBYaMzEpWdCr_pdZokjw",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494904219,
+          "settled_at_ms": 1792494904260,
+          "admitted_at_ms": 1792494869891
+        },
+        {
+          "id": "sevt_req_c1c0a816424bd59cbc39d51acfc09b16c25c64a31754a9fa2c5f7fceca916799_0",
+          "session_id": "session_KkBYaMzEpWdCr_pdZokjw",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494915091,
+          "settled_at_ms": 1792494929329,
+          "admitted_at_ms": 1792494890056
+        }
+      ],
+      "external_host_tool_wall_seconds": 20.813955,
+      "external_checks": [
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:27.350498Z",
+          "answered_at": "2026-10-20T11:14:28.141445Z",
+          "returned_at": "2026-10-20T11:14:28.322503Z",
+          "seconds_from_source": 65.070394,
+          "tool_duration_seconds": 0.972005,
+          "public_url": "https://www.coindesk.com/policy/2026/10/19/tether-senator-s-investigation-misses-positive-work-that-s-led-to-lower-iran-volumes"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "ERROR",
+          "requested_at": "2026-10-20T11:14:30.253767Z",
+          "answered_at": "2026-10-20T11:14:50.041803Z",
+          "returned_at": "2026-10-20T11:14:50.095717Z",
+          "seconds_from_source": 67.973663,
+          "tool_duration_seconds": 19.84195,
+          "public_url": "https://tether.io/news/",
+          "error": {
+            "type": "TimeoutError",
+            "reason": "Tool execution failed; inspect the audited call and implementation",
+            "category": "TOOL_EXECUTION"
+          }
+        }
+      ],
+      "all_pre_record_tools": [
+        {
+          "tool": "get_item",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:19.796602Z",
+          "answered_at": "2026-10-20T11:14:19.804164Z",
+          "returned_at": "2026-10-20T11:14:20.665238Z",
+          "seconds_from_source": 57.516498,
+          "tool_duration_seconds": 0.868636
+        },
+        {
+          "tool": "list_open_events",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:20.746442Z",
+          "answered_at": "2026-10-20T11:14:20.798809Z",
+          "returned_at": "2026-10-20T11:14:20.830014Z",
+          "seconds_from_source": 58.466338,
+          "tool_duration_seconds": 0.083572
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:20.845441Z",
+          "answered_at": "2026-10-20T11:14:20.860169Z",
+          "returned_at": "2026-10-20T11:14:20.892771Z",
+          "seconds_from_source": 58.565337,
+          "tool_duration_seconds": 0.04733,
+          "search_query": "Tether Iran"
+        },
+        {
+          "tool": "get_registry",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:20.900819Z",
+          "answered_at": "2026-10-20T11:14:21.514206Z",
+          "returned_at": "2026-10-20T11:14:21.662625Z",
+          "seconds_from_source": 58.620715,
+          "tool_duration_seconds": 0.761806
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:27.350498Z",
+          "answered_at": "2026-10-20T11:14:28.141445Z",
+          "returned_at": "2026-10-20T11:14:28.322503Z",
+          "seconds_from_source": 65.070394,
+          "tool_duration_seconds": 0.972005,
+          "public_url": "https://www.coindesk.com/policy/2026/10/19/tether-senator-s-investigation-misses-positive-work-that-s-led-to-lower-iran-volumes"
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:28.937209Z",
+          "answered_at": "2026-10-20T11:14:29.533559Z",
+          "returned_at": "2026-10-20T11:14:29.971585Z",
+          "seconds_from_source": 66.657105,
+          "tool_duration_seconds": 1.034376,
+          "search_query": "Iran"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "ERROR",
+          "requested_at": "2026-10-20T11:14:30.253767Z",
+          "answered_at": "2026-10-20T11:14:50.041803Z",
+          "returned_at": "2026-10-20T11:14:50.095717Z",
+          "seconds_from_source": 67.973663,
+          "tool_duration_seconds": 19.84195,
+          "public_url": "https://tether.io/news/",
+          "error": {
+            "type": "TimeoutError",
+            "reason": "Tool execution failed; inspect the audited call and implementation",
+            "category": "TOOL_EXECUTION"
+          }
+        },
+        {
+          "tool": "record_event",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:29.299386Z",
+          "answered_at": "2026-10-20T11:15:29.466559Z",
+          "returned_at": "2026-10-20T11:15:29.482410Z",
+          "seconds_from_source": 127.019282,
+          "tool_duration_seconds": 0.183024
+        }
+      ]
+    },
+    {
+      "event_id": "EVT-01M5CGCGAZR9YKYVADZ72FD4NY",
+      "session_id": "session_Nja6VFCoPYfff6NsiclV0",
+      "source_observed_at": "2026-10-20T11:13:22.280104Z",
+      "record_event_requested_at": "2026-10-20T11:15:44.597504Z",
+      "source_to_record_returned_seconds": 142.531611,
+      "initial_queue_seconds": 0.019,
+      "initial_native_claimed_at": "2026-10-20T11:13:27.979000Z",
+      "first_model_request_start_at": "2026-10-20T11:14:14.638000Z",
+      "claim_to_first_model_seconds": 46.659,
+      "model_request_sum_seconds": 38.569,
+      "model_requests": [
+        {
+          "start_id": "sevt-g3ow67owtt6l4ise",
+          "end_id": "sevt_RLRLDhEdhNdWJlA6qvfOg",
+          "start_at": "2026-10-20T11:14:14.638000Z",
+          "end_at": "2026-10-20T11:14:21.811000Z",
+          "elapsed_seconds": 7.173,
+          "input_tokens": 1628,
+          "output_tokens": 66
+        },
+        {
+          "start_id": "sevt-17n6cnzflsy34cs3",
+          "end_id": "sevt_eHKFlDTtTPzeRaGubDQPF",
+          "start_at": "2026-10-20T11:14:22.119000Z",
+          "end_at": "2026-10-20T11:14:25.708000Z",
+          "elapsed_seconds": 3.589,
+          "input_tokens": 8596,
+          "output_tokens": 100
+        },
+        {
+          "start_id": "sevt-59b7cee6p95n0ptf",
+          "end_id": "sevt_nxBTPKDvfT1k9qkOSi_ve",
+          "start_at": "2026-10-20T11:15:04.346000Z",
+          "end_at": "2026-10-20T11:15:07.338000Z",
+          "elapsed_seconds": 2.992,
+          "input_tokens": 19684,
+          "output_tokens": 60
+        },
+        {
+          "start_id": "sevt-20lz1yz0j7i2h40j",
+          "end_id": "sevt_ukOO5W46d02dlNU1MZ3GJ",
+          "start_at": "2026-10-20T11:15:16.529000Z",
+          "end_at": "2026-10-20T11:15:24.216000Z",
+          "elapsed_seconds": 7.687,
+          "input_tokens": 23796,
+          "output_tokens": 75
+        },
+        {
+          "start_id": "sevt-urdbbij3zxoa3z90",
+          "end_id": "sevt_jQ1Blz4rw8W39j_SEC4dV",
+          "start_at": "2026-10-20T11:15:27.462000Z",
+          "end_at": "2026-10-20T11:15:44.590000Z",
+          "elapsed_seconds": 17.128,
+          "input_tokens": 976,
+          "output_tokens": 700
+        }
+      ],
+      "native_queue_union_seconds": 47.586,
+      "continuation_queue_union_seconds": 47.567,
+      "queued_with_no_execution_running_seconds": 47.443999999999996,
+      "native_active_union_seconds": 86.25750390625,
+      "native_executions": [
+        {
+          "id": "sevt_req_710e3659ea2033d71a744ddda03d9f01d00514d0f026c6fb283eebaec10b3a8a_0",
+          "session_id": "session_Nja6VFCoPYfff6NsiclV0",
+          "event_types": [
+            "user.message"
+          ],
+          "claimed_at_ms": 1792494807979,
+          "settled_at_ms": 1792494866072,
+          "admitted_at_ms": 1792494807960
+        },
+        {
+          "id": "sevt_req_2c3a317172c44b84907d40ecb1c08050496196d684b3786a309814274e06af99_0",
+          "session_id": "session_Nja6VFCoPYfff6NsiclV0",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494903950,
+          "settled_at_ms": 1792494904069,
+          "admitted_at_ms": 1792494868117
+        },
+        {
+          "id": "sevt_req_61b70500872fabd5b92413c39ad5345afa7f6e8164d78bc43205030521a6b337_0",
+          "session_id": "session_Nja6VFCoPYfff6NsiclV0",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494904193,
+          "settled_at_ms": 1792494904216,
+          "admitted_at_ms": 1792494869532
+        },
+        {
+          "id": "sevt_req_76dd3436e481e9771f66c55e3473e70fb9932520b2364a565444309c15b04d28_0",
+          "session_id": "session_Nja6VFCoPYfff6NsiclV0",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494904265,
+          "settled_at_ms": 1792494907383,
+          "admitted_at_ms": 1792494870402
+        },
+        {
+          "id": "sevt_req_35e21bfacfc0d24d220b930f8e040fff7f7a8fb0b976cb33e01a2604f78385d7_0",
+          "session_id": "session_Nja6VFCoPYfff6NsiclV0",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494916501,
+          "settled_at_ms": 1792494924238,
+          "admitted_at_ms": 1792494908143
+        },
+        {
+          "id": "sevt_req_f72a5c1deb1d8854b9da1c9e44dcc59d132716c36e16d5aa302d97f308e02471_0",
+          "session_id": "session_Nja6VFCoPYfff6NsiclV0",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494927430,
+          "settled_at_ms": 1792494944613,
+          "admitted_at_ms": 1792494924369
+        }
+      ],
+      "external_host_tool_wall_seconds": 0.956208,
+      "external_checks": [
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:07.348033Z",
+          "answered_at": "2026-10-20T11:15:08.134513Z",
+          "returned_at": "2026-10-20T11:15:08.150686Z",
+          "seconds_from_source": 105.067929,
+          "tool_duration_seconds": 0.802653,
+          "public_url": "https://www.coindesk.com/markets/2026/10/20/bitcoin-drops-to-usd81-400-as-asian-chip-stocks-tumble-options-traders-seek-downside-protection"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:24.222164Z",
+          "answered_at": "2026-10-20T11:15:24.365337Z",
+          "returned_at": "2026-10-20T11:15:24.375719Z",
+          "seconds_from_source": 121.94206,
+          "tool_duration_seconds": 0.153555,
+          "public_url": "https://www.deribit.com/statistics/BTC/metrics/options"
+        }
+      ],
+      "all_pre_record_tools": [
+        {
+          "tool": "get_item",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:25.704400Z",
+          "answered_at": "2026-10-20T11:14:25.712607Z",
+          "returned_at": "2026-10-20T11:14:28.136077Z",
+          "seconds_from_source": 63.424296,
+          "tool_duration_seconds": 2.431677
+        },
+        {
+          "tool": "list_open_events",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:28.708252Z",
+          "answered_at": "2026-10-20T11:14:29.313774Z",
+          "returned_at": "2026-10-20T11:14:29.634830Z",
+          "seconds_from_source": 66.428148,
+          "tool_duration_seconds": 0.926578
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:30.137467Z",
+          "answered_at": "2026-10-20T11:14:30.329902Z",
+          "returned_at": "2026-10-20T11:14:30.432764Z",
+          "seconds_from_source": 67.857363,
+          "tool_duration_seconds": 0.295297,
+          "search_query": "bitcoin Asian chip stocks downside protection"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:07.348033Z",
+          "answered_at": "2026-10-20T11:15:08.134513Z",
+          "returned_at": "2026-10-20T11:15:08.150686Z",
+          "seconds_from_source": 105.067929,
+          "tool_duration_seconds": 0.802653,
+          "public_url": "https://www.coindesk.com/markets/2026/10/20/bitcoin-drops-to-usd81-400-as-asian-chip-stocks-tumble-options-traders-seek-downside-protection"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:24.222164Z",
+          "answered_at": "2026-10-20T11:15:24.365337Z",
+          "returned_at": "2026-10-20T11:15:24.375719Z",
+          "seconds_from_source": 121.94206,
+          "tool_duration_seconds": 0.153555,
+          "public_url": "https://www.deribit.com/statistics/BTC/metrics/options"
+        },
+        {
+          "tool": "record_event",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:44.597504Z",
+          "answered_at": "2026-10-20T11:15:44.796461Z",
+          "returned_at": "2026-10-20T11:15:44.811715Z",
+          "seconds_from_source": 142.3174,
+          "tool_duration_seconds": 0.214211
+        }
+      ]
+    },
+    {
+      "event_id": "EVT-01M5CGCH9EXR5H1HCEH84JJXPC",
+      "session_id": "session_-EFxqJwxREjH9GWkfGfHU",
+      "source_observed_at": "2026-10-20T11:13:22.280104Z",
+      "record_event_requested_at": "2026-10-20T11:15:45.569359Z",
+      "source_to_record_returned_seconds": 143.525358,
+      "initial_queue_seconds": 47.36,
+      "initial_native_claimed_at": "2026-10-20T11:14:15.537000Z",
+      "first_model_request_start_at": "2026-10-20T11:14:41.503000Z",
+      "claim_to_first_model_seconds": 25.966,
+      "model_request_sum_seconds": 42.544,
+      "model_requests": [
+        {
+          "start_id": "sevt-5sbiey9t76jg627x",
+          "end_id": "sevt_6V_Z2Ipu-a2bgo8KklqoQ",
+          "start_at": "2026-10-20T11:14:41.503000Z",
+          "end_at": "2026-10-20T11:14:45.287000Z",
+          "elapsed_seconds": 3.784,
+          "input_tokens": 1634,
+          "output_tokens": 66
+        },
+        {
+          "start_id": "sevt-z8c6yr9yl9orssa6",
+          "end_id": "sevt_e6_MhTqFXzHDlijMMKIKC",
+          "start_at": "2026-10-20T11:14:46.648000Z",
+          "end_at": "2026-10-20T11:15:03.229000Z",
+          "elapsed_seconds": 16.581,
+          "input_tokens": 8887,
+          "output_tokens": 112
+        },
+        {
+          "start_id": "sevt-fni28lxiub7pm4et",
+          "end_id": "sevt_tz9UbxVNAfrY4fcsVvJeH",
+          "start_at": "2026-10-20T11:15:15.616000Z",
+          "end_at": "2026-10-20T11:15:18.330000Z",
+          "elapsed_seconds": 2.714,
+          "input_tokens": 23745,
+          "output_tokens": 56
+        },
+        {
+          "start_id": "sevt-zj1btpfnpikgq9a4",
+          "end_id": "sevt_CvzVtvAl6q853uRcMjfkQ",
+          "start_at": "2026-10-20T11:15:24.596000Z",
+          "end_at": "2026-10-20T11:15:27.879000Z",
+          "elapsed_seconds": 3.283,
+          "input_tokens": 26416,
+          "output_tokens": 38
+        },
+        {
+          "start_id": "sevt-k58iuit3ubl5yyqt",
+          "end_id": "sevt_c6dzF_XkFXXa3eP7R-cT7",
+          "start_at": "2026-10-20T11:15:29.379000Z",
+          "end_at": "2026-10-20T11:15:45.561000Z",
+          "elapsed_seconds": 16.182,
+          "input_tokens": 33634,
+          "output_tokens": 827
+        }
+      ],
+      "native_queue_union_seconds": 64.511,
+      "continuation_queue_union_seconds": 17.151,
+      "queued_with_no_execution_running_seconds": 64.446,
+      "native_active_union_seconds": 70.82035913085937,
+      "native_executions": [
+        {
+          "id": "sevt_req_803bcceeeb9769cbbcdf225f2c04289edab0f5c713f1af348f039877beae085e_0",
+          "session_id": "session_-EFxqJwxREjH9GWkfGfHU",
+          "event_types": [
+            "user.message"
+          ],
+          "claimed_at_ms": 1792494855537,
+          "settled_at_ms": 1792494903947,
+          "admitted_at_ms": 1792494808177
+        },
+        {
+          "id": "sevt_req_1523e1f038435965b935765b325cfd1ad8e5fbae81dc8bc7c419bda3b74b3556_0",
+          "session_id": "session_-EFxqJwxREjH9GWkfGfHU",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494915510,
+          "settled_at_ms": 1792494915531,
+          "admitted_at_ms": 1792494904141
+        },
+        {
+          "id": "sevt_req_061f19c2194b345fd59c4fb5004f6e0c619cdaba537baa10ddaf07c520bec088_0",
+          "session_id": "session_-EFxqJwxREjH9GWkfGfHU",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494915531,
+          "settled_at_ms": 1792494915552,
+          "admitted_at_ms": 1792494904175
+        },
+        {
+          "id": "sevt_req_d348f9cc5da1e7b6056bfb87be4b6150675e746a73b8e581322371fca5d5642b_0",
+          "session_id": "session_-EFxqJwxREjH9GWkfGfHU",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494915553,
+          "settled_at_ms": 1792494915576,
+          "admitted_at_ms": 1792494904224
+        },
+        {
+          "id": "sevt_req_35014dd8fb53b977ee64412bbe2ce6b209e24d299cb97b9c2ff8b664529ceb0a_0",
+          "session_id": "session_-EFxqJwxREjH9GWkfGfHU",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494915577,
+          "settled_at_ms": 1792494918352,
+          "admitted_at_ms": 1792494904801
+        },
+        {
+          "id": "sevt_req_191662211904059cfffd2354485479836ebb057e0f095c3d12c4af5fefdaa32c_0",
+          "session_id": "session_-EFxqJwxREjH9GWkfGfHU",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494924571,
+          "settled_at_ms": 1792494927902,
+          "admitted_at_ms": 1792494919052
+        },
+        {
+          "id": "sevt_req_5787ac563180c4f8b06b28987230ac393c7f507243341367627d482c84430f3f_0",
+          "session_id": "session_-EFxqJwxREjH9GWkfGfHU",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494929330,
+          "settled_at_ms": 1792494945604,
+          "admitted_at_ms": 1792494929134
+        }
+      ],
+      "external_host_tool_wall_seconds": 1.982287,
+      "external_checks": [
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:18.337159Z",
+          "answered_at": "2026-10-20T11:15:19.045965Z",
+          "returned_at": "2026-10-20T11:15:19.062164Z",
+          "seconds_from_source": 116.057055,
+          "tool_duration_seconds": 0.725005,
+          "public_url": "https://www.coindesk.com/business/2026/10/20/bitcoin-etfs-just-saw-their-biggest-day-in-a-month-thanks-entirely-to-blackrock"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:27.885767Z",
+          "answered_at": "2026-10-20T11:15:29.124703Z",
+          "returned_at": "2026-10-20T11:15:29.143049Z",
+          "seconds_from_source": 125.605663,
+          "tool_duration_seconds": 1.257282,
+          "public_url": "https://www.ishares.com/us/products/333011/ishares-bitcoin-trust-etf"
+        }
+      ],
+      "all_pre_record_tools": [
+        {
+          "tool": "get_item",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:03.211363Z",
+          "answered_at": "2026-10-20T11:15:03.217585Z",
+          "returned_at": "2026-10-20T11:15:04.155073Z",
+          "seconds_from_source": 100.931259,
+          "tool_duration_seconds": 0.94371
+        },
+        {
+          "tool": "list_open_events",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:04.163218Z",
+          "answered_at": "2026-10-20T11:15:04.168276Z",
+          "returned_at": "2026-10-20T11:15:04.190146Z",
+          "seconds_from_source": 101.883114,
+          "tool_duration_seconds": 0.026928
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:04.200721Z",
+          "answered_at": "2026-10-20T11:15:04.208817Z",
+          "returned_at": "2026-10-20T11:15:04.236123Z",
+          "seconds_from_source": 101.920617,
+          "tool_duration_seconds": 0.035402,
+          "search_query": "BlackRock ETF"
+        },
+        {
+          "tool": "get_registry",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:04.257560Z",
+          "answered_at": "2026-10-20T11:15:04.784321Z",
+          "returned_at": "2026-10-20T11:15:04.817230Z",
+          "seconds_from_source": 101.977456,
+          "tool_duration_seconds": 0.55967
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:18.337159Z",
+          "answered_at": "2026-10-20T11:15:19.045965Z",
+          "returned_at": "2026-10-20T11:15:19.062164Z",
+          "seconds_from_source": 116.057055,
+          "tool_duration_seconds": 0.725005,
+          "public_url": "https://www.coindesk.com/business/2026/10/20/bitcoin-etfs-just-saw-their-biggest-day-in-a-month-thanks-entirely-to-blackrock"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:27.885767Z",
+          "answered_at": "2026-10-20T11:15:29.124703Z",
+          "returned_at": "2026-10-20T11:15:29.143049Z",
+          "seconds_from_source": 125.605663,
+          "tool_duration_seconds": 1.257282,
+          "public_url": "https://www.ishares.com/us/products/333011/ishares-bitcoin-trust-etf"
+        },
+        {
+          "tool": "record_event",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:45.569359Z",
+          "answered_at": "2026-10-20T11:15:45.790949Z",
+          "returned_at": "2026-10-20T11:15:45.805462Z",
+          "seconds_from_source": 143.289255,
+          "tool_duration_seconds": 0.236103
+        }
+      ]
+    },
+    {
+      "event_id": "EVT-01M5CGCT6C4F1TWJECSVX5FAQ7",
+      "session_id": "session_bf9i4-OQKZwAGSHK6BPQR",
+      "source_observed_at": "2026-10-20T11:13:22.280104Z",
+      "record_event_requested_at": "2026-10-20T11:15:54.690827Z",
+      "source_to_record_returned_seconds": 152.636552,
+      "initial_queue_seconds": 0.014,
+      "initial_native_claimed_at": "2026-10-20T11:13:27.208000Z",
+      "first_model_request_start_at": "2026-10-20T11:14:07.321000Z",
+      "claim_to_first_model_seconds": 40.113,
+      "model_request_sum_seconds": 26.605,
+      "model_requests": [
+        {
+          "start_id": "sevt-q8lwtlrkq58bb8ds",
+          "end_id": "sevt_kPxnKrfa1G_RyvgDYOgrA",
+          "start_at": "2026-10-20T11:14:07.321000Z",
+          "end_at": "2026-10-20T11:14:11.018000Z",
+          "elapsed_seconds": 3.697,
+          "input_tokens": 1633,
+          "output_tokens": 66
+        },
+        {
+          "start_id": "sevt-yzkupm7u6o6qd724",
+          "end_id": "sevt_cr7cIQ0A682KCjqyuKbLU",
+          "start_at": "2026-10-20T11:14:11.594000Z",
+          "end_at": "2026-10-20T11:14:15.327000Z",
+          "elapsed_seconds": 3.733,
+          "input_tokens": 8601,
+          "output_tokens": 117
+        },
+        {
+          "start_id": "sevt-rcowe732jbl2to57",
+          "end_id": "sevt_dWjIbvQAKC8OClVoz4L2G",
+          "start_at": "2026-10-20T11:14:20.246000Z",
+          "end_at": "2026-10-20T11:14:23.755000Z",
+          "elapsed_seconds": 3.509,
+          "input_tokens": 19951,
+          "output_tokens": 104
+        },
+        {
+          "start_id": "sevt-f5lnu5kscygb48uy",
+          "end_id": "sevt_skUDd9YRXUlep_Fhe_L-j",
+          "start_at": "2026-10-20T11:15:39.016000Z",
+          "end_at": "2026-10-20T11:15:54.682000Z",
+          "elapsed_seconds": 15.666,
+          "input_tokens": 16409,
+          "output_tokens": 663
+        }
+      ],
+      "native_queue_union_seconds": 12.18,
+      "continuation_queue_union_seconds": 12.166,
+      "queued_with_no_execution_running_seconds": 12.106,
+      "native_active_union_seconds": 67.72982690429687,
+      "native_executions": [
+        {
+          "id": "sevt_req_9f2bf2186a6d2e63f1110028dc43903c593aa003c343d3a484e05de48f0ef1dd_0",
+          "session_id": "session_bf9i4-OQKZwAGSHK6BPQR",
+          "event_types": [
+            "user.message"
+          ],
+          "claimed_at_ms": 1792494807208,
+          "settled_at_ms": 1792494855535,
+          "admitted_at_ms": 1792494807194
+        },
+        {
+          "id": "sevt_req_0ba4e22cdf4d22ad3e184dd9ac8cf4cf86c83f10ffb77f447a78703d99ff6b8e_0",
+          "session_id": "session_bf9i4-OQKZwAGSHK6BPQR",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494860128,
+          "settled_at_ms": 1792494860153,
+          "admitted_at_ms": 1792494857375
+        },
+        {
+          "id": "sevt_req_5fe444d5ef98cfe1fc3872391fc2080ee37e13ad838b224667e90ef3a2ae1ea8_0",
+          "session_id": "session_bf9i4-OQKZwAGSHK6BPQR",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494860154,
+          "settled_at_ms": 1792494860175,
+          "admitted_at_ms": 1792494857403
+        },
+        {
+          "id": "sevt_req_0abc5714dc1201624b8fd615f7b38f8beade9d72245034128c53a9af5af79b3e_0",
+          "session_id": "session_bf9i4-OQKZwAGSHK6BPQR",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494860175,
+          "settled_at_ms": 1792494860203,
+          "admitted_at_ms": 1792494857433
+        },
+        {
+          "id": "sevt_req_f730b63ceb142d3e5b7521d223c2410ddf79a470cf2d8004451b170cd9211160_0",
+          "session_id": "session_bf9i4-OQKZwAGSHK6BPQR",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494860203,
+          "settled_at_ms": 1792494863773,
+          "admitted_at_ms": 1792494857939
+        },
+        {
+          "id": "sevt_req_0231a8bc1de8727afb84e59e957335fdf7ed8ba304a4f6af2ba24c0194c5f320_0",
+          "session_id": "session_bf9i4-OQKZwAGSHK6BPQR",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494866073,
+          "settled_at_ms": 1792494866095,
+          "admitted_at_ms": 1792494864654
+        },
+        {
+          "id": "sevt_req_2c8f1f85b0bb250811e7bd8c7e8942b6c46d6459d341b65c55a610d4b72dc54b_0",
+          "session_id": "session_bf9i4-OQKZwAGSHK6BPQR",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494938954,
+          "settled_at_ms": 1792494954708,
+          "admitted_at_ms": 1792494931035
+        }
+      ],
+      "external_host_tool_wall_seconds": 67.093888,
+      "external_checks": [
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:23.756870Z",
+          "answered_at": "2026-10-20T11:14:24.640414Z",
+          "returned_at": "2026-10-20T11:14:24.691426Z",
+          "seconds_from_source": 61.476766,
+          "tool_duration_seconds": 0.934556,
+          "public_url": "https://www.coindesk.com/markets/2026/10/20/jpmorgan-sees-10-annual-bitcoin-returns-topping-stocks-bonds-and-gold-over-next-decade"
+        },
+        {
+          "tool": "web_search",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:24.883012Z",
+          "answered_at": "2026-10-20T11:15:31.018371Z",
+          "returned_at": "2026-10-20T11:15:31.042344Z",
+          "seconds_from_source": 62.602908,
+          "tool_duration_seconds": 66.159332,
+          "search_query": "site.jpmorgan.com bitcoin \"10%\" \"2026\" returns decade"
+        }
+      ],
+      "all_pre_record_tools": [
+        {
+          "tool": "get_item",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:15.317325Z",
+          "answered_at": "2026-10-20T11:14:15.326031Z",
+          "returned_at": "2026-10-20T11:14:17.384542Z",
+          "seconds_from_source": 53.037221,
+          "tool_duration_seconds": 2.067217
+        },
+        {
+          "tool": "list_open_events",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:17.392232Z",
+          "answered_at": "2026-10-20T11:14:17.398234Z",
+          "returned_at": "2026-10-20T11:14:17.410490Z",
+          "seconds_from_source": 55.112128,
+          "tool_duration_seconds": 0.018258
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:17.418661Z",
+          "answered_at": "2026-10-20T11:14:17.426565Z",
+          "returned_at": "2026-10-20T11:14:17.441641Z",
+          "seconds_from_source": 55.138557,
+          "tool_duration_seconds": 0.02298,
+          "search_query": "JPMorgan bitcoin returns"
+        },
+        {
+          "tool": "get_registry",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:17.451017Z",
+          "answered_at": "2026-10-20T11:14:17.928171Z",
+          "returned_at": "2026-10-20T11:14:17.948946Z",
+          "seconds_from_source": 55.170913,
+          "tool_duration_seconds": 0.497929
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:23.756870Z",
+          "answered_at": "2026-10-20T11:14:24.640414Z",
+          "returned_at": "2026-10-20T11:14:24.691426Z",
+          "seconds_from_source": 61.476766,
+          "tool_duration_seconds": 0.934556,
+          "public_url": "https://www.coindesk.com/markets/2026/10/20/jpmorgan-sees-10-annual-bitcoin-returns-topping-stocks-bonds-and-gold-over-next-decade"
+        },
+        {
+          "tool": "web_search",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:14:24.883012Z",
+          "answered_at": "2026-10-20T11:15:31.018371Z",
+          "returned_at": "2026-10-20T11:15:31.042344Z",
+          "seconds_from_source": 62.602908,
+          "tool_duration_seconds": 66.159332,
+          "search_query": "site.jpmorgan.com bitcoin \"10%\" \"2026\" returns decade"
+        },
+        {
+          "tool": "record_event",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:54.690827Z",
+          "answered_at": "2026-10-20T11:15:54.899332Z",
+          "returned_at": "2026-10-20T11:15:54.916656Z",
+          "seconds_from_source": 152.410723,
+          "tool_duration_seconds": 0.225829
+        }
+      ]
+    },
+    {
+      "event_id": "EVT-01M5CGEH3J4ZT1X5PP04QMRV4Z",
+      "session_id": "session_o7JvvHVBAZlehi4eFLt6L",
+      "source_observed_at": "2026-10-20T11:13:22.280104Z",
+      "record_event_requested_at": "2026-10-20T11:16:50.921821Z",
+      "source_to_record_returned_seconds": 208.821316,
+      "initial_queue_seconds": 57.843,
+      "initial_native_claimed_at": "2026-10-20T11:14:26.096000Z",
+      "first_model_request_start_at": "2026-10-20T11:15:06.958000Z",
+      "claim_to_first_model_seconds": 40.862,
+      "model_request_sum_seconds": 23.409,
+      "model_requests": [
+        {
+          "start_id": "sevt-949jtplmt1imijpr",
+          "end_id": "sevt_DothSAJ0M5IY3O-DRTD0Q",
+          "start_at": "2026-10-20T11:15:06.958000Z",
+          "end_at": "2026-10-20T11:15:10.919000Z",
+          "elapsed_seconds": 3.961,
+          "input_tokens": 1608,
+          "output_tokens": 66
+        },
+        {
+          "start_id": "sevt-aemz5zcp103nrpow",
+          "end_id": "sevt_XcLuLk0DIKBRWRMX5Q6bn",
+          "start_at": "2026-10-20T11:15:11.259000Z",
+          "end_at": "2026-10-20T11:15:16.226000Z",
+          "elapsed_seconds": 4.967,
+          "input_tokens": 8576,
+          "output_tokens": 169
+        },
+        {
+          "start_id": "sevt-dsid4eclmon52i5v",
+          "end_id": "sevt_1rUFcsZlHOMJ7m4CsMyVR",
+          "start_at": "2026-10-20T11:15:24.265000Z",
+          "end_at": "2026-10-20T11:15:27.407000Z",
+          "elapsed_seconds": 3.142,
+          "input_tokens": 35858,
+          "output_tokens": 31
+        },
+        {
+          "start_id": "sevt-jtsr0i28t7knl87i",
+          "end_id": "sevt_BeNm5ds9QK6B1BfV65yNL",
+          "start_at": "2026-10-20T11:16:39.576000Z",
+          "end_at": "2026-10-20T11:16:50.915000Z",
+          "elapsed_seconds": 11.339,
+          "input_tokens": 29292,
+          "output_tokens": 551
+        }
+      ],
+      "native_queue_union_seconds": 68.524,
+      "continuation_queue_union_seconds": 10.681,
+      "queued_with_no_execution_running_seconds": 68.31,
+      "native_active_union_seconds": 65.04482104492187,
+      "native_executions": [
+        {
+          "id": "sevt_req_cdbd9fa39752c679e1fadc6ee769c451981e80064533853e851298a8c6504544_0",
+          "session_id": "session_o7JvvHVBAZlehi4eFLt6L",
+          "event_types": [
+            "user.message"
+          ],
+          "claimed_at_ms": 1792494866096,
+          "settled_at_ms": 1792494916500,
+          "admitted_at_ms": 1792494808253
+        },
+        {
+          "id": "sevt_req_70a3cde0b04a947baa9547633da5e574aefabdb01bc280f4d0bf650c84447f78_0",
+          "session_id": "session_o7JvvHVBAZlehi4eFLt6L",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494922653,
+          "settled_at_ms": 1792494922673,
+          "admitted_at_ms": 1792494916359
+        },
+        {
+          "id": "sevt_req_383e358fa072bea43827f3f5cb479a70c3847136adda8203cbcb2708dd1898d5_0",
+          "session_id": "session_o7JvvHVBAZlehi4eFLt6L",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494922674,
+          "settled_at_ms": 1792494922691,
+          "admitted_at_ms": 1792494916393
+        },
+        {
+          "id": "sevt_req_f24255cc80c9fa54d166b85c920d56f67512393a406afd8f77262bda9dd4cba2_0",
+          "session_id": "session_o7JvvHVBAZlehi4eFLt6L",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494922691,
+          "settled_at_ms": 1792494922709,
+          "admitted_at_ms": 1792494916425
+        },
+        {
+          "id": "sevt_req_a7b626d69ff1932ea60a7212b03b2b4eb45e5073718e2e6feee29355d4b2c718_0",
+          "session_id": "session_o7JvvHVBAZlehi4eFLt6L",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494922710,
+          "settled_at_ms": 1792494922728,
+          "admitted_at_ms": 1792494916962
+        },
+        {
+          "id": "sevt_req_0f861c5732a1fc01a2e55895d033ae87b3d88022871f28f7ba138dd8930b76bf_0",
+          "session_id": "session_o7JvvHVBAZlehi4eFLt6L",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494924239,
+          "settled_at_ms": 1792494927429,
+          "admitted_at_ms": 1792494917692
+        },
+        {
+          "id": "sevt_req_549781cec75ecc74e4af224160225e9804f22e4a3ee39be9001d0fce7cec0cae_0",
+          "session_id": "session_o7JvvHVBAZlehi4eFLt6L",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494999544,
+          "settled_at_ms": 1792495010938,
+          "admitted_at_ms": 1792494996743
+        }
+      ],
+      "external_host_tool_wall_seconds": 70.05639099999999,
+      "external_checks": [
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:16.978845Z",
+          "answered_at": "2026-10-20T11:15:17.686664Z",
+          "returned_at": "2026-10-20T11:15:17.700523Z",
+          "seconds_from_source": 114.698741,
+          "tool_duration_seconds": 0.721678,
+          "public_url": "https://www.coindesk.com/business/2026/10/19/zerohash-rolls-out-a-new-tool-to-move-crypto-without-copying-wallet-addresses"
+        },
+        {
+          "tool": "web_search",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:27.416139Z",
+          "answered_at": "2026-10-20T11:16:36.737506Z",
+          "returned_at": "2026-10-20T11:16:36.750852Z",
+          "seconds_from_source": 125.136035,
+          "tool_duration_seconds": 69.334713,
+          "search_query": "site.zerohash.com AUTH October 19 2026 launched"
+        }
+      ],
+      "all_pre_record_tools": [
+        {
+          "tool": "get_item",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:16.210554Z",
+          "answered_at": "2026-10-20T11:15:16.219875Z",
+          "returned_at": "2026-10-20T11:15:16.376938Z",
+          "seconds_from_source": 113.93045,
+          "tool_duration_seconds": 0.166384
+        },
+        {
+          "tool": "list_open_events",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:16.383632Z",
+          "answered_at": "2026-10-20T11:15:16.389154Z",
+          "returned_at": "2026-10-20T11:15:16.400364Z",
+          "seconds_from_source": 114.103528,
+          "tool_duration_seconds": 0.016732
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:16.406186Z",
+          "answered_at": "2026-10-20T11:15:16.413195Z",
+          "returned_at": "2026-10-20T11:15:16.437419Z",
+          "seconds_from_source": 114.126082,
+          "tool_duration_seconds": 0.031233,
+          "search_query": "Zerohash"
+        },
+        {
+          "tool": "get_registry",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:16.449219Z",
+          "answered_at": "2026-10-20T11:15:16.949136Z",
+          "returned_at": "2026-10-20T11:15:16.971267Z",
+          "seconds_from_source": 114.169115,
+          "tool_duration_seconds": 0.522048
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:16.978845Z",
+          "answered_at": "2026-10-20T11:15:17.686664Z",
+          "returned_at": "2026-10-20T11:15:17.700523Z",
+          "seconds_from_source": 114.698741,
+          "tool_duration_seconds": 0.721678,
+          "public_url": "https://www.coindesk.com/business/2026/10/19/zerohash-rolls-out-a-new-tool-to-move-crypto-without-copying-wallet-addresses"
+        },
+        {
+          "tool": "web_search",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:27.416139Z",
+          "answered_at": "2026-10-20T11:16:36.737506Z",
+          "returned_at": "2026-10-20T11:16:36.750852Z",
+          "seconds_from_source": 125.136035,
+          "tool_duration_seconds": 69.334713,
+          "search_query": "site.zerohash.com AUTH October 19 2026 launched"
+        },
+        {
+          "tool": "record_event",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:50.921821Z",
+          "answered_at": "2026-10-20T11:16:51.086811Z",
+          "returned_at": "2026-10-20T11:16:51.101420Z",
+          "seconds_from_source": 208.641717,
+          "tool_duration_seconds": 0.179599
+        }
+      ]
+    },
+    {
+      "event_id": "EVT-01M5CGENHYB3KRP92EBAEXZE3N",
+      "session_id": "session_JK1HEC1etujyPMBJVlny0",
+      "source_observed_at": "2026-10-20T11:13:22.280104Z",
+      "record_event_requested_at": "2026-10-20T11:16:55.471996Z",
+      "source_to_record_returned_seconds": 213.589705,
+      "initial_queue_seconds": 59.32,
+      "initial_native_claimed_at": "2026-10-20T11:14:27.611000Z",
+      "first_model_request_start_at": "2026-10-20T11:15:07.674000Z",
+      "claim_to_first_model_seconds": 40.063,
+      "model_request_sum_seconds": 31.036,
+      "model_requests": [
+        {
+          "start_id": "sevt-w5t26j63diet51jk",
+          "end_id": "sevt_DDZmsS_j7LC9sbrCXs3KJ",
+          "start_at": "2026-10-20T11:15:07.674000Z",
+          "end_at": "2026-10-20T11:15:11.522000Z",
+          "elapsed_seconds": 3.848,
+          "input_tokens": 1615,
+          "output_tokens": 66
+        },
+        {
+          "start_id": "sevt-3zbt0x0xngwqc9qn",
+          "end_id": "sevt_8JHdpCMwJxsrbIB-9r_Nu",
+          "start_at": "2026-10-20T11:15:11.684000Z",
+          "end_at": "2026-10-20T11:15:15.257000Z",
+          "elapsed_seconds": 3.573,
+          "input_tokens": 8868,
+          "output_tokens": 115
+        },
+        {
+          "start_id": "sevt-819urn37izxk4zz1",
+          "end_id": "sevt_c9kLGHZ4aOx92e-0FeNKK",
+          "start_at": "2026-10-20T11:15:18.445000Z",
+          "end_at": "2026-10-20T11:15:24.547000Z",
+          "elapsed_seconds": 6.102,
+          "input_tokens": 26500,
+          "output_tokens": 93
+        },
+        {
+          "start_id": "sevt-559ht5qwsb43mr8e",
+          "end_id": "sevt_goB6tk5gR_J6kBu8GGd_u",
+          "start_at": "2026-10-20T11:16:37.949000Z",
+          "end_at": "2026-10-20T11:16:55.462000Z",
+          "elapsed_seconds": 17.513,
+          "input_tokens": 29586,
+          "output_tokens": 695
+        }
+      ],
+      "native_queue_union_seconds": 69.872,
+      "continuation_queue_union_seconds": 10.552,
+      "queued_with_no_execution_running_seconds": 69.808,
+      "native_active_union_seconds": 71.69199609375,
+      "native_executions": [
+        {
+          "id": "sevt_req_9a80ceeb719b17267f54af602f7097b50458842739e64089fa43de79a2132807_0",
+          "session_id": "session_JK1HEC1etujyPMBJVlny0",
+          "event_types": [
+            "user.message"
+          ],
+          "claimed_at_ms": 1792494867611,
+          "settled_at_ms": 1792494915509,
+          "admitted_at_ms": 1792494808291
+        },
+        {
+          "id": "sevt_req_38bce9aaa9f3b8c4696478ea5d68811980273251a6c10f87a4d3ffd48df66718_0",
+          "session_id": "session_JK1HEC1etujyPMBJVlny0",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494918353,
+          "settled_at_ms": 1792494918372,
+          "admitted_at_ms": 1792494915524
+        },
+        {
+          "id": "sevt_req_6d33e86a8ef9e4efc1c3ba37e1bd6ff30b4aedff9b986e1c57480ee77950db69_0",
+          "session_id": "session_JK1HEC1etujyPMBJVlny0",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494918373,
+          "settled_at_ms": 1792494918392,
+          "admitted_at_ms": 1792494915552
+        },
+        {
+          "id": "sevt_req_1fbc5bf2a52b0ae354e51990639458a4352d84cdc6aa15888a21bc5485238085_0",
+          "session_id": "session_JK1HEC1etujyPMBJVlny0",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494918393,
+          "settled_at_ms": 1792494918419,
+          "admitted_at_ms": 1792494915605
+        },
+        {
+          "id": "sevt_req_614df5498954abc26b2058ed23bc96053a2012e38737753cd1cb25b2592fa51a_0",
+          "session_id": "session_JK1HEC1etujyPMBJVlny0",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494918420,
+          "settled_at_ms": 1792494924570,
+          "admitted_at_ms": 1792494916216
+        },
+        {
+          "id": "sevt_req_22ff6b690924824f40fd8048a3ed75bd5c8b99beb0fa4663b7f0e9e62298a1d4_0",
+          "session_id": "session_JK1HEC1etujyPMBJVlny0",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494927903,
+          "settled_at_ms": 1792494927930,
+          "admitted_at_ms": 1792494925375
+        },
+        {
+          "id": "sevt_req_cd14366c71d8f44d961c387ff8819d1b769681d54deb540ffe1d839cd00034e6_0",
+          "session_id": "session_JK1HEC1etujyPMBJVlny0",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494997919,
+          "settled_at_ms": 1792495015489,
+          "admitted_at_ms": 1792494992791
+        }
+      ],
+      "external_host_tool_wall_seconds": 68.196375,
+      "external_checks": [
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:24.548281Z",
+          "answered_at": "2026-10-20T11:15:25.367891Z",
+          "returned_at": "2026-10-20T11:15:25.382958Z",
+          "seconds_from_source": 122.268177,
+          "tool_duration_seconds": 0.834677,
+          "public_url": "https://www.coindesk.com/tech/2026/10/19/cardano-founder-charles-hoskinson-is-building-a-new-programming-language-for-the-network"
+        },
+        {
+          "tool": "web_search",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:25.437863Z",
+          "answered_at": "2026-10-20T11:16:32.785757Z",
+          "returned_at": "2026-10-20T11:16:32.799561Z",
+          "seconds_from_source": 123.157759,
+          "tool_duration_seconds": 67.361698,
+          "search_query": "site.iohk.io Hoskinson new programming language October 2026"
+        }
+      ],
+      "all_pre_record_tools": [
+        {
+          "tool": "get_item",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:15.243918Z",
+          "answered_at": "2026-10-20T11:15:15.251262Z",
+          "returned_at": "2026-10-20T11:15:15.532686Z",
+          "seconds_from_source": 112.963814,
+          "tool_duration_seconds": 0.288768
+        },
+        {
+          "tool": "list_open_events",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:15.540515Z",
+          "answered_at": "2026-10-20T11:15:15.546698Z",
+          "returned_at": "2026-10-20T11:15:15.562382Z",
+          "seconds_from_source": 113.260411,
+          "tool_duration_seconds": 0.021867
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:15.571344Z",
+          "answered_at": "2026-10-20T11:15:15.581900Z",
+          "returned_at": "2026-10-20T11:15:15.629163Z",
+          "seconds_from_source": 113.29124,
+          "tool_duration_seconds": 0.057819,
+          "search_query": "Hoskinson programming language"
+        },
+        {
+          "tool": "get_registry",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:15.640177Z",
+          "answered_at": "2026-10-20T11:15:16.205468Z",
+          "returned_at": "2026-10-20T11:15:16.224607Z",
+          "seconds_from_source": 113.360073,
+          "tool_duration_seconds": 0.58443
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:24.548281Z",
+          "answered_at": "2026-10-20T11:15:25.367891Z",
+          "returned_at": "2026-10-20T11:15:25.382958Z",
+          "seconds_from_source": 122.268177,
+          "tool_duration_seconds": 0.834677,
+          "public_url": "https://www.coindesk.com/tech/2026/10/19/cardano-founder-charles-hoskinson-is-building-a-new-programming-language-for-the-network"
+        },
+        {
+          "tool": "web_search",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:25.437863Z",
+          "answered_at": "2026-10-20T11:16:32.785757Z",
+          "returned_at": "2026-10-20T11:16:32.799561Z",
+          "seconds_from_source": 123.157759,
+          "tool_duration_seconds": 67.361698,
+          "search_query": "site.iohk.io Hoskinson new programming language October 2026"
+        },
+        {
+          "tool": "record_event",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:55.471996Z",
+          "answered_at": "2026-10-20T11:16:55.839749Z",
+          "returned_at": "2026-10-20T11:16:55.869809Z",
+          "seconds_from_source": 213.191892,
+          "tool_duration_seconds": 0.397813
+        }
+      ]
+    },
+    {
+      "event_id": "EVT-01M5CGEY2T4MX9YXA139T24MN3",
+      "session_id": "session_t2lCjMykwQ5N7_Ej2hnym",
+      "source_observed_at": "2026-10-20T11:13:22.280104Z",
+      "record_event_requested_at": "2026-10-20T11:17:04.195555Z",
+      "source_to_record_returned_seconds": 222.265003,
+      "initial_queue_seconds": 59.117,
+      "initial_native_claimed_at": "2026-10-20T11:14:27.394000Z",
+      "first_model_request_start_at": "2026-10-20T11:15:08.034000Z",
+      "claim_to_first_model_seconds": 40.64,
+      "model_request_sum_seconds": 26.223,
+      "model_requests": [
+        {
+          "start_id": "sevt-yl0x6n8i5ezaqqcu",
+          "end_id": "sevt_yPj7rzQ0uPmF59u4Qm537",
+          "start_at": "2026-10-20T11:15:08.034000Z",
+          "end_at": "2026-10-20T11:15:10.920000Z",
+          "elapsed_seconds": 2.886,
+          "input_tokens": 8261,
+          "output_tokens": 66
+        },
+        {
+          "start_id": "sevt-mp39jbl9s4dja14f",
+          "end_id": "sevt_o3UQalkpgPi5gXpuPF2rg",
+          "start_at": "2026-10-20T11:15:11.169000Z",
+          "end_at": "2026-10-20T11:15:14.821000Z",
+          "elapsed_seconds": 3.652,
+          "input_tokens": 8858,
+          "output_tokens": 97
+        },
+        {
+          "start_id": "sevt-v219rtop4mc7x5jy",
+          "end_id": "sevt_l_RWL8uZ9oUrdZmbTZjc7",
+          "start_at": "2026-10-20T11:15:22.796000Z",
+          "end_at": "2026-10-20T11:15:25.655000Z",
+          "elapsed_seconds": 2.859,
+          "input_tokens": 23939,
+          "output_tokens": 50
+        },
+        {
+          "start_id": "sevt-4vbjiyboj2razy9j",
+          "end_id": "sevt_ol-ld70N2dVtuErkyRSuL",
+          "start_at": "2026-10-20T11:15:27.975000Z",
+          "end_at": "2026-10-20T11:15:31.668000Z",
+          "elapsed_seconds": 3.693,
+          "input_tokens": 26668,
+          "output_tokens": 99
+        },
+        {
+          "start_id": "sevt-3x595ra34mui93c2",
+          "end_id": "sevt_FpO-w1mLexuB6vtBcBRNu",
+          "start_at": "2026-10-20T11:16:51.052000Z",
+          "end_at": "2026-10-20T11:17:04.185000Z",
+          "elapsed_seconds": 13.133,
+          "input_tokens": 33240,
+          "output_tokens": 629
+        }
+      ],
+      "native_queue_union_seconds": 76.6,
+      "continuation_queue_union_seconds": 17.483,
+      "queued_with_no_execution_running_seconds": 76.529,
+      "native_active_union_seconds": 67.64755493164063,
+      "native_executions": [
+        {
+          "id": "sevt_req_0aab9bca54c3980bad58fabe27dbd4f5bb933c9010cb81eb9de44244e771f4f3_0",
+          "session_id": "session_t2lCjMykwQ5N7_Ej2hnym",
+          "event_types": [
+            "user.message"
+          ],
+          "claimed_at_ms": 1792494867394,
+          "settled_at_ms": 1792494915090,
+          "admitted_at_ms": 1792494808277
+        },
+        {
+          "id": "sevt_req_11075bd9b691542148ce4d4fce3bc6075a1c6c528ee3e1830241bdb4defff382_0",
+          "session_id": "session_t2lCjMykwQ5N7_Ej2hnym",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494922729,
+          "settled_at_ms": 1792494922744,
+          "admitted_at_ms": 1792494916969
+        },
+        {
+          "id": "sevt_req_157b1703abd7a0353bbac95add2f35107241ed41d74760bdda60a19039140905_0",
+          "session_id": "session_t2lCjMykwQ5N7_Ej2hnym",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494922745,
+          "settled_at_ms": 1792494922762,
+          "admitted_at_ms": 1792494917005
+        },
+        {
+          "id": "sevt_req_2008fe9f29b74276f2a835113e084215045e31c13be90dbfc8d9fce329c08971_0",
+          "session_id": "session_t2lCjMykwQ5N7_Ej2hnym",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494922763,
+          "settled_at_ms": 1792494925678,
+          "admitted_at_ms": 1792494917036
+        },
+        {
+          "id": "sevt_req_a73ba2baafbae0405c4850766f7269184fabf6f4113b7921f57c7a4b850c5173_0",
+          "session_id": "session_t2lCjMykwQ5N7_Ej2hnym",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494927940,
+          "settled_at_ms": 1792494931690,
+          "admitted_at_ms": 1792494926654
+        },
+        {
+          "id": "sevt_req_756fdc98769b0a86ecf091f8bee894c6b76e502033248ec49ad386888140e209_0",
+          "session_id": "session_t2lCjMykwQ5N7_Ej2hnym",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495010939,
+          "settled_at_ms": 1792495010959,
+          "admitted_at_ms": 1792495000577
+        },
+        {
+          "id": "sevt_req_35b5969a283d46e01cf23ffb8d3854208848bf9075ad7dae0d29c5723730d1eb_0",
+          "session_id": "session_t2lCjMykwQ5N7_Ej2hnym",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495010960,
+          "settled_at_ms": 1792495010979,
+          "admitted_at_ms": 1792495001351
+        },
+        {
+          "id": "sevt_req_5ecbd1c6dbd0b8ec67346d2a0c2a7b0715742f26e952fabb2ec381f22682c6eb_0",
+          "session_id": "session_t2lCjMykwQ5N7_Ej2hnym",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495010980,
+          "settled_at_ms": 1792495024214,
+          "admitted_at_ms": 1792495001417
+        }
+      ],
+      "external_host_tool_wall_seconds": 69.93983800000001,
+      "external_checks": [
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:25.701793Z",
+          "answered_at": "2026-10-20T11:15:26.647741Z",
+          "returned_at": "2026-10-20T11:15:26.663703Z",
+          "seconds_from_source": 123.421689,
+          "tool_duration_seconds": 0.96191,
+          "public_url": "https://www.coindesk.com/markets/2026/10/20/live-updates-market-jitters-persist-as-the-ai-selloff-deepens"
+        },
+        {
+          "tool": "web_search",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:31.665128Z",
+          "answered_at": "2026-10-20T11:16:40.563936Z",
+          "returned_at": "2026-10-20T11:16:40.643056Z",
+          "seconds_from_source": 129.385024,
+          "tool_duration_seconds": 68.977928,
+          "search_query": "site.finma.ch 2026 bitcoin ETF October 20 exemption"
+        }
+      ],
+      "all_pre_record_tools": [
+        {
+          "tool": "get_item",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:14.816381Z",
+          "answered_at": "2026-10-20T11:15:14.823516Z",
+          "returned_at": "2026-10-20T11:15:16.975438Z",
+          "seconds_from_source": 112.536277,
+          "tool_duration_seconds": 2.159057
+        },
+        {
+          "tool": "list_open_events",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:16.994756Z",
+          "answered_at": "2026-10-20T11:15:17.000749Z",
+          "returned_at": "2026-10-20T11:15:17.012953Z",
+          "seconds_from_source": 114.714652,
+          "tool_duration_seconds": 0.018197
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:17.018402Z",
+          "answered_at": "2026-10-20T11:15:17.025064Z",
+          "returned_at": "2026-10-20T11:15:17.046277Z",
+          "seconds_from_source": 114.738298,
+          "tool_duration_seconds": 0.027875,
+          "search_query": "AI selloff"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:25.701793Z",
+          "answered_at": "2026-10-20T11:15:26.647741Z",
+          "returned_at": "2026-10-20T11:15:26.663703Z",
+          "seconds_from_source": 123.421689,
+          "tool_duration_seconds": 0.96191,
+          "public_url": "https://www.coindesk.com/markets/2026/10/20/live-updates-market-jitters-persist-as-the-ai-selloff-deepens"
+        },
+        {
+          "tool": "web_search",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:15:31.665128Z",
+          "answered_at": "2026-10-20T11:16:40.563936Z",
+          "returned_at": "2026-10-20T11:16:40.643056Z",
+          "seconds_from_source": 129.385024,
+          "tool_duration_seconds": 68.977928,
+          "search_query": "site.finma.ch 2026 bitcoin ETF October 20 exemption"
+        },
+        {
+          "tool": "get_registry",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:40.665332Z",
+          "answered_at": "2026-10-20T11:16:41.339020Z",
+          "returned_at": "2026-10-20T11:16:41.360504Z",
+          "seconds_from_source": 198.385228,
+          "tool_duration_seconds": 0.695172
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:41.385809Z",
+          "answered_at": "2026-10-20T11:16:41.404972Z",
+          "returned_at": "2026-10-20T11:16:41.427285Z",
+          "seconds_from_source": 199.105705,
+          "tool_duration_seconds": 0.041476,
+          "search_query": "FINMA"
+        },
+        {
+          "tool": "record_event",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:17:04.195555Z",
+          "answered_at": "2026-10-20T11:17:04.528372Z",
+          "returned_at": "2026-10-20T11:17:04.545107Z",
+          "seconds_from_source": 221.915451,
+          "tool_duration_seconds": 0.349552
+        }
+      ]
+    },
+    {
+      "event_id": "EVT-01M5CGF1071TZ6RTFYX6Y44VP4",
+      "session_id": "session__z8apehkDy0LZ0lep8bb5",
+      "source_observed_at": "2026-10-20T11:13:22.280104Z",
+      "record_event_requested_at": "2026-10-20T11:17:07.195672Z",
+      "source_to_record_returned_seconds": 225.082359,
+      "initial_queue_seconds": 146.383,
+      "initial_native_claimed_at": "2026-10-20T11:15:54.708000Z",
+      "first_model_request_start_at": "2026-10-20T11:16:13.065000Z",
+      "claim_to_first_model_seconds": 18.357,
+      "model_request_sum_seconds": 40.043,
+      "model_requests": [
+        {
+          "start_id": "sevt-8w3zszivwk8uk28t",
+          "end_id": "sevt_b9VZunyCp8ACE6wKyiL9d",
+          "start_at": "2026-10-20T11:16:13.065000Z",
+          "end_at": "2026-10-20T11:16:19.282000Z",
+          "elapsed_seconds": 6.217,
+          "input_tokens": 1628,
+          "output_tokens": 66
+        },
+        {
+          "start_id": "sevt-4f38qjfvojur8z04",
+          "end_id": "sevt_afRpiiEZZ7NtR__Q2H0GN",
+          "start_at": "2026-10-20T11:16:19.467000Z",
+          "end_at": "2026-10-20T11:16:26.605000Z",
+          "elapsed_seconds": 7.138,
+          "input_tokens": 8596,
+          "output_tokens": 98
+        },
+        {
+          "start_id": "sevt-3pgnvmai4w6m4azf",
+          "end_id": "sevt_-bznQE6tRsMtwtdIj82A2",
+          "start_at": "2026-10-20T11:16:27.004000Z",
+          "end_at": "2026-10-20T11:16:28.300000Z",
+          "elapsed_seconds": 1.296,
+          "input_tokens": 0,
+          "output_tokens": 0
+        },
+        {
+          "start_id": "sevt-0sxf639lpz630z88",
+          "end_id": "sevt_m51VD0_pa5Gt5u3UYO_l7",
+          "start_at": "2026-10-20T11:16:30.309000Z",
+          "end_at": "2026-10-20T11:16:34.639000Z",
+          "elapsed_seconds": 4.33,
+          "input_tokens": 38048,
+          "output_tokens": 57
+        },
+        {
+          "start_id": "sevt-5maaglbw17wsgn0g",
+          "end_id": "sevt_Kqz_wst7teFmw3arBZMnG",
+          "start_at": "2026-10-20T11:16:38.810000Z",
+          "end_at": "2026-10-20T11:16:46.500000Z",
+          "elapsed_seconds": 7.69,
+          "input_tokens": 43913,
+          "output_tokens": 148
+        },
+        {
+          "start_id": "sevt-u96nrknhno2gmhmt",
+          "end_id": "sevt_Ukl76hDqLZPSnfyMYBDeh",
+          "start_at": "2026-10-20T11:16:53.816000Z",
+          "end_at": "2026-10-20T11:17:07.188000Z",
+          "elapsed_seconds": 13.372,
+          "input_tokens": 44949,
+          "output_tokens": 683
+        }
+      ],
+      "native_queue_union_seconds": 157.016,
+      "continuation_queue_union_seconds": 10.633,
+      "queued_with_no_execution_running_seconds": 156.691,
+      "native_active_union_seconds": 61.149672119140625,
+      "native_executions": [
+        {
+          "id": "sevt_req_a9bcb960f77d0ab60f663e10d7da07bef65930414364bb605a10ad972b0edb7e_0",
+          "session_id": "session__z8apehkDy0LZ0lep8bb5",
+          "event_types": [
+            "user.message"
+          ],
+          "claimed_at_ms": 1792494954708,
+          "settled_at_ms": 1792494986889,
+          "admitted_at_ms": 1792494808325
+        },
+        {
+          "id": "sevt_req_dfa184b1a77986f625d6d81af837ea1bdaa745b49a8fa506b70f958f8af5eb5a_0",
+          "session_id": "session__z8apehkDy0LZ0lep8bb5",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494986890,
+          "settled_at_ms": 1792494986915,
+          "admitted_at_ms": 1792494986614
+        },
+        {
+          "id": "sevt_req_e0f492c33b2862d37f08ebc28141817999d7be4f9df50dd347a497612090c40c_0",
+          "session_id": "session__z8apehkDy0LZ0lep8bb5",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494986916,
+          "settled_at_ms": 1792494986941,
+          "admitted_at_ms": 1792494986645
+        },
+        {
+          "id": "sevt_req_5063d3be74573d7b3ab19ed22b8467ad33201b66820596f7cd198bd0224c2477_0",
+          "session_id": "session__z8apehkDy0LZ0lep8bb5",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494986942,
+          "settled_at_ms": 1792494994670,
+          "admitted_at_ms": 1792494986725
+        },
+        {
+          "id": "sevt_req_4c11aeca14880e66bfecf4fab7b1e0b12bb0178e75691b0fd6b37b5603ece31c_0",
+          "session_id": "session__z8apehkDy0LZ0lep8bb5",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792494998777,
+          "settled_at_ms": 1792495006539,
+          "admitted_at_ms": 1792494995456
+        },
+        {
+          "id": "sevt_req_a517b0667cbe0525f052837b04f46103225f90dd9e6646cc41f976020c32c875_0",
+          "session_id": "session__z8apehkDy0LZ0lep8bb5",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495013767,
+          "settled_at_ms": 1792495027211,
+          "admitted_at_ms": 1792495006783
+        }
+      ],
+      "external_host_tool_wall_seconds": 1.09657,
+      "external_checks": [
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:34.651772Z",
+          "answered_at": "2026-10-20T11:16:35.447203Z",
+          "returned_at": "2026-10-20T11:16:35.465122Z",
+          "seconds_from_source": 192.371668,
+          "tool_duration_seconds": 0.81335,
+          "public_url": "https://www.coindesk.com/markets/2026/10/19/live-updates-bitcoin-tags-usd83-000-and-slips-back-as-chip-stocks-lead-a-rebound"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:46.509733Z",
+          "answered_at": "2026-10-20T11:16:46.775766Z",
+          "returned_at": "2026-10-20T11:16:46.792953Z",
+          "seconds_from_source": 204.229629,
+          "tool_duration_seconds": 0.28322,
+          "public_url": "https://api.exchange.coinbase.com/products/BTC-USD/candles"
+        }
+      ],
+      "all_pre_record_tools": [
+        {
+          "tool": "get_item",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:26.601448Z",
+          "answered_at": "2026-10-20T11:16:26.608377Z",
+          "returned_at": "2026-10-20T11:16:26.622238Z",
+          "seconds_from_source": 184.321344,
+          "tool_duration_seconds": 0.02079
+        },
+        {
+          "tool": "list_open_events",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:26.631354Z",
+          "answered_at": "2026-10-20T11:16:26.639239Z",
+          "returned_at": "2026-10-20T11:16:26.654138Z",
+          "seconds_from_source": 184.35125,
+          "tool_duration_seconds": 0.022784
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:26.661318Z",
+          "answered_at": "2026-10-20T11:16:26.703580Z",
+          "returned_at": "2026-10-20T11:16:26.745879Z",
+          "seconds_from_source": 184.381214,
+          "tool_duration_seconds": 0.084561,
+          "search_query": "Bitcoin Nasdaq rebounds"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:34.651772Z",
+          "answered_at": "2026-10-20T11:16:35.447203Z",
+          "returned_at": "2026-10-20T11:16:35.465122Z",
+          "seconds_from_source": 192.371668,
+          "tool_duration_seconds": 0.81335,
+          "public_url": "https://www.coindesk.com/markets/2026/10/19/live-updates-bitcoin-tags-usd83-000-and-slips-back-as-chip-stocks-lead-a-rebound"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:46.509733Z",
+          "answered_at": "2026-10-20T11:16:46.775766Z",
+          "returned_at": "2026-10-20T11:16:46.792953Z",
+          "seconds_from_source": 204.229629,
+          "tool_duration_seconds": 0.28322,
+          "public_url": "https://api.exchange.coinbase.com/products/BTC-USD/candles"
+        },
+        {
+          "tool": "record_event",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:17:07.195672Z",
+          "answered_at": "2026-10-20T11:17:07.348189Z",
+          "returned_at": "2026-10-20T11:17:07.362463Z",
+          "seconds_from_source": 224.915568,
+          "tool_duration_seconds": 0.166791
+        }
+      ]
+    },
+    {
+      "event_id": "EVT-01M5CGFNW2QKNK717FXD04VGTE",
+      "session_id": "session_xzOpIWegZGWWsRvfptdVo",
+      "source_observed_at": "2026-10-20T11:13:22.280104Z",
+      "record_event_requested_at": "2026-10-20T11:17:28.476487Z",
+      "source_to_record_returned_seconds": 247.712232,
+      "initial_queue_seconds": 180.337,
+      "initial_native_claimed_at": "2026-10-20T11:16:29.030000Z",
+      "first_model_request_start_at": "2026-10-20T11:16:42.401000Z",
+      "claim_to_first_model_seconds": 13.371,
+      "model_request_sum_seconds": 29.646,
+      "model_requests": [
+        {
+          "start_id": "sevt-9y87m2vf5e10d9hh",
+          "end_id": "sevt_0y3427lFdxKXaTVBsJVTh",
+          "start_at": "2026-10-20T11:16:42.401000Z",
+          "end_at": "2026-10-20T11:16:46.220000Z",
+          "elapsed_seconds": 3.819,
+          "input_tokens": 1618,
+          "output_tokens": 66
+        },
+        {
+          "start_id": "sevt-47iduxcuxkp4lidm",
+          "end_id": "sevt_Tw5qiadX5tK_mWcg2HW-5",
+          "start_at": "2026-10-20T11:16:46.662000Z",
+          "end_at": "2026-10-20T11:16:50.591000Z",
+          "elapsed_seconds": 3.929,
+          "input_tokens": 8871,
+          "output_tokens": 95
+        },
+        {
+          "start_id": "sevt-ou2r2s0gftl9sxl7",
+          "end_id": "sevt_V-4LUZyHPuswA3m7Sy_E0",
+          "start_at": "2026-10-20T11:16:55.940000Z",
+          "end_at": "2026-10-20T11:16:58.874000Z",
+          "elapsed_seconds": 2.934,
+          "input_tokens": 14229,
+          "output_tokens": 61
+        },
+        {
+          "start_id": "sevt-1njdv54h4i9ms6ie",
+          "end_id": "sevt_qVmliSTT6wdeF7Vw9G_ea",
+          "start_at": "2026-10-20T11:17:04.278000Z",
+          "end_at": "2026-10-20T11:17:09.641000Z",
+          "elapsed_seconds": 5.363,
+          "input_tokens": 24645,
+          "output_tokens": 116
+        },
+        {
+          "start_id": "sevt-0c3savz4y9ehm3n2",
+          "end_id": "sevt_or2i-8FPSgdPjQ17L60oY",
+          "start_at": "2026-10-20T11:17:14.765000Z",
+          "end_at": "2026-10-20T11:17:28.366000Z",
+          "elapsed_seconds": 13.601,
+          "input_tokens": 19320,
+          "output_tokens": 641
+        }
+      ],
+      "native_queue_union_seconds": 192.935,
+      "continuation_queue_union_seconds": 12.598,
+      "queued_with_no_execution_running_seconds": 192.885,
+      "native_active_union_seconds": 43.856,
+      "native_executions": [
+        {
+          "id": "sevt_req_c5ed855cbdfe96ff7e7bea9622bfec8332507832a0f2380ca9f7f99b30b55668_0",
+          "session_id": "session_xzOpIWegZGWWsRvfptdVo",
+          "event_types": [
+            "user.message"
+          ],
+          "claimed_at_ms": 1792494989030,
+          "settled_at_ms": 1792495010765,
+          "admitted_at_ms": 1792494808693
+        },
+        {
+          "id": "sevt_req_c5c5da3d51123c04f40af4cd7b5d73a17e741f6d392bbe34f192ac556db2ed1c_0",
+          "session_id": "session_xzOpIWegZGWWsRvfptdVo",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495015860,
+          "settled_at_ms": 1792495015882,
+          "admitted_at_ms": 1792495012516
+        },
+        {
+          "id": "sevt_req_04441355b5b997ee8b92dc54ff3c063ea73909e1fd3ad4901a1c15af58734c61_0",
+          "session_id": "session_xzOpIWegZGWWsRvfptdVo",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495015883,
+          "settled_at_ms": 1792495015911,
+          "admitted_at_ms": 1792495012545
+        },
+        {
+          "id": "sevt_req_01b5ae3b8adc43430d169e5811d8485ebed8b231b8fde83af986be9d40593c2c_0",
+          "session_id": "session_xzOpIWegZGWWsRvfptdVo",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495015912,
+          "settled_at_ms": 1792495018900,
+          "admitted_at_ms": 1792495012586
+        },
+        {
+          "id": "sevt_req_635e22381ede58e1ddec4ee0aa59c98c0a7d5b124282bdf2acd5824bacb977a9_0",
+          "session_id": "session_xzOpIWegZGWWsRvfptdVo",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495024242,
+          "settled_at_ms": 1792495029660,
+          "admitted_at_ms": 1792495019867
+        },
+        {
+          "id": "sevt_req_e5652c94fb7680814e7d40386d9c59e13350a2abd6118ae44eaeb6e2160f4aca_0",
+          "session_id": "session_xzOpIWegZGWWsRvfptdVo",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495034730,
+          "settled_at_ms": 1792495048395,
+          "admitted_at_ms": 1792495029903
+        }
+      ],
+      "external_host_tool_wall_seconds": 1.2558989999999999,
+      "external_checks": [
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:58.882147Z",
+          "answered_at": "2026-10-20T11:16:59.860684Z",
+          "returned_at": "2026-10-20T11:16:59.875744Z",
+          "seconds_from_source": 216.602043,
+          "tool_duration_seconds": 0.993597,
+          "public_url": "https://www.coindesk.com/markets/2026/10/19/bitcoin-extends-bounce-above-usd82-000-as-stocks-rebound-defi-tokens-lead-altcoin-gains"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:17:09.647368Z",
+          "answered_at": "2026-10-20T11:17:09.897740Z",
+          "returned_at": "2026-10-20T11:17:09.909670Z",
+          "seconds_from_source": 227.367264,
+          "tool_duration_seconds": 0.262302,
+          "public_url": "https://api.exchange.coinbase.com/products/BTC-USD/candles"
+        }
+      ],
+      "all_pre_record_tools": [
+        {
+          "tool": "get_item",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:50.587067Z",
+          "answered_at": "2026-10-20T11:16:50.594398Z",
+          "returned_at": "2026-10-20T11:16:52.524422Z",
+          "seconds_from_source": 208.306963,
+          "tool_duration_seconds": 1.937355
+        },
+        {
+          "tool": "list_open_events",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:52.532250Z",
+          "answered_at": "2026-10-20T11:16:52.539141Z",
+          "returned_at": "2026-10-20T11:16:52.563892Z",
+          "seconds_from_source": 210.252146,
+          "tool_duration_seconds": 0.031642
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:52.572005Z",
+          "answered_at": "2026-10-20T11:16:52.581551Z",
+          "returned_at": "2026-10-20T11:16:52.593078Z",
+          "seconds_from_source": 210.291901,
+          "tool_duration_seconds": 0.021073,
+          "search_query": "Bitcoin extends bounce"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:58.882147Z",
+          "answered_at": "2026-10-20T11:16:59.860684Z",
+          "returned_at": "2026-10-20T11:16:59.875744Z",
+          "seconds_from_source": 216.602043,
+          "tool_duration_seconds": 0.993597,
+          "public_url": "https://www.coindesk.com/markets/2026/10/19/bitcoin-extends-bounce-above-usd82-000-as-stocks-rebound-defi-tokens-lead-altcoin-gains"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:17:09.647368Z",
+          "answered_at": "2026-10-20T11:17:09.897740Z",
+          "returned_at": "2026-10-20T11:17:09.909670Z",
+          "seconds_from_source": 227.367264,
+          "tool_duration_seconds": 0.262302,
+          "public_url": "https://api.exchange.coinbase.com/products/BTC-USD/candles"
+        },
+        {
+          "tool": "record_event",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:17:28.476487Z",
+          "answered_at": "2026-10-20T11:17:29.296910Z",
+          "returned_at": "2026-10-20T11:17:29.992336Z",
+          "seconds_from_source": 246.196383,
+          "tool_duration_seconds": 1.515849
+        }
+      ]
+    },
+    {
+      "event_id": "EVT-01M5CGHEX470J98Y9PRMS5T4JN",
+      "session_id": "session_kRwbwhMcRY0LV4dPxpj6a",
+      "source_observed_at": "2026-10-20T11:13:22.280104Z",
+      "record_event_requested_at": "2026-10-20T11:18:26.757436Z",
+      "source_to_record_returned_seconds": 305.033852,
+      "initial_queue_seconds": 168.711,
+      "initial_native_claimed_at": "2026-10-20T11:16:17.037000Z",
+      "first_model_request_start_at": "2026-10-20T11:16:31.705000Z",
+      "claim_to_first_model_seconds": 14.668,
+      "model_request_sum_seconds": 23.88,
+      "model_requests": [
+        {
+          "start_id": "sevt-d6yhs4lj156vwq9y",
+          "end_id": "sevt_ahnzSifcNqXcXCFIk2PfU",
+          "start_at": "2026-10-20T11:16:31.705000Z",
+          "end_at": "2026-10-20T11:16:34.695000Z",
+          "elapsed_seconds": 2.99,
+          "input_tokens": 1607,
+          "output_tokens": 66
+        },
+        {
+          "start_id": "sevt-ry4u0qlwdkrx1zks",
+          "end_id": "sevt_beJyxDibREC3r2zIBUhll",
+          "start_at": "2026-10-20T11:16:34.979000Z",
+          "end_at": "2026-10-20T11:16:38.482000Z",
+          "elapsed_seconds": 3.503,
+          "input_tokens": 8860,
+          "output_tokens": 117
+        },
+        {
+          "start_id": "sevt-e668ni4rfoq3z0re",
+          "end_id": "sevt_gubuCkdtEVrzWxFjgOjK-",
+          "start_at": "2026-10-20T11:16:50.899000Z",
+          "end_at": "2026-10-20T11:16:55.835000Z",
+          "elapsed_seconds": 4.936,
+          "input_tokens": 55251,
+          "output_tokens": 102
+        },
+        {
+          "start_id": "sevt-k91jjlh8w8lmu2wb",
+          "end_id": "sevt_Tq7fyvaZpa_aJL-9GLyLU",
+          "start_at": "2026-10-20T11:18:10.519000Z",
+          "end_at": "2026-10-20T11:18:12.941000Z",
+          "elapsed_seconds": 2.422,
+          "input_tokens": 58429,
+          "output_tokens": 33
+        },
+        {
+          "start_id": "sevt-gpoo6t6sbwdn3g1y",
+          "end_id": "sevt_2UlPBNSU2o-VFR2Fk-n9v",
+          "start_at": "2026-10-20T11:18:16.360000Z",
+          "end_at": "2026-10-20T11:18:26.389000Z",
+          "elapsed_seconds": 10.029,
+          "input_tokens": 75671,
+          "output_tokens": 447
+        }
+      ],
+      "native_queue_union_seconds": 196.823,
+      "continuation_queue_union_seconds": 28.112,
+      "queued_with_no_execution_running_seconds": 196.737,
+      "native_active_union_seconds": 39.429,
+      "native_executions": [
+        {
+          "id": "sevt_req_adf8e74a8da238fbfe092caba62a56ec3fff8f6c60b5a01c8867790cfcb42e66_0",
+          "session_id": "session_kRwbwhMcRY0LV4dPxpj6a",
+          "event_types": [
+            "user.message"
+          ],
+          "claimed_at_ms": 1792494977037,
+          "settled_at_ms": 1792494998776,
+          "admitted_at_ms": 1792494808326
+        },
+        {
+          "id": "sevt_req_2211a5cd9b5f267b063c846b5f5bcaf9177aa0954f1d8be1be00e98e180ef261_0",
+          "session_id": "session_kRwbwhMcRY0LV4dPxpj6a",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495010766,
+          "settled_at_ms": 1792495010792,
+          "admitted_at_ms": 1792494999626
+        },
+        {
+          "id": "sevt_req_40b6a773e7844829e5826fa7302b0adaa1394cdb5ffdd7bf77066e0119b5d3e5_0",
+          "session_id": "session_kRwbwhMcRY0LV4dPxpj6a",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495010793,
+          "settled_at_ms": 1792495010821,
+          "admitted_at_ms": 1792494999655
+        },
+        {
+          "id": "sevt_req_23aba45b919b9aaa5e6eb1b2864c44374ce3784560fd35ef13ce82340d129cc7_0",
+          "session_id": "session_kRwbwhMcRY0LV4dPxpj6a",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495010822,
+          "settled_at_ms": 1792495010854,
+          "admitted_at_ms": 1792494999708
+        },
+        {
+          "id": "sevt_req_a42f48a63524fb461f3d24fee71590d1dff0e6496a074f3c2ab168574433b7b7_0",
+          "session_id": "session_kRwbwhMcRY0LV4dPxpj6a",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495010857,
+          "settled_at_ms": 1792495015859,
+          "admitted_at_ms": 1792495000565
+        },
+        {
+          "id": "sevt_req_7334d70d6fabb27200995bbe3db0244d89bb4ef505a36796a725a3ee9a13be21_0",
+          "session_id": "session_kRwbwhMcRY0LV4dPxpj6a",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495024215,
+          "settled_at_ms": 1792495024241,
+          "admitted_at_ms": 1792495016724
+        },
+        {
+          "id": "sevt_req_11f0c1943abd051710c2f0aa27b33c11fdab4752e59ccdb17d41a938f00f6b13_0",
+          "session_id": "session_kRwbwhMcRY0LV4dPxpj6a",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495090477,
+          "settled_at_ms": 1792495092966,
+          "admitted_at_ms": 1792495082508
+        },
+        {
+          "id": "sevt_req_0ab9d614faeb12c70143cbbdeca6bd3dbceea46956b2bfccd4587e3c0583a6b5_0",
+          "session_id": "session_kRwbwhMcRY0LV4dPxpj6a",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495096320,
+          "settled_at_ms": 1792495106407,
+          "admitted_at_ms": 1792495094899
+        }
+      ],
+      "external_host_tool_wall_seconds": 66.674933,
+      "external_checks": [
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:55.838868Z",
+          "answered_at": "2026-10-20T11:16:56.717220Z",
+          "returned_at": "2026-10-20T11:16:56.732844Z",
+          "seconds_from_source": 213.558764,
+          "tool_duration_seconds": 0.893976,
+          "public_url": "https://www.coindesk.com/markets/2026/10/19/jpmorgan-s-jpm-coin-representing-dollar-deposits-is-coming-to-ethereum-bloomberg"
+        },
+        {
+          "tool": "web_search",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:56.743300Z",
+          "answered_at": "2026-10-20T11:18:02.498596Z",
+          "returned_at": "2026-10-20T11:18:02.524257Z",
+          "seconds_from_source": 214.463196,
+          "tool_duration_seconds": 65.780957,
+          "search_query": "site.jpmorgan.com \"JPM Coin\" \"Ethereum\" October 2026"
+        }
+      ],
+      "all_pre_record_tools": [
+        {
+          "tool": "get_item",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:38.456966Z",
+          "answered_at": "2026-10-20T11:16:38.474028Z",
+          "returned_at": "2026-10-20T11:16:39.632874Z",
+          "seconds_from_source": 196.176862,
+          "tool_duration_seconds": 1.175908
+        },
+        {
+          "tool": "list_open_events",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:39.641303Z",
+          "answered_at": "2026-10-20T11:16:39.649857Z",
+          "returned_at": "2026-10-20T11:16:39.661546Z",
+          "seconds_from_source": 197.361199,
+          "tool_duration_seconds": 0.020243
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:39.671271Z",
+          "answered_at": "2026-10-20T11:16:39.681267Z",
+          "returned_at": "2026-10-20T11:16:39.733315Z",
+          "seconds_from_source": 197.391167,
+          "tool_duration_seconds": 0.062044,
+          "search_query": "JPM Coin Ethereum"
+        },
+        {
+          "tool": "get_registry",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:39.776148Z",
+          "answered_at": "2026-10-20T11:16:40.492019Z",
+          "returned_at": "2026-10-20T11:16:40.577585Z",
+          "seconds_from_source": 197.496044,
+          "tool_duration_seconds": 0.801437
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:55.838868Z",
+          "answered_at": "2026-10-20T11:16:56.717220Z",
+          "returned_at": "2026-10-20T11:16:56.732844Z",
+          "seconds_from_source": 213.558764,
+          "tool_duration_seconds": 0.893976,
+          "public_url": "https://www.coindesk.com/markets/2026/10/19/jpmorgan-s-jpm-coin-representing-dollar-deposits-is-coming-to-ethereum-bloomberg"
+        },
+        {
+          "tool": "web_search",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:16:56.743300Z",
+          "answered_at": "2026-10-20T11:18:02.498596Z",
+          "returned_at": "2026-10-20T11:18:02.524257Z",
+          "seconds_from_source": 214.463196,
+          "tool_duration_seconds": 65.780957,
+          "search_query": "site.jpmorgan.com \"JPM Coin\" \"Ethereum\" October 2026"
+        },
+        {
+          "tool": "get_registry",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:18:13.147065Z",
+          "answered_at": "2026-10-20T11:18:14.308176Z",
+          "returned_at": "2026-10-20T11:18:14.941204Z",
+          "seconds_from_source": 290.866961,
+          "tool_duration_seconds": 1.794139
+        },
+        {
+          "tool": "record_event",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:18:26.757436Z",
+          "answered_at": "2026-10-20T11:18:27.277011Z",
+          "returned_at": "2026-10-20T11:18:27.313956Z",
+          "seconds_from_source": 304.477332,
+          "tool_duration_seconds": 0.55652
+        }
+      ]
+    },
+    {
+      "event_id": "EVT-01M5CGHHEBSSV0RR1Z93BM2SAN",
+      "session_id": "session_nwmEyfAn42T9oM-lNRIej",
+      "source_observed_at": "2026-10-20T11:13:22.280104Z",
+      "record_event_requested_at": "2026-10-20T11:18:28.855218Z",
+      "source_to_record_returned_seconds": 308.751218,
+      "initial_queue_seconds": 229.696,
+      "initial_native_claimed_at": "2026-10-20T11:17:18.396000Z",
+      "first_model_request_start_at": "2026-10-20T11:17:48.676000Z",
+      "claim_to_first_model_seconds": 30.28,
+      "model_request_sum_seconds": 27.855,
+      "model_requests": [
+        {
+          "start_id": "sevt-q4n5n8jqs1iyrgm8",
+          "end_id": "sevt_vpPVBQuIButE6ERloOK24",
+          "start_at": "2026-10-20T11:17:48.676000Z",
+          "end_at": "2026-10-20T11:17:51.731000Z",
+          "elapsed_seconds": 3.055,
+          "input_tokens": 8282,
+          "output_tokens": 66
+        },
+        {
+          "start_id": "sevt-v2f1j1oy38zngzcj",
+          "end_id": "sevt_Kk2DjPjUWZXH4sPk1qDs8",
+          "start_at": "2026-10-20T11:17:51.857000Z",
+          "end_at": "2026-10-20T11:17:56.267000Z",
+          "elapsed_seconds": 4.41,
+          "input_tokens": 8879,
+          "output_tokens": 114
+        },
+        {
+          "start_id": "sevt-yc6flkm455n0tb0b",
+          "end_id": "sevt_Ga6CHwao5Vyp4onDFg1MZ",
+          "start_at": "2026-10-20T11:18:00.014000Z",
+          "end_at": "2026-10-20T11:18:04.703000Z",
+          "elapsed_seconds": 4.689,
+          "input_tokens": 17322,
+          "output_tokens": 96
+        },
+        {
+          "start_id": "sevt-wpsctboj81o72cyf",
+          "end_id": "sevt_lsUR_QFrzVtlrjDExv7ql",
+          "start_at": "2026-10-20T11:18:13.014000Z",
+          "end_at": "2026-10-20T11:18:28.715000Z",
+          "elapsed_seconds": 15.701,
+          "input_tokens": 20628,
+          "output_tokens": 679
+        }
+      ],
+      "native_queue_union_seconds": 238.754,
+      "continuation_queue_union_seconds": 9.058,
+      "queued_with_no_execution_running_seconds": 238.64499999999998,
+      "native_active_union_seconds": 59.15,
+      "native_executions": [
+        {
+          "id": "sevt_req_4df31422735e2e21007faf0d0cb736fde023cec139edc004e212f244e841e506_0",
+          "session_id": "session_nwmEyfAn42T9oM-lNRIej",
+          "event_types": [
+            "user.message"
+          ],
+          "claimed_at_ms": 1792495038396,
+          "settled_at_ms": 1792495076843,
+          "admitted_at_ms": 1792494808700
+        },
+        {
+          "id": "sevt_req_dea2884793a8f78b3d39b49f26f02a95c5986458cf6ea3dfd5eff17970b972db_0",
+          "session_id": "session_nwmEyfAn42T9oM-lNRIej",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495079867,
+          "settled_at_ms": 1792495079893,
+          "admitted_at_ms": 1792495078329
+        },
+        {
+          "id": "sevt_req_a1eac4635697f7422ffd583fd1a5cbe0d4799ef700df4a128de669c5994d7b44_0",
+          "session_id": "session_nwmEyfAn42T9oM-lNRIej",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495079897,
+          "settled_at_ms": 1792495079929,
+          "admitted_at_ms": 1792495078363
+        },
+        {
+          "id": "sevt_req_453cafc257a62d8066a4a896a079fd81d96a2fd04ea7ca284a655380fb30a746_0",
+          "session_id": "session_nwmEyfAn42T9oM-lNRIej",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495079931,
+          "settled_at_ms": 1792495079959,
+          "admitted_at_ms": 1792495078413
+        },
+        {
+          "id": "sevt_req_8e25d644343308d30e34fcac49c8c25587e573e49532d6d6b31c5a3f4d53b599_0",
+          "session_id": "session_nwmEyfAn42T9oM-lNRIej",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495079960,
+          "settled_at_ms": 1792495084779,
+          "admitted_at_ms": 1792495079211
+        },
+        {
+          "id": "sevt_req_af892f559c84cdbd6e0be9fe080668e8a5f0a0a2b6faa3be4bf555fc2f8c1ffe_0",
+          "session_id": "session_nwmEyfAn42T9oM-lNRIej",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495090758,
+          "settled_at_ms": 1792495090781,
+          "admitted_at_ms": 1792495085542
+        },
+        {
+          "id": "sevt_req_d35ff6999c6c3483b342d4e8c1ca18f8f2f79822e4b9ca90ea75b928f6b1ba24_0",
+          "session_id": "session_nwmEyfAn42T9oM-lNRIej",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495092969,
+          "settled_at_ms": 1792495108744,
+          "admitted_at_ms": 1792495086569
+        }
+      ],
+      "external_host_tool_wall_seconds": 1.846098,
+      "external_checks": [
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:18:04.715932Z",
+          "answered_at": "2026-10-20T11:18:05.513541Z",
+          "returned_at": "2026-10-20T11:18:05.639301Z",
+          "seconds_from_source": 282.435828,
+          "tool_duration_seconds": 0.923369,
+          "public_url": "https://www.coindesk.com/tech/2026/10/19/bitcoin-mining-offshoot-nscale-loses-microsoft-ai-deal-as-power-delay-stretches-into-2030s"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "ERROR",
+          "requested_at": "2026-10-20T11:18:05.670489Z",
+          "answered_at": "2026-10-20T11:18:06.552212Z",
+          "returned_at": "2026-10-20T11:18:06.593218Z",
+          "seconds_from_source": 283.390385,
+          "tool_duration_seconds": 0.922729,
+          "public_url": "https://www.nscale.com/news",
+          "error": {
+            "type": "HTTPStatusError",
+            "reason": "Source request failed (HTTP 404)",
+            "category": "SOURCE_HTTP"
+          }
+        }
+      ],
+      "all_pre_record_tools": [
+        {
+          "tool": "get_item",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:17:56.257408Z",
+          "answered_at": "2026-10-20T11:17:56.264863Z",
+          "returned_at": "2026-10-20T11:17:58.337274Z",
+          "seconds_from_source": 273.977304,
+          "tool_duration_seconds": 2.079866
+        },
+        {
+          "tool": "list_open_events",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:17:58.349945Z",
+          "answered_at": "2026-10-20T11:17:58.358798Z",
+          "returned_at": "2026-10-20T11:17:58.374105Z",
+          "seconds_from_source": 276.069841,
+          "tool_duration_seconds": 0.02416
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:17:58.385025Z",
+          "answered_at": "2026-10-20T11:17:58.398237Z",
+          "returned_at": "2026-10-20T11:17:58.435122Z",
+          "seconds_from_source": 276.104921,
+          "tool_duration_seconds": 0.050097,
+          "search_query": "Nscale Microsoft"
+        },
+        {
+          "tool": "get_registry",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:17:58.457577Z",
+          "answered_at": "2026-10-20T11:17:59.142044Z",
+          "returned_at": "2026-10-20T11:17:59.222080Z",
+          "seconds_from_source": 276.177473,
+          "tool_duration_seconds": 0.764503
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:18:04.715932Z",
+          "answered_at": "2026-10-20T11:18:05.513541Z",
+          "returned_at": "2026-10-20T11:18:05.639301Z",
+          "seconds_from_source": 282.435828,
+          "tool_duration_seconds": 0.923369,
+          "public_url": "https://www.coindesk.com/tech/2026/10/19/bitcoin-mining-offshoot-nscale-loses-microsoft-ai-deal-as-power-delay-stretches-into-2030s"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "ERROR",
+          "requested_at": "2026-10-20T11:18:05.670489Z",
+          "answered_at": "2026-10-20T11:18:06.552212Z",
+          "returned_at": "2026-10-20T11:18:06.593218Z",
+          "seconds_from_source": 283.390385,
+          "tool_duration_seconds": 0.922729,
+          "public_url": "https://www.nscale.com/news",
+          "error": {
+            "type": "HTTPStatusError",
+            "reason": "Source request failed (HTTP 404)",
+            "category": "SOURCE_HTTP"
+          }
+        },
+        {
+          "tool": "record_event",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:18:28.855218Z",
+          "answered_at": "2026-10-20T11:18:30.724836Z",
+          "returned_at": "2026-10-20T11:18:31.031322Z",
+          "seconds_from_source": 306.575114,
+          "tool_duration_seconds": 2.176104
+        }
+      ]
+    },
+    {
+      "event_id": "EVT-01M5CGHW9B7KXS0VGKBAHV3Y82",
+      "session_id": "session_a2vH79HapD5te9eZWnUg2",
+      "source_observed_at": "2026-10-20T11:13:22.280104Z",
+      "record_event_requested_at": "2026-10-20T11:18:40.410981Z",
+      "source_to_record_returned_seconds": 319.145635,
+      "initial_queue_seconds": 228.145,
+      "initial_native_claimed_at": "2026-10-20T11:17:16.842000Z",
+      "first_model_request_start_at": "2026-10-20T11:17:42.612000Z",
+      "claim_to_first_model_seconds": 25.77,
+      "model_request_sum_seconds": 32.173,
+      "model_requests": [
+        {
+          "start_id": "sevt-ozoxv2zfb2lkrpo3",
+          "end_id": "sevt_C90HAVdvt0fxgTwprHrDI",
+          "start_at": "2026-10-20T11:17:42.612000Z",
+          "end_at": "2026-10-20T11:17:46.465000Z",
+          "elapsed_seconds": 3.853,
+          "input_tokens": 1608,
+          "output_tokens": 66
+        },
+        {
+          "start_id": "sevt-jq5u0jwwxxeqssda",
+          "end_id": "sevt_EuFDW-ZIOcjeYrAnTwo7q",
+          "start_at": "2026-10-20T11:17:46.989000Z",
+          "end_at": "2026-10-20T11:17:50.693000Z",
+          "elapsed_seconds": 3.704,
+          "input_tokens": 8576,
+          "output_tokens": 95
+        },
+        {
+          "start_id": "sevt-ew7f3rws6gcuvwu6",
+          "end_id": "sevt_U8gNaE728RdmInVgqkFjo",
+          "start_at": "2026-10-20T11:17:56.882000Z",
+          "end_at": "2026-10-20T11:17:59.834000Z",
+          "elapsed_seconds": 2.952,
+          "input_tokens": 21432,
+          "output_tokens": 58
+        },
+        {
+          "start_id": "sevt-g44sf8of2o65yhz0",
+          "end_id": "sevt_ccUs6V01702lHx8XyW1SQ",
+          "start_at": "2026-10-20T11:18:05.898000Z",
+          "end_at": "2026-10-20T11:18:10.728000Z",
+          "elapsed_seconds": 4.83,
+          "input_tokens": 17671,
+          "output_tokens": 53
+        },
+        {
+          "start_id": "sevt-h4gz3de62ha8rjy5",
+          "end_id": "sevt_eqZMG9etWfmcXoApAxhOq",
+          "start_at": "2026-10-20T11:18:13.611000Z",
+          "end_at": "2026-10-20T11:18:16.297000Z",
+          "elapsed_seconds": 2.686,
+          "input_tokens": 17761,
+          "output_tokens": 45
+        },
+        {
+          "start_id": "sevt-iqapd5eub6aalne9",
+          "end_id": "sevt_eL1oz83YWdUmRiV75Y1LK",
+          "start_at": "2026-10-20T11:18:26.158000Z",
+          "end_at": "2026-10-20T11:18:40.306000Z",
+          "elapsed_seconds": 14.148,
+          "input_tokens": 21527,
+          "output_tokens": 691
+        }
+      ],
+      "native_queue_union_seconds": 248.107,
+      "continuation_queue_union_seconds": 19.962,
+      "queued_with_no_execution_running_seconds": 247.766,
+      "native_active_union_seconds": 59.441,
+      "native_executions": [
+        {
+          "id": "sevt_req_aeb35f9885355523195931de9b3a5a8fe2b95cbe284de2dd8a1a6e9aa10b1af2_0",
+          "session_id": "session_a2vH79HapD5te9eZWnUg2",
+          "event_types": [
+            "user.message"
+          ],
+          "claimed_at_ms": 1792495036842,
+          "settled_at_ms": 1792495071347,
+          "admitted_at_ms": 1792494808697
+        },
+        {
+          "id": "sevt_req_d123c103405636ba9058cbc9893857e98926a89480186151836ffda2b00f35e0_0",
+          "session_id": "session_a2vH79HapD5te9eZWnUg2",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495071464,
+          "settled_at_ms": 1792495071489,
+          "admitted_at_ms": 1792495071031
+        },
+        {
+          "id": "sevt_req_301224412a0c42d3ffd1034b2d5aabeba72c694f2a924e5aee7d48d5c5127b4c_0",
+          "session_id": "session_a2vH79HapD5te9eZWnUg2",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495071491,
+          "settled_at_ms": 1792495071510,
+          "admitted_at_ms": 1792495071191
+        },
+        {
+          "id": "sevt_req_14ee74afc79624219ae4e78c8d709bdda7d350fc61b3900da928ec04e361d4bb_0",
+          "session_id": "session_a2vH79HapD5te9eZWnUg2",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495076844,
+          "settled_at_ms": 1792495079865,
+          "admitted_at_ms": 1792495071552
+        },
+        {
+          "id": "sevt_req_badd8814bbb52f2bdcb793083661c5fc2291d1e403c56c3b43233eea23a9e640_0",
+          "session_id": "session_a2vH79HapD5te9eZWnUg2",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495085849,
+          "settled_at_ms": 1792495090756,
+          "admitted_at_ms": 1792495080992
+        },
+        {
+          "id": "sevt_req_064fd6026935fe5de21794043ae0b50cc819196d866ed01c37f2e1539f95f9fd_0",
+          "session_id": "session_a2vH79HapD5te9eZWnUg2",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495093583,
+          "settled_at_ms": 1792495096319,
+          "admitted_at_ms": 1792495092540
+        },
+        {
+          "id": "sevt_req_f59d5e233fe8545fbf466319cd6b1ebe4fe359416352c98c0ac30357a3e95ab1_0",
+          "session_id": "session_a2vH79HapD5te9eZWnUg2",
+          "event_types": [
+            "user.custom_tool_result"
+          ],
+          "claimed_at_ms": 1792495106111,
+          "settled_at_ms": 1792495120339,
+          "admitted_at_ms": 1792495097801
+        }
+      ],
+      "external_host_tool_wall_seconds": 2.9753730000000003,
+      "external_checks": [
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:17:59.851538Z",
+          "answered_at": "2026-10-20T11:18:00.964035Z",
+          "returned_at": "2026-10-20T11:18:01.009165Z",
+          "seconds_from_source": 277.571434,
+          "tool_duration_seconds": 1.157627,
+          "public_url": "https://www.coindesk.com/markets/2026/10/19/crypto-vault-deposits-top-usd10-billion-as-lending-risks-draw-regulatory-scrutiny"
+        },
+        {
+          "tool": "web_search",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:18:10.753754Z",
+          "answered_at": "2026-10-20T11:18:12.212508Z",
+          "returned_at": "2026-10-20T11:18:12.571500Z",
+          "seconds_from_source": 288.47365,
+          "tool_duration_seconds": 1.817746,
+          "search_query": "site.sec.gov crypto lending vaults curators October 2026 oversight"
+        }
+      ],
+      "all_pre_record_tools": [
+        {
+          "tool": "get_item",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:17:50.723272Z",
+          "answered_at": "2026-10-20T11:17:50.972539Z",
+          "returned_at": "2026-10-20T11:17:51.092442Z",
+          "seconds_from_source": 268.443168,
+          "tool_duration_seconds": 0.36917
+        },
+        {
+          "tool": "list_open_events",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:17:51.140496Z",
+          "answered_at": "2026-10-20T11:17:51.169447Z",
+          "returned_at": "2026-10-20T11:17:51.218019Z",
+          "seconds_from_source": 268.860392,
+          "tool_duration_seconds": 0.077523
+        },
+        {
+          "tool": "search_tank_items",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:17:51.322407Z",
+          "answered_at": "2026-10-20T11:17:51.390246Z",
+          "returned_at": "2026-10-20T11:17:51.629551Z",
+          "seconds_from_source": 269.042303,
+          "tool_duration_seconds": 0.307144,
+          "search_query": "vault deposits"
+        },
+        {
+          "tool": "fetch_page",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:17:59.851538Z",
+          "answered_at": "2026-10-20T11:18:00.964035Z",
+          "returned_at": "2026-10-20T11:18:01.009165Z",
+          "seconds_from_source": 277.571434,
+          "tool_duration_seconds": 1.157627,
+          "public_url": "https://www.coindesk.com/markets/2026/10/19/crypto-vault-deposits-top-usd10-billion-as-lending-risks-draw-regulatory-scrutiny"
+        },
+        {
+          "tool": "web_search",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:18:10.753754Z",
+          "answered_at": "2026-10-20T11:18:12.212508Z",
+          "returned_at": "2026-10-20T11:18:12.571500Z",
+          "seconds_from_source": 288.47365,
+          "tool_duration_seconds": 1.817746,
+          "search_query": "site.sec.gov crypto lending vaults curators October 2026 oversight"
+        },
+        {
+          "tool": "get_registry",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:18:16.636939Z",
+          "answered_at": "2026-10-20T11:18:17.618961Z",
+          "returned_at": "2026-10-20T11:18:17.834367Z",
+          "seconds_from_source": 294.356835,
+          "tool_duration_seconds": 1.197428
+        },
+        {
+          "tool": "record_event",
+          "status": "DONE",
+          "requested_at": "2026-10-20T11:18:40.410981Z",
+          "answered_at": "2026-10-20T11:18:41.311600Z",
+          "returned_at": "2026-10-20T11:18:41.425739Z",
+          "seconds_from_source": 318.130877,
+          "tool_duration_seconds": 1.014758
+        }
+      ]
+    }
+  ]
+}

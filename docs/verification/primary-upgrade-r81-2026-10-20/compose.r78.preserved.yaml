@@ -1,0 +1,37 @@
+services:
+  openma:
+    image: sha256:da8d1b4c986fb852d856453a62ad56fa0cd26df17139114b9c5adf9656f00f16
+    pull_policy: never
+    environment:
+      LITEBOX_CPUS: '2'
+      LITEBOX_MEMORY_MIB: '1024'
+      BOXLITE_HOME: /app/data/boxlite-c474-primary
+      OMA_SESSION_EXECUTION_CONCURRENCY: '4'
+    volumes:
+    - type: bind
+      source: /Users/a.mametyev/Library/Application Support/Tank/sandbox-oci-8e-prefix-20261018
+      target: /opt/tank-sandbox-oci
+      read_only: true
+    - type: volume
+      source: sandbox-image-cache
+      target: /app/data/boxlite-c474-primary/images/disk-images
+      read_only: true
+      volume:
+        nocopy: true
+    networks:
+      tank-net:
+        ipv4_address: 172.30.42.2
+  tank:
+    image: sha256:81e2d555ae3f8882551c97504a3b1c28c234b95a6bdce6f0309fa49ab6602819
+    pull_policy: never
+    networks:
+      tank-net:
+        ipv4_address: 172.30.42.4
+  postgres:
+    networks:
+      tank-net:
+        ipv4_address: 172.30.42.3
+volumes:
+  sandbox-image-cache:
+    external: true
+    name: tank_sandbox-image-cache

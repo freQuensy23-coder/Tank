@@ -1,0 +1,12 @@
+{
+  "started_at": "2026-10-19T19:18:06.391276+00:00",
+  "frozen_output": {
+    "path": "docs/verification/masked-f18-r40-2026-10-19/F-18/actual/qa-r40-masked-f18-driver/framework-bundles/f5b155a3bf0fed1a1ac7eab29312414fdbe9dedc3784ad7ac15cae4badd1fa64/outputs.json",
+    "sha256": "f78b18dd05964633e148392de2c6c8191c23ea68a2dd433e93657876dd036ae1"
+  },
+  "scope": "Actual single masked reference first outcome; no normal Runtime or SENT claim",
+  "manual_review": {
+    "path": "docs/verification/masked-f18-r40-2026-10-19/F-18/manual-review.json",
+    "sha256": "74ef7d7e17c83cf8548613aa2a9b225f330e3592eb607a46b6d5aa10fa86ec0f"
+  }
+}

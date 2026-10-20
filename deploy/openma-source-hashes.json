@@ -26,5 +26,11 @@
   "packages/managed-agents-api/src/contracts/agents.ts": "7725cfd0b0a12ae04e7518a90dd86422d26004ac003e9d8437b1526992086a7a",
   "apps/agent/src/harness/tools.ts": "313c95b191a36d19d39d226667f13be5a36ae78824066d393efa312b0c04d579",
   "packages/browser-harness/src/index.ts": "a6b8f640744563b61563b63b0fcf4a6fa1e4ccb4345ddf382382d4ab465b9213",
-  "packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts": "6110e8c3ebec6d9beb9690910a19d55d4e81bbd70b6e695f76d444d093f037ac"
+  "packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts": "6110e8c3ebec6d9beb9690910a19d55d4e81bbd70b6e695f76d444d093f037ac",
+  "packages/managed-agents-adapters-runtime/src/index.ts": "e2e01a8205d137a286c67e2d02f6440b0a3b8e7da7250354f92baea869e9adca",
+  "pnpm-lock.yaml": "6d5b4aee16af9210f0e5d7f5071e8e1ec916d77ee81f9d6c1e4e8768e00fb822",
+  "pnpm-workspace.yaml": "2316fdc7c95fad20758ef6aea06c194a508b98c49ccb597977188afd536b7461",
+  "packages/sandbox-adapter-litebox/src/index.ts": "9d7fd5012c120eae398a57773c9ac4092719b729f3388a769d9cccaaa9d68a8d",
+  "packages/sandbox-adapter-litebox/test/litebox.test.ts": "7cac970a5049c5a4fca588eba6552bd9ec8ee48c67a58b907ccac1cf6a29bfa4",
+  "packages/control-plane-node/src/lib/node-managed-session-inputs.ts": "93bb57eb4deb6681a81e00dc887f5ca4efdeb8214fd8a8a678f313c03939127b"
 }

@@ -1,0 +1,226 @@
+{
+  "recorded_at": "2026-10-19T00:13:32.254216+00:00",
+  "status": "BOUNDED_READ_ONLY_AUDIT_COMPLETE_NO_RUNTIME_OR_CONFIG_EDITS",
+  "spec_references": [
+    "03_Tank_V0_Technical_Design.md \u00a72.5/2.10",
+    "\u00a75.3 spot coverage is separate from perpetual OI",
+    "\u00a75.4 synchronized native OI and venue-aligned decomposition",
+    "\u00a711.3 F-11 exact retained REST authority"
+  ],
+  "retained_inputs": {
+    "binance": {
+      "path": "fixture_check/data/rest_openInterestHist_fixtures.json",
+      "sha256": "67e4afd8ee1e43e348344668a933b66b3e2490e02bd62b1ce5244d8205a88f45",
+      "byte_length": 103335,
+      "actual_receipt": "2026-10-17T10:38:45.665564+00:00",
+      "receipt_reason": null
+    },
+    "bybit": {
+      "path": "fixture_check/data/bybit_oi_5m_WLDUSDT.json",
+      "sha256": "d48c7826f1984925f94df2c13329de5f9031764972f6f99566940104a3edfe17",
+      "byte_length": 2848350,
+      "actual_receipt": null,
+      "receipt_reason": "UNKNOWN_BARE_ARRAY_NO_CAPTURE_ENVELOPE"
+    }
+  },
+  "retained_bybit_structure": {
+    "rows": 26941,
+    "unique_timestamps": 26941,
+    "non_5m_adjacent_pairs": 0,
+    "missing_singleOpenInterest": 0,
+    "first_reported_timestamp_ms": 1784073600000,
+    "last_reported_timestamp_ms": 1792155600000,
+    "scope": "Reported label continuity, not proof of bucket edge, receipt time, or qualification."
+  },
+  "window": {
+    "start": "2026-10-16T08:30:00Z",
+    "end": "2026-10-16T12:30:00Z"
+  },
+  "endpoints": {
+    "binance": {
+      "field": "sumOpenInterest",
+      "start": {
+        "symbol": "WLDUSDT",
+        "sumOpenInterest": "183464692.00000000",
+        "sumOpenInterestValue": "93438567.63560000",
+        "CMCCirculatingSupply": "3813012721.92007970",
+        "timestamp": 1792139400000
+      },
+      "end": {
+        "symbol": "WLDUSDT",
+        "sumOpenInterest": "202487919.00000000",
+        "sumOpenInterestValue": "110334296.21988837",
+        "CMCCirculatingSupply": "3813012721.92007970",
+        "timestamp": 1792153800000
+      },
+      "native_change_pct": "10.3688763176295523936562136980558635227752705681374375839030",
+      "source_values_changed": false
+    },
+    "bybit": {
+      "field": "singleOpenInterest",
+      "start": {
+        "openInterest": "167874944.80000001",
+        "singleOpenInterest": "83937472.5",
+        "timestamp": "1792139400000"
+      },
+      "end": {
+        "openInterest": "173555011.90000001",
+        "singleOpenInterest": "86777506",
+        "timestamp": "1792153800000"
+      },
+      "native_change_pct": "3.38351086280326108222998971049551200150802729972599544262000",
+      "source_values_changed": false
+    }
+  },
+  "numeric_composite": {
+    "native_start": "267402164.50000000",
+    "native_end": "289265425.00000000",
+    "native_change_pct": "8.17617184994775911770901166359107762570111881050237347648700",
+    "rounded_pct_2dp": "8.18",
+    "scope": "RAW_REPORTED_LABEL_NUMERIC_SUM_NOT_QUALIFIED_MARKET_TRUTH"
+  },
+  "current_component_disposition": {
+    "classification": "ASSEMBLY_SCOPE_GAP_NOT_A_WRONG_SYNCHRONIZED_SUM",
+    "evidence": [
+      "docs/verification/fixture-assembly-2026-10-19/assemble_oi_components.py imports only Binance fixture REST rows",
+      "docs/verification/fixture-assembly-2026-10-19/assemble_oi_statistics.py calls _oi_stats with Binance-only history and endpoints"
+    ],
+    "binance_only_pct": "10.3688763176295523936562136980558635227752705681374375839030",
+    "required_two_venue_numeric_values_available": true,
+    "Bybit_spot_exclusion_does_not_exclude_Bybit_perpetual_OI": true
+  },
+  "qualification_gaps": [
+    {
+      "kind": "DOCUMENTED_UNTESTED_GATE",
+      "detail": "Current Bybit metric definition is DOCUMENTED_UNTESTED, not instrument-qualified VERIFIED. \u00a75.4 excludes unverified unit/sidedness/multiplier from synchronized Market Truth; arithmetic reproduction alone does not promote it."
+    },
+    {
+      "kind": "DOCUMENT_METADATA_CONFLICT",
+      "detail": "config/semantics.yaml still says Bybit timestamp_semantics BUCKET_START; current official Bybit page only describes a timestamp in milliseconds, and normalizer correctly retains UNSPECIFIED edge. Do not silently claim a verified START or END edge."
+    },
+    {
+      "kind": "RETAINED_CONTEXT_MISSING",
+      "detail": "The retained Bybit OI array has no mark or USD value. A Bybit-specific aligned historical mark and required quote conversion context are needed for USD decomposition/REAL_NATIVE. Binance price must not be applied to Bybit positions."
+    },
+    {
+      "kind": "CAPTURE_PROVENANCE_MISSING",
+      "detail": "The retained Bybit array has no actual receipt timestamp; today's probe does not backdate that acquisition."
+    }
+  ],
+  "current_official_docs": {
+    "open_interest": {
+      "url": "https://bybit-exchange.github.io/docs/v5/market/open-interest",
+      "receipt": {
+        "label": "official-open-interest",
+        "url": "https://bybit-exchange.github.io/docs/v5/market/open-interest",
+        "params": null,
+        "started_at": "2026-10-19T00:08:31.796650+00:00",
+        "received_at": "2026-10-19T00:08:32.169561+00:00",
+        "http_status": 200,
+        "sha256": "d3c54b4de5a7538dc59e11d9944ba5e0d46cdff55578eac42797c3e3c824aced",
+        "byte_length": 83465,
+        "headers": {
+          "content-type": "text/html; charset=utf-8",
+          "age": "0",
+          "date": "Mon, 19 Oct 2026 00:08:32 GMT"
+        },
+        "path": "official-open-interest.body"
+      },
+      "supported": "Linear values use the base asset; singleOpenInterest is single-sided and openInterest counts both sides. The field timestamp is described in milliseconds without defining a start/end edge."
+    },
+    "tickers": {
+      "url": "https://bybit-exchange.github.io/docs/v5/market/tickers",
+      "receipt": {
+        "label": "official-tickers",
+        "url": "https://bybit-exchange.github.io/docs/v5/market/tickers",
+        "params": null,
+        "started_at": "2026-10-19T00:08:32.672145+00:00",
+        "received_at": "2026-10-19T00:08:32.860186+00:00",
+        "http_status": 200,
+        "sha256": "61b28c3dbcd0778f6436865f701bb3e9f02b1a6346852843b86e281b1cd195f3",
+        "byte_length": 175941,
+        "headers": {
+          "content-type": "text/html; charset=utf-8",
+          "age": "0",
+          "date": "Mon, 19 Oct 2026 00:08:32 GMT"
+        },
+        "path": "official-tickers.body"
+      },
+      "supported": "The latest ticker separately supplies single-sided OI and its value, both-sided OI, mark and index prices."
+    }
+  },
+  "bounded_public_probe": {
+    "http_requests": 22,
+    "http_errors": 0,
+    "nonzero_api_codes": 0,
+    "actual_http_acquisition_duration_s": 101.204091,
+    "first_started_at": "2026-10-19T00:08:31.796650+00:00",
+    "last_received_at": "2026-10-19T00:10:13.000741+00:00",
+    "total_response_bytes": 271876,
+    "symbols": [
+      "BTCUSDT",
+      "ETHUSDT",
+      "WLDUSDT"
+    ],
+    "history_interval": "5min",
+    "boundary_ms": 1792368600000,
+    "first_new_history_row": {
+      "openInterest": "159549938.09999999",
+      "singleOpenInterest": "79774969.1",
+      "timestamp": "1792368600000"
+    },
+    "first_new_history_response_server_time_ms": 1792368613010,
+    "first_new_history_received_at": "2026-10-19T00:10:13.000741+00:00",
+    "observed_publication_lag_vs_label_ms": 13010,
+    "equal_current_ticker_responses": [
+      {
+        "label": "boundary-00-ticker-WLDUSDT",
+        "response_server_time_ms": 1792368597330,
+        "actual_received_at": "2026-10-19T00:09:57.328864+00:00",
+        "singleOpenInterest": "79774969.1"
+      },
+      {
+        "label": "boundary-01-ticker-WLDUSDT",
+        "response_server_time_ms": 1792368599897,
+        "actual_received_at": "2026-10-19T00:09:59.888149+00:00",
+        "singleOpenInterest": "79774969.1"
+      },
+      {
+        "label": "boundary-02-ticker-WLDUSDT",
+        "response_server_time_ms": 1792368602327,
+        "actual_received_at": "2026-10-19T00:10:02.317141+00:00",
+        "singleOpenInterest": "79774969.1"
+      },
+      {
+        "label": "boundary-03-ticker-WLDUSDT",
+        "response_server_time_ms": 1792368604758,
+        "actual_received_at": "2026-10-19T00:10:04.753616+00:00",
+        "singleOpenInterest": "79774969.1"
+      }
+    ],
+    "observation": "The 00:10 label was first observed in the 00:10:13.010 server-time history response and exactly matches current ticker quantities already publicly observed before that label. The previous history label remained 00:05 through the 00:10:10.394 response.",
+    "limited_inference": "Supports a sampled boundary snapshot with publication delay. A point on a boundary does not distinguish naming it previous-period END from current-period START, prove exact sample capture time, or establish an entire historical endpoint contract.",
+    "no_semantics_promotion": true,
+    "no_unit_or_time_shift": true,
+    "no_retry_loops": true,
+    "headers_and_body_receipts": "acquisition.json"
+  },
+  "old_diagnostic_script_limitations": [
+    "fixture_check/scripts/compute.py has an openInterest/2 fallback, but every retained Bybit row contains singleOpenInterest; the fallback is not needed for this arithmetic and must not become production normalization.",
+    "That diagnostic uses archive window OI (7.26018% aggregate) instead of the required retained REST endpoints (8.17617%); TDD explicitly forbids this substitution for the event-window values.",
+    "Its position-share diagnostic applies a Binance-derived price to the combined native sum, which cannot qualify Bybit-specific USD decomposition."
+  ],
+  "safe_next_steps": [
+    "Keep the existing Binance-only component accurately scoped; add a separate two-venue native arithmetic component with the exact original labels and explicit unresolved qualification metadata.",
+    "Resolve the sampled-observation versus interval-aggregate temporal model against provider evidence and \u00a75.4, preserving raw timestamps and unspecified edge until authoritative qualification; do not force VERIFIED or change gates to hit the expected result.",
+    "Acquire or locate authentic Bybit-specific aligned historical mark/quote context before asserting a qualified synchronized USD decomposition or REAL_NATIVE; current prices cannot substitute for historical observations."
+  ],
+  "not_claimed": [
+    "Full F-11 Market Truth or analyst/card acceptance",
+    "Historical real-time availability from an unknown receipt",
+    "Verified global Bybit timestamp edge",
+    "Continuous capture or freshness acceptance"
+  ],
+  "source_runtime_config_test_gate_edits": false,
+  "secrets_models_X_trading_calls": 0
+}

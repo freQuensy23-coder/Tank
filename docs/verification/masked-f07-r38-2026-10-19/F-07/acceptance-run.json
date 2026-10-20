@@ -1,0 +1,8 @@
+{
+  "started_at": "2026-10-19T18:41:02.853440+00:00",
+  "frozen_output": {
+    "path": "docs/verification/masked-f07-r38-2026-10-19/F-07/actual/qa-r38-masked-f07-driver/framework-bundles/2b94324bef21292bb1230a2fb30dd570716da010886c4f5924be73330f2cdb1a/outputs.json",
+    "sha256": "26c7fa0bffe4a41df7f77a5391d3b5cf40de15e8a1813adee6f70ad9722d1c20"
+  },
+  "scope": "Actual single masked reference first outcome; no normal Runtime or SENT claim"
+}

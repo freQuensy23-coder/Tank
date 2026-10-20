@@ -1,0 +1,41 @@
+{
+  "checks": [
+    {
+      "assertion": {
+        "path": [
+          "decisions"
+        ],
+        "some": {
+          "path": [
+            "token_id"
+          ],
+          "equals": "asset-k"
+        }
+      },
+      "passed": false
+    },
+    {
+      "assertion": {
+        "path": [
+          "decisions",
+          "*"
+        ],
+        "satisfies": {
+          "when": {
+            "path": [
+              "token_id"
+            ],
+            "equals": "asset-k"
+          },
+          "path": [
+            "action"
+          ],
+          "not_equals": "START"
+        }
+      },
+      "passed": false
+    }
+  ],
+  "passed": false,
+  "manual_review_still_required": true
+}

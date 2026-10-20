@@ -1,0 +1,151 @@
+{
+  "status": "COMPLETED_FUNCTIONAL_REFERENCE_PARTIAL_ASSERTION_COVERAGE",
+  "recorded_at": "2026-10-19T03:13:00.465522+00:00",
+  "cli_status": "COMPLETED",
+  "cli_exit_code": 0,
+  "elapsed_seconds": 138.135021,
+  "replay_run_id": "RPL-01M592575Q2S0FKWCG7Y4GQH7E",
+  "session_id": "session_gdaA4B3WIpL53vzctoiBD",
+  "events": [
+    {
+      "event_id": "EVT-01M5926RTYRD7D4F7B1ZHC3G3J",
+      "lifecycle": "TRACKED",
+      "freshness": "FRESH",
+      "state": "PROPOSED"
+    }
+  ],
+  "assessment_classes": [
+    "MATERIAL",
+    "MATERIAL"
+  ],
+  "assessment_reasons": [
+    [
+      "A nonbinding Snapshot precedes a separate onchain vote; no accepted evidence establishes a binding vote, approval or activation. M4 is therefore not established."
+    ],
+    [
+      "Snapshot proposal precedes a conditional binding onchain vote; M4 binding-vote criterion not established."
+    ]
+  ],
+  "counts": {
+    "source_items": 1,
+    "source_done": 1,
+    "events": 1,
+    "assessments": 2,
+    "decisions": 0,
+    "alerts": 0,
+    "calls": 0
+  },
+  "refusals": [
+    {
+      "tool": "record_event",
+      "status": "REFUSED",
+      "error": {
+        "type": "ValueError",
+        "reason": "$.next_milestone: invalid type",
+        "category": "VALIDATION"
+      },
+      "reason": null
+    },
+    {
+      "tool": "record_event",
+      "status": "DONE",
+      "error": "Use add_observation for the session event",
+      "reason": "EVENT_ALREADY_BOUND"
+    },
+    {
+      "tool": "set_assessment",
+      "status": "REFUSED",
+      "error": {
+        "type": "ValueError",
+        "reason": "$.assessment.capture_chains[0].token_mechanism.conditional_on: invalid type",
+        "category": "VALIDATION"
+      },
+      "reason": null
+    }
+  ],
+  "workflow": [
+    {
+      "turn_status": "DONE",
+      "reason": "BELOW_MAJOR_STOP",
+      "source_outcome": "DONE"
+    }
+  ],
+  "packet_sha256": "02c112e498a976c6decb58560ee8fee14965c81caa6e4fccd1056c9da70eedce",
+  "original_source_clocks_assertions_unchanged": true,
+  "historical_market_acceptance_claimed": false,
+  "performance_evidence": false,
+  "cleanup": {
+    "archive_readback": true,
+    "native_catalog": [],
+    "gateway_closed": true,
+    "listener_closed": true,
+    "runner_absent": true,
+    "database_preserved": "tank_replay"
+  },
+  "no_reroll": true,
+  "actual_no_internet_DB_readonly_proof": "../managed-replay-offline-2026-10-19/actual-r19/result.json",
+  "limitations": [
+    "The separate Managed probe proves guest DB/network/mount controls; F01 itself was not given diagnostic instructions.",
+    "F01 ended at MATERIAL / BELOW_MAJOR_STOP before beneficiary analysis, market truth, decision or publication.",
+    "The report previously asserted an unsupported expected-MAJOR requirement. That wording is superseded, with the original report preserved; no source, outcome, fixture assertion or economic rule changed."
+  ],
+  "artifacts": {
+    "dryimport.log": "ca96ff34fc45e3011df641c7650020c54682ab0d7200d3a749d1ca9aba16302f",
+    "input-installation-atomic.json": "35f5f090c729a57d042fe5510a31c002dc98191cd341fbb5efceff9665fc5eec",
+    "role-provision.log": "ade2f0cfe862d7034f1343ff22a76101e40ef54c1704c02cdbdac10d12955bc9",
+    "install-inputs-atomic.py": "b5ed55877bdd0dc1bd84a71a04b54c4c2ee36d8222c39540b10d1dfe9485e3c1",
+    "install-inputs.py": "b4b6e3278ad80fd93bfb15fe2f58ec8831b80011c14977f7caf1055290219c9e",
+    "preserve-dry-before-actual.log": "539ea1e5e8cfa6bf3736ab83f2b495656e2284acad164f2f8e5140b4b9d1ec1c",
+    "cli-result.json": "8473fe6c7245d2cb3e90da224da79167cdfd1e23547f5a06807582dececa4e44",
+    "preserve-before-dry.log": "539ea1e5e8cfa6bf3736ab83f2b495656e2284acad164f2f8e5140b4b9d1ec1c",
+    "run-with-gateway.py": "6d280b393bbfad9b61f84ba4813b7332e02cfe3e4d476bf82b89b6375d06e739",
+    "database-outcome.jsonl": "9dbe8d78addf85797252487c501d3cf59760fef82a14ec19cbbb45cb7e4f2c06",
+    "dryimport.py": "07edbd7c5957669d0e07ccba496cf873b74de6d4e4f3f8225352927423628c29",
+    "archive-readback.py": "e4f1abb7370fc28bdb5e0a0702bd5c8df343f9fdc9c037b96dc2b9d1f1a9d742",
+    "role-grants.log": "c14aee5b62ffd744902b84a24398e930998597dda300e71334862f0ef148e50a",
+    "refusals-during-run.jsonl": "50af8373cbd7c4dca184452f4d2bbabaf73d240a64d6be3248b0f41376b04ae7",
+    "dryimport-before-install-failed.log": "fb64a2b15295a1be5fb76c25c72c830b63fa97f449afde24c723339beed4bf76",
+    "harvest.tar": "fb78a56029b2299eb772fbdb3ba9b8e47c270b66c82182df631bc55c0556e51a",
+    "acl-preflight.jsonl": "6b0cd9c921e79bc8608b1176b245cf0fecf70d7aedd9858c3504ba567feb1980",
+    "migrate.log": "d45231a3f49dbb3b0f909038a65f512fc01f5c386f2c563efb166bf975581eb0",
+    "install-inputs.failed.py": "b4b6e3278ad80fd93bfb15fe2f58ec8831b80011c14977f7caf1055290219c9e",
+    "native-catalog-before.json": "588fd71a711f1dbdba696d9c32a8d985d81ebe3778b1700ca04942223e27a7ac",
+    "archive-readback.log": "53d0696415115d8c914ec2400dac86a8bf35c6f0b41c1873d58d0315666eb9a6",
+    "docker-run.log": "24f3658038b01232ae052a45323520a4de8707701c9771aa989185b0e583ce3e",
+    "invocation.json": "54fed1ba06db1529b79dd09c50e198b21746c91966f54aa2e669bd2901914d8d",
+    "native-catalog-after.json": "588fd71a711f1dbdba696d9c32a8d985d81ebe3778b1700ca04942223e27a7ac",
+    "migrate.py": "6a872f99b3efd8639bcd91dd1e54419970e4d98a7e6b64a62283f32df8e3a232",
+    "input-installation.json": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "classification_failure_claimed": false,
+  "TDD_requires_F01_MAJOR": false,
+  "classification_adjudication": "MATERIAL is consistent with the accepted source and M4: a nonbinding Snapshot precedes a separate conditional binding onchain vote. The authoritative F01 assertion does not require MAJOR.",
+  "historical_fixture_acceptance": "UNPROVEN",
+  "assertion_scope": {
+    "PROPOSED_state_observed": true,
+    "conditional_capture_observed": true,
+    "capture_score_upper_bound_5_verified": true,
+    "actual_capture_scores": [
+      5,
+      5
+    ],
+    "never_STRUCTURAL_observed": true,
+    "live_burn_linter": "UNPROVEN by this reference run; no publication/linter path was executed.",
+    "historical_market_repricing": "UNPROVEN; no market truth was requested.",
+    "performance": "NOT_CLAIMED"
+  },
+  "supersedes": {
+    "path": "docs/verification/f01-report-adjudication-2026-10-19/superseded/docs/verification/f01-cli-r19-2026-10-19/result.json",
+    "sha256": "e888b74506e4a1b85a437b5044a52b171018951392ba1e65c9c0e3a9b20f884f",
+    "reason": "Unsupported expected-MAJOR report wording corrected after independent TDD review."
+  },
+  "independent_semantic_adjudication": {
+    "path": "docs/verification/f01-r19-independent-semantic-adjudication-2026-10-19.json",
+    "sha256": "7bdf9a4a0355f27d96f56eb607f1b609c2a9b8be13055f2ec799ad09aa83ceeb"
+  },
+  "actual_capture_chain_readonly_evidence": {
+    "path": "docs/verification/f01-cli-r19-2026-10-19/capture-chain-readonly.json",
+    "sha256": "9504f52873c6959cc8ede413059a58e47c3c787b0f1ba638b51a496a3989613e"
+  },
+  "coverage_note": "PROPOSED, conditional capture score 5 (<=5), and no STRUCTURAL classification are verified by actual accepted rows. Live-burn linter, historical market/repricing and performance remain unproven."
+}

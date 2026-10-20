@@ -1,0 +1,17 @@
+{
+  "input_sha256": "ab8167e735c54e3cc2677a21466baab2ea6de3511505d97e97a382b110f41208",
+  "frozen_output_sha256": "c52a772a67d0113f12e74f8adc8bd563302e1b558171d0f4c80db7fc28023759",
+  "checks": [
+    {
+      "requirement": "Never LIVE before the exact later effective time retained in the source; original release milliseconds and explicit minute-end reference bound remain unchanged.",
+      "passed": true,
+      "reason": "Event remains APPROVED before the exact 12:00UTC effective time; accepted claim retains future will-add wording and borrowing limitation. public_at/known_to_us_at preserve the actual 03:30:08.368 release milliseconds; cutoff remains the predeclared minute-end bound.",
+      "evidence": [
+        {
+          "path": "docs/verification/masked-f22-r38-2026-10-19/F-22/actual/qa-r38-masked-f22-driver/framework-bundles/ab8167e735c54e3cc2677a21466baab2ea6de3511505d97e97a382b110f41208/outputs.json",
+          "sha256": "c52a772a67d0113f12e74f8adc8bd563302e1b558171d0f4c80db7fc28023759"
+        }
+      ]
+    }
+  ]
+}

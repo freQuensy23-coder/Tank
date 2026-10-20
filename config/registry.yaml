@@ -3447,7 +3447,7 @@ entities:
   names:
   - bitcoin
   aliases:
-  - BTC
+  - Bitcoin
   tokens:
   - bitcoin:BTC
   official_sources:
@@ -3460,7 +3460,7 @@ entities:
   names:
   - ethereum
   aliases:
-  - ETH
+  - Ethereum
   tokens:
   - ethereum:ETH
   official_sources:
@@ -3473,7 +3473,6 @@ entities:
   names:
   - uniswap
   aliases:
-  - UNI
   - Uniswap
   - Uniswap Labs
   - Uniswap Foundation
@@ -3500,7 +3499,6 @@ entities:
   names:
   - pancakeswap
   aliases:
-  - CAKE
   - PancakeSwap
   tokens:
   - pancakeswap:CAKE
@@ -3519,7 +3517,6 @@ entities:
   names:
   - aerodrome
   aliases:
-  - AERO
   - Aerodrome
   tokens:
   - aerodrome:AERO
@@ -3537,7 +3534,6 @@ entities:
   names:
   - curve
   aliases:
-  - CRV
   - Curve Finance
   - Curve DAO
   - crvUSD
@@ -3556,7 +3552,6 @@ entities:
   names:
   - 1inch
   aliases:
-  - 1INCH
   - 1inch
   - 1inch Network
   tokens:
@@ -3578,7 +3573,6 @@ entities:
   names:
   - 0x
   aliases:
-  - ZRX
   - 0x Protocol
   - 0x Labs
   - Matcha
@@ -3598,7 +3592,6 @@ entities:
   names:
   - cow
   aliases:
-  - COW
   - CoW Protocol
   - CoW Swap
   - CoW DAO
@@ -3621,7 +3614,6 @@ entities:
   names:
   - hyperliquid
   aliases:
-  - HYPE
   - Hyperliquid
   - HyperEVM
   - HyperCore
@@ -3643,10 +3635,12 @@ entities:
   names:
   - lighter
   aliases:
-  - LIT
-  - Lighter only with "LIT"
-  - '"Lighter.xyz"'
-  - '"Lighter DEX" or "Lighter exchange"'
+  - Lighter.xyz
+  - Lighter DEX
+  - Lighter exchange
+  qualified_aliases:
+  - alias: Lighter
+    requires_any: [LIT]
   tokens:
   - lighter:LIT
   official_sources:
@@ -3663,7 +3657,6 @@ entities:
   names:
   - aave
   aliases:
-  - AAVE
   - Aave
   - Aave Labs
   - Aave DAO
@@ -3687,7 +3680,6 @@ entities:
   names:
   - morpho
   aliases:
-  - MORPHO
   - Morpho
   - Morpho Blue
   tokens:
@@ -3709,7 +3701,6 @@ entities:
   names:
   - euler
   aliases:
-  - EUL
   - Euler Finance
   - Euler v2
   tokens:
@@ -3729,7 +3720,6 @@ entities:
   names:
   - ondo
   aliases:
-  - ONDO
   - Ondo
   - Ondo Finance
   - Ondo Global Markets
@@ -3752,7 +3742,6 @@ entities:
   names:
   - layerzero
   aliases:
-  - ZRO
   - LayerZero
   - LayerZero Labs
   tokens:
@@ -3778,7 +3767,6 @@ entities:
   names:
   - quant
   aliases:
-  - QNT
   - Quant Network
   - Overledger
   tokens:
@@ -3796,7 +3784,6 @@ entities:
   names:
   - avalanche
   aliases:
-  - AVAX
   - Ava Labs
   - Avalanche network
   - Avalanche C-Chain
@@ -3816,7 +3803,6 @@ entities:
   names:
   - near
   aliases:
-  - NEAR
   - NEAR Protocol
   - NEAR Foundation
   tokens:
@@ -3836,9 +3822,11 @@ entities:
   names:
   - plasma
   aliases:
-  - XPL
-  - Plasma only with "XPL"
-  - '"Plasma chain" or "Plasma network"'
+  - Plasma chain
+  - Plasma network
+  qualified_aliases:
+  - alias: Plasma
+    requires_any: [XPL]
   tokens:
   - plasma:XPL
   official_sources:
@@ -3855,7 +3843,6 @@ entities:
   names:
   - ethena
   aliases:
-  - ENA
   - Ethena
   - Ethena Labs
   - USDe
@@ -3878,7 +3865,6 @@ entities:
   names:
   - world
   aliases:
-  - WLD
   - Worldcoin
   - World Network
   - World App
@@ -4125,6 +4111,26 @@ entities:
   layers_served:
   - ORACLE_DATA
   competes_with: []
+- entity_id: msci
+  name: MSCI
+  kind: COMPANY
+  names:
+  - MSCI
+  - MSCI Inc.
+  aliases:
+  - MSCI
+  - MSCI Inc.
+  tokens: []
+  official_sources: []
+  layers_served: []
+  competes_with: []
+  chains: []
+  identity_evidence:
+  - https://www.msci.com/indexes
+  identity_reviewed_at: '2026-10-18'
+  identity_basis: Named index provider confirmed on its official website; identity
+    matching only, with no asserted token exposure or source-authority expansion.
+
 - entity_id: openai
   name: OpenAI
   kind: COMPANY
@@ -4659,3 +4665,45 @@ x_accounts:
   role: OTHER
   entity_id: null
   token_id: null
+
+# Frozen provider pool identities; runtime lending observations use /lendBorrow only.
+lending_pool_catalog:
+  source_url: https://yields.llama.fi/pools
+  captured_at: '2026-10-20T09:40:53.930170+00:00'
+  source_sha256: 20379f9ecb12714d439a0addfe7d3c3bd50f5a7535922ef39516f45292b64979
+  pools:
+  - pool_id: 7ee6c38b-ac42-4388-88dc-389140276cf8
+    project: aave-v3
+    chain: Ethereum
+    underlying_tokens:
+    - '0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9'
+  - pool_id: a7c1060c-67d3-4c65-9c26-22adf26be7e3
+    project: aave-v4
+    chain: Ethereum
+    underlying_tokens:
+    - '0x7fc66500c84a76ad7e9c93437bfc5ac33e2ddae9'
+  - pool_id: 24a6127b-94e8-4600-a11d-0f1707e7c4b1
+    project: morpho-blue
+    chain: Ethereum
+    underlying_tokens:
+    - '0x58d97b57bb95320f9a05dc918aef65434969c2b2'
+  - pool_id: bec4869d-5a96-454c-89eb-c8975fe3eed3
+    project: morpho-blue
+    chain: Ethereum
+    underlying_tokens:
+    - '0xfaba6f8e4a5e8ab82f62fe7c39859fa577269be3'
+  - pool_id: e5ee7e24-45eb-4107-87f6-235ec6e237df
+    project: morpho-blue
+    chain: Base
+    underlying_tokens:
+    - '0x940181a94a35a4569e4529a3cdfb74e38fd98631'
+  - pool_id: ed39b965-8c33-5572-8e76-f47bb50f9015
+    project: euler-v2
+    chain: Base
+    underlying_tokens:
+    - '0x940181a94a35a4569e4529a3cdfb74e38fd98631'
+  - pool_id: 05c0fed1-684b-4b82-b089-b1c630e23efe
+    project: euler-v2
+    chain: Base
+    underlying_tokens:
+    - '0x940181a94a35a4569e4529a3cdfb74e38fd98631'

@@ -15,7 +15,7 @@ function fakeSandbox() {
         : request.op === "inner_text" ? "Fixture text"
         : request.op === "evaluate" ? { answer: 42 }
         : request.op === "screenshot" ? Buffer.from([137, 80, 78, 71]).toString("base64") : null;
-      return JSON.stringify({ version: 1, ok: true, result, url: "https://fixture.invalid/final" });
+      return "__TANK_BROWSER_RPC_V1__ " + JSON.stringify({ version: 1, ok: true, result, url: "https://fixture.invalid/final" });
     },
   };
 }
@@ -53,8 +53,46 @@ describe("Tank SandboxPort browser transport", () => {
   });
 
   it("fails clearly on transport or browser errors instead of opening a host browser", async () => {
-    for (const output of ["[error: VM unavailable]", '{"version":1,"ok":false,"error":"Chromium unavailable"}']) {
+    for (const output of ["[error: VM unavailable]", '__TANK_BROWSER_RPC_V1__ {"version":1,"ok":false,"error":"Chromium unavailable"}']) {
       const tools = buildBrowserTools(createSandboxBrowserHarness({ exec: async () => output }, "a"));
+      expect(await tools.browser_navigate.execute({ url: "https://fixture.invalid" })).toMatch(/^Navigate error:/);
+    }
+  });
+
+  it("accepts a framed reply alongside actual native stderr diagnostics", async () => {
+    const sandbox = fakeSandbox();
+    const tools = buildBrowserTools(createSandboxBrowserHarness({ exec: async command =>
+      (await sandbox.exec(command)) + "\n\u001b[33m WARN libcontainer: seccomp not available, unable to set seccomp privileges!\n"
+    }, "native-stderr"));
+    expect(await tools.browser_navigate.execute({ url: "https://fixture.invalid" })).toBe("Loaded https://fixture.invalid/final (HTTP 200)");
+  });
+
+  it("rejects ambiguous frames and command exit failures even alongside a valid reply", async () => {
+    const frame = '__TANK_BROWSER_RPC_V1__ {"version":1,"ok":true,"result":null}';
+    for (const output of [frame + "\n" + frame, frame + "\n[exit 2]", frame + "\n[exit exit=2]", frame + "\n[error: transport failed]"]) {
+      const tools = buildBrowserTools(createSandboxBrowserHarness({ exec: async () => output }, "a"));
+      expect(await tools.browser_navigate.execute({ url: "https://fixture.invalid" })).toMatch(/^Navigate error:/);
+    }
+  });
+
+  it("preserves exit-like page text inside the framed JSON payload", async () => {
+    const tools = buildBrowserTools(createSandboxBrowserHarness({ exec: async () =>
+      '__TANK_BROWSER_RPC_V1__ {"version":1,"ok":true,"result":"[exit 2]"}'
+    }, "page-text"));
+    expect(await tools.browser_eval.execute({ expression: "'[exit 2]'" })).toBe('"[exit 2]"');
+  });
+
+  it("rejects absent, malformed, wrong-version and invalid-shape protocol frames", async () => {
+    for (const output of [
+      '{"version":1,"ok":true,"result":null}',
+      '__TANK_BROWSER_RPC_V1__ not-json',
+      '__TANK_BROWSER_RPC_V1__ null',
+      '__TANK_BROWSER_RPC_V1__ {"version":2,"ok":true,"result":null}',
+      '__TANK_BROWSER_RPC_V1__ {"version":1,"ok":"true","result":null}',
+      '__TANK_BROWSER_RPC_V1__ {"version":1,"ok":true}',
+      '__TANK_BROWSER_RPC_V1__ {"version":1,"ok":false,"error":7}',
+    ]) {
+      const tools = buildBrowserTools(createSandboxBrowserHarness({ exec: async () => output }, "bad-protocol"));
       expect(await tools.browser_navigate.execute({ url: "https://fixture.invalid" })).toMatch(/^Navigate error:/);
     }
   });

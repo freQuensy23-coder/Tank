@@ -1,0 +1,39 @@
+{
+  "case": {
+    "fixture_id": "F-14",
+    "case_description": "QNT — 27 Sep 2026 19:00–23:00 UTC: native OI −30.36%, price +54.09% between the closes of the 19:00 and 23:00 hourly bars (+50.78% in the 22:00 hour)",
+    "cutoff_spec": "27 Sep 2026 23:00",
+    "assertion_spec": "Native OI change reported as positions closing during the rise; move class ∈ {SHORT_SQUEEZE, LIQUIDITY_VACUUM, UNKNOWN}; direction TWO_SIDED or UNKNOWN; never SPOT_LED_ACCUMULATION.",
+    "acceptance_input": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v1/F-14/inputs/input.json.zst",
+      "sha256": "80701e8e92294c65ebe1d0d217fbd2aab162b7175af4d45b3ad180b51e0f53fd"
+    },
+    "private_name_map": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v1/F-14/private/map.json",
+      "sha256": "11b818dfae99b2a10ba297d42b4e6dd77ca021dc4b532bd0051d48fd94004b54"
+    },
+    "sealed_outcomes": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v1/F-14/sealed/outcomes.json",
+      "sha256": "bb076085e94f4ce195fa7ec3ea76feb74ffc04b5b36bf8f1d3dbca130ab5ddca"
+    }
+  },
+  "readiness_errors": [],
+  "sources_host_only": [
+    {
+      "path": "data/replay/candidates/pure-market-retained-20261019/F-14/manifest.json",
+      "sha256": "9ae7ee671481dcae4c71c4dc8984604ed466606111ce9a959abf100323aee2d7"
+    },
+    {
+      "path": "data/replay/candidates/pure-market-retained-20261019/F-14/input-84db6fd98c3ba968cb7161a1abafeafeef122742e0f900e56fe961cd463c9e0c.json.zst",
+      "sha256": "a0aedc963889ca6c24f0b94cb7746e806d6fb810658dfb5a4e20849bfd698afb",
+      "declared_path": "/srv/tank/data/replay/candidates/pure-market-retained-20261019/F-14/input-84db6fd98c3ba968cb7161a1abafeafeef122742e0f900e56fe961cd463c9e0c.json",
+      "uncompressed_sha256": "84db6fd98c3ba968cb7161a1abafeafeef122742e0f900e56fe961cd463c9e0c"
+    }
+  ],
+  "no_news_event_catalyst_or_assessment_seeded": true,
+  "original_cutoff_preserved": true,
+  "original_observations_and_times_preserved_before_identity_mask": true,
+  "benchmark_symbol_exception": null,
+  "financial_performance_claim": false,
+  "native_wording_phase": "PLANNED_NOT_RUN"
+}

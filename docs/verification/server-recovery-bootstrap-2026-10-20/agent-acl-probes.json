@@ -1,0 +1,21 @@
+{
+  "passed": true,
+  "method": "Owner connection SET ROLE; actual table ACL enforcement, no rows modified",
+  "probes": [
+    {
+      "role": "tank_agent",
+      "database": "tank",
+      "select": true,
+      "zero_row_delete_denied_sqlstate": "42501"
+    },
+    {
+      "role": "tank_replay_agent",
+      "database": "tank_replay",
+      "select": true,
+      "zero_row_delete_denied_sqlstate": "42501"
+    }
+  ],
+  "sandbox_network": "Bootstrap HBA deliberately denies agent roles until actual native VM source is observed",
+  "cross_database_connect_privileges_denied": true,
+  "credential_values_or_hashes_emitted": false
+}

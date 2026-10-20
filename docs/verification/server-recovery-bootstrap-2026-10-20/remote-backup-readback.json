@@ -1,0 +1,14 @@
+{
+  "mode": "READ_ONLY_REMOTE_BACKUP_HASH_READBACK",
+  "source": "/var/backups/tank/recovered-20261020/tank-2026-10-20",
+  "manifest_files": 2,
+  "file_bytes": {
+    "oma.dump": 3817979,
+    "tank.dump": 698731496
+  },
+  "manifest_hashes_verified": true,
+  "server_pg_restore": null,
+  "postgres_started": false,
+  "global_disk_floor_bytes": 8589934592,
+  "free_bytes": 30454788096
+}

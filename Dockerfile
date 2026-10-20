@@ -13,7 +13,7 @@ COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen --no-dev --no-install-project
 RUN /opt/tank/venv/bin/python -m playwright install --with-deps chromium
 COPY src ./src
-RUN uv sync --frozen --no-dev && useradd --create-home --uid 1000 tank && mkdir -p /data /browser /codex-auth /backup && chown -R tank:tank /data /browser /codex-auth /backup
+RUN uv sync --frozen --no-dev && useradd --create-home --uid 1000 tank && mkdir -p /data/replay/evidence /browser /codex-auth /backup && chown -R tank:tank /data /browser /codex-auth /backup
 COPY deploy /app/deploy
 USER tank
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/tank/venv/bin/python", "/app/deploy/tank_entrypoint.py"]

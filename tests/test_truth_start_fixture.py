@@ -201,6 +201,26 @@ def synthetic_start_snapshot():
             "complete": True,
         }
     )
+    anchors = snap.pop("anchor_trades")
+    for row in anchors:
+        parent = next(
+            bar
+            for bar in snap["flow_bars"]
+            if bar["instrument_id"] == row["instrument_id"]
+            and parse_time(bar["minute_start"]) + timedelta(minutes=1) == anchor
+        )
+        parent["last_trade"] = row
+        parent["reference_points"] = [dict(boundary=iso(anchor), complete=True, last_trade=row)]
+    for iid in ("A:spot:T", "B:spot:T"):
+        parent = next(
+            bar
+            for bar in snap["flow_bars"]
+            if bar["instrument_id"] == iid and parse_time(bar["minute_start"]) + timedelta(minutes=1) == end
+        )
+        parent["last_trade"] = dict(
+            trade_id="SYNTHETIC-END", price="101.1", ts=iso(end - timedelta(microseconds=1))
+        )
+        parent["reference_points"] = [dict(boundary=iso(end), complete=True, last_trade=parent["last_trade"])]
     return snap
 
 
@@ -236,14 +256,48 @@ def test_threshold_configuration_is_consumed_and_isolated_between_calls():
     assert baseline["spot"][baseline["primary_window"]]["direction"] == "BUY"
 
 
-def test_documented_semantics_differs_from_unknown_and_failures_keep_spec_order():
+def test_legacy_semantic_status_cannot_reduce_confidence_or_mask_real_freshness():
     snapshot = synthetic_start_snapshot()
-    snapshot["semantics"][0]["semantic_confidence"] = "DOCUMENTED_UNTESTED"
-    medium = compute_market_truth(snapshot)
-    assert medium["data_confidence"]["class"] == "MEDIUM"
-    assert medium["data_confidence"]["limiting"]["condition"] == "semantics"
-    snapshot["semantics"][0]["semantic_confidence"] = "UNKNOWN"
-    assert compute_market_truth(snapshot)["data_confidence"]["class"] == "LOW"
+    for row in snapshot["semantics"]:
+        row.pop("semantic_confidence", None)
+    baseline = compute_market_truth(snapshot)
+    assert baseline["data_confidence"]["class"] == "HIGH"
+    for status in ("DOCUMENTED_UNTESTED", "UNKNOWN", "INFERRED"):
+        for row in snapshot["semantics"]:
+            row["semantic_confidence"] = status
+        actual = compute_market_truth(snapshot)
+        assert actual["data_confidence"] == baseline["data_confidence"]
+        assert actual["derivatives"]["synchronized"] == baseline["derivatives"]["synchronized"]
+    snapshot["books"] = []
+    missing = compute_market_truth(snapshot)
+    assert missing["data_confidence"]["class"] == "MEDIUM"
+    assert missing["data_confidence"]["limiting"]["condition"] == "freshness"
+
+
+def test_missing_instrument_registry_and_selftest_records_do_not_cap_observed_confidence():
+    snapshot = synthetic_start_snapshot()
+    end = parse_time(snapshot["cutoff"])
+    baseline = compute_market_truth(snapshot)
+    assert baseline["data_confidence"]["class"] == "HIGH"
+
+    # Actual typed observations carry identities even if discovery/self-test
+    # metadata has not arrived. Those metadata records are not a fourth gate.
+    snapshot["instruments"] = []
+    for row in snapshot["semantics"]:
+        row["semantic_confidence"] = "DOCUMENTED_UNTESTED"
+    observed = compute_market_truth(snapshot)
+    assert observed["data_confidence"] == baseline["data_confidence"]
+    assert observed["spot"] == baseline["spot"]
+    assert observed["derivatives"] == baseline["derivatives"]
+
+    # Removing metadata must not hide a genuinely stale observed field.
+    snapshot["books"] = [
+        row for row in snapshot["books"] if parse_time(row["exchange_ts"]) < end - timedelta(seconds=10)
+    ]
+    stale = compute_market_truth(snapshot)
+    assert stale["data_confidence"]["class"] == "MEDIUM"
+    assert stale["data_confidence"]["limiting"]["condition"] == "freshness"
+    assert stale["data_confidence"]["limiting"]["collection"] == "books"
 
 
 async def _assess_loser_snapshot():

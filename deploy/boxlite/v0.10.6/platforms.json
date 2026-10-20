@@ -1,0 +1,63 @@
+{
+  "schema": "tank.boxlite-build-platforms.v1",
+  "boxlite_version": "0.10.6",
+  "official_release": "https://github.com/boxlite-ai/boxlite/releases/tag/v0.10.6",
+  "official_go_checksums": "https://go.dev/dl/?mode=json&include=all",
+  "platforms": {
+    "arm64": {
+      "rust_target": "aarch64-unknown-linux-gnu",
+      "elf_machine": 183,
+      "elf_architecture": "aarch64",
+      "interpreter": "/lib/ld-linux-aarch64.so.1",
+      "official_runtime": {
+        "url": "https://github.com/boxlite-ai/boxlite/releases/download/v0.10.6/boxlite-runtime-v0.10.6-linux-arm64-gnu.tar.gz",
+        "archive_sha256": "fdf36eec030a6291d0cf321aed02506ea6d339b1b8abfc385b404569b7164f3a",
+        "size": 31760491
+      },
+      "original_files": {
+        "bwrap": "ff5634c3b9eb92135adacf974569ad9160f09898fefebe60cc687a4892ceb2d2",
+        "guest-mke2fs": "e4685269fad901ae2408cd9b01653099d8220e2a6f52015677b44c5d4a15e963",
+        "mke2fs": "2ffb7f930adaa5781aa124766d2686ab68b7a2108e50e9f0f2963b075e58088a",
+        "libkrunfw.so.5": "a47fad6c557420899b7e079c63227b4660c365bbb1c7def0428bf6352786a321",
+        "guest-resize2fs": "47e2659d5577bedc109de8f3427d42a26af1234669c563e50cc099961a9d0aca",
+        "boxlite-shim": "195b86c731425e94c32d7d749ada4ad79a0c910152db0ad7bf672918bb91146b",
+        "boxlite-guest": "90c4fb9b8525aedfd167d715a019a271100b055df4e715288fb1da726e276621",
+        "debugfs": "017e6bccb4c0ae757f961ab4241c8b0796613fef77d6410bf49590616d61cbca"
+      },
+      "go_archive_sha256": "9bf234ea70ffec9347fdf6b22ce4add51717d3386a38a441e8c8743fceb5eaee",
+      "needed_libraries": [
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6"
+      ]
+    },
+    "amd64": {
+      "rust_target": "x86_64-unknown-linux-gnu",
+      "elf_machine": 62,
+      "elf_architecture": "x86_64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "official_runtime": {
+        "url": "https://github.com/boxlite-ai/boxlite/releases/download/v0.10.6/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz",
+        "archive_sha256": "241171320f008c86d2f4af95ed6690edf93417ade956a196b2c3e366e4857e1b",
+        "size": 28133546
+      },
+      "original_files": {
+        "guest-resize2fs": "0a2c15cb20fa3e369a02e9712c611037a89236bc52ad109daf02c3d33a19ee97",
+        "boxlite-shim": "fb836e52ea6f29c4c66c78cffa476e010a1e88404971dfc45cc27bd0302ba9b5",
+        "libkrunfw.so.5": "953201c0c367070946a2f99695cb50dbb8980d97e416964bfa3fb1e9d1f15f69",
+        "boxlite-guest": "5e7d1415307e46dfb2dd690c118e63ebd7d62189777ded62b710929d01fb059e",
+        "mke2fs": "6898e063cdda9c004b7180b8ab6b06d14f06828ecf1708a5d8c12020f543add4",
+        "bwrap": "3ca262bcd5a1640d43adcd207a03e1834dd91e1bd6a2bb47b3d0aa47a2dc9c72",
+        "guest-mke2fs": "3a8cda1b1e6ba7c1e740f3d49e58155485c37f344b33851d95e68e1980f3922c",
+        "debugfs": "578ec8385c4e92cad16629a7ef2d25ade4bbdb2ef5c5a4e80e3124b0736e6712"
+      },
+      "go_archive_sha256": "a21ae5633a269bcd7e90cf767e48225633795e99d831742cbf3397064fee7712",
+      "needed_libraries": [
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ]
+    }
+  }
+}

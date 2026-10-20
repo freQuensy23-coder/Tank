@@ -1,0 +1,40 @@
+MAJOR (M5) — CoinDesk reports FINMA approved Switzerland’s first bitcoin ETF; the approval remains unverified against primary documentation.
+Scores D4 · M n/a (No fund size, expected creations or eligible capital base disclosed.) · P8 · X4 · F n/a (No launch, creations or mandated purchases established.) · S n/a (Expectations and prior regulatory process not established.) · I6
+Stage: unverified APPROVED · Certainty: MEDIUM · Data LOW
+Fresh: FRESH · public 11:00Z–12:00Z (BUCKET(1h), end exclusive) · known 11:13Z (collection)
+
+VERIFIED: n/a (no verified claims)
+NOT VERIFIED: FINMA approved Switzerland's first bitcoin ETF — FINMA approval notice or decision not obtained; immediate official-source search was blocked.; ETF issuer disclosure not disclosed by FINMA — Primary FINMA documentation identifying the fund and issuer is missing.; FINMA approved exemption ETFs holding only bitcoin — Official exemption text and scope not obtained.
+
+WHY IT MATTERS
+• What changed: CoinDesk reports an exemption allowing bitcoin-only ETFs, a regulatory access change naming bitcoin.
+• Economic effect: The issuer is undisclosed in the report; launch timing, subscriptions and actual bitcoin purchases are not established, so economic impact is not estimable.
+• Token capture: BTC UNKNOWN — Reported bitcoin ETF approval enables a bitcoin investment wrapper; subscriptions could create underlying demand, but holdings, replication method and flows are unknown. — The immediate official-source search was blocked, and incomplete market coverage leaves the current reaction unresolved.
+
+WHO: primary BTC · secondary none — No secondary provider identified.
+• Issuer / product: Bitcoin named as fund underlying; issuer remains undisclosed and approval unverified.
+• Exchanges / DEX: No venue identified.
+• Settlement L1 / L2: No required settlement rail identified.
+• Liquidity / execution: No execution provider identified.
+• Lending / collateral: No lending arrangement stated.
+• Oracles / data: No oracle provider stated.
+• Interoperability: No interoperability integration stated.
+• Custody / compliance: No custodian named.
+
+── BTC (PRIMARY) ──
+
+MARKET TRUTH: UNKNOWN
+Market data incomplete.
+Excluded: binance, bybit, coinbase, kraken, okx — full minute coverage incomplete
+
+OUTLOOK: UNKNOWN · MEDIUM · best 24h
+• Base: UNKNOWN: market evidence incomplete.
+• Upside: UNKNOWN until class and data resolve.
+• Failure: Thesis invalid if the event is denied.
+
+WHAT TO DO: WAIT — Thesis D · Trade D
+WHAT CHANGES THE ACTION:
+↑ Data confidence becomes HIGH; re-grade.
+↓ Majority-volume spot SELL for two hourly windows.
+
+CONFIDENCE: LOW — main unknown: Spot venue coverage is incomplete

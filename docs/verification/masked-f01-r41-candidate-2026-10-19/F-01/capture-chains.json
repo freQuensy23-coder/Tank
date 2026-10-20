@@ -1,0 +1,120 @@
+{
+  "collection": "evt.capture_chains",
+  "records": [
+    {
+      "version": 1,
+      "event_id": "EVT-01M5AVEP88YG8NTHZEQTJR1KVJ",
+      "model_id": "gpt-6.1-sol",
+      "token_id": "asset-k",
+      "session_id": "session_wnufnCaKdsrOXM_zHh2JU",
+      "conditional": true,
+      "caps_applied": [
+        "C1",
+        "C2",
+        "C3",
+        "C4"
+      ],
+      "code_version": "fe94583f66cb77d98305b7d1f462fbe4c93dc6f0dec3aeb590b44b94728a1f69",
+      "prompt_label": "baseline-2.3-assessment-v4-candidate",
+      "agent_version": "1",
+      "capture_class": "NARRATIVE_ONLY",
+      "capture_score": 3,
+      "config_version": "58daf19e9ed36d477dca6ff543523fd5b7b6cfed-dirty.9c0c5171062b841c3dee437f904ce18cd6d908a02fb02627e742a18d551234ed",
+      "effective_fees": {
+        "unit": "USD fees",
+        "value": null,
+        "reason": "NOT_SUPPORTED",
+        "window": null,
+        "coverage": null,
+        "precision": null,
+        "observed_at": null
+      },
+      "model_id_basis": "RESOLVED_SESSION_AGENT",
+      "prompt_binding": {
+        "snapshot_fields": [
+          "_oma",
+          "mcp_servers",
+          "model",
+          "multiagent",
+          "skills",
+          "system",
+          "tools"
+        ],
+        "resolved_skill_versions": [
+          {
+            "type": "custom",
+            "version": "1792438689765000",
+            "skill_id": "skill_V6l1YLQgjYdmh2u_BFAgE"
+          },
+          {
+            "type": "custom",
+            "version": "1792433821194000",
+            "skill_id": "skill_Z_Et7sUXMaJJh3JWlr-r_"
+          }
+        ]
+      },
+      "prompt_version": "9575e9852cb6a8e7a5a98522cd56842d54b3e0d378d1afa47e391e1e1f40adc4",
+      "model_id_reason": null,
+      "token_mechanism": {
+        "type": "BURN",
+        "active": false,
+        "evidence": [
+          "As on other chains, a searcher pays synthetic ASSETK on Arc to claim the TokenJar's accumulated fees. The releaser, `WormholeReleaser`, sends that synthetic ASSETK to be burned by the `NttManager` on Arc, which emits a Wormhole message. The message is forwarded to the `NttManager` on Ethereum, which sends the corresponding canonical ASSETK to the burn address."
+        ],
+        "conditional_on": "Successful Snapshot, binding onchain approval and execution, infrastructure deployment, fee collection and searcher claims."
+      },
+      "protocol_capture": {
+        "unit": "USD protocol fees",
+        "value": null,
+        "reason": "NOT_SUPPORTED",
+        "window": null,
+        "coverage": null,
+        "precision": null,
+        "observed_at": null
+      },
+      "eligible_activity": {
+        "unit": "USD eligible activity",
+        "value": null,
+        "reason": "NOT_SUPPORTED",
+        "window": null,
+        "coverage": null,
+        "precision": null,
+        "observed_at": null
+      },
+      "headline_activity": {
+        "unit": "USD activity",
+        "value": null,
+        "reason": "NOT_SUPPORTED",
+        "window": null,
+        "coverage": null,
+        "precision": null,
+        "observed_at": null
+      },
+      "agent_version_basis": "RESOLVED_SESSION_AGENT",
+      "token_flow_pct_mcap": {
+        "unit": "percent",
+        "value": null,
+        "reason": "NOT_ESTIMABLE",
+        "window": null,
+        "coverage": null,
+        "precision": null,
+        "observed_at": null
+      },
+      "agent_version_reason": null,
+      "prompt_version_basis": "RESOLVED_SESSION_AGENT_SNAPSHOT",
+      "session_code_version": "fe94583f66cb77d98305b7d1f462fbe4c93dc6f0dec3aeb590b44b94728a1f69",
+      "prompt_version_reason": null,
+      "token_flow_annual_usd": {
+        "unit": "USD/year",
+        "value": null,
+        "reason": "NOT_ESTIMABLE",
+        "window": null,
+        "coverage": null,
+        "precision": null,
+        "observed_at": null
+      },
+      "session_config_version": "58daf19e9ed36d477dca6ff543523fd5b7b6cfed-dirty.9c0c5171062b841c3dee437f904ce18cd6d908a02fb02627e742a18d551234ed"
+    }
+  ],
+  "source": "docs/verification/masked-f01-r41-candidate-2026-10-19/F-01/actual/qa-r41-candidate-masked-f01-driver/database-records.jsonl"
+}

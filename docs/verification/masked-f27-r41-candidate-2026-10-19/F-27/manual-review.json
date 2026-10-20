@@ -1,0 +1,21 @@
+{
+  "input_sha256": "75ff0afc612fa4a8a71023377efef887c0c7b1070fc381c02f318d2513ad3464",
+  "frozen_output_sha256": "5cc98a468f9cee6177e54cc4c6053bd531ad31265197de098d0e36a88e2088d3",
+  "checks": [
+    {
+      "requirement": "Recorded as unknown original account quoted by another account; no invented original identity or authority upgrade.",
+      "passed": true,
+      "reason": "Actual persisted statement explicitly attributes the novel claim to an unknown original account; record_event certainty LOW, claim verified=false/RUMOR/SOCIAL_LEAD and quoted evidence retained. No original identity or authority upgrade is invented; sourceDONE, no card.",
+      "evidence": [
+        {
+          "path": "docs/verification/masked-f27-r41-candidate-2026-10-19/F-27/recorded-claim.json",
+          "sha256": "77830200aabb57c808dfc625f08f4ca3599d2e9dcdcdb7901cc6bb98bdb880aa"
+        },
+        {
+          "path": "docs/verification/masked-f27-r41-candidate-2026-10-19/F-27/result.json",
+          "sha256": "165563018e27e8e452e01f459e0d206347d742813f62f8870f29eeae93aeb3fd"
+        }
+      ]
+    }
+  ]
+}

@@ -1,6 +1,8 @@
 # Explicit X opt-in: add this file only with authorized real X storage state/list.
 services:
   tank:
+    environment:
+      TANK_X_ENABLED: "true"
     secrets:
     - x_session
 secrets:

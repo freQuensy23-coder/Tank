@@ -1,0 +1,81 @@
+{
+  "fixture_id": "F-03",
+  "code_version": "ddd508f0fc231f10ba7119b890231a1df9a70116c410d75690ffccc4374c0e0e",
+  "config_version": "58daf19e9ed36d477dca6ff543523fd5b7b6cfed-dirty.68e7c9640cc42a4c5047557b9bcc96130128a0d610d3edeb4cd8e0114993d0bc",
+  "cli_exit_code": 0,
+  "elapsed_seconds": 110.21136733400635,
+  "framework_status": "COMPLETED",
+  "source_outcomes": [
+    {
+      "item_id": "ITM-01M59PEFPM3HEPRXHY61F07YCA",
+      "source_id": "WEB",
+      "extraction_status": "DONE"
+    }
+  ],
+  "turn_outcomes": [
+    {
+      "turn_status": "DONE",
+      "retry_count": 0,
+      "failure": null
+    }
+  ],
+  "cards": [
+    {
+      "kind": "FULL",
+      "version": 1,
+      "alert_id": "ALR-01M5B1ER0WMXF7JCXDZ8Y9KG8G",
+      "text": "MAJOR (M3) — A secondary report describes IdentityAlias12's Intelligent Portfolios launch; the reported live stage remains unverified.\nScores D4 Mn/a (NOT_ESTIMABLE) P6 X6 F0 Sn/a (NOT_SUPPORTED) I8 · Stage: unverified LIVE · Certainty: MEDIUM · Fresh: NORMAL (public 14:02Z, known 16:12Z) · Data LOW\nVERIFIED: n/a (no verified claims) · NOT VERIFIED: IdentityAlias12 launched Intelligent Portfolios: BLKHIon, BLKDIGon and BLKGRWon — Primary launch confirmation unavailable in replay.; Intelligent Portfolios use model strategies and settlement Name05 models; Ethereum and BNB Chain; Name03 settlement — Primary confirmation of model licensing and settlement adoption unavailable.; ASSETK has no reported direct portfolio token mechanism Platform inflow narrative rather than direct token economics — Primary token-economic documentation not available.\nWHY IT MATTERS\n• What changed: The report describes Name05 model portfolios on Ethereum and BNB Chain for eligible non-US investors.\n• Economic effect: ASSETK capture is narrative-only: the report identifies no direct token-economic features, and inflows are not quantified. (start UNKNOWN · ramp CONDITIONAL · dependencies Primary launch confirmation, Portfolio adoption and inflows · timing LOW · materiality Not estimable; adoption and token linkage unproven.)\n• Token capture: asset-k NARRATIVE-ONLY — Portfolio launch may attract platform inflows; ASSETK linkage is narrative only. · holders revenue: n/a (not captured) — Primary confirmation is unavailable in replay; incomplete market coverage prevents a reliable repricing assessment.\nWHO: primary project-k · secondary project-m (LIQUIDITY_EXECUTION, unverified COMPATIBLE) · secondary counterparty-id2 (ISSUER_PRODUCT, unverified COMPATIBLE) · secondary n/a (No secondary has evidenced token capture and confirmed adoption.; VENUE_DEX: UNKNOWN — No venue adoption identified.; ORACLE_DATA: UNKNOWN — No provider identified.; ISSUER_PRODUCT: UNKNOWN — ASSETK capture remains narrative only.; INTEROPERABILITY: UNKNOWN — No provider identified.; SETTLEMENT_L1_L2: UNKNOWN — Ethereum and BNB Chain named, but no registered-token economic linkage established.; CUSTODY_COMPLIANCE: UNKNOWN — Eligibility stated, no service provider established.; LENDING_COLLATERAL: UNKNOWN — No collateral adoption evidence.; LIQUIDITY_EXECUTION: UNKNOWN — Name03 settlement reported; primary adoption and token capture unconfirmed.)\n── asset-k (PRIMARY) ──\nMARKET TRUTH: UNKNOWN — n/a (market facts unavailable); priced: n/a (event repricing unavailable) (EVENT n/a (NOT_AVAILABLE) raw; n/a (NOT_AVAILABLE) net BTC); excluded: binance — boundary aggregate unavailable; bybit — boundary aggregate unavailable; coinbase — boundary aggregate unavailable; kraken — boundary aggregate unavailable; okx — boundary aggregate unavailable\nOUTLOOK: UNKNOWN · MEDIUM · best 24h (impact start: UNKNOWN) · base UNKNOWN: market evidence incomplete. · upside UNKNOWN until class and data resolve. · failure Thesis invalid if the event is denied.\nWHAT TO DO: WAIT — Thesis D · Trade D\nWHAT CHANGES THE ACTION: ↑ Data confidence becomes HIGH; re-grade. · ↓ Majority-volume spot SELL for two hourly windows.\nCONFIDENCE: LOW — main unknown: Spot venue coverage is incomplete: INCOMPLETE"
+    }
+  ],
+  "tool_counts": {
+    "get_decision": 1,
+    "search_tank_items": 2,
+    "publish_card": 1,
+    "set_beneficiaries": 1,
+    "get_item": 1,
+    "get_token_facts": 1,
+    "record_event": 1,
+    "set_assessment": 1,
+    "list_open_events": 1,
+    "get_registry": 1,
+    "get_market_truth": 1,
+    "web_search": 1
+  },
+  "tool_refusals": [
+    {
+      "tool": "web_search",
+      "status": "REFUSED",
+      "result": {
+        "ok": false,
+        "error": {
+          "type": "ReplayEvidenceUnavailable",
+          "reason": "REPLAY_EVIDENCE_UNAVAILABLE: no eligible recorded response for this request. External network is disabled. This is missing replay evidence, not an empty search or a live source failure; do not infer that confirmation is absent.",
+          "category": "VALIDATION"
+        }
+      }
+    }
+  ],
+  "native_errors": [],
+  "failed_attempts": [
+    null
+  ],
+  "delivery": "NOT_RUN",
+  "exports_complete": true,
+  "large_inputs_retained_losslessly": [
+    {
+      "path": "qa-r47-candidate-masked-f03-driver/framework-bundles/4a9d5ae5e6fddf0bdb699f56a9f6575977f41c0b7557169c589fb236fcaadb83/inputs.json",
+      "bytes": 101636116,
+      "sha256": "691966b9c29fae5f43900cd9e20f785e7d52057a5d68370ccc6225717a3098b2",
+      "retained": "losslessharvestarchive+canonicalbundle+hostpreparedcompressedpacket"
+    }
+  ],
+  "frozen_database": "tank_replay_r47_candidate_masked_f03_completed_20261020",
+  "database_oid": 1526786,
+  "native_cleanup": {
+    "catalog_empty": true,
+    "qa_healthy": true,
+    "no_active_replay_connections": true
+  },
+  "guard_errors": [],
+  "acceptance_scope": "masked_F03_first_outcome;sealed_evaluator_separate;not_normalRuntime_or_SENT"
+}

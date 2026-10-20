@@ -1,0 +1,101 @@
+{
+  "recorded_at": "2026-10-20T11:17:15.895397+00:00",
+  "current_verified_candidate": "r82 image aeff9822/code43977ae5; actual E2E running under workflow owner",
+  "authority_order": [
+    "Latest direct user request and explicit choices",
+    "Current PRD/HLD/TDD with direct-user changes applied",
+    "Tests are evidence and may not redefine the requested behavior"
+  ],
+  "current_functional_evidence_pending": [
+    {
+      "case": "Ordinary source → Jev → native event → market → decisions → readable card → actual Tank Alerts, on coherent r82",
+      "state": "ACTUAL_RUN_IN_PROGRESS",
+      "last_actual": "r81 observer PoolTimeout; 18events/1MAJOR/1truth/0decisions/0Alerts, retained as incomplete"
+    },
+    {
+      "case": "Final actual MAJOR card decision/reasons/source evidence and Telegram thread/ledger",
+      "state": "REVIEW_ALL_ACTUAL_CARDS_WHEN_EXPORTED",
+      "scope": "Includes OLD<48h products; eight-hour focus is not an acceptance filter"
+    },
+    {
+      "case": "News→event90seconds",
+      "state": "NOT_ESTABLISHED_BY_LATEST_ACTUAL_COLD_BURST",
+      "last_actual": "r81 3/18 within90; 76.605–585.080seconds across unchanged25-item cold feed; do not infer isolated steady-state p95"
+    }
+  ],
+  "current_component_and_primary_proofs": [
+    {
+      "case": "r82 native external-tool connection ownership",
+      "state": "PASS_ACTUAL_IMAGE_REAL_PG_PLUS60_PROTOCOL_TESTS",
+      "proof": "r82-image-session-pool-postgres.json"
+    },
+    {
+      "case": "Original paired historical BTC/ETH Market Truth deadline on deployed r81",
+      "state": "PASS_FIRST_ATTEMPT_BOTH_UNDER90",
+      "proof": "recovery-r81/report.json",
+      "seconds": {
+        "ETH": 69.078125,
+        "BTC": 68.943608
+      }
+    },
+    {
+      "case": "Physical primary legacy SQL/raw-frame retirement and frozen history preservation",
+      "state": "PASS_INDEPENDENT_FULL_READBACK",
+      "proof": "primary-r81-independent-audit.json",
+      "sql_rows": 2212864,
+      "raw_files": 19500
+    },
+    {
+      "case": "Canonical original source immutability in r81 actual run",
+      "state": "PASS_FOR_OBSERVED_INPUTS",
+      "proof": "r81-actual-independent-review.json",
+      "native_input_snapshots": 24,
+      "all_source_raw_hashes": 53,
+      "whole_row_immutability_claimed": false
+    }
+  ],
+  "formal_or_sustained_evidence_gaps": [
+    {
+      "case": "V0-C/V0-D full27 historical fixtures",
+      "state": "NOT_COMPLETE",
+      "evidence": "Seven existing formal evidence failures retained; F11–F16 packets placeholders/components rather than full ready replay; accepted historical16/27 span earlier versions"
+    },
+    {
+      "case": "Native amd64 KVM execution",
+      "state": "HARDWARE_RUNTIME_PROOF_NOT_RUN",
+      "distinction": "Architecture/build/asset contracts passed; retained actual ARM OpenMA image remains separate qualification"
+    },
+    {
+      "case": "72-hour source availability and14-day shadow operation",
+      "state": "ELAPSED_OPERATIONAL_EVIDENCE_NOT_COMPLETE"
+    }
+  ],
+  "superseded_or_scope_limited_assertions": [
+    {
+      "old_assertion": "Jev below90/90 is a hard blocker",
+      "current_authority": "User explicitly instructed retain Jev and pick best measured prompt/threshold then continue",
+      "status": "NOT_A_BLOCKER_AND_NOT_A_FALSE90_90_PASS"
+    },
+    {
+      "old_assertion": "Every successful ITEM_ADDED must create an observation or prescribed tool sequence",
+      "current_authority": "Latest requirement4 makes recording optional and limits FAILED to real OpenMA session failure",
+      "status": "DO_NOT_REINTRODUCE_COMPLETION_HEURISTICS"
+    },
+    {
+      "old_assertion": "Deterministic code must reinterpret agent stage/certainty/semantic card text",
+      "current_authority": "User makes agent/skill semantic owner; latest narrow explicit structural checks such as empty-universeLOW and G4binding are separately required",
+      "status": "DO_NOT_FIT_OBSOLETE_TESTS"
+    },
+    {
+      "old_assertion": "Mutable processing bookkeeping means original collected news was rewritten",
+      "current_authority": "Immutable source title/text/publication/source/raw evidence; processing/observation state may evolve without evidence rewrite",
+      "status": "DO_NOT_CLAIM_WHOLE_ROW_IMMUTABILITY"
+    },
+    {
+      "old_assertion": "Actual X readiness inferred from session availability",
+      "current_scope": "No actual X calls in current non-X acceptance; list_id unresolved, session untouched",
+      "status": "EXCLUDED_ACTUAL_X"
+    }
+  ],
+  "full_spec_acceptance": false
+}

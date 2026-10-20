@@ -1,0 +1,91 @@
+{
+  "fixture_id": "F-14",
+  "ready": true,
+  "formula_phase": "COMPLETED",
+  "automated_checks": [
+    {
+      "assertion": {
+        "path": [
+          "market_truth",
+          0,
+          "derivatives",
+          "per_venue",
+          0,
+          "oi_native_chg_pct"
+        ],
+        "lte": 0
+      },
+      "passed": true
+    },
+    {
+      "assertion": {
+        "path": [
+          "market_truth",
+          0,
+          "move_class"
+        ],
+        "in": [
+          "SHORT_SQUEEZE",
+          "LIQUIDITY_VACUUM",
+          "UNKNOWN"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "assertion": {
+        "path": [
+          "decisions",
+          0,
+          "outlook",
+          "direction"
+        ],
+        "in": [
+          "TWO_SIDED",
+          "UNKNOWN"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "assertion": {
+        "path": [
+          "market_truth",
+          0,
+          "move_class"
+        ],
+        "not_equals": "SPOT_LED_ACCUMULATION"
+      },
+      "passed": true
+    }
+  ],
+  "automated_passed": true,
+  "full_completed_errors": [
+    "required manual clause failed: Native OI change reported as positions closing during the rise; move class ∈ {SHORT_SQUEEZE, LIQUIDITY_VACUUM, UNKNOWN}; direction TWO_SIDED or UNKNOWN; never SPOT_LED_ACCUMULATION."
+  ],
+  "case": {
+    "fixture_id": "F-14",
+    "case_description": "QNT — 27 Sep 2026 19:00–23:00 UTC: native OI −30.36%, price +54.09% between the closes of the 19:00 and 23:00 hourly bars (+50.78% in the 22:00 hour)",
+    "cutoff_spec": "27 Sep 2026 23:00",
+    "assertion_spec": "Native OI change reported as positions closing during the rise; move class ∈ {SHORT_SQUEEZE, LIQUIDITY_VACUUM, UNKNOWN}; direction TWO_SIDED or UNKNOWN; never SPOT_LED_ACCUMULATION.",
+    "acceptance_input": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-14/inputs/input.json.zst",
+      "sha256": "80701e8e92294c65ebe1d0d217fbd2aab162b7175af4d45b3ad180b51e0f53fd"
+    },
+    "private_name_map": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-14/private/map.json",
+      "sha256": "11b818dfae99b2a10ba297d42b4e6dd77ca021dc4b532bd0051d48fd94004b54"
+    },
+    "sealed_outcomes": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-14/sealed/outcomes.json",
+      "sha256": "00a7b8dcb955ac89e67b399beb7583792e14b38b2858ac9fbe89af9810372a9d"
+    },
+    "acceptance_run": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-run-v2/F-14/run.json",
+      "sha256": "c4aa10e13d29c72a5d27136fa5d0274598cfd604b1b4083f125297c787ddb605"
+    }
+  },
+  "economic_context": "EMPTY_UNINVENTED",
+  "native_wording_phase": "PLANNED_NOT_RUN",
+  "canonical_adopted": false
+}

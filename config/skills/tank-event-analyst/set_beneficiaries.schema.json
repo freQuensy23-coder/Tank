@@ -73,7 +73,8 @@
           "exposure_score": {
             "type": "number",
             "minimum": 0,
-            "maximum": 10
+            "maximum": 10,
+            "description": "TDD §4.7 exposure rubric: 10 = sole required rail with counterparty evidence; 8 = required LIVE rail; 6 = likely rail with BUILT, SUBMITTED or APPROVED integration; 4 = compatible candidate; 2 = thematic connection; 0 = none. Supply the evidence and integration state supporting the selected level."
           },
           "edge_certainty": {
             "enum": [
@@ -94,6 +95,34 @@
             "items": {
               "type": "string"
             }
+          },
+          "negative_thesis": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "mechanism",
+              "quote",
+              "claim_ids"
+            ],
+            "properties": {
+              "mechanism": {
+                "type": "string",
+                "minLength": 1
+              },
+              "quote": {
+                "type": "string",
+                "minLength": 1
+              },
+              "claim_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "description": "Explicit negative economic thesis for a LOSER edge with NEGATIVE direction. Supply the causal mechanism, a verbatim supporting quote and accepted RELATION claim references; the agent judges the quoted causal evidence; Tank applies deterministic role and dependency rules using the structured fields."
           }
         },
         "required": [
@@ -139,7 +168,8 @@
           "type": "string"
         }
       },
-      "required": []
+      "required": [],
+      "description": "Give a reason for every layer without a credible beneficiary, including layers that contain only unverified or candidate edges."
     },
     "layer_statuses": {
       "type": "object",
@@ -204,5 +234,5 @@
     "edges"
   ],
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Rules of \u00a74.7. Returns: Analysis set (universe tokens) and per-layer reasons for none."
+  "description": "Map positive beneficiaries, competitors and losers across the eight declared economic layers. Each edge needs accepted claim references, an explicit causal or share-loss chain, integration state/directionality and exposure 0..10. Token IDs must belong to the fixed registry universe; organization relevance alone does not prove token value capture. Supply reasons and NONE/UNKNOWN status for omitted layers. Negative token theses require explicit accepted causal evidence and a verbatim quote. Persists a versioned map and returns the token analysis set and per-layer reasons."
 }

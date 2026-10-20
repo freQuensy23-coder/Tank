@@ -14,7 +14,7 @@ def settings(**overrides):
     config = {
         "thresholds": {"filter_cutoff": 0.7, "routing_cutoff": 0.8},
         "registry": {
-            "entities": [{"entity_id": "aave", "name": "Aave", "aliases": ["Aave Labs"]}],
+            "entities": [{"entity_id": "aave", "name": "Aave", "aliases": ["Aave", "Aave Labs"]}],
             "tokens": [],
             "x_accounts": [],
         },
@@ -26,7 +26,7 @@ def settings(**overrides):
         },
     }
     values = {
-        "typesafe_api_key": "secret",
+        "openrouter_api_key": "secret",
         "openma_api_key": "secret",
         "openma_url": "http://oma",
         "openma_model": "gpt-6.1-sol",
@@ -50,6 +50,13 @@ async def seed_session(repo, **changes):
         "messages": [],
     }
     row.update(changes)
+    from tank.util import sha256
+
+    row["prompt_label"] = row["prompt_version"]
+    row["prompt_version"] = sha256(
+        {"system": "Resolved synthetic fixture prompt", "label": row["prompt_label"]}
+    )
+    row["prompt_version_basis"] = "RESOLVED_SESSION_AGENT_SNAPSHOT"
     await repo.put("ops.agent_sessions", "ses_1", row)
     return row
 
@@ -66,9 +73,9 @@ async def test_filter_requires_calibration_and_logs_typed_usage():
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13.0",
+                "model": "typesafe/jev-1.13-20260917",
                 "answers": {"relevant": {"type": "noul", "noul": 0.9}},
-                "usage": {"input_tokens": 100, "output_tokens": 0},
+                "usage": {"input_tokens": 100, "output_tokens": 0, "cost": "0.0000042"},
             },
         )
 
@@ -87,6 +94,8 @@ async def test_filter_requires_calibration_and_logs_typed_usage():
     assert len(jobs) == 1 and jobs[0]["type"] == "ROUTE_ITEM"
     usage = await repo.list("ops.llm_usage")
     assert usage[0]["cost_usd"] == "0.0000042"
+    assert usage[0]["billing_basis"] == "OPENROUTER_REPORTED"
+    assert usage[0]["endpoint"] == "https://openrouter.ai/api/v1/systemone"
 
 
 @pytest.mark.asyncio
@@ -113,7 +122,7 @@ async def test_routing_whole_word_alias_three_day_and_best_score():
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13.0",
+                "model": "typesafe/jev-1.13-20260917",
                 "answers": {"same_event": {"type": "noul", "noul": 0.95 if event == "best" else 0.85}},
                 "usage": {"input_tokens": 100},
             },
@@ -286,13 +295,14 @@ async def test_canonical_event_routing_and_added_message():
     def handler(req):
         body = json.loads(req.content)
         posted.append(body)
-        if req.url.host == "api.typesafe.ai":
+        if req.url.host == "openrouter.ai":
+            assert req.url.path == "/api/v1/systemone"
             assert body["state"]["event"]["stage"] == "LIVE"
             assert body["state"]["event"]["tokens"] == ["AAVE"]
             return httpx.Response(
                 200,
                 json={
-                    "model": "jev-1.13.0",
+                    "model": "typesafe/jev-1.13-20260917",
                     "answers": {"same_event": {"type": "noul", "noul": 0.99}},
                     "usage": {"input_tokens": 100},
                 },
@@ -501,6 +511,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         "predicate": "cancels",
         "object": "Product",
         "state_claim": "CANCELLED",
+        "verified": True,
         "directionality": "BOTH",
         "evidence_class": "PRIMARY_FACT",
         "quote": "Official cancellation",
@@ -512,7 +523,6 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         # Create the original FULL through production publication so its pinned
         # shown_tokens and decision references exactly match real records.
         monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Original product card")
-        monkeypatch.setattr(cards, "lint_card", lambda *a, **k: [])
         await service.process_event(
             "ses_1",
             {
@@ -553,6 +563,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
                     "event_id": "evt_1",
                     "item_id": "denial",
                     "link": "DENIAL",
+                    "certainty": "HIGH",
+                    "certainty_reason": "Official cancellation",
                     "claims": [claim],
                     "public_at": {
                         "value": now,
@@ -582,7 +594,6 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         decision = (await repo.get("ops.tool_calls", "ses_1:decision_exit"))["result"]
         assert decision["action"] == "EXIT"
         monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "EXIT: Official cancellation")
-        monkeypatch.setattr(cards, "lint_card", lambda *a, **k: [])
         await service.process_event(
             "ses_1",
             {
@@ -650,86 +661,49 @@ async def test_unpublished_invalidated_event_can_end_when_idle_without_marker():
 
 
 @pytest.mark.asyncio
-async def test_concurrent_pre_extraction_routing_reserves_one_session_two_messages():
+async def test_concurrent_items_without_event_candidates_open_distinct_idempotent_sessions():
     import asyncio
 
     repo = MemoryRepository()
     opts, _ = settings()
-    for iid, text in [
-        ("first", "Aave Labs announced product"),
-        ("second", "Aave confirms same product announcement"),
-    ]:
-        await repo.put("ingest.source_items", iid, {"item_id": iid, "source_id": "S01", "text": text})
-    creates = []
-    messages = []
-    questions = []
+    for iid in ("first", "second"):
+        await repo.put(
+            "ingest.source_items", iid, {"item_id": iid, "source_id": "S01", "text": "Aave Labs news"}
+        )
+    creates, messages = [], []
 
     def handler(request):
-        if request.url.host == "api.typesafe.ai":
-            body = json.loads(request.content)
-            questions.append(body)
-            assert body["state"]["event"]["statement"] == "Aave Labs announced product"
-            assert "pending_item" not in body["state"]
-            return httpx.Response(
-                200,
-                json={
-                    "model": "jev-1.13.0",
-                    "answers": {"same_event": {"type": "noul", "noul": 0.99}},
-                    "usage": {"input_tokens": 30, "output_tokens": 0},
-                },
-            )
+        assert request.url.host != "openrouter.ai"  # Pending extraction has no event state to score.
         if request.method == "GET":
             return httpx.Response(200, json={"data": [], "next_page": None})
         body = json.loads(request.content)
         if request.url.path == "/v1/sessions":
             creates.append(body)
-            return httpx.Response(200, json={"id": "pending_session"})
+            return httpx.Response(200, json={"id": f"pending_session_{len(creates)}"})
         messages.append(body)
         return httpx.Response(200, json={"data": []})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         pipe = Pipeline(repo, opts, http=http)
-        first, blocked = await asyncio.gather(
-            pipe.route_item({"item_id": "first"}),
-            pipe.route_item({"item_id": "second"}),
-            return_exceptions=True,
+        first, second = await asyncio.gather(
+            pipe.route_item({"item_id": "first"}), pipe.route_item({"item_id": "second"})
         )
-        from tank.agents import PendingRouting
-
-        assert isinstance(blocked, PendingRouting)
-        assert await repo.list("evt.events") == [] and questions == []
+        assert await repo.list("evt.events") == []
+        assert first["routing_message"]["kind"] == second["routing_message"]["kind"] == "NEW_ITEM"
+        assert all(
+            "reservation_id" not in item[field]
+            for item in (first, second)
+            for field in ("route", "routing_message")
+        )
         service = SessionService(repo, opts, None, http=http)
         service.start_stream = lambda sid: None
         one = await service.send_message(first["routing_message"])
-        await repo.put(
-            "evt.events",
-            "extracted",
-            {
-                "event_id": "extracted",
-                "statement": "Aave Labs announced product",
-                "entities": [{"entity_id": "aave", "role": "SUBJECT"}],
-                "tokens_mentioned": [],
-                "lifecycle": "DETECTED",
-            },
-        )
-        session = await repo.get("ops.agent_sessions", one["session_id"])
-        session["event_id"] = "extracted"
-        await repo.put("ops.agent_sessions", session["session_id"], session)
-        rid = first["routing_message"]["reservation_id"]
-        reservation = await repo.get("ops.routing_reservations", rid)
-        reservation.update(status="BOUND", event_id="extracted")
-        await repo.put("ops.routing_reservations", rid, reservation)
-        second = await pipe.route_item({"item_id": "second"})
-        assert second["routing_message"]["kind"] == "ITEM_ADDED"
         two = await service.send_message(second["routing_message"])
-        assert one["session_id"] == two["session_id"] == "pending_session"
-        await pipe.route_item({"item_id": "second"})
-        await service.send_message(second["routing_message"])
-    assert len(creates) == 1 and len(messages) == 2 and len(questions) == 1
-    session = await repo.get("ops.agent_sessions", "pending_session")
-    assert len(session["message_log"]) == 2
-    reservation = (await repo.list("ops.routing_reservations"))[0]
-    assert reservation["session_id"] == "pending_session" and reservation["item_ids"] == ["first"]
+        assert one["session_id"] != two["session_id"]
+        repeated = await pipe.route_item({"item_id": "second"})
+        await service.send_message(repeated["routing_message"])
+    assert len(creates) == len(messages) == 2
+    assert await repo.list("ops.routing_reservations") == []
 
 
 @pytest.mark.asyncio
@@ -976,7 +950,7 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages():
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13.0",
+                "model": "typesafe/jev-1.13-20260917",
                 "answers": {
                     "same_event": {"type": "noul", "noul": 0.99 if "event" in body["state"] else 0.85}
                 },
@@ -1000,3 +974,176 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages():
         service.start_stream = resume
         await service.run(stop)
         assert resumed == ["zz_session"]
+
+
+@pytest.mark.asyncio
+async def test_session_acceptance_and_tools_keep_clock_and_source_precision_separate():
+    repo = MemoryRepository()
+    opts, _ = settings()
+    await repo.put(
+        "ingest.source_items",
+        "item",
+        {
+            "item_id": "item",
+            "text": "Captured source",
+            "observed_at": "2026-10-01T00:00:00Z",
+            "observed_at_prec": "BUCKET(1d)",
+        },
+    )
+
+    def transport(request):
+        if request.url.path.endswith("/sessions"):
+            return (
+                httpx.Response(200, json={"data": []})
+                if request.method == "GET"
+                else httpx.Response(201, json={"id": "fresh"})
+            )
+        return httpx.Response(200, json={})
+
+    async def dispatch(*args):
+        return {"ok": True}
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        service = SessionService(repo, opts, dispatch, http=http)
+        service.start_stream = lambda sid: None
+        session = await service.send_message({"kind": "NEW_ITEM", "item_id": "item"})
+        await service.process_event(
+            "fresh",
+            {
+                "id": "call",
+                "type": "agent.custom_tool_use",
+                "name": "get_item",
+                "input": {"item_id": "item"},
+                "processed_at": "2026-10-02T10:00:00Z",
+                "processed_at_prec": "BUCKET(1s)",
+            },
+        )
+        await service.close()
+    session = await repo.get("ops.agent_sessions", "fresh")
+    assert (
+        session["opened_at_prec"]
+        == session["created_at_prec"]
+        == session["last_item_at_prec"]
+        == "COLLECTION_ONLY"
+    )
+    assert session["last_item_observed_at"] == "2026-10-01T00:00:00Z"
+    assert session["last_item_observed_at_prec"] == "BUCKET(1d)"
+    message = session["message_log"][0]
+    assert message["sent_at_prec"] == "COLLECTION_ONLY"
+    assert message["item_observed_at_prec"] == "BUCKET(1d)"
+    assert session["last_event_at_prec"] == "BUCKET(1s)"
+    tool = await repo.get("ops.tool_calls", "fresh:call")
+    for field in ("requested_at", "answered_at", "completed_at", "returned_at"):
+        assert tool[field + "_prec"] == "COLLECTION_ONLY"
+    assert tool["processed_at_prec"] == "BUCKET(1s)"
+    assert tool["answered_at"] == tool["completed_at"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("precision", [None, "BUCKET(1s)"])
+async def test_usage_propagates_provider_processed_precision_without_inference(precision):
+    repo, (opts, _) = MemoryRepository(), settings()
+    session = await seed_session(repo)
+    event = {
+        "id": "usage",
+        "processed_at": "2026-10-02T10:00:00.123456Z",
+        "model_usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+    if precision:
+        event["processed_at_prec"] = precision
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200))) as http:
+        service = SessionService(repo, opts, None, http=http)
+        await service.usage(session, event)
+    row = await repo.get("ops.llm_usage", "ses_1:usage")
+    assert row["at"] == event["processed_at"]
+    assert row["at_prec"] == row["processed_at_prec"] == precision
+    assert row["at_prec_reason"] == (None if precision else "INCOMPLETE")
+    assert row["created_at_prec"] == "COLLECTION_ONLY"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["fetch_page", "get_market_truth"])
+@pytest.mark.parametrize("failure_kind", ["http", "type"])
+async def test_tool_execution_error_is_durable_returned_and_never_redispatched_after_lost_reply(
+    tool_name, failure_kind
+):
+    repo, (opts, _) = MemoryRepository(), settings()
+    await seed_session(repo)
+    invocations, responses = 0, []
+
+    async def dispatch(*args):
+        nonlocal invocations
+        invocations += 1
+        if failure_kind == "type":
+            raise TypeError("FAKE_CREDENTIAL_IN_EXCEPTION must never enter ledger")
+        request = httpx.Request("GET", "https://source.invalid/?apikey=FAKE_CREDENTIAL_IN_EXCEPTION")
+        raise httpx.HTTPStatusError(
+            "FAKE_CREDENTIAL_IN_EXCEPTION", request=request, response=httpx.Response(500, request=request)
+        )
+
+    def control(request):
+        responses.append(json.loads(request.content)["events"][0])
+        if len(responses) == 1:
+            raise httpx.ConnectError("Lost tool response acknowledgement", request=request)
+        return httpx.Response(200, json={})
+
+    event = {"id": "failure", "type": "agent.custom_tool_use", "name": tool_name, "input": {}}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
+        first = SessionService(repo, opts, dispatch, http=http)
+        with pytest.raises(httpx.ConnectError):
+            await first.process_event("ses_1", event)
+        failed = await repo.get("ops.tool_calls", "ses_1:failure")
+        assert failed["status"] == "ERROR" and not failed.get("returned_at")
+        assert "failure" not in (await repo.get("ops.agent_sessions", "ses_1")).get("processed_events", [])
+        resumed = SessionService(repo, opts, dispatch, http=http)
+        await resumed.process_event("ses_1", event)
+        await resumed.process_event("ses_1", event)
+    stored = await repo.get("ops.tool_calls", "ses_1:failure")
+    assert invocations == 1
+    assert stored["status"] == "ERROR" and stored["returned_at"]
+    assert responses[0] == responses[1] and responses[1]["is_error"] is True
+    assert "FAKE_CREDENTIAL_IN_EXCEPTION" not in json.dumps(stored)
+
+
+@pytest.mark.asyncio
+async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static_label():
+    import copy
+
+    repo, (opts, config) = MemoryRepository(), settings()
+    snapshot = {
+        "id": "agt_1",
+        "version": 7,
+        "system": "Actual registered instructions",
+        "skills": [{"type": "custom", "skill_id": "skill", "version": "1"}],
+        "tools": [],
+        "model": {"id": "gpt-6.1-sol"},
+    }
+    created = 0
+
+    def control(request):
+        nonlocal created
+        if request.url.path.endswith("/sessions"):
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": []})
+            created += 1
+            return httpx.Response(201, json={"id": "fresh-" + str(created), "agent": copy.deepcopy(snapshot)})
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
+        service = SessionService(repo, opts, None, http=http)
+        service.start_stream = lambda sid: None
+        for item_id in ("one", "two"):
+            await repo.put("ingest.source_items", item_id, {"item_id": item_id, "text": "Synthetic item"})
+        first = await service.send_message({"kind": "NEW_ITEM", "item_id": "one"})
+        snapshot["system"] = "Changed actual registered instructions"
+        second = await service.send_message({"kind": "NEW_ITEM", "item_id": "two"})
+    assert first["agent_version"] == second["agent_version"] == "7"
+    assert first["prompt_label"] == second["prompt_label"] == config["openma"]["prompt_version"]
+    assert first["prompt_version"] != second["prompt_version"]
+    assert first["prompt_version_basis"] == "RESOLVED_SESSION_AGENT_SNAPSHOT"
+    assert first["prompt_binding"]["resolved_skill_versions"] == [
+        {"type": "custom", "skill_id": "skill", "version": "1"}
+    ]
+    incomplete = service.agent_provenance({"agent": {"id": "agt_1", "version": 8}}, config["openma"], "agt_1")
+    assert incomplete["prompt_version"] is None
+    assert incomplete["prompt_label"] == "test" and "INCOMPLETE" in incomplete["prompt_version_reason"]

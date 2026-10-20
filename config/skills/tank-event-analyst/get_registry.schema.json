@@ -9,5 +9,5 @@
     }
   },
   "required": [],
-  "description": "Registry and dependency map. Returns: Identity, aliases, official accounts and sources."
+  "description": "Read fixed registry identity and dependency information for an entity or token: canonical IDs, aliases, contracts, official accounts and sources, plus registered causal dependencies. Registry links identify candidates; they do not alone prove a current integration, economic effect or token capture."
 }

@@ -1,0 +1,1514 @@
+.s.s.s.s.s...............................F.........................F.... [ 28%]
+.........FFF...............F.................................s.......... [ 56%]
+....F.F....s...........s...sF.................s.s....s.................. [ 84%]
+...................F...........F..FFFFFF                                 [100%]
+=================================== FAILURES ===================================
+________ test_full_who_names_layers_outside_universe_and_net_event_move ________
+
+    def test_full_who_names_layers_outside_universe_and_net_event_move():
+        e, a, b, m = inputs()
+        b["token_id"] = "1INCH"
+        m["token_id"] = "1INCH"
+        e["beneficiary_edges"] = [
+            {"entity_id": "OutsideNetwork", "role": "PRIMARY", "token_id": None},
+            {"entity_id": "Rail", "role": "SECONDARY", "layer": "SETTLEMENT", "integration_state": "COMPATIBLE"},
+        ]
+        m["relative"]["windows"] = {"EVENT": {"r_raw": "0.021", "r_btc_adj": "0.013"}}
+        d = DecisionEngine().evaluate(e, a, b, m)
+        text = compose_card(e, a, [b], [d], [m])
+>       assert "primary OutsideNetwork" in text and "secondary Rail (SETTLEMENT, unverified COMPATIBLE)" in text
+E       AssertionError: assert ('primary OutsideNetwork' in 'MAJOR (n/a) — —\nScores D n/a (estimate not supplied) · M n/a (estimate not supplied) · P n/a (estimate not supplied)...t above normal.\n↓ Majority-volume spot SELL for two hourly windows.\n\nCONFIDENCE: HIGH — main unknown: none recorded')
+
+tests/test_decisions.py:393: AssertionError
+________________________ test_literal_prd_card_template ________________________
+
+    def test_literal_prd_card_template():
+        values = card_inputs()
+        card = render(values)
+>       assert (
+            card
+            == """MAJOR (M2) — Approval changes access.
+    Scores D8 M7 P6 X5 F4 S3 I2
+    Stage: APPROVED · Certainty: HIGH · Data HIGH
+    Fresh: FRESH · public 12:30Z · known 12:31Z
+    
+    VERIFIED: World approved product [source in evidence bundle]
+    NOT VERIFIED: —
+    
+    WHY IT MATTERS
+    • What changed: The approval is confirmed
+    • Economic effect: not estimable
+    • Token capture: WLD DIRECT — Required token gas
+    
+    WHO: primary World · secondary — (No eligible dependency rail)
+    
+    ── WLD (PRIMARY) ──
+    
+    MARKET TRUTH: ORGANIC MIXED
+    • 4h: price 5.00%
+    • 4h: spot net flow 2000 WLD
+    Priced: EARLY · EVENT 3.00% raw; 1.00% net BTC
+    
+    OUTLOOK: BULLISH · MEDIUM · best 4h
+    • Base: Product remains available
+    • Upside: Deployment verified
+    • Failure: Approval reversed
+    
+    WHAT TO DO: WAIT — Thesis A · Trade B
+    WHAT CHANGES THE ACTION:
+    ↑ Spot BUY persists
+    ↓ Spot SELL persists
+    
+    CONFIDENCE: HIGH — main unknown: none recorded"""
+        )
+E       AssertionError: assert 'MAJOR (M2) —...none recorded' == 'MAJOR (M2) —...none recorded'
+E         
+E         Skipping 38 identical leading characters in diff, use -v to show
+E         - Scores D8 M7 P6 X5 F4 S3 I2
+E         + Scores D8 · M7 · P6 · X5 · F4 · S3 · I2
+E         ?           ++   ++   ++   ++   ++  ++
+E           Stage: APPROVED · Certainty: HIGH · Data HIGH
+E           Fresh: FRESH · public 12:30Z · known 12:31Z...
+E         
+E         ...Full output truncated (33 lines hidden), use '-vv' to show
+
+tests/test_card_template.py:133: AssertionError
+_ test_current_full_publication_uses_literal_render_and_excludes_undecided_token[Approval changes access.-why0] _
+
+tmp_path = PosixPath('/private/var/folders/g5/3f78vbqd25g8khzxg9xhsjj40000gn/T/pytest-of-a.mametyev/pytest-64/test_current_full_publication_0')
+verdict = 'Approval changes access.'
+why = ['The approval is confirmed', 'not estimable']
+
+    @pytest.mark.parametrize(
+        "verdict,why",
+        [
+            ("Approval changes access.", ["The approval is confirmed", "not estimable"]),
+            (
+                "The institution selected the protocol for its planned network.",
+                [
+                    "Selection is approved, not evidence of a live rollout.",
+                    "No issuance volumes, effective fees or active value-accrual mechanism are established.",
+                ],
+            ),
+            (
+                "The agent's judgment is recorded without a prose checker.",
+                ["Live usage and token economics remain unverified.", "Economic effect: not estimable"],
+            ),
+        ],
+    )
+    async def test_current_full_publication_uses_literal_render_and_excludes_undecided_token(
+        tmp_path, verdict, why
+    ):
+        """Actual publish tool/composer/repository; no model/native/Telegram calls."""
+        from tank.event_tools import EventToolService
+        from tank.settings import Settings
+        from tank.storage import MemoryRepository
+        from tank.util import iso
+    
+        event, assessment, beneficiary, decision, truth = deepcopy(card_inputs())
+        eid, token = "current-card-contract", "world:WLD"
+        now = iso()
+        event.update(
+            event_id=eid,
+            lifecycle="MONITORING",
+            current_ems_id="current-ems",
+            tokens_mentioned=[token, "ethereum:ETH"],
+            public_at=now,
+            known_to_us_at=now,
+        )
+        assessment.update(ems_id="current-ems", event_id=eid)
+        beneficiary.update(edge_id="selected-wld", event_id=eid, map_version=1, tradable=True, exposure_score=7)
+        extra = dict(
+            beneficiary,
+            edge_id="undecided-eth",
+            token_id="ethereum:ETH",
+            entity_name="Ethereum",
+            exposure_score=10,
+        )
+        truth.update(mta_id="current-truth", event_id=eid, cutoff=now)
+        decision.update(dec_id="current-decision", event_id=eid, cutoff=now, market_truth_id="current-truth")
+        for index, condition in enumerate(decision["conditions"]):
+            condition["cond_id"] = f"current-condition-{index}"
+        repo = MemoryRepository()
+        await repo.open()
+        try:
+            await repo.put("evt.events", eid, event)
+            await repo.put("evt.ems_assessments", "current-ems", assessment)
+            await repo.put(
+                "evt.beneficiary_maps",
+                "current-map",
+                {
+                    "event_id": eid,
+                    "map_version": 1,
+                    "analysis_set": [token],
+                    "no_credible_secondary_reason": "No eligible dependency rail",
+                },
+            )
+            await repo.put("evt.beneficiary_edges", "selected-wld", beneficiary)
+            await repo.put("evt.beneficiary_edges", "undecided-eth", extra)
+            await repo.put("ana.market_truth", "current-truth", truth)
+            await repo.put("ana.decisions", "current-decision", decision)
+            claim = dict(event["claims"][0], claim_id="current-proof", event_id=eid)
+            await repo.put("evt.claims", "current-proof", claim)
+            await repo.put(
+                "ingest.source_items",
+                "source-proof",
+                {
+                    "item_id": "source-proof",
+                    "source_id": "S01",
+                    "text": "World approved product",
+                    "observed_at": now,
+                    "source_class": "PRIMARY",
+                },
+            )
+            service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+            # Publication depends on stored structured inputs, not a host-imposed
+            # order of this turn's calls or a second opinion about the prose.
+            await repo.put("ops.agent_sessions", "card-session", {"session_id": "card-session", "event_id": eid})
+            result = await service.dispatch(
+                "publish_card",
+                {
+                    "event_id": eid,
+                    "kind": "FULL",
+                    "verdict": verdict,
+                    "why": why,
+                },
+                {"role": "analyst", "session_id": "card-session", "event_id": eid, "call_id": "current-render"},
+            )
+            assert result["published"] is True, result
+            alert = await repo.get("out.alerts", result["alert_id"] + ":1")
+            text = alert["card_text"]
+            assert text.splitlines()[0] == "MAJOR (M2) — " + verdict
+            assert why[0] in text
+            assert why[1].removeprefix("Economic effect: ") in text
+            lines = text.splitlines()
+            assert alert["shown_tokens"] == [token]
+>           assert "primary Ethereum" in text  # WHO retains concerned entities.
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError: assert 'primary Ethereum' in 'MAJOR (M2) — Approval changes access.\nScores D8 · M7 · P6 · X5 · F4 · S3 · I2\nStage: APPROVED · Certainty: HIGH · D...nWHAT CHANGES THE ACTION:\n↑ Spot BUY persists\n↓ Spot SELL persists\n\nCONFIDENCE: HIGH — main unknown: none recorded'
+
+tests/test_card_template.py:408: AssertionError
+_ test_current_full_publication_uses_literal_render_and_excludes_undecided_token[The institution selected the protocol for its planned network.-why1] _
+
+tmp_path = PosixPath('/private/var/folders/g5/3f78vbqd25g8khzxg9xhsjj40000gn/T/pytest-of-a.mametyev/pytest-64/test_current_full_publication_1')
+verdict = 'The institution selected the protocol for its planned network.'
+why = ['Selection is approved, not evidence of a live rollout.', 'No issuance volumes, effective fees or active value-accrual mechanism are established.']
+
+    @pytest.mark.parametrize(
+        "verdict,why",
+        [
+            ("Approval changes access.", ["The approval is confirmed", "not estimable"]),
+            (
+                "The institution selected the protocol for its planned network.",
+                [
+                    "Selection is approved, not evidence of a live rollout.",
+                    "No issuance volumes, effective fees or active value-accrual mechanism are established.",
+                ],
+            ),
+            (
+                "The agent's judgment is recorded without a prose checker.",
+                ["Live usage and token economics remain unverified.", "Economic effect: not estimable"],
+            ),
+        ],
+    )
+    async def test_current_full_publication_uses_literal_render_and_excludes_undecided_token(
+        tmp_path, verdict, why
+    ):
+        """Actual publish tool/composer/repository; no model/native/Telegram calls."""
+        from tank.event_tools import EventToolService
+        from tank.settings import Settings
+        from tank.storage import MemoryRepository
+        from tank.util import iso
+    
+        event, assessment, beneficiary, decision, truth = deepcopy(card_inputs())
+        eid, token = "current-card-contract", "world:WLD"
+        now = iso()
+        event.update(
+            event_id=eid,
+            lifecycle="MONITORING",
+            current_ems_id="current-ems",
+            tokens_mentioned=[token, "ethereum:ETH"],
+            public_at=now,
+            known_to_us_at=now,
+        )
+        assessment.update(ems_id="current-ems", event_id=eid)
+        beneficiary.update(edge_id="selected-wld", event_id=eid, map_version=1, tradable=True, exposure_score=7)
+        extra = dict(
+            beneficiary,
+            edge_id="undecided-eth",
+            token_id="ethereum:ETH",
+            entity_name="Ethereum",
+            exposure_score=10,
+        )
+        truth.update(mta_id="current-truth", event_id=eid, cutoff=now)
+        decision.update(dec_id="current-decision", event_id=eid, cutoff=now, market_truth_id="current-truth")
+        for index, condition in enumerate(decision["conditions"]):
+            condition["cond_id"] = f"current-condition-{index}"
+        repo = MemoryRepository()
+        await repo.open()
+        try:
+            await repo.put("evt.events", eid, event)
+            await repo.put("evt.ems_assessments", "current-ems", assessment)
+            await repo.put(
+                "evt.beneficiary_maps",
+                "current-map",
+                {
+                    "event_id": eid,
+                    "map_version": 1,
+                    "analysis_set": [token],
+                    "no_credible_secondary_reason": "No eligible dependency rail",
+                },
+            )
+            await repo.put("evt.beneficiary_edges", "selected-wld", beneficiary)
+            await repo.put("evt.beneficiary_edges", "undecided-eth", extra)
+            await repo.put("ana.market_truth", "current-truth", truth)
+            await repo.put("ana.decisions", "current-decision", decision)
+            claim = dict(event["claims"][0], claim_id="current-proof", event_id=eid)
+            await repo.put("evt.claims", "current-proof", claim)
+            await repo.put(
+                "ingest.source_items",
+                "source-proof",
+                {
+                    "item_id": "source-proof",
+                    "source_id": "S01",
+                    "text": "World approved product",
+                    "observed_at": now,
+                    "source_class": "PRIMARY",
+                },
+            )
+            service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+            # Publication depends on stored structured inputs, not a host-imposed
+            # order of this turn's calls or a second opinion about the prose.
+            await repo.put("ops.agent_sessions", "card-session", {"session_id": "card-session", "event_id": eid})
+            result = await service.dispatch(
+                "publish_card",
+                {
+                    "event_id": eid,
+                    "kind": "FULL",
+                    "verdict": verdict,
+                    "why": why,
+                },
+                {"role": "analyst", "session_id": "card-session", "event_id": eid, "call_id": "current-render"},
+            )
+            assert result["published"] is True, result
+            alert = await repo.get("out.alerts", result["alert_id"] + ":1")
+            text = alert["card_text"]
+            assert text.splitlines()[0] == "MAJOR (M2) — " + verdict
+            assert why[0] in text
+            assert why[1].removeprefix("Economic effect: ") in text
+            lines = text.splitlines()
+            assert alert["shown_tokens"] == [token]
+>           assert "primary Ethereum" in text  # WHO retains concerned entities.
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AssertionError: assert 'primary Ethereum' in 'MAJOR (M2) — The institution selected the protocol for its planned network.\nScores D8 · M7 · P6 · X5 · F4 · S3 · I2\...nWHAT CHANGES THE ACTION:\n↑ Spot BUY persists\n↓ Spot SELL persists\n\nCONFIDENCE: HIGH — main unknown: none recorded'
+
+tests/test_card_template.py:408: AssertionError
+_ test_current_full_publication_uses_literal_render_and_excludes_undecided_token[The agent's judgment is recorded without a prose checker.-why2] _
+
+tmp_path = PosixPath('/private/var/folders/g5/3f78vbqd25g8khzxg9xhsjj40000gn/T/pytest-of-a.mametyev/pytest-64/test_current_full_publication_2')
+verdict = "The agent's judgment is recorded without a prose checker."
+why = ['Live usage and token economics remain unverified.', 'Economic effect: not estimable']
+
+    @pytest.mark.parametrize(
+        "verdict,why",
+        [
+            ("Approval changes access.", ["The approval is confirmed", "not estimable"]),
+            (
+                "The institution selected the protocol for its planned network.",
+                [
+                    "Selection is approved, not evidence of a live rollout.",
+                    "No issuance volumes, effective fees or active value-accrual mechanism are established.",
+                ],
+            ),
+            (
+                "The agent's judgment is recorded without a prose checker.",
+                ["Live usage and token economics remain unverified.", "Economic effect: not estimable"],
+            ),
+        ],
+    )
+    async def test_current_full_publication_uses_literal_render_and_excludes_undecided_token(
+        tmp_path, verdict, why
+    ):
+        """Actual publish tool/composer/repository; no model/native/Telegram calls."""
+        from tank.event_tools import EventToolService
+        from tank.settings import Settings
+        from tank.storage import MemoryRepository
+        from tank.util import iso
+    
+        event, assessment, beneficiary, decision, truth = deepcopy(card_inputs())
+        eid, token = "current-card-contract", "world:WLD"
+        now = iso()
+        event.update(
+            event_id=eid,
+            lifecycle="MONITORING",
+            current_ems_id="current-ems",
+            tokens_mentioned=[token, "ethereum:ETH"],
+            public_at=now,
+            known_to_us_at=now,
+        )
+        assessment.update(ems_id="current-ems", event_id=eid)
+        beneficiary.update(edge_id="selected-wld", event_id=eid, map_version=1, tradable=True, exposure_score=7)
+        extra = dict(
+            beneficiary,
+            edge_id="undecided-eth",
+            token_id="ethereum:ETH",
+            entity_name="Ethereum",
+            exposure_score=10,
+        )
+        truth.update(mta_id="current-truth", event_id=eid, cutoff=now)
+        decision.update(dec_id="current-decision", event_id=eid, cutoff=now, market_truth_id="current-truth")
+        for index, condition in enumerate(decision["conditions"]):
+            condition["cond_id"] = f"current-condition-{index}"
+        repo = MemoryRepository()
+        await repo.open()
+        try:
+            await repo.put("evt.events", eid, event)
+            await repo.put("evt.ems_assessments", "current-ems", assessment)
+            await repo.put(
+                "evt.beneficiary_maps",
+                "current-map",
+                {
+                    "event_id": eid,
+                    "map_version": 1,
+                    "analysis_set": [token],
+                    "no_credible_secondary_reason": "No eligible dependency rail",
+                },
+            )
+            await repo.put("evt.beneficiary_edges", "selected-wld", beneficiary)
+            await repo.put("evt.beneficiary_edges", "undecided-eth", extra)
+            await repo.put("ana.market_truth", "current-truth", truth)
+            await repo.put("ana.decisions", "current-decision", decision)
+            claim = dict(event["claims"][0], claim_id="current-proof", event_id=eid)
+            await repo.put("evt.claims", "current-proof", claim)
+            await repo.put(
+                "ingest.source_items",
+                "source-proof",
+                {
+                    "item_id": "source-proof",
+                    "source_id": "S01",
+                    "text": "World approved product",
+                    "observed_at": now,
+                    "source_class": "PRIMARY",
+                },
+            )
+            service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+            # Publication depends on stored structured inputs, not a host-imposed
+            # order of this turn's calls or a second opinion about the prose.
+            await repo.put("ops.agent_sessions", "card-session", {"session_id": "card-session", "event_id": eid})
+            result = await service.dispatch(
+                "publish_card",
+                {
+                    "event_id": eid,
+                    "kind": "FULL",
+                    "verdict": verdict,
+                    "why": why,
+                },
+                {"role": "analyst", "session_id": "card-session", "event_id": eid, "call_id": "current-render"},
+            )
+            assert result["published"] is True, result
+            alert = await repo.get("out.alerts", result["alert_id"] + ":1")
+            text = alert["card_text"]
+            assert text.splitlines()[0] == "MAJOR (M2) — " + verdict
+            assert why[0] in text
+            assert why[1].removeprefix("Economic effect: ") in text
+            lines = text.splitlines()
+            assert alert["shown_tokens"] == [token]
+>           assert "primary Ethereum" in text  # WHO retains concerned entities.
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           assert 'primary Ethereum' in "MAJOR (M2) — The agent's judgment is recorded without a prose checker.\nScores D8 · M7 · P6 · X5 · F4 · S3 · I2\nStag...nWHAT CHANGES THE ACTION:\n↑ Spot BUY persists\n↓ Spot SELL persists\n\nCONFIDENCE: HIGH — main unknown: none recorded"
+
+tests/test_card_template.py:408: AssertionError
+__ test_layer_reasons_are_rendered_once_with_generic_summary_without_mutation __
+
+    def test_layer_reasons_are_rendered_once_with_generic_summary_without_mutation():
+        inputs = card_inputs()
+        event = inputs[0]
+        layers = {
+            "ISSUER_PRODUCT": {"status": "UNKNOWN", "note": "Issuer proof absent"},
+            "VENUE_DEX": {"status": "NONE", "note": "No venue evidence"},
+        }
+        prefix = "No SECONDARY edge satisfies the credibility requirements in §4.7. "
+        summary = prefix.rstrip()
+        event["beneficiary_map"] = {"layers": layers, "no_credible_secondary_reason": summary}
+        original = deepcopy(inputs)
+        text = render(inputs)
+>       assert "Issuer proof absent" not in text
+E       AssertionError: assert 'Issuer proof absent' not in 'MAJOR (M2) ...one recorded'
+E         
+E         'Issuer proof absent' is contained here:
+E            product: Issuer proof absent
+E           • Exchanges / DEX: No venue evidence
+E           
+E           ── WLD (PRIMARY) ──
+E           ...
+E         
+E         ...Full output truncated (16 lines hidden), use '-vv' to show
+
+tests/test_card_template.py:559: AssertionError
+________ test_real_expiry_to_update_delivery_never_reopens_call[FRESH] _________
+
+service = <tank.event_tools.EventToolService object at 0x109efaff0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x109ef8bf0>
+freshness = 'FRESH'
+
+    @pytest.mark.parametrize("freshness", ["FRESH", "STALE"])
+    async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkeypatch, freshness):
+        import httpx
+    
+        from tank.analysis.decisions import DecisionEngine
+        from tank.delivery import DeliveryService
+        from tank.scheduler import Scheduler
+    
+        service.engine = DecisionEngine()
+        eid = "expiry-event"
+        token = "T"
+        now = utcnow()
+        event = {
+            "event_id": eid,
+            "statement": "Access approved",
+            "current_ems_id": "expiry-ems",
+            "event_state": "APPROVED",
+            "state_verified": True,
+            "freshness": "FRESH",
+            "certainty": "HIGH",
+            "lifecycle": "MONITORING",
+            "public_at": iso(now),
+            "known_to_us_at": iso(now),
+            "event_time": {"value": None, "precision": "UNKNOWN"},
+        }
+        assessment = {
+            "ems_id": "expiry-ems",
+            "event_id": eid,
+            "class": "MAJOR",
+            "criterion": "M2",
+            "certainty": "HIGH",
+            "impact_horizon": {"impact_start": "WEEKS"},
+        }
+        edge = {
+            "edge_id": "expiry-edge",
+            "event_id": eid,
+            "map_version": 1,
+            "entity_id": "world",
+            "token_id": token,
+            "role": "PRIMARY",
+            "tradable": True,
+            "credible": True,
+            "capture_class": "DIRECT",
+            "exposure_score": 8,
+        }
+        truth = {
+            "mta_id": "expiry-truth",
+            "event_id": eid,
+            "token_id": token,
+            "cutoff": iso(now),
+            "move_class": "SPOT_LED_ACCUMULATION",
+            "data_confidence": {"class": "HIGH", "critical_semantics_verified": True},
+            "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL", "anchor": {"ref_price": "10"}},
+            "liquidity": {"liquidity_state": "NORMAL"},
+            "spot": {},
+            "derivatives": {},
+        }
+        call = {
+            "call_id": "expiry-call",
+            "event_id": eid,
+            "token_id": token,
+            "status": "OPEN",
+            "opened_at": iso(now - timedelta(days=8)),
+            "invalidation_price": "9",
+            "entry_ref_price": "10",
+        }
+        for table, key, row in [
+            ("evt.events", eid, event),
+            ("evt.ems_assessments", "expiry-ems", assessment),
+            ("evt.beneficiary_maps", "expiry-map", {"event_id": eid, "map_version": 1, "analysis_set": [token]}),
+            ("evt.beneficiary_edges", "expiry-edge", edge),
+            ("ana.market_truth", "expiry-truth", truth),
+            ("ana.calls", "expiry-call", call),
+        ]:
+            await service.repo.put(table, key, row)
+        first_decision = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+        assert first_decision["action"] == "HOLD"
+        first = await service.dispatch(
+            "publish_card",
+            {
+                "event_id": eid,
+                "kind": "FULL",
+                "verdict": "Access approved",
+                "why": ["Defined access", "Primary event confirmed"],
+            },
+            {},
+        )
+        assert first["published"], first
+        service.settings.telegram_token = "test"
+        service.settings.telegram_alerts_chat = "1"
+        service.settings.telegram_ops_chat = "2"
+        sent = []
+    
+        async def telegram(request):
+            sent.append(request)
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
+    
+        async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+            delivery = DeliveryService(service.repo, service.settings, http=http)
+            await delivery.deliver({"alert_id": first["alert_id"], "version": 1})
+            stale_event = await service.repo.get("evt.events", eid)
+            stale_event["freshness"] = freshness
+            await service.repo.put("evt.events", eid, stale_event)
+            scheduler = Scheduler(service.repo, service.settings, None, None)
+            await scheduler.expire_calls(now)
+            assert (await service.repo.get("evt.events", eid))["call_expired"]
+            lifecycle = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+            assert lifecycle["tracking_ended"] and lifecycle["actionable"] is False
+            assert lifecycle["action"] == "HOLD"
+            assert not lifecycle["conditions"]
+            correction = await service.dispatch(
+                "publish_card",
+                {
+                    "event_id": eid,
+                    "kind": "UPDATE",
+                    "verdict": "Tracking window ended",
+                    "why": ["Call window expired", "Tracking ended"],
+                },
+                {},
+            )
+>           assert not correction["published"]
+E           assert not True
+
+tests/test_event_tools.py:953: AssertionError
+_ test_material_update_refused_without_pending_card_then_republished_after_window _
+
+service = <tank.event_tools.EventToolService object at 0x1098d9850>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1098db3b0>
+
+    async def test_material_update_refused_without_pending_card_then_republished_after_window(
+        service, monkeypatch
+    ):
+        import httpx
+    
+        from tank.analysis.decisions import DecisionEngine
+        from tank.delivery import DeliveryService
+    
+        service.engine = DecisionEngine()
+        eid = "material-event"
+        token = "T"
+        now = utcnow()
+        records = [
+            (
+                "evt.events",
+                eid,
+                {
+                    "event_id": eid,
+                    "statement": "Access approved",
+                    "current_ems_id": "material-ems",
+                    "event_state": "APPROVED",
+                    "state_verified": True,
+                    "freshness": "FRESH",
+                    "certainty": "HIGH",
+                    "lifecycle": "MONITORING",
+                    "public_at": iso(now),
+                    "known_to_us_at": iso(now),
+                },
+            ),
+            (
+                "evt.ems_assessments",
+                "material-ems",
+                {
+                    "ems_id": "material-ems",
+                    "event_id": eid,
+                    "class": "MAJOR",
+                    "criterion": "M2",
+                    "certainty": "HIGH",
+                    "impact_horizon": {"impact_start": "WEEKS"},
+                },
+            ),
+            (
+                "evt.beneficiary_maps",
+                "material-map",
+                {"event_id": eid, "map_version": 1, "analysis_set": [token]},
+            ),
+            (
+                "evt.beneficiary_edges",
+                "material-edge",
+                {
+                    "edge_id": "material-edge",
+                    "event_id": eid,
+                    "map_version": 1,
+                    "entity_id": "world",
+                    "token_id": token,
+                    "role": "PRIMARY",
+                    "tradable": True,
+                    "credible": True,
+                    "capture_class": "DIRECT",
+                    "exposure_score": 8,
+                },
+            ),
+            (
+                "ana.calls",
+                "material-call",
+                {
+                    "call_id": "material-call",
+                    "event_id": eid,
+                    "token_id": token,
+                    "status": "OPEN",
+                    "opened_at": iso(now),
+                    "invalidation_price": "9",
+                    "entry_ref_price": "10",
+                },
+            ),
+        ]
+        truth = {
+            "mta_id": "material-truth",
+            "event_id": eid,
+            "token_id": token,
+            "cutoff": iso(now),
+            "move_class": "SPOT_LED_ACCUMULATION",
+            "data_confidence": {"class": "HIGH", "critical_semantics_verified": True},
+            "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL", "anchor": {"ref_price": "10"}},
+            "liquidity": {"liquidity_state": "NORMAL"},
+            "spot": {},
+            "derivatives": {},
+        }
+        records.append(("ana.market_truth", "material-truth", truth))
+        for table, key, row in records:
+            await service.repo.put(table, key, row)
+        first = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+        assert first["action"] == "HOLD"
+        full = await service.dispatch(
+            "publish_card",
+            {
+                "event_id": eid,
+                "kind": "FULL",
+                "verdict": "Access approved",
+                "why": ["Defined access", "Primary event confirmed"],
+            },
+            {},
+        )
+        assert full["published"], full
+        service.settings.telegram_token = "test"
+        service.settings.telegram_alerts_chat = "1"
+        service.settings.telegram_ops_chat = "2"
+        sent = []
+    
+        async def telegram(request):
+            sent.append(request)
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
+    
+        async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+            delivery = DeliveryService(service.repo, service.settings, http=http)
+            await delivery.deliver({"alert_id": full["alert_id"], "version": 1})
+            low = dict(
+                truth,
+                mta_id="material-low",
+                cutoff=iso(),
+                data_confidence={"class": "LOW", "critical_semantics_verified": False},
+            )
+            await service.repo.put("ana.market_truth", "material-low", low)
+            reduced = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
+            assert reduced["action"] == "REDUCE"
+            args = {
+                "event_id": eid,
+                "kind": "UPDATE",
+                "verdict": "Data coverage limited",
+                "why": ["Coverage decreased", "Execution confidence lower"],
+            }
+            for _ in range(2):
+                refused = await service.dispatch("publish_card", args, {})
+>               assert not refused["published"] and refused["reason"] == "UPDATE_RATE_LIMIT"
+E               assert (not True)
+
+tests/test_event_tools.py:1123: AssertionError
+_______ test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent _______
+
+service = <tank.event_tools.EventToolService object at 0x1077b3620>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x11591bb30>
+
+    async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(service, monkeypatch):
+        """Use real publication gate, frozen snapshots and delivery; isolate card layout."""
+        import httpx
+    
+        import tank.analysis.cards as cards
+        from tank.delivery import DeliveryService
+    
+        monkeypatch.setattr(cards, "compose_card", lambda *args, **kwargs: "Synthetic safety update")
+        eid = "repeat-safety"
+        await service.repo.put(
+            "evt.events",
+            eid,
+            {
+                "event_id": eid,
+                "current_ems_id": "repeat-ems",
+                "event_state": "APPROVED",
+                "state_verified": True,
+                "freshness": "FRESH",
+                "certainty": "HIGH",
+                "lifecycle": "MONITORING",
+                "known_to_us_at": iso(),
+                "tokens_mentioned": ["T"],
+            },
+        )
+        await service.repo.put(
+            "evt.ems_assessments",
+            "repeat-ems",
+            {"ems_id": "repeat-ems", "event_id": eid, "class": "MAJOR", "certainty": "HIGH"},
+        )
+        await service.repo.put(
+            "evt.beneficiary_maps", "repeat-map", {"event_id": eid, "map_version": 1, "analysis_set": ["T"]}
+        )
+        await service.repo.put(
+            "evt.beneficiary_edges",
+            "repeat-edge",
+            {
+                "edge_id": "repeat-edge",
+                "event_id": eid,
+                "map_version": 1,
+                "token_id": "T",
+                "role": "PRIMARY",
+                "tradable": True,
+                "credible": True,
+                "exposure_score": 8,
+            },
+        )
+        await service.repo.put(
+            "ana.market_truth",
+            "repeat-truth",
+            {
+                "mta_id": "repeat-truth",
+                "event_id": eid,
+                "token_id": "T",
+                "cutoff": iso(),
+                "data_confidence": {"class": "LOW"},
+            },
+        )
+        await service.repo.put(
+            "ana.decisions",
+            "repeat-wait",
+            {"dec_id": "repeat-wait", "event_id": eid, "token_id": "T", "action": "WAIT", "cutoff": iso()},
+        )
+        args = {
+            "event_id": eid,
+            "kind": "FULL",
+            "verdict": "Synthetic fact",
+            "why": ["Primary fixture", "Safety fixture"],
+        }
+        first = await service.dispatch("publish_card", args, {})
+        assert first["published"], first
+        service.settings.telegram_token = "fixture"
+        service.settings.telegram_alerts_chat = "1"
+        service.settings.telegram_ops_chat = "2"
+        sent = []
+    
+        def telegram(request):
+            sent.append(request)
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
+    
+        async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+            delivery = DeliveryService(service.repo, service.settings, http=http)
+            await delivery.deliver({"alert_id": first["alert_id"], "version": 1})
+            event = await service.repo.get("evt.events", eid)
+            await service.repo.put("evt.events", eid, {**event, "freshness": "FRESH", "lifecycle": "INVALIDATED"})
+            await service.repo.put(
+                "ana.contradictions",
+                "repeat-fatal",
+                {
+                    "contradiction_id": "repeat-fatal",
+                    "event_id": eid,
+                    "type": "FATAL",
+                    "description": "Synthetic official denial",
+                },
+            )
+            await service.repo.put(
+                "ana.decisions",
+                "repeat-exit",
+                {"dec_id": "repeat-exit", "event_id": eid, "token_id": "T", "action": "EXIT", "cutoff": iso()},
+            )
+            args["kind"] = "UPDATE"
+            correction = await service.dispatch("publish_card", args, {})
+            assert correction["published"], correction
+            await delivery.deliver({"alert_id": correction["alert_id"], "version": 2})
+            for _ in range(2):
+                repeat = await service.dispatch("publish_card", args, {})
+                assert not repeat["published"], repeat
+            assert len(sent) == 2
+            assert len(await service.repo.list("out.alerts", filters={"event_id": eid})) == 2
+            # Persisted FATAL/EXIT cannot make an unrelated class change immediate.
+            event = await service.repo.get("evt.events", eid)
+            await service.repo.put("evt.events", eid, {**event, "freshness": "FRESH", "lifecycle": "MONITORING"})
+            await service.repo.put(
+                "evt.ems_assessments",
+                "repeat-ems",
+                {"ems_id": "repeat-ems", "event_id": eid, "class": "STRUCTURAL_SHOCK", "certainty": "HIGH"},
+            )
+            refused = await service.dispatch("publish_card", args, {})
+>           assert not refused["published"] and refused["reason"] == "UPDATE_RATE_LIMIT"
+E           assert (not True)
+
+tests/test_event_tools.py:2353: AssertionError
+________ test_refused_update_stays_unsent_after_restart_and_later_exit _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1159d45f0>
+
+    @pytest.mark.asyncio
+    async def test_refused_update_stays_unsent_after_restart_and_later_exit(monkeypatch):
+        from datetime import timedelta
+    
+        import tank.delivery as delivery_module
+        from tank.util import iso, utcnow
+    
+        base = utcnow()
+        clock = [base + timedelta(minutes=2)]
+        monkeypatch.setattr(delivery_module, "utcnow", lambda: clock[0])
+        repo = MemoryRepository()
+        await repo.put("evt.events", "e", {"event_id": "e"})
+        await repo.put(
+            "out.alerts",
+            "a:1",
+            {
+                "alert_id": "a",
+                "version": 1,
+                "event_id": "e",
+                "kind": "FULL",
+                "generated_at": iso(base),
+                "card_text": "Original",
+                "decisions": [],
+            },
+            immutable=True,
+        )
+        await repo.put(
+            "out.deliveries",
+            "first",
+            {
+                "alert_id": "a",
+                "version": 1,
+                "channel": "telegram:alerts",
+                "status": "SENT",
+                "message_ref": "42",
+                "attempt": 1,
+                "at": iso(base),
+            },
+            immutable=True,
+        )
+        await repo.put(
+            "ana.calls", "call", {"call_id": "call", "event_id": "e", "token_id": "T", "status": "OPEN"}
+        )
+        await repo.put(
+            "ana.decisions",
+            "dontchase",
+            {"dec_id": "dontchase", "event_id": "e", "token_id": "T", "action": "DONT_CHASE"},
+        )
+        await repo.put(
+            "out.alerts",
+            "a:2",
+            {
+                "alert_id": "a",
+                "version": 2,
+                "event_id": "e",
+                "kind": "UPDATE",
+                "generated_at": iso(clock[0]),
+                "card_text": "Do not chase",
+                "decisions": ["dontchase"],
+                "delivery_not_before": iso(base + timedelta(minutes=15)),
+            },
+            immutable=True,
+        )
+        settings = SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
+        requests = []
+    
+        def send(request):
+            requests.append(request)
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": 43}})
+    
+        async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+>           await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
+
+tests/test_delivery.py:367: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tank.delivery.DeliveryService object at 0x11591ba40>
+payload = {'alert_id': 'a', 'version': 2}
+
+    async def deliver(self, payload):
+        if payload.get("notice_id"):
+            error = await self._deliver(payload)
+        else:
+            rows = await self._all(
+                "out.alerts", filters={"alert_id": payload["alert_id"], "version": payload["version"]}
+            )
+            if not rows:
+                raise ValueError("Delivery subject does not exist")
+            # Serialization includes policy checks and the network send, not just ledger writes.
+            async with self.repo.lock("event:" + rows[0]["event_id"]):
+                error = await self._deliver(payload)
+        if isinstance(error, DeliveryError):
+            if getattr(error, "terminal", False):
+                await self.terminal_failure(payload, error, 5)
+>           raise error
+E           tank.delivery.DeliveryError: Accepted card is scheduled for later delivery
+
+src/tank/delivery.py:120: DeliveryError
+___ test_explicit_ordinary_update_flag_preserves_rate_with_persistent_safety ___
+
+    @pytest.mark.asyncio
+    async def test_explicit_ordinary_update_flag_preserves_rate_with_persistent_safety():
+        from datetime import timedelta
+    
+        from tank.util import iso, utcnow
+    
+        repo = MemoryRepository()
+        await repo.put("evt.events", "e", {"event_id": "e"})
+        await repo.put(
+            "ana.decisions", "exit", {"dec_id": "exit", "event_id": "e", "token_id": "T", "action": "EXIT"}
+        )
+        await repo.put(
+            "out.alerts",
+            "a:1",
+            {"alert_id": "a", "version": 1, "event_id": "e", "card_text": "Denial", "decisions": ["exit"]},
+            immutable=True,
+        )
+        await repo.put(
+            "out.deliveries",
+            "sent",
+            {
+                "alert_id": "a",
+                "version": 1,
+                "channel": "telegram:alerts",
+                "status": "SENT",
+                "message_ref": "42",
+                "attempt": 1,
+                "at": iso(),
+            },
+            immutable=True,
+        )
+        await repo.put(
+            "out.alerts",
+            "a:2",
+            {
+                "alert_id": "a",
+                "version": 2,
+                "event_id": "e",
+                "kind": "UPDATE",
+                "card_text": "Class changed",
+                "decisions": ["exit"],
+                "delivery_immediate": False,
+                "delivery_not_before": iso(utcnow() + timedelta(minutes=15)),
+                "card_struct": {"event": {"contradictions": [{"type": "FATAL"}]}},
+            },
+            immutable=True,
+        )
+        settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda r: pytest.fail("Ordinary update sent early"))
+        ) as http:
+>           await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
+
+tests/test_delivery.py:676: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tank.delivery.DeliveryService object at 0x11591bd40>
+payload = {'alert_id': 'a', 'version': 2}
+
+    async def deliver(self, payload):
+        if payload.get("notice_id"):
+            error = await self._deliver(payload)
+        else:
+            rows = await self._all(
+                "out.alerts", filters={"alert_id": payload["alert_id"], "version": payload["version"]}
+            )
+            if not rows:
+                raise ValueError("Delivery subject does not exist")
+            # Serialization includes policy checks and the network send, not just ledger writes.
+            async with self.repo.lock("event:" + rows[0]["event_id"]):
+                error = await self._deliver(payload)
+        if isinstance(error, DeliveryError):
+            if getattr(error, "terminal", False):
+                await self.terminal_failure(payload, error, 5)
+>           raise error
+E           tank.delivery.DeliveryError: Accepted card is scheduled for later delivery
+
+src/tank/delivery.py:120: DeliveryError
+_ test_delivery_refusal_preserves_sent_anchor_and_records_no_attempt[BUCKET(1m)] _
+
+precision = 'BUCKET(1m)'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("precision", ["BUCKET(1m)", None])
+    async def test_delivery_refusal_preserves_sent_anchor_and_records_no_attempt(precision):
+        from tank.util import iso
+    
+        repo = MemoryRepository()
+        await repo.put(
+            "out.alerts",
+            "p:1",
+            {"alert_id": "p", "version": 1, "event_id": "e", "card_text": "Original", "decisions": []},
+            immutable=True,
+        )
+        stamp = {
+            "alert_id": "p",
+            "version": 1,
+            "channel": "telegram:alerts",
+            "status": "SENT",
+            "message_ref": "42",
+            "attempt": 1,
+            "at": iso(),
+        }
+        if precision:
+            stamp["at_prec"] = precision
+        await repo.put("out.deliveries", "sent", stamp, immutable=True)
+        await repo.put(
+            "out.alerts",
+            "p:2",
+            {
+                "alert_id": "p",
+                "version": 2,
+                "event_id": "e",
+                "kind": "UPDATE",
+                "card_text": "Update",
+                "decisions": [],
+                "delivery_immediate": False,
+            },
+            immutable=True,
+        )
+        settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: pytest.fail("Sent early"))) as http:
+>           await DeliveryService(repo, settings, http=http).deliver({"alert_id": "p", "version": 2})
+
+tests/test_delivery.py:761: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/tank/delivery.py:116: in deliver
+    error = await self._deliver(payload)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/tank/delivery.py:201: in _deliver
+    response = await self.http.post(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1859: in post
+    return await self.request(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1540: in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_client.py:1629: in send
+    response = await self._send_handling_auth(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1657: in _send_handling_auth
+    response = await self._send_handling_redirects(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1694: in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_client.py:1730: in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_transports/mock.py:34: in handle_async_request
+    response = self.handler(request)
+               ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+r = <Request('POST', 'https://api.telegram.org/botfixture/sendMessage')>
+
+>   async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: pytest.fail("Sent early"))) as http:
+                                                                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: Sent early
+
+tests/test_delivery.py:760: Failed
+___ test_delivery_refusal_preserves_sent_anchor_and_records_no_attempt[None] ___
+
+precision = None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("precision", ["BUCKET(1m)", None])
+    async def test_delivery_refusal_preserves_sent_anchor_and_records_no_attempt(precision):
+        from tank.util import iso
+    
+        repo = MemoryRepository()
+        await repo.put(
+            "out.alerts",
+            "p:1",
+            {"alert_id": "p", "version": 1, "event_id": "e", "card_text": "Original", "decisions": []},
+            immutable=True,
+        )
+        stamp = {
+            "alert_id": "p",
+            "version": 1,
+            "channel": "telegram:alerts",
+            "status": "SENT",
+            "message_ref": "42",
+            "attempt": 1,
+            "at": iso(),
+        }
+        if precision:
+            stamp["at_prec"] = precision
+        await repo.put("out.deliveries", "sent", stamp, immutable=True)
+        await repo.put(
+            "out.alerts",
+            "p:2",
+            {
+                "alert_id": "p",
+                "version": 2,
+                "event_id": "e",
+                "kind": "UPDATE",
+                "card_text": "Update",
+                "decisions": [],
+                "delivery_immediate": False,
+            },
+            immutable=True,
+        )
+        settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: pytest.fail("Sent early"))) as http:
+>           await DeliveryService(repo, settings, http=http).deliver({"alert_id": "p", "version": 2})
+
+tests/test_delivery.py:761: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/tank/delivery.py:116: in deliver
+    error = await self._deliver(payload)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/tank/delivery.py:201: in _deliver
+    response = await self.http.post(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1859: in post
+    return await self.request(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1540: in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_client.py:1629: in send
+    response = await self._send_handling_auth(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1657: in _send_handling_auth
+    response = await self._send_handling_redirects(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1694: in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_client.py:1730: in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_transports/mock.py:34: in handle_async_request
+    response = self.handler(request)
+               ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+r = <Request('POST', 'https://api.telegram.org/botfixture/sendMessage')>
+
+>   async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: pytest.fail("Sent early"))) as http:
+                                                                         ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: Sent early
+
+tests/test_delivery.py:760: Failed
+_ test_ineligible_legacy_candidates_are_suppressed_without_network_or_retry[STALE-MAJOR-False-STALE] _
+
+freshness = 'STALE', event_class = 'MAJOR', legacy_rate_limited = False
+reason = 'STALE'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "freshness,event_class,legacy_rate_limited,reason",
+        [
+            ("STALE", "MAJOR", False, "STALE"),
+            ("FRESH", "LOW", False, "BELOW_MAJOR"),
+            ("FRESH", "MATERIAL", False, "BELOW_MAJOR"),
+            ("FRESH", "MAJOR", True, "UPDATE_RATE_LIMIT"),
+        ],
+    )
+    async def test_ineligible_legacy_candidates_are_suppressed_without_network_or_retry(
+        freshness, event_class, legacy_rate_limited, reason
+    ):
+        repo = MemoryRepository()
+        await repo.put(
+            "out.alerts",
+            "legacy:1",
+            {
+                "alert_id": "legacy",
+                "version": 1,
+                "event_id": "event",
+                "kind": "UPDATE",
+                "card_text": "Historical candidate",
+                "decisions": [],
+                "rate_limited": legacy_rate_limited,
+                "delivery_immediate": False,
+                "card_struct": {"event": {"freshness": freshness}, "assessment": {"class": event_class}},
+            },
+            immutable=True,
+        )
+        settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: pytest.fail("Forbidden send"))
+        ) as http:
+            for _ in range(2):
+>               await DeliveryService(repo, settings, http=http).deliver({"alert_id": "legacy", "version": 1})
+
+tests/test_delivery.py:803: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/tank/delivery.py:116: in deliver
+    error = await self._deliver(payload)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/tank/delivery.py:201: in _deliver
+    response = await self.http.post(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1859: in post
+    return await self.request(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1540: in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_client.py:1629: in send
+    response = await self._send_handling_auth(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1657: in _send_handling_auth
+    response = await self._send_handling_redirects(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1694: in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_client.py:1730: in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_transports/mock.py:34: in handle_async_request
+    response = self.handler(request)
+               ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+_ = <Request('POST', 'https://api.telegram.org/botfixture/sendMessage')>
+
+>       transport=httpx.MockTransport(lambda _: pytest.fail("Forbidden send"))
+                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ) as http:
+E   Failed: Forbidden send
+
+tests/test_delivery.py:800: Failed
+_ test_ineligible_legacy_candidates_are_suppressed_without_network_or_retry[FRESH-LOW-False-BELOW_MAJOR] _
+
+freshness = 'FRESH', event_class = 'LOW', legacy_rate_limited = False
+reason = 'BELOW_MAJOR'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "freshness,event_class,legacy_rate_limited,reason",
+        [
+            ("STALE", "MAJOR", False, "STALE"),
+            ("FRESH", "LOW", False, "BELOW_MAJOR"),
+            ("FRESH", "MATERIAL", False, "BELOW_MAJOR"),
+            ("FRESH", "MAJOR", True, "UPDATE_RATE_LIMIT"),
+        ],
+    )
+    async def test_ineligible_legacy_candidates_are_suppressed_without_network_or_retry(
+        freshness, event_class, legacy_rate_limited, reason
+    ):
+        repo = MemoryRepository()
+        await repo.put(
+            "out.alerts",
+            "legacy:1",
+            {
+                "alert_id": "legacy",
+                "version": 1,
+                "event_id": "event",
+                "kind": "UPDATE",
+                "card_text": "Historical candidate",
+                "decisions": [],
+                "rate_limited": legacy_rate_limited,
+                "delivery_immediate": False,
+                "card_struct": {"event": {"freshness": freshness}, "assessment": {"class": event_class}},
+            },
+            immutable=True,
+        )
+        settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: pytest.fail("Forbidden send"))
+        ) as http:
+            for _ in range(2):
+>               await DeliveryService(repo, settings, http=http).deliver({"alert_id": "legacy", "version": 1})
+
+tests/test_delivery.py:803: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/tank/delivery.py:116: in deliver
+    error = await self._deliver(payload)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/tank/delivery.py:201: in _deliver
+    response = await self.http.post(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1859: in post
+    return await self.request(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1540: in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_client.py:1629: in send
+    response = await self._send_handling_auth(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1657: in _send_handling_auth
+    response = await self._send_handling_redirects(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1694: in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_client.py:1730: in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_transports/mock.py:34: in handle_async_request
+    response = self.handler(request)
+               ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+_ = <Request('POST', 'https://api.telegram.org/botfixture/sendMessage')>
+
+>       transport=httpx.MockTransport(lambda _: pytest.fail("Forbidden send"))
+                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ) as http:
+E   Failed: Forbidden send
+
+tests/test_delivery.py:800: Failed
+_ test_ineligible_legacy_candidates_are_suppressed_without_network_or_retry[FRESH-MATERIAL-False-BELOW_MAJOR] _
+
+freshness = 'FRESH', event_class = 'MATERIAL', legacy_rate_limited = False
+reason = 'BELOW_MAJOR'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "freshness,event_class,legacy_rate_limited,reason",
+        [
+            ("STALE", "MAJOR", False, "STALE"),
+            ("FRESH", "LOW", False, "BELOW_MAJOR"),
+            ("FRESH", "MATERIAL", False, "BELOW_MAJOR"),
+            ("FRESH", "MAJOR", True, "UPDATE_RATE_LIMIT"),
+        ],
+    )
+    async def test_ineligible_legacy_candidates_are_suppressed_without_network_or_retry(
+        freshness, event_class, legacy_rate_limited, reason
+    ):
+        repo = MemoryRepository()
+        await repo.put(
+            "out.alerts",
+            "legacy:1",
+            {
+                "alert_id": "legacy",
+                "version": 1,
+                "event_id": "event",
+                "kind": "UPDATE",
+                "card_text": "Historical candidate",
+                "decisions": [],
+                "rate_limited": legacy_rate_limited,
+                "delivery_immediate": False,
+                "card_struct": {"event": {"freshness": freshness}, "assessment": {"class": event_class}},
+            },
+            immutable=True,
+        )
+        settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: pytest.fail("Forbidden send"))
+        ) as http:
+            for _ in range(2):
+>               await DeliveryService(repo, settings, http=http).deliver({"alert_id": "legacy", "version": 1})
+
+tests/test_delivery.py:803: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/tank/delivery.py:116: in deliver
+    error = await self._deliver(payload)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/tank/delivery.py:201: in _deliver
+    response = await self.http.post(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1859: in post
+    return await self.request(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1540: in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_client.py:1629: in send
+    response = await self._send_handling_auth(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1657: in _send_handling_auth
+    response = await self._send_handling_redirects(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1694: in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_client.py:1730: in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_transports/mock.py:34: in handle_async_request
+    response = self.handler(request)
+               ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+_ = <Request('POST', 'https://api.telegram.org/botfixture/sendMessage')>
+
+>       transport=httpx.MockTransport(lambda _: pytest.fail("Forbidden send"))
+                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ) as http:
+E   Failed: Forbidden send
+
+tests/test_delivery.py:800: Failed
+_ test_ineligible_legacy_candidates_are_suppressed_without_network_or_retry[FRESH-MAJOR-True-UPDATE_RATE_LIMIT] _
+
+freshness = 'FRESH', event_class = 'MAJOR', legacy_rate_limited = True
+reason = 'UPDATE_RATE_LIMIT'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "freshness,event_class,legacy_rate_limited,reason",
+        [
+            ("STALE", "MAJOR", False, "STALE"),
+            ("FRESH", "LOW", False, "BELOW_MAJOR"),
+            ("FRESH", "MATERIAL", False, "BELOW_MAJOR"),
+            ("FRESH", "MAJOR", True, "UPDATE_RATE_LIMIT"),
+        ],
+    )
+    async def test_ineligible_legacy_candidates_are_suppressed_without_network_or_retry(
+        freshness, event_class, legacy_rate_limited, reason
+    ):
+        repo = MemoryRepository()
+        await repo.put(
+            "out.alerts",
+            "legacy:1",
+            {
+                "alert_id": "legacy",
+                "version": 1,
+                "event_id": "event",
+                "kind": "UPDATE",
+                "card_text": "Historical candidate",
+                "decisions": [],
+                "rate_limited": legacy_rate_limited,
+                "delivery_immediate": False,
+                "card_struct": {"event": {"freshness": freshness}, "assessment": {"class": event_class}},
+            },
+            immutable=True,
+        )
+        settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda _: pytest.fail("Forbidden send"))
+        ) as http:
+            for _ in range(2):
+>               await DeliveryService(repo, settings, http=http).deliver({"alert_id": "legacy", "version": 1})
+
+tests/test_delivery.py:803: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+src/tank/delivery.py:116: in deliver
+    error = await self._deliver(payload)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/tank/delivery.py:201: in _deliver
+    response = await self.http.post(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1859: in post
+    return await self.request(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1540: in request
+    return await self.send(request, auth=auth, follow_redirects=follow_redirects)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_client.py:1629: in send
+    response = await self._send_handling_auth(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1657: in _send_handling_auth
+    response = await self._send_handling_redirects(
+.venv/lib/python3.12/site-packages/httpx/_client.py:1694: in _send_handling_redirects
+    response = await self._send_single_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_client.py:1730: in _send_single_request
+    response = await transport.handle_async_request(request)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv/lib/python3.12/site-packages/httpx/_transports/mock.py:34: in handle_async_request
+    response = self.handler(request)
+               ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+_ = <Request('POST', 'https://api.telegram.org/botfixture/sendMessage')>
+
+>       transport=httpx.MockTransport(lambda _: pytest.fail("Forbidden send"))
+                                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ) as http:
+E   Failed: Forbidden send
+
+tests/test_delivery.py:800: Failed
+=========================== short test summary info ============================
+FAILED tests/test_decisions.py::test_full_who_names_layers_outside_universe_and_net_event_move
+FAILED tests/test_card_template.py::test_literal_prd_card_template - Assertio...
+FAILED tests/test_card_template.py::test_current_full_publication_uses_literal_render_and_excludes_undecided_token[Approval changes access.-why0]
+FAILED tests/test_card_template.py::test_current_full_publication_uses_literal_render_and_excludes_undecided_token[The institution selected the protocol for its planned network.-why1]
+FAILED tests/test_card_template.py::test_current_full_publication_uses_literal_render_and_excludes_undecided_token[The agent's judgment is recorded without a prose checker.-why2]
+FAILED tests/test_card_template.py::test_layer_reasons_are_rendered_once_with_generic_summary_without_mutation
+FAILED tests/test_event_tools.py::test_real_expiry_to_update_delivery_never_reopens_call[FRESH]
+FAILED tests/test_event_tools.py::test_material_update_refused_without_pending_card_then_republished_after_window
+FAILED tests/test_event_tools.py::test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent
+FAILED tests/test_delivery.py::test_refused_update_stays_unsent_after_restart_and_later_exit
+FAILED tests/test_delivery.py::test_explicit_ordinary_update_flag_preserves_rate_with_persistent_safety
+FAILED tests/test_delivery.py::test_delivery_refusal_preserves_sent_anchor_and_records_no_attempt[BUCKET(1m)]
+FAILED tests/test_delivery.py::test_delivery_refusal_preserves_sent_anchor_and_records_no_attempt[None]
+FAILED tests/test_delivery.py::test_ineligible_legacy_candidates_are_suppressed_without_network_or_retry[STALE-MAJOR-False-STALE]
+FAILED tests/test_delivery.py::test_ineligible_legacy_candidates_are_suppressed_without_network_or_retry[FRESH-LOW-False-BELOW_MAJOR]
+FAILED tests/test_delivery.py::test_ineligible_legacy_candidates_are_suppressed_without_network_or_retry[FRESH-MATERIAL-False-BELOW_MAJOR]
+FAILED tests/test_delivery.py::test_ineligible_legacy_candidates_are_suppressed_without_network_or_retry[FRESH-MAJOR-True-UPDATE_RATE_LIMIT]
+17 failed, 227 passed, 12 skipped in 36.00s

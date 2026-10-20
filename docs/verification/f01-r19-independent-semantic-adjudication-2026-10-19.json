@@ -1,0 +1,151 @@
+{
+  "status": "INDEPENDENT_NORMATIVE_SEMANTIC_REVIEW_COMPLETE_PARTIAL_F01_COVERAGE",
+  "scope": "Read-only exact current PRD/TDD, unchanged original F01 assertion and actual r19 accepted records; no model, native, DDL, rule/label/fixture/production edits.",
+  "normative_conclusion": "MATERIAL and BELOW_MAJOR_STOP are justified by the retained source. M4 is not established: the current Snapshot is followed by a separate conditional onchain vote required for activation. No accepted evidence shows Arc token economics already decided or put to that binding vote at cutoff.",
+  "spec_bindings": [
+    {
+      "path": "01_Tank_V0_PRD.md",
+      "section": "6.3 FR-M-02",
+      "line": 291,
+      "rule": "M4 economics change decided or put to a binding vote; MATERIAL includes proposal still to be decided."
+    },
+    {
+      "path": "03_Tank_V0_Technical_Design.md",
+      "section": "4.3",
+      "line": 1046,
+      "rule": "PROPOSED class<=MATERIAL except qualifying M4/M5."
+    },
+    {
+      "path": "03_Tank_V0_Technical_Design.md",
+      "section": "11.3 F-01",
+      "line": 1624,
+      "rule": "Event state PROPOSED; capture conditional with score<=5; EMS never STRUCTURAL; linter blocks burn-is-live wording."
+    }
+  ],
+  "source": {
+    "item_id": "ITM-01M58HC7AJYS5PX8K3B606N4J2",
+    "raw_sha256": "f64b6ea26359806a9242b102fce5a34a3f7fe887094382ebd36cdb7af4a8ef01",
+    "url": "https://ipfs.snapshot.box/ipfs/bafkreihwjnxkey2zqbvjeqvral6oli2kh576rbyjioboxu3m3n5pjkhpae",
+    "source_quotes": [
+      "where fee parameter update proposals can bypass the RFC stage and go directly to a five-day Snapshot followed by an onchain vote.",
+      "The protocol fee infrastructure contracts will be deployed in the coming days and added to the table before the onchain vote goes live.",
+      "If passed, the Arc Fee Activation proposal will execute two sets of calls on Ethereum.",
+      "Those contracts now exist and are governance owned, so registering a new chain against them requires an onchain vote.",
+      "* **Snapshot:** Sep 18-23, 2026\n* **Onchain vote:** Following successful Snapshot"
+    ],
+    "interpretation_limit": "This is specific to the recorded Uniswap two-step governance process; Snapshot is not categorically nonbinding for every protocol. A scheduled later onchain vote is not a current binding vote."
+  },
+  "background_not_new_activation": [
+    "Previously approved UNIfication governance process",
+    "Existing fee/burn operations on other chains",
+    "Already-deployed Arc AMMs and message-passing contracts"
+  ],
+  "non_normative_major_expectation": {
+    "path": "docs/verification/f01-cli-r19-2026-10-19/result.json",
+    "json_pointer": "/limitations/3",
+    "line": 91,
+    "text": "Original F01 expected MAJOR/code assessment behavior remains unmet; no expected assertion or input changed.",
+    "disposition": "Unsupported nonnormative reporting assertion, not an F01 requirement. Preserve old result; this independent finding supersedes that interpretation. No MAJOR field occurs in actual r19 packet, original fixture[0].assertion_spec or current TDD F01 row."
+  },
+  "requirements": [
+    {
+      "requirement": "F01 event state PROPOSED",
+      "status": "PASS",
+      "evidence": "PROPOSED"
+    },
+    {
+      "requirement": "F01 conditional capture",
+      "status": "PASS",
+      "evidence": [
+        {
+          "version": 1,
+          "event_id": "EVT-01M5926RTYRD7D4F7B1ZHC3G3J",
+          "token_id": "uniswap:UNI",
+          "conditional": true,
+          "caps_applied": [
+            "C3",
+            "C4"
+          ],
+          "capture_class": "INDIRECT",
+          "capture_score": 5,
+          "token_mechanism": {
+            "type": "BURN",
+            "active": false,
+            "evidence": [
+              "CLM-01M5926RYK7K9BH0GCN77HSXFE",
+              "CLM-01M5926RYFERMYFBAV3VZ8ZDFF"
+            ],
+            "conditional_on": "Governance approval, deployment, execution and fee redemption on Arc."
+          }
+        },
+        {
+          "version": 2,
+          "event_id": "EVT-01M5926RTYRD7D4F7B1ZHC3G3J",
+          "token_id": "uniswap:UNI",
+          "conditional": true,
+          "caps_applied": [
+            "C3",
+            "C4"
+          ],
+          "capture_class": "INDIRECT",
+          "capture_score": 5,
+          "token_mechanism": {
+            "type": "BURN",
+            "active": false,
+            "evidence": [
+              "CLM-01M5926RYK7K9BH0GCN77HSXFE",
+              "CLM-01M5926RYFERMYFBAV3VZ8ZDFF"
+            ],
+            "conditional_on": "Governance approval, deployment, execution and fee generation with searcher claims"
+          }
+        }
+      ]
+    },
+    {
+      "requirement": "F01 capture score<=5",
+      "status": "PASS",
+      "evidence": "Both actual persisted capture-chain versions have capture_score5, conditionaltrue, activefalse; C3/C4 applied."
+    },
+    {
+      "requirement": "F01 EMS never STRUCTURAL",
+      "status": "PASS",
+      "evidence": [
+        "MATERIAL",
+        "MATERIAL"
+      ]
+    },
+    {
+      "requirement": "F01 linter rejects burn-is-live wording",
+      "status": "UNPROVEN",
+      "evidence": "No card/linter publication path exercised; absence of a false claim does not test rejection."
+    },
+    {
+      "requirement": "MAJOR market/decision/card workflow for actual MATERIAL event",
+      "status": "N/A",
+      "evidence": "Normal analyst workflow stops at LOW/MATERIAL; zero MT/decisions/cards is appropriate."
+    },
+    {
+      "requirement": "F01 OI~+10%/modest funding historical market context",
+      "status": "UNPROVEN",
+      "evidence": "Explicit missing historical UNI input declaration; no market truth computation performed."
+    },
+    {
+      "requirement": "Full historical F01 acceptance/performance",
+      "status": "UNPROVEN",
+      "evidence": "Fixture reference reconstruction, incomplete historical market and linter coverage;138.1s not accepted as historical performance evidence."
+    }
+  ],
+  "capture_chain_receipt_path": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/docs/verification/f01-cli-r19-2026-10-19/capture-chain-readonly.json",
+  "capture_chain_receipt_sha256": "9504f52873c6959cc8ede413059a58e47c3c787b0f1ba638b51a496a3989613e",
+  "evidence_sha256": {
+    "docs/verification/f01-cli-r19-2026-10-19/cli-result.json": "8473fe6c7245d2cb3e90da224da79167cdfd1e23547f5a06807582dececa4e44",
+    "docs/verification/f01-cli-r19-2026-10-19/result.json": "e888b74506e4a1b85a437b5044a52b171018951392ba1e65c9c0e3a9b20f884f",
+    "data/replay/prepared/reference-r19-20261019/replay/inputs/F-01.json": "02c112e498a976c6decb58560ee8fee14965c81caa6e4fccd1056c9da70eedce",
+    "tests/fixtures/authoritative-definitions-v1.json": "86cda04f53b7b8032655ed40ce53e78e2d123f9a146131b0afb91201121c334c",
+    "03_Tank_V0_Technical_Design.md": "93b6895648fa2189598f85615899aac01d5813c4a80897f2ab9873c2eadeb7e2",
+    "01_Tank_V0_PRD.md": "a93c66f3ee06fedda4a52f65bcd847ab14f65f1cd8b1316f8b1b8b65355c01ca"
+  },
+  "edits_to_prior_results_or_fixtures": false,
+  "new_model_calls": 0,
+  "production_edits": false
+}

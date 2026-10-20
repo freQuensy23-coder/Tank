@@ -1,16 +1,10 @@
-version: baseline-2.3
-self_test_policy: All initial rows DOCUMENTED_UNTESTED. Document source verification
-  separately from runtime confidence. Only a passing adapter unit/field/ID/side check
-  in the current run promotes the corresponding persisted semantic row to VERIFIED,
-  with verified_at/by and sample evidence; failures become UNKNOWN. Restart requires
-  revalidation.
+version: registry-authoritative-3
 metrics:
 - metric_key: binance.spot.aggTrade
   field: m
   meaning: m = true → buyer was maker → aggressor SELL
   units_time: q base units; T ms
   dedup_key: a (agg ID; f–l trade range)
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED (live sample "m":false on WLDUSDT)
   venue: binance
   market_type: SPOT
@@ -28,26 +22,18 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: aggressor_native
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: aggressor
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED (live sample "m":false on WLDUSDT)
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: binance.usdm.aggTrade
   field: m
   meaning: m = true → buyer was maker → aggressor SELL
   units_time: q base units; T ms
   dedup_key: a (agg ID; f–l trade range)
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED (live sample "m":false on WLDUSDT)
   venue: binance
   market_type: PERP_LINEAR
@@ -65,26 +51,18 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: aggressor_native
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: aggressor
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED (live sample "m":false on WLDUSDT)
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: coinbase.spot.matches
   field: side
   meaning: Maker order side → aggressor is the opposite side
   units_time: size base; time ISO-8601 µs
   dedup_key: trade_id
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED (exchange documentation; live sample "side":"sell")
   venue: coinbase
   market_type: SPOT
@@ -102,26 +80,18 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: aggressor_native
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: aggressor
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED (exchange documentation; live sample "side":"sell")
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: coinbase.spot.trades
   field: side
   meaning: Maker order side → aggressor is the opposite side
   units_time: size base; time ISO-8601 µs
   dedup_key: trade_id
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED (exchange documentation; live sample "side":"sell")
   venue: coinbase
   market_type: SPOT
@@ -139,26 +109,18 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: aggressor_native
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: aggressor
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED (exchange documentation; live sample "side":"sell")
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: okx.spot.trades
   field: side
   meaning: Taker side
   units_time: sz base (spot) or contracts (swap, × ctVal); ts ms
   dedup_key: tradeId
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED
   venue: okx
   market_type: SPOT
@@ -176,26 +138,18 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: aggressor_native
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: aggressor
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: okx.swap.trades
   field: side
   meaning: Taker side
   units_time: sz base (spot) or contracts (swap, × ctVal); ts ms
   dedup_key: tradeId
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED
   venue: okx
   market_type: PERP_LINEAR
@@ -213,19 +167,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: true
   aggregation_class: aggressor_native
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: aggressor
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: Use the matched instrument contract_multiplier discovered
     from venue metadata
 - metric_key: bybit.spot.publicTrade
@@ -233,7 +180,6 @@ metrics:
   meaning: Taker side
   units_time: v/size base; T/time ms
   dedup_key: i / execId
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED
   venue: bybit
   market_type: SPOT
@@ -251,26 +197,18 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: aggressor_native
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: aggressor
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: bybit.linear.publicTrade
   field: S (WS), side (REST)
   meaning: Taker side
   units_time: v/size base; T/time ms
   dedup_key: i / execId
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED
   venue: bybit
   market_type: PERP_LINEAR
@@ -288,26 +226,18 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: aggressor_native
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: aggressor
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: kraken.spot.trade
   field: side (WS v2), b/s (REST)
   meaning: Taker side
   units_time: qty base; REST time = seconds (float)
   dedup_key: trade_id
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED
   venue: kraken
   market_type: SPOT
@@ -325,26 +255,18 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: aggressor_native
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: aggressor
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: hyperliquid.perp.trades
   field: side
   meaning: B → aggressor BUY, A → aggressor SELL
   units_time: sz coin; time ms
   dedup_key: tid
-  confidence: DOCUMENTED_UNTESTED
   evidence: 'VERIFIED (16 Oct 2026, BTC/ETH/HYPE/SOL against the book: of trades printed
     at the bid or ask, 104 of 115 B at the ask, 49 of 62 A at the bid)'
   venue: hyperliquid
@@ -363,26 +285,18 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: aggressor_native
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: aggressor
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: 'VERIFIED (16 Oct 2026, BTC/ETH/HYPE/SOL against the book: of trades
     printed at the bid or ask, 104 of 115 B at the ask, 49 of 62 A at the bid)'
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: binance.usdm.openInterest
   field: openInterest
   units_sidedness: 'Base units, single-sided (WLDUSDT 16 Oct 2026: 203,999,216 WLD)'
   excluded: —
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED
   meaning: 'Base units, single-sided (WLDUSDT 16 Oct 2026: 203,999,216 WLD)'
   venue: binance
@@ -402,26 +316,18 @@ metrics:
   requires_native_normalization: false
   aggregation_class: oi_native_single_sided
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - USD open-interest is price-contaminated and cannot prove native position growth.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: oi
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: binance.usdm.openInterestHist
   field: sumOpenInterest; sumOpenInterestValue
   units_sidedness: Base units, single-sided; USD notional (price-contaminated); 5m
     buckets, 30-day history
   excluded: CMCCirculatingSupply (not OI)
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED
   meaning: Base units, single-sided; USD notional (price-contaminated); 5m buckets,
     30-day history
@@ -435,33 +341,29 @@ metrics:
   trade_aggregation: N_A
   scope: per instrument
   calc_method: snapshot
-  timestamp_semantics: BUCKET_START
+  timestamp_semantics: BUCKET_END
   timestamp_unit: MS
   timestamp_precision: BUCKET
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: oi_native_single_sided
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - USD open-interest is price-contaminated and cannot prove native position growth.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  - Official response schema defines timestamp as period end; preserve raw milliseconds
+    and actual period duration. Evidence docs/verification/binance-oi-period-end-2026-10-19.json
+    hashes only the quoted field description, not full-page bytes; local HTTP returned
+    202 with an empty body.
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: oi
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: okx.swap.open-interest
   field: oiCcy
   units_sidedness: Coin units, single-sided (oi = contracts; oi × ctVal = oiCcy; WLD
     ctVal = 1)
   excluded: oiUsd alone
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED
   meaning: Coin units, single-sided (oi = contracts; oi × ctVal = oiCcy; WLD ctVal
     = 1)
@@ -482,26 +384,18 @@ metrics:
   requires_native_normalization: false
   aggregation_class: oi_native_single_sided
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - USD open-interest is price-contaminated and cannot prove native position growth.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: oi
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: bybit.linear.open-interest
   field: singleOpenInterest
   units_sidedness: Base units, single-sided
   excluded: openInterest = both sides counted (ratio 2.000 on BTCUSDT, ETHUSDT, WLDUSDT,
     16 Oct 2026)
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED
   meaning: Base units, single-sided
   venue: bybit
@@ -514,32 +408,27 @@ metrics:
   trade_aggregation: N_A
   scope: per instrument
   calc_method: snapshot
-  timestamp_semantics: BUCKET_START
+  timestamp_semantics: EXCHANGE_EVENT_TIME
+  timestamp_semantics_reason: null
+  timestamp_semantics_detail: OI stock sampled at the response timestamp; intervalTime
+    controls sampling cadence, not an aggregate bucket.
   timestamp_unit: MS
-  timestamp_precision: BUCKET
+  timestamp_precision: EXACT
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: oi_native_single_sided
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - USD open-interest is price-contaminated and cannot prove native position growth.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: oi
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: hyperliquid.perp.ctx
   field: openInterest
   units_sidedness: Coin units; sidedness not published by Hyperliquid
   excluded: Summing with other venues
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED for per-venue % change only (a sidedness factor cancels in a
     ratio)
   meaning: Coin units; sidedness not published by Hyperliquid
@@ -560,27 +449,19 @@ metrics:
   requires_native_normalization: false
   aggregation_class: oi_per_venue_ratio_only
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - USD open-interest is price-contaminated and cannot prove native position growth.
   - 'Sidedness unpublished: per-venue percentage changes only; never sum cross-venue.'
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: oi
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED for per-venue % change only (a sidedness factor cancels in
     a ratio)
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: binance.usdm.funding
   settled: /fapi/v1/fundingRate → fundingRate at fundingTime
   estimate: /fapi/v1/premiumIndex → lastFundingRate (+ nextFundingTime); WS r
   interval: fundingIntervalHours from /fapi/v1/fundingInfo, else 8 h
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED
   meaning: /fapi/v1/fundingRate → fundingRate at fundingTime
   venue: binance
@@ -600,25 +481,17 @@ metrics:
   requires_native_normalization: false
   aggregation_class: funding_8h_equivalent
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - Raw rate applies to stated interval; normalize to 8 hours before comparison.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: funding
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: okx.swap.funding
   settled: settFundingRate (settState), history fundingRate
   estimate: 'fundingRate (method: current_period) applying at fundingTime'
   interval: spacing of prevFundingTime → fundingTime (8 h on WLD)
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED
   meaning: settFundingRate (settState), history fundingRate
   venue: okx
@@ -638,25 +511,17 @@ metrics:
   requires_native_normalization: false
   aggregation_class: funding_8h_equivalent
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - Raw rate applies to stated interval; normalize to 8 hours before comparison.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: funding
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: bybit.linear.funding
   settled: /v5/market/funding/history → fundingRate
   estimate: tickers fundingRate (+ nextFundingTime)
   interval: fundingIntervalHour (8 on WLD)
-  confidence: DOCUMENTED_UNTESTED
   evidence: VERIFIED
   meaning: /v5/market/funding/history → fundingRate
   venue: bybit
@@ -676,25 +541,17 @@ metrics:
   requires_native_normalization: false
   aggregation_class: funding_8h_equivalent
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - Raw rate applies to stated interval; normalize to 8 hours before comparison.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: funding
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: VERIFIED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: hyperliquid.perp.funding
   settled: fundingHistory
   estimate: metaAndAssetCtxs → funding
   interval: 1 h
-  confidence: DOCUMENTED_UNTESTED
   evidence: 'VERIFIED (WLD 16 Oct 2026: 0.0000125 per hour = 0.0100% per 8 h, equal
     to Binance, OKX and Bybit)'
   meaning: fundingHistory
@@ -715,20 +572,13 @@ metrics:
   requires_native_normalization: false
   aggregation_class: funding_8h_equivalent
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - Raw rate applies to stated interval; normalize to 8 hours before comparison.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: funding
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: 'VERIFIED (WLD 16 Oct 2026: 0.0000125 per hour = 0.0100% per 8 h,
     equal to Binance, OKX and Bybit)'
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
 - metric_key: binance.usdm.liquidations
   coverage: SAMPLED
@@ -750,22 +600,14 @@ metrics:
   requires_native_normalization: false
   aggregation_class: liquidations_sampled
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - Sampled streams cannot establish total liquidation volume; unsupported is missing,
     never zero.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: false
   metric_family: liquidations
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: Specification baseline
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: bybit.linear.liquidations
   coverage: COMPLETE
   meaning: 'COMPLETE — Bybit documentation: "push all liquidations that occur on Bybit"
@@ -787,22 +629,14 @@ metrics:
   requires_native_normalization: false
   aggregation_class: liquidations_complete
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - Sampled streams cannot establish total liquidation volume; unsupported is missing,
     never zero.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: false
   metric_family: liquidations
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: Specification baseline
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: okx.swap.liquidations
   coverage: SAMPLED
   meaning: 'SAMPLED — OKX documentation: "This data doesn''t represent the total number
@@ -824,22 +658,14 @@ metrics:
   requires_native_normalization: false
   aggregation_class: liquidations_sampled
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - Sampled streams cannot establish total liquidation volume; unsupported is missing,
     never zero.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: false
   metric_family: liquidations
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: Specification baseline
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: hyperliquid.perp.liquidations
   coverage: NOT_SUPPORTED (no public stream)
   meaning: NOT_SUPPORTED (no public stream)
@@ -860,22 +686,14 @@ metrics:
   requires_native_normalization: false
   aggregation_class: liquidations_not_supported
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - Sampled streams cannot establish total liquidation volume; unsupported is missing,
     never zero.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: false
   metric_family: liquidations
-  verification_status: DOCUMENTED_UNTESTED
   source_basis: Specification baseline
   source_basis_date: '2026-10-16'
-  source_basis_confidence: VERIFIED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: binance.spot.book.depth
   meaning: Order book depth within covered distance from midpoint; unobserved bands
     are null.
@@ -896,20 +714,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: depth_native_covered_band
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: depth
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: binance.spot.reference_price
   meaning: Reference execution-market close price; mark/index prices remain separately
     labeled.
@@ -930,27 +740,19 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: reference_price_quote
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: price
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: binance.usdm.book.depth
   meaning: Order book depth within covered distance from midpoint; unobserved bands
     are null.
   source_basis: 02 §4, 03 §2.5 and §5.10
   venue: binance
   market_type: PERP_LINEAR
-  endpoint_or_stream: https://fapi.binance.com/fapi/v1/depth?symbol={symbol}&limit=1000
+  endpoint_or_stream: wss://fstream.binance.com/public/stream
   unit: BASE_QTY
   contract_multiplier_ref: null
   sidedness: N_A
@@ -964,20 +766,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: depth_native_covered_band
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: depth
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: binance.usdm.reference_price
   meaning: Reference execution-market close price; mark/index prices remain separately
     labeled.
@@ -998,20 +792,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: reference_price_quote
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: price
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: coinbase.spot.book.depth
   meaning: Order book depth within covered distance from midpoint; unobserved bands
     are null.
@@ -1032,20 +818,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: depth_native_covered_band
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: depth
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: coinbase.spot.reference_price
   meaning: Reference execution-market close price; mark/index prices remain separately
     labeled.
@@ -1066,20 +844,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: reference_price_quote
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: price
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: okx.spot.book.depth
   meaning: Order book depth within covered distance from midpoint; unobserved bands
     are null.
@@ -1101,21 +871,13 @@ metrics:
   requires_native_normalization: false
   aggregation_class: depth_native_covered_band
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - 'OKX checksum deprecated23June2026 and fixed0: integrity requires seqId/prevSeqId
     continuity; do not require CRC32.'
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: depth
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
   current_doc_ref: https://www.okx.com/docs-v5/log_en/#2026-06-23
   endpoint_change_evidence: Official changelog:8443 public WS removed31Oct2026;443
     already supported. Market adapter uses443.
@@ -1139,20 +901,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: reference_price_quote
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: price
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: okx.swap.book.depth
   meaning: Order book depth within covered distance from midpoint; unobserved bands
     are null.
@@ -1174,21 +928,13 @@ metrics:
   requires_native_normalization: true
   aggregation_class: depth_native_covered_band
   inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
   - 'OKX checksum deprecated23June2026 and fixed0: integrity requires seqId/prevSeqId
     continuity; do not require CRC32.'
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: depth
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
   current_doc_ref: https://www.okx.com/docs-v5/log_en/#2026-06-23
   endpoint_change_evidence: Official changelog:8443 public WS removed31Oct2026;443
     already supported. Market adapter uses443.
@@ -1212,20 +958,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: reference_price_quote
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: price
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: bybit.spot.book.depth
   meaning: Order book depth within covered distance from midpoint; unobserved bands
     are null.
@@ -1246,20 +984,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: depth_native_covered_band
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: depth
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: bybit.spot.reference_price
   meaning: Reference execution-market close price; mark/index prices remain separately
     labeled.
@@ -1280,20 +1010,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: reference_price_quote
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: price
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: bybit.linear.book.depth
   meaning: Order book depth within covered distance from midpoint; unobserved bands
     are null.
@@ -1314,20 +1036,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: depth_native_covered_band
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: depth
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: bybit.linear.reference_price
   meaning: Reference execution-market close price; mark/index prices remain separately
     labeled.
@@ -1348,20 +1062,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: reference_price_quote
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: price
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: kraken.spot.book.depth
   meaning: Order book depth within covered distance from midpoint; unobserved bands
     are null.
@@ -1382,20 +1088,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: depth_native_covered_band
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: depth
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: kraken.spot.reference_price
   meaning: Reference execution-market close price; mark/index prices remain separately
     labeled.
@@ -1416,20 +1114,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: reference_price_quote
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: price
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: hyperliquid.perp.book.depth
   meaning: Order book depth within covered distance from midpoint; unobserved bands
     are null.
@@ -1450,20 +1140,12 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: depth_native_covered_band
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: depth
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED
 - metric_key: hyperliquid.perp.reference_price
   meaning: Reference execution-market close price; mark/index prices remain separately
     labeled.
@@ -1484,17 +1166,9 @@ metrics:
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: reference_price_quote
-  inference_limits:
-  - Documented baseline requires installation self-test; do not use as VERIFIED before
-    a passing current-run adapter check.
-  semantic_confidence: DOCUMENTED_UNTESTED
-  verified_at: null
-  verified_by: null
+  inference_limits: []
   doc_ref: 03_Tank_V0_Technical_Design.md §2.10 and §2.5; 02_Tank_V0_HLD.md §4
   critical: true
   metric_family: price
-  verification_status: DOCUMENTED_UNTESTED
   source_basis_date: '2026-10-16'
-  source_basis_confidence: DOCUMENTED_UNTESTED
   contract_multiplier_rule: null
-  confidence: DOCUMENTED_UNTESTED

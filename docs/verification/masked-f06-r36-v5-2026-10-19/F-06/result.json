@@ -1,0 +1,148 @@
+{
+  "fixture_id": "F-06",
+  "status": "RESOURCE_GUARD_INTERRUPTED",
+  "framework_status": [
+    "FAILED"
+  ],
+  "frozen_completed_bundles": 0,
+  "gateway": {
+    "scope": "Diagnostic gateway prerequisite around normal F08 CLI; not full source E2E",
+    "started_at": "2026-10-19T17:21:36.080455Z",
+    "pid": 8,
+    "code_version": "6a62a53cd3e58079e5f338dddc5afd4c7885b8d46d6df41ddf96a910ee985880",
+    "config_version": "b1449f64c8986545f50c77c2b43c617436dc3c41-dirty.ba59517049df8712d464bf2a3d07dd9d5f345890d57267e8f0a572424f780678",
+    "endpoint": "http://tank:8790/v1",
+    "cli_deadline_seconds": 600,
+    "child_command_redacted": [
+      "tank",
+      "replay",
+      "F-06",
+      "--database-url",
+      "<private QA tank_replay DSN>"
+    ],
+    "runtime_supervisor_started": false,
+    "source_market_delivery_loops": false,
+    "remote_native_cleanup": "NOT_PROVEN_BY_DRIVER; separate API/catalog receipt required",
+    "gateway_source_sha256": "2f02974cb19ee3b783c00737d5cceec968e124ed51eaa893832d1f23737d7ff6",
+    "gateway_started_at": "2026-10-19T17:21:36.131870Z",
+    "owned_child_pid": 9,
+    "owned_process_group": 9,
+    "deadline_exceeded": false,
+    "operator_interrupted": true,
+    "shutdown": [
+      {
+        "signal": "SIGINT",
+        "grace_seconds": 15,
+        "exited": true
+      }
+    ],
+    "child_exit_code": 1,
+    "child_reaped": true,
+    "cli_exit_code": 1,
+    "status": "CLI_FAILED_OR_INTERRUPTED",
+    "gateway_closed_at": "2026-10-19T17:24:00.768920Z",
+    "local_listener_closed": true,
+    "finished_at": "2026-10-19T17:24:00.769502Z"
+  },
+  "source_outcomes": [
+    {
+      "source_id": "WEB",
+      "extraction_status": "DONE"
+    }
+  ],
+  "turn_outcomes": [
+    {
+      "turn_status": "FAILED",
+      "failure": null,
+      "retry_count": 0
+    }
+  ],
+  "cards": [
+    {
+      "kind": "FULL",
+      "version": 1,
+      "alert_id": "ALR-01M5AK1PWPD3EDFX75DM9G8FW4",
+      "card_text": "MAJOR (M3) — Name03 tokenized stocks are live as collateral for USDC borrowing on ASSETK V4 on Base.\nScores D8 Mn/a (NOT_ESTIMABLE) P6 X4 Fn/a (NOT_SUPPORTED) Sn/a (NOT_SUPPORTED) I8 · Stage: LIVE · Certainty: HIGH · Fresh: POOR (public 2026-09-25 (day precision), known 00:00Z) · Data LOW\nVERIFIED: ASSETK V4 makes available Name03 tokenized stocks on Base [ITM-01M58GXDXPP7QYXP5YX54N4Q6J]; Name03 tokenized US technology stocks are eligible as collateral USDC borrowing on ASSETK V4 [ITM-01M58GXDXPP7QYXP5YX54N4Q6J]; ASSETK supports collateralized borrowing using Name03 tokenized stocks [ITM-01M58GXDXPP7QYXP5YX54N4Q6J]; Chainlink provides market data as official oracle for Name03 [ITM-01M58GXDXPP7QYXP5YX54N4Q6J]; Name03 tokenized stocks geographic availability eligible geographies outside the United States [ITM-01M58GXDXPP7QYXP5YX54N4Q6J] · NOT VERIFIED: —\nWHY IT MATTERS\n• What changed: ASSETK confirms collateral borrowing availability for eligible users outside the United States.\n• Economic effect: The capability expands the lending product's collateral use cases, but incremental borrowing, fees and economic materiality are not estimable. (start NOW · ramp GRADUAL · dependencies Eligible deposits and borrowing demand, Liquidity, Unproven token capture · timing MEDIUM · materiality Not estimable; availability does not quantify adoption or token flows.)\n• Token capture: asset-k UNKNOWN — Stock collateral enables borrowing on ASSETK; incremental fees and token capture are unknown. · holders revenue: n/a (not captured) — The announcement establishes no ASSETK token buyback, burn, fee-share or required-lock mechanism; token capture remains unknown.\nWHO: primary project-k · secondary chainlink (ORACLE_DATA, unverified COMPATIBLE) · secondary coinbase (VENUE_DEX, unverified COMPATIBLE) · secondary n/a (No additional registered token capture or competitor share loss established.; VENUE_DEX: UNKNOWN — No trading venue adoption identified.; ORACLE_DATA: UNKNOWN — Chainlink named as official oracle; no registered token.; ISSUER_PRODUCT: UNKNOWN — Name03 product named but no registered issuer-token capture established.; INTEROPERABILITY: UNKNOWN — No bridge or messaging provider identified.; SETTLEMENT_L1_L2: UNKNOWN — Base named without universe settlement token linkage.; CUSTODY_COMPLIANCE: UNKNOWN — No custody provider identified.; LENDING_COLLATERAL: UNKNOWN — ASSETK provides live collateral borrowing.; LIQUIDITY_EXECUTION: UNKNOWN — No execution provider identified.)\n── asset-k (PRIMARY) ──\nMARKET TRUTH: UNKNOWN — n/a (market facts unavailable); priced: n/a (event repricing unavailable) (EVENT n/a (NOT_AVAILABLE) raw; n/a (NOT_AVAILABLE) net BTC); excluded: binance — full minute coverage incomplete; bybit — full minute coverage incomplete; coinbase — full minute coverage incomplete; kraken — full minute coverage incomplete; okx — full minute coverage incomplete\nOUTLOOK: UNKNOWN · MEDIUM · best 4h (impact start: NOW) · base UNKNOWN: market evidence incomplete. · upside UNKNOWN until class and data resolve. · failure Thesis invalid if the event is denied.\nWHAT TO DO: WAIT — Thesis D · Trade D\nWHAT CHANGES THE ACTION: ↑ Data confidence becomes HIGH; re-grade. · ↓ Majority-volume spot SELL for two hourly windows.\nCONFIDENCE: LOW — main unknown: Spot venue coverage is incomplete: INCOMPLETE"
+    }
+  ],
+  "tool_counts": {
+    "set_beneficiaries": 3,
+    "set_assessment": 2,
+    "get_item": 1,
+    "get_registry": 1,
+    "get_decision": 1,
+    "search_tank_items": 1,
+    "get_market_truth": 1,
+    "list_open_events": 1,
+    "publish_card": 1,
+    "get_token_facts": 1,
+    "record_event": 1
+  },
+  "native_readback": {
+    "status": "POST_CASE_READBACK",
+    "fixture_id": "F-06",
+    "sessions": [
+      {
+        "session_id": "session_sck9KdxjhSXefDi3dUwle",
+        "archived_at": "2026-10-19T17:23:59.638Z",
+        "public_status": "idle",
+        "native_events": 110,
+        "event_types": {
+          "user.message": 1,
+          "session.status_running": 15,
+          "span.model_request_start": 13,
+          "agent.tool_use": 1,
+          "span.model_request_end": 13,
+          "session.usage": 17,
+          "agent.tool_result": 1,
+          "agent.custom_tool_use": 14,
+          "session.status_idle": 15,
+          "user.custom_tool_result": 14,
+          "agent.thinking": 5,
+          "agent.message": 1
+        },
+        "accepted_input_count": 15,
+        "queue_states": {
+          "COMPLETED": 15
+        }
+      }
+    ],
+    "collections": {
+      "ingest.source_items": 1,
+      "ops.agent_sessions": 1,
+      "ops.tool_calls": 14,
+      "ops.jobs": 27,
+      "evt.events": 1,
+      "evt.event_observations": 1,
+      "evt.claims": 5,
+      "evt.state_changes": 1,
+      "evt.ems_assessments": 1,
+      "evt.beneficiary_maps": 1,
+      "evt.beneficiary_edges": 3,
+      "ana.market_truth": 1,
+      "ana.decisions": 1,
+      "ana.calls": 0,
+      "ana.watch_conditions": 3,
+      "out.alerts": 1,
+      "out.deliveries": 1,
+      "out.evidence_bundles": 1
+    },
+    "framework_bundles": [],
+    "no_new_model_or_sdk_calls": true
+  },
+  "failed_attempts": [
+    {
+      "error_type": "CancelledError",
+      "reason": "Replay caller cancelled execution"
+    }
+  ],
+  "exports_complete": true,
+  "frozen_database": "tank_replay_r36_masked_f06_guard_interrupted_20261019",
+  "database_oid": 819029,
+  "guard_owner_sha256": "aa32215a859f3650b523e8b5932b58e798e3b33f2123aed78443849c7a813387",
+  "no_acceptance_or_latency_pass_claim": true,
+  "rerolls": 0,
+  "large_inputs_retained": [],
+  "delivery": "NOT_RUN",
+  "time": "2026-10-19T17:25:06.281633+00:00"
+}

@@ -6,7 +6,7 @@ x-logging: &id001
     max-file: '5'
 services:
   tank:
-    image: tank-v0:openrouter-live
+    image: tank-v0:persistent-no-x
     build:
       context: .
       dockerfile: Dockerfile
@@ -32,8 +32,7 @@ services:
       TANK_X_STORAGE_STATE_PATH: /run/secrets/x_session
       TANK_BACKUP_DIR: /backup
       TANK_USER_AGENT: ${TANK_USER_AGENT:?Set declared contact User-Agent}
-      TANK_X_ENABLED: ${TANK_X_ENABLED:-true}
-      TANK_X_LIST_ID: ${TANK_X_LIST_ID:-}
+      TANK_X_ENABLED: ${TANK_X_ENABLED:-false}
       TANK_TELEGRAM_ALERTS_CHAT: ${TANK_TELEGRAM_ALERTS_CHAT:-}
       TANK_TELEGRAM_OPS_CHAT: ${TANK_TELEGRAM_OPS_CHAT:-}
     secrets:
@@ -46,6 +45,7 @@ services:
     - oma_db_password
     volumes:
     - tank-data:/data
+    - sealed-replay-evidence:/data/replay/evidence
     - tank-browser:/browser
     - codex-auth:/codex-auth
     - backup:/backup
@@ -62,7 +62,7 @@ services:
     networks:
     - tank-net
   openma:
-    image: tank-openma:85d5361f535c7221de975838dc48444e468cc02e-tank2-openrouter
+    image: tank-openma:85d5361f535c7221de975838dc48444e468cc02e-tank5-startup
     build:
       context: ${OPENMA_SOURCE_PATH:?Set pinned prepared OpenMA checkout path}
       dockerfile: apps/main-node/Dockerfile.tank
@@ -75,6 +75,10 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: '8787'
+      BOXLITE_HOME: /app/data/boxlite
+      TANK_REPLAY_EVIDENCE_ROOT: /app/replay-evidence
+      LITEBOX_CPUS: ${TANK_SANDBOX_CPUS:-2}
+      LITEBOX_MEMORY_MIB: ${TANK_SANDBOX_MEMORY_MIB:-2048}
       SANDBOX_PROVIDER: litebox
       SANDBOX_IMAGE: ${TANK_SANDBOX_IMAGE:-tank-analysis:python3.12-local}
       SANDBOX_ROOTFS_PATH: /opt/tank-sandbox-oci
@@ -98,6 +102,7 @@ services:
     - etherscan_api_key
     volumes:
     - openma-data:/app/data
+    - sealed-replay-evidence:/app/replay-evidence:ro
     - ${TANK_SANDBOX_OCI_PATH:?Set verified local OCI layout directory}:/opt/tank-sandbox-oci:ro
     depends_on:
       postgres:
@@ -117,6 +122,7 @@ services:
     - tank-net
   postgres:
     image: postgres:16
+    shm_size: 512m
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
@@ -141,7 +147,7 @@ services:
     healthcheck:
       test:
       - CMD-SHELL
-      - pg_isready -U postgres -d postgres
+      - gosu postgres pg_isready -U postgres -d postgres
       interval: 5s
       timeout: 3s
       retries: 10
@@ -154,6 +160,7 @@ volumes:
   codex-auth: {}
   pg-data: {}
   openma-data: {}
+  sealed-replay-evidence: {}
   backup:
     driver: local
     driver_opts:

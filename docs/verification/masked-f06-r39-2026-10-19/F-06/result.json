@@ -1,0 +1,104 @@
+{
+  "fixture_id": "F-06",
+  "code_version": "d01a5c44212d2b50a38bba70d2ed91a633763abc26ea46f0f6238c36f88d7a54",
+  "config_version": "58daf19e9ed36d477dca6ff543523fd5b7b6cfed-dirty.791aa8a913b578554f88c23b1c5c4a82a6a7e00fbb932094c779b1910ada9e3e",
+  "cli_exit_code": 0,
+  "elapsed_seconds": 130.59319962502923,
+  "framework_status": "COMPLETED",
+  "source_outcomes": [
+    {
+      "item_id": "ITM-01M58GXDXPP7QYXP5YX54N4Q6J",
+      "source_id": "WEB",
+      "extraction_status": "DONE"
+    }
+  ],
+  "turn_outcomes": [
+    {
+      "turn_status": "DONE",
+      "retry_count": 0,
+      "failure": null
+    }
+  ],
+  "cards": [
+    {
+      "kind": "FULL",
+      "version": 1,
+      "alert_id": "ALR-01M5ASEG50B6S7VEWKVZP1DBDQ",
+      "text": "MAJOR (M2) — Name03 tokenized stocks are live as collateral for USDC borrowing on ASSETK V4 on Base.\nScores D6 Mn/a (NOT_ESTIMABLE) P6 X2 F2 Sn/a (NOT_SUPPORTED) I8 · Stage: LIVE · Certainty: HIGH · Fresh: POOR (public 2026-09-25 (day precision), known 00:00Z) · Data LOW\nVERIFIED: ASSETK V4 supports live collateral integration Name03 tokenized stocks on Base [ITM-01M58GXDXPP7QYXP5YX54N4Q6J]; ASSETK enables collateralized USDC borrowing using Name03 tokenized stocks [ITM-01M58GXDXPP7QYXP5YX54N4Q6J]; Chainlink provides market data for Name03 tokenized stocks [ITM-01M58GXDXPP7QYXP5YX54N4Q6J]; Name03 tokenized stocks available in eligible geographies outside the United States [ITM-01M58GXDXPP7QYXP5YX54N4Q6J] · NOT VERIFIED: —\nWHY IT MATTERS\n• What changed: The ASSETK announcement confirms collateral availability for eligible users outside the United States, with Chainlink providing market data.\n• Economic effect: The integration enables borrowing activity, but deposits, borrowing volumes and resulting protocol fees are not quantified. (start NOW · ramp CONDITIONAL · dependencies Eligible deposits and USDC borrowing, Protocol fee generation, Unproven token capture mechanism · timing MEDIUM · materiality Unknown; live availability does not establish material usage or token flows.)\n• Token capture: asset-k UNKNOWN — Collateral eligibility enables USDC borrowing and potential protocol activity, not proven token capture. · holders revenue: n/a (not captured) — Economic capture by the ASSETK token is unknown; product availability does not establish token purchases or holder revenue.\nWHO: primary project-k · secondary coinbase (VENUE_DEX, unverified COMPATIBLE) · secondary chainlink (ORACLE_DATA, unverified COMPATIBLE) · secondary n/a (No additional fixed-universe token has supported economic capture or negative share-loss evidence.; VENUE_DEX: UNKNOWN — No venue trading activity evidenced.; ORACLE_DATA: UNKNOWN — Chainlink named as data provider but has no fixed-registry token.; ISSUER_PRODUCT: UNKNOWN — Name03 product gains utility; no registered issuer token capture.; INTEROPERABILITY: UNKNOWN — No adoption evidence.; SETTLEMENT_L1_L2: UNKNOWN — Base named, no registered settlement token capture.; CUSTODY_COMPLIANCE: UNKNOWN — No provider evidence.; LENDING_COLLATERAL: UNKNOWN — ASSETK is explicitly live but token capture remains unknown.; LIQUIDITY_EXECUTION: UNKNOWN — No execution provider evidence.)\n── asset-k (PRIMARY) ──\nMARKET TRUTH: UNKNOWN — W4H spot flow BUY: CVD 5858.05500000, INSUFFICIENT_DATA; 1 complete venues. [W4H; NATIVE_TOKEN; 1 complete spot venues]; W4H BTC-adjusted price move +0.94%; normal range [-0.024457777849562396, 0.027266596933836835]. [W4H; DECIMAL_RETURN; 1 complete trailing-24h reference venues]; priced: n/a (event repricing unavailable) (EVENT n/a (NOT_AVAILABLE) raw; n/a (NOT_AVAILABLE) net BTC); excluded: bybit — full minute coverage incomplete; coinbase — full minute coverage incomplete; kraken — full minute coverage incomplete; okx — full minute coverage incomplete\nOUTLOOK: UNKNOWN · MEDIUM · best 4h (impact start: NOW) · base UNKNOWN: market evidence incomplete. · upside UNKNOWN until class and data resolve. · failure Thesis invalid if the event is denied.\nWHAT TO DO: WAIT — Thesis D · Trade D\nWHAT CHANGES THE ACTION: ↑ Data confidence becomes HIGH; re-grade. · ↓ Majority-volume spot SELL for two hourly windows.\nCONFIDENCE: LOW — main unknown: Spot venue coverage is incomplete: INCOMPLETE"
+    }
+  ],
+  "tool_counts": {
+    "set_beneficiaries": 3,
+    "list_open_events": 2,
+    "get_registry": 2,
+    "get_decision": 1,
+    "get_item": 1,
+    "publish_card": 1,
+    "record_event": 1,
+    "get_token_facts": 1,
+    "get_market_truth": 1,
+    "set_assessment": 2,
+    "search_tank_items": 1
+  },
+  "tool_refusals": [
+    {
+      "tool": "set_beneficiaries",
+      "status": "REFUSED",
+      "result": {
+        "ok": false,
+        "error": {
+          "type": "ValueError",
+          "reason": "Layer ISSUER_PRODUCT requires NONE/UNKNOWN reason",
+          "category": "VALIDATION"
+        }
+      }
+    },
+    {
+      "tool": "set_beneficiaries",
+      "status": "REFUSED",
+      "result": {
+        "ok": false,
+        "error": {
+          "type": "ValueError",
+          "reason": "Layer LENDING_COLLATERAL requires NONE/UNKNOWN reason",
+          "category": "VALIDATION"
+        }
+      }
+    },
+    {
+      "tool": "set_assessment",
+      "status": "REFUSED",
+      "result": {
+        "ok": false,
+        "error": {
+          "type": "ValueError",
+          "reason": "Missing score requires reason",
+          "category": "VALIDATION"
+        }
+      }
+    }
+  ],
+  "native_errors": [],
+  "failed_attempts": [
+    null
+  ],
+  "delivery": "NOT_RUN",
+  "exports_complete": true,
+  "large_inputs_retained_losslessly": [
+    {
+      "path": "qa-r39-masked-f06-driver/framework-bundles/d8c38c152e0f083f05a0d247e8656eb99d67b20a2dd48b4883226df6c1af4994/inputs.json",
+      "bytes": 39413803,
+      "sha256": "ddf09eab345825dd21c31e44245bc54c3adeaaf9a719f679f42cba88575c0b76",
+      "retained": "losslessharvestarchive+canonicalbundle+hostpreparedcompressedpacket"
+    }
+  ],
+  "frozen_database": "tank_replay_r39_masked_f06_completed_20261019",
+  "database_oid": 1229265,
+  "native_cleanup": {
+    "catalog_empty": true,
+    "qa_healthy": true,
+    "no_active_replay_connections": true
+  },
+  "guard_errors": [],
+  "acceptance_scope": "masked_F06_first_outcome;sealed_evaluator_separate;not_normalRuntime_or_SENT"
+}

@@ -1,0 +1,168 @@
+{
+  "scope": "DETERMINISTIC_HASH_VERIFIED_PARENT_RECOVERY_ONLY",
+  "cases": [
+    {
+      "fixture_id": "F-01",
+      "attempts": [
+        {
+          "source": "CURRENT_ACCEPTANCE_PACKET",
+          "path": "data/replay/acceptance-r41-wire-prepared/F-01/inputs/input.json.zst",
+          "source_file_sha256": "c9af8490bd415194f2f062dc367c59eac884214dec0ad14e3b8325bc3acdf81d",
+          "expected_canonical_parent_sha256": "47088f59099fc7646f616bbf50a7d289f859fcb76f7039732fdb09bc6a327a27",
+          "actual_canonical_parent_sha256": "be24577b4e24a8ad4ac25a0972f90107e255362948c4cb288a849595539b74a0",
+          "exact_match": false,
+          "candidate_pins": {
+            "code_version": "fe94583f66cb77d98305b7d1f462fbe4c93dc6f0dec3aeb590b44b94728a1f69",
+            "config_version": "58daf19e9ed36d477dca6ff543523fd5b7b6cfed-dirty.9c0c5171062b841c3dee437f904ce18cd6d908a02fb02627e742a18d551234ed",
+            "assembled_at": "2026-10-19T18:53:48.790945Z"
+          }
+        },
+        {
+          "source": "AUTHENTIC_ORIGINAL_MASKED_GENERATION",
+          "path": "data/replay/acceptance-F01-signed-market-r39-prepared/inputs/input.json.zst",
+          "source_file_sha256": "a235b56a2a48ca49fbf36b4f5a9a06dd6b260a48ab35142e359c8c75be4f5dfd",
+          "expected_canonical_parent_sha256": "47088f59099fc7646f616bbf50a7d289f859fcb76f7039732fdb09bc6a327a27",
+          "actual_canonical_parent_sha256": "6a8093be78bb64e99c559671dd59fd01ffc9d489d04da8881a86ecdf6d792f8a",
+          "exact_match": false,
+          "candidate_pins": {
+            "code_version": "d01a5c44212d2b50a38bba70d2ed91a633763abc26ea46f0f6238c36f88d7a54",
+            "config_version": "58daf19e9ed36d477dca6ff543523fd5b7b6cfed-dirty.7e4ef7d08f7faad10d3192ed6081ca3d312a00199eca8861f14058ef056de6b0",
+            "assembled_at": "2026-10-19T18:53:48.790945Z"
+          }
+        }
+      ],
+      "parent_recovered": false,
+      "original_source_wrapper_authority": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-01.json",
+      "no_expected_financial_fields_or_new_clocks_invented": true
+    },
+    {
+      "fixture_id": "F-17",
+      "attempts": [
+        {
+          "source": "CURRENT_ACCEPTANCE_PACKET",
+          "path": "data/replay/acceptance-r37-context-prepared/F-17/inputs/input.json.zst",
+          "source_file_sha256": "fcddaec56e7bef12c3cf10a2afa61d10d8c851f78fdabf8bd338b71618a4a71f",
+          "expected_canonical_parent_sha256": "d11ea03f27d7d7e0858ddf3a070b6a3f0d71054e4f4800f88165bc60bc70ee9a",
+          "actual_canonical_parent_sha256": "8e8c156fb09e1ff8e8f59b31441a3c7787e47160956ae375870ae8073a9ca187",
+          "exact_match": false,
+          "candidate_pins": {
+            "code_version": "bbb87ee13781e9c96a703d6e4b66e4879770271caf7e25e847352c25ef32ab4a",
+            "config_version": "58daf19e9ed36d477dca6ff543523fd5b7b6cfed-dirty.4448fd280ff94bb47c03c0a83e4f84dd9d933f2575f2e64c642d638ee1374464",
+            "assembled_at": "2026-10-19T17:21:37.798378Z"
+          }
+        },
+        {
+          "source": "AUTHENTIC_ORIGINAL_MASKED_GENERATION",
+          "path": "data/replay/acceptance-r36-prepared/F-17-vote-metadata-v6/inputs/input.json.zst",
+          "source_file_sha256": "5eb464519a6bf510d7bee2642f62a50a844c076f473c7b5428f9c9bebb3406eb",
+          "expected_canonical_parent_sha256": "d11ea03f27d7d7e0858ddf3a070b6a3f0d71054e4f4800f88165bc60bc70ee9a",
+          "actual_canonical_parent_sha256": "95becb3f1deda043a8c6d65af1b77ea5c199b6f79dfeb4d8b3a7f04d75a9ad54",
+          "exact_match": false,
+          "candidate_pins": {
+            "code_version": "6a62a53cd3e58079e5f338dddc5afd4c7885b8d46d6df41ddf96a910ee985880",
+            "config_version": "b1449f64c8986545f50c77c2b43c617436dc3c41-dirty.fb70f93132b5812a17a9785ebdf5a57c31d0fee1cfbbefe11ce93452c6707120",
+            "assembled_at": "2026-10-19T17:21:37.798378Z"
+          }
+        }
+      ],
+      "parent_recovered": false,
+      "original_source_wrapper_authority": "data/replay/inputs/F-17.json",
+      "no_expected_financial_fields_or_new_clocks_invented": true
+    },
+    {
+      "fixture_id": "F-24",
+      "attempts": [
+        {
+          "source": "CURRENT_ACCEPTANCE_PACKET",
+          "path": "data/replay/acceptance-F24-context-r45/F-24/inputs/input.json.zst",
+          "exact_match": false,
+          "reason": "No authentic retained original source wrapper for ITM-01M59HE4EXKR4V94YJBXBME19R"
+        },
+        {
+          "source": "AUTHENTIC_ORIGINAL_MASKED_GENERATION",
+          "path": "data/replay/acceptance-F24-reporter-context-r41/inputs/input.json.zst",
+          "exact_match": false,
+          "reason": "No authentic retained original source wrapper for ITM-01M59HE4EXKR4V94YJBXBME19R"
+        }
+      ],
+      "parent_recovered": false,
+      "original_source_wrapper_authority": "data/replay/inputs/F-24.json",
+      "no_expected_financial_fields_or_new_clocks_invented": true
+    }
+  ],
+  "native_admission_run": false,
+  "source_fields_rewritten": false,
+  "transfer_sha_verified": [
+    {
+      "path": "docs/verification/masked-f01-r41-candidate-2026-10-19/F-01/capture-chains.json",
+      "sha256": "4e5a261f6a6ac1def2e491200cb97834a06013d12ad5b858cf537545eef69cc1",
+      "bytes": 4125
+    },
+    {
+      "path": "docs/verification/masked-f08-r38-2026-10-19/F-08/publication-market-order.json",
+      "sha256": "2b149f27d86bc776188a33a38ce6ba57cd9220e4b44a0e688db2a6443a5556cd",
+      "bytes": 1633
+    },
+    {
+      "path": "docs/verification/masked-f17-r37-2026-10-19/F-17/job-ledger.json",
+      "sha256": "c9cd7be3665f60006ba6598bf1ea5cd2898725a82f86eb3d0af302c02c5eaee4",
+      "bytes": 1052
+    },
+    {
+      "path": "docs/verification/masked-f21-r38-2026-10-19/F-21/registry-lookup.json",
+      "sha256": "5ab90ad4b440480176eb7134190eaa141b2e664a4088df183f673dc331cc3317",
+      "bytes": 162
+    },
+    {
+      "path": "docs/verification/masked-f23-r38-2026-10-19/F-23/message-publication-ownership.json",
+      "sha256": "c63c74754396c7652513d209095221bda2b28b0311838cb7e604d52ede30bdef",
+      "bytes": 1576
+    },
+    {
+      "path": "docs/verification/masked-f24-r45-candidate-2026-10-19/F-24/phase-checkpoints/RPL-01M5AZKR0S50XVQZAFQP7CEJ89-phase-confirmation.json",
+      "sha256": "483bb5383b9a6b2dae456c62634f3fa221f886a30cdfe6af5ac391f68433a9dd",
+      "bytes": 10580944
+    },
+    {
+      "path": "docs/verification/masked-f24-r45-candidate-2026-10-19/F-24/phase-checkpoints/RPL-01M5AZKR0S50XVQZAFQP7CEJ89-phase-initial.json",
+      "sha256": "3042c8992995e736ceb2dd1ab326674e45e2baac060c42d001556559052d7a60",
+      "bytes": 4626612
+    },
+    {
+      "path": "docs/verification/masked-f24-r45-candidate-2026-10-19/F-24/phase-claim-tool-receipts.json",
+      "sha256": "a37ec43b4ccdf9e50651760fbd29252510d7a55ff8b6381391d7244717d61f29",
+      "bytes": 68648
+    },
+    {
+      "path": "docs/verification/masked-f25-r36-v4-2026-10-19/F-25/day-quote-review-evidence.json",
+      "sha256": "33b9858bc51b23c0d2adaad45d87a9415a7b84a6ea0101a3aa5a000a92dd8a10",
+      "bytes": 7612
+    },
+    {
+      "path": "docs/verification/masked-f26-r38-2026-10-19/F-26/authority-lookup.json",
+      "sha256": "d67a2d941766f924607854a8e692c9886e247d6fbdcbb993c23a66b4a4642e31",
+      "bytes": 1008
+    },
+    {
+      "path": "docs/verification/masked-f27-r41-candidate-2026-10-19/F-27/recorded-claim.json",
+      "sha256": "77830200aabb57c808dfc625f08f4ca3599d2e9dcdcdb7901cc6bb98bdb880aa",
+      "bytes": 17332
+    },
+    {
+      "path": "data/replay/acceptance-F01-signed-market-r39-prepared/inputs/input.json.zst",
+      "sha256": "a235b56a2a48ca49fbf36b4f5a9a06dd6b260a48ab35142e359c8c75be4f5dfd",
+      "bytes": 443246
+    },
+    {
+      "path": "data/replay/acceptance-r36-prepared/F-17-vote-metadata-v6/inputs/input.json.zst",
+      "sha256": "5eb464519a6bf510d7bee2642f62a50a844c076f473c7b5428f9c9bebb3406eb",
+      "bytes": 3700529
+    },
+    {
+      "path": "data/replay/acceptance-F24-reporter-context-r41/inputs/input.json.zst",
+      "sha256": "b97e22371b4815893fd2d41d8c7a6292bf6ea392a0f88e3f784643f8ba19dea3",
+      "bytes": 2622711
+    }
+  ],
+  "failed_inverse_candidates_not_admitted": true
+}

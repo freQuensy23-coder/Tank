@@ -1,7 +1,9 @@
-# V0-A capture before event calibration
+# Collection and startup
 
-Run `tank db migrate`, then `tank capture` to collect sources and BASE market data for the PRD §10 V0-A acceptance checkpoint. This explicit command enables `capture_only` for this process, synchronizes configured registry rows, and maintains database partitions independently of backups when the repository provides that operation. Stop with SIGINT or SIGTERM.
+Run `tank calibrate` offline before the first Tank service startup, review its evidence and apply both measured Jev cutoffs. Start the normal service with `tank serve` using the base Compose file. Production includes the configured X session through `compose.x.yaml`; local development may omit X when explicitly excluded.
 
-Capture retains source raw records and normalized items without scheduling FILTER_ITEM or ROUTE_ITEM. It does not start model workers, Jev classification, OpenMA sessions, the Codex gateway, event analysis, or Telegram delivery. Market capture ignores existing HOT event state. Normal source and market credentials/configuration remain necessary for actual live collection.
+Source and BASE market collection are part of the normal service. Historical acquisition libraries remain available to prepare calibration evidence; they do not expose a second service mode or bypass calibration. There is no public `tank capture` command or capture Compose workflow.
 
-The command neither invents Jev cutoffs nor bypasses the calibrated cutoffs required by `tank serve`. V0-B remains a separate labeled-item calibration and event acceptance checkpoint. Captured source items do not automatically become analysis jobs when capture stops; prepare the reviewed V0-B calibration dataset explicitly. Running this command alone does not establish the required 72-hour V0-A acceptance evidence.
+The previous local capture-only experiment stopped gracefully at `2026-10-18T21:51:49.898596966Z`. Its data and dated verification reports are retained as historical evidence, with interruptions preserved. They are not proof of the required full service acceptance.
+
+Backups recover PostgreSQL dumps and checksummed bundles through the documented restore procedure. See [OPERATIONS.md](OPERATIONS.md) for calibration, startup and recovery commands.

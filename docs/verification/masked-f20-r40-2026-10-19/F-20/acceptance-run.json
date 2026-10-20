@@ -1,0 +1,8 @@
+{
+  "started_at": "2026-10-19T19:23:12.434569+00:00",
+  "frozen_output": {
+    "path": "docs/verification/masked-f20-r40-2026-10-19/F-20/actual/qa-r40-masked-f20-driver/framework-bundles/9c92fa519cd9b3b0d8797f8512436dd7f10212330374a42ce80ca14f252f8239/outputs.json",
+    "sha256": "283729007a99746e23fa7b5c923516ee61f3cd6b646e33bbaf63297f49f4001a"
+  },
+  "scope": "Actual single masked reference first outcome; no normal Runtime or SENT claim"
+}

@@ -1,0 +1,260 @@
+{
+  "schema": "tank.fixture-components-index.v1",
+  "status": "AUTHENTIC_PARTIAL_COMPONENTS_NOT_REPLAY_PACKETS",
+  "fixtures": [
+    {
+      "fixture_id": "F-01",
+      "path": "tests/fixtures/components/2026-10-19/F-01.components.json",
+      "sha256": "9ffe2253d2992b748e351482f9bddd716b2dd78dcb71d2d5a2b4af092c5e4cc2",
+      "market_candidates": 0,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-02",
+      "path": "tests/fixtures/components/2026-10-19/F-02.components.json",
+      "sha256": "07e67c12a0f681b14844f01bebeeda59ea70e3b1b04f590fdd3752a77baa5105",
+      "market_candidates": 0,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-03",
+      "path": "tests/fixtures/components/2026-10-19/F-03.components.json",
+      "sha256": "a836abadc946ba7cac1a21858dfe039c0b5482fc5beaba1e24aa79209a2962ca",
+      "market_candidates": 94,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-04",
+      "path": "tests/fixtures/components/2026-10-19/F-04.components.json",
+      "sha256": "57b22d8b112f9c1c3a51024c019187a25f8b12f52047f16bfe6e12612a0e188f",
+      "market_candidates": 0,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-05",
+      "path": "tests/fixtures/components/2026-10-19/F-05.components.json",
+      "sha256": "a7abe5cccddf7fa542c0d8ba7bf76d0ee45e91b467868f0a236e984c14498bfa",
+      "market_candidates": 97,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-06",
+      "path": "tests/fixtures/components/2026-10-19/F-06.components.json",
+      "sha256": "464bdf8db5afee14c417810c3de316567b1b402ef10ca03d3f56094a72262d28",
+      "market_candidates": 0,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-07",
+      "path": "tests/fixtures/components/2026-10-19/F-07.components.json",
+      "sha256": "b76a5e509293404f3fa576003b121ca6e38b335c491b7b974c295d3a40231dd4",
+      "market_candidates": 0,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-08",
+      "path": "tests/fixtures/components/2026-10-19/F-08.components.json",
+      "sha256": "4dfdfe0a9b79eba3130ac9e7ecdcef360473a57f45282f6e77cb4045a1bc16e5",
+      "market_candidates": 100,
+      "source_candidates": 1,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 1
+    },
+    {
+      "fixture_id": "F-09",
+      "path": "tests/fixtures/components/2026-10-19/F-09.components.json",
+      "sha256": "1de0fc13fc94f289856d8af90d689afbec8d434f223d3221cfa387a8bd4b5338",
+      "market_candidates": 95,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-10",
+      "path": "tests/fixtures/components/2026-10-19/F-10.components.json",
+      "sha256": "49a055ca3c3be4f0ac80a03d5549ddeafb6e2f233052547c673f4fed10e361e4",
+      "market_candidates": 0,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-11",
+      "path": "tests/fixtures/components/2026-10-19/F-11.components.json",
+      "sha256": "8df1e90f74d56d15e262b68c78f812d97b2d7aad6b77d018095e06737f74f9e1",
+      "market_candidates": 98,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-12",
+      "path": "tests/fixtures/components/2026-10-19/F-12.components.json",
+      "sha256": "3ef68919857c36079c2695ae116e59b804741f96349f0ec126e22b10a3e7b7df",
+      "market_candidates": 101,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-13",
+      "path": "tests/fixtures/components/2026-10-19/F-13.components.json",
+      "sha256": "9da1f2a6a3b5918868d8714205a8f368e788bbf04d99ac766e0a9423f151683b",
+      "market_candidates": 96,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-14",
+      "path": "tests/fixtures/components/2026-10-19/F-14.components.json",
+      "sha256": "143d196e2c48dccae82ff3fefba43ffaec5e754978dfcbc65375253a8338cf4f",
+      "market_candidates": 101,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-15",
+      "path": "tests/fixtures/components/2026-10-19/F-15.components.json",
+      "sha256": "4cdcf8929b9ce841f12b687f865f5c407f2d726ed92bb4930b44478f64954cff",
+      "market_candidates": 0,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-16",
+      "path": "tests/fixtures/components/2026-10-19/F-16.components.json",
+      "sha256": "5c01b60488923011a1e213f79579184cdb7e33790914f01e205879451afeee69",
+      "market_candidates": 3,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-17",
+      "path": "tests/fixtures/components/2026-10-19/F-17.components.json",
+      "sha256": "2b93fdd0567acf1ea5eea73ed4a4f9bb5ad241c2e67c51bc4aa0dfc15b13bc0a",
+      "market_candidates": 0,
+      "source_candidates": 1,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 1
+    },
+    {
+      "fixture_id": "F-18",
+      "path": "tests/fixtures/components/2026-10-19/F-18.components.json",
+      "sha256": "8ffaef934b8dc583887fd8463cd522327ab2e5f63e57b9fde50a5bdff10c49c3",
+      "market_candidates": 0,
+      "source_candidates": 6,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 2
+    },
+    {
+      "fixture_id": "F-19",
+      "path": "tests/fixtures/components/2026-10-19/F-19.components.json",
+      "sha256": "b58966fbd47d07d6c7d1e83e2080068d433b4948dbdd70cbf44c0bf74ac6b17e",
+      "market_candidates": 0,
+      "source_candidates": 6,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 2
+    },
+    {
+      "fixture_id": "F-20",
+      "path": "tests/fixtures/components/2026-10-19/F-20.components.json",
+      "sha256": "eef863fda2f1452792e2df27f0b1544b5c4938c132aa07928070ac460a60665a",
+      "market_candidates": 0,
+      "source_candidates": 5,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 2
+    },
+    {
+      "fixture_id": "F-21",
+      "path": "tests/fixtures/components/2026-10-19/F-21.components.json",
+      "sha256": "050df7ac00905f47fab6cef6de8194abf105fa929b6da14685d317152414b9d4",
+      "market_candidates": 0,
+      "source_candidates": 1,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 1
+    },
+    {
+      "fixture_id": "F-22",
+      "path": "tests/fixtures/components/2026-10-19/F-22.components.json",
+      "sha256": "33ca3a4115e08d5ef53cbf02ba64b907a86795a3375b92d17d6e531127f03b5b",
+      "market_candidates": 0,
+      "source_candidates": 1,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 1
+    },
+    {
+      "fixture_id": "F-23",
+      "path": "tests/fixtures/components/2026-10-19/F-23.components.json",
+      "sha256": "55fff72aa69a6cfce0ec00661a17de558506222c88b77a054730603b085bda5c",
+      "market_candidates": 0,
+      "source_candidates": 1,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 1
+    },
+    {
+      "fixture_id": "F-24",
+      "path": "tests/fixtures/components/2026-10-19/F-24.components.json",
+      "sha256": "4e5216b3db02d06d2958976b4d034f53eb709de2f2ce961f84505c2380699690",
+      "market_candidates": 0,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-25",
+      "path": "tests/fixtures/components/2026-10-19/F-25.components.json",
+      "sha256": "8e590a90f2f5830e8ead82c923f0138c2ee76bae4292487c5bdc4809d4188ebc",
+      "market_candidates": 0,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-26",
+      "path": "tests/fixtures/components/2026-10-19/F-26.components.json",
+      "sha256": "2b4582559f035e74bc74f8873e7bbd61a2f35f54ab0e33d26e8195aa74e90c8e",
+      "market_candidates": 0,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    },
+    {
+      "fixture_id": "F-27",
+      "path": "tests/fixtures/components/2026-10-19/F-27.components.json",
+      "sha256": "0c2e72c27ee0f7b1e78033331c14f89b3817fb2e7046e43812d52ef9e184dea4",
+      "market_candidates": 0,
+      "source_candidates": 0,
+      "status": "INCOMPLETE_NOT_RUNNABLE",
+      "later_source_candidates": 0
+    }
+  ],
+  "complete_runnable_packets": 0,
+  "original_manifest_modified": false,
+  "original_manifest_sha256": "86cda04f53b7b8032655ed40ce53e78e2d123f9a146131b0afb91201121c334c",
+  "host_only_raw_responses": 10,
+  "forbidden": "Component JSONs are not runnable replay packets. Use explicit first-reference schema with preserved actual receipt and separate simulated availability; never expose later source state or fabricate original live logs.",
+  "immutable_original_source_cases_verified_now": [
+    "F-18",
+    "F-19",
+    "F-20"
+  ],
+  "first_fixture_run_requires_historical_tank_logs": false
+}

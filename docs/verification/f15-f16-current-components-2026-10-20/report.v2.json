@@ -1,0 +1,54 @@
+{
+  "scope": "CURRENT_READER_TRUTH_DECISION_RENDERER_COMPONENTS_ONLY_NO_NEW_EVENT_OR_E2E",
+  "no_network_model_native_database_product_or_fixture_edits": true,
+  "production_hashes": {
+    "src/tank/analysis/truth.py": "091162358c680bd3e1900eca637291a20e646504d81bddd3b32468ea23295382",
+    "src/tank/analysis/decisions.py": "37e209b4ff1e5c2be9e9321df41dfaf2a83a0b0d2b363c77563bd87e06cce54f",
+    "src/tank/analysis/cards.py": "3c2dc344814d22a3eb475256463ba4218d89344fc038803dcfbe878afc4cb429",
+    "src/tank/replay.py": "235bcd0933b16975a959f6a3d9d0ff5a9a1d2f5e8b8c3ae0569a3034af7dad0e"
+  },
+  "cases": {
+    "F-15": {
+      "path": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/docs/verification/f15-f16-current-components-2026-10-20/F-15.json",
+      "sha256": "50de1fbe672b22d52f245f665b76a8b8d55c68db0b75f52b1cc16b5f3e0c9f4f",
+      "checks": {
+        "books_absent_in_actual_input": true,
+        "weak_response_is_missing_not_false": true,
+        "move_unknown": true,
+        "not_absorption": true,
+        "not_accumulation": true,
+        "literal_na_in_actual_render": true,
+        "no_absorption_literal_in_actual_render": true,
+        "no_accumulation_literal_in_actual_render": true
+      },
+      "remaining": [
+        "No actual analyst/native/publication proof claimed."
+      ]
+    },
+    "F-16": {
+      "path": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/docs/verification/f15-f16-current-components-2026-10-20/F-16.json",
+      "sha256": "86ef37fea3b1767754bf7cef7ff57c759f69178fd61900037ffd3557a1c3a467",
+      "checks": {
+        "genuine_market_context_stress": true,
+        "actual_nonstructural_empty_context_not_bullish": true,
+        "retained_grade_D_floor": true,
+        "no_additional_stress_lifecycle_wait_veto": true
+      },
+      "remaining": [
+        "A/B/C\u2192nextnotch: actual data LOW already bottoms trade atD.",
+        "General credible nonSTRUCTURAL beneficiary bias: no actualeconomicbeneficiary/catalyst supplied.",
+        "Every action branch: only actual WAIT/A1 and controlled-existing-call REDUCE/B2 reachable on this partialcapture.",
+        "STRUCTURALpositive-relative resilience: no actualstructural event supplied."
+      ]
+    }
+  },
+  "additional_disjoint_policy_controls": {
+    "path": "docs/verification/f15-f16-current-components-2026-10-20/F-16.policy-controls.json",
+    "sha256": "2481468c16b495e52b914e1653bdee8170e5cfab2b0ac41510e4c0f02908afde",
+    "checks": {
+      "nonstructural_credible_policy_beneficiary_not_bullish": true,
+      "stress_does_not_automatically_veto_positive_watch_action": true
+    },
+    "historical_data_scope": "Syntheticpolicyunitpremises,separatefromgenuineF16capture."
+  }
+}

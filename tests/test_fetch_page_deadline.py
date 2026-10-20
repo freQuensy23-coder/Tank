@@ -1,0 +1,163 @@
+"""Actual local async HTTPX streams; production 20-second deadline is unmodified."""
+
+import asyncio
+import time
+from pathlib import Path
+
+import httpx
+import pytest
+import zstandard
+
+import tank.event_tools as CANDIDATE
+from tank.settings import Settings
+from tank.storage import MemoryRepository
+
+CLIENT = httpx.AsyncClient
+
+
+class Body(httpx.AsyncByteStream):
+    def __init__(self, chunks, delay=0):
+        self.chunks, self.delay, self.closed, self.yielded = chunks, delay, False, 0
+
+    async def __aiter__(self):
+        for chunk in self.chunks:
+            await asyncio.sleep(self.delay)
+            self.yielded += 1
+            yield chunk
+
+    async def aclose(self):
+        self.closed = True
+
+
+async def setup(tmp_path, handler, owned, monkeypatch):
+    repo = MemoryRepository()
+    await repo.open()
+    client = CLIENT(transport=httpx.MockTransport(handler), timeout=None)
+    service = CANDIDATE.EventToolService(
+        repo, Settings(data_dir=tmp_path), None, None, http=None if owned else client
+    )
+    if owned:
+
+        def factory(**kwargs):
+            assert kwargs == {"timeout": 20, "follow_redirects": False}
+            return client
+
+        monkeypatch.setattr(CANDIDATE.httpx, "AsyncClient", factory)
+    return service, client
+
+
+async def no_evidence(service):
+    assert not await service.repo.list("ingest.source_items")
+    assert not list(Path(service.settings.data_dir).rglob("*.json.zst"))
+
+
+@pytest.mark.parametrize("owned", [False, True])
+@pytest.mark.parametrize("kind", ["slow_drip", "delayed_headers"])
+async def test_real_twenty_second_total_deadline(tmp_path, monkeypatch, owned, kind):
+    body = Body([b"x"] * 40, delay=1)
+    cancelled = asyncio.Event()
+
+    async def handler(request):
+        if kind == "delayed_headers":
+            try:
+                await asyncio.sleep(40)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+        return httpx.Response(200, stream=body)
+
+    service, client = await setup(tmp_path, handler, owned, monkeypatch)
+    start = time.monotonic()
+    try:
+        with pytest.raises(TimeoutError):
+            await service.fetch_page({"url": "https://example.com/page"}, {})
+        elapsed = time.monotonic() - start
+        assert 19.5 <= elapsed < 23, elapsed
+        if kind == "slow_drip":
+            assert 10 < body.yielded < 22
+            assert body.closed
+        else:
+            assert cancelled.is_set()
+        await no_evidence(service)
+        assert client.is_closed is owned
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.parametrize("owned", [False, True])
+async def test_complete_exact_raw_evidence(tmp_path, monkeypatch, owned):
+    original = b"<html><script>ignored</script><body>Actual evidence</body></html>"
+    body = Body([original[:20], original[20:]], delay=0.01)
+    service, client = await setup(
+        tmp_path, lambda request: httpx.Response(200, stream=body), owned, monkeypatch
+    )
+    try:
+        item = await service.fetch_page({"url": "https://example.com/page"}, {})
+        assert item["text"] == "Actual evidence"
+        assert zstandard.ZstdDecompressor().decompress(Path(item["raw_ref"]).read_bytes()) == original
+        assert len(await service.repo.list("ingest.source_items")) == 1
+        assert body.closed
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.parametrize("status", [404, 503])
+async def test_http_failure_has_no_partial_evidence(tmp_path, monkeypatch, status):
+    service, client = await setup(
+        tmp_path, lambda request: httpx.Response(status, content=b"error"), False, monkeypatch
+    )
+    try:
+        with pytest.raises(httpx.HTTPStatusError):
+            await service.fetch_page({"url": "https://example.com/page"}, {})
+        await no_evidence(service)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.parametrize("owned", [False, True])
+async def test_caller_cancellation_propagates_and_closes_body(tmp_path, monkeypatch, owned):
+    body = Body([b"first", b"second"], delay=0.1)
+    service, client = await setup(
+        tmp_path, lambda request: httpx.Response(200, stream=body), owned, monkeypatch
+    )
+    try:
+        task = asyncio.create_task(service.fetch_page({"url": "https://example.com/page"}, {}))
+        await asyncio.sleep(0.15)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert body.yielded == 1 and body.closed
+        await no_evidence(service)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.parametrize("extra,accepted", [(0, True), (1, False)])
+async def test_exact_two_mib_boundary(tmp_path, monkeypatch, extra, accepted):
+    body = Body([b"x" * (2 * 1024 * 1024), b"y" * extra])
+    service, client = await setup(
+        tmp_path, lambda request: httpx.Response(200, stream=body), False, monkeypatch
+    )
+    try:
+        if accepted:
+            item = await service.fetch_page({"url": "https://example.com/page"}, {})
+            assert item["raw_size_bytes"] == 2 * 1024 * 1024
+        else:
+            with pytest.raises(ValueError, match="Page exceeds 2 MB"):
+                await service.fetch_page({"url": "https://example.com/page"}, {})
+            await no_evidence(service)
+        assert body.closed
+    finally:
+        await client.aclose()
+
+
+def test_existing_session_error_protocol_accepts_wall_timeout():
+    from tank.agents.sessions import SessionService
+
+    service = object.__new__(SessionService)
+    error, status = service.tool_failure(TimeoutError())
+    assert status == "ERROR"
+    assert error["type"] == "TimeoutError"
+    assert error["category"] == "TOOL_EXECUTION"
+    assert isinstance(asyncio.CancelledError(), BaseException)
+    assert not isinstance(asyncio.CancelledError(), Exception)

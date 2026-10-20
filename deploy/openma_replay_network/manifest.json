@@ -1,0 +1,29 @@
+{
+  "schema": "tank.openma-replay-network.v1",
+  "upstream_openma_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+  "target": "packages/sandbox-adapter-litebox/src/litebox.ts",
+  "input_sha256": "4b304db1665f1f4151a25802ef0cfbe10d237d45b90f82a942abc452069b680c",
+  "patched_sha256": "de3acae49e3e71886386ce2a70ce5adc798d800f722d83c05f85ffe3edafe894",
+  "scope": "Resolve the postgres selector to one validated private IPv4 native allowNet rule; live analysis unrestricted; native DNS policy is a separate required stage",
+  "native_qualification": {
+    "status": "PASS",
+    "scope": "native factory replay isolation and unrestricted controls, not Managed/E2E",
+    "evidence": "docs/verification/native-replay-network-r18-2026-10-19/verification.json",
+    "evidence_sha256": "659f9ea665032bccd0ae8116e4a060089cb09aa73dccd91118a78e5bcbfb827e"
+  },
+  "status": "FROZEN_NATIVE_FACTORY_NETWORK_PASS_MANAGED_NOT_CLAIMED",
+  "assets_sha256": {
+    "prepare_overlay.py": "e546760c59ee3efc96b425f7745c521ff6d87130fd7729f1d63452e8986b8d9e",
+    "check_guards.py": "f3cedae7f3bb63889d17eadfa05af114f7f9c2394fbe5abf6488141f5c172d6c",
+    "network-policy.test.ts": "0a9af05a393dcc393c1980621ba8e339df8e1509a51e3dbc4e21584e9f1987cd",
+    "README.md": "74cf28924fa8bc3a873b85730e7940aa4f99fe04ffbb4cc3d37c31c673648bf0"
+  },
+  "generated_modules_sha256": {},
+  "tests": {
+    "factory_controls": 13,
+    "guards": 6,
+    "strict_actual_adapter_typescript": "PASS",
+    "actual_Managed_retained_provider_synthetic_SDK": "PASS",
+    "native": "PASS_NATIVE_FACTORY_COMPONENT"
+  }
+}

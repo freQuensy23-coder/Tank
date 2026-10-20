@@ -2,6 +2,7 @@
 
 from decimal import Decimal
 
+from tank.time_precision import propagate_timestamp
 from tank.util import new_id
 
 
@@ -102,8 +103,11 @@ class DecisionEngine:
             any(c.get("type") == "FATAL" for c in contradictions) or event.get("lifecycle") == "INVALIDATED"
         )
         unresolved = any(c.get("type") == "UNRESOLVED" for c in contradictions)
-        credible = beneficiary.get(
-            "credible", role == "PRIMARY" and bool(beneficiary.get("evidence"))
+        # LOSER is a thesis relationship, not positive beneficiary eligibility (§4.7).
+        credible = (
+            beneficiary.get("thesis_link_credible") is True
+            if role == "LOSER"
+            else beneficiary.get("credible", role == "PRIMARY" and bool(beneficiary.get("evidence")))
         ) and role in {"PRIMARY", "SECONDARY", "LOSER"}
         state = _enum(event.get("event_state", event.get("state")))
         verified = event.get("state_verified", event.get("verified", False))
@@ -114,6 +118,7 @@ class DecisionEngine:
             thesis = "C"
         elif (
             capture == "DIRECT"
+            and role in {"PRIMARY", "SECONDARY"}
             and cls in {"MAJOR", "STRUCTURAL_SHOCK"}
             and (
                 role == "PRIMARY"
@@ -219,19 +224,11 @@ class DecisionEngine:
                 action, rule = "EXIT", "B1"
             elif trade == "D" or "DOWNGRADE" in roles:
                 action, rule = "REDUCE", "B2"
-            elif (
-                "UPGRADE" in roles
-                and trade == "A"
-                and thesis in {"A", "B"}
-                and band != "HEAVY"
-                and data == "HIGH"
-                and not unresolved
-                and role != "LOSER"
-            ):
+            elif "UPGRADE" in roles and trade == "A" and thesis in {"A", "B"} and band != "HEAVY":
                 action, rule = "ADD", "B3"
             else:
                 action, rule = "HOLD", "B4"
-        elif data == "LOW" or not dc.get("critical_semantics_verified", False):
+        elif data == "LOW":
             action, rule = "WAIT", "A1"
         elif shock and role == "PRIMARY" and band == "HEAVY":
             action, rule = "DONT_CHASE", "A0"
@@ -239,6 +236,24 @@ class DecisionEngine:
             action, rule = "WAIT", "A2"
         elif thesis == "D" or fatal:
             action, rule = "WAIT", "A3"
+        elif any(
+            condition.get("status") == "FIRED"
+            and condition.get("role") in {"DOWNGRADE", "INVALIDATION"}
+            and (condition.get("expr") or {}).get("metric") == "price.close_vs_level"
+            and (condition.get("expr") or {}).get("op") == "<"
+            for condition in conditions or []
+        ):
+            action, rule = "WAIT", "WATCH_ANCHOR_LOST"
+        elif any(
+            condition.get("status") == "FIRED"
+            and condition.get("role") == "DOWNGRADE"
+            and any(
+                expression.get("metric") == "spot.cohort.direction" and expression.get("value") == "SELL"
+                for expression in (condition.get("expr") or {}).get("all", [])
+            )
+            for condition in conditions or []
+        ):
+            action, rule = "WAIT", "WATCH_SELL_DOWNGRADE"
         elif trade == "A":
             if thesis in {"A", "B"}:
                 action, rule = ("WATCH_TO_START", "A6") if unresolved else ("START", "A5")
@@ -260,7 +275,7 @@ class DecisionEngine:
                 "WATCH_TO_START",
                 "START_HIGH_DATA_GUARD" if data != "HIGH" else "START_UNRESOLVED_GUARD",
             )
-        watches = self._conditions(action, move, band, relative, open_call)
+        watches = self._conditions(action, move, band, relative, open_call, wait_data=rule == "A1")
         milestone = event.get("next_milestone")
         if milestone:
             milestone_id = (
@@ -355,7 +370,9 @@ class DecisionEngine:
             "dec_id": new_id("DEC"),
             "event_id": event.get("event_id"),
             "token_id": beneficiary.get("token_id", m.get("token_id")),
-            "cutoff": m.get("cutoff"),
+            **propagate_timestamp(m, "cutoff", missing_reason="LEGACY_CUTOFF_PRECISION_UNAVAILABLE").fields(
+                "cutoff"
+            ),
             "thesis_grade": thesis,
             "thesis_rule": thesis,
             "trade_grade": trade,
@@ -387,7 +404,7 @@ class DecisionEngine:
             "provenance": {"ems_id": assessment.get("ems_id"), "mta_id": m.get("mta_id")},
         }
 
-    def _conditions(self, action, move, band, relative, open_call):
+    def _conditions(self, action, move, band, relative, open_call, *, wait_data=False):
         anchor = (relative.get("anchor") or {}).get("ref_price")
         down = _condition(
             "DOWNGRADE",
@@ -395,6 +412,14 @@ class DecisionEngine:
             _expr("spot.cohort.direction", "==", "SELL", count=2),
             _expr("spot.cohort.cwb_sell", ">", 0.5, count=2),
         )
+        if open_call:
+            down = _condition(
+                "DOWNGRADE",
+                "Spot cohort BROAD SELL with most volume selling for two consecutive hourly windows; REDUCE.",
+                _expr("spot.cohort.direction", "==", "SELL", count=2),
+                _expr("spot.cohort.cwb_sell", ">", 0.5, count=2),
+                _expr("spot.classification", "==", "BROAD", count=2),
+            )
         up = _condition(
             "UPGRADE",
             "Spot BUY with most volume buying for two consecutive hourly windows and native OI not above normal.",
@@ -402,7 +427,11 @@ class DecisionEngine:
             _expr("spot.cohort.cwb_buy", ">", 0.5, count=2),
             _expr("deriv.native_oi_vs_normal", "in", ["WITHIN", "BELOW"]),
         )
-        if action == "WAIT":
+        if action == "WAIT" and wait_data:
+            up = _condition(
+                "UPGRADE", "Data confidence becomes HIGH; re-grade.", _expr("dc.class", "==", "HIGH")
+            )
+        elif action == "WAIT":
             up = _condition(
                 "UPGRADE",
                 "Data HIGH and class resolves to spot led accumulation or organic mixed.",
@@ -444,6 +473,14 @@ class DecisionEngine:
             else:
                 down = None
         result = [c for c in [up, down] if c is not None]
+        if action == "WATCH_TO_START" and not open_call and anchor is not None:
+            result.append(
+                _condition(
+                    "DOWNGRADE",
+                    "Hourly close below the anchor price; WAIT.",
+                    _expr("price.close_vs_level", "<", str(anchor)),
+                )
+            )
         level = (open_call or {}).get("invalidation_price")
         if level is None and anchor is not None:
             entry = (

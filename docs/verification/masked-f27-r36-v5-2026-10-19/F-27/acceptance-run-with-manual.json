@@ -1,0 +1,12 @@
+{
+  "started_at": "2026-10-19T17:30:37.220853+00:00",
+  "frozen_output": {
+    "path": "docs/verification/masked-f27-r36-v5-2026-10-19/F-27/actual/qa-r36-v5-masked-f27-driver/framework-bundles/1b4076a28ec3d17797f095bb50c5106046b76273a4bb7c8d037ab83de6dcfe2a/outputs.json",
+    "sha256": "92489e6feda3f8ef2db4fc6284cea968fe9d5787e3e53699ccd3b26e1fc3da8b"
+  },
+  "scope": "Actual single masked reference first outcome; no normal Runtime or SENT claim",
+  "manual_review": {
+    "path": "docs/verification/masked-f27-r36-v5-2026-10-19/F-27/manual-review.json",
+    "sha256": "7181a4f9775f739137fca8846ecd3a33e05a4ad2e6a9c1585b0d363e43924e0e"
+  }
+}

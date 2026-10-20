@@ -1,12 +1,14 @@
 """Version-pinned Jev classification. Cutoffs must come from labeled calibration."""
 
+import asyncio
 import re
 from datetime import timedelta
 from decimal import Decimal
 
 import httpx
 
-from tank.util import iso, new_id, parse_time, sha256, utcnow
+from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
+from tank.util import iso, sha256, utcnow
 
 from .jev import MODEL, classify, provider_binding
 
@@ -14,15 +16,6 @@ JEV_PROMPT_VERSION = "jev-v1"
 
 FILTER = "Is this text about crypto - crypto assets, crypto exchanges, crypto regulation or enforcement, blockchain networks, or one of these projects: Bitcoin, Ethereum, Uniswap, PancakeSwap, Aerodrome, Curve, 1inch, 0x, CoW Protocol, Hyperliquid, Lighter, Aave, Morpho, Euler, Ondo, LayerZero, Quant, Avalanche, NEAR, Plasma, Ethena, World (Worldcoin)? Whether it reports anything new or important does not matter here. General finance, technology or politics that does not touch crypto does not count."
 ROUTE = "Does the item report the same real-world event as the event described, or a new development of it - a confirmation, denial, stage change, new detail or new party? Another event about the same project does not count."
-
-
-class PendingRouting(RuntimeError):
-    """Wait for extraction before applying the calibrated event question."""
-
-    def __init__(self, reservation_id):
-        self.reservation_id = reservation_id
-        self.run_after = iso(utcnow() + timedelta(seconds=5))
-        super().__init__(f"Pending event extraction: {reservation_id}")
 
 
 class ConfigurationError(ValueError):
@@ -61,7 +54,7 @@ class Pipeline:
             or item.get("source_name")
             or item.get("source_id"),
             "text": "\n\n".join(
-                str(v) for v in (item.get("title"), item.get("text") or item.get("body")) if v
+                dict.fromkeys(str(v) for v in (item.get("title"), item.get("text") or item.get("body")) if v)
             ),
             "quoted": item.get("quoted"),
         }
@@ -69,7 +62,7 @@ class Pipeline:
     async def score(self, item, name, state):
         return (await self._score_record(item, name, state))["score"]
 
-    async def _score_record(self, item, name, state):
+    def score_identity(self, item, name, state):
         questions = {
             name: {
                 "type": "noul",
@@ -80,7 +73,7 @@ class Pipeline:
                 },
             }
         }
-        binding = provider_binding(getattr(self.settings, "jev_provider", "typesafe"))
+        binding = provider_binding(getattr(self.settings, "jev_provider", "openrouter"))
         state_fingerprint = sha256(state)
         question_fingerprint = sha256(questions)
         request_fingerprint = sha256({"model": binding.request_model, "state": state, "questions": questions})
@@ -95,6 +88,12 @@ class Pipeline:
                 "state_fingerprint": state_fingerprint,
             }
         )
+        return key, questions, binding, state_fingerprint, question_fingerprint, request_fingerprint
+
+    async def _score_record(self, item, name, state):
+        key, questions, binding, state_fingerprint, question_fingerprint, request_fingerprint = (
+            self.score_identity(item, name, state)
+        )
         cached = await self.repo.get("ops.llm_usage", key)
         if cached:
             return cached
@@ -102,19 +101,9 @@ class Pipeline:
             raise ValueError(
                 "Replay requires stored Jev score for the exact wire question and state; live classification is disabled"
             )
-        key_field = "openrouter_api_key" if binding.provider == "openrouter" else "typesafe_api_key"
-        api_key = getattr(self.settings, key_field, None)
+        api_key = getattr(self.settings, "openrouter_api_key", None)
         if not api_key:
-            raise ConfigurationError(
-                "Jev provider "
-                + binding.provider
-                + " requires "
-                + (
-                    "OPENROUTER_API_KEY or TANK_OPENROUTER_API_KEY"
-                    if binding.provider == "openrouter"
-                    else "TANK_TYPESAFE_API_KEY"
-                )
-            )
+            raise ConfigurationError("Jev requires OPENROUTER_API_KEY or TANK_OPENROUTER_API_KEY")
         data = await classify(
             self.http, api_key=api_key, state=state, questions=questions, provider=binding.provider
         )
@@ -123,18 +112,14 @@ class Pipeline:
             raise ValueError("Jev returned invalid score or unexpected resolved model")
         usage = data.get("usage", {})
         tokens = usage.get("input_tokens")
-        if binding.provider == "openrouter":
-            reported_cost = usage.get("cost")
-            amount = Decimal(str(reported_cost)) if reported_cost is not None else None
-            if amount is not None and (not amount.is_finite() or amount < 0):
-                raise ValueError("Invalid OpenRouter reported Jev cost")
-            cost = str(amount) if amount is not None else None
-            cost_reason = None if amount is not None else "OpenRouter omitted billed usage.cost"
-            billing_basis = "OPENROUTER_REPORTED"
-        else:
-            cost = str(Decimal(str(tokens)) * Decimal("0.042") / 1000000) if tokens is not None else None
-            cost_reason = None if cost is not None else "provider omitted input tokens"
-            billing_basis = "TYPESAFE_RATE_CARD_ESTIMATE"
+        reported_cost = usage.get("cost")
+        amount = Decimal(str(reported_cost)) if reported_cost is not None else None
+        if amount is not None and (not amount.is_finite() or amount < 0):
+            raise ValueError("Invalid OpenRouter reported Jev cost")
+        cost = str(amount) if amount is not None else None
+        cost_reason = None if amount is not None else "OpenRouter omitted billed usage.cost"
+        billing_basis = "OPENROUTER_REPORTED"
+        completed_at = collection_clock()
         record = await self.repo.put(
             "ops.llm_usage",
             key,
@@ -150,9 +135,7 @@ class Pipeline:
                 "resolved_model_id": data["model"],
                 "response_id": data.get("id"),
                 "upstream_provider": data.get("provider"),
-                "model_pin_evidence": "Exact direct version"
-                if binding.provider == "typesafe"
-                else "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed",
+                "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed",
                 "billing_basis": billing_basis,
                 "billing_currency": "USD",
                 "prompt_version": JEV_PROMPT_VERSION,
@@ -170,6 +153,7 @@ class Pipeline:
                 "web_searches": 0,
                 "missing_fields": {
                     "effort": "Not applicable to nongenerative Jev classification",
+                    **({"cost_usd": cost_reason} if cost is None else {}),
                     **({"input_tokens": "Provider omitted input tokens"} if tokens is None else {}),
                     **(
                         {"output_tokens": "Provider omitted output tokens"}
@@ -181,8 +165,8 @@ class Pipeline:
                 },
                 "cost_usd": cost,
                 "cost_reason": cost_reason,
-                "at": iso(),
-                "created_at": iso(),
+                **completed_at.fields("at"),
+                **completed_at.fields("created_at"),
                 "subject_id": item["item_id"],
                 "model": data["model"],
                 "config_version": self.settings.config_version,
@@ -234,7 +218,12 @@ class Pipeline:
                         item["item_id"],
                         priority=priority(item),
                         max_attempts=2,
-                        expires_at=iso(parse_time(item.get("observed_at") or iso()) + timedelta(hours=6)),
+                        expires_at=offset_schedule(
+                            propagate_timestamp(item, "observed_at")
+                            if item.get("observed_at")
+                            else collection_clock(),
+                            timedelta(hours=6),
+                        ),
                     )
             return item
 
@@ -246,39 +235,23 @@ class Pipeline:
         result = {e["entity_id"] if isinstance(e, dict) else e for e in item.get("entities", [])} | set(
             item.get("tokens_mentioned", item.get("tokens", []))
         )
-        qualified = {
-            "curve": ["Curve Finance", "Curve DAO", "crvUSD"],
-            "cow": ["CoW Protocol", "CoW Swap", "CoW DAO"],
-            "lighter": ["Lighter.xyz", "Lighter DEX", "Lighter exchange"],
-            "quant": ["Quant Network", "Overledger"],
-            "near": ["NEAR Protocol", "NEAR Foundation"],
-            "plasma": ["Plasma chain", "Plasma network"],
-            "world": [
-                "Worldcoin",
-                "World Network",
-                "World App",
-                "World Chain",
-                "World ID",
-                "Tools for Humanity",
-            ],
-            "avalanche": ["Ava Labs", "Avalanche network", "Avalanche C-Chain"],
-            "euler": ["Euler Finance", "Euler v2"],
-            "0x": ["0x Protocol", "0x Labs", "Matcha"],
-        }
 
         def matches(name):
             return name and re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.IGNORECASE)
 
-        for row in registry.get("entities", []) + registry.get("tokens", []):
+        for row in registry.get("entities", []):
             entity = row.get("entity_id")
-            names = qualified.get(entity, [row.get("name"), *row.get("names", []), *row.get("aliases", [])])
-            hit = any(matches(name) for name in names)
-            if entity == "lighter":
-                hit = hit or (matches("Lighter") and matches("LIT"))
-            if entity == "plasma":
-                hit = hit or (matches("Plasma") and matches("XPL"))
-            if hit or (row.get("symbol") and matches("$" + row["symbol"])):
-                result.update([entity, row.get("token_id"), *row.get("tokens", [])])
+            # Display names are not matching rules: e.g. "near" needs its
+            # registered qualifier. The frozen registry is the only alias policy.
+            hit = any(matches(name) for name in row.get("aliases", [])) or any(
+                matches(rule["alias"]) and any(matches(q) for q in rule["requires_any"])
+                for rule in row.get("qualified_aliases", [])
+            )
+            if hit:
+                result.update([entity, *row.get("tokens", [])])
+        for row in registry.get("tokens", []):
+            if row.get("symbol") and matches("$" + row["symbol"]):
+                result.update([row.get("entity_id"), row["token_id"]])
         authors = {
             str(item.get(key) or "").lstrip("@").lower()
             for key in ("author", "monitored_author", "reposted_by")
@@ -291,8 +264,57 @@ class Pipeline:
                 result.update([row.get("entity_id"), row.get("token_id")])
         return result - {None}
 
+    @classmethod
+    def routing_state(cls, item, event):
+        return {
+            **cls.state(item),
+            "event": {
+                "statement": event.get("statement"),
+                "entities": event.get("entities", []),
+                "tokens": event.get("tokens_mentioned", event.get("tokens", [])),
+                "stage": event.get("event_state", event.get("stage")),
+                "known_to_us_at": event.get("known_to_us_at"),
+            },
+        }
+
+    async def _candidate_events(self, identities, since, now):
+        # iter_range is half-open; PostgreSQL timestamps have microsecond
+        # resolution. Include the batch clock itself without admitting future rows.
+        recent = {
+            row["event_id"]
+            async for row in self.repo.iter_range(
+                "ops.agent_sessions", "last_item_at", start=since, end=iso(now + timedelta(microseconds=1))
+            )
+            if row.get("event_id")
+        }
+        events = []
+        # Preserve stable event-key order, including the production tie rule.
+        for event_id in sorted(recent):
+            event = await self.repo.get("evt.events", event_id)
+            if not event or event.get("lifecycle", event.get("status")) in (
+                "CLOSED",
+                "MERGED",
+                "INVALIDATED",
+                "FAILED",
+            ):
+                continue
+            event_ids = {
+                e["entity_id"] if isinstance(e, dict) else e for e in event.get("entities", [])
+            } | set(event.get("tokens_mentioned", event.get("tokens", [])))
+            if identities.intersection(event_ids):
+                events.append(event)
+        return events
+
+    async def candidate_events(self, item):
+        """The exact online candidate builder, also used by isolated calibration."""
+        now = utcnow()
+        since = iso(
+            now - timedelta(days=self.settings.load_config("thresholds").get("routing_window_days", 3))
+        )
+        return await self._candidate_events(self.identities(item), since, now)
+
     async def route_item(self, payload):
-        async with self.repo.lock("routing"):
+        async with self.repo.lock("routing:" + payload["item_id"]):
             item = await self.repo.get("ingest.source_items", payload["item_id"])
             if item is None:
                 raise KeyError(payload["item_id"])
@@ -303,105 +325,58 @@ class Pipeline:
             since = iso(
                 now - timedelta(days=self.settings.load_config("thresholds").get("routing_window_days", 3))
             )
-            recent = {
-                row["event_id"]
-                async for row in self.repo.iter_range(
-                    "ops.agent_sessions", "last_item_at", start=since, end=iso(now)
-                )
-                if row.get("event_id")
-            }
             best, best_score = None, -1
             scores = {}
-            # Prior PostgreSQL list order was stable event storage key order;
-            # fetching only recent identities preserves its score-tie behavior.
-            for event_id in sorted(recent):
-                event = await self.repo.get("evt.events", event_id)
-                if not event or event.get("lifecycle", event.get("status")) in (
-                    "CLOSED",
-                    "MERGED",
-                    "INVALIDATED",
-                    "FAILED",
-                ):
-                    continue
-                event_ids = {
-                    e["entity_id"] if isinstance(e, dict) else e for e in event.get("entities", [])
-                } | set(event.get("tokens_mentioned", event.get("tokens", [])))
-                if not identities.intersection(event_ids):
-                    continue
-                state = self.state(item)
-                state["event"] = {
-                    "statement": event.get("statement"),
-                    "entities": event.get("entities", []),
-                    "tokens": event.get("tokens_mentioned", event.get("tokens", [])),
-                    "stage": event.get("event_state", event.get("stage")),
-                    "known_to_us_at": event.get("known_to_us_at"),
-                }
+            candidates = tuple(await self._candidate_events(identities, since, now))
+            if candidates:
                 cutoff = self.cutoff("routing_cutoff")
-                score = await self.score(item, "same_event", state)
-                scores[event["event_id"]] = score
-                if score >= cutoff and score > best_score:
-                    best, best_score = event, score
-            reservation = None
-            pending = [
-                candidate
-                async for candidate in self.repo.iter_range(
-                    "ops.routing_reservations",
-                    "last_item_at",
-                    start=since,
-                    end=iso(now),
-                    filters={"status": "PENDING"},
-                )
-            ]
-            for candidate in sorted(pending, key=lambda row: row["reservation_id"]):
-                if not identities.intersection(
-                    set(candidate.get("entities", [])) | set(candidate.get("tokens", []))
-                ):
-                    continue
-                session_id = candidate.get("session_id")
-                session = await self.repo.get("ops.agent_sessions", session_id) if session_id else None
-                if session and session.get("status") in {"ENDED", "FAILED"}:
-                    candidate["status"] = "CLOSED"
-                    await self.repo.put("ops.routing_reservations", candidate["reservation_id"], candidate)
-                    continue
-                raise PendingRouting(candidate["reservation_id"])
+                # Each exact item/event question is independent. Collect every
+                # result before selecting so a failed pair cannot yield a partial
+                # winner; successful usage rows remain available on ordinary retry.
+                requests = [
+                    asyncio.create_task(self.score(item, "same_event", self.routing_state(item, event)))
+                    for event in candidates
+                ]
+                try:
+                    results = await asyncio.gather(*requests, return_exceptions=True)
+                except BaseException:
+                    for request in requests:
+                        request.cancel()
+                    await asyncio.gather(*requests, return_exceptions=True)
+                    raise
+                for result in results:
+                    if isinstance(result, BaseException):
+                        raise result
+                # Reduce in the stable candidate order, independent of completion
+                # order, retaining the first event on equal probabilities.
+                for event, score in zip(candidates, results, strict=True):
+                    scores[event["event_id"]] = score
+                    if score >= cutoff and score > best_score:
+                        best, best_score = event, score
+            # §3.1: only extracted events are candidates. With no qualifying
+            # candidate, enqueue NEW_ITEM immediately, identified by this item.
             added = best is not None
             message = {"kind": "ITEM_ADDED" if added else "NEW_ITEM", "item_id": item["item_id"]}
             if best:
                 message["event_id"] = best["event_id"]
-            else:
-                rid = new_id("RSV")
-                reservation = {
-                    "reservation_id": rid,
-                    "first_item_id": item["item_id"],
-                    "item_ids": [item["item_id"]],
-                    "entities": sorted(identities),
-                    "tokens": [],
-                    "event_id": None,
-                    "session_id": None,
-                    "status": "PENDING",
-                    "created_at": iso(),
-                    "last_item_at": iso(),
-                    "config_version": self.settings.config_version,
-                    "code_version": self.settings.code_version,
-                }
-                message["reservation_id"] = rid
-            item["route"] = {
+            route = {
                 "decision": "ADDED" if added else "NEW_SESSION",
                 "event_id": best["event_id"] if best else None,
-                "reservation_id": reservation["reservation_id"] if reservation else None,
                 "p_same": best_score if added else None,
             }
-            item.update(
-                routing_message=message,
-                routing_scores=scores,
-                route_event_id=best["event_id"] if best else None,
-                status="ROUTED",
-            )
-            async with self.repo.transaction():
-                if reservation:
-                    await self.repo.put(
-                        "ops.routing_reservations", reservation["reservation_id"], reservation
-                    )
+            async with self.repo.lock("ingest-dedup"), self.repo.transaction():
+                # A new observation or official-source promotion may arrive
+                # during Jev's call. Preserve that current ingestion record.
+                item = await self.repo.get("ingest.source_items", payload["item_id"])
+                if item is None:
+                    raise KeyError(payload["item_id"])
+                item.update(
+                    route=route,
+                    routing_message=message,
+                    routing_scores=scores,
+                    route_event_id=best["event_id"] if best else None,
+                    status="ROUTED",
+                )
                 await self.repo.put("ingest.source_items", item["item_id"], item)
                 await self.repo.enqueue(
                     "AGENT_MESSAGE", message, item["item_id"] + ":" + message["kind"], priority=priority(item)

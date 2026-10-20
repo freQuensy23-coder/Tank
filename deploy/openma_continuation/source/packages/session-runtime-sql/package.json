@@ -1,0 +1,27 @@
+{
+  "name": "@open-managed-agents/session-runtime-sql",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./coordination": "./src/coordination.ts",
+    "./context": "./src/context.ts",
+    "./history": "./src/history.ts",
+    "./continuation": "./src/continuation.ts"
+  },
+  "scripts": {
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@open-managed-agents/domain": "workspace:*",
+    "@open-managed-agents/session-runtime-contract": "workspace:*",
+    "@open-managed-agents/sql-client": "workspace:*",
+    "effect": "3.22.1"
+  },
+  "devDependencies": {
+    "better-sqlite3": "^13.0.3",
+    "vitest": "^4.1.3"
+  }
+}

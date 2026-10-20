@@ -1,0 +1,221 @@
+{
+  "prepared_at": "2026-10-19T09:09:15.130819+00:00",
+  "status": "BOUNDED_PUBLIC_ACQUISITION_AND_PRODUCTION_COMPONENT_PROJECTION_COMPLETE",
+  "network_stopped": true,
+  "cutoff": "2026-10-16T12:30:00Z",
+  "window_start": "2026-10-16T08:30:00Z",
+  "receipt_policy": "Actual October19 acquisition retained; retrospective calculations only, no live latency/contemporaneous capture claim. Market observations strictly bounded separately.",
+  "retained_source_inventory_correction": {
+    "file": "fixture_check/data/bybit_oi_5m_WLDUSDT.json",
+    "sha256": "d48c7826f1984925f94df2c13329de5f9031764972f6f99566940104a3edfe17",
+    "rows": 26941,
+    "min_ms": 1784073600000,
+    "max_ms": 1792155600000,
+    "prior_plan_claim_incorrect": "Original file already has~93days numerical OI history, not onlyhours. Existing frozen file unchanged. New capture independently binds9day exact values to actualHTTP request/receipt, does not newly supply missing numeric baseline.",
+    "matched_new_capture_rows": 2592,
+    "singleOpenInterest_mismatches": 0
+  },
+  "bybit": {
+    "points": 2592,
+    "unique_points": 2592,
+    "start_ms": 1791376200000,
+    "end_ms": 1792153500000,
+    "cadence_ms": 300000,
+    "missing_intervals": 0,
+    "ts_semantics": "EXACT exchange observation point; intervalTime sampling cadence only",
+    "USD": "missing, no mark/FX manufactured",
+    "normalized_successor_sha256": "4b007395d653700486867323d049c579b1a57c7ee434ce96b4b7cc620fa535bf",
+    "original_fixture_shared_rows": 2592,
+    "original_fixture_singleOI_mismatches": 0
+  },
+  "binance": {
+    "production_import_results": [
+      {
+        "archive_id": "ARCH-662178c0dd2537457bd1a5ad98423414339d1700c8abc8b3ef0076badd65b1a4",
+        "path": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/docs/verification/f11-public-acquisition-2026-10-19/production-import/archive/binance/spot/aggTrades/WLDUSDT-aggTrades-2026-10-15.zip",
+        "source_url": "https://data.binance.vision/data/spot/daily/aggTrades/WLDUSDT/WLDUSDT-aggTrades-2026-10-15.zip",
+        "rows": 119103,
+        "complete": true,
+        "gaps": [],
+        "duplicates": [],
+        "timestamp_unit": "US"
+      },
+      {
+        "archive_id": "ARCH-3e1e3ab3f23e41bbaab3daec33653dc71ec9ef9a231292d127208eb83bc1c995",
+        "path": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/docs/verification/f11-public-acquisition-2026-10-19/production-import/archive/binance/spot/aggTrades/WLDUSDT-aggTrades-2026-10-16.zip",
+        "source_url": "https://data.binance.vision/data/spot/daily/aggTrades/WLDUSDT/WLDUSDT-aggTrades-2026-10-16.zip",
+        "rows": 177902,
+        "complete": true,
+        "gaps": [],
+        "duplicates": [],
+        "timestamp_unit": "US"
+      }
+    ],
+    "ordinary_database_used": false,
+    "normalized_trades": "Production TradeArchive Parquet, original ZIP/CHECKSUM bytes retained",
+    "scope": "Full Oct15/16 raw archives; downstream F11 must select strict cutoff; later rows not automatically eligible."
+  },
+  "spot_venue_results": {
+    "binance": {
+      "instrument_id": "binance:spot:WLDUSDT",
+      "raw_unique_rows": 297005,
+      "raw_first_event": "2026-10-15T00:00:00.994354Z",
+      "raw_last_event": "2026-10-16T23:59:59.071242Z",
+      "id_gap_count": 0,
+      "window_complete": true,
+      "window": {
+        "start": "2026-10-16T08:30:00+00:00",
+        "end_exclusive": "2026-10-16T12:30:00+00:00"
+      },
+      "windows": {
+        "1h": {
+          "trade_count": 11826,
+          "buy_native": "2600110.00000000",
+          "sell_native": "2904056.40000000",
+          "cvd_native": "-303946.40000000",
+          "sum_qty_native_sq": "63172873758.1400000000000000",
+          "buy_share": "0.4723894248545974191477932063"
+        },
+        "4h": {
+          "trade_count": 64442,
+          "buy_native": "18237936.90000000",
+          "sell_native": "18698197.40000000",
+          "cvd_native": "-460260.50000000",
+          "sum_qty_native_sq": "328093382886.7900000000000000",
+          "buy_share": "0.4937695090631073430984357234"
+        }
+      },
+      "proof_scope": "Original API cursor chain plus documented temporal request boundaries; archive SHA+IDs for Binance. No live latency claim.",
+      "USD_policy": "USDT not converted without actual historical FX; USD quote uses actual prices, no substitute peg."
+    },
+    "okx": {
+      "instrument_id": "okx:spot:WLD-USDT",
+      "raw_unique_rows": 35900,
+      "raw_first_event": "2026-10-16T08:29:28.766000Z",
+      "raw_last_event": "2026-10-16T12:29:55.281000Z",
+      "id_gap_count": 0,
+      "window_complete": true,
+      "window": {
+        "start": "2026-10-16T08:30:00+00:00",
+        "end_exclusive": "2026-10-16T12:30:00+00:00"
+      },
+      "windows": {
+        "1h": {
+          "trade_count": 6503,
+          "buy_native": "1028932.273",
+          "sell_native": "1107763.026",
+          "cvd_native": "-78830.753",
+          "sum_qty_native_sq": "8001613745.941471",
+          "buy_share": "0.4815531131095543258365169455"
+        },
+        "4h": {
+          "trade_count": 35800,
+          "buy_native": "6740643.821",
+          "sell_native": "7089693.598",
+          "cvd_native": "-349049.777",
+          "sum_qty_native_sq": "108904168355.057073",
+          "buy_share": "0.4873810100785943811108112777"
+        }
+      },
+      "proof_scope": "Original API cursor chain plus documented temporal request boundaries; archive SHA+IDs for Binance. No live latency claim.",
+      "USD_policy": "USDT not converted without actual historical FX; USD quote uses actual prices, no substitute peg."
+    },
+    "coinbase": {
+      "instrument_id": "coinbase:spot:WLD-USD",
+      "raw_unique_rows": 24000,
+      "raw_first_event": "2026-10-16T08:28:31.000618Z",
+      "raw_last_event": "2026-10-19T09:05:34.849428Z",
+      "id_gap_count": 0,
+      "window_complete": true,
+      "window": {
+        "start": "2026-10-16T08:30:00+00:00",
+        "end_exclusive": "2026-10-16T12:30:00+00:00"
+      },
+      "windows": {
+        "1h": {
+          "trade_count": 488,
+          "buy_native": "185857.59000000",
+          "sell_native": "194281.29000000",
+          "cvd_native": "-8423.70000000",
+          "sum_qty_native_sq": "1198421376.3210000000000000",
+          "buy_share": "0.4889202335735823707377682599"
+        },
+        "4h": {
+          "trade_count": 4203,
+          "buy_native": "2353125.34000000",
+          "sell_native": "1616206.32000000",
+          "cvd_native": "736919.02000000",
+          "sum_qty_native_sq": "27270192490.8102000000000000",
+          "buy_share": "0.5928265868314969679303643778"
+        }
+      },
+      "proof_scope": "Original API cursor chain plus documented temporal request boundaries; archive SHA+IDs for Binance. No live latency claim.",
+      "USD_policy": "USDT not converted without actual historical FX; USD quote uses actual prices, no substitute peg."
+    },
+    "kraken": {
+      "instrument_id": "kraken:spot:WLD/USD",
+      "raw_unique_rows": 2998,
+      "raw_first_event": "2026-10-16T08:30:03.119810Z",
+      "raw_last_event": "2026-10-16T13:20:55.491688Z",
+      "id_gap_count": 0,
+      "window_complete": true,
+      "window": {
+        "start": "2026-10-16T08:30:00+00:00",
+        "end_exclusive": "2026-10-16T12:30:00+00:00"
+      },
+      "windows": {
+        "1h": {
+          "trade_count": 396,
+          "buy_native": "207475.20565",
+          "sell_native": "103516.42772",
+          "cvd_native": "103958.77793",
+          "sum_qty_native_sq": "1549578305.5423378831",
+          "buy_share": "0.6671407954025499641048430177"
+        },
+        "4h": {
+          "trade_count": 2597,
+          "buy_native": "926713.98691",
+          "sell_native": "668287.88581",
+          "cvd_native": "258426.10110",
+          "sum_qty_native_sq": "13297442574.3049948920",
+          "buy_share": "0.5810112218424229663057445391"
+        }
+      },
+      "proof_scope": "Original API cursor chain plus documented temporal request boundaries; archive SHA+IDs for Binance. No live latency claim.",
+      "USD_policy": "USDT not converted without actual historical FX; USD quote uses actual prices, no substitute peg."
+    }
+  },
+  "flowbars": {
+    "rows": 960,
+    "complete": 960,
+    "gap_reasons": [
+      "None"
+    ],
+    "representation": "Unchanged production normalize.trade / FlowAccumulator / TradeArchive; no actualMarketService/SQL/agent/native replay execution claimed."
+  },
+  "acquisition": {
+    "HTTP_receipt_count": 410,
+    "all_saved_HTTP_SHA_checks_pass": true,
+    "logical_bytes_all_files": 98059711,
+    "unique_inode_bytes_all_files": 78398525,
+    "budget_bytes": 524288000,
+    "host_free_bytes": 9108639744,
+    "host_floor_bytes": 8589934592,
+    "no_original_evidence_deleted": true
+  },
+  "remaining_gaps": [
+    "Full cross-venue24h baseline/reference-venue ranking not acquired; Binance alone has full two-day raw coverage",
+    "Verified semantic/USD conversion prerequisites unchanged; no USDT=USD assumption; Bybit historicalUSD missing",
+    "No historical books/liquidations created; absent-depth/absorption remain unresolved",
+    "This report does not certify F11 native-growth/flow/classification assertions; actual mixed1h/4h venue data remains uncalibrated"
+  ],
+  "artifact_SHA256": {
+    "bybit-oi-normalized-successor.json": "4b007395d653700486867323d049c579b1a57c7ee434ce96b4b7cc620fa535bf",
+    "production-import-results.json": "333d064da200dac6e50588415596aa50380a4e766bb36c3909e8b0830bb02a04",
+    "spot-flowbars-production.json": "b6adac0c234a45232600e6bb860e48aa1d0baf94c6b60a17230847fb2b7de8a5",
+    "rest-spot-parquet-manifests.json": "00c6f98c286f3763e0368be6b727e0d7a754e2ed4682818391c996820b4b4a58",
+    "spot-projection-report.json": "82eb83e3a3c32b5be39b0f75ebd39bcfcf77406ac2ac8a7e4cb447aac8cb8d1f"
+  },
+  "source_unchanged": true,
+  "no_models_or_DB_or_QA_or_native": true
+}

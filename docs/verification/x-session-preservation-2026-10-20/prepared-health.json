@@ -1,0 +1,31 @@
+{
+  "status": "PREPARED_WAIT_DISK_NO_AUTH_REQUESTS",
+  "production_enabled": false,
+  "source_id": "S29",
+  "list_id": null,
+  "compose_overlay": "/srv/tank/compose.x.yaml",
+  "source_export_original_unchanged": true,
+  "secure_copy_byte_equal": true,
+  "secret_mode": "0400",
+  "secret_uid": 1000,
+  "secret_gid": 1000,
+  "expected_prd_handle_count": 86,
+  "browser_plan": {
+    "chromium_processes": 1,
+    "S29_context": "authenticated isolated service context",
+    "S19_context": "separate public context in same process",
+    "existing_owner_not_touched": true
+  },
+  "probe_plan": {
+    "persistent_context": false,
+    "save_storage_state": false,
+    "login": false,
+    "challenge_bypass": false,
+    "list_mutations": false,
+    "cpu_limit": 1,
+    "memory_limit_bytes": 1073741824,
+    "hard_seconds": 90,
+    "outer_seconds": 120
+  },
+  "activation_gate": "actual readonly account/list inventory + exact86comparison then rootreview; no fullRuntimeactivation by backgroundprobe"
+}

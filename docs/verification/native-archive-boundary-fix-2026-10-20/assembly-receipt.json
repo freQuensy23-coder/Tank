@@ -1,0 +1,17 @@
+{
+  "base_image": "sha256:da8d1b4c986fb852d856453a62ad56fa0cd26df17139114b9c5adf9656f00f16",
+  "controller_identity": "22fcb95a1ead9492c1c780deddf679cbb9a7b4a5994d6f745332d04404cebd13",
+  "guest_runtime_identity": "d1d3eb4031e45f848c0b7f44c41029a53e3e955b2e6301ec44bbce678d5957f9",
+  "context_sha256": {
+    "Dockerfile": "3580d3b68742fd7c5006eace7b5266af426b87d28c65f7e57e72b045296350f4",
+    "packages/control-plane-node/src/lib/node-managed-session-runtime.ts": "87291a579358a0043d93a54a6bd8684bea6eb75ba0364ae7e8d986217333368f",
+    "packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts": "5c272de72bc4289db4c138d7e114cbfad84163d1df19a8d5978a210e8c25ff52",
+    "tank-archive-compatibility.json": "3cd075b6c8ec598d637b05d986b7f4b667d9aa4c028fa3dcefe3ac917751fc6d",
+    "tank-deployment-composition.json": "3720959df2e259e8aa47cf5e1e3b873a35148f656bf4092669336f657085fae5",
+    "tank-overlay.json": "0f91a70c0f76c62c165277638571f958494721a1a0006146d50a8cab594168f4",
+    "tank-retained-candidate.json": "03506f6c0e41c4364094377cd82bf959f8bfc66a9eb7c43537a95fd13cdf6c72"
+  },
+  "network": "none",
+  "compiler_or_dependency_install": false,
+  "native_qualification": "NOT_RUN"
+}

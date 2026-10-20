@@ -1,0 +1,212 @@
+{
+  "schema": "tank.fixture-retained-components.v1",
+  "fixture_id": "F-19",
+  "status": "INCOMPLETE_NOT_RUNNABLE",
+  "not_a_replay_input_packet": true,
+  "synthetic_as_declared": false,
+  "unchanged_assertion_manifest": "tests/fixtures/history/manifest-86cda04f53b7b8032655ed40ce53e78e2d123f9a146131b0afb91201121c334c.json",
+  "assertion_sha256": "5710ba9e99183a382f15bb2853d2bc16b0288efce4e9a021af7f361f5564275b",
+  "cutoff_spec_unchanged": "6 Oct 2026",
+  "market_candidates": [],
+  "source_candidates": [
+    {
+      "source_id": "S03",
+      "request_url": "https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=crypto&order=newest&per_page=20",
+      "path": "/tmp/tank-source-smoke/raw/sources/b0/b03d3096b233a12390101d3798a377cb4f9e579323228acf8ac8a2ab234b69f7.gz",
+      "raw_sha256": "b03d3096b233a12390101d3798a377cb4f9e579323228acf8ac8a2ab234b69f7",
+      "actual_capture_interval_utc": [
+        "2026-10-17T16:50:53.721064Z",
+        "2026-10-17T16:50:54.222793Z"
+      ],
+      "scope": "Saved listing/proposal response; not necessarily full article body; actual receipt is after fixture cutoff.",
+      "exists_now": true,
+      "stored_file_sha256": "a07b61469e6419624f41f72773fc4639667b4a908b411921b2e5e5f51985675a",
+      "payload_sha256": "b03d3096b233a12390101d3798a377cb4f9e579323228acf8ac8a2ab234b69f7",
+      "payload_hash_matches": true,
+      "payload_bytes": 42052,
+      "retained_copy": "tests/fixtures/components/2026-10-19/host-only-raw/a07b61469e6419624f41f72773fc4639667b4a908b411921b2e5e5f51985675a.gz",
+      "agent_input_eligible": false,
+      "restriction": "Actual later receipt; full original response can include later fields. Host audit only; never mount into agent input."
+    },
+    {
+      "source_id": "S03",
+      "request_url": "https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=%22digital%20asset%22&order=newest&per_page=20",
+      "path": "/tmp/tank-source-smoke/raw/sources/fa/fa8dfe759c5b5e42f7ddf0e390009caab3e9e360752a63718418a23b805e29e8.gz",
+      "raw_sha256": "fa8dfe759c5b5e42f7ddf0e390009caab3e9e360752a63718418a23b805e29e8",
+      "actual_capture_interval_utc": [
+        "2026-10-17T16:50:53.721286Z",
+        "2026-10-17T16:50:54.942729Z"
+      ],
+      "scope": "Saved listing/proposal response; not necessarily full article body; actual receipt is after fixture cutoff.",
+      "exists_now": true,
+      "stored_file_sha256": "27c56cb1d008e4791269b11f15e0f3fd22aa70ab56704f52d77007ccc9d19e98",
+      "payload_sha256": "fa8dfe759c5b5e42f7ddf0e390009caab3e9e360752a63718418a23b805e29e8",
+      "payload_hash_matches": true,
+      "payload_bytes": 42658,
+      "retained_copy": "tests/fixtures/components/2026-10-19/host-only-raw/27c56cb1d008e4791269b11f15e0f3fd22aa70ab56704f52d77007ccc9d19e98.gz",
+      "agent_input_eligible": false,
+      "restriction": "Actual later receipt; full original response can include later fields. Host audit only; never mount into agent input."
+    },
+    {
+      "source_id": "S03",
+      "request_url": "https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=bitcoin&order=newest&per_page=20",
+      "path": "/tmp/tank-source-smoke/raw/sources/03/03768164707238deef4778c23ad377f4667ea9f9528090054c564cc103c151a1.gz",
+      "raw_sha256": "03768164707238deef4778c23ad377f4667ea9f9528090054c564cc103c151a1",
+      "actual_capture_interval_utc": [
+        "2026-10-17T16:50:53.721297Z",
+        "2026-10-17T16:50:55.643330Z"
+      ],
+      "scope": "Saved listing/proposal response; not necessarily full article body; actual receipt is after fixture cutoff.",
+      "exists_now": true,
+      "stored_file_sha256": "0375464864e0dfd346d8093929d9b4230b27f41df498ad7f87d87bece5b292fe",
+      "payload_sha256": "03768164707238deef4778c23ad377f4667ea9f9528090054c564cc103c151a1",
+      "payload_hash_matches": true,
+      "payload_bytes": 39069,
+      "retained_copy": "tests/fixtures/components/2026-10-19/host-only-raw/0375464864e0dfd346d8093929d9b4230b27f41df498ad7f87d87bece5b292fe.gz",
+      "agent_input_eligible": false,
+      "restriction": "Actual later receipt; full original response can include later fields. Host audit only; never mount into agent input."
+    },
+    {
+      "source_id": "S03",
+      "request_url": "https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=ether&order=newest&per_page=20",
+      "path": "/tmp/tank-source-smoke/raw/sources/dd/dd9883ffe5b0c700c5987968a4467278a60fd06f3c9d20c0e0d2b49929082ad9.gz",
+      "raw_sha256": "dd9883ffe5b0c700c5987968a4467278a60fd06f3c9d20c0e0d2b49929082ad9",
+      "actual_capture_interval_utc": [
+        "2026-10-17T16:50:53.721304Z",
+        "2026-10-17T16:50:56.347603Z"
+      ],
+      "scope": "Saved listing/proposal response; not necessarily full article body; actual receipt is after fixture cutoff.",
+      "exists_now": true,
+      "stored_file_sha256": "d869c5adff2fe32ceebb10b041bc80b511022cd8947bebc844808bec2c6dc81c",
+      "payload_sha256": "dd9883ffe5b0c700c5987968a4467278a60fd06f3c9d20c0e0d2b49929082ad9",
+      "payload_hash_matches": true,
+      "payload_bytes": 38173,
+      "retained_copy": "tests/fixtures/components/2026-10-19/host-only-raw/d869c5adff2fe32ceebb10b041bc80b511022cd8947bebc844808bec2c6dc81c.gz",
+      "agent_input_eligible": false,
+      "restriction": "Actual later receipt; full original response can include later fields. Host audit only; never mount into agent input."
+    },
+    {
+      "source_id": "S03",
+      "request_url": "https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=stablecoin&order=newest&per_page=20",
+      "path": "/tmp/tank-source-smoke/raw/sources/6a/6a1326193ac27da319ec64c7ae33f2f0ca4fc8040db89b462b089ffcc974aa25.gz",
+      "raw_sha256": "6a1326193ac27da319ec64c7ae33f2f0ca4fc8040db89b462b089ffcc974aa25",
+      "actual_capture_interval_utc": [
+        "2026-10-17T16:50:53.721309Z",
+        "2026-10-17T16:50:57.150942Z"
+      ],
+      "scope": "Saved listing/proposal response; not necessarily full article body; actual receipt is after fixture cutoff.",
+      "exists_now": true,
+      "stored_file_sha256": "cbf0edd6dfcf22073f478a3ef2ccb638d2a3f0b6da9761231131efe656a0bfcf",
+      "payload_sha256": "6a1326193ac27da319ec64c7ae33f2f0ca4fc8040db89b462b089ffcc974aa25",
+      "payload_hash_matches": true,
+      "payload_bytes": 45945,
+      "retained_copy": "tests/fixtures/components/2026-10-19/host-only-raw/cbf0edd6dfcf22073f478a3ef2ccb638d2a3f0b6da9761231131efe656a0bfcf.gz",
+      "agent_input_eligible": false,
+      "restriction": "Actual later receipt; full original response can include later fields. Host audit only; never mount into agent input."
+    },
+    {
+      "source_id": "S03",
+      "request_url": "https://www.federalregister.gov/api/v1/documents.json?conditions[agencies][]=securities-and-exchange-commission&conditions[agencies][]=commodity-futures-trading-commission&conditions[agencies][]=federal-reserve-system&conditions[agencies][]=comptroller-of-the-currency&conditions[agencies][]=treasury-department&conditions[agencies][]=financial-crimes-enforcement-network&conditions[agencies][]=foreign-assets-control-office&conditions[agencies][]=federal-deposit-insurance-corporation&conditions[term]=tokenized&order=newest&per_page=20",
+      "path": "/tmp/tank-source-smoke/raw/sources/ee/eebafddce7105e92e6cbd73ab6484f00b3bbbe3f8f57772c20189ad4b16dca4f.gz",
+      "raw_sha256": "eebafddce7105e92e6cbd73ab6484f00b3bbbe3f8f57772c20189ad4b16dca4f",
+      "actual_capture_interval_utc": [
+        "2026-10-17T16:50:53.721313Z",
+        "2026-10-17T16:50:57.866121Z"
+      ],
+      "scope": "Saved listing/proposal response; not necessarily full article body; actual receipt is after fixture cutoff.",
+      "exists_now": true,
+      "stored_file_sha256": "fb169c72637396be8d8d654eb08a5518b57bc66ba479dde70d90462e92a2e2bd",
+      "payload_sha256": "eebafddce7105e92e6cbd73ab6484f00b3bbbe3f8f57772c20189ad4b16dca4f",
+      "payload_hash_matches": true,
+      "payload_bytes": 42069,
+      "retained_copy": "tests/fixtures/components/2026-10-19/host-only-raw/fb169c72637396be8d8d654eb08a5518b57bc66ba479dde70d90462e92a2e2bd.gz",
+      "agent_input_eligible": false,
+      "restriction": "Actual later receipt; full original response can include later fields. Host audit only; never mount into agent input."
+    }
+  ],
+  "missing": [
+    "Explicit validated fixture-reference clock wrapper and conservative publication-bucket eligibility",
+    "Frozen reference-run code/config/registry snapshots and clearly fixture-authored NEW_ITEM messages",
+    "Case-specific missing source/market facts remain explicit; no fabricated market data",
+    "First-run session/tool/message ledger generated by first execution, not falsely claimed historical"
+  ],
+  "case_specific_gap": "Exact Federal Register metadata is saved; the full body is needed for quoted custody-layer evidence.",
+  "performance_evidence": false,
+  "network_or_native_actions": 0,
+  "later_source_candidates": [
+    {
+      "source_id": "S03",
+      "identity": "2026-20466",
+      "url": "https://www.federalregister.gov/documents/2026/10/06/2026-20466/adviser-and-regulated-fund-custody-rules-crypto-custody-rules",
+      "http_status": 200,
+      "parser_status": "VISIBLE_TEXT_PARSED",
+      "status": "RECEIVED",
+      "received_at": "2026-10-18T19:54:00.159589Z",
+      "finished_at": "2026-10-18T19:54:00.161065Z",
+      "raw_ref": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/data/verification/historical-source-bodies-20261018_195357/raw/items/S03/2026/10/18/ITM-01M589812ZEY1AFQ2B81RM3BN4.json.zst",
+      "raw_sha256": "bea125c5818e625bc21c2ff029ce3bef9edd1f11ab11315c399f0c085422ae36",
+      "parsed_path": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/data/verification/historical-source-bodies-20261018_195357/S03-2026-20466-parsed.json",
+      "body_complete": true,
+      "visible_text_characters": 1063,
+      "agent_input_eligible": false,
+      "restriction": "New18Oct receipt after historical cutoff; retained retrospective evidence only. HTTP200/raw bytes alone do not prove a usable parsed original article.",
+      "stored_file_sha256": "e5ec27ea3874a2352b9957b87faa213cc421be329fa4d8d1a6e0c45b36424f7a"
+    },
+    {
+      "source_id": "S03",
+      "identity": "2026-20466",
+      "url": "https://www.govinfo.gov/content/pkg/FR-2026-10-06/pdf/2026-20466.pdf",
+      "http_status": 200,
+      "parser_status": "PDF_BYTES_RETAINED",
+      "status": "RECEIVED",
+      "received_at": "2026-10-18T19:54:10.937093Z",
+      "finished_at": "2026-10-18T19:54:10.956617Z",
+      "raw_ref": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/data/verification/historical-source-bodies-20261018_195357/raw/items/S03/2026/10/18/ITM-01M5898BKSZ2PJX46QFAX8NCE6.json.zst",
+      "raw_sha256": "db0482ed6bce58f6d0ec491d347ee75a7845a6f395be84c8dc755b4b9ce6e487",
+      "parsed_path": null,
+      "body_complete": true,
+      "visible_text_characters": null,
+      "agent_input_eligible": false,
+      "restriction": "New18Oct receipt after historical cutoff; retained retrospective evidence only. HTTP200/raw bytes alone do not prove a usable parsed original article.",
+      "stored_file_sha256": "7acbf5946fcf96502b27d57c12a01250f1564b80d18d6d0c9ee5ca7ebea6faa3"
+    }
+  ],
+  "verified_original_authored_source": {
+    "fixture_id": "F-19",
+    "representation": "govinfo_html",
+    "url": "https://www.govinfo.gov/content/pkg/FR-2026-10-06/html/2026-20466.htm",
+    "request_started_at": "2026-10-18T21:50:07.205767+00:00",
+    "actual_clock_precision": "COLLECTION_ONLY",
+    "retries": 0,
+    "redirect_followed": false,
+    "http_status": 200,
+    "content_type": "text/html",
+    "headers_received_at": "2026-10-18T21:50:07.407660+00:00",
+    "raw_ref": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/data/verification/fixture-public-20261018T215005Z-819ccbfc/21db637f8784a6569f834e1a867df68ecedc577650b1dc34dffd93fa3020f62f.zst",
+    "raw_sha256": "21db637f8784a6569f834e1a867df68ecedc577650b1dc34dffd93fa3020f62f",
+    "response_bytes": 1638612,
+    "body_complete": true,
+    "received_at": "2026-10-18T21:50:08.570717+00:00",
+    "finished_at": "2026-10-18T21:50:08.570747+00:00",
+    "as_of_content_verified": false,
+    "simulated_availability_assigned": false,
+    "performance_evidence": false,
+    "as_of_content_verification": {
+      "basis": "Original dated Federal Register issue published by U.S. Government Publishing Office; document ID/date/agency/action retained in body",
+      "document_id": "2026-20466",
+      "issue_date_literal": "October 6, 2026",
+      "source_format": "GOVINFO_FR_ORIGINAL_ISSUE_HTML",
+      "publication_precision": "BUCKET(1d)",
+      "source_is_historical_reconstruction": true,
+      "actual_receipt_backdated": false,
+      "simulated_availability_assigned": false,
+      "complete_body_sha256": "21db637f8784a6569f834e1a867df68ecedc577650b1dc34dffd93fa3020f62f"
+    },
+    "normalized_text_sha256": "dbf24d1d1e3147852c547471f385ce60b90a36e3d07a42c60b53e869223cf8bb",
+    "normalized_text_characters": 1620175,
+    "normalized_text_path": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/data/verification/fixture-public-20261018T215005Z-819ccbfc/F-19-govinfo-authored.txt",
+    "reference_execution_eligibility": "SOURCE_ORIGINAL_VERSION_IDENTIFIED_REQUIRES_EXPLICIT_REFERENCE_CLOCK_WRAPPER",
+    "historical_live_receipt_claimed": false
+  },
+  "reference_execution_note": "First fixture/reference execution may declare fixture NEW_ITEM messages and freeze current registry/config; it does not require nonexistent historical Tank logs. Capture its own first-run ledger for later replay; actual original-service replay remains distinct."
+}

@@ -1,0 +1,12 @@
+{
+  "started_at": "2026-10-19T17:18:10.513375+00:00",
+  "frozen_output": {
+    "path": "docs/verification/masked-f25-r36-v4-2026-10-19/F-25/actual/qa-r36-v4-masked-f25-driver/framework-bundles/22132bf6bd1ca28a42e443fe2d728565cebd89aa2385e4896a8bdc9295bd9116/outputs.json",
+    "sha256": "07b1052716635e396c4efe8ade46246c4eb5e92e5e0e25cadcd00af666526eff"
+  },
+  "scope": "Actual single masked reference first outcome; no normal Runtime or SENT claim",
+  "manual_review": {
+    "path": "docs/verification/masked-f25-r36-v4-2026-10-19/F-25/manual-review.json",
+    "sha256": "ff64652e0b50309363fa044858b1c083f913c338de661c13164f45b5dbaf5fc8"
+  }
+}

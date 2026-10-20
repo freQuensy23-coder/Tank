@@ -1,0 +1,12 @@
+{
+  "started_at": "2026-10-20T12:16:59.324025Z",
+  "frozen_output": {
+    "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-run-v2/F-14/frozen-output.json",
+    "sha256": "bdc28b2a95b0cafb3f576c77476f5686483533283503e83a217bc46630640429"
+  },
+  "manual_review": {
+    "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-run-v2/F-14/manual-review.pending.json",
+    "sha256": "7175c7a123d0cfef5a30027f0ccd2801d5aaea26147f1e1b25cb77b8b4208956"
+  },
+  "scope": "Completed formula phase only; native wording and full literal acceptance pending"
+}

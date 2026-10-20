@@ -11,5 +11,5 @@
   "required": [
     "event_id"
   ],
-  "description": "Reads the event. Returns: Claims, quotes, stages, sources, assessment."
+  "description": "Read an event and its recorded claims, source quotes, observations, agent-supplied verification flags, stages, certainty with reason, contradictions and assessment. Returns stored state without changing or semantically rechecking it."
 }

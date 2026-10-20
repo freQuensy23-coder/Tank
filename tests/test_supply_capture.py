@@ -1,5 +1,10 @@
 """Regressions from authenticated Etherscan coverage probes, using synthetic responses."""
 
+import os
+import uuid
+from decimal import Decimal
+from urllib.parse import urlsplit, urlunsplit
+
 import httpx
 import pytest
 import yaml
@@ -7,7 +12,227 @@ import yaml
 from tank.market.service import MarketService
 from tank.market.supply import SupplyCapture
 from tank.settings import Settings
-from tank.storage import MemoryRepository
+from tank.storage import MemoryRepository, PostgresRepository
+
+
+def lending_market(tmp_path, transport, *, catalog=True, repo=None, tokens=None):
+    token = {
+        "token_id": "test:T",
+        "contracts": [{"chain": "Base", "address": "0x" + "1" * 40}],
+    }
+    identities = {
+        "source_url": "https://yields.llama.fi/pools",
+        "captured_at": "2026-10-20T00:00:00+00:00",
+        "source_sha256": "public-fixture",
+        "pools": [
+            {
+                "pool_id": iid,
+                "project": project,
+                "chain": chain,
+                "underlying_tokens": ["0x" + "1" * 40],
+            }
+            for iid, project, chain in [
+                ("allowed", "morpho-blue", "Base"),
+                ("other-chain", "aave-v3", "Ethereum"),
+                ("other-project", "compound-v3", "Base"),
+                ("changed-identity", "euler-v2", "Base"),
+            ]
+        ],
+    }
+    config = tmp_path / "config"
+    config.mkdir()
+    for name, document in {
+        "registry": {
+            "tokens": tokens or [token],
+            "instruments": [],
+            **({"lending_pool_catalog": identities} if catalog else {}),
+        },
+        "semantics": {"metrics": []},
+    }.items():
+        (config / (name + ".yaml")).write_text(yaml.safe_dump(document))
+    settings = Settings(_env_file=None, config_dir=config, data_dir=tmp_path / "data")
+    return token, MarketService(
+        repo or MemoryRepository(), settings, http=httpx.AsyncClient(transport=httpx.MockTransport(transport))
+    )
+
+
+async def test_lending_runtime_uses_only_free_endpoint_and_exact_registered_identities(tmp_path):
+    calls = []
+
+    def respond(request):
+        calls.append(str(request.url))
+        assert str(request.url) == "https://yields.llama.fi/lendBorrow"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "pool": iid,
+                    "underlyingTokens": ["0x" + ("2" if iid == "changed-identity" else "1") * 40],
+                    "totalSupplyUsd": "100000000000000000000.00000000000000001",
+                    "totalBorrowUsd": "30000000000000000000.000000000000000003",
+                    "apyBaseBorrow": "2.125",
+                }
+                for iid in ("allowed", "other-chain", "other-project", "changed-identity", "new-unmapped")
+            ],
+        )
+
+    token, market = lending_market(tmp_path, respond)
+    capture = SupplyCapture(market)
+    try:
+        result = await capture.lending(token)
+        cached = await capture.lending(dict(token, token_id="second:T"))
+        assert result["available"] is True
+        assert result["pools"] == [
+            {
+                "pool_id": "allowed",
+                "project": "morpho-blue",
+                "chain": "Base",
+                "utilization": Decimal("0.3"),
+                "borrow_apy": "2.125",
+                "total_supply_usd": "100000000000000000000.00000000000000001",
+                "total_borrow_usd": "30000000000000000000.000000000000000003",
+            }
+        ]
+        assert cached["pools"] == result["pools"]
+        assert result["identity_evidence"]["unmapped_pool_ids"] == ["new-unmapped"]
+        assert result["identity_evidence"]["pool_identity_source"]["source_sha256"] == "public-fixture"
+        from tank.market_storage import encode
+
+        encode("mkt.supply_obs", result)
+        assert len(calls) == 1
+    finally:
+        await market.http.aclose()
+
+
+async def test_lending_unknown_identity_remains_explicitly_unavailable_without_catalog(tmp_path):
+    calls = []
+
+    def respond(request):
+        calls.append(str(request.url))
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "pool": "unknown",
+                    "underlyingTokens": ["0x" + "1" * 40],
+                    "totalSupplyUsd": 100,
+                    "totalBorrowUsd": 50,
+                }
+            ],
+        )
+
+    token, market = lending_market(tmp_path, respond, catalog=False)
+    try:
+        result = await SupplyCapture(market).lending(token)
+        assert result["available"] is False
+        assert result["pools"] == []
+        assert result["reason"] == "NO_MATCHED_LENDING_POOLS"
+        assert result["identity_evidence"]["unmapped_pool_ids"] == ["unknown"]
+        from tank.market_storage import encode
+
+        encode("mkt.supply_obs", result)
+        assert calls == ["https://yields.llama.fi/lendBorrow"]
+    finally:
+        await market.http.aclose()
+
+
+async def test_lending_invalid_free_endpoint_schema_is_not_cached(tmp_path):
+    from tank.market.normalize import SemanticError
+
+    token, market = lending_market(tmp_path, lambda _: httpx.Response(200, json={"data": []}))
+    try:
+        with pytest.raises(SemanticError, match="lendBorrow schema absent"):
+            await SupplyCapture(market).lending(token)
+        assert getattr(market, "_lend_cache", None) is None
+    finally:
+        await market.http.aclose()
+
+
+@pytest.fixture(params=["memory", "postgres"])
+async def lending_repository(request):
+    if request.param == "memory":
+        yield await MemoryRepository().open()
+        return
+    dsn = os.getenv("TANK_TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("Requires isolated PostgreSQL; creates and drops its own lending proof database")
+    import psycopg
+    from psycopg import sql
+
+    name = "tank_lending_boundary_" + uuid.uuid4().hex[:12]
+    admin = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
+    repo = None
+    created = False
+    try:
+        await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        created = True
+        target = urlunsplit(urlsplit(dsn)._replace(path="/" + name))
+        repo = await PostgresRepository(target).open()
+        await repo.migrate()
+        yield repo
+    finally:
+        if repo is not None:
+            await repo.close()
+        if created:
+            await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
+        await admin.close()
+
+
+async def test_lending_collect_flush_typed_storage_and_22_token_cache(tmp_path, lending_repository):
+    calls = []
+
+    def respond(request):
+        calls.append(str(request.url))
+        assert str(request.url) == "https://yields.llama.fi/lendBorrow"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "pool": pool_id,
+                    "underlyingTokens": ["0x" + digit * 40],
+                    "totalSupplyUsd": "10.000000000000000001",
+                    "totalBorrowUsd": "3.0000000000000000003",
+                    "apyBaseBorrow": "2.125",
+                }
+                for pool_id, digit in [("allowed", "1"), ("unregistered", "2")]
+            ],
+        )
+
+    tokens = [
+        {
+            "token_id": f"token:{index}",
+            "contracts": [{"chain": "Base", "address": "0x" + str(index + 1) * 40}] if index < 2 else [],
+        }
+        for index in range(22)
+    ]
+    _, market = lending_market(tmp_path, respond, repo=lending_repository, tokens=tokens)
+    try:
+        capture = SupplyCapture(market)
+        for token in market.tokens.values():
+            await capture.lending(token)
+        assert len(market._pending_market["mkt.supply_obs"]) == 22
+        await market.flush_market()
+        assert not market._pending_market
+        rows = await lending_repository.list("mkt.supply_obs", filters={"kind": "LENDING"}, limit=100)
+        assert len(rows) == 22
+        by_token = {row["token_id"]: row for row in rows}
+        measured = by_token["token:0"]
+        assert measured["available"] is True
+        assert measured["pools"][0]["utilization"] == "0.3"
+        assert measured["pools"][0]["total_supply_usd"] == "10.000000000000000001"
+        assert measured["identity_evidence"]["unmapped_pool_ids"] == []
+        unknown = by_token["token:1"]
+        assert unknown["available"] is False and unknown["pools"] == []
+        assert unknown["reason"] == "NO_MATCHED_LENDING_POOLS"
+        assert unknown["identity_evidence"]["unmapped_pool_ids"] == ["unregistered"]
+        assert all(
+            row["identity_evidence"]["pool_identity_source"]["source_sha256"] == "public-fixture"
+            for row in rows
+        )
+        assert all("unmapped_pool_ids" not in row and "pool_identity_source" not in row for row in rows)
+        assert calls == ["https://yields.llama.fi/lendBorrow"]
+    finally:
+        await market.http.aclose()
 
 
 @pytest.mark.parametrize("failure", ["plan_restriction", "invalid_decimals", "transport"])

@@ -17,6 +17,21 @@ from tank.sources import SourceService
 from tank.storage import ImmutableRecordError, MemoryRepository
 
 
+def _native_session(session_id, agent_id="synthetic"):
+    """Native OpenMA session response with its resolved, versioned agent bytes."""
+    return {
+        "id": session_id,
+        "agent": {
+            "id": agent_id,
+            "version": "synthetic-agent-v1",
+            "system": "Synthetic offline analyst fixture instructions",
+            "skills": [{"type": "custom", "skill_id": "synthetic-analyst", "version": "1"}],
+            "tools": [],
+            "model": {"id": "gpt-6.1-sol"},
+        },
+    }
+
+
 def _fixture_api_limits():
     from pathlib import Path
 
@@ -108,8 +123,8 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
     settings = TestSettings(
         **_fake_gateway_settings(tmp_path),
         data_dir=tmp_path,
-        jev_provider="typesafe",
-        typesafe_api_key="mock",
+        jev_provider="openrouter",
+        openrouter_api_key="mock",
         telegram_token="mock",
         telegram_alerts_chat="mock",
     )
@@ -121,19 +136,24 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
 
     def transport(request):
         path = request.url.path
-        if request.url.host == "api.typesafe.ai":
+        if request.url.host == "openrouter.ai":
             body = json.loads(request.content)
             key = next(iter(body["questions"]))
             return httpx.Response(
                 200,
                 json={
-                    "model": "jev-1.13.0",
+                    "model": "typesafe/jev-1.13-20260917",
                     "answers": {key: {"type": "noul", "noul": 0.99}},
                     "usage": {"input_tokens": 20},
                 },
             )
         if path.endswith("/sessions"):
-            return httpx.Response(200, json={"data": []} if request.method == "GET" else {"id": "s1"})
+            return httpx.Response(
+                200,
+                json={"data": []} if request.method == "GET" else _native_session("s1", "synthetic-agent"),
+            )
+        if request.method == "GET" and path.endswith("/sessions/s1"):
+            return httpx.Response(200, json=_native_session("s1", "synthetic-agent"))
         if path.endswith("/events/stream"):
             return httpx.Response(
                 200,
@@ -327,8 +347,8 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
         **_fake_gateway_settings(tmp_path),
         data_dir=tmp_path,
         database_url=isolated_e2e_database,
-        jev_provider="typesafe",
-        typesafe_api_key="mock",
+        jev_provider="openrouter",
+        openrouter_api_key="mock",
         telegram_token="mock",
         telegram_alerts_chat="mock",
     )
@@ -347,11 +367,11 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
         if req.url.host == "synthetic.invalid":
             rss = f'<rss version="2.0"><channel><title>Synthetic</title><item><guid>{feed_guid}</guid><title>Synthetic listing approval</title><description>{text}</description><pubDate>{now}</pubDate><link>https://synthetic.invalid/{sid}</link></item></channel></rss>'
             return httpx.Response(200, content=rss.encode(), headers={"content-type": "application/rss+xml"})
-        if req.url.host == "api.typesafe.ai":
+        if req.url.host == "openrouter.ai":
             return httpx.Response(
                 200,
                 json={
-                    "model": "jev-1.13.0",
+                    "model": "typesafe/jev-1.13-20260917",
                     "answers": {
                         next(iter(json.loads(req.content)["questions"])): {
                             "type": "noul",
@@ -370,7 +390,9 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 },
             )
         if path.endswith("/sessions"):
-            return httpx.Response(200, json={"data": []} if req.method == "GET" else {"id": sid})
+            return httpx.Response(200, json={"data": []} if req.method == "GET" else _native_session(sid))
+        if req.method == "GET" and path.endswith("/sessions/" + sid):
+            return httpx.Response(200, json=_native_session(sid))
         if path.endswith("/events/stream"):
             return httpx.Response(
                 200,
@@ -565,6 +587,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                         "freshness": "FRESH",
                         "claims": [
                             {
+                                "verified": True,
                                 "type": "STATE",
                                 "state_claim": "LIVE" if complete_market else "APPROVED",
                                 "quote": text,
@@ -601,6 +624,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                     "assessment": {
                         "class": "MAJOR",
                         "criterion": "M1",
+                        "criterion_venue": "binance",
                         "criterion_quote": text,
                         "dims": dims,
                         "impact_horizon": {
@@ -659,7 +683,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
             )
             assert published["published"], published
             alerts = await repo.list("out.alerts", filters={"event_id": eid})
-            assert alerts[0]["linter"]["passed"]
+            assert "linter" not in alerts[0]
             frozen = alerts[0]["card_text"]
             if complete_market:
                 assert "EVENT" in frozen and "NATIVE_TOKEN" in frozen
@@ -715,6 +739,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 await invoke(
                     "add_observation",
                     {
+                        "certainty_reason": "Synthetic agent confirms the official denial",
                         "event_id": eid,
                         "item_id": denial_item["item_id"],
                         "link": "DENIAL",
@@ -728,6 +753,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                         "freshness": "FRESH",
                         "claims": [
                             {
+                                "verified": True,
                                 "type": "STATE",
                                 "subject": "Binance",
                                 "predicate": "cancelled",
@@ -867,8 +893,8 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
         **_fake_gateway_settings(tmp_path),
         data_dir=tmp_path / "data",
         database_url=make_conninfo(**params),
-        jev_provider="typesafe",
-        typesafe_api_key="mock",
+        jev_provider="openrouter",
+        openrouter_api_key="mock",
         telegram_token="mock",
         telegram_alerts_chat="mock-alerts",
         telegram_ops_chat="mock-ops",
@@ -922,22 +948,24 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
         if request.url.host == "synthetic.invalid":
             rss = f'<rss version="2.0"><channel><title>Synthetic</title><item><guid>autonomous-input</guid><title>Autonomous synthetic listing</title><description>{text}</description><pubDate>{timestamp}</pubDate><link>https://synthetic.invalid/autonomous-input</link></item></channel></rss>'
             return httpx.Response(200, content=rss.encode(), headers={"content-type": "application/rss+xml"})
-        if request.url.host == "api.typesafe.ai":
+        if request.url.host == "openrouter.ai":
             body = json.loads(request.content)
             question = next(iter(body["questions"]))
-            assert body["model"] == "jev-1.13.0"
+            assert body["model"] == "typesafe/jev-1.13"
             return httpx.Response(
                 200,
                 json={
-                    "model": "jev-1.13.0",
+                    "model": "typesafe/jev-1.13-20260917",
                     "answers": {question: {"type": "noul", "noul": 0.99}},
                     "usage": {"input_tokens": 20},
                 },
             )
         if path.endswith("/sessions"):
             return httpx.Response(
-                200, json={"data": []} if request.method == "GET" else {"id": "autonomous-session"}
+                200, json={"data": []} if request.method == "GET" else _native_session("autonomous-session")
             )
+        if request.method == "GET" and path.endswith("/sessions/autonomous-session"):
+            return httpx.Response(200, json=_native_session("autonomous-session"))
         if path.endswith("/events/stream"):
             return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=SSE())
         if path.endswith("/events"):
@@ -967,6 +995,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                         "freshness": "FRESH",
                         "claims": [
                             {
+                                "verified": True,
                                 "type": "STATE",
                                 "subject": "Binance",
                                 "predicate": "approved",
@@ -1010,6 +1039,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                             "assessment": {
                                 "class": "MAJOR",
                                 "criterion": "M1",
+                                "criterion_venue": "binance",
                                 "criterion_quote": text,
                                 "dims": dims,
                                 "impact_horizon": {
@@ -1134,6 +1164,9 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
             pass
 
         async def snapshot(self, token_id, cutoff, anchor=None):
+            from tank.time_precision import Timestamp, chosen_boundary
+
+            boundary = cutoff if isinstance(cutoff, Timestamp) else chosen_boundary(cutoff, precision="EXACT")
             runs = await repo.list("mkt.backfill_runs", filters={"token_id": token_id})
             latest = max(runs, key=lambda row: row["started_at"]) if runs else None
             return {
@@ -1147,7 +1180,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                     "incomplete_windows_excluded": True,
                 },
                 "token_id": token_id,
-                "cutoff": cutoff,
+                **boundary.fields("cutoff"),
                 "anchor": anchor,
                 "flow_bars": [],
                 "klines": [],
@@ -1262,7 +1295,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                 "DELIVER",
             } <= {job["type"] for job in jobs if job["status"] == "DONE"}
             alerts = await repo.list("out.alerts")
-            assert len(alerts) == 1 and alerts[0]["linter"]["passed"]
+            assert len(alerts) == 1 and "linter" not in alerts[0]
             assert (await repo.list("ops.agent_sessions"))[0]["runtime_status"] == "IDLE"
             assert market.escalations == [(state["event_id"], ["T"])]
             captures = await repo.list("mkt.backfill_runs", filters={"event_id": state["event_id"]})

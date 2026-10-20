@@ -1,0 +1,822 @@
+{
+  "scope": "READ_ONLY_OLD_1403_CORPUS_NOT_RUNTIME_QUALITY; no labels/scores/prompts/source changed",
+  "dataset_path": "docs/verification/current-jev-quality-audit-2026-10-20/raw/scored-dataset.provenance-corrected.frozen.v1.json",
+  "text_kind_definitions": {
+    "HEADLINE_ONLY_EXACT": "state.text == title, exact string equality",
+    "HEADLINE_DUPLICATED_EXACT": "state.text == title + two newline characters + title",
+    "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": "All remaining nonempty state.text; may be summary, extract, boilerplate or longer text; NOT asserted a full article"
+  },
+  "by_source": {
+    "S01": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 50
+    },
+    "S03": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 76
+    },
+    "S04": {
+      "HEADLINE_ONLY_EXACT": 20
+    },
+    "S05": {
+      "HEADLINE_DUPLICATED_EXACT": 20,
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 20
+    },
+    "S06": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 10
+    },
+    "S07": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 11
+    },
+    "S08": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 142
+    },
+    "S09": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 60
+    },
+    "S10": {
+      "HEADLINE_DUPLICATED_EXACT": 79
+    },
+    "S11": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 30,
+      "HEADLINE_ONLY_EXACT": 19,
+      "HEADLINE_DUPLICATED_EXACT": 10
+    },
+    "S12": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 10
+    },
+    "S13": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 9
+    },
+    "S15": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 17
+    },
+    "S16": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 13
+    },
+    "S17": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 13
+    },
+    "S18": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 6
+    },
+    "S19": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 20
+    },
+    "S20": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 11
+    },
+    "S21": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 5
+    },
+    "S22": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 6
+    },
+    "S23": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 253
+    },
+    "S24": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 43
+    },
+    "S25": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 107,
+      "HEADLINE_DUPLICATED_EXACT": 14
+    },
+    "S26": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 3
+    },
+    "S27": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 25
+    },
+    "S28": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 12
+    },
+    "S30": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 75
+    },
+    "S31": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 37
+    },
+    "S32": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 117
+    },
+    "S33": {
+      "HEADLINE_ONLY_EXACT": 37
+    },
+    "S34": {
+      "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 23
+    }
+  },
+  "totals": {
+    "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE": 1204,
+    "HEADLINE_ONLY_EXACT": 76,
+    "HEADLINE_DUPLICATED_EXACT": 123
+  },
+  "filter_counts": {
+    "ALL": {
+      "TN": 455,
+      "TP": 894,
+      "FN": 46,
+      "FP": 8
+    },
+    "FILTER": {
+      "TN": 162,
+      "TP": 157,
+      "FN": 10
+    },
+    "ALWAYS": {
+      "TP": 737,
+      "TN": 293,
+      "FN": 36,
+      "FP": 8
+    }
+  },
+  "filter_errors": [
+    {
+      "item_id": "ITM-01M57D9AJMT5874PQ0BT2EKYXF",
+      "source_id": "S01",
+      "title": "Stock Around the Clock: Remarks at the Roundtable on Preparations for 24-Hour Trading",
+      "text_snippet": "Stock Around the Clock: Remarks at the Roundtable on Preparations for 24-Hour Trading\n\nMore in this Section Statement Stock Around the Clock: Remarks at the Roundtable on Preparations for 24-Hour Trading Commissioner Hes",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.06,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JQHJTDEJAT25CCP7AWYKP",
+      "source_id": "S04",
+      "title": "CFTC Issues No-Action Letter for DCMs Regarding Converting Existing Perpetual-Style Broad-Based Security Index Futures into True Perpetual Futures",
+      "text_snippet": "CFTC Issues No-Action Letter for DCMs Regarding Converting Existing Perpetual-Style Broad-Based Security Index Futures into True Perpetual Futures",
+      "input_kind": "HEADLINE_ONLY_EXACT",
+      "label_relevant": false,
+      "filter_score": 0.26,
+      "virtual_score_decision": true,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JQHK705VHPFCCXDS53322",
+      "source_id": "S04",
+      "title": "CFTC Releases Staff Advisory on Mention Markets",
+      "text_snippet": "CFTC Releases Staff Advisory on Mention Markets",
+      "input_kind": "HEADLINE_ONLY_EXACT",
+      "label_relevant": false,
+      "filter_score": 0.28,
+      "virtual_score_decision": true,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JQHKAS1N9T8ND1BDW6JB8",
+      "source_id": "S04",
+      "title": "CFTC Innovation Task Force to Host Frontier Forum Series on Innovative Financial Technologies",
+      "text_snippet": "CFTC Innovation Task Force to Host Frontier Forum Series on Innovative Financial Technologies",
+      "input_kind": "HEADLINE_ONLY_EXACT",
+      "label_relevant": false,
+      "filter_score": 0.27,
+      "virtual_score_decision": true,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JQHKCFHSD13SXT4V5W62K",
+      "source_id": "S04",
+      "title": "CFTC Staff Issues No-Action Position to Providers of Passive Software",
+      "text_snippet": "CFTC Staff Issues No-Action Position to Providers of Passive Software",
+      "input_kind": "HEADLINE_ONLY_EXACT",
+      "label_relevant": false,
+      "filter_score": 0.27,
+      "virtual_score_decision": true,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JQSF209DPVHAVK4E4RSB8",
+      "source_id": "S03",
+      "title": "Proposal of Special Measure Prohibiting the Transmittal of Funds Regarding Transactions Involving the A7 Network's Sub-Agents",
+      "text_snippet": "Proposal of Special Measure Prohibiting the Transmittal of Funds Regarding Transactions Involving the A7 Network's Sub-Agents\n\nFinCEN is issuing a finding and notice of proposed rulemaking, pursuant to section 9714(a) of",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.07,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JR0XC25WZ121WM8YAE7E5",
+      "source_id": "S28",
+      "title": "The Cost of Agentic Search",
+      "text_snippet": "The Cost of Agentic Search\n\nTL;DR: What does an AI-generated answer cost to produce, and who is paying for it? Every part of the operation is metered except the content the answer is made of. An earlier piece asked how p",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.17,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JR0Y9EW2RH00A0DPTTGSN",
+      "source_id": "S28",
+      "title": "How Will Paywalled Content Get Paid For?",
+      "text_snippet": "How Will Paywalled Content Get Paid For?\n\nFor thirty years the answer to the above question was a subscription. A person paid an annual fee, logged in, and consumed what they could during working hours; the fee reflected",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.19,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JR3WA46R6GFFRSRDQCQ70",
+      "source_id": "S01",
+      "title": "Remarks at the Stanford University Private Capital Roundtable",
+      "text_snippet": "Remarks at the Stanford University Private Capital Roundtable\n\nMore in this Section Speech Remarks at the Stanford University Private Capital Roundtable Brian Daly, Director, Division of Investment Management Stanford, C",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.05,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JR665PXYQ7QXT2YGFQV16",
+      "source_id": "S01",
+      "title": "Statement at Open Meeting on Proposals to Expand Responsible Retailization of Private Markets",
+      "text_snippet": "Statement at Open Meeting on Proposals to Expand Responsible Retailization of Private Markets\n\nMore in this Section Statement Statement at Open Meeting on Proposals to Expand Responsible Retailization of Private Markets ",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.22,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRE4HCQ0QBEWHJNQE8SK6",
+      "source_id": "S01",
+      "title": "Remarks at the 24-Hour Trading Roundtable",
+      "text_snippet": "Remarks at the 24-Hour Trading Roundtable\n\nMore in this Section Statement Remarks at the 24-Hour Trading Roundtable Paul S. Atkins, Chairman Washington D.C. Washington D.C. Sept. 17, 2026 Good morning, ladies and gentlem",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.07,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRFPVYGB9B6G0PY922M9N",
+      "source_id": "S25",
+      "title": "0.22.0",
+      "text_snippet": "0.22.0\n\nAdd support for general user abstraction actions",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.07,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRFQ9RMND6MGEM74XXDCC",
+      "source_id": "S25",
+      "title": "0.18.0",
+      "text_snippet": "0.18.0\n\nAdds support for noop action Adds support for setting custom network timeouts Adds support for using encrypted keystore for examples",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.05,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRFQC4F8G6JYWMR18PPWN",
+      "source_id": "S25",
+      "title": "0.17.0",
+      "text_snippet": "0.17.0\n\nAdd support for Spot Deploy: enable quote token",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.17,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRFQGXW1WJSVKNHSACYTS",
+      "source_id": "S25",
+      "title": "v1.1.6",
+      "text_snippet": "v1.1.6\n\nws shutdown message handling, unhandled messages no longer break the loop",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.04,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRFQTRKSAEB36T7P8S2NN",
+      "source_id": "S25",
+      "title": "v1.1.3",
+      "text_snippet": "v1.1.3\n\npmi changes modify order version allow bigger market indexes",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.12,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRFRBHNJ7BWS5W4M70PPA",
+      "source_id": "S25",
+      "title": "v1.0.7",
+      "text_snippet": "v1.0.7\n\nfix windows issue",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.03,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRG2HA6QYNTSSBW7YVM4R",
+      "source_id": "S25",
+      "title": "crates-0.38.0-rc.2",
+      "text_snippet": "crates-0.38.0-rc.2\n\n1911crates.io snapshot\\n---\\n- near-async - https://crates.io/crates/…",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.2,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRG2XDFY58ZFGC5TKS6H1",
+      "source_id": "S25",
+      "title": "crates-0.37.4",
+      "text_snippet": "crates-0.37.4\n\n2080crates.io snapshot\\n---\\n- near-async - https://crates.io/crates/…",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.18,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRG30R0R3M972FY96JTMH",
+      "source_id": "S25",
+      "title": "sync modules (#202)",
+      "text_snippet": "sync modules (#202)\n\nsync modules (#202)",
+      "input_kind": "HEADLINE_DUPLICATED_EXACT",
+      "label_relevant": true,
+      "filter_score": 0.06,
+      "virtual_score_decision": false,
+      "actual_policy": "FILTER",
+      "actual_runtime_relevance_decision": "REJECT"
+    },
+    {
+      "item_id": "ITM-01M59JRG4H5AEFNA1WBRJQX1XE",
+      "source_id": "S25",
+      "title": "smol typo",
+      "text_snippet": "smol typo\n\nsmol typo",
+      "input_kind": "HEADLINE_DUPLICATED_EXACT",
+      "label_relevant": true,
+      "filter_score": 0.02,
+      "virtual_score_decision": false,
+      "actual_policy": "FILTER",
+      "actual_runtime_relevance_decision": "REJECT"
+    },
+    {
+      "item_id": "ITM-01M59JRG4P8V8QWDEVPPSVJQST",
+      "source_id": "S25",
+      "title": "resolving comments",
+      "text_snippet": "resolving comments\n\nresolving comments",
+      "input_kind": "HEADLINE_DUPLICATED_EXACT",
+      "label_relevant": true,
+      "filter_score": 0.02,
+      "virtual_score_decision": false,
+      "actual_policy": "FILTER",
+      "actual_runtime_relevance_decision": "REJECT"
+    },
+    {
+      "item_id": "ITM-01M59JRGX0VP5BJARD4GTR2JQT",
+      "source_id": "S25",
+      "title": "v1.15.1-rc.0",
+      "text_snippet": "v1.15.1-rc.0\n\nv1.15.1-rc.0",
+      "input_kind": "HEADLINE_DUPLICATED_EXACT",
+      "label_relevant": true,
+      "filter_score": 0.04,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRGXD5GNJFNPYM2863RYZ",
+      "source_id": "S25",
+      "title": "v1.15.0-rc.7",
+      "text_snippet": "v1.15.0-rc.7\n\nFinal hotfix",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.03,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRGXFHMA7KNAH6MPE4WH2",
+      "source_id": "S25",
+      "title": "v1.15.0-rc.6",
+      "text_snippet": "v1.15.0-rc.6\n\nTest fix",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.03,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRGY5FW5H2C0M4867NECM",
+      "source_id": "S25",
+      "title": "0.0.3",
+      "text_snippet": "0.0.3\n\nFull Changelog : 0.0.2...0.0.3",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.04,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRGY84G5BP9XZ53EA4EDX",
+      "source_id": "S25",
+      "title": "0.0.2",
+      "text_snippet": "0.0.2\n\nFull Changelog : 0.0.1...0.0.2",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.03,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRGYNTNDXP8J6E6H5805B",
+      "source_id": "S25",
+      "title": "vprom-upgrade-refunder",
+      "text_snippet": "vprom-upgrade-refunder\n\ndeploy vprom-upgrade-refunder from jmgd/prom-upgrade-refunder",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.19,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRGZ62H7FKNEP710Y8HVK",
+      "source_id": "S25",
+      "title": "vlog-reduction",
+      "text_snippet": "vlog-reduction\n\nMerge remote-tracking branch 'origin/main' into logging-improvements",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.01,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRGZ9NHPRZ24KC51Q65VP",
+      "source_id": "S25",
+      "title": "v2.383.0-log-reduction",
+      "text_snippet": "v2.383.0-log-reduction\n\nonly log verification log on failure",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.03,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRGZFEG3SG9JZWN1NEE1D",
+      "source_id": "S25",
+      "title": "vbuilder-submission-prod",
+      "text_snippet": "vbuilder-submission-prod\n\ndeploy vbuilder-submission-prod from jmgd/builder-submission",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.03,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRGZJEZFBMA5T7FXHC8E9",
+      "source_id": "S25",
+      "title": "vbuilder-bundles",
+      "text_snippet": "vbuilder-bundles\n\ndeploy vbuilder-bundles from jmgd/builder-bundles",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.02,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRGZNS5RFN5YPKDH8D7C7",
+      "source_id": "S25",
+      "title": "Weekly Release v2.382.2",
+      "text_snippet": "Weekly Release v2.382.2\n\nFull Changelog : v2.382.0...v2.382.2",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.04,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRGZSP3Q1DN85MFKQ0Q70",
+      "source_id": "S25",
+      "title": "v2.382.1",
+      "text_snippet": "v2.382.1\n\nadd deadline slack in driver",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.04,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRK97X8FHWJSG4TMQ8708",
+      "source_id": "S25",
+      "title": "v3.2.1",
+      "text_snippet": "v3.2.1\n\nVersion 3.2.1",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.03,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRK9G8PE4B7G5GG2PDKDX",
+      "source_id": "S25",
+      "title": "v3.1.0",
+      "text_snippet": "v3.1.0\n\nv3.1.0",
+      "input_kind": "HEADLINE_DUPLICATED_EXACT",
+      "label_relevant": true,
+      "filter_score": 0.04,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRK9PG4Z5MJ9A3VGSK529",
+      "source_id": "S25",
+      "title": "simpler conf",
+      "text_snippet": "simpler conf\n\nsimpler conf",
+      "input_kind": "HEADLINE_DUPLICATED_EXACT",
+      "label_relevant": true,
+      "filter_score": 0.03,
+      "virtual_score_decision": false,
+      "actual_policy": "FILTER",
+      "actual_runtime_relevance_decision": "REJECT"
+    },
+    {
+      "item_id": "ITM-01M59JRK9Z0YFJGNPW4KDVAWVX",
+      "source_id": "S25",
+      "title": "chore: license non-core files under MIT",
+      "text_snippet": "chore: license non-core files under MIT\n\nchore: license non-core files under MIT",
+      "input_kind": "HEADLINE_DUPLICATED_EXACT",
+      "label_relevant": true,
+      "filter_score": 0.02,
+      "virtual_score_decision": false,
+      "actual_policy": "FILTER",
+      "actual_runtime_relevance_decision": "REJECT"
+    },
+    {
+      "item_id": "ITM-01M59JRKA5TRCHTSWPNT3QZNDK",
+      "source_id": "S25",
+      "title": "small changes",
+      "text_snippet": "small changes\n\nsmall changes",
+      "input_kind": "HEADLINE_DUPLICATED_EXACT",
+      "label_relevant": true,
+      "filter_score": 0.03,
+      "virtual_score_decision": false,
+      "actual_policy": "FILTER",
+      "actual_runtime_relevance_decision": "REJECT"
+    },
+    {
+      "item_id": "ITM-01M59JRKAEXE2KJFR8Z4FA26FA",
+      "source_id": "S25",
+      "title": "[ci] check foundry.lock matches submodule pins",
+      "text_snippet": "[ci] check foundry.lock matches submodule pins\n\n[ci] check foundry.lock matches submodule pins Co-authored-by: MathisGD <74971347+MathisGD@users.noreply.github.com> Co-Authored-By: Claude Opus 5 (1M context) <noreply@ant",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.22,
+      "virtual_score_decision": false,
+      "actual_policy": "FILTER",
+      "actual_runtime_relevance_decision": "REJECT"
+    },
+    {
+      "item_id": "ITM-01M59JRKAGMZ9D87V30XDHCF5E",
+      "source_id": "S25",
+      "title": "[certora] don't cancel sibling specs on first failure",
+      "text_snippet": "[certora] don't cancel sibling specs on first failure\n\n[certora] don't cancel sibling specs on first failure Co-authored-by: MathisGD <74971347+MathisGD@users.noreply.github.com> Co-Authored-By: Claude Opus 5 (1M context",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.2,
+      "virtual_score_decision": false,
+      "actual_policy": "FILTER",
+      "actual_runtime_relevance_decision": "REJECT"
+    },
+    {
+      "item_id": "ITM-01M59JRKAPHJ4BT0MNFM8SGTAB",
+      "source_id": "S25",
+      "title": "chore: apply forge 1.8 formatting",
+      "text_snippet": "chore: apply forge 1.8 formatting\n\nchore: apply forge 1.8 formatting",
+      "input_kind": "HEADLINE_DUPLICATED_EXACT",
+      "label_relevant": true,
+      "filter_score": 0.18,
+      "virtual_score_decision": false,
+      "actual_policy": "FILTER",
+      "actual_runtime_relevance_decision": "REJECT"
+    },
+    {
+      "item_id": "ITM-01M59JRKAW0PXXYRNN8VY6NABX",
+      "source_id": "S25",
+      "title": "ci: pin foundry-toolchain to v1.9.1",
+      "text_snippet": "ci: pin foundry-toolchain to v1.9.1\n\nci: pin foundry-toolchain to v1.9.1 Pins foundry-rs/foundry-toolchain to the v1.9.1 commit 908c540300062bd5a7e473851cdb4282204cee09.\\n\\nWhy now: foundryup became a Rust binary in foun",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.14,
+      "virtual_score_decision": false,
+      "actual_policy": "FILTER",
+      "actual_runtime_relevance_decision": "REJECT"
+    },
+    {
+      "item_id": "ITM-01M59JRNQ6C5M82XNTM5YTFDD7",
+      "source_id": "S13",
+      "title": "A Look Back on HOOD Summit: Engines of Creation",
+      "text_snippet": "A Look Back on HOOD Summit: Engines of Creation\n\nAll News Ideas Education Design Crypto Uncategorized News Oct 7, 2026 A Look Back on HOOD Summit: Engines of Creation Robinhood’s third annual HOOD Summit brought record a",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.07,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRTZT9B8GEJK9FTY218ZK",
+      "source_id": "S23",
+      "title": "About the MORPHO & Treasury category",
+      "text_snippet": "About the MORPHO & Treasury category\n\n(Replace this first paragraph with a brief description of your new category. This guidance will appear in the category selection area, so try to keep it below 200 characters.) Use th",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": false,
+      "filter_score": 0.87,
+      "virtual_score_decision": true,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRV3QJZ16YPC368JKKXCF",
+      "source_id": "S23",
+      "title": "About the RockawayX category",
+      "text_snippet": "About the RockawayX category\n\n(Replace this first paragraph with a brief description of your new category. This guidance will appear in the category selection area, so try to keep it below 200 characters.) Use the follow",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": false,
+      "filter_score": 0.29,
+      "virtual_score_decision": true,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRV48VHY1HQKC6JT29M8P",
+      "source_id": "S25",
+      "title": "proofs/v1.0.0-rc.4",
+      "text_snippet": "proofs/v1.0.0-rc.4\n\nProofs v1.0.0-rc.4",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.22,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRV4D92YVX102B82TG85X",
+      "source_id": "S25",
+      "title": "proofs/v1.0.0-rc.3: chore(proofs): prepare RC3 release (#1138)",
+      "text_snippet": "proofs/v1.0.0-rc.3: chore(proofs): prepare RC3 release (#1138)\n\nchore(proofs): prepare version 1.0.0-rc.3 chore(proofs): refresh RC3 measurements",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.21,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRV4G0DJYSBBB46T7E9D4",
+      "source_id": "S25",
+      "title": "proofs/v1.0.0-rc.2: chore(proofs): prepare v1.0.0-rc.2 (#1100)",
+      "text_snippet": "proofs/v1.0.0-rc.2: chore(proofs): prepare v1.0.0-rc.2 (#1100)\n\nchore(proofs): prepare v1.0.0-rc.2 chore(proofs): record rc.2 measurements",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.15,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRV64DDXD8N5VR74M3ZD2",
+      "source_id": "S23",
+      "title": "Hey NEAR Happy to be back",
+      "text_snippet": "Hey NEAR Happy to be back\n\nWhat’s new? Happy to be back Any update and a follow up? 2 posts - 2 participants Read full topic",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": false,
+      "filter_score": 0.94,
+      "virtual_score_decision": true,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JRVQZ0YEF8B96BDB5FFZJ",
+      "source_id": "S23",
+      "title": "About the Canonical URCs category",
+      "text_snippet": "About the Canonical URCs category\n\nAll URCs that have received a number from the URC Editors. 1 post - 1 participant Read full topic",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.21,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JV44MGGMZWQ3P3D7X761K",
+      "source_id": "S08",
+      "title": "DTCC and iCapital Collaborate to Advance Private Market Infrastructure, Expand Access and Support the Industry’s Next Phase of Growth and Scale",
+      "text_snippet": "DTCC and iCapital Collaborate to Advance Private Market Infrastructure, Expand Access and Support the Industry’s Next Phase of Growth and Scale\n\nThe firms’ complementary capabilities aim to deliver enhanced technology, o",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.22,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JVEJJCT5FANMCRQD27JW8",
+      "source_id": "S08",
+      "title": "Four Distinguished Financial Services Industry Leaders Join DTCC Board of Directors",
+      "text_snippet": "Four Distinguished Financial Services Industry Leaders Join DTCC Board of Directors\n\nNew York/London/Hong Kong/Singapore/Sydney, March 30, 2026 ‒ The Depository Trust & Clearing Corporation (DTCC), the premier post-trade",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": false,
+      "filter_score": 0.36,
+      "virtual_score_decision": true,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    },
+    {
+      "item_id": "ITM-01M59JW70JDHPPQPP23HRHMWHJ",
+      "source_id": "S08",
+      "title": "DTCC and EY Share Insights on 24x5 Equity Trading, Revealing Up to 10% of Total Equity Volume Projected to Be Traded During Overnight Sessions by 2028",
+      "text_snippet": "DTCC and EY Share Insights on 24x5 Equity Trading, Revealing Up to 10% of Total Equity Volume Projected to Be Traded During Overnight Sessions by 2028\n\nNew York/London/Hong Kong/Singapore/Sydney, December 4, 2025 ‒ DTCC,",
+      "input_kind": "OTHER_TEXT_NOT_ASSERTED_FULL_ARTICLE",
+      "label_relevant": true,
+      "filter_score": 0.07,
+      "virtual_score_decision": false,
+      "actual_policy": "ALWAYS",
+      "actual_runtime_relevance_decision": "ALWAYS"
+    }
+  ],
+  "tch_genius_pair": [
+    {
+      "item_id": "ITM-01M59JRRWV7FWANAAVAMWK5PQ9",
+      "source_id": "S27",
+      "title": "The Clearing House Payments Authority (TCHPA) Sign In",
+      "url": "https://www.theclearinghouse.org/payment-systems/Articles/2025/11/GENIUS-Act",
+      "known_to_us_at": "2026-10-19T07:59:02.372575Z",
+      "filter_state": {
+        "source": "The Clearing House",
+        "author": "The Clearing House",
+        "text": "The Clearing House Payments Authority (TCHPA) Sign In\n\nNew York – BPI, the American Bankers Association, Consumer Bankers Association, Financial Services Forum and The Clearing House Association responded late yesterday to a U.S. Department of the Treasury Advance Notice of Proposed Rulemaking on its implementation of the Guiding and Establishing National Innovation for U.S. Stablecoins Act (GENIUS) Act. The submission asks Treasury to develop regulations that preserve the benefits of payment stablecoins for their intended use in payments and settlements, without causing undue risks for consumers, other stablecoin holders or users, competition, credit availability, illicit finance, or financial stability. “The GENIUS Act is a major legislative achievement that, if implemented effectively, can strengthen America’s financial competitiveness,” the associations stated upon filing the letter. “We are confident that Treasury is carefully considering how to craft regulations that mitigate potential risks associated with these instruments while faithfully implementing Congress’s intent that payment stablecoins function as payment instruments. We recognize the complexity of developing these rules and look forward to engaging with Treasury and the federal banking agencies throughout the rulemaking process.” The associations made several initial recommendations in their letter: Implement Congress’s intent to prohibit stablecoins from paying interest or yield. Congress broadly prohibited the payment of interest or yield by stablecoin issuers in GENIUS. That prohibition should be extended to digital asset service providers, such as exchanges and affiliates. Prevent regulatory arbitrage. Same activity, same regulation. Treasury should consider federal, state, and foreign payment stablecoin regulatory regimes so that stablecoin issuers are held to the same rules required of any other financial institution engaged in equivalent activities. Enforce strict illicit finance safeguards. Combatting illicit finance requires common standards that are strictly enforced. Treasury should hold all entities engaged in the same activities to the same standards, including stablecoin issuers, digital asset services providers, and banks. Reaffirm the longstanding separation of banking and commerce. The U.S. has maintained a longstanding policy of separating banking and commercial activities to prevent the emergence of associated risks, including undue concentration of economic power. The GENIUS Act prohibition on payment stablecoin issuance by public or foreign companies not predominantly engaged in financial activities should be implemented in a manner that continues that policy. Tighten safeguards to preserve trust and prevent conflicts of interest. Stablecoin issuers should provide clear disclosures, including regarding the reserves backing their stablecoins. They must also uphold the highest standards for custody and safekeeping to protect customers, maintain market integrity, foster confidence, and minimize conflicts of interest. Apply consistent consumer protections. Stablecoin issuers and payment stablecoins must be subject to the same robust consumer protections applicable to other institutions and products that similarly facilitate payments and settlement. Clarify statutory definitions. Help create common definitions and standards for what constitutes a “payment stablecoin,” “digital asset service provider,” “foreign payment stablecoin issuer,” and other novel terminologies to mitigate the risk of regulatory arbitrage and evasion. To access a copy of the associations’ response, please click here . ### About The Clearing House Association The Clearing House Association L.L.C., the country’s oldest banking trade association, is a nonpartisan organization that provides informed advocacy and thought leadership on critical payments-related issues. Its sister company, The Clearing House Payments Company L.L.C., owns and operates core payments system infrastructure in the U.S., clearing and settling more than $2 trillion each day. About Bank Policy Institute The Bank Policy Institute is a nonpartisan public policy, research and advocacy group that represents universal banks, regional banks and the major foreign banks doing business in the United States. The Institute produces academic research and analysis on regulatory and monetary policy topics, analyzes and comments on proposed regulations, and represents the financial services industry with respect to cybersecurity, fraud, and other information security issues. About American Bankers Association The American Bankers Association is the voice of the nation’s $25 trillion banking industry, which is composed of small, regional and large banks that together employ approximately 2.1 million people, safeguard $19.7 trillion in deposits and extend $13.1 trillion in loans. About Consumer Bankers Association The Consumer Bankers Association represents America’s leading retail banks. We promote policies to create a stronger industry and economy. Established in 1919, CBA’s corporate member institutions account for 1.7 million jobs in America, extend roughly $4 trillion in consumer loans and provide $275 billion in small business loans annually. Follow us on X @consumerbankers. About Financial Services Forum The Financial Services Forum is an economic policy and advocacy organization whose members are the eight largest and most diversified financial institutions headquartered in the United States. Forum member institutions are a leading source of lending and investment in the United States and serve millions of consumers, businesses, investors, and communities throughout the country. The Forum promotes policies that support savings and investment, financial inclusion, deep and liquid capital markets, a competitive global marketplace, and a sound financial system. Media Contacts Greg MacSweeney, The Clearing House Association, gregory.macsweeney@theclearinghouse.org Austin Anton, Bank Policy Institute, austin.anton@bpi.com Sarah Grano, American Bankers Association, sgrano@aba.com Billy Rielly, Consumer Bankers Association, brielly@consumerbankers.com Laura Peavey, Financial Services Forum, lpeavey@fsforum.com",
+        "quoted": null
+      },
+      "predicted_candidate": {
+        "event_id": "REF-GLOBAL-4ab799d02655d0089318fc60",
+        "score": 0.72,
+        "usage_id": "164a4109d21376bedb3067b1b22364ccd1fbfb804bc16cc749c68ce67d155e37",
+        "state": {
+          "source": "The Clearing House",
+          "author": "The Clearing House",
+          "text": "The Clearing House Payments Authority (TCHPA) Sign In\n\nNew York – BPI, the American Bankers Association, Consumer Bankers Association, Financial Services Forum and The Clearing House Association responded late yesterday to a U.S. Department of the Treasury Advance Notice of Proposed Rulemaking on its implementation of the Guiding and Establishing National Innovation for U.S. Stablecoins Act (GENIUS) Act. The submission asks Treasury to develop regulations that preserve the benefits of payment stablecoins for their intended use in payments and settlements, without causing undue risks for consumers, other stablecoin holders or users, competition, credit availability, illicit finance, or financial stability. “The GENIUS Act is a major legislative achievement that, if implemented effectively, can strengthen America’s financial competitiveness,” the associations stated upon filing the letter. “We are confident that Treasury is carefully considering how to craft regulations that mitigate potential risks associated with these instruments while faithfully implementing Congress’s intent that payment stablecoins function as payment instruments. We recognize the complexity of developing these rules and look forward to engaging with Treasury and the federal banking agencies throughout the rulemaking process.” The associations made several initial recommendations in their letter: Implement Congress’s intent to prohibit stablecoins from paying interest or yield. Congress broadly prohibited the payment of interest or yield by stablecoin issuers in GENIUS. That prohibition should be extended to digital asset service providers, such as exchanges and affiliates. Prevent regulatory arbitrage. Same activity, same regulation. Treasury should consider federal, state, and foreign payment stablecoin regulatory regimes so that stablecoin issuers are held to the same rules required of any other financial institution engaged in equivalent activities. Enforce strict illicit finance safeguards. Combatting illicit finance requires common standards that are strictly enforced. Treasury should hold all entities engaged in the same activities to the same standards, including stablecoin issuers, digital asset services providers, and banks. Reaffirm the longstanding separation of banking and commerce. The U.S. has maintained a longstanding policy of separating banking and commercial activities to prevent the emergence of associated risks, including undue concentration of economic power. The GENIUS Act prohibition on payment stablecoin issuance by public or foreign companies not predominantly engaged in financial activities should be implemented in a manner that continues that policy. Tighten safeguards to preserve trust and prevent conflicts of interest. Stablecoin issuers should provide clear disclosures, including regarding the reserves backing their stablecoins. They must also uphold the highest standards for custody and safekeeping to protect customers, maintain market integrity, foster confidence, and minimize conflicts of interest. Apply consistent consumer protections. Stablecoin issuers and payment stablecoins must be subject to the same robust consumer protections applicable to other institutions and products that similarly facilitate payments and settlement. Clarify statutory definitions. Help create common definitions and standards for what constitutes a “payment stablecoin,” “digital asset service provider,” “foreign payment stablecoin issuer,” and other novel terminologies to mitigate the risk of regulatory arbitrage and evasion. To access a copy of the associations’ response, please click here . ### About The Clearing House Association The Clearing House Association L.L.C., the country’s oldest banking trade association, is a nonpartisan organization that provides informed advocacy and thought leadership on critical payments-related issues. Its sister company, The Clearing House Payments Company L.L.C., owns and operates core payments system infrastructure in the U.S., clearing and settling more than $2 trillion each day. About Bank Policy Institute The Bank Policy Institute is a nonpartisan public policy, research and advocacy group that represents universal banks, regional banks and the major foreign banks doing business in the United States. The Institute produces academic research and analysis on regulatory and monetary policy topics, analyzes and comments on proposed regulations, and represents the financial services industry with respect to cybersecurity, fraud, and other information security issues. About American Bankers Association The American Bankers Association is the voice of the nation’s $25 trillion banking industry, which is composed of small, regional and large banks that together employ approximately 2.1 million people, safeguard $19.7 trillion in deposits and extend $13.1 trillion in loans. About Consumer Bankers Association The Consumer Bankers Association represents America’s leading retail banks. We promote policies to create a stronger industry and economy. Established in 1919, CBA’s corporate member institutions account for 1.7 million jobs in America, extend roughly $4 trillion in consumer loans and provide $275 billion in small business loans annually. Follow us on X @consumerbankers. About Financial Services Forum The Financial Services Forum is an economic policy and advocacy organization whose members are the eight largest and most diversified financial institutions headquartered in the United States. Forum member institutions are a leading source of lending and investment in the United States and serve millions of consumers, businesses, investors, and communities throughout the country. The Forum promotes policies that support savings and investment, financial inclusion, deep and liquid capital markets, a competitive global marketplace, and a sound financial system. Media Contacts Greg MacSweeney, The Clearing House Association, gregory.macsweeney@theclearinghouse.org Austin Anton, Bank Policy Institute, austin.anton@bpi.com Sarah Grano, American Bankers Association, sgrano@aba.com Billy Rielly, Consumer Bankers Association, brielly@consumerbankers.com Laura Peavey, Financial Services Forum, lpeavey@fsforum.com",
+          "quoted": null,
+          "event": {
+            "statement": "The Treasury proposed regulations implementing GENIUS Act Section 3 limits on payment stablecoin issuance, offer and sale in the United States.",
+            "entities": [
+              {
+                "entity_id": "us-treasury",
+                "role": "REGULATOR"
+              }
+            ],
+            "tokens": [],
+            "stage": "PROPOSED",
+            "known_to_us_at": "2026-10-19T07:59:00.739540Z"
+          }
+        }
+      },
+      "expected_event_id": null,
+      "candidate_count": 13
+    }
+  ]
+}

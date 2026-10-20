@@ -3,6 +3,7 @@ user_agent: null
 sources:
 - source_id: S01
   name: SEC
+  author_organization: SEC
   mode: REST
   interval_s: 60
   feeds:
@@ -93,6 +94,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S04
   name: CFTC
+  author_organization: CFTC
   mode: REST
   interval_s: 120
   feeds:
@@ -118,6 +120,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S05
   name: Federal Reserve
+  author_organization: Federal Reserve
   mode: REST
   interval_s: 120
   feeds:
@@ -145,6 +148,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S06
   name: OCC
+  author_organization: OCC
   mode: REST
   interval_s: 300
   feeds:
@@ -171,10 +175,12 @@ sources:
   interval_s: 300
   feeds:
   - url: https://home.treasury.gov/news/press-releases
+    author_organization: U.S. Department of the Treasury
     kind: html
     interval_s: 300
     article_pattern: ^/news/press-releases/[a-z]{2}\d{4}/?$
   - url: https://ofac.treasury.gov/rss.xml
+    author_organization: Office of Foreign Assets Control
     kind: rss
     interval_s: 300
   priority: CORE
@@ -193,26 +199,14 @@ sources:
     unattended acceptance claimed.
 - source_id: S08
   name: DTCC
+  author_organization: DTCC
   mode: REST
   interval_s: 300
   feeds:
-  - url: https://depositorytrustclearingcorporationproductionbw3fbrqw.org.coveo.com/rest/search/v2
-    kind: dtcc_search
+  - url: https://www.dtcc.com/press-releases
+    kind: html
     interval_s: 300
-    article_pattern: https://www.dtcc.com/press-releases/\d{4}/[a-z0-9-]+
-    method: POST
-    body:
-      searchHub: DTCC Opti PROD Global
-      pipeline: DTCC Opti PROD Global
-      numberOfResults: 20
-      firstResult: 0
-      sortCriteria: date descending
-    bootstrap_script_url: https://www.dtcc.com/_next/static/chunks/1335.2d9b3a99610c88e6.js
-    official_index_url: https://www.dtcc.com/press-releases
-    bootstrap_discovery: true
-    bootstrap_script_url_basis: Historical verification only when bootstrap_discovery
-      enabled; resolve current official pressroom webpack/component manifest each
-      bootstrap.
+    article_pattern: '^/press-releases/\d{4}/[A-Za-z0-9][A-Za-z0-9._~-]*$'
   priority: CORE
   terms_notes: Read-only public content; honor publisher terms and Retry-After.
   limits:
@@ -221,15 +215,11 @@ sources:
     unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
       acceptance.
   endpoint_verification:
-    checked_at: '2026-10-17T16:57:55.625794+00:00'
-    status: VERIFIED_BY_SOURCE_ADAPTER_AGENT
-    basis: Source adapter verified official pressroom Coveo API HTTP200,142 release
-      records with newest-first ordering. Client-only pressroom HTML exposes only
-      partial anchors; adapter paginates to known checkpoint. Read-only public query
-      token extracted from official bootstrap script at runtime, never checked into
-      config.
-    baseline_discrepancy: HLD HTML /news index replaced by official pressroom search
-      backend, preserving same source and article URLs.
+    checked_at: '2026-10-20'
+    status: VERIFIED_PUBLIC_HTML
+    basis: Official press-releases index returned HTTP 200 and an authored release
+      link. Discovery reads only links from the official HTML page; zero article
+      matches degrades the source.
   bucket: REGULATOR_MARKET_STRUCTURE
   source_class: PRIMARY
   cost_class: FREE_OPEN
@@ -239,6 +229,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S09
   name: Binance
+  author_organization: Binance
   mode: REST
   interval_s: 30
   feeds:
@@ -268,6 +259,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S10
   name: OKX
+  author_organization: OKX
   mode: REST
   interval_s: 60
   feeds:
@@ -299,6 +291,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S11
   name: Bybit
+  author_organization: Bybit
   mode: REST
   interval_s: 60
   feeds:
@@ -327,6 +320,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S12
   name: Kraken
+  author_organization: Kraken
   mode: REST
   interval_s: 120
   feeds:
@@ -349,6 +343,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S13
   name: Robinhood
+  author_organization: Robinhood
   mode: REST
   interval_s: 300
   feeds:
@@ -456,13 +451,14 @@ sources:
     unattended acceptance claimed.
 - source_id: S15
   name: Uniswap
+  author_organization: Uniswap
   mode: REST
   interval_s: 600
   feeds:
   - url: https://blog.uniswap.org/
     kind: html
     interval_s: 600
-    article_pattern: ^/(?!category/)[a-z0-9-]{8,}$
+    article_pattern: ^/(?!category/|latest-updates$)[a-z0-9-]{8,}$
   priority: CORE
   terms_notes: Read-only public content; honor publisher terms and Retry-After.
   limits:
@@ -479,6 +475,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S16
   name: Ondo Finance
+  author_organization: Ondo Finance
   mode: REST
   interval_s: 600
   feeds:
@@ -502,6 +499,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S17
   name: LayerZero
+  author_organization: LayerZero
   mode: REST
   interval_s: 600
   feeds:
@@ -525,6 +523,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S18
   name: BlackRock
+  author_organization: BlackRock
   mode: REST
   interval_s: 600
   feeds:
@@ -548,6 +547,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S19
   name: Franklin Templeton
+  author_organization: Franklin Templeton
   mode: BROWSER
   interval_s: 600
   feeds:
@@ -572,6 +572,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S20
   name: Circle
+  author_organization: Circle
   mode: REST
   interval_s: 600
   feeds:
@@ -595,6 +596,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S21
   name: Tether
+  author_organization: Tether
   mode: REST
   interval_s: 300
   feeds:
@@ -617,6 +619,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S22
   name: Paxos
+  author_organization: Paxos
   mode: REST
   interval_s: 600
   feeds:
@@ -661,7 +664,7 @@ sources:
   - url: https://forum.euler.finance/latest.rss
     kind: rss
     interval_s: 600
-  - url: https://gov.1inch.io/latest.rss
+  - url: https://gov.1inch.network/latest.rss
     kind: rss
     interval_s: 600
   - url: https://gov.near.org/latest.rss
@@ -777,6 +780,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S26
   name: BNY
+  author_organization: BNY
   mode: REST
   interval_s: 600
   feeds:
@@ -800,6 +804,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S27
   name: The Clearing House
+  author_organization: The Clearing House
   mode: REST
   interval_s: 600
   feeds:
@@ -823,6 +828,7 @@ sources:
     unattended acceptance claimed.
 - source_id: S28
   name: Anchorage Digital
+  author_organization: Anchorage Digital
   mode: REST
   interval_s: 600
   feeds:

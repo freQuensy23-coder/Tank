@@ -1,0 +1,17 @@
+{
+  "input_sha256": "d8c38c152e0f083f05a0d247e8656eb99d67b20a2dd48b4883226df6c1af4994",
+  "frozen_output_sha256": "92899a402e7173e35ba8af37f167aa78dc7fee427fa502c4ccc9d9cc81e1c100",
+  "checks": [
+    {
+      "requirement": "Announced versus live integration must follow the retained actual source evidence, including qualifiers; verify relevant event/claim/edge scope, not a forced stage.",
+      "passed": true,
+      "reason": "The retained source expressly says tokenized stocks are live on the lending protocol; recorded LIVE claims quote that statement and retain eligible non-US geography qualifier. Stage is grounded in the actual source, not forced to satisfy the fixture.",
+      "evidence": [
+        {
+          "path": "docs/verification/masked-f06-r39-2026-10-19/F-06/actual/qa-r39-masked-f06-driver/framework-bundles/d8c38c152e0f083f05a0d247e8656eb99d67b20a2dd48b4883226df6c1af4994/outputs.json",
+          "sha256": "92899a402e7173e35ba8af37f167aa78dc7fee427fa502c4ccc9d9cc81e1c100"
+        }
+      ]
+    }
+  ]
+}

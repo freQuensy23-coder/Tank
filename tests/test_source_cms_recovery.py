@@ -1,0 +1,197 @@
+import json
+from pathlib import Path
+
+import httpx
+import pytest
+import zstandard
+from test_sources import Repo, settings
+
+from tank.sources import SourceService, parsers
+from tank.util import sha256
+
+FIXTURES = Path(__file__).parent / "fixtures/s13-cms-recovery"
+FEED = {
+    "url": "https://robinhood.com/newsroom/",
+    "article_pattern": r"^/(?:us/en/)?newsroom/(?!category/)[A-Za-z0-9-]+/?$",
+    "embedded_json_fields": ["canonicalUrl"],
+}
+OLD = "https://robinhood.com/us/en/newsroom/introducingukcryptotrading"
+NEW = "https://robinhood.com/newsroom/robinhood-launches-crypto-trading-for-uk-investors/"
+
+
+def retained(name):
+    return zstandard.ZstdDecompressor().decompress((FIXTURES / (name + ".html.zst")).read_bytes())
+
+
+def original():
+    return next(r for r in parsers.article_links(retained("index"), FEED) if r["url"] == OLD)
+
+
+def test_retained_cms_entry_declares_slug_without_replacing_canonical_identity():
+    row = original()
+    assert row["publisher_cms_identity"]["entry_id"] == "59JVkSSAyZoVoQP8zH3Wkn"
+    assert row["publisher_cms_slug_url"] == NEW
+    assert row["url"] == row["external_id"] == OLD
+    assert row["publisher_cms_identity"] in parsers.publisher_cms_entries(retained("detail"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mismatch", [None, "entry_id", "title", "content"])
+async def test_retained_canonical_404_recovers_only_exact_same_cms_entry(tmp_path, mismatch):
+    detail = retained("detail")
+    if mismatch:
+        from selectolax.parser import HTMLParser
+
+        tree = HTMLParser(detail)
+        script = tree.css_first("script#__NEXT_DATA__")
+        data = json.loads(script.text())
+
+        def change(x):
+            if isinstance(x, dict):
+                if x.get("sys", {}).get("id") == "59JVkSSAyZoVoQP8zH3Wkn":
+                    if mismatch == "entry_id":
+                        x["sys"]["id"] = "different-entry"
+                    elif mismatch == "title":
+                        x["fields"]["title"] = "Different article"
+                    else:
+                        x["fields"]["content"] = {"nodeType": "document", "content": []}
+                for v in x.values():
+                    change(v)
+            elif isinstance(x, list):
+                for v in x:
+                    change(v)
+
+        change(data)
+        script.replace_with(
+            '<script id="__NEXT_DATA__" type="application/json">' + json.dumps(data) + "</script>"
+        )
+        detail = tree.html.encode()
+    calls = []
+
+    def handle(request):
+        calls.append(str(request.url))
+        if str(request.url) == OLD:
+            return httpx.Response(404, content=retained("not-found"))
+        assert str(request.url) == NEW
+        return httpx.Response(200, content=detail)
+
+    source = {"source_id": "S13", "name": "Robinhood", "author_organization": "Robinhood", "feeds": [FEED]}
+    repo = Repo()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        row = original()
+        row["observed_at"] = "2026-10-19T07:59:02.218121Z"
+        batch = {"kind": "html", "raw_ref": "retained-index", "raw_sha256": sha256(retained("index"))}
+        if mismatch:
+            with pytest.raises(ValueError, match="identity/content mismatch"):
+                await svc.poller._item(source, FEED, "S13:0", batch, row)
+            assert not any(c == "ingest.source_items" for c, _ in repo.rows)
+        else:
+            await svc.poller._item(source, FEED, "S13:0", batch, row)
+            item = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
+            assert item["external_id"] == OLD
+            assert item["url"] == NEW
+            assert item["publisher_url_aliases"] == [OLD, NEW]
+            assert item["observed_at"] == row["observed_at"]
+            recovery = item["publisher_cms_recovery"]
+            assert recovery["status"] == "VERIFIED_SAME_CMS_ENTRY"
+            assert recovery["original_raw_sha256"] == sha256(retained("not-found"))
+            assert recovery["resolved_raw_sha256"] == sha256(detail)
+            assert Path(recovery["original_raw_ref"]).exists()
+            assert Path(recovery["resolved_raw_ref"]).exists()
+        recovery = await repo.get("ops.source_checkpoints", "S13:0:cms-recovery:" + sha256(OLD))
+        assert recovery["original_http_status"] == 404 and recovery["canonical_url"] == OLD
+    assert calls == [OLD, NEW]
+
+
+@pytest.mark.parametrize("slug", ["../escape", "https://evil.org/article", "/absolute", "with?query"])
+def test_untrusted_slug_never_becomes_fallback(slug):
+    payload = {
+        "sys": {"id": "one"},
+        "fields": {"slug": slug, "title": "Article", "content": {"nodeType": "document"}},
+    }
+    html = '<script id="__NEXT_DATA__" type="application/json">' + json.dumps(payload) + "</script>"
+    assert not parsers.publisher_cms_entries(html)
+
+
+@pytest.mark.asyncio
+async def test_cms_fallback_is_not_used_for_non404_failure(tmp_path):
+    calls = []
+
+    def handle(request):
+        calls.append(str(request.url))
+        return httpx.Response(403, text="Forbidden")
+
+    source = {"source_id": "S13", "name": "Robinhood", "feeds": [FEED]}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(Repo(), settings(tmp_path, [source]), http=http)
+        row = original()
+        row["observed_at"] = "2026-10-19T07:59:02.218121Z"
+        with pytest.raises(httpx.HTTPStatusError):
+            await svc.poller._item(source, FEED, "S13:0", {"kind": "html"}, row)
+    assert calls and set(calls) == {OLD}
+    assert NEW not in calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fallback",
+    ["https://evil.org/newsroom/article/", NEW + "?other=1", "https://robinhood.com/newsroom/other/"],
+)
+async def test_checkpoint_fallback_must_match_same_host_and_declared_slug(tmp_path, fallback):
+    calls = []
+
+    def handle(request):
+        calls.append(str(request.url))
+        return httpx.Response(404, content=retained("not-found"))
+
+    source = {"source_id": "S13", "name": "Robinhood", "feeds": [FEED]}
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(Repo(), settings(tmp_path, [source]), http=http)
+        row = original()
+        row.update(observed_at="2026-10-19T07:59:02.218121Z", publisher_cms_slug_url=fallback)
+        with pytest.raises(httpx.HTTPStatusError):
+            await svc.poller._item(source, FEED, "S13:0", {"kind": "html"}, row)
+    assert calls == [OLD]
+
+
+@pytest.mark.asyncio
+async def test_pending_old_index_row_gains_current_cms_binding_without_backdating_it(tmp_path):
+    from copy import deepcopy
+
+    def handle(request):
+        if str(request.url) == OLD:
+            return httpx.Response(404, content=retained("not-found"))
+        assert str(request.url) == NEW
+        return httpx.Response(200, content=retained("detail"))
+
+    source = {"source_id": "S13", "name": "Robinhood", "feeds": [FEED]}
+    repo = Repo()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        ref, digest = svc.raw(retained("index"), source_id="S13")
+        first = "2026-10-18T12:00:00Z"
+        later = "2026-10-20T12:00:00Z"
+        old = deepcopy(original())
+        old.pop("publisher_cms_identity")
+        old.pop("publisher_cms_slug_url")
+        state = {}
+        captured = {"fetched_at": first, "raw_ref": ref, "raw_sha256": digest}
+        svc.poller.queue_rows(state, "S13:0", FEED, [old], captured, "html", {}, first)
+        svc.poller.queue_rows(
+            state, "S13:0", FEED, [original()], dict(captured, fetched_at=later), "html", {}, later
+        )
+        pending = state["pending_batches"][0]["rows"][0]
+        assert pending["observed_at"] == first
+        assert pending["observation_times"] == [first, later]
+        assert pending["publisher_cms_discovery"] == {
+            "observed_at": later,
+            "observed_at_prec": "COLLECTION_ONLY",
+            "raw_ref": ref,
+            "raw_sha256": digest,
+        }
+        await svc.poller._item(source, FEED, "S13:0", state["pending_batches"][0], pending)
+        item = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
+        assert item["url"] == NEW and item["external_id"] == OLD
+        assert item["observed_at"] == first
+        assert item["publisher_cms_recovery"]["status"] == "VERIFIED_SAME_CMS_ENTRY"

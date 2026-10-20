@@ -1,0 +1,13 @@
+[
+  {
+    "path": "/Users/a.mametyev/Library/Application Support/Tank/backups/legacy-market-frames/primary-r79-2026-10-20T10-51-46.203303_00-00",
+    "verified": true,
+    "file_count": 19500,
+    "archive_bytes": 478666240,
+    "archive_sha256": "05c78ec775744ad0d6f2938c7c829208baa2e931f8c9776d1682ca1c8849f8a0",
+    "created_at": "2026-10-20T10:57:40.325942+00:00",
+    "expires_at": "2026-11-19T10:57:40.325942+00:00",
+    "purpose": "Finite legacy raw market-frame audit cache; not primary hot trades/books or a replacement for SQL history",
+    "read_only": true
+  }
+]

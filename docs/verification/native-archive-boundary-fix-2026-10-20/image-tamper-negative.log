@@ -1,0 +1,20 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+AssertionError [ERR_ASSERTION]: tracked source mismatch: packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts
++ actual - expected
+
++ '5cf605ed6c7a3ad1892c39d6daed8b7f4c1c00830ef1a783b9f1ca9435d45f0b'
+- '5c272de72bc4289db4c138d7e114cbfad84163d1df19a8d5978a210e8c25ff52'
+
+    at file:///audit/verify-image.mjs:44:9 {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: '5cf605ed6c7a3ad1892c39d6daed8b7f4c1c00830ef1a783b9f1ca9435d45f0b',
+  expected: '5c272de72bc4289db4c138d7e114cbfad84163d1df19a8d5978a210e8c25ff52',
+  operator: 'strictEqual',
+  diff: 'simple'
+}
+
+Node.js v24.22.0

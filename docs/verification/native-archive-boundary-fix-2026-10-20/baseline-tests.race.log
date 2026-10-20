@@ -1,0 +1,365 @@
+✖ overlapping adapter idle, runner idle and duplicate archive stop/reap once (97.457105ms)
+✖ archive waits owned startup and accepts its exact session_stopped only after reap (4.869283ms)
+✖ archive waits owned startup and accepts its exact session_archived only after reap (74.244984ms)
+✖ unrelated user AbortError is reported after exact owned cleanup (1.643318ms)
+✖ expected operator abort never hides failed native reap (0.864085ms)
+✔ real native stop failure surfaces and later authorized retry succeeds (1.697326ms)
+✖ driver drains actual startup before cleanup, intentional stop=false (2.560391ms)
+✖ driver drains actual startup before cleanup, intentional stop=true (1.006804ms)
+✖ driver never suppresses real owned cleanup failure after intentional abort (7.043813ms)
+✖ driver preserves unexpected startup error after cleanup (0.38128ms)
+✖ driver does not blanket-ignore another cancellation reason (0.763832ms)
+✔ old controller allocation resumes with same fingerprint and disk under candidate (1.870082ms)
+✔ compatibility never permits changed allocation fingerprint (0.848472ms)
+✖ driver rejects an unbound AbortError even when its words match operator stop (0.294604ms)
+✖ cold bind suspended in its execution assertion cannot publish after archive (0.22545ms)
+✖ warm bind suspended in fingerprint cannot replace context after archive (0.508938ms)
+✖ lazy factory suspended in fingerprint cannot allocate after cold archive (0.946942ms)
+✖ previously bound unused lazy factory remains sealed after archive completes (0.347127ms)
+✖ in-flight native startup remains owned and drained before archive succeeds (4.058825ms)
+✔ cold archive seals are released without retaining an unbounded scope catalog (6.943433ms)
+ℹ tests 20
+ℹ suites 0
+ℹ pass 4
+ℹ fail 16
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 3495.998984
+
+✖ failing tests:
+
+test at ../../../audit/archive-boundary.test.mjs:34:1
+✖ overlapping adapter idle, runner idle and duplicate archive stop/reap once (97.457105ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    [
+      'fulfilled',
+  +   'rejected',
+  +   'rejected',
+  +   'rejected'
+  -   'fulfilled',
+  -   'fulfilled',
+  -   'fulfilled'
+    ]
+  
+      at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:41:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'fulfilled', 'rejected', 'rejected', 'rejected' ],
+    expected: [ 'fulfilled', 'fulfilled', 'fulfilled', 'fulfilled' ],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../audit/archive-boundary.test.mjs:46:60
+✖ archive waits owned startup and accepts its exact session_stopped only after reap (4.869283ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    {
+  +   error: Error [AbortError]: session_stopped
+  +       at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:49:28)
+  +       at async Test.run (node:internal/test_runner/test:1409:7)
+  +       at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  -   ok: true
+    }
+  
+      at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:52:55)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: {
+      error: AbortError: session_stopped
+          at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:49:28)
+          at async Test.run (node:internal/test_runner/test:1409:7)
+          at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+    },
+    expected: { ok: true },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../audit/archive-boundary.test.mjs:46:60
+✖ archive waits owned startup and accepts its exact session_archived only after reap (74.244984ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    {
+  +   error: Error [AbortError]: session_archived
+  +       at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:49:28)
+  +       at async Test.run (node:internal/test_runner/test:1409:7)
+  +       at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  -   ok: true
+    }
+  
+      at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:52:55)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: {
+      error: AbortError: session_archived
+          at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:49:28)
+          at async Test.run (node:internal/test_runner/test:1409:7)
+          at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+    },
+    expected: { ok: true },
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../audit/archive-boundary.test.mjs:55:1
+✖ unrelated user AbortError is reported after exact owned cleanup (1.643318ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  1 !== 0
+  
+      at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:60:77)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 0,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../audit/archive-boundary.test.mjs:63:1
+✖ expected operator abort never hides failed native reap (0.864085ms)
+  AssertionError [ERR_ASSERTION]: Expected "actual" to be reference-equal to "expected":
+  + actual - expected
+  
+  + [Error [AbortError]: session_stopped]
+  - [Error: owned native removal failed]
+  
+      at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:68:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: { name: 'AbortError' },
+    expected: {},
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../audit/archive-boundary.test.mjs:89:37
+✖ driver drains actual startup before cleanup, intentional stop=false (2.560391ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  true !== false
+  
+      at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:92:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../audit/archive-boundary.test.mjs:89:37
+✖ driver drains actual startup before cleanup, intentional stop=true (1.006804ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  true !== false
+  
+      at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:92:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: true,
+    expected: false,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../audit/archive-boundary.test.mjs:97:1
+✖ driver never suppresses real owned cleanup failure after intentional abort (7.043813ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(s.calls.indexOf('owned-cleanup')>s.calls.indexOf('startup-compensation-finished'))
+  
+      at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:100:49)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at ../../../audit/archive-boundary.test.mjs:103:1
+✖ driver preserves unexpected startup error after cleanup (0.38128ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + undefined
+  - Error: startup configuration mismatch
+  -     at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:104:21)
+  -     at Test.runInAsyncScope (node:async_hooks:227:14)
+  -     at Test.run (node:internal/test_runner/test:1402:25)
+  -     at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+  -     at Test.postRun (node:internal/test_runner/test:1542:19)
+  -     at Test.run (node:internal/test_runner/test:1467:12)
+  -     at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  
+      at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:106:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: Error: startup configuration mismatch
+        at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:104:21)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1402:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+        at Test.postRun (node:internal/test_runner/test:1542:19)
+        at Test.run (node:internal/test_runner/test:1467:12)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:974:7),
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../audit/archive-boundary.test.mjs:109:1
+✖ driver does not blanket-ignore another cancellation reason (0.763832ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + undefined
+  - Error [AbortError]: user_interrupt
+  -     at cancellationError (/app/packages/control-plane-node/src/lib/node-managed-session-runtime.archive-baseline.ts:653:17)
+  -     at DefaultNodeManagedSessionRuntimeDriver.cancel (/app/packages/control-plane-node/src/lib/node-managed-session-runtime.archive-baseline.ts:281:40)
+  -     at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:110:59)
+  -     at async Test.run (node:internal/test_runner/test:1409:7)
+  -     at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  
+      at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:112:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: AbortError: user_interrupt
+        at cancellationError (/app/packages/control-plane-node/src/lib/node-managed-session-runtime.archive-baseline.ts:653:17)
+        at DefaultNodeManagedSessionRuntimeDriver.cancel (/app/packages/control-plane-node/src/lib/node-managed-session-runtime.archive-baseline.ts:281:40)
+        at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:110:59)
+        at async Test.run (node:internal/test_runner/test:1409:7)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:974:7),
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../audit/archive-boundary.test.mjs:130:1
+✖ driver rejects an unbound AbortError even when its words match operator stop (0.294604ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + undefined
+  - Error [AbortError]: session_archived
+  -     at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:131:35)
+  -     at Test.runInAsyncScope (node:async_hooks:227:14)
+  -     at Test.run (node:internal/test_runner/test:1402:25)
+  -     at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+  -     at Test.postRun (node:internal/test_runner/test:1542:19)
+  -     at Test.run (node:internal/test_runner/test:1467:12)
+  -     at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+  
+      at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:133:62)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: AbortError: session_archived
+        at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:131:35)
+        at Test.runInAsyncScope (node:async_hooks:227:14)
+        at Test.run (node:internal/test_runner/test:1402:25)
+        at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+        at Test.postRun (node:internal/test_runner/test:1542:19)
+        at Test.run (node:internal/test_runner/test:1467:12)
+        at async Test.processPendingSubtests (node:internal/test_runner/test:974:7),
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at ../../../audit/archive-boundary.test.mjs:137:1
+✖ cold bind suspended in its execution assertion cannot publish after archive (0.22545ms)
+  TypeError [Error]: Cannot read properties of undefined (reading 'message')
+      at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:142:31)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at ../../../audit/archive-boundary.test.mjs:148:1
+✖ warm bind suspended in fingerprint cannot replace context after archive (0.508938ms)
+  TypeError [Error]: Cannot read properties of undefined (reading 'message')
+      at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:153:31)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)
+
+test at ../../../audit/archive-boundary.test.mjs:157:1
+✖ lazy factory suspended in fingerprint cannot allocate after cold archive (0.946942ms)
+  AssertionError [ERR_ASSERTION]: The "string" argument must be of type string. Received type undefined (undefined)
+      at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:162:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /retained_session_archiving/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at ../../../audit/archive-boundary.test.mjs:165:1
+✖ previously bound unused lazy factory remains sealed after archive completes (0.347127ms)
+  AssertionError [ERR_ASSERTION]: Missing expected rejection.
+      at async TestContext.<anonymous> (/audit/archive-boundary.test.mjs:167:2)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /retained_session_archiving/,
+    operator: 'rejects',
+    diff: 'simple'
+  }
+
+test at ../../../audit/archive-boundary.test.mjs:170:1
+✖ in-flight native startup remains owned and drained before archive succeeds (4.058825ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /retained_session_archiving/. Input:
+  
+  'RetainedLifecycleError: retained_already_active'
+  
+      at async TestContext.<anonymous> (/audit/archive-boundary.test.mjs:175:2)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: RetainedLifecycleError: retained_already_active
+        at fail (/app/packages/control-plane-node/src/lib/tank-retained/retained-session.ts:52:44)
+        at RetainedSessionLifecycle.begin (/app/packages/control-plane-node/src/lib/tank-retained/retained-session.ts:138:32)
+        at NodeRetainedLifecycle.ensureActive (/app/packages/control-plane-node/src/lib/tank-retained/node-lifecycle.archive-baseline.ts:130:43)
+        at use (/app/packages/control-plane-node/src/lib/tank-retained/node-lifecycle.archive-baseline.ts:120:20)
+        at RetainedBoxOperations.RetainedBoxOperations.use (/app/packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts:208:29)
+        at RetainedBoxOperations.run (/app/packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts:227:17)
+        at RetainedBoxOperations.exec (/app/packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts:214:17)
+        at Object.exec (/audit/archive-boundary.test.mjs:29:226)
+        at TestContext.<anonymous> (/audit/archive-boundary.test.mjs:175:26)
+        at async Test.run (node:internal/test_runner/test:1409:7),
+    expected: /retained_session_archiving/,
+    operator: 'rejects',
+    diff: 'simple'
+  }

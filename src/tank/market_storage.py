@@ -1,0 +1,755 @@
+"""Typed market encoding and batched SQL writes (§14)."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import timedelta
+from decimal import Decimal
+
+from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
+from tank.util import iso, jsonable, parse_time
+
+
+def encode(collection, record):
+    from tank.time_precision import propagate_timestamp
+
+    record = jsonable(record)
+    columns = MARKET_COLUMNS[collection]
+    aliases = MARKET_ALIASES.get(collection, {})
+    timestamps = {name for name, kind in columns.items() if kind == "timestamptz"}
+    time_aliases = {name: target for name, target in aliases.items() if target in timestamps}
+    precision_names = {field + "_precision": field for field in timestamps}
+    precision_names.update({alias + "_precision": target for alias, target in time_aliases.items()})
+    result = {}
+    for key, value in record.items():
+        if key in precision_names or key.removesuffix("_reason") in precision_names:
+            continue  # validated with canonical declarations below, never silently chosen
+        target = aliases.get(key, key)
+        if target not in columns:
+            raise ValueError(f"Unknown typed market field {collection}.{key}")
+        if target in timestamps and value is not None:
+            if isinstance(value, dict):
+                value = value.get("value", value.get("ts"))
+            value = parse_time(value) if value is not None else None
+        if target in result and result[target] != value:
+            if target.endswith("_prec"):
+                continue  # duration-equivalent declarations are resolved by shared validation
+            raise ValueError(f"Conflicting market aliases {collection}.{key}")
+        result[target] = value
+    for field in timestamps:
+        associated = [alias for alias, target in time_aliases.items() if target == field]
+        precision_aliases = [name for alias in associated for name in (alias + "_prec", alias + "_precision")]
+        if collection == "mkt.oi_obs" and field == "ts":
+            precision_aliases.append("timestamp_precision")
+        declared = field in result or any(
+            record.get(name) is not None
+            for name in (field + "_prec", field + "_precision", *precision_aliases)
+        )
+        if declared:
+            selected = dict(record)
+            selected[field] = record.get(
+                field, next((record[alias] for alias in associated if alias in record), result.get(field))
+            )
+            stamp = propagate_timestamp(selected, field, precision_aliases=precision_aliases)
+            result.update(stamp.fields(field))
+    for name, value in list(result.items()):
+        if value is None:
+            continue
+        kind = columns[name]
+        if kind == "timestamptz":
+            result[name] = parse_time(value)
+        elif kind == "numeric":
+            result[name] = Decimal(str(value))
+        elif kind == "text" and not isinstance(value, str):
+            raise ValueError(f"{collection}.{name} requires text")
+    return result
+
+
+def decode(collection, row):
+    result = {}
+    for key, kind in MARKET_COLUMNS[collection].items():
+        value = row.get(key)
+        if value is None:
+            result[key] = None
+            continue
+        if kind == "timestamptz":
+            value = iso(value)
+        elif kind == "numeric":
+            value = str(value)
+        result[key] = value
+    for alias, target in MARKET_ALIASES.get(collection, {}).items():
+        if target in result:
+            result[alias] = result[target]
+    return result
+
+
+def semantic_fingerprint(record):
+    def strip(value):
+        if isinstance(value, dict):
+            return {
+                k: strip(v)
+                for k, v in value.items()
+                if v is not None
+                and not k.startswith(("received_ts", "recorded_at", "updated_at", "observed_at"))
+                and k not in ("code_version", "config_version", "semantic_fingerprint")
+            }
+        if isinstance(value, list):
+            return [strip(v) for v in value]
+        return value
+
+    return hashlib.sha256(
+        json.dumps(strip(jsonable(record)), sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def merge_point(collection, old, incoming):
+    """Memory-test parity for the named server-side point mergers."""
+    import copy
+
+    merged = copy.deepcopy(old)
+    merged.update({k: v for k, v in incoming.items() if v is not None})
+    if collection == "mkt.funding_obs":
+        sources = copy.deepcopy(old.get("source_observations") or {})
+        for key, value in (incoming.get("source_observations") or {}).items():
+            if semantic_fingerprint(sources.get(key)) != semantic_fingerprint(value):
+                sources[key] = copy.deepcopy(value)
+        merged["source_observations"] = sources
+        preferred = "PUBLIC_REST" if merged.get("kind") == "SETTLED" else "WEBSOCKET"
+        preferred = preferred if preferred in sources else incoming.get("capture_source")
+        if preferred in sources:
+            chosen = sources[preferred]
+            for field in (
+                "rate",
+                "interval_h",
+                "rate_8h_eq",
+                "as_of",
+                "as_of_prec",
+                "as_of_prec_reason",
+                "funding_time",
+                "funding_time_prec",
+                "funding_time_prec_reason",
+                "received_ts",
+                "received_ts_prec",
+                "received_ts_prec_reason",
+                "recorded_at",
+                "recorded_at_prec",
+                "recorded_at_prec_reason",
+                "source_path",
+            ):
+                if field in chosen:
+                    merged[field] = chosen[field]
+            merged["capture_source"] = preferred
+            merged["primary_source"] = preferred
+        merged["source_disagreement"] = {
+            "present": len(
+                {str(v["rate_8h_eq"]) for v in sources.values() if v.get("rate_8h_eq") is not None}
+            )
+            > 1,
+            "values": {
+                k: {f: v.get(f) for f in ("rate", "interval_h", "rate_8h_eq")} for k, v in sources.items()
+            },
+        }
+    elif collection == "mkt.tickers_24h":
+        sources = copy.deepcopy(old.get("field_sources") or {})
+        for field, meta in (incoming.get("field_sources") or {}).items():
+            prior = sources.get(field)
+            if (
+                prior is None
+                or meta.get("as_of")
+                and (not prior.get("as_of") or parse_time(meta["as_of"]) >= parse_time(prior["as_of"]))
+            ):
+                sources[field] = copy.deepcopy(meta)
+            elif field in old:
+                merged[field] = old[field]
+        for field in old.get("field_sources") or {}:
+            if field not in (incoming.get("field_sources") or {}) and field in old:
+                merged[field] = old[field]
+        merged["field_sources"] = sources
+        merged["capture_sources"] = sorted(
+            {m["capture_source"] for m in sources.values() if m.get("capture_source")}
+        )
+        for prefix in ("mark", "index"):
+            meta = sources.get(prefix + "_price")
+            if meta:
+                for suffix in ("as_of", "as_of_prec", "as_of_prec_reason"):
+                    merged[prefix + "_" + suffix] = meta.get(suffix)
+        merged["unclocked_components"] = (old.get("unclocked_components") or {}) | (
+            incoming.get("unclocked_components") or {}
+        )
+    merged["semantic_fingerprint"] = semantic_fingerprint(merged)
+    return merged
+
+
+async def put_market_batch(self, collection, records, *, keys=None):
+    return await _put_market_batch(self, collection, records, keys=keys)
+
+
+async def _put_market_batch(self, collection, records, *, keys=None, _columns=None):
+    # Forward migration import can target a historical typed schema. Ordinary
+    # production writes always use the entire current explicit column contract.
+    columns = MARKET_COLUMNS[collection] if _columns is None else _columns
+    from psycopg import errors, sql
+    from psycopg.types.json import Jsonb
+
+    records = list(records)
+    if not records:
+        return []
+    encoded = [encode(collection, r) for r in records]
+    if _columns is not None:
+        for row in encoded:
+            unsupported = [name for name, value in row.items() if name not in columns and value is not None]
+            if unsupported:
+                raise ValueError(f"Non-null fields unavailable in migration target: {unsupported}")
+    if keys is None:
+        keys = [":".join(str(r.get(k, "")) for k in MARKET_IDENTITIES[collection]) for r in encoded]
+    keys = list(keys)
+    if len(keys) != len(records):
+        raise ValueError("keys and records must have equal lengths")
+    unique = {}
+    identity_keys = {}
+    for key, record in zip(keys, encoded, strict=True):
+        identity = tuple(
+            str(key) if name == "storage_key" else record.get(name) for name in MARKET_IDENTITIES[collection]
+        )
+        if any(value is None or value == "" for value in identity):
+            raise ValueError(f"Missing typed market identity {collection}: {MARKET_IDENTITIES[collection]}")
+        previous_key = identity_keys.get(identity)
+        if previous_key is not None:
+            previous_record = unique.pop(previous_key)
+            if collection in ("mkt.funding_obs", "mkt.tickers_24h"):
+                record = encode(collection, merge_point(collection, previous_record, record))
+        identity_keys[identity] = str(key)
+        record["semantic_fingerprint"] = semantic_fingerprint(record)
+        unique[str(key)] = record
+    if not hasattr(self, "_conn"):
+        changed = []
+        async with self.transaction():
+            rows = self._data.setdefault(collection, {})
+            for key, row in unique.items():
+                value = decode(collection, row)
+                previous = key if key in rows else None
+                if key not in rows:
+                    identity = tuple(value.get(n) for n in MARKET_IDENTITIES[collection])
+                    previous = (
+                        next(
+                            (
+                                k
+                                for k, v in rows.items()
+                                if tuple(v.get(n) for n in MARKET_IDENTITIES[collection]) == identity
+                            ),
+                            None,
+                        )
+                        if "storage_key" not in MARKET_IDENTITIES[collection]
+                        else None
+                    )
+                old = rows.get(previous, {})
+                if old and collection in ("mkt.funding_obs", "mkt.tickers_24h"):
+                    value = merge_point(collection, old, value)
+                if old.get("semantic_fingerprint") != value["semantic_fingerprint"]:
+                    if collection == "mkt.raw_archives" and old.get("status") == "SEALED":
+                        from tank.storage import ImmutableRecordError
+
+                        raise ImmutableRecordError("Immutable sealed raw archive")
+                    if previous is not None and previous != key:
+                        rows.pop(previous)
+                    rows[key] = value
+                    changed.append(value.copy())
+        return changed
+    names = ["storage_key", *columns]
+    arrays = []
+    for name in names:
+        kind = "text" if name == "storage_key" else columns[name]
+        values = []
+        for key, row in unique.items():
+            value = key if name == "storage_key" else row.get(name)
+            values.append(Jsonb(value) if kind in ("jsonb", "text[]") and value is not None else value)
+        arrays.append(values)
+    selection = sql.SQL(",").join(
+        sql.SQL(
+            "CASE WHEN u.{} IS NULL THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(u.{})) END"
+        ).format(sql.Identifier(n), sql.Identifier(n))
+        if columns.get(n) == "text[]"
+        else sql.SQL("coalesce(u.id,nextval('mkt.liq_obs_id_seq'))")
+        if collection == "mkt.liq_obs" and n == "id"
+        else sql.SQL("u.{}").format(sql.Identifier(n))
+        for n in names
+    )
+    unnest_args = sql.SQL(",").join(
+        sql.SQL("%s::{}[]").format(
+            sql.SQL("jsonb" if columns.get(n) == "text[]" else "text" if n == "storage_key" else columns[n])
+        )
+        for n in names
+    )
+    source = sql.SQL("SELECT {} FROM unnest({}) AS u({})").format(
+        selection, unnest_args, sql.SQL(",").join(map(sql.Identifier, names))
+    )
+    table = sql.Identifier(*collection.split("."))
+    identity = MARKET_IDENTITIES[collection]
+    assignments = sql.SQL(",").join(
+        sql.SQL("{}=EXCLUDED.{}").format(sql.Identifier(n), sql.Identifier(n))
+        for n in names
+        if n not in identity
+    )
+    query = sql.SQL(
+        "INSERT INTO {} AS current ({}) {} ON CONFLICT ({}) DO UPDATE SET {} WHERE current.semantic_fingerprint IS DISTINCT FROM EXCLUDED.semantic_fingerprint RETURNING *"
+    ).format(
+        table,
+        sql.SQL(",").join(map(sql.Identifier, names)),
+        source,
+        sql.SQL(",").join(map(sql.Identifier, identity)),
+        assignments,
+    )
+    if collection in ("mkt.funding_obs", "mkt.tickers_24h"):
+        mode = "funding" if collection == "mkt.funding_obs" else "ticker"
+        merged = sql.SQL("ops.merge_market_point({},to_jsonb(current),to_jsonb(EXCLUDED))").format(
+            sql.Literal(mode)
+        )
+        query = sql.SQL(
+            "INSERT INTO {} AS current ({}) {} ON CONFLICT ({}) DO UPDATE SET ({}) = (SELECT {} FROM jsonb_populate_record(NULL::{}, {}) AS point) WHERE ops.market_semantic({}) IS DISTINCT FROM ops.market_semantic(to_jsonb(current)) RETURNING *"
+        ).format(
+            table,
+            sql.SQL(",").join(map(sql.Identifier, names)),
+            source,
+            sql.SQL(",").join(map(sql.Identifier, identity)),
+            sql.SQL(",").join(map(sql.Identifier, names)),
+            sql.SQL(",").join(sql.SQL("point.{}").format(sql.Identifier(n)) for n in names),
+            table,
+            merged,
+            merged,
+        )
+    try:
+        async with self.transaction():
+            rows = await (await self._conn().execute(query, arrays)).fetchall()
+    except errors.RaiseException as error:
+        if str(error).startswith("immutable sealed raw archive"):
+            from tank.storage import ImmutableRecordError
+
+            raise ImmutableRecordError(str(error)) from error
+        raise
+    return [decode(collection, r) for r in rows]
+
+
+async def latest_market_records(
+    self,
+    collection,
+    *,
+    group_by=("instrument_id",),
+    time_field="ts",
+    filters=None,
+    cutoff=None,
+    assembled_at=None,
+    start=None,
+    instrument_ids=None,
+):
+    """Latest point per typed group after applying semantic/availability bounds.
+
+    Unknown legacy recorded_at remains visible for consumers to classify as unknown/stale;
+    this read does not invent historical availability or precision.
+    """
+    from psycopg import sql
+
+    from tank.storage import _exact_predicate
+
+    columns = MARKET_COLUMNS.get(collection)
+    if columns is None or not group_by:
+        raise ValueError("Latest market records require a market collection and typed grouping")
+    for field in (*group_by, time_field):
+        if field not in columns:
+            raise ValueError(f"Unknown market column {field}")
+    if columns[time_field] != "timestamptz":
+        raise ValueError("Latest market time_field must be a typed timestamp")
+    if instrument_ids is not None:
+        if isinstance(instrument_ids, (str, bytes)) or "instrument_id" not in columns:
+            raise ValueError("instrument_ids requires a typed instrument scope")
+        instrument_ids = list(instrument_ids)
+        if any(not isinstance(value, str) for value in instrument_ids):
+            raise ValueError("instrument_ids must contain instrument identifier strings")
+        instrument_ids = sorted(set(instrument_ids))
+        if not instrument_ids:
+            return []
+    cutoff = parse_time(cutoff) if cutoff is not None else None
+    start = parse_time(start) if start is not None else None
+    assembled_at = parse_time(assembled_at) if assembled_at is not None else None
+    clauses, args = _exact_predicate(collection, filters)
+    for bound, operator in ((start, ">="), (cutoff, "<=")):
+        if bound is not None:
+            clauses.append(sql.SQL("{} " + operator + " %s").format(sql.Identifier(time_field)))
+            args.append(bound)
+    if assembled_at is not None:
+        clauses.append(sql.SQL("(recorded_at IS NULL OR recorded_at<=%s)"))
+        args.append(assembled_at)
+    if not hasattr(self, "_conn"):
+        grouped = {}
+        async for row in self.iter_all(collection, filters=filters):
+            if instrument_ids is not None and row.get("instrument_id") not in instrument_ids:
+                continue
+            at = parse_time(row[time_field]) if row.get(time_field) is not None else None
+            arrival = parse_time(row["recorded_at"]) if row.get("recorded_at") is not None else None
+            if (
+                cutoff is not None
+                and (at is None or at > cutoff)
+                or start is not None
+                and (at is None or at < start)
+                or assembled_at is not None
+                and arrival is not None
+                and arrival > assembled_at
+            ):
+                continue
+            key = tuple(row.get(k) for k in group_by)
+            previous = grouped.get(key)
+            # iter_all is storage-key ascending; replacing ties matches SQL key DESC.
+            if (
+                previous is None
+                or (
+                    at is not None
+                    and (previous.get(time_field) is None or at >= parse_time(previous[time_field]))
+                )
+                or at is None
+                and previous.get(time_field) is None
+            ):
+                grouped[key] = row
+        return list(grouped.values())
+    groups = sql.SQL(",").join(map(sql.Identifier, group_by))
+    if instrument_ids is not None and tuple(group_by) == ("instrument_id",):
+        # Each scope seeks its last point through the existing instrument/time
+        # index. DISTINCT ON over a whole history scans and sorts every point.
+        clauses.append(sql.SQL("instrument_id = scope.instrument_id"))
+        bounded = start is not None or cutoff is not None
+        unique_time = bounded and set(MARKET_IDENTITIES[collection]) <= {*group_by, time_field}
+        tie_breaker = sql.SQL("") if unique_time else sql.SQL(",storage_key DESC")
+        query = sql.SQL(
+            "SELECT point.* FROM unnest(%s::text[]) AS scope(instrument_id) "
+            "CROSS JOIN LATERAL (SELECT * FROM {} WHERE {} "
+            "ORDER BY {} {}{} LIMIT 1) AS point"
+        ).format(
+            sql.Identifier(*collection.split(".")),
+            sql.SQL(" AND ").join(clauses),
+            sql.Identifier(time_field),
+            sql.SQL("DESC" if bounded else "DESC NULLS LAST"),
+            tie_breaker,
+        )
+        args.insert(0, instrument_ids)
+    else:
+        if instrument_ids is not None:
+            clauses.append(sql.SQL("instrument_id = ANY(%s::text[])"))
+            args.append(instrument_ids)
+        query = sql.SQL(
+            "SELECT DISTINCT ON ({}) * FROM {} WHERE {} ORDER BY {},{} DESC NULLS LAST,storage_key DESC"
+        ).format(
+            groups,
+            sql.Identifier(*collection.split(".")),
+            sql.SQL(" AND ").join(clauses) if clauses else sql.SQL("TRUE"),
+            groups,
+            sql.Identifier(time_field),
+        )
+    async with self.transaction():
+        rows = await (await self._conn().execute(query, args)).fetchall()
+    return [decode(collection, row) for row in rows]
+
+
+async def market_dependency_head(
+    self,
+    collection,
+    semantic_field,
+    cutoff,
+    *,
+    start=None,
+    filters=None,
+    instrument_ids=None,
+    assembled_at=None,
+    order="availability",
+):
+    """Availability or semantic-boundary head within a scope, returning metadata only.
+
+    A correction to an old point participates by its actual recorded_at, not by its
+    position in semantic history. Unknown legacy availability is explicitly excluded.
+    Bounds are inclusive; an empty instrument scope never broadens into all instruments.
+    """
+    from psycopg import sql
+
+    from tank.storage import _exact_predicate
+
+    if order not in ("availability", "semantic_latest", "semantic_earliest"):
+        raise ValueError("Unsupported market dependency head order")
+    ascending = order == "semantic_earliest"
+    columns = MARKET_COLUMNS.get(collection)
+    semantic_field = MARKET_ALIASES.get(collection, {}).get(semantic_field, semantic_field)
+    order_field = "recorded_at" if order == "availability" else semantic_field
+    if (
+        columns is None
+        or columns.get(semantic_field) != "timestamptz"
+        or columns.get("recorded_at") != "timestamptz"
+    ):
+        raise ValueError("Dependency heads require typed market semantic and availability timestamps")
+    if instrument_ids is not None:
+        if isinstance(instrument_ids, (str, bytes)):
+            raise ValueError("instrument_ids must contain instrument identifier strings")
+        instrument_ids = list(instrument_ids)
+        if any(not isinstance(value, str) for value in instrument_ids):
+            raise ValueError("instrument_ids must contain instrument identifier strings")
+        instrument_ids = sorted(set(instrument_ids))
+        if not instrument_ids:
+            return None
+        if "instrument_id" not in columns:
+            raise ValueError(f"{collection} has no typed instrument_id")
+    cutoff = parse_time(cutoff)
+    start = parse_time(start) if start is not None else None
+    assembled_at = parse_time(assembled_at) if assembled_at is not None else None
+
+    def metadata(row):
+        return {
+            "storage_key": row["storage_key"],
+            "recorded_at": iso(row["recorded_at"]),
+            "semantic_fingerprint": row.get("semantic_fingerprint"),
+            semantic_field: iso(row[semantic_field]),
+        }
+
+    if not hasattr(self, "_conn"):
+        # Validate filters with the same allowlist even when no rows match.
+        _exact_predicate(collection, filters)
+        selected = None
+        async with self.transaction():
+            for key, row in self._data.get(collection, {}).items():
+                arrival, semantic = row.get("recorded_at"), row.get(semantic_field)
+                if arrival is None or semantic is None:
+                    continue
+                arrival, semantic = parse_time(arrival), parse_time(semantic)
+                if (
+                    semantic > cutoff
+                    or start is not None
+                    and semantic < start
+                    or assembled_at is not None
+                    and arrival > assembled_at
+                ):
+                    continue
+                if instrument_ids is not None and row.get("instrument_id") not in instrument_ids:
+                    continue
+                if any(
+                    row.get(MARKET_ALIASES.get(collection, {}).get(k, k)) != v
+                    for k, v in (filters or {}).items()
+                ):
+                    continue
+                candidate = (arrival if order == "availability" else semantic, key)
+                if selected is None or (candidate < selected[0] if ascending else candidate > selected[0]):
+                    selected = (candidate, metadata(dict(row, storage_key=key)))
+        return selected[1] if selected else None
+    clauses, args = _exact_predicate(collection, filters)
+    clauses.extend(
+        [sql.SQL("recorded_at IS NOT NULL"), sql.SQL("{} <= %s").format(sql.Identifier(semantic_field))]
+    )
+    args.append(cutoff)
+    if start is not None:
+        clauses.append(sql.SQL("{} >= %s").format(sql.Identifier(semantic_field)))
+        args.append(start)
+    if assembled_at is not None:
+        clauses.append(sql.SQL("recorded_at <= %s"))
+        args.append(assembled_at)
+    if instrument_ids is not None:
+        if len(instrument_ids) == 1:
+            clauses.append(sql.SQL("instrument_id = %s"))
+            args.append(instrument_ids[0])
+        else:
+            clauses.append(sql.SQL("instrument_id = ANY(%s::text[])"))
+            args.append(instrument_ids)
+    query = sql.SQL(
+        "SELECT storage_key,recorded_at,semantic_fingerprint,{} FROM {} WHERE {} ORDER BY {} {},storage_key {} LIMIT 1"
+    ).format(
+        sql.Identifier(semantic_field),
+        sql.Identifier(*collection.split(".")),
+        sql.SQL(" AND ").join(clauses),
+        sql.Identifier(order_field),
+        sql.SQL("ASC" if ascending else "DESC"),
+        sql.SQL("ASC" if ascending else "DESC"),
+    )
+    async with self.transaction():
+        row = await (await self._conn().execute(query, args)).fetchone()
+    return metadata(row) if row else None
+
+
+async def iter_market_projection(
+    self,
+    collection,
+    fields,
+    time_field,
+    *,
+    start=None,
+    end=None,
+    filters=None,
+    instrument_ids=None,
+    assembled_at=None,
+    batch_size=1000,
+):
+    """Stream explicitly selected typed columns, never full market records.
+
+    Semantic bounds are [start,end). Unknown legacy availability is retained explicitly.
+    Each keyset page releases its connection before yielding any projected row.
+    """
+    from psycopg import sql
+
+    from tank.storage import _exact_predicate
+
+    columns = MARKET_COLUMNS.get(collection)
+    aliases = MARKET_ALIASES.get(collection, {})
+    time_field = aliases.get(time_field, time_field)
+    fields = list(fields)
+    if columns is None or columns.get(time_field) != "timestamptz":
+        raise ValueError("Market projection requires a typed market time field")
+    if not fields or len(fields) > 100 or len(set(fields)) != len(fields) or batch_size < 1:
+        raise ValueError("Projection requires unique fields and a positive batch size")
+    selected = {field: aliases.get(field, field) for field in fields}
+    if any(field != "storage_key" and field not in columns for field in selected.values()):
+        raise ValueError("Unknown typed market projection field")
+    if instrument_ids is not None:
+        if isinstance(instrument_ids, (str, bytes)):
+            raise ValueError("instrument_ids must contain identifier strings")
+        instrument_ids = list(instrument_ids)
+        if any(not isinstance(value, str) for value in instrument_ids):
+            raise ValueError("instrument_ids must contain identifier strings")
+        if not instrument_ids:
+            return
+        if "instrument_id" not in columns:
+            raise ValueError("Collection lacks instrument_id")
+    start = parse_time(start) if start is not None else None
+    end = parse_time(end) if end is not None else None
+    assembled_at = parse_time(assembled_at) if assembled_at is not None else None
+    # Validate typed predicates even for Memory and empty matching populations.
+    _exact_predicate(collection, filters)
+
+    def project(row, key):
+        result = {}
+        for requested, field in selected.items():
+            value = key if field == "storage_key" else row.get(field)
+            kind = columns.get(field)
+            if value is not None and kind == "timestamptz":
+                value = iso(value)
+            elif value is not None and kind == "numeric":
+                value = str(value)
+            result[requested] = value
+        return result
+
+    after = None
+    while True:
+        if hasattr(self, "_conn"):
+            clauses, args = _exact_predicate(collection, filters)
+            clauses.append(sql.SQL("{} IS NOT NULL").format(sql.Identifier(time_field)))
+            for bound, operator in ((start, ">="), (end, "<")):
+                if bound is not None:
+                    clauses.append(sql.SQL("{} " + operator + " %s").format(sql.Identifier(time_field)))
+                    args.append(bound)
+            if assembled_at is not None:
+                clauses.append(sql.SQL("(recorded_at IS NULL OR recorded_at<=%s)"))
+                args.append(assembled_at)
+            if instrument_ids is not None:
+                clauses.append(sql.SQL("instrument_id=ANY(%s::text[])"))
+                args.append(instrument_ids)
+            if after is not None:
+                clauses.append(sql.SQL("({},storage_key)>(%s,%s)").format(sql.Identifier(time_field)))
+                args.extend(after)
+            expressions = sql.SQL(",").join(
+                sql.SQL("{} AS {}").format(sql.Identifier(field), sql.Identifier(requested))
+                for requested, field in selected.items()
+            )
+            query = sql.SQL(
+                "SELECT {},{} AS _cursor_time,storage_key AS _cursor_key FROM {} WHERE {} ORDER BY {},storage_key LIMIT %s"
+            ).format(
+                expressions,
+                sql.Identifier(time_field),
+                sql.Identifier(*collection.split(".")),
+                sql.SQL(" AND ").join(clauses),
+                sql.Identifier(time_field),
+            )
+            async with self.transaction():
+                raw = await (await self._conn().execute(query, [*args, batch_size])).fetchall()
+            page = []
+            for row in raw:
+                result = {}
+                for requested, field in selected.items():
+                    value = row[requested]
+                    kind = columns.get(field)
+                    if value is not None and kind == "timestamptz":
+                        value = iso(value)
+                    elif value is not None and kind == "numeric":
+                        value = str(value)
+                    result[requested] = value
+                page.append((row["_cursor_time"], row["_cursor_key"], result))
+        else:
+            page = []
+            async with self.transaction():
+                for key, row in self._data.get(collection, {}).items():
+                    at = parse_time(row[time_field]) if row.get(time_field) is not None else None
+                    arrival = parse_time(row["recorded_at"]) if row.get("recorded_at") is not None else None
+                    if (
+                        at is None
+                        or start is not None
+                        and at < start
+                        or end is not None
+                        and at >= end
+                        or assembled_at is not None
+                        and arrival is not None
+                        and arrival > assembled_at
+                    ):
+                        continue
+                    if after and (at, key) <= after:
+                        continue
+                    if instrument_ids is not None and row.get("instrument_id") not in instrument_ids:
+                        continue
+                    if any(row.get(aliases.get(k, k)) != v for k, v in (filters or {}).items()):
+                        continue
+                    page.append((at, key, project(row, key)))
+            page.sort(key=lambda value: value[:2])
+            page = page[:batch_size]
+        for _, _, row in page:
+            yield row
+        if len(page) < batch_size:
+            return
+        after = page[-1][:2]
+
+
+async def market_series_counts(self, instrument_ids, start, cutoff, assembled_at=None):
+    """Count complete finite positive closes of closed native 1m bars per instrument."""
+    from psycopg import sql
+
+    if isinstance(instrument_ids, (str, bytes)):
+        raise TypeError("instrument_ids must be identifiers")
+    instrument_ids = list(instrument_ids)
+    if any(not isinstance(value, str) for value in instrument_ids):
+        raise TypeError("instrument_ids must be identifiers")
+    instrument_ids = sorted(set(instrument_ids))
+    counts = dict.fromkeys(instrument_ids, 0)
+    if not counts:
+        return counts
+    start, cutoff = parse_time(start), parse_time(cutoff)
+    assembled_at = parse_time(assembled_at) if assembled_at is not None else None
+    if not hasattr(self, "_conn"):
+        async for row in self.iter_market_projection(
+            "mkt.klines_1m",
+            ["instrument_id", "open_time", "c", "interval_s"],
+            "open_time",
+            start=start,
+            end=cutoff,
+            filters={"complete": True, "interval_s": 60},
+            instrument_ids=instrument_ids,
+            assembled_at=assembled_at,
+        ):
+            close = Decimal(row["c"]) if row["c"] is not None else None
+            if (
+                close is not None
+                and close.is_finite()
+                and close > 0
+                and parse_time(row["open_time"]) + timedelta(seconds=60) <= cutoff
+            ):
+                counts[row["instrument_id"]] += 1
+        return counts
+    args = [instrument_ids, start, cutoff, cutoff]
+    availability = sql.SQL("")
+    if assembled_at is not None:
+        availability = sql.SQL(" AND (recorded_at IS NULL OR recorded_at<=%s)")
+        args.append(assembled_at)
+    query = sql.SQL(
+        "SELECT instrument_id,count(*) AS n FROM mkt.klines_1m WHERE instrument_id=ANY(%s::text[]) AND open_time>=%s AND open_time<%s AND open_time+interval '60 seconds'<=%s AND interval_s=60 AND complete IS TRUE AND c>0 AND c<'Infinity'::numeric {} GROUP BY instrument_id"
+    ).format(availability)
+    async with self.transaction():
+        rows = await (await self._conn().execute(query, args)).fetchall()
+    counts.update({row["instrument_id"]: row["n"] for row in rows})
+    return counts

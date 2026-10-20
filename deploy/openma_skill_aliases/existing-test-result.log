@@ -1,0 +1,54 @@
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.4 [39m[90m/app/apps/main-node[39m
+
+ [31m❯[39m test/node-managed-session-inputs.test.ts [2m([22m[2m12 tests[22m[2m | [22m[31m2 failed[39m[2m)[22m[32m 11[2mms[22m[39m
+     [32m✓[39m describes mounted custom skills for inclusion in the model system prompt[32m 1[2mms[22m[39m
+     [32m✓[39m resolves version-pinned appendable prompts into system prompt reminders[32m 0[2mms[22m[39m
+     [32m✓[39m prepares local provider outputs without calling a FUSE mount when shared OSS publication is selected[32m 0[2mms[22m[39m
+[31m     [31m×[31m materializes file, pinned repository revision, and custom skill before execution[39m[32m 5[2mms[22m[39m
+[31m     [31m×[31m mounts durable outputs and memory stores before materializing inputs[39m[32m 0[2mms[22m[39m
+     [32m✓[39m validates a retained repository before preserving its working tree[32m 1[2mms[22m[39m
+     [32m✓[39m fails closed when retained repository identity does not match the Session resource[32m 1[2mms[22m[39m
+     [32m✓[39m fails closed when the selected sandbox cannot mount durable outputs[32m 0[2mms[22m[39m
+     [32m✓[39m does not require binary writes for provider-owned built-in skills[32m 0[2mms[22m[39m
+     [32m✓[39m fails closed when a memory store is attached to a sandbox without memory mounts[32m 0[2mms[22m[39m
+     [32m✓[39m materializes read-write Managed Memory in a fenced runtime generation[32m 0[2mms[22m[39m
+     [32m✓[39m fails closed when a skill archive contains a parent traversal[32m 0[2mms[22m[39m
+ [32m✓[39m test/tank-stable-skill-paths.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 293[2mms[22m[39m
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m1 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[31m2 failed[39m[22m[2m | [22m[1m[32m17 passed[39m[22m[90m (19)[39m
+[2m   Start at [22m 01:37:02
+[2m   Duration [22m 631ms[2m (transform 176ms, setup 16ms, import 198ms, tests 304ms, environment 0ms)[22m
+
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 2 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m test/node-managed-session-inputs.test.ts[2m > [22mNodeManagedSessionInputPreparer[2m > [22mmaterializes file, pinned repository revision, and custom skill before execution
+[31m[1mError[22m: Stable skill binding rejected[39m
+[36m [2m❯[22m materializeStableSkills ../../packages/control-plane-node/src/lib/node-managed-stable-skills.ts:[2m83:75[22m[39m
+    [90m 81|[39m     [35mconst[39m output [33m=[39m [35mawait[39m sandbox[33m.[39m[34mexec[39m(command[33m,[39m [34m30_000[39m)[33m;[39m
+    [90m 82|[39m     [34massertSucceeded[39m(command[33m,[39m output)[33m;[39m
+    [90m 83|[39m     if (!/(?:^|\n)TANK_STABLE_SKILL_BINDINGS_OK\s*$/u.test(output)) th…
+    [90m   |[39m                                                                           [31m^[39m
+    [90m 84|[39m   }
+    [90m 85|[39m   [35mfor[39m ([35mconst[39m plan [35mof[39m plans) [35mfor[39m ([35mconst[39m file [35mof[39m plan[33m.[39mfiles) {
+[90m [2m❯[22m NodeManagedSessionInputPreparer.prepare ../../packages/control-plane-node/src/lib/node-managed-session-inputs.ts:[2m351:5[22m[39m
+[90m [2m❯[22m test/node-managed-session-inputs.test.ts:[2m185:5[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯[22m[39m
+
+[41m[1m FAIL [22m[49m test/node-managed-session-inputs.test.ts[2m > [22mNodeManagedSessionInputPreparer[2m > [22mmounts durable outputs and memory stores before materializing inputs
+[31m[1mError[22m: Skill metadata and manifest name differ[39m
+[36m [2m❯[22m stableSkillPlan ../../packages/control-plane-node/src/lib/node-managed-stable-skills.ts:[2m39:57[22m[39m
+    [90m 37|[39m   if (input.archive.byteLength > 128 * 1024 * 1024) throw new Error('S…
+    [90m 38|[39m   const archive = unzipSync(input.archive), manifest = skillArchiveMan…
+    [90m 39|[39m   if (manifestName(manifest.body) !== input.name) throw new Error('Ski…
+    [90m   |[39m                                                         [31m^[39m
+    [90m 40|[39m   [35mconst[39m aliasRoot [33m=[39m [32m`/home/user/.skills/[39m[36m${[39minput[33m.[39mname[36m}[39m[32m/`[39m[33m;[39m
+    [90m 41|[39m   const canonicalRoot = `/workspace/.openma/skills/${encodeURIComponen…
+[90m [2m❯[22m NodeManagedSessionInputPreparer.prepare ../../packages/control-plane-node/src/lib/node-managed-session-inputs.ts:[2m346:25[22m[39m
+[90m [2m❯[22m test/node-managed-session-inputs.test.ts:[2m292:5[22m[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯[22m[39m
+

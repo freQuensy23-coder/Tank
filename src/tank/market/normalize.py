@@ -7,7 +7,17 @@ from decimal import Decimal, localcontext
 from functools import wraps
 from inspect import iscoroutinefunction
 
-from tank.util import iso, jsonable, parse_time
+from tank.time_precision import collection_clock, propagate_timestamp
+from tank.util import canonical_json, iso, jsonable, parse_time
+
+
+def timestamp_fields(field, value, precision, *, bucket_size=None):
+    """Emit caller-declared source precision through the shared time contract."""
+    return propagate_timestamp(
+        {field: iso(value) if value is not None else None, field + "_prec": precision},
+        field,
+        bucket_size=bucket_size,
+    ).fields(field)
 
 
 def precise(function):
@@ -144,10 +154,12 @@ def trade(instrument, raw, *, received_ts=None, source="WS"):
             "instrument_id": instrument["instrument_id"],
             "token_id": instrument["token_id"],
             "venue": venue,
+            "venue_symbol": instrument.get("venue_symbol"),
             "market_type": instrument["market_type"],
             "trade_id": str(tid),
-            "ts": iso(ts),
-            "received_ts": iso(received_ts),
+            "source_payload_json": canonical_json(raw),
+            **timestamp_fields("ts", ts, "EXACT"),
+            **collection_clock(received_ts).fields("received_ts"),
             "side": side,
             "qty_native": qty,
             "price": price,
@@ -224,14 +236,14 @@ def kline(instrument, row, *, now=None):
     result = {
         "instrument_id": instrument["instrument_id"],
         "token_id": instrument["token_id"],
-        "open_time": iso(ts),
+        **timestamp_fields("open_time", ts, "BUCKET(60s)"),
         "o": str(decimal(o)),
         "h": str(decimal(h)),
         "l": str(decimal(low)),
         "c": str(decimal(c)),
         "volume_native": str(decimal(v)),
         "complete": complete,
-        "received_ts": iso(now),
+        **collection_clock(now).fields("received_ts"),
         "interval_s": 60,
     }
     for name in ("quote_volume", "n_trades", "taker_buy_native", "taker_buy_quote"):
@@ -252,13 +264,15 @@ def kline(instrument, row, *, now=None):
         if fx is None
         else None,
         quote_usd_rate=fx,
-        quote_usd_rate_as_of=fx_asof,
+        **timestamp_fields(
+            "quote_usd_rate_as_of", fx_asof, instrument.get("quote_usd_rate_as_of_prec") if fx_asof else None
+        ),
     )
     return jsonable(result)
 
 
 @precise
-def oi(instrument, raw, *, mark=None, mark_ts=None, received_ts=None):
+def oi(instrument, raw, *, mark=None, mark_ts=None, mark_ts_prec=None, received_ts=None, bucket_size_s=300):
     received_ts = received_ts or raw.get("_capture_observed_at")
     key = venue_key(instrument)
     sidedness = "SINGLE_SIDED"
@@ -276,7 +290,7 @@ def oi(instrument, raw, *, mark=None, mark_ts=None, received_ts=None):
         if "singleOpenInterest" not in raw:
             raise SemanticError("Bybit singleOpenInterest absent; openInterest cannot substitute")
         value = raw["singleOpenInterest"]
-        ts = raw["timestamp"]
+        ts = raw.get("timestamp")
         metric = key + ".open-interest"
     elif key == "hyperliquid.perp":
         value = raw["openInterest"]
@@ -286,6 +300,27 @@ def oi(instrument, raw, *, mark=None, mark_ts=None, received_ts=None):
         reason = "SIDEDNESS_UNPUBLISHED"
     else:
         raise SemanticError("spot has no OI")
+    if ts is None:
+        raise SemanticError("OI source timestamp absent")
+    bucketed = "Hist" in metric
+    # Bybit historical OI is a timestamped stock sample; intervalTime is
+    # request sampling cadence, not an aggregation window or unknown edge.
+    if bucketed or key == "bybit.linear":
+        allowed = (
+            {300, 900, 1800, 3600, 14400, 86400}
+            if key == "bybit.linear"
+            else {300, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400}
+        )
+        if isinstance(bucket_size_s, bool) or decimal(bucket_size_s) not in allowed:
+            raise SemanticError("OI bucket must match a documented source request period in seconds")
+        bucket_size_s = int(decimal(bucket_size_s))
+    precision = (
+        "COLLECTION_ONLY"
+        if key == "hyperliquid.perp"
+        else f"BUCKET({bucket_size_s}s)"
+        if bucketed
+        else "EXACT"
+    )
     value = decimal(value)
     if value < 0:
         raise SemanticError("negative open interest")
@@ -308,8 +343,10 @@ def oi(instrument, raw, *, mark=None, mark_ts=None, received_ts=None):
         {
             "instrument_id": instrument["instrument_id"],
             "token_id": instrument["token_id"],
-            "ts": iso(ts),
-            "received_ts": iso(received_ts),
+            **timestamp_fields("ts", ts, precision),
+            **collection_clock(received_ts).fields("received_ts"),
+            "ts_bucket_size_s": bucket_size_s if bucketed else None,
+            **({"ts_bucket_anchor": "END" if key == "binance.usdm" else "UNSPECIFIED"} if bucketed else {}),
             "raw_value": str(value),
             "raw_unit": "BASE_QTY",
             "sidedness": sidedness,
@@ -318,18 +355,12 @@ def oi(instrument, raw, *, mark=None, mark_ts=None, received_ts=None):
             "oi_usd": usd,
             "oi_usd_reason": None if usd is not None else "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE",
             "mark_price": str(mark) if mark_aligned else None,
-            "mark_as_of": iso(mark_ts) if mark_aligned else None,
-            "semantic_confidence": "VERIFIED"
-            if metric in instrument.get("semantic_verified_keys", [])
-            else "UNKNOWN",
-            "synchronized_eligible": sidedness == "SINGLE_SIDED"
-            and metric in instrument.get("semantic_verified_keys", []),
+            **timestamp_fields(
+                "mark_as_of", mark_ts if mark_aligned else None, mark_ts_prec if mark_aligned else None
+            ),
+            "synchronized_eligible": sidedness == "SINGLE_SIDED",
             "gap_reason": reason,
-            "timestamp_precision": "COLLECTION_ONLY"
-            if key == "hyperliquid.perp"
-            else "BUCKET"
-            if key == "bybit.linear" or "Hist" in metric
-            else "EXACT",
+            "timestamp_precision": precision,
         }
     )
 
@@ -358,6 +389,14 @@ def funding(instrument, raw, *, kind, interval_h, received_ts=None):
     else:
         raise SemanticError("spot has no funding")
     rate = decimal(rate)
+    source_clock = kind == "SETTLED" or (
+        key.startswith("binance")
+        and (raw.get("time") is not None or raw.get("E") is not None)
+        or key.startswith("okx")
+        and raw.get("ts") is not None
+        or key.startswith("hyperliquid")
+        and raw.get("time") is not None
+    )
     return jsonable(
         dict(
             instrument_id=instrument["instrument_id"],
@@ -366,12 +405,16 @@ def funding(instrument, raw, *, kind, interval_h, received_ts=None):
             rate=rate,
             interval_h=interval,
             rate_8h_eq=rate * 8 / interval,
+            **timestamp_fields("as_of", timestamp, "EXACT" if source_clock else "COLLECTION_ONLY"),
             **(
-                {"funding_time": iso(timestamp), "settlement_time": iso(timestamp)}
+                {
+                    **timestamp_fields("funding_time", timestamp, "EXACT"),
+                    **timestamp_fields("settlement_time", timestamp, "EXACT"),
+                }
                 if kind == "SETTLED"
-                else {"as_of": iso(timestamp)}
+                else {}
             ),
-            received_ts=iso(received_ts),
+            **collection_clock(received_ts).fields("received_ts"),
             metric_key=key + ".funding",
         )
     )
@@ -418,12 +461,14 @@ def liquidation(instrument, raw, *, received_ts=None):
         {
             "instrument_id": instrument["instrument_id"],
             "token_id": instrument["token_id"],
-            "ts": iso(ts),
-            "received_ts": iso(received_ts),
+            **timestamp_fields("ts", ts, "EXACT"),
+            **collection_clock(received_ts).fields("received_ts"),
             "side": side,
             "qty_native": qty,
             "price": price,
             "notional_usd": qty * price * decimal(fx) if fx is not None else None,
+            "null_reasons": {} if fx is not None else {"notional_usd": "INCOMPLETE"},
+            "usd_reason": None if fx is not None else "QUOTE_USD_RATE_UNAVAILABLE",
             "coverage": coverage,
             "price_kind": "BANKRUPTCY" if key in ("okx.swap", "bybit.linear") else "EXECUTION_AVERAGE",
         }

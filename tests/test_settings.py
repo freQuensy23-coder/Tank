@@ -168,7 +168,8 @@ def test_openrouter_alias_secret_and_explicit_provider(tmp_path, monkeypatch):
     assert settings.jev_provider == "openrouter"
     assert "FAKE-prefixed-router" not in repr(settings)
     assert Settings(_env_file=None, openrouter_api_key="FAKE-explicit").openrouter_api_key == "FAKE-explicit"
-    assert Settings(_env_file=None, jev_provider="typesafe").jev_provider == "typesafe"
+    with pytest.raises(ValueError):
+        Settings(_env_file=None, jev_provider="typesafe")
     with pytest.raises(ValueError):
         Settings(_env_file=None, jev_provider="automatic")
 
@@ -188,18 +189,15 @@ def test_codex_auth_default_only_resolves_path(tmp_path, monkeypatch):
     )
 
 
-def test_readiness_requires_only_selected_jev_provider(tmp_path):
+def test_readiness_requires_only_openrouter_key(tmp_path):
     from tank.cli import readiness_checks
 
-    for provider, key in [("openrouter", "openrouter_api_key"), ("typesafe", "typesafe_api_key")]:
-        settings = Settings(
-            _env_file=None, secrets_dir=tmp_path, jev_provider=provider, **{key: "FAKE-ready-key"}
-        )
-        checks = {row["check"]: row for row in readiness_checks(settings)}
-        assert checks[key]["ok"]
-        other = "typesafe_api_key" if provider == "openrouter" else "openrouter_api_key"
-        assert other not in checks
-        assert "FAKE-ready-key" not in str(checks)
+    settings = Settings(_env_file=None, secrets_dir=tmp_path, openrouter_api_key="FAKE-ready-key")
+    checks = {row["check"]: row for row in readiness_checks(settings)}
+    assert checks["openrouter_api_key"]["ok"]
+    assert checks["jev_provider"] == {"check": "jev_provider", "ok": True, "provider": "openrouter"}
+    assert "typesafe_api_key" not in checks
+    assert "FAKE-ready-key" not in str(checks)
 
 
 def test_x_disabled_is_explicit_readiness_scope_not_missing_credentials(tmp_path):

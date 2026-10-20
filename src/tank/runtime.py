@@ -2,11 +2,13 @@
 
 import asyncio
 import logging
+import traceback
 from datetime import timedelta
 
-from tank.delivery import DeliveryService
+from tank.delivery import DeliveryDeferred, DeliveryService
 from tank.scheduler import Scheduler
-from tank.util import iso, parse_time, utcnow
+from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
+from tank.util import parse_time, utcnow
 
 log = logging.getLogger(__name__)
 TIMEOUTS = {
@@ -23,11 +25,7 @@ TIMEOUTS = {
 }
 
 
-class PendingBackfill(RuntimeError):
-    def __init__(self, backfill_id):
-        super().__init__("Durable event capture is still pending")
-        self.backfill_id = backfill_id
-        self.run_after = iso(utcnow() + timedelta(seconds=0.25))
+CAPTURE_WAIT_S = 15  # Included in the 90s numerical job; leaves 75s for the actual assessment.
 
 
 class Runtime:
@@ -85,6 +83,8 @@ class Runtime:
         self.pipeline, self.sessions, self.event_tools = pipeline, sessions, event_tools
         self.delivery = delivery or DeliveryService(repo, settings)
         self.scheduler = scheduler or Scheduler(repo, settings, market, truth)
+        if hasattr(self.event_tools, "scheduler"):
+            self.event_tools.scheduler = self.scheduler
         self.handlers = {
             "FILTER_ITEM": pipeline.filter_item,
             "ROUTE_ITEM": pipeline.route_item,
@@ -109,6 +109,10 @@ class Runtime:
 
     @staticmethod
     def validate_settings(settings):
+        from tank.bootstrap import validate_registry
+
+        if getattr(settings, "capture_only", False):
+            raise ValueError("Historical acquisition settings cannot start the live Tank service")
         if settings.workers != 8:
             raise ValueError("Tank production requires exactly eight workers")
         for name in ("sources", "registry", "semantics", "dependency_map", "thresholds"):
@@ -129,6 +133,9 @@ class Runtime:
         thresholds = settings.load_config("thresholds")
         if thresholds.get("filter_cutoff") is None or thresholds.get("routing_cutoff") is None:
             raise ValueError("Filter and routing cutoffs require calibration before live service startup")
+        # Use the same complete validation as registry synchronization while the
+        # old generation is still live. A malformed reload must not stop it.
+        validate_registry(settings)
 
     async def escalate(self, payload):
         tokens = payload.get("tokens") or ([payload["token_id"]] if payload.get("token_id") else None)
@@ -145,11 +152,15 @@ class Runtime:
         prerequisite = await self.market.capture_readiness(
             payload["event_id"], payload["token_id"], anchor=event_anchor(event)["ts"]
         )
-        if prerequisite["status"] in {"PENDING", "RUNNING"}:
-            raise PendingBackfill(prerequisite["backfill_id"])
-        if prerequisite["status"] not in {"COMPLETE", "PARTIAL", "FAILED"}:
+        if prerequisite["status"] not in {"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"}:
             raise RuntimeError("Required durable event capture was not scheduled")
-        return await self.truth.assess(payload["event_id"], payload["token_id"], payload.get("cutoff"))
+        if prerequisite["status"] in {"PENDING", "RUNNING"}:
+            # The durable capture task is independent of this worker. A bounded
+            # wait uses at most 15s of its 90s budget; timeout remains explicitly
+            # incomplete and never upgrades a venue's measured coverage.
+            await self.market.wait_capture(payload["event_id"], payload["token_id"], timeout_s=CAPTURE_WAIT_S)
+        cutoff = propagate_timestamp(payload, "cutoff") if payload.get("cutoff") is not None else None
+        return await self.truth.assess(payload["event_id"], payload["token_id"], cutoff)
 
     async def scout_review(self, payload):
         if not hasattr(self.sessions, "scout_review"):
@@ -175,7 +186,9 @@ class Runtime:
                 if job.get("expires_at") and parse_time(job["expires_at"]) <= utcnow():
                     # claim_job atomically expires queued jobs; this also protects custom repositories.
                     await self.repo.put(
-                        "ops.jobs", job["job_id"], {**job, "status": "EXPIRED", "finished_at": iso()}
+                        "ops.jobs",
+                        job["job_id"],
+                        {**job, "status": "EXPIRED", **collection_clock(utcnow()).fields("finished_at")},
                     )
                     await self.terminal_delivery_failure(job, "EXPIRED")
                     continue
@@ -192,7 +205,9 @@ class Runtime:
                             **job,
                             "status": "QUEUED",
                             "attempts": max(0, job["attempts"] - 1),
-                            "run_after": iso(utcnow() + timedelta(seconds=0.25)),
+                            **offset_schedule(collection_clock(utcnow()), timedelta(seconds=0.25)).fields(
+                                "run_after"
+                            ),
                         },
                     )
                     continue
@@ -204,24 +219,39 @@ class Runtime:
                 async with self.repo.transaction():
                     await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
                     await self.repo.finish_job(job["job_id"])
+            except DeliveryDeferred as deferred:
+                # Waiting for delivery order or the actual SENT clock is ordinary
+                # scheduling, not a failed Telegram attempt. Keep the accepted
+                # payload and its bounded expiry unchanged across restarts.
+                async with self.repo.transaction():
+                    current = await self.repo.get("ops.jobs", job["job_id"])
+                    if current and current["status"] == "RUNNING":
+                        await self.repo.put(
+                            "ops.jobs",
+                            job["job_id"],
+                            {
+                                **current,
+                                "status": "QUEUED",
+                                "attempts": max(0, current["attempts"] - 1),
+                                **deferred.not_before.fields("run_after"),
+                            },
+                        )
             except asyncio.CancelledError:
                 # Remains RUNNING and is recovered on the next process start.
                 raise
-            except Exception as exc:
-                if getattr(exc, "run_after", None):
-                    await self.repo.put(
-                        "ops.jobs",
-                        job["job_id"],
-                        {
-                            **job,
-                            "status": "QUEUED",
-                            "run_after": exc.run_after,
-                            "attempts": max(0, job["attempts"] - 1),
-                            "last_deferred_reason": type(exc).__name__,
-                        },
-                    )
-                    continue
-                log.error("Job %s (%s) failed: %s", job["job_id"], job["type"], type(exc).__name__)
+            except Exception as exc:  # noqa: BLE001 - persist the failed job and keep the worker alive
+                # asyncio.timeout wraps the cancelled await in TimeoutError;
+                # its cause retains the useful suspended operation frames.
+                failure = exc.__cause__ if isinstance(exc, TimeoutError) and exc.__cause__ else exc
+                frames = " > ".join(
+                    f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}:{frame.name}"
+                    for frame in traceback.extract_tb(failure.__traceback__)
+                )
+                # Exception values can contain provider URLs with credentials.
+                # Function/line locations identify the fault without those values.
+                log.error(
+                    "Job %s (%s) failed: %s [%s]", job["job_id"], job["type"], type(exc).__name__, frames
+                )
                 try:
                     await self.repo.fail_job(
                         job["job_id"],
@@ -254,7 +284,9 @@ class Runtime:
                 if not job.get("delivery_failure_recorded_at"):
                     await self.terminal_delivery_failure(job, status)
                     await self.repo.put(
-                        "ops.jobs", job["job_id"], {**job, "delivery_failure_recorded_at": iso()}
+                        "ops.jobs",
+                        job["job_id"],
+                        {**job, **collection_clock(utcnow()).fields("delivery_failure_recorded_at")},
                     )
 
     @staticmethod
@@ -280,7 +312,7 @@ class Runtime:
         from tank.bootstrap import sync_registry
 
         await sync_registry(self.repo, self.settings)
-        await self.repo.maintain_partitions()
+        await self.repo.maintain_partitions(include_history=False)
 
     async def run(self, stop=None):
         stop = stop or asyncio.Event()
@@ -363,8 +395,7 @@ class Runtime:
                         async with self.repo.lock("job:" + job_id):
                             job = await self.repo.get("ops.jobs", job_id)
                             if job and job["status"] == "RUNNING":
-                                from tank.util import iso
-
+                                interrupted_at = collection_clock(utcnow())
                                 await self.repo.put(
                                     "ops.jobs",
                                     job_id,
@@ -372,8 +403,8 @@ class Runtime:
                                         **job,
                                         "status": "QUEUED",
                                         "attempts": max(0, job["attempts"] - 1),
-                                        "run_after": iso(),
-                                        "interrupted_at": iso(),
+                                        **interrupted_at.fields("run_after"),
+                                        **interrupted_at.fields("interrupted_at"),
                                         "interruption_reason": "CONTROLLED_GENERATION_STOP",
                                     },
                                 )

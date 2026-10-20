@@ -1,0 +1,79 @@
+{
+  "fixture_id": "F-18",
+  "code_version": "dbf5e66bcddd269f578eff6090eb45c03d4cfced825ca0092c9e770070e8cd3c",
+  "config_version": "58daf19e9ed36d477dca6ff543523fd5b7b6cfed-dirty.8f0fddc875fd882448db37391c19dd77659b54caffce24b96f005d86728a03ba",
+  "cli_exit_code": 0,
+  "elapsed_seconds": 63.0954027089756,
+  "framework_status": "COMPLETED",
+  "source_outcomes": [
+    {
+      "item_id": "ITM-01M58FWMV5X5GJEN22WZ1GK5C4",
+      "source_id": "S03",
+      "extraction_status": "DONE"
+    }
+  ],
+  "turn_outcomes": [
+    {
+      "turn_status": "DONE",
+      "retry_count": 0,
+      "failure": null
+    }
+  ],
+  "cards": [],
+  "tool_counts": {
+    "search_tank_items": 1,
+    "record_event": 2,
+    "list_open_events": 1,
+    "set_assessment": 2,
+    "get_item": 1
+  },
+  "tool_refusals": [
+    {
+      "tool": "record_event",
+      "status": "REFUSED",
+      "result": {
+        "ok": false,
+        "error": {
+          "type": "ValueError",
+          "reason": "$.next_milestone: invalid type",
+          "category": "VALIDATION"
+        }
+      }
+    },
+    {
+      "tool": "set_assessment",
+      "status": "REFUSED",
+      "result": {
+        "ok": false,
+        "error": {
+          "type": "ValueError",
+          "reason": "Missing score requires reason",
+          "category": "VALIDATION"
+        }
+      }
+    }
+  ],
+  "native_errors": [],
+  "failed_attempts": [
+    null
+  ],
+  "delivery": "NOT_RUN",
+  "exports_complete": true,
+  "large_inputs_retained_losslessly": [
+    {
+      "path": "qa-r40-masked-f18-driver/framework-bundles/f5b155a3bf0fed1a1ac7eab29312414fdbe9dedc3784ad7ac15cae4badd1fa64/inputs.json",
+      "bytes": 209350,
+      "sha256": "6b580eabd88c0f53a600c7d3846a8f0b5116fa8a545ac345de36b4d8cf53028c",
+      "retained": "losslessharvestarchive+canonicalbundle+hostpreparedcompressedpacket"
+    }
+  ],
+  "frozen_database": "tank_replay_r40_masked_f18_completed_20261019",
+  "database_oid": 1266528,
+  "native_cleanup": {
+    "catalog_empty": true,
+    "qa_healthy": true,
+    "no_active_replay_connections": true
+  },
+  "guard_errors": [],
+  "acceptance_scope": "masked_F18_first_outcome;sealed_evaluator_separate;not_normalRuntime_or_SENT"
+}

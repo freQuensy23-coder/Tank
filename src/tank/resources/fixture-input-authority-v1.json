@@ -1,0 +1,154 @@
+{
+  "schema": "tank.fixture-input-authority.v1",
+  "original_manifest_sha256": "86cda04f53b7b8032655ed40ce53e78e2d123f9a146131b0afb91201121c334c",
+  "cases": [
+    {
+      "fixture_id": "F-01",
+      "synthetic": false,
+      "cutoff_spec": "21 Sep 2026 15:02"
+    },
+    {
+      "fixture_id": "F-02",
+      "synthetic": false,
+      "cutoff_spec": "22 Sep 2026 18:52"
+    },
+    {
+      "fixture_id": "F-03",
+      "synthetic": false,
+      "cutoff_spec": "24 Sep 2026 16:12"
+    },
+    {
+      "fixture_id": "F-04",
+      "synthetic": false,
+      "cutoff_spec": "25 Sep 2026 11:33"
+    },
+    {
+      "fixture_id": "F-05",
+      "synthetic": false,
+      "cutoff_spec": "26 Sep 2026 03:50"
+    },
+    {
+      "fixture_id": "F-06",
+      "synthetic": false,
+      "cutoff_spec": "26 Sep 2026 16:34"
+    },
+    {
+      "fixture_id": "F-07",
+      "synthetic": false,
+      "cutoff_spec": "24 Sep 2026 17:05"
+    },
+    {
+      "fixture_id": "F-08",
+      "synthetic": false,
+      "cutoff_spec": "24 Sep 2026 20:15"
+    },
+    {
+      "fixture_id": "F-09",
+      "synthetic": false,
+      "cutoff_spec": "18 Sep 2026 09:30"
+    },
+    {
+      "fixture_id": "F-10",
+      "synthetic": false,
+      "cutoff_spec": "18 Sep 2026 17:12"
+    },
+    {
+      "fixture_id": "F-11",
+      "synthetic": false,
+      "cutoff_spec": "16 Oct 2026 12:30 UTC"
+    },
+    {
+      "fixture_id": "F-12",
+      "synthetic": false,
+      "cutoff_spec": "26 Sep 2026 23:00"
+    },
+    {
+      "fixture_id": "F-13",
+      "synthetic": false,
+      "cutoff_spec": "24 Sep 2026 16:00"
+    },
+    {
+      "fixture_id": "F-14",
+      "synthetic": false,
+      "cutoff_spec": "27 Sep 2026 23:00"
+    },
+    {
+      "fixture_id": "F-15",
+      "synthetic": false,
+      "cutoff_spec": "23 Sep 2026 07:00"
+    },
+    {
+      "fixture_id": "F-16",
+      "synthetic": false,
+      "cutoff_spec": "15 Sep 2026 23:59"
+    },
+    {
+      "fixture_id": "F-17",
+      "synthetic": false,
+      "cutoff_spec": "15 Oct 2026 18:00"
+    },
+    {
+      "fixture_id": "F-18",
+      "synthetic": false,
+      "cutoff_spec": "13 Oct 2026"
+    },
+    {
+      "fixture_id": "F-19",
+      "synthetic": false,
+      "cutoff_spec": "6 Oct 2026"
+    },
+    {
+      "fixture_id": "F-20",
+      "synthetic": false,
+      "cutoff_spec": "5 Oct 2026"
+    },
+    {
+      "fixture_id": "F-21",
+      "synthetic": false,
+      "cutoff_spec": "16 Oct 2026 11:45"
+    },
+    {
+      "fixture_id": "F-22",
+      "synthetic": false,
+      "cutoff_spec": "14 Oct 2026 03:30"
+    },
+    {
+      "fixture_id": "F-23",
+      "synthetic": true,
+      "cutoff_spec": "27 Sep 2026",
+      "source_leads": []
+    },
+    {
+      "fixture_id": "F-24",
+      "synthetic": true,
+      "cutoff_spec": "post + 1 min",
+      "source_leads": [
+        "Robinhood to list LIT"
+      ]
+    },
+    {
+      "fixture_id": "F-25",
+      "synthetic": true,
+      "cutoff_spec": "16 Oct 2026 12:01",
+      "source_leads": [
+        "Yesterday we shipped X and told all the press, sorry for posting late"
+      ]
+    },
+    {
+      "fixture_id": "F-26",
+      "synthetic": true,
+      "cutoff_spec": "post + 1 min",
+      "source_leads": [
+        "We will integrate WLD and OpenAI"
+      ]
+    },
+    {
+      "fixture_id": "F-27",
+      "synthetic": true,
+      "cutoff_spec": "quote + 1 min",
+      "source_leads": [
+        "Bybit pivots to making condoms"
+      ]
+    }
+  ]
+}

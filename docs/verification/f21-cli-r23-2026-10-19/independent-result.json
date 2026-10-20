@@ -1,0 +1,95 @@
+{
+  "status": "PASS_F21_DECLARED_REFERENCE_BEHAVIOR",
+  "session_id": "session_8oOe3Xco1b0DG_2kGSn7o",
+  "run_id": "RPL-01M59DHBE16Q3FXHAHR929H2KT",
+  "code_version": "d834e00858abf7aef8890504b44246bfbf4b09a672513279f401b6eb196908b0",
+  "config_version": "1b860c8ab2add6ae17d3d515fd1e67f4c5ba595d-dirty.db8fcccf8d4a5a9d55ad87c905f9fb3ec45f0610900cfe21ad1d155a1e381564",
+  "elapsed_seconds_including_gateway_cleanup": 85.101817,
+  "class": "LOW",
+  "universe_tokens": [],
+  "events": 1,
+  "assessments": 2,
+  "source_status": "DONE",
+  "cards": 0,
+  "deliveries": 0,
+  "returned_tool_calls": 8,
+  "verified_quotes": 2,
+  "native_execution_barrier_complete": true,
+  "verified_workflow_bindings": 7,
+  "workflow_proof": {
+    "33347accefed79f16c30476b5c4010da0847f4d8ea05ebe4d77f249598575639": {
+      "item_id": "ITM-01M55CC7Y57314BDMPWFDP0RDC",
+      "outcome": "DONE",
+      "version": 3,
+      "workflow": {
+        "valid": true,
+        "ems_id": "EMS-01M59DK9Q5SW10NXZTQ71RDFKT",
+        "reason": "BELOW_MAJOR_STOP",
+        "attempt": 0,
+        "version": 1,
+        "bindings": [
+          {
+            "sha256": "cff913cf4e5a22a2993d7320b82973189395f24933c630155902ba23ab564cd2",
+            "call_id": "call_66b01ad2b9c647528fa9c2b63c2b45b9|fc_0e89d6f22d22f0d9016ad5b890136c81918c67a67c9681a416"
+          },
+          {
+            "sha256": "05dd2a5876f6166fc46184b49be8e31260db298e26d19f90ffcaa75509d03505",
+            "call_id": "call_ea429486bf21401290b81cc7416a758b|fc_0e89d6f22d22f0d9016ad5b89267988191bf24502bd7edf706"
+          },
+          {
+            "sha256": "490379bb9fd5f3ada350de72ce053082b7223f10d126f5744cd0cf390b9da02c",
+            "call_id": "call_d94290df8827484d93e59524bd90e1e5|fc_0e89d6f22d22f0d9016ad5b89267988191bbfb277472083317"
+          },
+          {
+            "sha256": "cab38cab1ca266ea59f892d36679edbbaa40357202cd2d57440ce09c5bfe6a36",
+            "call_id": "call_7735a905b0ec4aec8662a223048d903e|fc_0e89d6f22d22f0d9016ad5b8926798819183ea36e1b50c9a11"
+          },
+          {
+            "sha256": "c15dbc0c2621e0ba7531920ca24ad96c3f6c463e66ae60d2f0f691593a993e81",
+            "call_id": "call_dfac56a084b24a72b6bec143ded4e445|fc_0e89d6f22d22f0d9016ad5b89627f08191ba035ef2cebfb246"
+          },
+          {
+            "sha256": "27acc9c2cc3700fe34eb98259f5f8ff9c273eece744df5ad19c1f9944f7ffee3",
+            "call_id": "call_db1242324e0944ea81e968ed201bfb8b|fc_0e89d6f22d22f0d9016ad5b8ababdc819186d7aacfe0bfd800"
+          },
+          {
+            "sha256": "829aa617056eadbe1b2960a7eb4e1861437347d821468739a7b029106a7e52e2",
+            "call_id": "call_117712f889e34c6baa44feca4dbb5585|fc_0e89d6f22d22f0d9016ad5b8b691dc81918f5b1e8aee790ba6"
+          }
+        ],
+        "event_id": "EVT-01M59DJBXVP8RQ9JNVS4DNFVZY",
+        "ems_class": "LOW",
+        "message_id": "33347accefed79f16c30476b5c4010da0847f4d8ea05ebe4d77f249598575639"
+      },
+      "retry_attempt": 0,
+      "native_input_id": "sevt_req_c7604fc2661c59a63e9c7e88159823c4cf3b95480dfc6fc24874157bc7d6d8b7_0"
+    }
+  },
+  "archive": {
+    "session_id": "session_8oOe3Xco1b0DG_2kGSn7o",
+    "archived_at": "2026-10-19T06:29:38.481Z",
+    "status": "idle",
+    "environment_id": "env_dKKaX4PPOkS56zBn9pDSk",
+    "agent_id": "agent_mq5GXfZtPf8t29FrpcX53",
+    "model_id": "gpt-6.1-sol",
+    "skills": [
+      {
+        "skill_id": "skill_X0N7EFjZdWYOKK21xoQ5N",
+        "type": "custom",
+        "version": "1792384233810000"
+      },
+      {
+        "skill_id": "skill_qoxVLm8qNiekCEyCgsTxp",
+        "type": "custom",
+        "version": "1792384233829000"
+      }
+    ],
+    "readback_archived": true
+  },
+  "native_catalog": [],
+  "fixture_assertions_passed": true,
+  "historical_live_performance_claim": false,
+  "source_capture_scope": "Retrospective reference; original retained item and cutoff unchanged; new direct-page title/description match supports optional fetch result. Agent did not need fetch_page.",
+  "full_runtime_e2e": false,
+  "universe_tokens_basis": "Accepted record_event input, verified against empty token decision/card outputs"
+}

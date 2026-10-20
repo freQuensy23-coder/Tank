@@ -1,0 +1,29 @@
+--- data/qa/openma-archive-boundary-fix-20261020/baseline/packages/control-plane-node/src/lib/node-managed-session-runtime.ts	2026-10-20 13:58:24
++++ data/qa/openma-archive-boundary-fix-20261020/candidate/packages/control-plane-node/src/lib/node-managed-session-runtime.ts	2026-10-20 13:59:23
+@@ -282,14 +282,25 @@
+   }
+ 
+   async stop(input: StopNodeManagedSessionRuntime): Promise<void> {
++    const signal = this.startAborts.get(input)?.signal;
+     this.cancel({
+       workspaceId: input.workspaceId,
+       sessionId: input.sessionId,
+       reason: `session_${input.reason}`,
+     });
++    const expectedCancellation = (error: unknown) => ['archived', 'deleted'].includes(input.reason)
++      && isAbortError(error) && signal?.aborted && signal.reason === error
++      && [`session_${input.reason}`, 'session_stopped'].includes((error as Error).message);
++    let startupFailed = false, startupError: unknown;
++    try { await this.starts.get(input); } catch (error) { startupFailed = true; startupError = error; }
+     try {
++      // Startup must finish its cancellation/compensation before final cleanup.
++      // Cleanup errors always propagate, even for an expected operator abort.
+       await this.dependencies.engine.stop(input);
+-      await this.outputChains.get(input);
++      let outputFailed = false, outputError: unknown;
++      try { await this.outputChains.get(input); } catch (error) { outputFailed = true; outputError = error; }
++      if (startupFailed && !expectedCancellation(startupError)) throw startupError;
++      if (outputFailed && !expectedCancellation(outputError)) throw outputError;
+     } finally {
+       this.starts.delete(input);
+       this.eventStamps.delete(input);

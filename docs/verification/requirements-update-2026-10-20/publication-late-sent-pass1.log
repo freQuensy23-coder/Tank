@@ -1,0 +1,81 @@
+....F.........................s.......................                   [100%]
+=================================== FAILURES ===================================
+____________ test_invalidated_session_waits_for_every_call_to_close ____________
+
+    @pytest.mark.asyncio
+    async def test_invalidated_session_waits_for_every_call_to_close():
+        repo = MemoryRepository()
+        await repo.put("evt.events", "e", {"event_id": "e", "lifecycle": "INVALIDATED"})
+        await repo.put(
+            "ana.calls", "open", {"call_id": "open", "event_id": "e", "token_id": "t", "status": "OPEN"}
+        )
+        await repo.put(
+            "out.alerts",
+            "a:1",
+            {
+                "alert_id": "a",
+                "version": 1,
+                "event_id": "e",
+                "kind": "UPDATE",
+                "terminal_correction": True,
+                "card_text": "Denial",
+                "decisions": [],
+            },
+            immutable=True,
+        )
+        settings = SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda r: httpx.Response(200, json={"ok": True, "result": {"message_id": 9}})
+            )
+        ) as http:
+            service = DeliveryService(repo, settings, http=http)
+            await service.deliver({"alert_id": "a", "version": 1})
+            assert not (await repo.get("evt.events", "e")).get("session_finalized_at")
+            await repo.put(
+                "ana.decisions", "exit", {"dec_id": "exit", "event_id": "e", "token_id": "t", "action": "EXIT"}
+            )
+            await repo.put(
+                "out.alerts",
+                "a:2",
+                {
+                    "alert_id": "a",
+                    "version": 2,
+                    "event_id": "e",
+                    "kind": "UPDATE",
+                    "terminal_correction": True,
+                    "card_text": "EXIT denial",
+                    "decisions": ["exit"],
+                },
+                immutable=True,
+            )
+>           await service.deliver({"alert_id": "a", "version": 2})
+
+tests/test_delivery.py:193: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <tank.delivery.DeliveryService object at 0x1079f02f0>
+payload = {'alert_id': 'a', 'version': 2}
+
+    async def deliver(self, payload):
+        if payload.get("notice_id"):
+            error = await self._deliver(payload)
+        else:
+            rows = await self._all(
+                "out.alerts", filters={"alert_id": payload["alert_id"], "version": payload["version"]}
+            )
+            if not rows:
+                raise ValueError("Delivery subject does not exist")
+            # Serialize each event's network sends so updates retain their original reply anchor.
+            async with self.repo.lock("event:" + rows[0]["event_id"]):
+                error = await self._deliver(payload)
+        if isinstance(error, DeliveryError):
+            if getattr(error, "terminal", False):
+                await self.terminal_failure(payload, error, 5)
+>           raise error
+E           tank.delivery.DeliveryDeferred: Accepted card is scheduled for later delivery
+
+src/tank/delivery.py:131: DeliveryDeferred
+=========================== short test summary info ============================
+FAILED tests/test_delivery.py::test_invalidated_session_waits_for_every_call_to_close
+1 failed, 52 passed, 1 skipped in 1.94s

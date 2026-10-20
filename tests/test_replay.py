@@ -101,7 +101,83 @@ def test_clock_and_query_bounds(packet):
 def test_manifest_honest():
     manifest = json.loads((Path(__file__).parent / "fixtures/manifest.json").read_text())
     assert len(manifest["fixtures"]) == 27
-    assert all(f["readiness"] == "INCOMPLETE_PACKET" for f in manifest["fixtures"])
+    baseline = json.loads((Path(__file__).parent / "fixtures/authoritative-definitions-v2.json").read_text())
+    from fixture_acceptance import specification_cases
+
+    from tank.util import sha256
+
+    prior = json.loads((Path(__file__).parent / "fixtures/authoritative-definitions-v1.json").read_text())
+    assert baseline["definition_version"] == 2
+    assert baseline["previous_definition_sha256"] == sha256(
+        (Path(__file__).parent / "fixtures/authoritative-definitions-v1.json").read_bytes()
+    )
+    changed = []
+    specification = specification_cases(Path(__file__).resolve().parents[1])
+    for original, accepted in zip(prior["fixtures"], baseline["fixtures"], strict=True):
+        assert {k: v for k, v in original.items() if k != "assertion_spec"} == {
+            k: v for k, v in accepted.items() if k != "assertion_spec"
+        }
+        if original["assertion_spec"] != accepted["assertion_spec"]:
+            changed.append(accepted["fixture_id"])
+        assert accepted["assertion_spec"] == specification[accepted["fixture_id"]]["assertion_spec"]
+    assert changed == ["F-01", "F-12", "F-18"]
+    coverage_fields = {
+        "capture_references",
+        "readiness",
+        "missing",
+        "acceptance_input",
+        "private_name_map",
+        "sealed_outcomes",
+        "acceptance_run",
+        "acceptance_history",
+        "execution_attempts",
+    }
+    partial_states = {
+        "SOURCE_REFERENCE_PREPARED_NOT_FULL_CASE_PASSED",
+        "SOURCE_REFERENCE_EXECUTED_PARTIAL_ASSERTION_COVERAGE",
+        "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+        "INSUFFICIENT_PRIMARY_OR_ASOF_EVIDENCE",
+        "PARTIAL_F23_NOT_FULL_NEW_NEWS_ITEM_CASE",
+        "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+        "EXECUTED_ACCEPTANCE_FAILED",
+        "EXECUTED_NATIVE_FAILED_MISSING_CAPTURE",
+        "EXECUTED_REPLAY_INPUT_INCOMPLETE",
+    }
+    completed_states = {"COMPLETE", "PASSED", "EXECUTED_ACCEPTANCE_PASSED", "R37_NATIVE_ACCEPTANCE_PASSED"}
+    for original, current in zip(baseline["fixtures"], manifest["fixtures"], strict=True):
+        for prior_run in current.get("acceptance_history", []):
+            assert set(prior_run) <= coverage_fields | {"superseded_reason"}
+        for attempt in current.get("execution_attempts", []):
+            assert set(attempt) == {"path", "sha256"}
+            assert (
+                sha256((Path(__file__).resolve().parents[1] / attempt["path"]).read_bytes())
+                == attempt["sha256"]
+            )
+        # New real input references must not change a case, cutoff or assertion,
+        # and partial coverage must not be promoted to full fixture acceptance.
+        assert {k: v for k, v in original.items() if k not in coverage_fields} == {
+            k: v for k, v in current.items() if k not in coverage_fields
+        }
+        if current["readiness"] in {"READY_FOR_ACCEPTANCE"} | completed_states:
+            from fixture_acceptance import check_completed, check_ready
+
+            root = Path(__file__).resolve().parents[1]
+            assert not check_ready(root, current)
+            if current["readiness"] in completed_states:
+                assert not check_completed(root, current)
+        else:
+            assert current["readiness"] in partial_states
+        assert current["capture_references"]
+        assert all(
+            ref.get("historical_acceptance_claimed") is not True for ref in current["capture_references"]
+        )
+        if current["readiness"] == "SOURCE_REFERENCE_EXECUTED_PARTIAL_ASSERTION_COVERAGE":
+            executions = [
+                ref
+                for ref in current["capture_references"]
+                if ref["kind"] == "HOST_ONLY_ACTUAL_FRESH_SESSION_REFERENCE_RESULT"
+            ]
+            assert executions and all(ref.get("full_fixture_passed") is False for ref in executions)
     assert manifest["fixtures"][15]["known_conflict"] is None
     assert "Market context STRESS" in manifest["fixtures"][15]["assertion_spec"]
     assert manifest["fixtures"][15]["expectation_status"] == "CURRENT_SPEC_ALIGNED"
@@ -131,8 +207,8 @@ async def test_bundle_reproduction_reexecutes_captured_tools(packet, tmp_path):
     root.mkdir(parents=True)
     (root / "F-01.json").write_text(json.dumps(data))
     config = settings().model_copy(update={"data_dir": tmp_path})
-    first = await replay_fixture(MemoryRepository(), config, "F-01")
-    second = await reproduce_bundle(MemoryRepository(), config, digest(data))
+    first = await replay_fixture(MemoryRepository(), config, "F-01", mode="captured-tools")
+    second = await reproduce_bundle(MemoryRepository(), config, digest(data), mode="captured-tools")
     assert second["reproduced"] and second["output_sha256"] == first["output_sha256"]
 
 
@@ -208,6 +284,7 @@ async def test_replays_mutation_and_remaps_captured_generated_ids(packet):
                 "predicate": "deployed",
                 "object": "Synthetic token",
                 "state_claim": "LIVE",
+                "verified": True,
                 "directionality": "NONE",
                 "evidence_class": "PRIMARY_FACT",
                 "quote": quote,
@@ -275,7 +352,11 @@ def test_masking_preserves_original_and_private_map_is_not_pipeline_input(packet
         load_inputs(masked, settings())
 
 
-async def test_fresh_replay_session_reruns_market_and_decision_code(packet, tmp_path):
+@pytest.mark.parametrize("captured_http_status", [None, 404, 503])
+@pytest.mark.parametrize("transient_case", [None, "scope_refusal", "lost_decision_ack"])
+async def test_fresh_replay_session_reruns_market_and_decision_code(
+    packet, tmp_path, captured_http_status, transient_case
+):
     import asyncio
     import copy
 
@@ -338,6 +419,8 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(packet, tmp_
             {
                 "event_id": event_id,
                 "event_state": "APPROVED",
+                "statement": "Synthetic replay source",
+                "entities": [],
                 "state_verified": True,
                 "freshness": "FRESH",
                 "certainty": "HIGH",
@@ -452,6 +535,18 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(packet, tmp_
             ),
         ]
     )
+    captured_error = {
+        "ok": False,
+        "error": {
+            "type": "HTTPStatusError",
+            "reason": f"Source request failed (HTTP {captured_http_status})",
+            "category": "SOURCE_HTTP",
+        },
+    }
+    if captured_http_status:
+        for collection, key, row in records:
+            if collection == "ops.tool_calls" and key == old_sid + ":old-web":
+                row.update(status="ERROR", is_error=True, result=captured_error)
     data["records"] = [
         {"collection": collection, "key": key, "available_at": earlier, "record": row}
         for collection, key, row in records
@@ -470,8 +565,38 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(packet, tmp_
         async def aclose(self):
             pass
 
+    accepted_inputs = []
+    decision_ack_bodies = []
+
     async def transport(request):
+        if request.url.path.endswith("/executions"):
+            assert request.method == "GET"
+            ids = request.url.params.get_list("ids[]")
+            assert ids and len(ids) <= 64 and set(ids) <= set(accepted_inputs)
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"execution_id": identity, "state": "COMPLETED", "settled_outcome": "COMPLETED"}
+                        for identity in ids
+                    ]
+                },
+            )
         path = request.url.path
+        if request.method == "GET" and path.rsplit("/", 1)[-1] in {"fresh-session", "fresh-replay-session"}:
+            return httpx.Response(
+                200,
+                json={
+                    "agent": {
+                        "id": "captured-analyst",
+                        "version": 1,
+                        "system": "Fixture analyst prompt",
+                        "skills": [],
+                        "tools": [],
+                        "model": {"id": "fixture-model"},
+                    }
+                },
+            )
         if path.endswith("/sessions"):
             if request.method == "GET":
                 return httpx.Response(200, json={"data": [{"id": old_sid, "metadata": {}}]})
@@ -483,25 +608,84 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(packet, tmp_
             if request.method == "GET":
                 return httpx.Response(200, json={"data": []})
             event = json.loads(request.content)["events"][0]
-            if event["type"] == "user.message":
+            if event.get("custom_tool_use_id") == "replay-decision":
+                decision_ack_bodies.append(copy.deepcopy(event))
+                if transient_case == "lost_decision_ack" and len(decision_ack_bodies) == 1:
+                    # Native reconnect redelivers the unacknowledged original use.
+                    await queue.put(
+                        (
+                            4,
+                            {
+                                "id": "replay-decision",
+                                "type": "agent.custom_tool_use",
+                                "name": "get_decision",
+                                "input": {"event_id": event_id, "token": "T"},
+                            },
+                        )
+                    )
+                    raise httpx.ReadError("Synthetic lost replay ACK", request=request)
+            accepted_id = "accepted-" + str(len(accepted_inputs) + 1)
+            accepted_inputs.append(accepted_id)
+            if event["type"] == "user.message" and transient_case == "scope_refusal":
+                await queue.put(
+                    (
+                        0,
+                        {
+                            "id": "replay-scope",
+                            "type": "agent.custom_tool_use",
+                            "name": "get_decision",
+                            "input": {"event_id": new_id("EVT"), "token": "T"},
+                        },
+                    )
+                )
+            elif event["type"] == "user.message" or event.get("custom_tool_use_id") == "replay-scope":
+                if event["type"] != "user.message":
+                    refusal = json.loads(event["content"][0]["text"])
+                    assert refusal["accepted"] is False and refusal["reason"] == "EVENT_SCOPE"
+                    assert isinstance(refusal["error"], str)
                 await queue.put(
                     (
                         1,
                         {
-                            "id": "replay-truth",
+                            "id": "replay-observation",
                             "type": "agent.custom_tool_use",
-                            "name": "get_market_truth",
-                            "input": {"event_id": event_id, "tokens": ["T"]},
+                            "name": "add_observation",
+                            "input": {
+                                "event_id": event_id,
+                                "item_id": item_id,
+                                "link": "CORROBORATION",
+                                "claims": [],
+                                "public_at": {
+                                    "value": earlier,
+                                    "precision": "EXACT",
+                                    "basis": "ITEM_METADATA",
+                                    "quote": None,
+                                },
+                                "freshness": "FRESH",
+                            },
                         },
                     )
                 )
             else:
                 result = json.loads(event["content"][0]["text"])
-                results.append(result)
-                if event["custom_tool_use_id"] == "replay-truth":
+                if event["custom_tool_use_id"] == "replay-observation":
+                    assert not event.get("is_error"), result
                     await queue.put(
                         (
                             2,
+                            {
+                                "id": "replay-truth",
+                                "type": "agent.custom_tool_use",
+                                "name": "get_market_truth",
+                                "input": {"event_id": event_id, "tokens": ["T"]},
+                            },
+                        )
+                    )
+                elif event["custom_tool_use_id"] == "replay-truth":
+                    results.append(result)
+                    await queue.put(
+                        (
+                            3,
                             {
                                 "id": "replay-web",
                                 "type": "agent.custom_tool_use",
@@ -511,9 +695,11 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(packet, tmp_
                         )
                     )
                 elif event["custom_tool_use_id"] == "replay-web":
+                    results.append(result)
+                    assert bool(event.get("is_error")) == bool(captured_http_status)
                     await queue.put(
                         (
-                            3,
+                            4,
                             {
                                 "id": "replay-decision",
                                 "type": "agent.custom_tool_use",
@@ -523,17 +709,19 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(packet, tmp_
                         )
                     )
                 else:
+                    results.append(result)
                     await queue.put(
                         (
-                            4,
+                            5,
                             {
                                 "id": "replay-done",
                                 "type": "session.status_idle",
+                                "execution_id": accepted_id,
                                 "stop_reason": {"type": "end_turn"},
                             },
                         )
                     )
-            return httpx.Response(200, json={})
+            return httpx.Response(200, json={"data": [{"id": accepted_id}]})
         raise AssertionError("Unexpected control-plane request")
 
     class CapturedMarket:
@@ -569,7 +757,12 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(packet, tmp_
             config,
             tools,
             http=http,
-            initial_message={"kind": "ITEM_ADDED", "item_id": item_id, "event_id": event_id},
+            initial_message={
+                "kind": "ITEM_ADDED",
+                "item_id": item_id,
+                "event_id": event_id,
+                "replay_at": data["cutoff"],
+            },
             replay_run_id="unique-replay-run",
             timeout=5,
             output_path=tmp_path / "frozen-fresh-session.json",
@@ -580,11 +773,55 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(packet, tmp_
     assert report["output"]["decisions"][0]["action"] == "WAIT"
     assert results[-1]["action"] == "WAIT"  # deliberately wrong stored START was not reused
     assert results[0]["market_truth"][0]["move_class"] == "UNKNOWN"
-    assert results[1]["text"] == "Synthetic captured page"
+    if captured_http_status:
+        assert results[1] == captured_error
+        captured = await repo.get("ops.tool_calls", report["session_id"] + ":replay-web")
+        assert captured["status"] == "ERROR" and captured["is_error"] is True
+        assert captured["returned_at"]
+    else:
+        assert results[1]["text"] == "Synthetic captured page"
     assert (await repo.get("ops.jobs", future_job))["status"] == "QUEUED"
     assert (await repo.get("ops.agent_sessions", report["session_id"]))[
         "replay_run_id"
     ] == "unique-replay-run"
+
+    assert report["status"] == "COMPLETED"
+    if transient_case == "scope_refusal":
+        refused = await repo.get("ops.tool_calls", report["session_id"] + ":replay-scope")
+        assert refused["result"]["reason"] == "EVENT_SCOPE" and refused["returned_at"]
+
+    decision_receipts = [row for row in report["causal_tool_receipts"] if row["tool"] == "get_decision"]
+    assert len(decision_receipts) == 1
+    assert decision_receipts[0]["source_call_id"] == "old-decision"
+    assert len(await repo.list("ana.decisions")) == 1
+    if transient_case == "lost_decision_ack":
+        assert len(decision_ack_bodies) == 2 and decision_ack_bodies[0] == decision_ack_bodies[1]
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        None,
+        {},
+        {"error": None},
+        {"accepted": False, "reason": "EVENT_SCOPE", "error": "Use the session event"},
+        {"error": {"type": "ReplayError", "reason": None}},
+        {"error": {"type": "ValueError", "reason": "insufficient_fixture is merely input text"}},
+        {"error": {"type": "HTTPStatusError", "reason": "Source request failed (HTTP 503)"}},
+    ],
+)
+def test_replay_error_boundary_preserves_pending_rows_and_ordinary_refusals(result):
+    from tank.replay import missing_capture_error
+
+    assert not missing_capture_error({"result": result})
+    assert missing_capture_error(
+        {
+            "result": {
+                "ok": False,
+                "error": {"type": "ReplayError", "reason": "insufficient_fixture: missing original capture"},
+            }
+        }
+    )
 
 
 async def test_transcript_web_reads_use_only_captured_results(packet, monkeypatch):
@@ -701,3 +938,2607 @@ def test_assembly_does_not_admit_source_revision(packet):
     packet.write_text(json.dumps(data))
     with pytest.raises(ReplayError, match="post-cutoff"):
         load_inputs(packet, settings())
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "valid",
+        "missing_assembly",
+        "early_assembly",
+        "future_trade",
+        "future_boundary",
+        "future_segment",
+        "exchange_observation",
+        "unknown_observation",
+    ],
+)
+def test_reconstructed_quiet_minute_preserves_collection_clock(packet, monkeypatch, case):
+    from copy import deepcopy
+
+    from tank.market import flow, normalize
+    from tank.time_precision import collection_clock
+
+    received = "2026-10-17T00:00:00Z"
+    monkeypatch.setattr(flow, "collection_clock", lambda value=None: collection_clock(received))
+    instrument = {
+        "instrument_id": "binance:spot:QNTUSDT",
+        "token_id": "quant:QNT",
+        "venue": "binance",
+        "market_type": "SPOT",
+        "quote_asset": "USDT",
+    }
+    accumulator = flow.FlowAccumulator()
+    trade = normalize.trade(
+        instrument,
+        {"a": 1, "p": "100", "q": "2", "f": 1, "l": 1, "T": "2026-09-24T11:58:30Z", "m": False},
+        received_ts=received,
+    )
+    accumulator.add(trade, continuity=False)
+    accumulator.prove_range(
+        instrument["instrument_id"],
+        "2026-09-24T11:58:00Z",
+        "2026-09-24T12:00:00Z",
+        complete=True,
+        source="VERIFIED_BINANCE_DAILY_ARCHIVE",
+        observed_at=received,
+    )
+    accumulator.empty_minute(instrument, "2026-09-24T11:59:00Z")
+    bar = accumulator.record((instrument["instrument_id"], "2026-09-24T11:59:00Z"), complete=True)
+    point = bar["reference_points"][0]
+    assert point["complete"] and point["observed_at_prec"] == "COLLECTION_ONLY"
+    assert point["last_trade"]["ts"] == "2026-09-24T11:58:30Z"
+    original = deepcopy(bar)
+    data = json.loads(packet.read_text())
+    data["assembled_at"] = "2026-10-17T01:00:00Z"
+    data["records"] = [{"collection": "mkt.flow_bars_1m", "available_at": received, "record": bar}]
+    if case == "missing_assembly":
+        del data["assembled_at"]
+    elif case == "early_assembly":
+        point["observed_at"] = "2026-10-17T02:00:00Z"
+    elif case == "future_trade":
+        point["last_trade"]["ts"] = "2026-09-24T12:00:01Z"
+    elif case == "future_boundary":
+        point["boundary"] = "2026-09-24T12:00:01Z"
+    elif case == "future_segment":
+        bar["boundary_segments"] = [{"start": "2026-09-24T11:59:00Z", "end": "2026-09-24T12:00:01Z"}]
+    elif case == "exchange_observation":
+        point["observed_at_prec"] = "EXACT"
+    elif case == "unknown_observation":
+        del point["observed_at_prec"]
+    packet.write_text(json.dumps(data))
+    if case == "valid":
+        admitted = load_inputs(packet, settings()).records("mkt.flow_bars_1m")
+        assert admitted == [original]
+    else:
+        with pytest.raises(ReplayError, match="assembled_at|post-cutoff market"):
+            load_inputs(packet, settings())
+
+
+@pytest.mark.parametrize("representation", ["value", "ts"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        "collection",
+        "missing_assembly",
+        "late_receipt",
+        "exchange",
+        "future_trade",
+        "conflicting_values",
+        "null_value",
+        "null_ts",
+    ],
+)
+def test_nested_market_clocks_cannot_bypass_cutoff_or_receipt_bounds(packet, representation, case):
+    data = json.loads(packet.read_text())
+    cutoff = data["cutoff"]
+    receipt = "2026-10-17T00:00:00Z"
+    observed = {representation: receipt, "precision": "COLLECTION_ONLY"}
+    record = {"ts": {representation: cutoff, "precision": "EXACT"}, "observed_at": observed}
+    data["assembled_at"] = "2026-10-17T01:00:00Z"
+    data["records"] = [{"collection": "mkt.oi_obs", "available_at": cutoff, "record": record}]
+    if case == "missing_assembly":
+        del data["assembled_at"]
+    elif case == "late_receipt":
+        record["received_ts"] = {representation: "2026-10-17T02:00:00Z", "precision": "COLLECTION_ONLY"}
+    elif case == "exchange":
+        observed["precision"] = "EXACT"
+    elif case == "future_trade":
+        record["ts"][representation] = "2026-09-24T12:00:01Z"
+    elif case == "conflicting_values":
+        observed["ts" if representation == "value" else "value"] = "2026-10-17T02:00:00Z"
+    elif case == "null_value":
+        observed.update(value=None, ts=receipt)
+    elif case == "null_ts":
+        observed.update(value=receipt, ts=None)
+    packet.write_text(json.dumps(data))
+    if case == "collection":
+        assert load_inputs(packet, settings()).records("mkt.oi_obs") == [record]
+    else:
+        with pytest.raises(ReplayError, match="assembled_at|post-cutoff market|conflicting market timestamp"):
+            load_inputs(packet, settings())
+
+
+async def test_operational_replay_composes_fresh_session_not_captured_tools(packet, monkeypatch):
+    from tank import replay
+    from tank.event_tools import EventToolService
+
+    data = json.loads(packet.read_text())
+    messages = [
+        {"kind": "NEW_ITEM", "item_id": "first", "replay_source_session_id": "original"},
+        {"kind": "ITEM_ADDED", "item_id": "second"},
+    ]
+    messages[0]["replay_at"] = data["cutoff"]
+    data["config"]["replay_messages"] = messages
+    packet.write_text(json.dumps(data))
+    repo = MemoryRepository()
+    config = settings()
+    transport = object()
+
+    async def fresh(path, actual_repo, actual_settings, tools, **kwargs):
+        assert actual_repo is repo and actual_settings is config
+        assert isinstance(tools, EventToolService)
+        assert isinstance(tools.truth.market, replay.ReplayMarketReader)
+        assert kwargs["http"] is transport
+        assert kwargs["initial_message"] == messages[0]
+        assert kwargs["subsequent_messages"] == messages[1:]
+        return {"mode": "FRESH_OPENMA_SESSION"}
+
+    async def forbidden(*args, **kwargs):
+        raise AssertionError("captured-tool diagnostic entered")
+
+    monkeypatch.setattr(replay, "replay_agent_session", fresh)
+    monkeypatch.setattr(replay, "run_captured_tools", forbidden)
+    assert (await replay.run_operational_replay(packet, repo, config, http=transport))[
+        "mode"
+    ] == "FRESH_OPENMA_SESSION"
+
+
+async def test_full_replay_refuses_missing_original_messages_without_fallback(packet, tmp_path):
+    from tank.replay import replay_fixture
+
+    root = tmp_path / "replay" / "inputs"
+    root.mkdir(parents=True)
+    (root / "F-01.json").write_text(packet.read_text())
+    with pytest.raises(ReplayError, match="missing original replay_messages"):
+        await replay_fixture(MemoryRepository(), settings().model_copy(update={"data_dir": tmp_path}), "F-01")
+
+
+def test_operator_cli_defaults_to_fresh_session_and_diagnostic_is_explicit(monkeypatch):
+    from click.testing import CliRunner
+
+    from tank import cli, replay
+
+    seen = []
+
+    async def fixture(repo, settings, identifier, *, mode):
+        seen.append(("fixture", identifier, mode))
+
+    async def reproduce(repo, settings, identifier, *, mode):
+        seen.append(("bundle", identifier, mode))
+
+    def run(fn, **kwargs):
+        import asyncio
+
+        assert kwargs == {"database_url": "postgresql://replay/isolated", "replay": True}
+        asyncio.run(fn(None, None))
+
+    monkeypatch.setattr(cli, "run_db", run)
+    monkeypatch.setattr(replay, "replay_fixture", fixture)
+    monkeypatch.setattr(replay, "reproduce_bundle", reproduce)
+    runner = CliRunner()
+    for args in (
+        ["replay", "F-01"],
+        ["bundle", "reproduce", "a" * 64],
+        ["replay", "F-01", "--mode", "captured-tools"],
+    ):
+        result = runner.invoke(cli.main, args + ["--database-url", "postgresql://replay/isolated"])
+        assert result.exit_code == 0, result.output
+    assert [row[2] for row in seen] == ["fresh-session", "fresh-session", "captured-tools"]
+
+
+@pytest.mark.parametrize("timer_divergence", [False, True])
+async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_seeding(
+    packet, timer_divergence
+):
+    import asyncio
+    import copy
+
+    import httpx
+
+    from tank.analysis.decisions import DecisionEngine
+    from tank.analysis.truth import MarketTruthService
+    from tank.event_tools import EventToolService
+    from tank.replay import ReplayMarketReader, replay_agent_session
+
+    first_at, second_at = "2026-09-24T11:59:00Z", "2026-09-24T12:00:00Z"
+    cfg = {
+        "registry": {"tokens": []},
+        "thresholds": {},
+        "semantics": {},
+        "dependency_map": {},
+        "openma": {"agent_id": "analyst", "environment_id": "live", "replay_environment_id": "replay"},
+    }
+
+    class Config(Settings):
+        def load_config(self, name):
+            return copy.deepcopy(cfg[name])
+
+    config = Config(replay=True, config_version="test", code_version="test", _env_file=None)
+    from tank.util import sha256
+
+    retained = json.dumps({"data": {"code": "legacy-replay", "publishDate": first_at}}).encode()
+    retained_path = packet.parent / "legacy-detail.json"
+    retained_path.write_bytes(retained)
+    feed = {"url": "https://captured.example/binance-cms", "kind": "json"}
+    cfg["sources"] = {"sources": [{"source_id": "S09", "feeds": [feed]}]}
+    data = json.loads(packet.read_text())
+    data["registry"] = cfg["registry"]
+    data["config"] = {key: value for key, value in cfg.items() if key != "registry"}
+    data["records"] = [
+        {
+            "collection": "ingest.source_items",
+            "key": item,
+            "available_at": at,
+            "record": {
+                "item_id": item,
+                "text": item,
+                "source_class": "PRIMARY",
+                "observed_at": at,
+                **({"observed_at_prec": "BUCKET(1s)"} if item == "first" else {}),
+            },
+        }
+        for item, at in [("first", first_at), ("second", second_at)]
+    ] + [
+        {
+            "collection": "evt.events",
+            "key": "future-original-output",
+            "available_at": second_at,
+            "record": {"event_id": "future-original-output", "statement": "Must be recomputed"},
+        }
+    ]
+    data["records"].append(
+        {
+            "collection": "ingest.source_items",
+            "key": "first",
+            "available_at": second_at,
+            "record": {
+                "item_id": "first",
+                "text": "first revised",
+                "observed_at": first_at,
+                "new_observation": "captured enrichment",
+                "source_id": "S09",
+                "external_id": "legacy-replay",
+                "feed": feed["url"],
+                "raw_ref": str(retained_path),
+                "raw_sha256": sha256(retained),
+                "published_at": first_at,
+                "published_prec": "EXACT",
+                "published_at_precision": "SECOND",
+                "route_event_id": "old-original-event",
+                "event_id": "old-original-event",
+                "session_id": "old-original-session",
+                "extraction_status": "SKIPPED",
+                "body_recovery": {
+                    "recovered_at": second_at,
+                    "recovered_at_prec": "COLLECTION_ONLY",
+                    "original_record": {
+                        "item_id": "first",
+                        "text": "",
+                        "event_id": "SENTINEL-ORIGINAL-EVENT-SECRET-TO-REPLAY",
+                        "route_event_id": "SENTINEL-ORIGINAL-ROUTE-SECRET-TO-REPLAY",
+                        "session_id": "SENTINEL-ORIGINAL-SESSION-SECRET-TO-REPLAY",
+                        "relevance": {"decision": "SENTINEL-ORIGINAL-VERDICT"},
+                        "extraction_status": "DONE",
+                    },
+                },
+            },
+        }
+    )
+    # Synthetic original host transcript binds the rerun origin identity; the
+    # deliberately absent original call counterpart remains the timer divergence.
+    data["records"].extend(
+        [
+            {
+                "collection": "ops.agent_sessions",
+                "key": "original-projection-session",
+                "available_at": first_at,
+                "record": {
+                    "session_id": "original-projection-session",
+                    "opened_by_item": "first",
+                    "event_id": "original-event",
+                },
+            },
+            {
+                "collection": "ops.tool_calls",
+                "key": "original-projection-session:origin",
+                "available_at": first_at,
+                "record": {
+                    "session_id": "original-projection-session",
+                    "call_id": "origin",
+                    "tool": "record_event",
+                    "status": "DONE",
+                    "arguments": {
+                        "item_id": "first",
+                        "is_event": True,
+                        "statement": "first",
+                        "certainty": "MEDIUM",
+                        "certainty_reason": "Synthetic projection actor",
+                        "entities": [],
+                        "tokens": [],
+                        "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
+                        "public_at": {
+                            "value": first_at,
+                            "precision": "EXACT",
+                            "basis": "Synthetic first collection",
+                            "quote": None,
+                        },
+                        "freshness": "FRESH",
+                        "claims": [],
+                        "next_milestone": None,
+                        "checked_sources": [],
+                    },
+                    "result": {"event_id": "original-event"},
+                },
+            },
+        ]
+    )
+    packet.write_text(json.dumps(data))
+    repo, queue, sent, results = MemoryRepository(), asyncio.Queue(), [], []
+    seq = 0
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            while True:
+                event = await queue.get()
+                yield event
+
+    async def emit(event):
+        nonlocal seq
+        seq += 1
+        await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
+
+    accepted_inputs = []
+    actor_stage = None
+    actor_item = None
+    fresh_event_id = None
+
+    async def transport(request):
+        nonlocal actor_stage, actor_item, fresh_event_id
+        if request.url.path.endswith("/executions"):
+            assert request.method == "GET"
+            ids = request.url.params.get_list("ids[]")
+            assert ids and len(ids) <= 64 and set(ids) <= set(accepted_inputs)
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"execution_id": identity, "state": "COMPLETED", "settled_outcome": "COMPLETED"}
+                        for identity in ids
+                    ]
+                },
+            )
+        if request.method == "GET" and request.url.path.endswith("/sessions/new-session"):
+            return httpx.Response(
+                200,
+                json={
+                    "agent": {
+                        "id": "analyst",
+                        "version": 1,
+                        "system": "Synthetic projection actor",
+                        "skills": [],
+                        "tools": [],
+                        "model": {"id": "fixture-model"},
+                    }
+                },
+            )
+        if request.url.path.endswith("/sessions"):
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": []})
+            assert json.loads(request.content)["environment_id"] == "replay"
+            return httpx.Response(201, json={"id": "new-session"})
+        if request.url.path.endswith("/events/stream"):
+            return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
+        if request.url.path.endswith("/archive"):
+            return httpx.Response(200, json={})
+        if request.url.path.endswith("/events"):
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": []})
+            event = json.loads(request.content)["events"][0]
+            accepted_id = "accepted-" + str(len(accepted_inputs) + 1)
+            accepted_inputs.append(accepted_id)
+            if event["type"] == "user.message":
+                content = json.loads(event["content"][0]["text"])
+                item = content["message"]["item_id"]
+                if not sent:
+                    assert await repo.get("ingest.source_items", "second") is None
+                    original = await repo.get("ingest.source_items", "first")
+                    assert "new_observation" not in original
+
+                else:
+                    assert await repo.get("ingest.source_items", "second") is not None
+                    revised = await repo.get("ingest.source_items", "first")
+                    assert revised["new_observation"] == "captured enrichment"
+                    assert revised["route_event_id"] == fresh_event_id
+                    assert revised["extraction_status"] == "DONE"
+                    assert "event_id" not in revised and "session_id" not in revised
+                    assert "SENTINEL-ORIGINAL" not in json.dumps(revised)
+                    assert "original_record" not in revised["body_recovery"]
+                    assert revised["body_recovery"]["original_record_sha256"]
+                    assert revised["published_at_precision"] == "EXACT"
+                    assert "source_metadata_repair" not in revised
+                    assert revised["source_metadata_repair_sha256"]
+                assert await repo.get("evt.events", "future-original-output") is None
+                actor_item, actor_stage = item, "get"
+                sent.append(item)
+                await emit(
+                    {
+                        "id": "get-" + item,
+                        "type": "agent.custom_tool_use",
+                        "name": "get_item",
+                        "input": {"item_id": "first" if item == "second" else item},
+                    }
+                )
+            else:
+                result = json.loads(event["content"][0]["text"])
+                if actor_stage == "get":
+                    results.append(result)
+                    actor_stage = "origin" if actor_item == "first" else "observation"
+                    arguments = (
+                        {
+                            "item_id": actor_item,
+                            "is_event": True,
+                            "statement": "first",
+                            "certainty": "MEDIUM",
+                            "certainty_reason": "Synthetic projection actor",
+                            "entities": [],
+                            "tokens": [],
+                            "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
+                            "public_at": {
+                                "value": first_at,
+                                "precision": "EXACT",
+                                "basis": "Synthetic first collection",
+                                "quote": None,
+                            },
+                            "freshness": "FRESH",
+                            "claims": [],
+                            "next_milestone": None,
+                            "checked_sources": [],
+                        }
+                        if actor_item == "first"
+                        else {
+                            "item_id": actor_item,
+                            "event_id": fresh_event_id,
+                            "link": "CORROBORATION",
+                            "claims": [],
+                            "public_at": {
+                                "value": first_at,
+                                "precision": "EXACT",
+                                "basis": "Synthetic first collection",
+                                "quote": None,
+                            },
+                            "freshness": "FRESH",
+                        }
+                    )
+                    await emit(
+                        {
+                            "id": actor_stage + "-" + actor_item,
+                            "type": "agent.custom_tool_use",
+                            "execution_id": accepted_id,
+                            "name": "record_event" if actor_item == "first" else "add_observation",
+                            "input": arguments,
+                        }
+                    )
+                elif actor_stage == "origin":
+                    from test_event_tools import unknown_assessment
+
+                    assert result.get("event_id"), result
+                    fresh_event_id, actor_stage = result["event_id"], "assessment"
+                    # Preserve this projection fixture's independently tested routing metadata;
+                    # extraction completion itself comes only from the accepted producer.
+                    source = await repo.get("ingest.source_items", "first")
+                    await repo.put(
+                        "ingest.source_items", "first", dict(source, route_event_id=fresh_event_id)
+                    )
+                    await emit(
+                        {
+                            "id": "assessment-first",
+                            "type": "agent.custom_tool_use",
+                            "execution_id": accepted_id,
+                            "name": "set_assessment",
+                            "input": {
+                                "event_id": fresh_event_id,
+                                "assessment": unknown_assessment(klass="MATERIAL"),
+                            },
+                        }
+                    )
+                else:
+                    assert (
+                        result.get("class") in {"LOW", "MATERIAL"}
+                        or result.get("link_type") == "CORROBORATION"
+                    ), result
+                    await emit(
+                        {
+                            "id": "idle-" + str(len(results)),
+                            "type": "session.status_idle",
+                            "execution_id": accepted_id,
+                            "stop_reason": {"type": "end_turn"},
+                        }
+                    )
+            return httpx.Response(200, json={"data": [{"id": accepted_id}]})
+        raise AssertionError("Unexpected request")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        tools = EventToolService(
+            repo,
+            config,
+            MarketTruthService(repo, config, ReplayMarketReader(load_inputs(packet, config))),
+            DecisionEngine(config),
+        )
+        report = await replay_agent_session(
+            packet,
+            repo,
+            config,
+            tools,
+            http=http,
+            initial_message={"kind": "NEW_ITEM", "item_id": "first"},
+            subsequent_messages=[{"kind": "ITEM_ADDED", "item_id": "second"}]
+            + (
+                [
+                    {
+                        "kind": "CALL_EXPIRED",
+                        "replay_at": second_at,
+                        "event_id": "original-event",
+                        "call": {
+                            "call_id": "original-call",
+                            "event_id": "original-event",
+                            "token_id": "T",
+                            "status": "CLOSED",
+                        },
+                    }
+                ]
+                if timer_divergence
+                else []
+            ),
+            timeout=3,
+        )
+    assert report["status"] == ("DIVERGED" if timer_divergence else "COMPLETED")
+    if timer_divergence:
+        assert report["divergence"]["original_message"]["kind"] == "CALL_EXPIRED"
+        assert "unique fresh counterpart" in report["divergence"]["reason"]
+    assert sent == ["first", "second"]
+    assert [row["item_id"] for row in results] == ["first", "first"]
+    assert "SENTINEL-ORIGINAL" not in json.dumps(results)
+    assert report["source_metadata_normalizations"][0]["outcome"] == "VERIFIED"
+    assert "SENTINEL-ORIGINAL" not in json.dumps(report["source_metadata_normalizations"])
+    captured = next(
+        row["record"]
+        for row in json.loads(packet.read_text())["records"]
+        if row["collection"] == "ingest.source_items" and "body_recovery" in row["record"]
+    )
+    assert (
+        captured["body_recovery"]["original_record"]["event_id"] == "SENTINEL-ORIGINAL-EVENT-SECRET-TO-REPLAY"
+    )
+    assert (
+        "original_record"
+        in next(
+            row["record"]
+            for row in data["records"]
+            if row["collection"] == "ingest.source_items" and "body_recovery" in row["record"]
+        )["body_recovery"]
+    )
+    assert report["cleanup_sessions"] == [{"session_id": "new-session", "archived": True}]
+    session = await repo.get("ops.agent_sessions", "new-session")
+    assert [row["sent_at"] for row in session["message_log"]] == [first_at, second_at]
+    assert session["opened_at_prec"] == "BUCKET(1s)"
+    assert session["message_log"][0]["sent_at_prec"] == "BUCKET(1s)"
+    assert session["last_item_at_prec"] is None
+    assert session["last_item_at_prec_reason"] == "INCOMPLETE"
+
+
+def test_original_messages_use_durable_log_not_inferred_tool_calls(packet):
+    from tank.replay import original_replay_messages
+
+    data = json.loads(packet.read_text())
+    data["records"] = [
+        {
+            "collection": "ops.agent_sessions",
+            "key": "old",
+            "available_at": data["cutoff"],
+            "record": {
+                "session_id": "old",
+                "message_log": [
+                    {
+                        "sent_at": data["cutoff"],
+                        "payload": {"kind": "NEW_ITEM", "item_id": "real", "session_id": "old"},
+                    }
+                ],
+            },
+        }
+    ]
+    packet.write_text(json.dumps(data))
+    messages = original_replay_messages(load_inputs(packet, settings()))
+    assert messages == [
+        {
+            "kind": "NEW_ITEM",
+            "item_id": "real",
+            "replay_source_session_id": "old",
+            "replay_at": data["cutoff"],
+            "replay_at_prec": None,
+            "replay_at_prec_reason": "INCOMPLETE",
+        }
+    ]
+    assert data["records"][0]["record"]["message_log"][0]["payload"]["session_id"] == "old"
+
+
+@pytest.mark.parametrize("change", [None, "action", "thesis_grade", "gate", "window", "evidence"])
+def test_semantic_verdict_comparison_declares_identity_only_changes(change):
+    import copy
+
+    from tank.replay import semantic_verdict_output
+
+    reference = {
+        "decisions": [
+            {
+                "dec_id": "DEC-original",
+                "event_id": "EVT-original",
+                "token_id": "world:WLD",
+                "action": "WAIT",
+                "thesis_grade": "B",
+                "trade_grade": "C",
+                "cutoff": "2026-09-24T12:00:00Z",
+                "provenance": {"mta_id": "MTA-original"},
+                "evidence": [{"item_id": "ITM-real-source", "raw_sha256": "same-proof"}],
+            }
+        ],
+        "alerts": [
+            {
+                "alert_id": "AL-original",
+                "event_id": "EVT-original",
+                "decisions": ["DEC-original"],
+                "session_id": "native-original",
+                "card_text": "Original actor wording",
+                "gate": {"allowed": True},
+                "shown_tokens": ["world:WLD"],
+            }
+        ],
+        "verdict_inputs": [{"mta_id": "MTA-original", "windows": {"1h": {"price_change": 2}}}],
+    }
+    actual = copy.deepcopy(reference)
+    actual["decisions"][0].update(dec_id="DEC-new", event_id="EVT-new", provenance={"mta_id": "MTA-new"})
+    actual["alerts"][0].update(
+        alert_id="AL-new",
+        event_id="EVT-new",
+        decisions=["DEC-new"],
+        session_id="native-new",
+        card_text="Different actor wording",
+    )
+    actual["verdict_inputs"][0]["mta_id"] = "MTA-new"
+    if change == "action":
+        actual["decisions"][0]["action"] = "START"
+    elif change == "thesis_grade":
+        actual["decisions"][0]["thesis_grade"] = "A"
+    elif change == "gate":
+        actual["alerts"][0]["gate"]["allowed"] = False
+    elif change == "window":
+        actual["verdict_inputs"][0]["windows"]["1h"]["price_change"] = 3
+    elif change == "evidence":
+        actual["decisions"][0]["evidence"][0]["raw_sha256"] = "different-proof"
+    assert (semantic_verdict_output(reference) == semantic_verdict_output(actual)) == (change is None)
+
+
+@pytest.mark.parametrize("wall_timeout", [None, 75])
+async def test_operational_replay_accepts_recorded_timer_messages_without_item(
+    packet, monkeypatch, wall_timeout
+):
+    from tank import replay
+
+    data = json.loads(packet.read_text())
+    messages = [{"kind": "NEW_ITEM", "item_id": "one"}] + [
+        {"kind": kind, "event_id": "original-event", "replay_at": data["cutoff"]}
+        for kind in ["CONDITION", "CONDITION_FIRED", "MILESTONE", "CALL_EXPIRED"]
+    ]
+    messages[0]["replay_at"] = data["cutoff"]
+    data["config"]["replay_messages"] = messages
+    if wall_timeout is not None:
+        data["config"]["replay_timeout_seconds"] = wall_timeout
+    packet.write_text(json.dumps(data))
+
+    async def fresh(*args, **kwargs):
+        assert kwargs["timeout"] == (480 if wall_timeout is None else wall_timeout)
+        assert kwargs["subsequent_messages"] == messages[1:]
+        return {"mode": "FRESH_OPENMA_SESSION"}
+
+    monkeypatch.setattr(replay, "replay_agent_session", fresh)
+    await replay.run_operational_replay(packet, MemoryRepository(), settings(), http=object())
+
+
+@pytest.mark.parametrize(
+    "object_kind,id_field,collection",
+    [
+        ("call", "call_id", "ana.calls"),
+        ("condition", "cond_id", "ana.watch_conditions"),
+    ],
+)
+async def test_timer_references_resolve_actual_fresh_lineage_not_old_snapshot(
+    packet, object_kind, id_field, collection
+):
+    from tank.replay import resolve_replay_message_references
+
+    old = {
+        id_field: "old-id",
+        "event_id": "old-event",
+        "token_id": "T",
+        "status": "CLOSED" if object_kind == "call" else "FIRED",
+    }
+    if object_kind == "call":
+        old.update(
+            opened_at="2026-09-24T11:00:00Z", opened_by_version=1, entry_ref_price=10, invalidation_price=8
+        )
+    else:
+        old.update(
+            role="START",
+            expr={"metric": "price", "op": ">", "value": 10},
+            created_at="2026-09-24T11:00:00Z",
+            expires_at="2026-09-24T12:00:00Z",
+        )
+    data = json.loads(packet.read_text())
+    data["records"] = [
+        {"collection": collection, "key": "old-id", "available_at": data["cutoff"], "record": old}
+    ]
+    packet.write_text(json.dumps(data))
+    inputs, repo = load_inputs(packet, settings()), MemoryRepository()
+    fresh = dict(
+        old,
+        **{
+            id_field: "fresh-id",
+            "event_id": "fresh-event",
+            "status": "OPEN" if object_kind == "call" else "ARMED",
+        },
+    )
+    await repo.put(collection, "fresh-id", fresh)
+    message = {
+        "kind": "CALL_EXPIRED" if object_kind == "call" else "CONDITION_FIRED",
+        "event_id": "old-event",
+        object_kind: old,
+    }
+    mapping = {"old-event": "fresh-event"}
+    actual = await resolve_replay_message_references(message, inputs, repo, mapping)
+    assert actual["event_id"] == "fresh-event"
+    assert actual[object_kind] == fresh
+    assert mapping["old-id"] == "fresh-id"
+    assert old["event_id"] == "old-event"
+    with pytest.raises(ReplayError, match="fresh session|unique fresh counterpart"):
+        await resolve_replay_message_references(
+            message, inputs, repo, {"old-event": "fresh-event"}, event_scope="unrelated-event"
+        )
+    await repo.put(collection, "second-fresh", dict(fresh, **{id_field: "another-id"}))
+    with pytest.raises(ReplayError, match="unique fresh counterpart"):
+        await resolve_replay_message_references(message, inputs, repo, {"old-event": "fresh-event"})
+    with pytest.raises(ReplayError, match="unique fresh counterpart"):
+        await resolve_replay_message_references(
+            message, inputs, MemoryRepository(), {"old-event": "fresh-event"}
+        )
+
+
+def test_virtual_clock_preserves_selected_precision_and_does_not_invent_exactness():
+    from datetime import timedelta
+
+    from tank.time_precision import offset_schedule, propagate_timestamp
+
+    start = propagate_timestamp({"at": "2026-10-01T00:00:00Z", "at_prec": "BUCKET(1d)"}, "at")
+    clock = ReplayClock(start, "2026-10-03T00:00:00Z")
+    assert clock.timestamp().precision == "BUCKET(1d)"
+    clock.advance(offset_schedule(start, timedelta(hours=2)))
+    assert clock.timestamp().value == "2026-10-01T02:00:00Z"
+    assert clock.timestamp().precision == "BUCKET(1d)"
+    clock.advance("2026-10-02T00:00:00.123456Z")
+    assert clock.timestamp().precision is None
+    assert clock.timestamp().precision_reason == "INCOMPLETE"
+
+
+async def test_timer_evidence_maps_only_exact_accepted_claim_counterpart(packet):
+    from tank.replay import resolve_replay_message_references
+
+    old = {
+        "claim_id": "old-claim",
+        "event_id": "old-event",
+        "subject": "Protocol",
+        "state_claim": "APPROVED",
+        "evidence": [{"item_id": "source", "quote": "Proposal approved."}],
+        "accepted": True,
+        "verified": True,
+    }
+    data = json.loads(packet.read_text())
+    data["records"] = [
+        {"collection": "evt.claims", "key": "old-claim", "available_at": data["cutoff"], "record": old}
+    ]
+    packet.write_text(json.dumps(data))
+    inputs, repo = load_inputs(packet, settings()), MemoryRepository()
+    fresh = dict(old, claim_id="fresh-claim", event_id="fresh-event")
+    await repo.put("evt.claims", "fresh-claim", fresh)
+    message = {"kind": "MILESTONE", "event_id": "old-event", "evidence": ["old-claim"]}
+    actual = await resolve_replay_message_references(
+        message, inputs, repo, {"old-event": "fresh-event"}, event_scope="fresh-event"
+    )
+    assert actual["evidence"] == ["fresh-claim"]
+    await repo.put(
+        "evt.claims",
+        "fresh-claim",
+        dict(fresh, evidence=[{"item_id": "source", "quote": "A different decision."}]),
+    )
+    with pytest.raises(ReplayError, match="unique fresh counterpart"):
+        await resolve_replay_message_references(
+            message, inputs, repo, {"old-event": "fresh-event"}, event_scope="fresh-event"
+        )
+
+
+@pytest.mark.parametrize("premature_trigger", [False, True])
+async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_expiry(
+    packet, premature_trigger
+):
+    """Synthetic transport: actual delivery/call/expiry code, no Telegram or model HTTP."""
+    import asyncio
+    import copy
+
+    import httpx
+    from test_event_tools import (
+        complete_assessment_fixture,
+        complete_decision_fixture,
+        complete_event_fixture,
+        complete_truth_fixture,
+    )
+
+    from tank.analysis.decisions import DecisionEngine
+    from tank.analysis.truth import MarketTruthService
+    from tank.event_tools import EventToolService
+    from tank.replay import ReplayMarketReader, replay_agent_session
+
+    initial_at, sent_at = "2026-09-01T00:00:00Z", "2026-09-02T00:00:00Z"
+    trigger = "2026-09-08T00:00:00Z" if premature_trigger else "2026-09-09T00:00:00Z"
+    cutoff = "2026-09-10T00:00:00Z"
+    cfg = {
+        "registry": {},
+        "thresholds": {"call_expiry_days": 7},
+        "semantics": {},
+        "dependency_map": {},
+        "openma": {"agent_id": "analyst", "environment_id": "live", "replay_environment_id": "replay"},
+    }
+
+    class Config(Settings):
+        def load_config(self, name):
+            return copy.deepcopy(cfg[name])
+
+    config = Config(replay=True, config_version="test", code_version="test", _env_file=None)
+    decision = {
+        "dec_id": "original-dec",
+        "event_id": "event",
+        "token_id": "T",
+        "action": "START",
+        "entry_ref_price": 10,
+        "invalidation_price": 8,
+    }
+    alert = {
+        "alert_id": "original-alert",
+        "version": 1,
+        "kind": "FULL",
+        "event_id": "event",
+        "generated_at": initial_at,
+        "card_text": "Synthetic frozen card",
+        "decisions": ["original-dec"],
+        "shown_tokens": ["T"],
+        "card_struct": {"assessment": {"class": "MAJOR"}},
+    }
+    canonical_event = complete_event_fixture(
+        "event",
+        public_at=initial_at,
+        known_to_us_at=initial_at,
+        lifecycle="ANALYZING",
+        current_ems_id="fixture-ems",
+    )
+    canonical_ems = complete_assessment_fixture(
+        "fixture-ems", "event", cutoff=initial_at, **{"class": "MAJOR"}
+    )
+    canonical_truth = complete_truth_fixture("fixture-truth", "event", "T", initial_at)
+    complete_decision = complete_decision_fixture("original-dec", "event", "T", initial_at, "fixture-truth")
+    complete_decision.update(decision, cutoff=initial_at)
+    decision = complete_decision
+    alert["card_struct"] = {"event": dict(canonical_event), "assessment": canonical_ems}
+    old_call = {
+        "call_id": "original-call",
+        "event_id": "event",
+        "token_id": "T",
+        "opened_by_alert": "original-alert",
+        "opened_by_version": 1,
+        "opened_at": sent_at,
+        "entry_ref_price": 10,
+        "invalidation_price": 8,
+        "status": "CLOSED",
+        "closed_by": "EXPIRED",
+    }
+    records = [
+        (
+            "ingest.source_items",
+            "source",
+            {"item_id": "source", "text": "Synthetic source", "observed_at": initial_at},
+            initial_at,
+        ),
+        (
+            "evt.events",
+            "event",
+            canonical_event,
+            initial_at,
+        ),
+        ("ana.decisions", "original-dec", decision, initial_at),
+        ("out.alerts", "original-alert:1", alert, initial_at),
+        (
+            "ops.agent_sessions",
+            "original-session",
+            {"session_id": "original-session", "event_id": "event", "item_id": "source"},
+            initial_at,
+        ),
+        (
+            "ops.jobs",
+            "delivery-job",
+            {
+                "job_id": "delivery-job",
+                "idem_key": "original-alert:1:telegram:alerts",
+                "type": "DELIVER",
+                "status": "QUEUED",
+                "payload": {"alert_id": "original-alert", "version": 1, "channel": "telegram:alerts"},
+            },
+            initial_at,
+        ),
+        (
+            "out.deliveries",
+            "original-sent",
+            {
+                "alert_id": "original-alert",
+                "version": 1,
+                "channel": "telegram:alerts",
+                "status": "SENT",
+                "message_ref": "123",
+                "at": sent_at,
+                "sent_at": sent_at,
+                "sent_at_prec": "COLLECTION_ONLY",
+            },
+            sent_at,
+        ),
+        ("ana.calls", "original-call", old_call, trigger),
+    ]
+    records.extend(
+        [
+            ("evt.ems_assessments", "fixture-ems", canonical_ems, initial_at),
+            ("ana.market_truth", "fixture-truth", canonical_truth, initial_at),
+            (
+                "evt.beneficiary_maps",
+                "event:1",
+                {"event_id": "event", "map_version": 1, "analysis_set": ["T"]},
+                initial_at,
+            ),
+            (
+                "evt.beneficiary_edges",
+                "fixture-edge",
+                {
+                    "edge_id": "fixture-edge",
+                    "event_id": "event",
+                    "map_version": 1,
+                    "token_id": "T",
+                    "role": "PRIMARY",
+                    "credible": False,
+                    "capture_class": "UNKNOWN",
+                    "exposure_score": 0,
+                },
+                initial_at,
+            ),
+        ]
+    )
+    if not premature_trigger:
+        # Explicit synthetic receipt for the newly required expiry UPDATE.
+        # It supplies captured transport acknowledgment, not a publication verdict.
+        records.extend(
+            [
+                (
+                    "out.alerts",
+                    "original-alert:2",
+                    dict(alert, version=2, kind="UPDATE", generated_at=trigger),
+                    trigger,
+                ),
+                (
+                    "out.deliveries",
+                    "original-update-sent",
+                    {
+                        "alert_id": "original-alert",
+                        "version": 2,
+                        "channel": "telegram:alerts",
+                        "status": "SENT",
+                        "message_ref": "123",
+                        "at": trigger,
+                        "sent_at": trigger,
+                        "sent_at_prec": "COLLECTION_ONLY",
+                    },
+                    trigger,
+                ),
+            ]
+        )
+    data = json.loads(packet.read_text())
+    data.update(
+        cutoff=cutoff,
+        config={key: value for key, value in cfg.items() if key != "registry"},
+        records=[
+            {"collection": collection, "key": key, "record": row, "available_at": at}
+            for collection, key, row, at in records
+        ],
+    )
+    packet.write_text(json.dumps(data))
+    queue, messages, seq = asyncio.Queue(), [], 0
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            while True:
+                yield await queue.get()
+
+    async def emit(event):
+        nonlocal seq
+        seq += 1
+        await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
+
+    accepted_inputs = []
+    actor_stage = None
+
+    async def control(request):
+        nonlocal actor_stage
+        if request.url.path.endswith("/executions"):
+            assert request.method == "GET"
+            ids = request.url.params.get_list("ids[]")
+            assert ids and len(ids) <= 64 and set(ids) <= set(accepted_inputs)
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"execution_id": identity, "state": "COMPLETED", "settled_outcome": "COMPLETED"}
+                        for identity in ids
+                    ]
+                },
+            )
+        assert request.url.host != "api.telegram.org", (
+            "Delivery must use its separate captured-only transport"
+        )
+        path = request.url.path
+        if request.method == "GET" and path.rsplit("/", 1)[-1] in {"fresh-session", "fresh-replay-session"}:
+            return httpx.Response(
+                200,
+                json={
+                    "agent": {
+                        "id": "captured-analyst",
+                        "version": 1,
+                        "system": "Fixture analyst prompt",
+                        "skills": [],
+                        "tools": [],
+                        "model": {"id": "fixture-model"},
+                    }
+                },
+            )
+        if path.endswith("/sessions"):
+            return (
+                httpx.Response(200, json={"data": []})
+                if request.method == "GET"
+                else httpx.Response(201, json={"id": "fresh-session"})
+            )
+        if path.endswith("/events/stream"):
+            return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
+        if path.endswith("/archive"):
+            return httpx.Response(200, json={})
+        if path.endswith("/events"):
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": []})
+            event = json.loads(request.content)["events"][0]
+            accepted_id = "accepted-" + str(len(accepted_inputs) + 1)
+            accepted_inputs.append(accepted_id)
+            if event["type"] == "user.message":
+                message = json.loads(event["content"][0]["text"])["message"]
+                messages.append(message)
+                actor_stage = "observation" if message.get("item_id") else "decision"
+                await emit(
+                    {
+                        "id": "actor-" + actor_stage + "-" + str(len(messages)),
+                        "type": "agent.custom_tool_use",
+                        "execution_id": accepted_id,
+                        "name": "add_observation" if message.get("item_id") else "get_decision",
+                        "input": {
+                            "item_id": "source",
+                            "event_id": "event",
+                            "link": "CORROBORATION",
+                            "claims": [],
+                            "public_at": {
+                                "value": initial_at,
+                                "precision": "EXACT",
+                                "basis": "Synthetic captured source",
+                                "quote": None,
+                            },
+                            "freshness": "FRESH",
+                        }
+                        if message.get("item_id")
+                        else {"event_id": "event", "token": "T"},
+                    }
+                )
+            else:
+                result = json.loads(event["content"][0]["text"])
+                assert not result.get("error"), result
+                if actor_stage == "decision":
+                    actor_stage = "publication"
+                    await emit(
+                        {
+                            "id": "actor-update",
+                            "type": "agent.custom_tool_use",
+                            "execution_id": accepted_id,
+                            "name": "publish_card",
+                            "input": {
+                                "event_id": "event",
+                                "kind": "UPDATE",
+                                "verdict": "Synthetic expiry update",
+                                "why": [
+                                    "Tracking ended at the configured expiry",
+                                    "No later material source fact was supplied",
+                                ],
+                            },
+                        }
+                    )
+                else:
+                    if actor_stage == "publication":
+                        assert result.get("publication_receipt", {}).get("disposition") in {
+                            "PUBLISHED",
+                            "SUPPRESSED",
+                        }, result
+                    await emit(
+                        {
+                            "id": "idle-" + str(len(messages)),
+                            "type": "session.status_idle",
+                            "execution_id": accepted_id,
+                            "stop_reason": {"type": "end_turn"},
+                        }
+                    )
+            return httpx.Response(200, json={"data": [{"id": accepted_id}]})
+        raise AssertionError("Unexpected control-plane request")
+
+    repo = MemoryRepository()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
+        tools = EventToolService(
+            repo,
+            config,
+            MarketTruthService(repo, config, ReplayMarketReader(load_inputs(packet, config))),
+            DecisionEngine(config),
+        )
+        report = await replay_agent_session(
+            packet,
+            repo,
+            config,
+            tools,
+            http=http,
+            initial_message={
+                "kind": "ITEM_ADDED",
+                "item_id": "source",
+                "event_id": "event",
+                "replay_at": initial_at,
+            },
+            subsequent_messages=[
+                {"kind": "CALL_EXPIRED", "event_id": "event", "call": old_call, "replay_at": trigger}
+            ],
+            timeout=3,
+        )
+    calls = await repo.list("ana.calls")
+    assert len(calls) == 1 and calls[0]["call_id"] != "original-call"
+    assert calls[0]["opened_at"] == sent_at
+    assert report["delivery_receipts"][0]["transport"] == "CAPTURED_RECEIPT_NO_NETWORK"
+    assert report["delivery_receipts"][0]["call_bindings"] == {"original-call": calls[0]["call_id"]}
+    assert report["status"] == ("DIVERGED" if premature_trigger else "COMPLETED"), report.get("divergence")
+    if premature_trigger:
+        assert calls[0]["status"] == "OPEN"
+        assert len(messages) == 1
+        assert "predicate does not fire" in report["divergence"]["reason"]
+    else:
+        assert calls[0]["status"] == "CLOSED" and calls[0]["closed_by"] == "EXPIRED"
+        assert messages[1]["call"]["call_id"] == calls[0]["call_id"]
+        assert report["timer_receipts"][0]["predicate"] == "RERUN_PRODUCTION_SCHEDULER"
+    assert await repo.get("ana.calls", "original-call") is None
+
+
+@pytest.mark.parametrize("state", ["APPROVED", "PROPOSED"])
+async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicate(packet, state):
+    """Fixture grade, real callback ledger/reconcile/watch execution; no live requests."""
+    import asyncio
+    import copy
+
+    import httpx
+    from test_event_tools import (
+        complete_assessment_fixture,
+        complete_decision_fixture,
+        complete_event_fixture,
+        complete_truth_fixture,
+    )
+
+    from tank.analysis.decisions import DecisionEngine
+    from tank.analysis.truth import MarketTruthService
+    from tank.event_tools import EventToolService
+    from tank.replay import ReplayMarketReader, replay_agent_session
+
+    start, trigger, cutoff = "2026-09-01T00:00:00Z", "2026-09-01T01:00:00Z", "2026-09-10T00:00:00Z"
+    expr = {"all": [{"metric": "event.state", "op": "==", "value": "APPROVED", "window": "W1H"}]}
+    old = {
+        "cond_id": "old-condition",
+        "event_id": "event",
+        "token_id": "T",
+        "role": "UPGRADE",
+        "expr": expr,
+        "created_at": start,
+        "expires_at": "2026-09-07T00:00:00Z",
+        "status": "FIRED",
+        "created_by": "old-decision",
+    }
+    cfg = {
+        "registry": {},
+        "thresholds": {},
+        "semantics": {},
+        "dependency_map": {},
+        "openma": {"agent_id": "analyst", "environment_id": "live", "replay_environment_id": "replay"},
+    }
+
+    class Config(Settings):
+        def load_config(self, name):
+            return copy.deepcopy(cfg[name])
+
+    config = Config(replay=True, config_version="test", code_version="test", _env_file=None)
+    canonical_event = complete_event_fixture(
+        "event",
+        event_state=state,
+        lifecycle="ANALYZING",
+        public_at=start,
+        known_to_us_at=start,
+        current_ems_id="fixture-ems",
+    )
+    canonical_ems = complete_assessment_fixture("fixture-ems", "event", cutoff=start, **{"class": "MAJOR"})
+    canonical_truth = complete_truth_fixture("fixture-truth", "event", "T", start)
+    baseline_decision = complete_decision_fixture("baseline-decision", "event", "T", start, "fixture-truth")
+    baseline_decision.update(cutoff=start, conditions=[], conditions_shown=[])
+    rows = [
+        (
+            "ingest.source_items",
+            "source",
+            {"item_id": "source", "observed_at": start, "text": "Synthetic source"},
+            start,
+        ),
+        ("evt.events", "event", canonical_event, start),
+        (
+            "ops.agent_sessions",
+            "old-session",
+            {"session_id": "old-session", "item_id": "source", "event_id": "event"},
+            start,
+        ),
+        ("ana.watch_conditions", "old-condition", old, trigger),
+        (
+            "ops.tool_calls",
+            "old-session:decision",
+            {
+                "call_id": "decision",
+                "session_id": "old-session",
+                "tool": "get_decision",
+                "status": "DONE",
+                "arguments": {"event_id": "event", "token": "T"},
+                "result": {"dec_id": "old-decision", "event_id": "event", "conditions": [old]},
+            },
+            trigger,
+        ),
+    ]
+    rows.extend(
+        [
+            (
+                "replay.market_snapshots",
+                "trigger-empty-market",
+                {"token_id": "T", "cutoff": trigger},
+                trigger,
+            ),
+            ("evt.ems_assessments", "fixture-ems", canonical_ems, start),
+            ("ana.market_truth", "fixture-truth", canonical_truth, start),
+            ("ana.decisions", "baseline-decision", baseline_decision, start),
+            (
+                "evt.beneficiary_maps",
+                "event:1",
+                {"event_id": "event", "map_version": 1, "analysis_set": ["T"]},
+                start,
+            ),
+            (
+                "evt.beneficiary_edges",
+                "fixture-edge",
+                {
+                    "edge_id": "fixture-edge",
+                    "event_id": "event",
+                    "map_version": 1,
+                    "token_id": "T",
+                    "role": "PRIMARY",
+                    "credible": False,
+                    "capture_class": "UNKNOWN",
+                    "exposure_score": 0,
+                },
+                start,
+            ),
+            (
+                "out.alerts",
+                "baseline-alert:1",
+                {
+                    "alert_id": "baseline-alert",
+                    "version": 1,
+                    "kind": "FULL",
+                    "event_id": "event",
+                    "generated_at": start,
+                    "card_text": "Synthetic baseline",
+                    "decisions": ["baseline-decision"],
+                    "shown_tokens": ["T"],
+                    "card_struct": {"event": canonical_event, "assessment": canonical_ems},
+                },
+                start,
+            ),
+        ]
+    )
+    data = json.loads(packet.read_text())
+    data.update(
+        cutoff=cutoff,
+        config={key: value for key, value in cfg.items() if key != "registry"},
+        records=[
+            {"collection": collection, "key": key, "record": record, "available_at": at}
+            for collection, key, record, at in rows
+        ],
+    )
+    packet.write_text(json.dumps(data))
+    repo, queue, messages, seq = MemoryRepository(), asyncio.Queue(), [], 0
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            while True:
+                yield await queue.get()
+
+    async def emit(event):
+        nonlocal seq
+        seq += 1
+        if event["type"] == "session.status_idle":
+            settled_inputs.update(accepted_inputs)
+        await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
+
+    accepted_inputs = []
+    settled_inputs = set()
+    actor_stage = None
+
+    async def control(request):
+        nonlocal actor_stage
+        if request.url.path.endswith("/executions"):
+            assert request.method == "GET"
+            ids = request.url.params.get_list("ids[]")
+            assert ids and len(ids) <= 64 and set(ids) <= set(accepted_inputs)
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "execution_id": identity,
+                            "state": "COMPLETED" if identity in settled_inputs else "RUNNING",
+                            "settled_outcome": "COMPLETED" if identity in settled_inputs else None,
+                        }
+                        for identity in ids
+                    ]
+                },
+            )
+        path = request.url.path
+        if request.method == "GET" and path.rsplit("/", 1)[-1] in {"fresh-session", "fresh-replay-session"}:
+            return httpx.Response(
+                200,
+                json={
+                    "agent": {
+                        "id": "captured-analyst",
+                        "version": 1,
+                        "system": "Fixture analyst prompt",
+                        "skills": [],
+                        "tools": [],
+                        "model": {"id": "fixture-model"},
+                    }
+                },
+            )
+        if path.endswith("/sessions"):
+            return (
+                httpx.Response(200, json={"data": []})
+                if request.method == "GET"
+                else httpx.Response(201, json={"id": "fresh-session"})
+            )
+        if path.endswith("/events/stream"):
+            return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
+        if path.endswith("/archive"):
+            return httpx.Response(200, json={})
+        if path.endswith("/events"):
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": []})
+            event = json.loads(request.content)["events"][0]
+            accepted_id = "accepted-" + str(len(accepted_inputs) + 1)
+            accepted_inputs.append(accepted_id)
+            if event["type"] == "user.message":
+                message = json.loads(event["content"][0]["text"])["message"]
+                messages.append(message)
+                actor_stage = "observation" if message.get("item_id") else "timer-truth"
+                await emit(
+                    {
+                        "id": "observation" if message.get("item_id") else "timer-truth",
+                        "type": "agent.custom_tool_use",
+                        "execution_id": accepted_id,
+                        "name": "add_observation" if message.get("item_id") else "get_market_truth",
+                        "input": {
+                            "item_id": "source",
+                            "event_id": "event",
+                            "link": "CORROBORATION",
+                            "claims": [],
+                            "public_at": {
+                                "value": start,
+                                "precision": "EXACT",
+                                "basis": "Synthetic captured source",
+                                "quote": None,
+                            },
+                            "freshness": "FRESH",
+                        }
+                        if message.get("item_id")
+                        else {"event_id": "event", "tokens": ["T"], "cutoff": trigger},
+                    }
+                )
+            else:
+                result = json.loads(event["content"][0]["text"])
+                assert not result.get("error"), result
+                if actor_stage == "observation":
+                    actor_stage = "initial-decision"
+                    await emit(
+                        {
+                            "id": "decide",
+                            "type": "agent.custom_tool_use",
+                            "execution_id": accepted_id,
+                            "name": "get_decision",
+                            "input": {"event_id": "event", "token": "T"},
+                        }
+                    )
+                elif actor_stage == "timer-truth":
+                    actor_stage = "timer-decision"
+                    await emit(
+                        {
+                            "id": "timer-decision",
+                            "type": "agent.custom_tool_use",
+                            "execution_id": accepted_id,
+                            "name": "get_decision",
+                            "input": {"event_id": "event", "token": "T"},
+                        }
+                    )
+                elif actor_stage == "timer-decision":
+                    actor_stage = "publication"
+                    await emit(
+                        {
+                            "id": "timer-publication",
+                            "type": "agent.custom_tool_use",
+                            "execution_id": accepted_id,
+                            "name": "publish_card",
+                            "input": {
+                                "event_id": "event",
+                                "kind": "UPDATE",
+                                "verdict": "Synthetic condition review",
+                                "why": [
+                                    "Condition predicate was rechecked",
+                                    "No market evidence was supplied",
+                                ],
+                            },
+                        }
+                    )
+                else:
+                    if actor_stage == "publication":
+                        assert result.get("publication_receipt", {}).get("disposition") in {
+                            "PUBLISHED",
+                            "SUPPRESSED",
+                        }, result
+                    await emit(
+                        {
+                            "id": "idle-" + str(len(messages)),
+                            "type": "session.status_idle",
+                            "execution_id": accepted_id,
+                            "stop_reason": {"type": "end_turn"},
+                        }
+                    )
+            return httpx.Response(200, json={"data": [{"id": accepted_id}]})
+        raise AssertionError("Unexpected request")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
+        tools = EventToolService(
+            repo,
+            config,
+            MarketTruthService(repo, config, ReplayMarketReader(load_inputs(packet, config))),
+            DecisionEngine(config),
+        )
+
+        async def fixture_grade(arguments, context):
+            # This test already isolates a declared fixture-grade condition;
+            # retain that grade on refresh, while real reconciliation consumes
+            # the fired watch instead of rearming or adding unrelated watches.
+            result = dict(
+                baseline_decision,
+                dec_id="fresh-decision" if len(messages) == 1 else "fresh-timer-decision",
+                cutoff=start if len(messages) == 1 else trigger,
+                event_id="event",
+                token_id="T",
+                action="WAIT",
+                conditions=[{"role": "UPGRADE", "expr": expr, "status": "ARMED"}],
+            )
+            if len(messages) > 1:
+                truths = await repo.list("ana.market_truth")
+                latest = max(truths, key=lambda row: row["cutoff"])
+                result.update(mta_id=latest["mta_id"], market_truth_id=latest["mta_id"])
+            await tools.reconcile_conditions(
+                result, await repo.list("ana.watch_conditions") if len(messages) > 1 else [], [], context
+            )
+            await repo.put("ana.decisions", result["dec_id"], result)
+            return result
+
+        tools.get_decision = fixture_grade
+        report = await replay_agent_session(
+            packet,
+            repo,
+            config,
+            tools,
+            http=http,
+            initial_message={
+                "kind": "ITEM_ADDED",
+                "item_id": "source",
+                "event_id": "event",
+                "replay_at": start,
+            },
+            subsequent_messages=[
+                {
+                    "kind": "CONDITION_FIRED",
+                    "event_id": "event",
+                    "condition": old,
+                    "token_id": "T",
+                    "replay_at": trigger,
+                }
+            ],
+            timeout=3,
+        )
+    conditions = await repo.list("ana.watch_conditions")
+    assert len(conditions) == 1 and conditions[0]["cond_id"] != "old-condition"
+    assert report["identity_substitutions"]["old-condition"] == conditions[0]["cond_id"]
+    assert report["causal_tool_receipts"][0]["source_call_id"] == "decision"
+    assert (
+        report["output"]["conditions"][0]["expires_at"] != old["expires_at"]
+    )  # Economic difference retained.
+    assert report["status"] == ("COMPLETED" if state == "APPROVED" else "DIVERGED")
+    if state == "APPROVED":
+        assert conditions[0]["status"] == "FIRED"
+        assert messages[1]["condition"]["cond_id"] == conditions[0]["cond_id"]
+    else:
+        assert conditions[0]["status"] == "ARMED"
+        assert len(messages) == 1
+
+
+@pytest.mark.parametrize("backend", ["memory", "postgres"])
+async def test_captured_replay_batches_market_prefix_without_per_row_writer(packet, monkeypatch, backend):
+    import os
+    import uuid
+    from urllib.parse import urlsplit, urlunsplit
+
+    from tank.storage import PostgresRepository
+
+    admin, database = None, None
+    if backend == "postgres":
+        import psycopg
+        from psycopg import sql
+
+        url = os.getenv("TANK_TEST_DATABASE_URL")
+        if not url:
+            pytest.skip("Explicit isolated replay batch PostgreSQL database not configured")
+        database = "tank_replay_batch_" + uuid.uuid4().hex[:12]
+        admin = await psycopg.AsyncConnection.connect(url, autocommit=True)
+        await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
+        target = urlunsplit(urlsplit(url)._replace(path="/" + database))
+        repo = None
+        try:
+            repo = await PostgresRepository(target).open()
+            await repo.migrate()
+        except BaseException:
+            if repo:
+                await repo.close()
+            await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database)))
+            await admin.close()
+            raise
+    else:
+        repo = MemoryRepository()
+    data = json.loads(packet.read_text())
+    data["records"] = []
+    for index in range(1001):
+        data["records"].append(
+            {
+                "collection": "mkt.tickers_24h",
+                "key": f"ticker-{index}",
+                "available_at": data["cutoff"],
+                "record": {"instrument_id": f"fixture:{index}", "ts": data["cutoff"], "last": "1"},
+            }
+        )
+    data["config"]["replay_tool_calls"] = [
+        {
+            "call_id": "one",
+            "tool": "get_registry",
+            "arguments": {},
+            "available_at": data["cutoff"],
+        }
+    ]
+    packet.write_text(json.dumps(data))
+    sizes = []
+    original_batch, original_put = repo.put_market_batch, repo.put
+
+    async def batch(collection, records, **kwargs):
+        assert collection == "mkt.tickers_24h"
+        sizes.append(len(records))
+        return await original_batch(collection, records, **kwargs)
+
+    async def put(collection, *args, **kwargs):
+        assert not collection.startswith("mkt."), "market import used per-row writer"
+        return await original_put(collection, *args, **kwargs)
+
+    monkeypatch.setattr(repo, "put_market_batch", batch)
+    monkeypatch.setattr(repo, "put", put)
+    try:
+        await replay_bundle(packet, repo, settings())
+        assert sizes == [500, 500, 1]
+        rows = [row async for row in repo.iter_all("mkt.tickers_24h")]
+        assert len(rows) == 1001
+    finally:
+        await repo.close()
+        if admin:
+            await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database)))
+            await admin.close()
+
+
+def test_as_of_market_receipt_cannot_bypass_current_replay_clock():
+    from tank.replay import ReplayInputs
+    from tank.util import parse_time
+
+    row = {
+        "collection": "mkt.oi_obs",
+        "key": "oi",
+        "available_at": "2026-10-18T12:00:30Z",
+        "record": {"ts": "2026-10-18T11:59:50Z", "received_ts": "2026-10-18T12:00:30Z"},
+    }
+    inputs = ReplayInputs("2026-10-18T12:01:00Z", "test", "test", {}, {}, (row,), ())
+    assert inputs.evidence_mode == "AS_OF_CAPTURE"
+    assert not inputs.record_visible(row, parse_time("2026-10-18T12:00:00Z"))
+    assert inputs.record_visible(row, parse_time("2026-10-18T12:00:30Z"))
+
+
+@pytest.mark.parametrize("explicit", [False, True])
+async def test_operational_initial_view_uses_same_earliest_revision_clock(
+    packet, tmp_path, monkeypatch, explicit
+):
+    from tank import replay
+
+    data = json.loads(packet.read_text())
+    first = "2026-09-24T11:59:00Z"
+    later = data["cutoff"]
+    message = {"kind": "NEW_ITEM", "item_id": "same"}
+    if explicit:
+        message.update(replay_at=later, replay_at_prec="COLLECTION_ONLY")
+    data["config"]["replay_messages"] = [message]
+    data["records"] = [
+        {
+            "collection": "ingest.source_items",
+            "key": "same",
+            "available_at": later,
+            "record": {"item_id": "same", "new_observation": "later partial revision"},
+        },
+        {
+            "collection": "ingest.source_items",
+            "key": "same",
+            "available_at": first,
+            "record": {"item_id": "same", "observed_at": first, "observed_at_prec": "BUCKET(1s)"},
+        },
+    ]
+    packet.write_text(json.dumps(data))
+    config = settings().model_copy(update={"data_dir": tmp_path})
+
+    async def terminal(path, repo, settings, tools, **kwargs):
+        inputs = replay.load_inputs(path, settings)
+        selected = replay.replay_message_timestamp(inputs, kwargs["initial_message"])
+        manifest = kwargs["evidence_capture"]["manifest"]
+        assert manifest["cutoff"] == selected.value == (later if explicit else first)
+        assert (
+            manifest["cutoff_prec"] == selected.precision == ("COLLECTION_ONLY" if explicit else "BUCKET(1s)")
+        )
+        return {"status": "TEST_TERMINAL"}
+
+    monkeypatch.setattr(replay, "replay_agent_session", terminal)
+    await replay.run_operational_replay(packet, MemoryRepository(), config, http=object())
+
+
+async def test_replay_projects_actual_retained_body_recovery_at_availability(packet, tmp_path, monkeypatch):
+    import zstandard
+
+    from tank.time_precision import collection_clock
+    from tank.util import sha256
+
+    before, recovered_at = "2026-09-24T11:59:00Z", "2026-09-24T12:00:00Z"
+    original = {
+        "item_id": "retained-S09",
+        "source_id": "S09",
+        "external_id": "legacy",
+        "title": "Original listing headline",
+        "text": "",
+        "content_hash": sha256("Original listing headline"),
+        "observed_at": before,
+        "published_at": before,
+        "extraction_status": "DONE",
+        "relevance": {"decision": "SEND"},
+    }
+    raw = json.dumps(
+        {
+            "data": {
+                "code": "legacy",
+                "body": json.dumps(
+                    {"node": "root", "child": [{"node": "text", "text": "Retained full CMS body."}]}
+                ),
+            }
+        }
+    ).encode()
+    raw_path = tmp_path / "detail.zst"
+    raw_path.write_bytes(zstandard.ZstdCompressor().compress(raw))
+    original.update(detail_raw_ref=str(raw_path), detail_raw_sha256=sha256(raw))
+    source_repo = MemoryRepository()
+    await source_repo.put("ingest.source_items", original["item_id"], original)
+
+    # Explicit historical fixture: the runtime no longer reparses or mutates
+    # captured news. Readers still honor recovery receipts created by old builds.
+    enriched = {
+        **original,
+        "text": "Retained full CMS body.",
+        "content_hash": sha256("Original listing headline Retained full CMS body."),
+        "body_recovery": {
+            "contract_version": 1,
+            "original_record": original,
+            **collection_clock(recovered_at).fields("recovered_at"),
+        },
+    }
+    await source_repo.put("ingest.source_items", original["item_id"], enriched)
+    data = json.loads(packet.read_text())
+    data["records"] = [
+        {
+            "collection": "ingest.source_items",
+            "key": original["item_id"],
+            "available_at": before,
+            "record": enriched,
+        }
+    ]
+    data["config"]["replay_tool_calls"] = [
+        {
+            "call_id": str(index),
+            "tool": "get_item",
+            "arguments": {"item_id": original["item_id"]},
+            "available_at": at,
+        }
+        for index, at in enumerate((before, recovered_at))
+    ]
+    packet.write_text(json.dumps(data))
+    inputs = load_inputs(packet, settings())
+    assert inputs.records("ingest.source_items", cutoff=before) == [original]
+    assert inputs.records("ingest.source_items", cutoff=recovered_at) == [enriched]
+    result = await replay_bundle(packet, MemoryRepository(), settings())
+    first, second = [entry["result"] for entry in result["output"]["tool_calls"]]
+    assert first == original
+    assert "body_recovery" not in first
+    assert second == enriched
+    assert first["observed_at"] == second["observed_at"] == before
+    assert first["detail_raw_sha256"] == second["detail_raw_sha256"]
+    assert not await source_repo.list("ops.jobs")
+
+
+@pytest.mark.parametrize("backend", ["memory", "postgres"])
+async def test_legacy_source_metadata_replay_uses_retained_bytes_before_sql(packet, tmp_path, backend):
+    import os
+    import uuid
+    from urllib.parse import urlsplit, urlunsplit
+
+    from tank.storage import PostgresRepository
+    from tank.util import sha256
+
+    feed = {"url": "https://captured.example/cms", "kind": "json"}
+    raw = json.dumps({"data": {"code": "legacy", "publishDate": "2026-09-24T11:58:00Z"}}).encode()
+    retained = tmp_path / "retained-detail.json"
+    retained.write_bytes(raw)
+    original = {
+        "item_id": "legacy-source",
+        "source_id": "S09",
+        "source_class": "PRIMARY",
+        "external_id": "legacy",
+        "feed": feed["url"],
+        "text": "Original captured text",
+        "content_hash": sha256("Original captured text"),
+        "raw_ref": str(retained),
+        "raw_sha256": sha256(raw),
+        "published_at": "2026-09-24T11:58:00Z",
+        "published_prec": "EXACT",
+        "published_at_precision": "SECOND",
+        "observed_at": "2026-09-24T11:59:00Z",
+        "observed_at_prec": "COLLECTION_ONLY",
+        "relevance": {"decision": "ALWAYS"},
+        "extraction_status": "DONE",
+    }
+    data = json.loads(packet.read_text())
+    data["config"]["sources"] = {"sources": [{"source_id": "S09", "feeds": [feed]}]}
+    data["config"]["replay_tool_calls"] = [
+        {
+            "call_id": "one",
+            "tool": "get_item",
+            "arguments": {"item_id": original["item_id"]},
+            "available_at": data["cutoff"],
+        }
+    ]
+    data["records"] = [
+        {
+            "collection": "ingest.source_items",
+            "key": original["item_id"],
+            "available_at": original["observed_at"],
+            "record": original,
+        }
+    ]
+    packet.write_text(json.dumps(data))
+    packet_bytes = packet.read_bytes()
+    admin, database = None, None
+    if backend == "postgres":
+        import psycopg
+        from psycopg import sql
+
+        url = os.getenv("TANK_TEST_DATABASE_URL")
+        if not url:
+            pytest.skip("Requires explicit isolated PostgreSQL admin DSN")
+        database = "tank_replay_source_" + uuid.uuid4().hex[:12]
+        admin = await psycopg.AsyncConnection.connect(url, autocommit=True)
+        await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
+        repo = await PostgresRepository(urlunsplit(urlsplit(url)._replace(path="/" + database))).open()
+        try:
+            await repo.migrate()
+        except BaseException:
+            await repo.close()
+            await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database)))
+            await admin.close()
+            raise
+    else:
+        repo = MemoryRepository()
+    try:
+        if backend == "postgres":
+            with pytest.raises(ValueError, match="precision|Conflicting|Unsupported"):
+                await repo.put("ingest.source_items", original["item_id"], original)
+            assert await repo.get("ingest.source_items", original["item_id"]) is None
+        result = await replay_bundle(packet, repo, settings())
+        item = result["output"]["tool_calls"][0]["result"]
+        assert item["published_at_precision"] == "EXACT"
+        assert item["published_at"] == original["published_at"]
+        assert item["text"] == original["text"] and item["extraction_status"] == "DONE"
+        receipt = item["source_metadata_repair"]
+        assert receipt["outcome"] == "VERIFIED" and receipt["converted_at_prec"] == "COLLECTION_ONLY"
+        assert receipt["original_publication_fields"]["published_at_precision"] == "SECOND"
+        assert "original_record" not in receipt
+        assert packet.read_bytes() == packet_bytes and retained.read_bytes() == raw
+    finally:
+        await repo.close()
+        if admin:
+            await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database)))
+            await admin.close()
+
+
+async def test_unverified_legacy_source_fails_before_fresh_session_or_repository_write(packet, tmp_path):
+    import httpx
+
+    from tank.replay import run_operational_replay
+
+    data = json.loads(packet.read_text())
+    feed = {"url": "https://captured.example/cms", "kind": "json"}
+    data["config"]["sources"] = {"sources": [{"source_id": "S09", "feeds": [feed]}]}
+    data["config"]["replay_messages"] = [
+        {"kind": "NEW_ITEM", "item_id": "legacy", "replay_at": data["cutoff"]}
+    ]
+    data["records"] = [
+        {
+            "collection": "ingest.source_items",
+            "key": "legacy",
+            "available_at": data["cutoff"],
+            "record": {
+                "item_id": "legacy",
+                "source_id": "S09",
+                "feed": feed["url"],
+                "external_id": "legacy",
+                "published_at": data["cutoff"],
+                "published_at_precision": "SECOND",
+                "published_prec": "EXACT",
+                "raw_ref": str(tmp_path / "missing"),
+                "raw_sha256": "a" * 64,
+            },
+        }
+    ]
+    packet.write_text(json.dumps(data))
+    repo = MemoryRepository()
+
+    def forbidden(request):
+        raise AssertionError("Native request must not occur for unverified legacy source metadata")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as http:
+        with pytest.raises(ReplayError, match="insufficient_fixture.*unverified"):
+            await run_operational_replay(packet, repo, settings(), http=http)
+    assert repo._data == {}
+
+
+def test_legacy_day_metadata_requires_actual_date_only_retained_proof(packet, tmp_path):
+    from tank.util import sha256
+
+    feed = {"url": "https://captured.example/cms", "kind": "json"}
+    raw = json.dumps({"data": {"code": "day-row", "publishDate": "2026-09-24"}}).encode()
+    path = tmp_path / "retained-day.json"
+    path.write_bytes(raw)
+    record = {
+        "source_id": "S09",
+        "external_id": "day-row",
+        "feed": feed["url"],
+        "published_at": "2026-09-24T00:00:00Z",
+        "published_prec": "BUCKET",
+        "published_at_precision": "DAY",
+        "text": "Original unchanged text",
+        "raw_ref": str(path),
+        "raw_sha256": sha256(raw),
+    }
+    data = json.loads(packet.read_text())
+    data["config"]["sources"] = {"sources": [{"source_id": "S09", "feeds": [feed]}]}
+    packet.write_text(json.dumps(data))
+    inputs = load_inputs(packet, settings())
+    proven = inputs.source_for_import(record)
+    assert proven["published_at_precision"] == "BUCKET(1d)"
+    assert proven["published_at"] == record["published_at"] and proven["text"] == record["text"]
+    assert record["published_at_precision"] == "DAY" and record["published_prec"] == "BUCKET"
+    with pytest.raises(ReplayError, match="insufficient_fixture.*unverified"):
+        inputs.source_for_import({**record, "published_at": "2026-09-23T00:00:00Z"})
+
+
+async def test_s25_discovery_raw_updated_only_temporal_and_fresh_replay(packet, tmp_path):
+    import asyncio
+    import copy
+
+    import httpx
+
+    from tank.analysis.decisions import DecisionEngine
+    from tank.analysis.truth import MarketTruthService
+    from tank.event_tools import EventToolService
+    from tank.replay import ReplayMarketReader, replay_agent_session
+    from tank.sources.legacy import normalize_legacy_source_record
+    from tank.util import sha256
+
+    earlier, converted = "2026-09-24T11:59:00Z", "2026-09-24T12:00:00Z"
+    raw = b'<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>tag:github.com,2008:repo/v1</id><title>Release</title><updated>2026-09-24T11:58:00Z</updated><link href="https://github.com/example/repo/releases/tag/v1"/></entry></feed>'
+    path = tmp_path / "discovery.atom"
+    path.write_bytes(raw)
+    feed = {"kind": "atom", "url": "https://github.com/example/repo/releases.atom"}
+    original = {
+        "item_id": "s25-original",
+        "source_id": "S25",
+        "source_class": "PRIMARY",
+        "feed": feed["url"],
+        "external_id": "tag:github.com,2008:repo/v1",
+        "text": "Original release text",
+        "observed_at": earlier,
+        "published_at": "2026-09-24T11:58:00Z",
+        "published_prec": "EXACT",
+        "published_at_precision": "SECOND",
+        "raw_ref": str(tmp_path / "unavailable-article.html"),
+        "raw_sha256": "a" * 64,
+        "discovery_raw_ref": str(path),
+        "discovery_raw_sha256": sha256(raw),
+    }
+    corrected = normalize_legacy_source_record(
+        original, raw, feed=feed, raw_ref=str(path), raw_sha256=sha256(raw), converted_at=converted
+    )
+    assert corrected["published_at"] is None
+    cfg = {
+        "registry": {"tokens": []},
+        "thresholds": {},
+        "semantics": {},
+        "dependency_map": {},
+        "sources": {"sources": [{"source_id": "S25", "feeds": [feed]}]},
+        "openma": {"agent_id": "agent", "environment_id": "live", "replay_environment_id": "replay"},
+    }
+    data = json.loads(packet.read_text())
+    data["registry"] = cfg["registry"]
+    data["config"] = {key: value for key, value in cfg.items() if key != "registry"}
+    data["records"] = [
+        {
+            "collection": "ingest.source_items",
+            "key": original["item_id"],
+            "available_at": earlier,
+            "record": corrected,
+        }
+    ]
+    packet.write_text(json.dumps(data))
+    packet_bytes = packet.read_bytes()
+
+    class Config(Settings):
+        def load_config(self, name):
+            return copy.deepcopy(cfg[name])
+
+    config = Config(replay=True, config_version="test", code_version="test", _env_file=None)
+    inputs = load_inputs(packet, config)
+    assert inputs.records("ingest.source_items", cutoff=earlier) == [original]
+    assert inputs.records("ingest.source_items", cutoff=converted) == [corrected]
+    assert inputs.source_for_import(original)["source_metadata_repair"]["raw_ref"] == str(path)
+    queue, returned = asyncio.Queue(), []
+    seq = 0
+
+    async def emit(event):
+        nonlocal seq
+        seq += 1
+        await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            while True:
+                yield await queue.get()
+
+    accepted_inputs = []
+    actor_stage = 0
+    fresh_event_id = None
+
+    async def control(request):
+        nonlocal actor_stage, fresh_event_id
+        if request.url.path.endswith("/executions"):
+            assert request.method == "GET"
+            ids = request.url.params.get_list("ids[]")
+            assert ids and len(ids) <= 64 and set(ids) <= set(accepted_inputs)
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {"execution_id": identity, "state": "COMPLETED", "settled_outcome": "COMPLETED"}
+                        for identity in ids
+                    ]
+                },
+            )
+        endpoint = request.url.path
+        if endpoint.endswith("/sessions"):
+            return (
+                httpx.Response(200, json={"data": []})
+                if request.method == "GET"
+                else httpx.Response(201, json={"id": "fresh-s25"})
+            )
+        if endpoint.endswith("/events/stream"):
+            return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
+        if endpoint.endswith("/archive"):
+            return httpx.Response(200, json={})
+        if endpoint.endswith("/events"):
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": []})
+            event = json.loads(request.content)["events"][0]
+            accepted_id = "accepted-" + str(len(accepted_inputs) + 1)
+            accepted_inputs.append(accepted_id)
+            if event["type"] == "user.message":
+                await emit(
+                    {
+                        "id": "get",
+                        "type": "agent.custom_tool_use",
+                        "name": "get_item",
+                        "input": {"item_id": original["item_id"]},
+                    }
+                )
+            else:
+                response = json.loads(event["content"][0]["text"])
+                if actor_stage == 0:
+                    returned.append(response)
+                    actor_stage = 1
+                    await emit(
+                        {
+                            "id": "origin",
+                            "type": "agent.custom_tool_use",
+                            "execution_id": accepted_id,
+                            "name": "record_event",
+                            "input": {
+                                "item_id": original["item_id"],
+                                "is_event": True,
+                                "statement": original["text"],
+                                "certainty": "MEDIUM",
+                                "certainty_reason": "Explicit synthetic release actor",
+                                "entities": [],
+                                "tokens": [],
+                                "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
+                                "public_at": {
+                                    "value": earlier,
+                                    "precision": "EXACT",
+                                    "basis": "Synthetic first collection",
+                                    "quote": None,
+                                },
+                                "freshness": "FRESH",
+                                "claims": [],
+                                "next_milestone": None,
+                                "checked_sources": [],
+                            },
+                        }
+                    )
+                elif actor_stage == 1:
+                    from test_event_tools import unknown_assessment
+
+                    assert response.get("event_id"), response
+                    fresh_event_id = response["event_id"]
+                    actor_stage = 2
+                    await emit(
+                        {
+                            "id": "assessment",
+                            "type": "agent.custom_tool_use",
+                            "execution_id": accepted_id,
+                            "name": "set_assessment",
+                            "input": {
+                                "event_id": fresh_event_id,
+                                "assessment": unknown_assessment(klass="MATERIAL"),
+                            },
+                        }
+                    )
+                else:
+                    assert response.get("class") in {"LOW", "MATERIAL"}, response
+                    await emit(
+                        {
+                            "id": "idle",
+                            "type": "session.status_idle",
+                            "execution_id": accepted_id,
+                            "stop_reason": {"type": "end_turn"},
+                        }
+                    )
+            return httpx.Response(200, json={"data": [{"id": accepted_id}]})
+        if endpoint.endswith("/fresh-s25"):
+            return httpx.Response(
+                200,
+                json={
+                    "agent": {
+                        "id": "agent",
+                        "version": 1,
+                        "system": "Synthetic replay actor",
+                        "skills": [],
+                        "tools": [],
+                        "model": {"id": "fixture-model"},
+                    }
+                },
+            )
+        raise AssertionError("Uncaptured native transport request")
+
+    repo = MemoryRepository()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(control)) as http:
+        tools = EventToolService(
+            repo, config, MarketTruthService(repo, config, ReplayMarketReader(inputs)), DecisionEngine(config)
+        )
+        await replay_agent_session(
+            packet,
+            repo,
+            config,
+            tools,
+            http=http,
+            initial_message={"kind": "NEW_ITEM", "item_id": original["item_id"], "replay_at": converted},
+            timeout=3,
+        )
+    assert len(returned) == 1
+    visible = returned[0]
+    assert visible["published_at"] is None and visible["published_prec"] == "COLLECTION_ONLY"
+    assert visible["published_at_missing_reason"] == "SOURCE_DID_NOT_PROVIDE_TIME"
+    assert visible["source_updated_at"] == original["published_at"]
+    assert "source_metadata_repair" not in visible and visible["source_metadata_repair_sha256"]
+    assert visible["text"] == original["text"] and packet.read_bytes() == packet_bytes
+
+
+@pytest.mark.parametrize("profile", ["first_reference", "ordinary_missing_sent"])
+async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_requires_capture(
+    tmp_path, monkeypatch, profile
+):
+    """Actual origin/class/map/publisher receipts; only native wire is synthetic."""
+    import asyncio
+    import copy
+
+    import httpx
+    from test_event_tools import unknown_assessment
+    from test_fixture_reference import reference_packet as make_reference_packet
+
+    from tank.analysis.decisions import DecisionEngine
+    from tank.analysis.truth import MarketTruthService
+    from tank.delivery import DeliveryService
+    from tank.event_tools import LAYERS, EventToolService
+    from tank.replay import ReplayMarketReader, digest, replay_agent_session
+    from tank.util import sha256
+
+    path, data = make_reference_packet.__wrapped__(tmp_path)
+    cutoff = data["cutoff"]
+    source = data["records"][0]["record"]
+    body = "World access approved"
+    raw = ("<html><time>21 Sep 2022</time><p>" + body + "</p></html>").encode()
+    Path(source["raw_ref"]).write_bytes(raw)
+    source.update(text=body, content_hash=sha256(body), raw_sha256=sha256(raw))
+    data["records"][0]["as_of_evidence"].update(raw_sha256=sha256(raw), body_sha256=sha256(body))
+    baseline = Settings(data_dir=tmp_path)
+    cfg = {
+        name: baseline.load_config(name) for name in ("registry", "thresholds", "semantics", "dependency_map")
+    }
+    cfg["openma"] = {
+        "agent_id": "fixture-agent",
+        "environment_id": "analysis",
+        "replay_environment_id": "replay",
+    }
+    data["registry"] = cfg["registry"]
+    data["config"].update({key: value for key, value in cfg.items() if key != "registry"})
+    if profile == "ordinary_missing_sent":
+        data.pop("replay_mode")
+        data.pop("fixture_reference")
+        source.update(observed_at=cutoff, acquired_at=cutoff)
+        data["records"][0]["available_at"] = cutoff
+        for key in list(data["records"][0]):
+            if key.startswith("simulated_"):
+                data["records"][0].pop(key)
+        # An explicitly incomplete synthetic original transcript has a prior
+        # publication but no SENT receipt. Ordinary replay must still refuse it.
+        data["records"].extend(
+            [
+                {
+                    "collection": "ops.agent_sessions",
+                    "key": "original-session",
+                    "available_at": cutoff,
+                    "record": {
+                        "session_id": "original-session",
+                        "opened_by_item": source["item_id"],
+                        "event_id": "original-event",
+                    },
+                },
+                {
+                    "collection": "out.alerts",
+                    "key": "original-alert:1",
+                    "available_at": cutoff,
+                    "record": {
+                        "alert_id": "original-alert",
+                        "event_id": "original-event",
+                        "version": 1,
+                        "kind": "PARTIAL",
+                        "generated_at": cutoff,
+                    },
+                },
+            ]
+        )
+    data.pop("input_sha256", None)
+    data["input_sha256"] = digest(data)
+    path.write_text(json.dumps(data))
+
+    class Config(Settings):
+        def load_config(self, name):
+            return copy.deepcopy(cfg[name])
+
+    config = Config(
+        replay=True, config_version="test", code_version="test", data_dir=tmp_path, _env_file=None
+    )
+    repo, queue = MemoryRepository(), asyncio.Queue()
+    accepted, settled = [], set()
+    sequence, stage = 0, 0
+    event_id = None
+    publication = None
+    partial_card = partial_intent = None
+    delivery_attempts = []
+
+    async def forbid_delivery(self, payload):
+        delivery_attempts.append(payload)
+        raise AssertionError("No reference or uncaptured delivery transport is authorized")
+
+    monkeypatch.setattr(DeliveryService, "deliver", forbid_delivery)
+
+    class Stream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            while True:
+                yield await queue.get()
+
+    async def emit(event):
+        nonlocal sequence
+        sequence += 1
+        if event["type"] == "session.status_idle":
+            settled.update(accepted)
+        await queue.put(f"id: {sequence}\ndata: {json.dumps(event)}\n\n".encode())
+
+    async def tool(name, arguments, execution_id):
+        await emit(
+            {
+                "id": "producer-" + name + "-" + str(stage),
+                "type": "agent.custom_tool_use",
+                "execution_id": execution_id,
+                "name": name,
+                "input": arguments,
+            }
+        )
+
+    async def transport(request):
+        nonlocal stage, event_id, publication, partial_card, partial_intent
+        endpoint = request.url.path
+        if endpoint.endswith("/executions"):
+            ids = request.url.params.get_list("ids[]")
+            assert set(ids) <= set(accepted)
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "execution_id": identity,
+                            "state": "COMPLETED" if identity in settled else "RUNNING",
+                            "settled_outcome": "COMPLETED" if identity in settled else None,
+                        }
+                        for identity in ids
+                    ]
+                },
+            )
+        if endpoint.endswith("/sessions"):
+            return (
+                httpx.Response(200, json={"data": []})
+                if request.method == "GET"
+                else httpx.Response(201, json={"id": "reference-session"})
+            )
+        if request.method == "GET" and endpoint.endswith("/reference-session"):
+            return httpx.Response(
+                200,
+                json={
+                    "agent": {
+                        "id": "fixture-agent",
+                        "version": 1,
+                        "system": "Synthetic publication producer",
+                        "skills": [],
+                        "tools": [],
+                        "model": {"id": "fixture-model"},
+                    }
+                },
+            )
+        if endpoint.endswith("/events/stream"):
+            return httpx.Response(200, stream=Stream(), headers={"content-type": "text/event-stream"})
+        if endpoint.endswith("/archive"):
+            return httpx.Response(200, json={})
+        if endpoint.endswith("/events"):
+            if request.method == "GET":
+                return httpx.Response(200, json={"data": []})
+            event = json.loads(request.content)["events"][0]
+            identity = "accepted-" + str(len(accepted) + 1)
+            accepted.append(identity)
+            if event["type"] == "user.message":
+                assert stage == 0, "The producer must complete without corrective retries"
+                await tool(
+                    "record_event",
+                    {
+                        "item_id": source["item_id"],
+                        "is_event": True,
+                        "statement": body,
+                        "certainty": "HIGH",
+                        "certainty_reason": "Explicit synthetic primary fixture fact",
+                        "entities": [],
+                        "tokens": ["world:WLD"],
+                        "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
+                        "public_at": {
+                            "value": cutoff,
+                            "precision": "EXACT",
+                            "basis": "Declared fixture first-knowledge boundary; item retains publication day",
+                            "quote": None,
+                        },
+                        "freshness": "FRESH",
+                        "claims": [
+                            {
+                                "type": "STATE",
+                                "subject": "World",
+                                "predicate": "announces",
+                                "object": "Product",
+                                "state_claim": "APPROVED",
+                                "verified": True,
+                                "directionality": "BOTH",
+                                "evidence_class": "PRIMARY_FACT",
+                                "quote": body,
+                            }
+                        ],
+                        "next_milestone": None,
+                        "checked_sources": [],
+                    },
+                    identity,
+                )
+            else:
+                result = json.loads(event["content"][0]["text"])
+                assert not result.get("error"), result
+                stage += 1
+                if stage == 1:
+                    event_id = result["event_id"]
+                    await tool(
+                        "set_assessment",
+                        {
+                            "event_id": event_id,
+                            "assessment": unknown_assessment(
+                                criterion="G5", klass="STRUCTURAL_SHOCK", quote=body
+                            ),
+                        },
+                        identity,
+                    )
+                elif stage == 2:
+                    assert result["class"] == "STRUCTURAL_SHOCK", result
+                    await tool(
+                        "publish_card",
+                        {"event_id": event_id, "kind": "PARTIAL", "verdict": body, "why": []},
+                        identity,
+                    )
+                elif stage == 3:
+                    assert result["published"] is True, result
+                    publication = result
+                    partial_card = await repo.get("out.alerts", result["alert_id"] + ":1")
+                    partial_intent = copy.deepcopy(
+                        (await repo.list("ops.jobs", filters={"type": "DELIVER"}))[0]
+                    )
+                    await tool(
+                        "set_beneficiaries",
+                        {
+                            "event_id": event_id,
+                            "edges": [],
+                            "layer_reasons": {
+                                layer: "No credible beneficiary established from this synthetic fact"
+                                for layer in LAYERS
+                            },
+                        },
+                        identity,
+                    )
+                elif stage == 4:
+                    assert result["analysis_set"] == []
+                    await tool(
+                        "publish_card",
+                        {
+                            "event_id": event_id,
+                            "kind": "FULL",
+                            "verdict": body,
+                            "why": ["Official primary fixture fact", "No credible beneficiary established"],
+                        },
+                        identity,
+                    )
+                else:
+                    assert stage == 5 and result["published"] is True, result
+                    publication = result
+                    await emit(
+                        {
+                            "id": "final-idle",
+                            "type": "session.status_idle",
+                            "execution_id": identity,
+                            "stop_reason": {"type": "end_turn"},
+                        }
+                    )
+            return httpx.Response(200, json={"data": [{"id": identity}]})
+        raise AssertionError("Unexpected native control-plane request")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        from tank.fixture_reference import TrustedFixtureClock
+
+        inputs = load_inputs(path, config)
+        tools = EventToolService(
+            repo,
+            config,
+            MarketTruthService(repo, config, ReplayMarketReader(inputs)),
+            DecisionEngine(config),
+            reference_clock=TrustedFixtureClock(inputs) if inputs.fixture_reference else None,
+        )
+        if profile == "ordinary_missing_sent":
+            with pytest.raises(ReplayError, match="one captured SENT delivery receipt required"):
+                await replay_agent_session(
+                    path,
+                    repo,
+                    config,
+                    tools,
+                    http=http,
+                    initial_message={"kind": "NEW_ITEM", "item_id": source["item_id"]},
+                    timeout=3,
+                )
+        else:
+            report = await replay_agent_session(
+                path,
+                repo,
+                config,
+                tools,
+                http=http,
+                initial_message=data["config"]["replay_messages"][0],
+                timeout=3,
+            )
+            assert report["status"] == "COMPLETED"
+            assert report["delivery_status"] == "NOT_RUN"
+            assert report["delivery_reason"] == "FIRST_REFERENCE_NO_CAPTURED_DELIVERY"
+            assert report["delivery_receipts"] == []
+            jobs = await repo.list("ops.jobs", filters={"type": "DELIVER"})
+            assert len(jobs) == 2 and all(job["status"] == "QUEUED" for job in jobs)
+            assert report["delivery_intents"] == sorted(jobs, key=lambda job: job["job_id"])
+            assert {job["payload"]["version"] for job in jobs} == {1, 2}
+            assert all(job["payload"]["alert_id"] == publication["alert_id"] for job in jobs)
+            assert await repo.get("ops.jobs", partial_intent["job_id"]) == partial_intent
+            assert await repo.get("out.alerts", partial_card["alert_id"] + ":1") == partial_card
+            assert [(alert["kind"], alert["version"]) for alert in report["output"]["alerts"]] == [
+                ("PARTIAL", 1),
+                ("FULL", 2),
+            ]
+            assert report["cutoff"] == cutoff
+            assert report["execution_barrier"]["complete"]
+            assert (await repo.get("ingest.source_items", source["item_id"]))["extraction_status"] == "DONE"
+    assert publication["publication_receipt"]["disposition"] == "PUBLISHED"
+    assert not delivery_attempts
+    generated = await repo.list("out.deliveries")
+    assert generated and all(row["status"] == "GENERATED" for row in generated)
+    assert all(not row.get("message_ref") and not row.get("sent_at") for row in generated)
+    assert all(row["at"] == cutoff for row in generated)
+    assert await repo.list("ana.calls") == []
+
+
+async def test_captured_tools_decision_refreshes_fired_market_watch_offline(packet, tmp_path, monkeypatch):
+    from datetime import timedelta
+
+    from test_market_capture_refresh import ReleasedMarket, seed_domain, shifted_snapshot
+
+    from tank.analysis.decisions import DecisionEngine
+    from tank.analysis.truth import MarketTruthService
+    from tank.event_tools import EventToolService
+    from tank.time_precision import chosen_boundary
+    from tank.util import iso, parse_time
+
+    data = json.loads(packet.read_text())
+    end = parse_time(data["cutoff"])
+    monkeypatch.setattr("tank.util.utcnow", lambda: end)
+    monkeypatch.setattr("tank.event_tools.utcnow", lambda: end)
+    earlier = iso(end - timedelta(minutes=1))
+    source = MemoryRepository()
+    cfg = Settings(data_dir=tmp_path, _env_file=None)
+    await seed_domain(source, cfg, end)
+    market = ReleasedMarket(shifted_snapshot(end))
+    truth = MarketTruthService(source, cfg, market)
+    first = await truth.assess("e", "T", chosen_boundary(earlier, precision="BUCKET(1m)"))
+    tools = EventToolService(source, cfg, truth, DecisionEngine())
+    initial = await tools.dispatch("get_decision", {"event_id": "e", "token": "T"}, {})
+    watch = next(row for row in initial["conditions"] if row["role"] == "UPGRADE")
+    watch.update(status="FIRED", fired_at=data["cutoff"])
+    snapshot = shifted_snapshot(end)
+    data["registry"] = {"tokens": [{"token_id": "T", "symbol": "T"}], "instruments": []}
+    data["config"] = {
+        "thresholds": {},
+        "semantics": {},
+        "dependency_map": {},
+        "replay_tool_calls": [
+            {
+                "call_id": "decision",
+                "tool": "get_decision",
+                "arguments": {"event_id": "e", "token": "T"},
+                "available_at": data["cutoff"],
+            }
+        ],
+    }
+    data["records"] = []
+    for table, keyname in [
+        ("evt.events", "event_id"),
+        ("evt.ems_assessments", "ems_id"),
+        ("evt.beneficiary_maps", "event_id"),
+        ("evt.beneficiary_edges", "edge_id"),
+        ("ana.market_truth", "mta_id"),
+    ]:
+        for row in await source.list(table):
+            data["records"].append(
+                {"collection": table, "key": row[keyname], "available_at": earlier, "record": row}
+            )
+    data["records"].extend(
+        [
+            {
+                "collection": "ana.watch_conditions",
+                "key": watch["cond_id"],
+                "available_at": data["cutoff"],
+                "record": watch,
+            },
+            {
+                "collection": "replay.market_snapshots",
+                "key": "synthetic-current",
+                "available_at": data["cutoff"],
+                "record": snapshot,
+            },
+        ]
+    )
+    packet.write_text(json.dumps(data))
+    repo = MemoryRepository()
+    report = await replay_bundle(packet, repo, settings())
+    result = report["output"]["tool_calls"][0]["result"]
+    assert result["mta_id"] != first["mta_id"]
+    assert result["action"] == "START"
+    assert (await repo.get("ana.market_truth", result["mta_id"]))["data_confidence"]["class"] == "HIGH"
+    assert (await repo.get("ana.watch_conditions", watch["cond_id"]))["consumed_by"] == result["dec_id"]
+    jobs = [row for row in await repo.list("ops.jobs") if row["type"] == "RUN_MARKET_TRUTH"]
+    assert len(jobs) == 1 and jobs[0]["status"] == "DONE"

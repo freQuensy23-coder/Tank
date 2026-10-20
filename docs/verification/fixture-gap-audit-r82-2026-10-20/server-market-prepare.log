@@ -1,0 +1,13 @@
+F-11 READY
+F-12 READY
+F-13 READY
+F-14 READY
+F-15 READY
+Traceback (most recent call last):
+  File "/srv/tank/docs/verification/fixture-gap-audit-r82-2026-10-20/prepare-market-packets.server.py", line 245, in <module>
+    main()
+  File "/srv/tank/docs/verification/fixture-gap-audit-r82-2026-10-20/prepare-market-packets.server.py", line 203, in main
+    prepare_masked_packet(original_path, masked_path, map_path, mapping)
+  File "/srv/tank/src/tank/replay.py", line 1420, in prepare_masked_packet
+    raise ReplayError("masked aliases cannot themselves be original names")
+tank.replay.ReplayError: masked aliases cannot themselves be original names

@@ -1,0 +1,123 @@
+{
+  "scope": "Complete r79 run preserved; one subsequent producer correction and five affected test files are explicitly separated",
+  "counts": {
+    "passed": 1965,
+    "failed": 17,
+    "skipped": 37,
+    "total": 2019
+  },
+  "seconds": 652.99,
+  "failure_classes": {
+    "KNOWN_FORMAL_FIXTURE_EVIDENCE_GAP": 7,
+    "MISSING_OPENROUTER_COST_REASON_PRODUCER_FIXED": 5,
+    "PG_TEST_DATABASE_ISOLATION_FIXED": 4,
+    "SYNTHETIC_SETTINGS_FIXTURE_FIXED": 1
+  },
+  "failures": [
+    {
+      "node": "tests/test_e2e.py::test_full_sse_pipeline_postgres[False]",
+      "classification": "MISSING_OPENROUTER_COST_REASON_PRODUCER_FIXED",
+      "message": "psycopg.errors.CheckViolation: new row for relation \"llm_usage\" violates check constraint \"required_cost_usd\"\nDETAIL:  Failing row contains (fd389f09c3d21c48b6ec3336972b33b07c5835067ee90fa74bfd33cb58db5425, {\"at\": \"2026-10-20T10:23:00Z\", \"call\": \"FILTER\", \"model\": \"types..., t, 1, 2026-10-20 10:23:00+00, FILTER, ITM-01M5CDDK54QXGS1RE8YWNZAWEB, typesafe/jev-1.13-20260917, null, 20, null, null, null, null, 0, NON_GENERATIVE_CLASSIFICATION, COLLECTION_ONLY, null)."
+    },
+    {
+      "node": "tests/test_e2e.py::test_full_sse_pipeline_postgres[True]",
+      "classification": "MISSING_OPENROUTER_COST_REASON_PRODUCER_FIXED",
+      "message": "psycopg.errors.CheckViolation: new row for relation \"llm_usage\" violates check constraint \"required_cost_usd\"\nDETAIL:  Failing row contains (20cf1275c79c1e9ab33d9f9c96d07ff3eeebb61a40f8dcad31f8a49b80df9270, {\"at\": \"2026-10-20T10:23:00Z\", \"call\": \"FILTER\", \"model\": \"types..., t, 1, 2026-10-20 10:23:00+00, FILTER, ITM-01M5CDDP2QPKFH0G0XM71E3201, typesafe/jev-1.13-20260917, null, 20, null, null, null, null, 0, NON_GENERATIVE_CLASSIFICATION, COLLECTION_ONLY, null)."
+    },
+    {
+      "node": "tests/test_e2e.py::test_runtime_autonomous_source_to_telegram",
+      "classification": "MISSING_OPENROUTER_COST_REASON_PRODUCER_FIXED",
+      "message": "Failed: Traceback (most recent call last):\n  File \"/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/src/tank/runtime.py\", line 213, in worker\n    result = await self.handlers[kind](job[\"payload\"])\n             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/src/tank/agents/pipeline.py\", line 188, in filter_item\n    score_record = await self._score_record(item, \"relevant\", self.state(item))\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/src/tank/agents/pipeline.py\", l"
+    },
+    {
+      "node": "tests/test_event_tools.py::test_live_update_survives_restart_and_delivers_at_boundary_with_retry[postgres]",
+      "classification": "PG_TEST_DATABASE_ISOLATION_FIXED",
+      "message": "AssertionError: assert 'JOB-01M5CDEA...HENHKZ1DS4G63' == 'JOB-01M5CDEZ...ZTAVY6HCR610B'\n  \n  - JOB-01M5CDEZZEVDZZTAVY6HCR610B\n  + JOB-01M5CDEASSDC4HENHKZ1DS4G63"
+    },
+    {
+      "node": "tests/test_fixture_acceptance.py::test_fixture_is_ready_for_spec_acceptance[F-11]",
+      "classification": "KNOWN_FORMAL_FIXTURE_EVIDENCE_GAP",
+      "message": "AssertionError: \n  input is a placeholder, not a replay packet\nassert not ['input is a placeholder, not a replay packet']"
+    },
+    {
+      "node": "tests/test_fixture_acceptance.py::test_fixture_is_ready_for_spec_acceptance[F-12]",
+      "classification": "KNOWN_FORMAL_FIXTURE_EVIDENCE_GAP",
+      "message": "AssertionError: \n  input is a placeholder, not a replay packet\nassert not ['input is a placeholder, not a replay packet']"
+    },
+    {
+      "node": "tests/test_fixture_acceptance.py::test_fixture_is_ready_for_spec_acceptance[F-13]",
+      "classification": "KNOWN_FORMAL_FIXTURE_EVIDENCE_GAP",
+      "message": "AssertionError: \n  input is a placeholder, not a replay packet\nassert not ['input is a placeholder, not a replay packet']"
+    },
+    {
+      "node": "tests/test_fixture_acceptance.py::test_fixture_is_ready_for_spec_acceptance[F-14]",
+      "classification": "KNOWN_FORMAL_FIXTURE_EVIDENCE_GAP",
+      "message": "AssertionError: \n  input is a placeholder, not a replay packet\nassert not ['input is a placeholder, not a replay packet']"
+    },
+    {
+      "node": "tests/test_fixture_acceptance.py::test_fixture_is_ready_for_spec_acceptance[F-15]",
+      "classification": "KNOWN_FORMAL_FIXTURE_EVIDENCE_GAP",
+      "message": "AssertionError: \n  input is a placeholder, not a replay packet\nassert not ['input is a placeholder, not a replay packet']"
+    },
+    {
+      "node": "tests/test_fixture_acceptance.py::test_fixture_is_ready_for_spec_acceptance[F-16]",
+      "classification": "KNOWN_FORMAL_FIXTURE_EVIDENCE_GAP",
+      "message": "AssertionError: \n  input is a placeholder, not a replay packet\nassert not ['input is a placeholder, not a replay packet']"
+    },
+    {
+      "node": "tests/test_fixture_acceptance.py::test_v0c_v0d_have_completed_acceptance_evidence",
+      "classification": "KNOWN_FORMAL_FIXTURE_EVIDENCE_GAP",
+      "message": "AssertionError: {\n    \"F-02\": [\n      \"required manual clause failed: Move class not SPOT_LED_ACCUMULATION or ORGANIC_MIXED; unlock recorded as potential supply, not a sale; action ≠ START.\"\n    ],\n    \"F-03\": [\n      \"assertion failed: {\\\"path\\\":[\\\"decisions\\\"],\\\"some\\\":{\\\"equals\\\":\\\"asset-m\\\",\\\"path\\\":[\\\"token_id\\\"]}}\",\n      \"required manual clause failed: CoW mapped as SECONDARY on LIQUIDITY_EXECUTION with integration state as evidenced; event not dropped; action ∈ {WATCH_TO_START, WAIT}.\"\n    ],\n    \"F-04\": [\n      \"assertion failed: {\\\"path\\\":[\\\"decisions\\\"],\\\"some\\\":{\\\"equals\\\":\\\"asset-"
+    },
+    {
+      "node": "tests/test_holders_revenue.py::test_real_supply_producer_to_computed_frozen_analysis",
+      "classification": "SYNTHETIC_SETTINGS_FIXTURE_FIXED",
+      "message": "AttributeError: 'types.SimpleNamespace' object has no attribute 'load_config'"
+    },
+    {
+      "node": "tests/test_pipeline_postgres.py::test_parallel_candidate_scores_survive_retry_without_partial_winner[failure]",
+      "classification": "MISSING_OPENROUTER_COST_REASON_PRODUCER_FIXED",
+      "message": "psycopg.errors.CheckViolation: new row for relation \"llm_usage\" violates check constraint \"required_cost_usd\"\nDETAIL:  Failing row contains (79e8e29c6b42b2accd83a355ff1050a0a8dd9dd542c10274a15c17cfcb70a6d5, {\"at\": \"2026-10-20T10:28:23.749349Z\", \"call\": \"ROUTE\", \"model\": ..., t, 2, 2026-10-20 10:28:23.749349+00, ROUTE, ROUTE-PAIRS-01M5CDNT1NSTMP07JAEWXSQG2C-item, typesafe/jev-1.13-20260917, null, 10, null, null, null, null, 0, NON_GENERATIVE_CLASSIFICATION, COLLECTION_ONLY, null)."
+    },
+    {
+      "node": "tests/test_pipeline_postgres.py::test_parallel_candidate_scores_survive_retry_without_partial_winner[cancellation]",
+      "classification": "MISSING_OPENROUTER_COST_REASON_PRODUCER_FIXED",
+      "message": "TimeoutError"
+    },
+    {
+      "node": "tests/test_runtime.py::test_delivery_order_wait_requeues_without_spending_network_attempts[postgres]",
+      "classification": "PG_TEST_DATABASE_ISOLATION_FIXED",
+      "message": "AssertionError: assert 'JOB-01M5CDEC...K397SCNXSRWTH' == 'JOB-01M5CDQR...MTC7X5M64W0DF'\n  \n  - JOB-01M5CDQRHXXXMMTC7X5M64W0DF\n  + JOB-01M5CDECZC4GKK397SCNXSRWTH"
+    },
+    {
+      "node": "tests/test_runtime.py::test_contended_delivery_lock_is_scheduling_then_sends_once[event-postgres]",
+      "classification": "PG_TEST_DATABASE_ISOLATION_FIXED",
+      "message": "AssertionError: assert (not [<Request('POST', 'https://api.telegram.org/botfixture/sendMessage')>])"
+    },
+    {
+      "node": "tests/test_runtime.py::test_contended_delivery_lock_is_scheduling_then_sends_once[delivery-postgres]",
+      "classification": "PG_TEST_DATABASE_ISOLATION_FIXED",
+      "message": "AssertionError: assert (not [<Request('POST', 'https://api.telegram.org/botfixture/sendMessage')>])"
+    }
+  ],
+  "r79_source_candidate_sha256": "de4fd3fffd72a8822ea47be5a39c3db5d24857388176b3b2a4db3c6cdb65967a",
+  "r80_candidate_sha256": "b49f034ea84804551cea6bea798fd2f7f129891785a81f9de641bda8d20a9b65",
+  "changed_files": [
+    "src/tank/agents/pipeline.py",
+    "tests/test_agents_openrouter.py",
+    "tests/test_event_tools.py",
+    "tests/test_holders_revenue.py",
+    "tests/test_pipeline_postgres.py",
+    "tests/test_runtime.py"
+  ],
+  "r80_affected_retest": {
+    "status": "PASS",
+    "passed": 301,
+    "failed": 0,
+    "skipped": 0,
+    "receipt": "r80-affected-regression.json",
+    "junit": "r80-affected-regression.xml"
+  },
+  "formal_acceptance": false,
+  "subsequent_r81_scope": "Only src/tank/market/supply.py and its test changed after r80; see combined-status-r81.json for independent affected proof and preserved actual E2E negative"
+}

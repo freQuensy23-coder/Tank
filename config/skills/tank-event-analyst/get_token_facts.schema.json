@@ -11,5 +11,5 @@
   "required": [
     "token"
   ],
-  "description": "Stored fundamentals. Returns: Fees and revenue, supply and unlocks, venues and markets."
+  "description": "Read stored token fundamentals and coverage: provider-specific fees/revenue, supply/unlocks, verified identity/contracts and active venues/markets. Returns provenance, timestamps and unavailable-data reasons. Protocol fees or chain gas do not by themselves prove economic value accruing to the token."
 }

@@ -1,0 +1,788 @@
+{
+  "status": "CANDIDATE_ONLY_NOT_CANONICAL_NOT_ACCEPTANCE",
+  "code_version": "d834e00858abf7aef8890504b44246bfbf4b09a672513279f401b6eb196908b0",
+  "config_version": "1b860c8ab2add6ae17d3d515fd1e67f4c5ba595d-dirty.db8fcccf8d4a5a9d55ad87c905f9fb3ec45f0610900cfe21ad1d155a1e381564",
+  "generation": "data/replay/prepared/reference-r22-candidate-20261019",
+  "actual_model_calls": 0,
+  "network_requests": 0,
+  "database_actions": 0,
+  "canonical_inputs_unchanged": true,
+  "evaluator_manifest_unchanged": true,
+  "source_packet_count": 17,
+  "canonical_source_packet_count": 16,
+  "canonical_insufficient_count": 11,
+  "market_components_scope": "Six separate existing components, unchanged; not analyst acceptance",
+  "rows": [
+    {
+      "fixture_id": "F-01",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-01.json",
+      "before_sha256": "02c112e498a976c6decb58560ee8fee14965c81caa6e4fccd1056c9da70eedce",
+      "packet_sha256": "972ee7379936996c7395a09d6603e0981cec31fb63923d42cb2440f7fdd14731",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256"
+      ],
+      "capture_review": {
+        "status": "UNCHANGED_EXISTING_CAPTURE"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "92d5963cb26c986fdff7b2e9bb217db3b9dffc23acfa1d730363691866d74941",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58HC7AJYS5PX8K3B606N4J2",
+          "source_url": "https://ipfs.snapshot.box/ipfs/bafkreihwjnxkey2zqbvjeqvral6oli2kh576rbyjioboxu3m3n5pjkhpae",
+          "source_kind": "IMMUTABLE_ORIGINAL_PUBLICATION",
+          "physical_available_at": "2026-10-18T22:16:06.226314+00:00",
+          "simulated_available_at": "2026-09-18T14:41:53Z",
+          "raw_sha256": "f64b6ea26359806a9242b102fce5a34a3f7fe887094382ebd36cdb7af4a8ef01",
+          "body_sha256": "8b0193e10b74c7dab4a2df3157daca7a7f7759b152f39a5c701b413ef5cc8bd2",
+          "capture_urls": [
+            "https://ipfs.snapshot.box/ipfs/bafkreihwjnxkey2zqbvjeqvral6oli2kh576rbyjioboxu3m3n5pjkhpae"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-02",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-02.json",
+      "before_sha256": "c5ea5a6ced1618ef3368f65bc104a8cfe7544a960b30560154e2dc985985958d",
+      "packet_sha256": "abf5094cc68fed1784da64faedfff6ebb0f512bf7860ce8fad30d906448f9fca",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256",
+        "/tool_results"
+      ],
+      "capture_review": {
+        "status": "ADDED_EXACT_REUSED_ACQUIRED_REFERENCE",
+        "receipt_path": "data/verification/fixture-public-20261018T220801Z-8f567c1a/receipt.json",
+        "receipt_sha256": "d6da07af8106d6590a193aeb45dbb220d9df978e0eb52adfe068fde148264f31",
+        "receipt": {
+          "fixture_id": "F-02",
+          "representation": "official_anchorage_original_candidate",
+          "url": "https://layerzero.network/blog/anchorage-selects-layerzero-for-stablecoins",
+          "method": "GET",
+          "request_json": null,
+          "request_started_at": "2026-10-18T22:08:01.056520+00:00",
+          "actual_clock_precision": "COLLECTION_ONLY",
+          "retries": 0,
+          "redirect_followed": false,
+          "http_status": 200,
+          "content_type": "text/html; charset=utf-8",
+          "location": null,
+          "etag": null,
+          "last_modified": null,
+          "provider_date": "Sun, 18 Oct 2026 18:48:51 GMT",
+          "headers_received_at": "2026-10-18T22:08:01.434270+00:00",
+          "raw_ref": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/data/verification/fixture-public-20261018T220801Z-8f567c1a/985e1aa3ca4360004887f88bc27ca34e77a549c23b0859e958c4c60cfb733ffb.zst",
+          "raw_sha256": "985e1aa3ca4360004887f88bc27ca34e77a549c23b0859e958c4c60cfb733ffb",
+          "response_bytes": 631051,
+          "body_complete": true,
+          "received_at": "2026-10-18T22:08:01.501668+00:00",
+          "finished_at": "2026-10-18T22:08:01.501679+00:00",
+          "as_of_content_verified": false,
+          "simulated_availability_assigned": false,
+          "performance_evidence": false
+        },
+        "source_scope": "exact admitted source.record projection, not full HTTP page or historical tool execution"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "a96feb1c20d3a89fb8350679e9cae5b62f6251f3ad2c33e3041a90e363655be3",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58GXDYXK1F1N8YA8DG00J47",
+          "source_url": "https://layerzero.network/blog/anchorage-selects-layerzero-for-stablecoins",
+          "source_kind": "RETROSPECTIVE_BEHAVIOR_REFERENCE",
+          "physical_available_at": "2026-10-18T22:08:01.501668+00:00",
+          "simulated_available_at": "2026-09-22T00:00:00Z",
+          "raw_sha256": "33b66f17ebd23eeb97ec77baf993171e36e3899c0818ffa643249d0ccc061cb9",
+          "body_sha256": "5e5d58f49b8e0f0c83dc29a52ba82e78c5a3f2f61efe0079c52bacaf08f085a2",
+          "capture_urls": [
+            "https://layerzero.network/blog/anchorage-selects-layerzero-for-stablecoins"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-04",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-04.json",
+      "before_sha256": "6012d95494babe863c848a801486b66e2962dced8453a8fdb547c0f0998aca4a",
+      "packet_sha256": "f1a081a7a09267b7749ecccb01df47ab69a886ae3f3c178054834894f9894290",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256"
+      ],
+      "capture_review": {
+        "status": "UNCHANGED_EXISTING_CAPTURE"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "49c6a6ca714599388e71cbdc7039fd7d5419f6c3ff5f8d5d7e2fa65fb24ee357",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58G848XFXC4TMD1XNAH3RXN",
+          "source_url": "https://gov.ethenafoundation.com/t/ena-fee-switch-activation/830.json",
+          "source_kind": "IMMUTABLE_ORIGINAL_PUBLICATION",
+          "physical_available_at": "2026-10-18T21:56:23.453659+00:00",
+          "simulated_available_at": "2026-08-27T13:59:31.579Z",
+          "raw_sha256": "4029dbf1b44879f6928c916c3f5ec9777e5b6b59d7938e4293ae7103a4b480bf",
+          "body_sha256": "e45a3745bae8c0fd3e8fcc131d75daff893e071d2c535d2764d79cc54fbf4b38",
+          "capture_urls": [
+            "https://gov.ethenafoundation.com/t/ena-fee-switch-activation/830.json"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-06",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-06.json",
+      "before_sha256": "a9521e09424a2349ea7da0a98536010cec37a4b2cff2a34ea4462b407399d2b2",
+      "packet_sha256": "9573690a0ac811953f2ee630903d8561dc7c4e15a984e5208691ffc6104c9713",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256",
+        "/tool_results"
+      ],
+      "capture_review": {
+        "status": "ADDED_EXACT_REUSED_ACQUIRED_REFERENCE",
+        "receipt_path": "data/verification/fixture-public-20261018T220801Z-8f567c1a/receipt.json",
+        "receipt_sha256": "d6da07af8106d6590a193aeb45dbb220d9df978e0eb52adfe068fde148264f31",
+        "receipt": {
+          "fixture_id": "F-06",
+          "representation": "official_v4_equities_collateral_candidate",
+          "url": "https://aave.com/blog/coinbase-tokenized-stocks",
+          "method": "GET",
+          "request_json": null,
+          "request_started_at": "2026-10-18T22:08:01.314068+00:00",
+          "actual_clock_precision": "COLLECTION_ONLY",
+          "retries": 0,
+          "redirect_followed": false,
+          "http_status": 200,
+          "content_type": "text/html; charset=utf-8",
+          "location": null,
+          "etag": null,
+          "last_modified": null,
+          "provider_date": "Sun, 18 Oct 2026 22:08:01 GMT",
+          "headers_received_at": "2026-10-18T22:08:01.461180+00:00",
+          "raw_ref": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/data/verification/fixture-public-20261018T220801Z-8f567c1a/b1efeed8bee949525cd2fa6a7c722afae821e78247247a42da1dfc1610a7a22f.zst",
+          "raw_sha256": "b1efeed8bee949525cd2fa6a7c722afae821e78247247a42da1dfc1610a7a22f",
+          "response_bytes": 58710,
+          "body_complete": true,
+          "received_at": "2026-10-18T22:08:01.462275+00:00",
+          "finished_at": "2026-10-18T22:08:01.462288+00:00",
+          "as_of_content_verified": false,
+          "simulated_availability_assigned": false,
+          "performance_evidence": false
+        },
+        "source_scope": "exact admitted source.record projection, not full HTTP page or historical tool execution"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "e80308418b10c879eb59fd4e71987ca675fe6b3054afda37c7cc7a795a33e002",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58GXDXPP7QYXP5YX54N4Q6J",
+          "source_url": "https://aave.com/blog/coinbase-tokenized-stocks",
+          "source_kind": "RETROSPECTIVE_BEHAVIOR_REFERENCE",
+          "physical_available_at": "2026-10-18T22:08:01.462275+00:00",
+          "simulated_available_at": "2026-09-26T00:00:00Z",
+          "raw_sha256": "dac323fe55fb6b8a37ebeb49c72154ab8b2ae9b1e77f974f867b31e1a564281f",
+          "body_sha256": "cf626b97b96c59e6ef25b7a7a8c6f179f2ded5bec22b76e17e9cb95a4897a0c6",
+          "capture_urls": [
+            "https://aave.com/blog/coinbase-tokenized-stocks"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-07",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-07.json",
+      "before_sha256": "8d767693cbdb10a5c529f852c91c454ca1899711e4ee14339d49f16272c33a4c",
+      "packet_sha256": "68600d48d5e52855ef602d7cda2df5c49b570441dd3992c29b7707e630b28c2c",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256"
+      ],
+      "capture_review": {
+        "status": "UNCHANGED_EXISTING_CAPTURE"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "b249f3bef5bb9c6d218151c11bdff77a3e0ab28e4772dcd68e4da657f840e631",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M57MQ28X96NM41H3RK8PH541",
+          "source_url": "https://www.binance.com/en/support/announcement/d49de208bb6d4a26b02677d7c3d89b5d",
+          "source_kind": "IMMUTABLE_ORIGINAL_PUBLICATION",
+          "physical_available_at": "2026-10-18T13:55:12.797364Z",
+          "simulated_available_at": "2026-09-24T07:30:38.608000Z",
+          "raw_sha256": "2acd81baa9cc43019cad10b0e9d9365773caea22c4772d33a8bafcb86dd947df",
+          "body_sha256": "68c0e66c98e81d53383f291dc8c5dfbfd32b73787e7b2c8c363efc4562bc984e",
+          "capture_urls": [
+            "https://www.binance.com/en/support/announcement/d49de208bb6d4a26b02677d7c3d89b5d"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-08",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-08.json",
+      "before_sha256": "07fe78bace2b1d5fe0bff1193d6dd757e988c924e42fa4c433d90e9f53cbf78c",
+      "packet_sha256": "17a67acdd7f3817e2d7c109ac6dcea88dcae8cc5f09a78007f078b6757afc9b4",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256",
+        "/records",
+        "/tool_results"
+      ],
+      "capture_review": {
+        "status": "EXACT_EXECUTED_R22_PACKET",
+        "actual_result_ref": "docs/verification/f08-cli-r22-2026-10-19/result.json"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "5f4be494b361d46a7c681db424cc86aa1e355422e220305be5e6149239676c0b",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58980T1PZ6N0M4MQNJ2SGTE",
+          "source_url": "https://www.theclearinghouse.org/payment-systems/Articles/2026/09/The-Clearing-House-Partners-with-Quant-to-Advance-the--On-Chain-Money-Initiative",
+          "source_kind": "RETROSPECTIVE_BEHAVIOR_REFERENCE",
+          "physical_available_at": "2026-10-18T19:53:59.873710Z",
+          "simulated_available_at": "2026-09-24T20:15:00Z",
+          "raw_sha256": "84ce2ab5b7b706def1fa934eee42304fbe5ec0108c3325a22569edfdc23983e8",
+          "body_sha256": "973feb8ec4e9113f3b85781ee24d2711d3fa0e8e5b87f13c81d6a9c938896a21",
+          "capture_urls": [
+            "https://www.theclearinghouse.org/payment-systems/Articles/2026/09/The-Clearing-House-Partners-with-Quant-to-Advance-the--On-Chain-Money-Initiative"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-09",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-09.json",
+      "before_sha256": "f05bcc63b4f55592267cbfbca9228df06fb25c25fba562d1c6534d2b34dadeff",
+      "packet_sha256": "da343d7c4e2d4b7987c1eec733917da5dc420efa9cb59ee157a3e94eba8835fc",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256",
+        "/tool_results"
+      ],
+      "capture_review": {
+        "status": "ADDED_EXACT_REUSED_ACQUIRED_REFERENCE",
+        "receipt_path": "data/verification/fixture-public-20261018T223241Z-3233e034/receipt.json",
+        "receipt_sha256": "2ceb6c511dae72b06d53a5cecafac2409a337fa4a90af23b15796352e1fcc767",
+        "receipt": {
+          "fixture_id": "F-09",
+          "representation": "official_sec_linked_fact_sheet",
+          "url": "https://www.sec.gov/files/34-106402-fact-sheet.pdf",
+          "method": "GET",
+          "request_json": null,
+          "request_started_at": "2026-10-18T22:32:41.519566+00:00",
+          "actual_clock_precision": "COLLECTION_ONLY",
+          "retries": 0,
+          "redirect_followed": false,
+          "http_status": 200,
+          "content_type": "application/pdf",
+          "location": null,
+          "etag": null,
+          "last_modified": "Thu, 17 Sep 2026 12:49:38 GMT",
+          "provider_date": "Sun, 18 Oct 2026 22:32:41 GMT",
+          "headers_received_at": "2026-10-18T22:32:41.762340+00:00",
+          "raw_ref": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/data/verification/fixture-public-20261018T223241Z-3233e034/4ae1230fe66ae6e0a2b0a8310d49401c8b754d76a7acb432e64d29ccd13c8cd2.zst",
+          "raw_sha256": "4ae1230fe66ae6e0a2b0a8310d49401c8b754d76a7acb432e64d29ccd13c8cd2",
+          "response_bytes": 250908,
+          "body_complete": true,
+          "received_at": "2026-10-18T22:32:41.788648+00:00",
+          "finished_at": "2026-10-18T22:32:41.788659+00:00",
+          "as_of_content_verified": false,
+          "simulated_availability_assigned": false,
+          "performance_evidence": false
+        },
+        "source_scope": "exact admitted source.record projection, not full HTTP page or historical tool execution"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "9cbb7c8676326caf8cd5bb15978fa839b7a1a648dbca0768d7e4998dac26cd46",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58JAKHW9BGJ63Z6DBKE18NG",
+          "source_url": "https://www.sec.gov/files/34-106402-fact-sheet.pdf",
+          "source_kind": "IMMUTABLE_ORIGINAL_PUBLICATION",
+          "physical_available_at": "2026-10-18T22:32:41.788648+00:00",
+          "simulated_available_at": "2026-09-18T00:00:00Z",
+          "raw_sha256": "4ae1230fe66ae6e0a2b0a8310d49401c8b754d76a7acb432e64d29ccd13c8cd2",
+          "body_sha256": "1b8fc8e719807040b9d519267ab9d8539145b80b838a3ced1c5c84bf4d060cbc",
+          "capture_urls": [
+            "https://www.sec.gov/files/34-106402-fact-sheet.pdf"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-17",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-17.json",
+      "before_sha256": "efd79a8af0aeb2644647c4b44a83e521d8d1a8bba28bb48210459ae3ef17d0b1",
+      "packet_sha256": "38845f5d6e55315e1e8b9a6a03cb5a177b581dc3ce7811f08879f273eb0c7d1b",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256"
+      ],
+      "capture_review": {
+        "status": "UNCHANGED_EXISTING_CAPTURE"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "4348b7ca32e87093021d2c9084deadfcc21dcd6d318b2ad6708d01cc93f3426d",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58HC7BMVNAGVA248EXD7NEY",
+          "source_url": "https://ipfs.snapshot.box/ipfs/bafkreig5kug2qrcdxlj5lxr2ipmc5hfitfckcih334itng4xyorkke7fru",
+          "source_kind": "IMMUTABLE_ORIGINAL_PUBLICATION",
+          "physical_available_at": "2026-10-18T22:16:06.260500+00:00",
+          "simulated_available_at": "2026-10-14T17:52:44Z",
+          "raw_sha256": "dd550da84443bad3d5de3a43d82e9ca89944a120fbdf11369b97c3a2a513e58d",
+          "body_sha256": "594f59256fcb22321556fae5337a00c56c4ba1759072cb7321a2499c134a7a44",
+          "capture_urls": [
+            "https://ipfs.snapshot.box/ipfs/bafkreig5kug2qrcdxlj5lxr2ipmc5hfitfckcih334itng4xyorkke7fru"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-18",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-18.json",
+      "before_sha256": "6b9e79903d2a9cea380c962afb2811f97a4542d8d6cd19b61e044f0453e82ca3",
+      "packet_sha256": "38e38ac5ff0f47cba145f013475bb041742b95142445eea661e4f6723c2009b0",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256"
+      ],
+      "capture_review": {
+        "status": "UNCHANGED_EXISTING_CAPTURE"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "011a5c81876cc83da8d8762411bc928d0fb6c4b271d8cdf45f768e49544541be",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58FWMV5X5GJEN22WZ1GK5C4",
+          "source_url": "https://www.govinfo.gov/content/pkg/FR-2026-10-13/html/2026-20888.htm",
+          "source_kind": "IMMUTABLE_ORIGINAL_PUBLICATION",
+          "physical_available_at": "2026-10-18T21:50:07.205721+00:00",
+          "simulated_available_at": "2026-10-14T00:00:00Z",
+          "raw_sha256": "e961275442e7c3099584c08dded5d3bf46e94fd71958880ed2f825802833590c",
+          "body_sha256": "097dc8e01fa4c69765f354b1e34fcb6a5f37f4702becca0843a6712b9c305cb9",
+          "capture_urls": [
+            "https://www.govinfo.gov/content/pkg/FR-2026-10-13/html/2026-20888.htm"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-19",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-19.json",
+      "before_sha256": "c360f16f38220e9a5fab8191bbb9151df1f23ba6b2c11476572c9efb5b2dc307",
+      "packet_sha256": "3f9dff5b9aeb8097b40e247820d2c41ff6a1e1039f81dffb978788b286fd6acf",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256"
+      ],
+      "capture_review": {
+        "status": "UNCHANGED_EXISTING_CAPTURE"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "c50fc1ff16d80ad993d4cc98fc89251f3905cb273e12bd86991cc54a3ed9a62b",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58FWP5T47DP6ZW7GJK5D7W3",
+          "source_url": "https://www.govinfo.gov/content/pkg/FR-2026-10-06/html/2026-20466.htm",
+          "source_kind": "IMMUTABLE_ORIGINAL_PUBLICATION",
+          "physical_available_at": "2026-10-18T21:50:08.570717+00:00",
+          "simulated_available_at": "2026-10-07T00:00:00Z",
+          "raw_sha256": "21db637f8784a6569f834e1a867df68ecedc577650b1dc34dffd93fa3020f62f",
+          "body_sha256": "6c02d74b4f826abe889d9519707fad5cbc7e4aafaa22704c1ce90d0346420918",
+          "capture_urls": [
+            "https://www.govinfo.gov/content/pkg/FR-2026-10-06/html/2026-20466.htm"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-20",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-20.json",
+      "before_sha256": "bebb43697e01b20d29bc0b96a98f9a8cb1734b26ce8230a4294b3b0f84a1e504",
+      "packet_sha256": "6863d353708518e33d2e0e29b7cbebc64238e90aca84ed829d9b7f53354ecbff",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256"
+      ],
+      "capture_review": {
+        "status": "UNCHANGED_EXISTING_CAPTURE"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "b54688b68ccca2271b15bb1afb637eb00d1a5f65fe7cb7055ee69c391285a88f",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58FWPBDJN40SYA2K3X9XATN",
+          "source_url": "https://www.govinfo.gov/content/pkg/FR-2026-10-05/html/2026-20371.htm",
+          "source_kind": "IMMUTABLE_ORIGINAL_PUBLICATION",
+          "physical_available_at": "2026-10-18T21:50:08.749427+00:00",
+          "simulated_available_at": "2026-10-06T00:00:00Z",
+          "raw_sha256": "95480cf94298fa9eab5585d1f24465d9f0eeeeab307266b4bd381bc7baa2515f",
+          "body_sha256": "702d8d1f17f5c03da35e577ad55da59f06cff7058206b7ce800ca0cb6ee4be02",
+          "capture_urls": [
+            "https://www.govinfo.gov/content/pkg/FR-2026-10-05/html/2026-20371.htm"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-21",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-21.json",
+      "before_sha256": "55e7f982224a875c00c03419aa191f4aa7c5868b3131511a36fddc9116bc6da5",
+      "packet_sha256": "9e93ec534c26782b6f578eedd918616f58401ad3d34877cd9efc25a008ede57e",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256"
+      ],
+      "capture_review": {
+        "status": "MISSING_NO_PROVEN_DIRECT_SOURCE_ACQUISITION",
+        "reason": "Only selected Bybit LIST row acquired; exact announcement-detail URL is identified but no direct detail-page acquisition is retained. No new capture declared."
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "cad2d3527bd05a17b8f333f4f6fc768b03b03d65e74689e75dcb245b89a5f20b",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M55CC7Y57314BDMPWFDP0RDC",
+          "source_url": "https://announcements.bybit.com/en-US/article/new-listing-listing-of-dnausdt-on-bybit-perpetual-on-oct-16-2026-11-45am-utc--art2e000df3b3e1/",
+          "source_kind": "RETROSPECTIVE_BEHAVIOR_REFERENCE",
+          "physical_available_at": "2026-10-17T16:51:00.677358Z",
+          "simulated_available_at": "2026-10-16T11:17:25Z",
+          "raw_sha256": "a51d481259b1d8191211dfe3132acd123de7919b38f8e7b6fbfcf019d0e8ca0f",
+          "body_sha256": "6bbd76403bf44969cc605f91856dcf4375d404d82b48d2a4174dfe6f1598f96b",
+          "capture_urls": []
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-23",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/partial/F-23-same-item-redelivery.json",
+      "before_sha256": "219a3fb15c1417996f4178b5306dd0f18ee08d0768ab3fcf9de7a845ba86a371",
+      "packet_sha256": "3a3b838c2daba92b92766e4e9b6c737c7506836b8e0765681c0f19e496f0c1e2",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256",
+        "/tool_results"
+      ],
+      "capture_review": {
+        "status": "ADDED_EXACT_REUSED_ACQUIRED_REFERENCE",
+        "evidence_ref": "docs/verification/f08-cli-r21-2026-10-19/repin.json",
+        "source_scope": "same TCH source projection; F23 remains same-item redelivery only"
+      },
+      "full_fixture_passed": false,
+      "scope": "PARTIAL_SAME_ITEM_REDELIVERY_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "ad89af6871ef504f39799dc592e58e42648529d128cc706c5f5e78b4dff987a6",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58980T1PZ6N0M4MQNJ2SGTE",
+          "source_url": "https://www.theclearinghouse.org/payment-systems/Articles/2026/09/The-Clearing-House-Partners-with-Quant-to-Advance-the--On-Chain-Money-Initiative",
+          "source_kind": "RETROSPECTIVE_BEHAVIOR_REFERENCE",
+          "physical_available_at": "2026-10-18T19:53:59.873710Z",
+          "simulated_available_at": "2026-09-24T20:15:00Z",
+          "raw_sha256": "84ce2ab5b7b706def1fa934eee42304fbe5ec0108c3325a22569edfdc23983e8",
+          "body_sha256": "973feb8ec4e9113f3b85781ee24d2711d3fa0e8e5b87f13c81d6a9c938896a21",
+          "capture_urls": [
+            "https://www.theclearinghouse.org/payment-systems/Articles/2026/09/The-Clearing-House-Partners-with-Quant-to-Advance-the--On-Chain-Money-Initiative"
+          ]
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-24",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-24.json",
+      "before_sha256": "4db8b1a4299f447fa595b459eb8d43443e8e0b3332f6f034e04a2693bfb969f3",
+      "packet_sha256": "77ffb88998ba5bf81997740407162a989f75073fe2ed606ad6100f409e1ddcca",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256"
+      ],
+      "capture_review": {
+        "status": "UNCHANGED_EXISTING_CAPTURE"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "726a9b3a41da2f2123881f4b78af152ba2fd13773e7e1ae0ff319727ce1c9189",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58JCQVJ0812XBBAZ4BTN4YA",
+          "source_url": "fixture://F-24/source/1",
+          "source_kind": "DECLARED_SYNTHETIC_SOURCE",
+          "physical_available_at": "2026-10-18T22:33:51.730387+00:00",
+          "simulated_available_at": "2026-10-16T12:00:00Z",
+          "raw_sha256": "02022ead6af917aa93ca41858b20a19efd58051536ce6a63a25176985327e106",
+          "body_sha256": "02022ead6af917aa93ca41858b20a19efd58051536ce6a63a25176985327e106",
+          "capture_urls": []
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-25",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-25.json",
+      "before_sha256": "e057671bb60006476015e9a19de55ee285e5013abc93f189d48255b773612b1e",
+      "packet_sha256": "a8e396fa3d74a516a782cef64fdcb4f09929f30a063e3c03a90632389040f872",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256"
+      ],
+      "capture_review": {
+        "status": "MISSING_NO_PROVEN_DIRECT_SOURCE_ACQUISITION"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "9c4d3bc469a6a54e2f248a74ac07992f5ee792ca18f5e62f3dada585659913d2",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58JCQVJWGSDF9N5G4DZVBNY",
+          "source_url": "fixture://F-25/source/1",
+          "source_kind": "DECLARED_SYNTHETIC_SOURCE",
+          "physical_available_at": "2026-10-18T22:33:51.730767+00:00",
+          "simulated_available_at": "2026-10-16T12:01:00Z",
+          "raw_sha256": "e432d7a6a5811bfdaebee0c2f99299c63d978056ec5b56530404b448cfed2cae",
+          "body_sha256": "e432d7a6a5811bfdaebee0c2f99299c63d978056ec5b56530404b448cfed2cae",
+          "capture_urls": []
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-26",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-26.json",
+      "before_sha256": "b8f189afa09e9fb6728dadab5710e6ca42b20a4dcc8b90f6d5281b6ed69cc532",
+      "packet_sha256": "4b8e0f079a29a4be58ab95e2899b357ff66ba6277137ea29ca33f334a46da07f",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256"
+      ],
+      "capture_review": {
+        "status": "MISSING_NO_PROVEN_DIRECT_SOURCE_ACQUISITION"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "b82e563f3cccbee1dfd038ae3196f29057477edc802d869d26864f163d38e7e1",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58JCQVJV3D0MFTB6S50G58J",
+          "source_url": "fixture://F-26/source/1",
+          "source_kind": "DECLARED_SYNTHETIC_SOURCE",
+          "physical_available_at": "2026-10-18T22:33:51.730893+00:00",
+          "simulated_available_at": "2026-10-16T12:00:00Z",
+          "raw_sha256": "d8da0a3f4b364a081512aa75a4b2b45484abae83935ebeb5564649a2d0f8a7a1",
+          "body_sha256": "d8da0a3f4b364a081512aa75a4b2b45484abae83935ebeb5564649a2d0f8a7a1",
+          "capture_urls": []
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-27",
+      "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-27.json",
+      "before_sha256": "94bbaf02c8b6d308455fdfb3f0d6e969c543a2af58ad30004a61305aef3c16d1",
+      "packet_sha256": "ca0393ba1927dd1d4bf68ebca75491833c01034de355428a75e780a02bf143aa",
+      "changed_paths": [
+        "/assembled_at",
+        "/code_version",
+        "/config/openma/agent_id",
+        "/config/openma/environment_id",
+        "/config/openma/openma_overlay",
+        "/config/openma/replay_environment_id",
+        "/config/openma/scout_agent_id",
+        "/config_version",
+        "/input_sha256"
+      ],
+      "capture_review": {
+        "status": "MISSING_NO_PROVEN_DIRECT_SOURCE_ACQUISITION"
+      },
+      "full_fixture_passed": false,
+      "scope": "SOURCE_REFERENCE_INPUTS_ONLY",
+      "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+      "input_sha256": "7ded24c3b6a62869d061eaba91ce0f50e51d9e0ba5570654daf222db4c3790ce",
+      "source_provenance": [
+        {
+          "source_item_id": "ITM-01M58JCQVJQWWXNYXXWAQ96E8Z",
+          "source_url": "fixture://F-27/source/1",
+          "source_kind": "DECLARED_SYNTHETIC_SOURCE",
+          "physical_available_at": "2026-10-18T22:33:51.730986+00:00",
+          "simulated_available_at": "2026-10-16T12:00:00Z",
+          "raw_sha256": "bf39dafbbde2ae93391fd45e50ba7d546b280a9518a51f014292b89da6097d12",
+          "body_sha256": "bf39dafbbde2ae93391fd45e50ba7d546b280a9518a51f014292b89da6097d12",
+          "capture_urls": []
+        }
+      ]
+    }
+  ],
+  "full_fixture_passed": false,
+  "canonical_before_sha256": {
+    "tests/fixtures/manifest.json": "f696b7139214489d0e7fb70631d3203480a58f4d0055e5dc8d554601010972d2",
+    "data/replay/inputs/F-01.json": "02c112e498a976c6decb58560ee8fee14965c81caa6e4fccd1056c9da70eedce",
+    "data/replay/inputs/F-02.json": "c5ea5a6ced1618ef3368f65bc104a8cfe7544a960b30560154e2dc985985958d",
+    "data/replay/inputs/F-03.json": "8903d3fe8abb0e23fcbb4b7ae56ba9f7f483be21b15bd9e5df3ed23f9efc152b",
+    "data/replay/inputs/F-04.json": "6012d95494babe863c848a801486b66e2962dced8453a8fdb547c0f0998aca4a",
+    "data/replay/inputs/F-05.json": "14ad072dda02bb9ae757a839e802a6c9fb5f88025d77b33bd21ba5ec2b82e69b",
+    "data/replay/inputs/F-06.json": "a9521e09424a2349ea7da0a98536010cec37a4b2cff2a34ea4462b407399d2b2",
+    "data/replay/inputs/F-07.json": "8d767693cbdb10a5c529f852c91c454ca1899711e4ee14339d49f16272c33a4c",
+    "data/replay/inputs/F-08.json": "07fe78bace2b1d5fe0bff1193d6dd757e988c924e42fa4c433d90e9f53cbf78c",
+    "data/replay/inputs/F-09.json": "f05bcc63b4f55592267cbfbca9228df06fb25c25fba562d1c6534d2b34dadeff",
+    "data/replay/inputs/F-10.json": "5245bbbb97fb5a84e5f915685a62f3daaf74ce8c091be636b75e8e00c8101e10",
+    "data/replay/inputs/F-11.json": "08d85fe6467ba303afaef1799c27e4520f82cdc49b2e671fa69748337db97db9",
+    "data/replay/inputs/F-12.json": "1693be0b418d35d4e4ae53d908b1a1ac8dadc0c63982e5393f737fecc16a90e2",
+    "data/replay/inputs/F-13.json": "3e7b7d85ef1c5e9ae5175b25c414bb4650d9ac429b0747bc7194079214fef0d0",
+    "data/replay/inputs/F-14.json": "b55216e0da236b105e3da32e92015f7a13bf9a91fdcec9603e7e03f1d790141b",
+    "data/replay/inputs/F-15.json": "0f2f9502efc0ba9fd5cec78ba2a1011e826842b7db5487cbd6e9472fc1fdb9f9",
+    "data/replay/inputs/F-16.json": "978ab890394d9b3a2f98684ebdde7b3d7c675930cb42c6317f2c4236243d0961",
+    "data/replay/inputs/F-17.json": "efd79a8af0aeb2644647c4b44a83e521d8d1a8bba28bb48210459ae3ef17d0b1",
+    "data/replay/inputs/F-18.json": "6b9e79903d2a9cea380c962afb2811f97a4542d8d6cd19b61e044f0453e82ca3",
+    "data/replay/inputs/F-19.json": "c360f16f38220e9a5fab8191bbb9151df1f23ba6b2c11476572c9efb5b2dc307",
+    "data/replay/inputs/F-20.json": "bebb43697e01b20d29bc0b96a98f9a8cb1734b26ce8230a4294b3b0f84a1e504",
+    "data/replay/inputs/F-21.json": "55e7f982224a875c00c03419aa191f4aa7c5868b3131511a36fddc9116bc6da5",
+    "data/replay/inputs/F-22.json": "009676e05dd8e66008af52f36d7f1ff636f520ef55e04a6de7b212403d2622f5",
+    "data/replay/inputs/F-23.json": "d43ccfa3b27fd162191528b887b3bc62fae40cfdfc769111968c3e4bbcca6ead",
+    "data/replay/inputs/F-24.json": "4db8b1a4299f447fa595b459eb8d43443e8e0b3332f6f034e04a2693bfb969f3",
+    "data/replay/inputs/F-25.json": "e057671bb60006476015e9a19de55ee285e5013abc93f189d48255b773612b1e",
+    "data/replay/inputs/F-26.json": "b8f189afa09e9fb6728dadab5710e6ca42b20a4dcc8b90f6d5281b6ed69cc532",
+    "data/replay/inputs/F-27.json": "94bbaf02c8b6d308455fdfb3f0d6e969c543a2af58ad30004a61305aef3c16d1"
+  },
+  "candidate_evaluator_manifest_sha256": "44cf3f76e8dd4304d6298cbeac9c623cb9b8b88b8220164cbb2c9ec71d648565",
+  "evaluator_business_fields_unchanged": true,
+  "f01_execution_scope": "Preserved older r19 execution only; candidate admission does not establish execution under r22.",
+  "f08_scope": "Exact actual r22 source/partial-market packet and real PARTIAL-to-FULL execution; historical HEAVY assertion unproven."
+}

@@ -102,7 +102,7 @@ async def test_heartbeat_counts_all_pages_with_time_bounds(tmp_path):
         "out.deliveries", "old", {"status": "SENT", "alert_id": "old", "at": iso(now - timedelta(days=2))}
     )
     for i in range(5):
-        await repo.put("mkt.hot_tokens", str(i), {"token_id": str(i)})
+        await repo.put("mkt.hot_tokens", str(i), {"token_id": str(i), "event_id": "synthetic-event"})
         await repo.put("ops.llm_usage", str(i), {"at": iso(now - timedelta(hours=1)), "cost_usd": "1.25"})
     await repo.put("ops.llm_usage", "unknown", {"at": iso(now), "cost_usd": None})
     await repo.put("ops.llm_usage", "old", {"at": iso(now - timedelta(days=2)), "cost_usd": "1000"})

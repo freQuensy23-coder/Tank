@@ -1,0 +1,22 @@
+{
+  "status": "FAILED_NATIVE_SECOND_SESSION_BOOT",
+  "first_session_native_turn": "COMPLETED",
+  "new_item_session_count": 2,
+  "event_count": 1,
+  "native_errors": 6,
+  "all_sessions_archived": true,
+  "database": "tank_replay_r56_f10_failed_20261020",
+  "framework_attempts": [
+    {
+      "status": "FAILED",
+      "failure": {
+        "error_type": "ReplayError",
+        "reason": "replay agent turn failed before a settled completion"
+      },
+      "code_version": "082547aeb4e32c0503f1f71345c27454620590999f65f678a684fe7fa0cdf763",
+      "config_version": "58daf19e9ed36d477dca6ff543523fd5b7b6cfed-dirty.caa5870f572700d54f15d824c05ce3a0522745b76035bc6b870ff76ea376a03e"
+    }
+  ],
+  "assertions_changed": false,
+  "accepted": false
+}

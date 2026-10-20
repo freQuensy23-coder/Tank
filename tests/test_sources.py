@@ -26,6 +26,13 @@ class Repo:
     async def list(self, *a, **k):
         return []
 
+    async def iter_all(self, collection, *, filters=None, batch_size=1000):
+        from copy import deepcopy
+
+        for (table, _), row in sorted(self.rows.items()):
+            if table == collection and all(row.get(k) == v for k, v in (filters or {}).items()):
+                yield deepcopy(row)
+
     async def enqueue(self, *a, **k):
         self.jobs.append((a, k))
 
@@ -356,9 +363,10 @@ async def test_snapshot_closed_proposal_checked_after_leaving_latest(tmp_path):
 async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path):
     """Exercise the actual schema, not a permissive in-memory record store."""
     import os
+    from pathlib import Path
 
     from tank.storage import PostgresRepository
-    from tank.util import new_id
+    from tank.util import new_id, sha256
 
     database_url = os.getenv("TANK_SOURCE_TEST_DATABASE_URL")
     if not database_url:
@@ -384,13 +392,14 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path):
             (filtered, None, "FILTER_ITEM"),
         ]:
             key = new_id("test-source")
-            raw_ref, digest = svc.raw(key.encode())
+            raw_ref, digest = svc.raw(key.encode(), source_id=source["source_id"])
             item = {
                 "external_id": key,
                 "title": key,
                 "text": "Actual source content",
                 "url": "https://example.org/item",
                 "published_at": "2026-10-16T12:00:00Z",
+                "published_at_precision": "EXACT",
             }
             record = await svc.ingest(source, item, raw_ref, digest)
             assert record["relevance"]["decision"] == expected
@@ -398,7 +407,7 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path):
             async with repo.transaction():
                 row = await (
                     await repo._conn().execute(
-                        "SELECT relevance_decision,published_prec,body,raw_path FROM ingest.source_items WHERE item_id=%s",
+                        "SELECT relevance_decision,published_prec,body,raw_path,raw_sha256 FROM ingest.source_items WHERE item_id=%s",
                         (record["item_id"],),
                     )
                 ).fetchone()
@@ -410,7 +419,19 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path):
                 ).fetchone()
             assert row["relevance_decision"] == expected
             assert row["published_prec"] == "EXACT" and row["body"] == item["text"]
-            assert row["raw_path"] == raw_ref and jobs["n"] == 1
+            expected_raw_path = (
+                tmp_path.resolve()
+                / "raw"
+                / "items"
+                / source["source_id"]
+                / record["observed_at"][:10].replace("-", "/")
+                / (record["item_id"] + ".json.zst")
+            )
+            assert Path(row["raw_path"]) == expected_raw_path
+            assert row["raw_path"] == record["raw_ref"] and row["raw_path"] != raw_ref
+            assert zstandard.ZstdDecompressor().decompress(expected_raw_path.read_bytes()) == key.encode()
+            assert row["raw_sha256"] == record["raw_sha256"] == digest == sha256(key.encode())
+            assert jobs["n"] == 1
             assert (await repo.get("ingest.source_items", record["item_id"]))["observation_count"] == 2
     finally:
         await http.aclose()
@@ -515,54 +536,6 @@ def test_robinhood_canonical_article_metadata_same_origin_only():
     rows = parsers.article_links(html, feed)
     assert len(rows) == 1 and rows[0]["title"] == "Protocol release"
     assert rows[0]["url"] == "https://robinhood.com/us/en/newsroom/protocol-release"
-
-
-@pytest.mark.asyncio
-async def test_dtcc_public_search_pagination_checkpoint_and_ordering(tmp_path):
-    calls = []
-
-    def release(slug, stamp):
-        url = "https://www.dtcc.com/press-releases/2026/" + slug
-        return {
-            "clickUri": url,
-            "title": slug,
-            "excerpt": "Official release",
-            "raw": {"news_full_name": slug, "news_date": stamp},
-        }
-
-    ordered = [
-        release("third-release", 1790654400000),
-        release("second-release", 1790568000000),
-        release("first-release", 1790481600000),
-    ]
-
-    def handle(request):
-        if request.url.host == "www.dtcc.com":
-            return httpx.Response(200, text='publicSettings={apiKey:"anonymous-public-search-only"}')
-        body = json.loads(request.content)
-        calls.append(body["firstResult"])
-        assert request.headers["Authorization"] == "Bearer anonymous-public-search-only"
-        return httpx.Response(
-            200, json={"totalCount": 3, "results": ordered[body["firstResult"] : body["firstResult"] + 2]}
-        )
-
-    http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
-    svc = SourceService(Repo(), settings(tmp_path, []), http=http)
-    feed = {
-        "url": "https://search.example.org/rest/search/v2",
-        "kind": "dtcc_search",
-        "bootstrap_script_url": "https://www.dtcc.com/_next/static/chunks/public.js",
-        "body": {"numberOfResults": 2},
-    }
-    payload, _state = await svc.dtcc_payload(feed, "test", {})
-    rows = parsers.json_items(payload, "S08")
-    assert [r["title"] for r in rows] == ["third-release", "second-release", "first-release"]
-    assert calls == [0, 2] and len(json.loads(payload)["raw_pages"]) == 2
-    calls.clear()
-    payload, _state = await svc.dtcc_payload(feed, "test", {"dtcc_checkpoint": ordered[1]["clickUri"]})
-    assert [r["title"] for r in parsers.json_items(payload, "S08")] == ["third-release", "second-release"]
-    assert calls == [0]
-    await http.aclose()
 
 
 @pytest.mark.asyncio
@@ -822,7 +795,13 @@ async def test_major_assessment_producer_activates_15s_source_reads(tmp_path, mo
     result = await tools.set_assessment(
         {
             "event_id": event["event_id"],
-            "assessment": {"class": "MAJOR", "criterion": "M1", "criterion_quote": quote, "dims": dimensions},
+            "assessment": {
+                "class": "MAJOR",
+                "criterion": "M1",
+                "criterion_venue": "binance",
+                "criterion_quote": quote,
+                "dims": dimensions,
+            },
         },
         {},
     )
@@ -1112,7 +1091,7 @@ def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path):
         },
         "S03",
     )[0]
-    assert row["published_at_precision"] == "DAY"
+    assert row["published_at_precision"] == "BUCKET(1d)"
 
 
 @pytest.mark.asyncio
@@ -1214,40 +1193,6 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(tmp_path, m
 
 
 @pytest.mark.asyncio
-async def test_dtcc_resolves_current_deployment_manifest_without_stale_hash(tmp_path):
-    calls = []
-
-    def handle(request):
-        calls.append(str(request.url))
-        path = request.url.path
-        if path == "/press-releases":
-            return httpx.Response(
-                200,
-                text='<script src="/_next/static/chunks/webpack-new.js"></script><script src="/_next/static/chunks/registry-new.js"></script>',
-            )
-        if "webpack-new" in path:
-            return httpx.Response(200, text='"static/chunks/"+e+"."+({900:"abcdef123"})[e]+".js"')
-        if "registry-new" in path:
-            return httpx.Response(
-                200, text="PressReleaseSearchModuleBlock:()=>Promise.all([i.e(900)]).then(i.bind(i,123))"
-            )
-        if "900.abcdef123" in path:
-            return httpx.Response(200, text='settings={apiKey:"public-synthetic-query-token"}')
-        return httpx.Response(404)
-
-    http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
-    svc = SourceService(Repo(), settings(tmp_path, []), http=http)
-    feed = {
-        "official_index_url": "https://www.dtcc.com/press-releases",
-        "bootstrap_script_url": "https://www.dtcc.com/old-hash.js",
-        "bootstrap_discovery": True,
-    }
-    assert await svc.resolve_dtcc_bootstrap(feed, "dynamic") == "public-synthetic-query-token"
-    assert len(calls) == 4 and not any("old-hash" in url for url in calls)
-    await http.aclose()
-
-
-@pytest.mark.asyncio
 async def test_capture_only_never_enqueues_analysis_and_org_repost_promotes_existing_item(tmp_path):
     from tank.storage import MemoryRepository
 
@@ -1259,7 +1204,7 @@ async def test_capture_only_never_enqueues_analysis_and_org_repost_promotes_exis
     try:
         source = {"source_id": "S29", "name": "X"}
         svc.accounts = {"other": {"role": "OTHER"}, "official": {"role": "ORGANIZATION"}}
-        raw_ref, digest = svc.raw(b"<html>source evidence</html>")
+        raw_ref, digest = svc.raw(b"<html>source evidence</html>", source_id="S29")
         item = {
             "external_id": "same-status",
             "author": "original",
@@ -1275,54 +1220,14 @@ async def test_capture_only_never_enqueues_analysis_and_org_repost_promotes_exis
             source, dict(item, monitored_author="official", reposted_by="official"), raw_ref, digest
         )
         assert promoted["item_id"] == first["item_id"] and promoted["author"] == "original"
-        assert promoted["author_role"] == "ORGANIZATION" and promoted["relevance"]["decision"] == "ALWAYS"
+        assert promoted["author_role"] == "OTHER" and promoted["relevance"]["decision"] == "ALWAYS"
+        assert promoted["monitored_author"] == "other"
         assert set(promoted["monitored_accounts"]) == {"other", "official"}
         jobs = await repo.list("ops.jobs")
         assert len(jobs) == 1 and jobs[0]["type"] == "ROUTE_ITEM" and jobs[0]["max_attempts"] == 2
     finally:
         await svc.close()
         await repo.close()
-
-
-@pytest.mark.asyncio
-async def test_dtcc_rotated_public_query_key_refreshes_manifest_once(tmp_path, monkeypatch):
-    from tank.util import utcnow
-
-    svc = SourceService(Repo(), settings(tmp_path, []))
-    feed = {
-        "url": "https://search.example.org/rest/search/v2",
-        "bootstrap_script_url": "https://www.dtcc.com/historical.js",
-        "bootstrap_discovery": True,
-        "body": {"numberOfResults": 20},
-    }
-    svc.dtcc_public_keys[feed["bootstrap_script_url"]] = ("old-public-query-key", utcnow())
-    seen = []
-    resolved = []
-
-    async def fetch(request, key):
-        auth = request["headers"]["Authorization"]
-        seen.append(auth)
-        if auth.endswith("old-public-query-key"):
-            response = httpx.Response(401, request=httpx.Request("POST", feed["url"]))
-            raise httpx.HTTPStatusError(
-                "Expired anonymous token", request=response.request, response=response
-            )
-        payload = json.dumps({"totalCount": 0, "results": []}).encode()
-        ref, digest = svc.raw(payload)
-        return payload, {"raw_ref": ref, "raw_sha256": digest}
-
-    async def resolve(request, key):
-        resolved.append(key)
-        return "new-public-query-key"
-
-    monkeypatch.setattr(svc, "fetch", fetch)
-    monkeypatch.setattr(svc, "resolve_dtcc_bootstrap", resolve)
-    try:
-        payload, _ = await svc.dtcc_payload(feed, "rotated", {})
-        assert json.loads(payload)["results"] == [] and len(resolved) == 1
-        assert seen == ["Bearer old-public-query-key", "Bearer new-public-query-key"]
-    finally:
-        await svc.close()
 
 
 @pytest.mark.asyncio
@@ -1663,3 +1568,1620 @@ async def test_seen_full_article_empty_index_deduplicates_before_new_content_gua
     finally:
         await http.aclose()
         await service.close()
+
+
+@pytest.mark.asyncio
+async def test_declared_author_organization_precedence_and_identity_without_body_name(tmp_path):
+    from tank.agents.pipeline import Pipeline
+    from tank.settings import Settings
+
+    repo = Repo()
+    config = Settings(data_dir=tmp_path)
+    service = SourceService(repo, config)
+    source = {
+        "source_id": "S01",
+        "name": "SEC",
+        "author_organization": "SEC",
+        "feeds": [{"url": "https://www.sec.gov/synthetic", "author_organization": "CFTC"}],
+    }
+    ref, digest = service.raw(b"<article>Actual synthetic test evidence</article>", source_id="S01")
+    try:
+        for external, item_org, feed, expected in [
+            ("item", "Circle", "https://www.sec.gov/synthetic", "Circle"),
+            ("feed", None, "https://www.sec.gov/synthetic", "CFTC"),
+            ("source", None, "https://www.sec.gov/other", "SEC"),
+        ]:
+            item = {
+                "external_id": external,
+                "feed": feed,
+                "title": external + " custody guidance",
+                "text": "Custody standards updated",
+                "author_organization": item_org,
+            }
+            record = await service.ingest(source, item, ref, digest)
+            assert record["author_organization"] == expected
+            if external == "source":
+                assert "sec" in Pipeline(repo, config, http=object()).identities(record)
+        news = await service.ingest(
+            {"source_id": "S30", "name": "BBC News"},
+            {"external_id": "news", "title": "Separate custody guidance", "text": "Standards changed"},
+            ref,
+            digest,
+        )
+        assert news["author"] == "BBC News" and news["author_organization"] is None
+        assert "sec" not in Pipeline(repo, config, http=object()).identities(news)
+    finally:
+        await service.close()
+
+
+def test_wire_timestamp_precision_survives_normalization():
+    row = parsers.article(
+        b'<article><h1>Release</h1><time datetime="2026-10-18"></time><p>Body</p></article>'
+    )
+    assert row["published_at_precision"] == "BUCKET(1d)"
+    dated = RSS.replace(b"Fri, 16 Oct 2026 12:00:00 GMT", b"2026-10-16")
+    assert (
+        parsers.feeds(dated, "S01", {"url": "https://example.org"})[0]["published_at_precision"]
+        == "BUCKET(1d)"
+    )
+    assert parsers.feeds(RSS, "S01", {"url": "https://example.org"})[0]["published_at_precision"] == "EXACT"
+    assert parsers.timestamp_fields(None)["published_at_precision"] == "COLLECTION_ONLY"
+
+
+@pytest.mark.asyncio
+async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path):
+    phase = ["Trading"]
+    requests = []
+
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"ETag": phase[0]},
+            json={
+                "retCode": 0,
+                "result": {
+                    "list": [
+                        {"symbol": "ABCUSDT", "baseCoin": "ABC", "quoteCoin": "USDT", "status": phase[0]}
+                    ],
+                    "nextPageCursor": "",
+                },
+            },
+        )
+
+    repo = Repo()
+    source = {
+        "source_id": "S14",
+        "feeds": [
+            {
+                "kind": "instruments",
+                "url": "https://api.bybit.com/v5/market/instruments-info?category=linear",
+                "venue": "bybit",
+                "market_type": "PERP_LINEAR",
+            }
+        ],
+    }
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        await svc.poll_once("S14")
+        phase[0] = "Settling"
+        original = svc.ingest
+
+        async def fail(*args):
+            raise RuntimeError("storage unavailable")
+
+        svc.ingest = fail
+        assert (await svc.poll_once("S14"))["status"] == "DEGRADED"
+        checkpoint = repo.rows["ops.source_checkpoints", "S14:0"]
+        assert checkpoint["instruments"]["ABCUSDT"]["status"] == "Trading"
+        assert "etag" not in checkpoint
+        svc.ingest = original
+        assert (await svc.poll_once("S14"))["items"] == 1
+        assert "if-none-match" not in requests[-1].headers
+
+
+@pytest.mark.asyncio
+async def test_content_duplicate_remembers_secondary_external_identity(tmp_path):
+    repo = Repo()
+    svc = SourceService(repo, settings(tmp_path, []))
+    ref, digest = svc.raw(b"Original public source evidence", source_id="S01")
+    first = await svc.ingest(
+        {"source_id": "S01"}, {"external_id": "a", "title": "Same", "text": "Release"}, ref, digest
+    )
+    duplicate = await svc.ingest(
+        {"source_id": "S04"}, {"external_id": "b", "title": "Same", "text": "Release"}, "raw-b", "hash-b"
+    )
+    edited = await svc.ingest(
+        {"source_id": "S04"},
+        {"external_id": "b", "title": "Changed", "text": "Updated release"},
+        "raw-c",
+        "hash-c",
+    )
+    assert first["item_id"] == duplicate["item_id"] == edited["item_id"]
+    assert edited["observed_at"] == first["observed_at"]
+    assert edited["observation_count"] == 3
+    assert len([key for key in repo.rows if key[0] == "ingest.source_items"]) == 1
+    await svc.close()
+
+
+@pytest.mark.asyncio
+async def test_slow_feed_does_not_block_fast_sibling_ingestion(tmp_path):
+    import asyncio
+
+    blocked = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handle(request):
+        if request.url.path == "/slow":
+            blocked.set()
+            await release.wait()
+        return httpx.Response(200, content=RSS)
+
+    source = {
+        "source_id": "S30",
+        "feeds": [
+            {"kind": "rss", "url": "https://example.org/slow"},
+            {"kind": "rss", "url": "https://example.org/fast"},
+        ],
+    }
+    repo = Repo()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        poll = asyncio.create_task(svc.poll_once("S30"))
+        await asyncio.wait_for(blocked.wait(), 1)
+
+        async def fast_ingested():
+            while not any(c == "ingest.source_items" for c, _ in repo.rows):
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(fast_ingested(), 1)
+        assert not poll.done()
+        row = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
+        assert row["feed"].endswith("/fast")
+        release.set()
+        assert (await poll)["status"] == "HEALTHY"
+
+
+@pytest.mark.asyncio
+async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_first_seen(tmp_path):
+    import asyncio
+
+    from tank.util import iso, parse_time
+
+    calls = []
+    detail_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def handle(request):
+        if request.url.path == "/index":
+            calls.append(iso())
+            return httpx.Response(200, text='<a href="/article/one">Release</a>')
+        detail_started.set()
+        await release.wait()
+        return httpx.Response(200, text="<article><h1>Release</h1><p>Full release evidence</p></article>")
+
+    source = {
+        "source_id": "S13",
+        "feeds": [
+            {
+                "kind": "html",
+                "url": "https://example.org/index",
+                "article_pattern": "^/article/",
+                "interval_s": 0.02,
+            }
+        ],
+    }
+    repo = Repo()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        stop = asyncio.Event()
+        run = asyncio.create_task(svc.run(stop))
+        await asyncio.wait_for(detail_started.wait(), 1)
+
+        async def three_indexes():
+            while len(calls) < 3:
+                await asyncio.sleep(0.005)
+
+        await asyncio.wait_for(three_indexes(), 1)
+        state = await repo.get("ops.source_checkpoints", "S13:0")
+        first_seen = state["pending_batches"][0]["rows"][0]["observed_at"]
+        assert not any(c == "ingest.source_items" for c, _ in repo.rows)
+        assert parse_time(first_seen) < parse_time(calls[-1])
+        stop.set()
+        await asyncio.wait_for(run, 1)
+        release.set()
+        restarted = SourceService(repo, settings(tmp_path, [source]), http=http)
+        await restarted.poll_once("S13")
+        row = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
+        assert row["observed_at"] == first_seen
+        assert row["observation_count"] == len(calls)
+        assert not (await repo.get("ops.source_checkpoints", "S13:0"))["pending_batches"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_id", ["S03", "S09", "S24"])
+async def test_json_discovery_burst_reads_every_page_until_durable_boundary(tmp_path, source_id):
+    import re
+
+    phase = [0]
+    pages = []
+
+    def handle(request):
+        if "detail/query" in request.url.path:
+            code = request.url.params["articleCode"]
+            return httpx.Response(
+                200, json={"data": {"body": json.dumps({"children": [{"text": "Body for " + code}]})}}
+            )
+        body = json.loads(request.content) if request.content else {}
+        if source_id == "S24":
+            match = re.search(r"\bskip\s*:\s*(\d+)", body["query"])
+            offset = int(match.group(1)) if match else 0
+        elif source_id == "S09":
+            offset = (int(request.url.params.get("pageNo", 1)) - 1) * 2
+        else:
+            offset = (int(request.url.params.get("page", 1)) - 1) * 2
+        pages.append((phase[0], offset))
+        all_ids = list(range(1 if phase[0] == 0 else 8, -1, -1))
+        ids = all_ids[offset : offset + 2]
+        if source_id == "S03":
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "document_number": str(i),
+                            "title": "Release " + str(i),
+                            "abstract": "Body " + str(i),
+                            "html_url": "https://example.org/doc/" + str(i),
+                            "publication_date": "2026-10-18",
+                        }
+                        for i in ids
+                    ],
+                    "next_page_url": "https://example.org/list?per_page=2&page=" + str(offset // 2 + 2)
+                    if offset + 2 < len(all_ids)
+                    else None,
+                },
+            )
+        if source_id == "S09":
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "total": len(all_ids),
+                        "articles": [
+                            {"code": str(i), "title": "Release " + str(i), "releaseDate": 1792238400000 + i}
+                            for i in ids
+                        ],
+                    }
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "proposals": [
+                        {
+                            "id": str(i),
+                            "title": "Proposal " + str(i),
+                            "body": "Body " + str(i),
+                            "state": "closed",
+                            "start": 1792238400,
+                            "end": 1792248400,
+                            "created": 1792238300 + i,
+                            "scores": [i],
+                            "scores_total": i,
+                            "space": {"id": "configured.eth"},
+                        }
+                        for i in ids
+                    ]
+                }
+            },
+        )
+
+    feed = {"url": "https://example.org/list?per_page=2", "kind": "json"}
+    if source_id == "S09":
+        feed["url"] = "https://www.binance.com/list?pageNo=1&pageSize=2"
+    elif source_id == "S24":
+        feed.update(
+            method="POST",
+            body={
+                "query": 'query { proposals(first: 2, where: {space_in: ["configured.eth"]}, orderBy: "created", orderDirection: desc) { id title body state start end created scores scores_total space { id } } }'
+            },
+        )
+    source = {"source_id": source_id, "feeds": [feed]}
+    repo = Repo()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        assert (await svc.poll_once(source_id))["status"] == "HEALTHY"
+        assert (await repo.get("ops.source_checkpoints", source_id + ":0"))["discovery_checkpoint"] == "1"
+        phase[0] = 1
+        assert (await svc.poll_once(source_id))["status"] == "HEALTHY"
+        rows = [row for (collection, _), row in repo.rows.items() if collection == "ingest.source_items"]
+        assert len(rows) == 9
+        assert {row.get("proposal_id", row["external_id"]) for row in rows} == {str(i) for i in range(9)}
+        assert [offset for phase, offset in pages if phase == 1] == [0, 2, 4, 6]
+        state = await repo.get("ops.source_checkpoints", source_id + ":0")
+        assert state["discovery_checkpoint"] == "8"
+        assert not state["pending_batches"]
+
+
+@pytest.mark.asyncio
+async def test_failed_later_history_page_retains_earlier_items_without_advancing_boundary(tmp_path):
+    phase = [0]
+
+    def handle(request):
+        if phase[0] == 1 and request.url.params.get("page") == "2":
+            return httpx.Response(404, text="Publisher page unavailable")
+        ids = [1] if phase[0] == 0 else [3, 2] if request.url.params.get("page") != "2" else [1]
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "document_number": str(i),
+                        "title": "Release " + str(i),
+                        "abstract": "Body " + str(i),
+                        "html_url": "https://example.org/doc/" + str(i),
+                        "publication_date": "2026-10-18",
+                    }
+                    for i in ids
+                ],
+                "next_page_url": "https://example.org/list?page=2"
+                if phase[0] and request.url.params.get("page") != "2"
+                else None,
+            },
+        )
+
+    source = {"source_id": "S03", "feeds": [{"url": "https://example.org/list", "kind": "json"}]}
+    repo = Repo()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        await svc.poll_once("S03")
+        phase[0] = 1
+        assert (await svc.poll_once("S03"))["status"] == "DEGRADED"
+        rows = [row for (collection, _), row in repo.rows.items() if collection == "ingest.source_items"]
+        assert {row["external_id"] for row in rows} == {"1", "2", "3"}
+        assert (await repo.get("ops.source_checkpoints", "S03:0"))["discovery_checkpoint"] == "1"
+        phase[0] = 2
+        assert (await svc.poll_once("S03"))["status"] == "HEALTHY"
+        assert (await repo.get("ops.source_checkpoints", "S03:0"))["discovery_checkpoint"] == "3"
+
+
+@pytest.mark.parametrize("schema_type", ["Article", "BlogPosting", "NewsArticle"])
+def test_publication_metadata_extracts_actual_publication_not_modification(schema_type):
+    payload = (
+        '<article><h1>Actual Release</h1><p>Evidence</p></article><script type="application/ld+json">'
+        + json.dumps(
+            {
+                "@context": "https://schema.org",
+                "@graph": [
+                    {"@type": "Organization", "foundingDate": "2020-01-01"},
+                    {
+                        "@type": schema_type,
+                        "headline": "Actual Release",
+                        "datePublished": "2026-10-17",
+                        "dateModified": "2026-10-18T23:00:00Z",
+                    },
+                ],
+            }
+        )
+        + "</script>"
+    )
+    row = parsers.article(payload)
+    assert row["published_at"] == "2026-10-17T00:00:00Z"
+    assert row["published_at_precision"] == "BUCKET(1d)"
+    assert row["published_at_basis"] == "ARTICLE_JSON_LD_DATE_PUBLISHED"
+    conflicting = payload.replace("</script>", ", invalid json</script>")
+    assert parsers.article(conflicting)["published_at"] is None
+
+
+def test_publication_meta_and_ambiguous_articles_preserve_precision():
+    row = parsers.article(
+        '<article>Release</article><meta property="article:published_time" content="2026-10-17">'
+    )
+    assert row["published_at_precision"] == "BUCKET(1d)"
+    blackrock = '<article>Release</article><meta name="publicationDate" content="1791936000000">'
+    assert parsers.article(blackrock, source_id="S18")["published_at_precision"] == "BUCKET(1d)"
+    assert parsers.article(blackrock, source_id="S13")["published_at"] is None
+    competing = (
+        '<article><h1>Release</h1></article><script type="application/ld+json">'
+        + json.dumps(
+            [
+                {"@type": "Article", "headline": "Other", "datePublished": "2026-10-17"},
+                {"@type": "Article", "headline": "Unrelated", "datePublished": "2026-10-18"},
+            ]
+        )
+        + "</script>"
+    )
+    row = parsers.article(competing)
+    assert row["published_at"] is None and row["published_at_missing_reason"] == "UNVERIFIED_SEMANTICS"
+
+
+@pytest.mark.asyncio
+async def test_completed_later_batch_cannot_erase_failed_earlier_coverage(tmp_path):
+    phase = [0]
+    fail = [False]
+
+    def handle(request):
+        ids = [1] if phase[0] == 0 else [2, 1] if phase[0] == 1 else [3, 2, 1]
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "document_number": str(i),
+                        "title": "Release " + str(i),
+                        "abstract": "Body " + str(i),
+                        "html_url": "https://example.org/doc/" + str(i),
+                        "publication_date": "2026-10-18",
+                    }
+                    for i in ids
+                ],
+                "next_page_url": None,
+            },
+        )
+
+    source = {"source_id": "S03", "feeds": [{"url": "https://example.org/list", "kind": "json"}]}
+    repo = Repo()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        original = svc.ingest
+
+        async def ingest(*args):
+            if fail[0] and args[1]["external_id"] == "2":
+                raise RuntimeError("storage failed for one original")
+            return await original(*args)
+
+        svc.ingest = ingest
+        await svc.poll_once("S03")
+        phase[0], fail[0] = 1, True
+        assert (await svc.poll_once("S03"))["status"] == "DEGRADED"
+        phase[0] = 2
+        assert (await svc.poll_once("S03"))["status"] == "DEGRADED"
+        rows = [row for (collection, _), row in repo.rows.items() if collection == "ingest.source_items"]
+        assert {row["external_id"] for row in rows} == {"1", "3"}
+        assert (await repo.get("ops.source_checkpoints", "S03:0"))["discovery_checkpoint"] == "1"
+        fail[0] = False
+        await svc.poller.drain(source, 0, force=True)
+        state = await repo.get("ops.source_checkpoints", "S03:0")
+        assert state["discovery_checkpoint"] == "3" and not state["pending_batches"]
+        assert len(repo.jobs) == 3
+
+
+@pytest.mark.asyncio
+async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path):
+    from tank.util import iso
+
+    source = {
+        "source_id": "S13",
+        "feeds": [{"url": "https://example.org/index", "kind": "html", "article_pattern": "^/article/"}],
+    }
+    repo = Repo()
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: (
+                httpx.Response(304)
+                if request.url.path == "/index"
+                else httpx.Response(200, text="<article><h1>Release</h1><p>Body</p></article>")
+            )
+        )
+    ) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        raw_ref, raw_hash = svc.raw(b'<a href="/article/one">Release</a>')
+        acquired = {"raw_ref": raw_ref, "raw_sha256": raw_hash, "fetched_at": iso()}
+        state = {"etag": "older-index", **acquired}
+        svc.poller.queue_rows(
+            state,
+            "S13:0",
+            source["feeds"][0],
+            [
+                {
+                    "external_id": "https://example.org/article/one",
+                    "url": "https://example.org/article/one",
+                    "title": "Release",
+                    "text": "",
+                }
+            ],
+            acquired,
+            "html",
+            {},
+            "captured-before-restart",
+        )
+        await repo.put("ops.source_checkpoints", "S13:0", state)
+        result = await svc.poll_once("S13")
+        assert result["items"] == 1 and result["status"] == "HEALTHY"
+        assert not (await repo.get("ops.source_checkpoints", "S13:0"))["pending_batches"]
+        assert len(repo.jobs) == 1
+
+
+def test_source_timestamp_canonical_bucket_and_timezone_uncertainty():
+    day = parsers.timestamp_fields("2026-10-18")
+    assert day["published_prec"] == "BUCKET"
+    assert day["published_at_precision"] == "BUCKET(1d)"
+    assert day["published_at_bucket_size_s"] == 86400
+    unknown_zone = parsers.timestamp_fields("2026-10-18T12:00:00")
+    assert unknown_zone["published_at"] is None
+    assert unknown_zone["published_prec_reason"] == "UNVERIFIED_SEMANTICS"
+    assert parsers.timestamp_fields(None)["published_at_reason"] == "INCOMPLETE"
+    known_instant = parsers.timestamp_fields("2026-10-18T12:00:00+02:00")
+    assert known_instant["published_at"] == "2026-10-18T10:00:00Z"
+    assert known_instant["published_prec"] == "EXACT"
+    end = parsers.timestamp_fields(1792238400, "end")
+    assert end["end_prec"] == end["end_precision"] == "EXACT"
+    assert (
+        parsers.timestamp_fields(None, "business_published_at")["business_published_at_prec_reason"]
+        == "INCOMPLETE"
+    )
+
+
+@pytest.mark.asyncio
+async def test_due_time_uses_actual_request_start_after_budget_admission(tmp_path, monkeypatch):
+    from datetime import timedelta
+
+    import tank.sources as source_module
+    from tank.util import iso, utcnow
+
+    clock = [utcnow()]
+    monkeypatch.setattr(source_module, "utcnow", lambda: clock[0])
+    monkeypatch.setattr(source_module, "iso", lambda value=None: iso(clock[0] if value is None else value))
+    source = {
+        "source_id": "S30",
+        "feeds": [{"url": "https://example.org/rss", "kind": "rss", "interval_s": 60}],
+    }
+    repo = Repo()
+    calls = []
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: calls.append(clock[0]) or httpx.Response(200, content=RSS)
+        )
+    ) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        first = [True]
+
+        async def budget(feed):
+            if first[0]:
+                clock[0] += timedelta(seconds=30)
+                first[0] = False
+
+        svc.acquire_budget = budget
+        await svc.control_once("S30")
+        state = await repo.get("ops.source_checkpoints", "S30:0")
+        assert state["last_attempt_at"] == iso(calls[0])
+        assert state["last_attempt_at_prec"] == "COLLECTION_ONLY"
+        row = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
+        assert row["observed_at"] == iso(calls[0])
+        assert row["observed_at_prec"] == "COLLECTION_ONLY"
+        clock[0] += timedelta(seconds=59)
+        await svc.control_once("S30")
+        assert len(calls) == 1
+        clock[0] += timedelta(seconds=1)
+        await svc.control_once("S30")
+        assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_invalid_index_retains_source_associated_raw_before_parse_failure(tmp_path):
+    from pathlib import Path
+
+    source = {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}
+    repo = Repo()
+    payload = b"<html>Publisher layout changed</html>"
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, content=payload, headers={"ETag": "unprocessed"})
+        )
+    ) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        assert (await svc.poll_once("S30"))["status"] == "DEGRADED"
+        state = await repo.get("ops.source_checkpoints", "S30:0")
+        assert state["response_url"] == "https://example.org/rss"
+        assert state["fetched_at_prec"] == "COLLECTION_ONLY"
+        assert zstandard.ZstdDecompressor().decompress(Path(state["raw_ref"]).read_bytes()) == payload
+        assert "etag" not in state
+        assert not repo.jobs
+
+
+def test_atom_update_time_is_not_fabricated_original_publication():
+    updated = "<updated>2026-10-18T12:00:00Z</updated>"
+    prefix = '<feed xmlns="http://www.w3.org/2005/Atom"><title>Activity</title><entry><id>entry1</id><title>Release</title><link href="https://example.org/entry1"/>'
+    suffix = "<content>Actual body</content></entry></feed>"
+    row = parsers.feeds(
+        (prefix + updated + suffix).encode(), "S25", {"url": "https://example.org/commits/main.atom"}
+    )[0]
+    assert row["published_at"] is None
+    assert row["published_prec"] == "COLLECTION_ONLY"
+    assert row["published_at_reason"] == "INCOMPLETE"
+    assert row["source_updated_at"] == "2026-10-18T12:00:00Z"
+    assert row["source_updated_at_prec"] == "EXACT"
+    both = parsers.feeds(
+        (prefix + "<published>2026-10-17T10:00:00Z</published>" + updated + suffix).encode(),
+        "S25",
+        {"url": "https://example.org/releases.atom"},
+    )[0]
+    assert both["published_at"] == "2026-10-17T10:00:00Z"
+    assert both["source_updated_at"] == "2026-10-18T12:00:00Z"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_id", ["S03", "S30"])
+async def test_malformed_index_entry_does_not_starve_valid_sibling_or_advance_validators(tmp_path, source_id):
+    calls = []
+    rss = RSS.replace(b"<item><guid>", b"<item><title>Bad entry without identity</title></item><item><guid>")
+    data = {
+        "results": [
+            {"title": "Malformed original without identifier"},
+            {
+                "document_number": "good",
+                "title": "Valid release",
+                "abstract": "Full visible body",
+                "html_url": "https://example.org/good",
+                "publication_date": "2026-10-18",
+            },
+        ],
+        "next_page_url": None,
+    }
+
+    def handle(request):
+        calls.append(request)
+        return (
+            httpx.Response(200, headers={"ETag": "partial-response"}, json=data)
+            if source_id == "S03"
+            else httpx.Response(200, headers={"ETag": "partial-response"}, content=rss)
+        )
+
+    source = {
+        "source_id": source_id,
+        "feeds": [{"url": "https://example.org/index", "kind": "json" if source_id == "S03" else "rss"}],
+    }
+    repo = Repo()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        result = await svc.poll_once(source_id)
+        assert result["items"] == 1 and result["status"] == "DEGRADED"
+        state = await repo.get("ops.source_checkpoints", source_id + ":0")
+        assert state["entry_errors"] and "etag" not in state
+        assert not state.get("discovery_checkpoint")
+        assert len(repo.jobs) == 1
+        await svc.poll_once(source_id)
+        assert "if-none-match" not in calls[-1].headers
+        assert len(repo.jobs) == 1
+
+
+@pytest.mark.asyncio
+async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidence(tmp_path, monkeypatch):
+    from datetime import timedelta
+    from pathlib import Path
+
+    import tank.sources as source_module
+    from tank.util import iso, utcnow
+
+    clock = [utcnow()]
+    monkeypatch.setattr(source_module, "utcnow", lambda: clock[0])
+    monkeypatch.setattr(source_module, "iso", lambda value=None: iso(clock[0] if value is None else value))
+    phase = [0]
+
+    def handle(request):
+        clock[0] += timedelta(seconds=5)
+        cursor = request.url.params.get("cursor")
+        symbol = "DEFUSDT" if cursor else "ABCUSDT"
+        rows = (
+            []
+            if cursor and phase[0] == 2
+            else [
+                {
+                    "symbol": symbol,
+                    "baseCoin": "DEF" if cursor else "ABC",
+                    "quoteCoin": "USDT",
+                    "status": "Settling" if cursor and phase[0] == 1 else "Trading",
+                }
+            ]
+        )
+        return httpx.Response(
+            200, json={"retCode": 0, "result": {"list": rows, "nextPageCursor": "" if cursor else "next"}}
+        )
+
+    source = {
+        "source_id": "S14",
+        "feeds": [
+            {
+                "url": "https://api.bybit.com/v5/market/instruments-info?category=linear",
+                "kind": "instruments",
+                "venue": "bybit",
+                "market_type": "PERP_LINEAR",
+            }
+        ],
+    }
+    repo = Repo()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        await svc.poll_once("S14")
+        phase[0] = 1
+        await svc.poll_once("S14")
+        row = next(row for (collection, _), row in repo.rows.items() if collection == "ingest.source_items")
+        assert row["observed_at"] == iso(clock[0])
+        payload = json.loads(zstandard.ZstdDecompressor().decompress(Path(row["raw_ref"]).read_bytes()))
+        assert payload["result"]["list"][0]["symbol"] == "DEFUSDT"
+        assert len(row["instrument_snapshot_raw_pages"]) == 2
+        phase[0] = 2
+        await svc.poll_once("S14")
+        removed = next(
+            row
+            for (collection, _), row in repo.rows.items()
+            if collection == "ingest.source_items" and row["change"] == "REMOVED"
+        )
+        assert removed["observed_at"] == iso(clock[0])
+        manifest = json.loads(zstandard.ZstdDecompressor().decompress(Path(removed["raw_ref"]).read_bytes()))
+        assert len(manifest["raw_pages"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_long_history_catchup_refreshes_current_head_at_feed_cadence(tmp_path, monkeypatch):
+    from datetime import timedelta
+
+    import tank.sources as source_module
+    from tank.util import iso, utcnow
+
+    clock = [utcnow()]
+    monkeypatch.setattr(source_module, "utcnow", lambda: clock[0])
+    monkeypatch.setattr(source_module, "iso", lambda value=None: iso(clock[0] if value is None else value))
+    phase = [0]
+    calls = []
+
+    def handle(request):
+        page = int(request.url.params.get("page", 1))
+        calls.append((phase[0], page, clock[0]))
+        clock[0] += timedelta(seconds=2)
+        ids = [1, 0] if phase[0] == 0 else [8, 7, 6, 5, 4, 3, 2, 1, 0]
+        if phase[0] == 1 and page == 1 and sum(phase == 1 and p == 1 for phase, p, _ in calls) > 1:
+            ids = [9] + ids
+        selected = ids[(page - 1) * 2 : page * 2]
+        return httpx.Response(
+            200,
+            json={
+                "results": [
+                    {
+                        "document_number": str(i),
+                        "title": "Release " + str(i),
+                        "abstract": "Body " + str(i),
+                        "html_url": "https://example.org/doc/" + str(i),
+                        "publication_date": "2026-10-18",
+                    }
+                    for i in selected
+                ],
+                "next_page_url": "https://example.org/list?page=" + str(page + 1)
+                if page * 2 < len(ids)
+                else None,
+            },
+        )
+
+    source = {
+        "source_id": "S03",
+        "feeds": [{"url": "https://example.org/list", "kind": "json", "interval_s": 2}],
+    }
+    repo = Repo()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        await svc.poll_once("S03")
+        phase[0] = 1
+        assert (await svc.poll_once("S03"))["status"] == "HEALTHY"
+        rows = [row for (collection, _), row in repo.rows.items() if collection == "ingest.source_items"]
+        assert {row["external_id"] for row in rows} == {str(i) for i in range(10)}
+        assert sum(phase == 1 and page == 1 for phase, page, _ in calls) > 1
+        assert (await repo.get("ops.source_checkpoints", "S03:0"))["discovery_checkpoint"] == "8"
+
+
+@pytest.mark.asyncio
+async def test_coinbase_trading_restriction_change_emits_item_without_status_enum_change(tmp_path):
+    restricted = [False]
+    source = {
+        "source_id": "S14",
+        "feeds": [
+            {
+                "url": "https://api.exchange.coinbase.com/products",
+                "kind": "instruments",
+                "venue": "coinbase",
+                "market_type": "SPOT",
+            }
+        ],
+    }
+    repo = Repo()
+
+    def handle(request):
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "ETH-USD",
+                    "base_currency": "ETH",
+                    "quote_currency": "USD",
+                    "status": "online",
+                    "trading_disabled": False,
+                    "cancel_only": restricted[0],
+                    "limit_only": False,
+                    "post_only": False,
+                    "auction_mode": False,
+                }
+            ],
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        assert (await svc.poll_once("S14"))["items"] == 0
+        restricted[0] = True
+        assert (await svc.poll_once("S14"))["items"] == 1
+        row = next(row for (collection, _), row in repo.rows.items() if collection == "ingest.source_items")
+        change = json.loads(row["text"])
+        assert change["before"]["status"] == change["after"]["status"] == "online"
+        assert change["before"]["status_flags"]["cancel_only"] is False
+        assert change["after"]["status_flags"]["cancel_only"] is True
+
+
+@pytest.mark.asyncio
+async def test_new_coinbase_flag_observation_does_not_fabricate_historical_status_change(tmp_path):
+    flag = [True]
+    source = {
+        "source_id": "S14",
+        "feeds": [
+            {
+                "url": "https://api.exchange.coinbase.com/products",
+                "kind": "instruments",
+                "venue": "coinbase",
+                "market_type": "SPOT",
+            }
+        ],
+    }
+    repo = Repo()
+    original = {
+        "id": "ETH-USD",
+        "base_currency": "ETH",
+        "quote_currency": "USD",
+        "status": "online",
+        "trading_disabled": False,
+    }
+    previous = parsers.instruments([original], source["feeds"][0])
+    previous["ETH-USD"].pop("status_flags")
+    await repo.put("ops.source_checkpoints", "S14:0", {"instruments": previous})
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json=[dict(original, cancel_only=flag[0])])
+        )
+    ) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        assert (await svc.poll_once("S14"))["items"] == 0
+        assert (await repo.get("ops.source_checkpoints", "S14:0"))["instrument_snapshot_schema_version"] == 2
+        flag[0] = False
+        assert (await svc.poll_once("S14"))["items"] == 1
+
+
+def test_treasury_duplicate_designated_publication_elements_are_one_source_timestamp():
+    payload = '<main><h1>Official release</h1><div class="field--name-field-news-publication-date"><time datetime="2026-10-16T20:00:00Z">October 16, 2026</time></div><div class="field--name-field-news-publication-date"><time datetime="2026-10-16T20:00:00Z">October 16, 2026</time></div></main>'
+    row = parsers.article(payload, source_id="S07")
+    assert row["published_at"] == "2026-10-16T20:00:00Z"
+    assert row["published_prec"] == "EXACT"
+    assert row["published_at_basis"] == "DESIGNATED_PUBLICATION_TIME_ELEMENT"
+    conflicting = payload.replace("2026-10-16T20:00:00Z", "2026-10-15T20:00:00Z", 1)
+    assert parsers.article(conflicting, source_id="S07")["published_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_unavailable_known_snapshot_proposal_remains_pending_and_explicitly_degraded(tmp_path):
+    source = {
+        "source_id": "S24",
+        "feeds": [
+            {
+                "url": "https://hub.snapshot.org/graphql",
+                "kind": "graphql",
+                "method": "POST",
+                "body": {
+                    "query": 'query { proposals(first: 20, orderBy: "created", orderDirection: desc) { id title body state start end created scores scores_total space { id } } }'
+                },
+            }
+        ],
+    }
+    repo = Repo()
+    await repo.put("ops.source_checkpoints", "S24:0", {"pending_proposals": ["known-now-unavailable"]})
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"data": {"proposals": []}}))
+    ) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        result = await svc.poll_once("S24")
+        assert result["items"] == 0 and result["status"] == "DEGRADED"
+        state = await repo.get("ops.source_checkpoints", "S24:0")
+        assert state["pending_proposals"] == ["known-now-unavailable"]
+        assert state["entry_errors"][0]["reason"] == "PENDING_PROPOSAL_UNAVAILABLE"
+        assert not repo.jobs
+
+
+def test_null_publisher_identity_is_not_stringified_into_fabricated_item():
+    rows = parsers.json_items(
+        {
+            "results": [
+                {
+                    "document_number": None,
+                    "title": "Missing identity",
+                    "abstract": "Body",
+                    "html_url": "https://example.org/unknown",
+                    "publication_date": "2026-10-18",
+                },
+                {
+                    "document_number": "real-id",
+                    "title": "Valid",
+                    "abstract": "Actual",
+                    "html_url": "https://example.org/real",
+                    "publication_date": "2026-10-18",
+                },
+            ]
+        },
+        "S03",
+    )
+    assert len(rows) == 1 and rows[0]["external_id"] == "real-id"
+    assert len(rows.errors) == 1
+
+
+def test_raw_item_writer_exact_hld_path_utc_bytes_and_immutable_conflict(tmp_path):
+    from pathlib import Path
+
+    from tank.sources.raw_store import write_raw_item
+    from tank.util import sha256
+
+    payload = b"<rss>Exact original wire bytes</rss>"
+    path, digest = write_raw_item(tmp_path, "S01", "ITM_example", "2026-10-18T00:30:00+03:00", payload)
+    assert Path(path) == tmp_path.resolve() / "raw/items/S01/2026/10/17/ITM_example.json.zst"
+    assert digest == sha256(payload)
+    assert zstandard.ZstdDecompressor().decompress(Path(path).read_bytes()) == payload
+    assert write_raw_item(tmp_path, "S01", "ITM_example", "2026-10-17T21:30:00Z", payload) == (path, digest)
+    with pytest.raises(ValueError, match="immutable"):
+        write_raw_item(tmp_path, "S01", "ITM_example", "2026-10-17T21:30:00Z", b"different body")
+    assert zstandard.ZstdDecompressor().decompress(Path(path).read_bytes()) == payload
+    with pytest.raises(ValueError, match="source_id"):
+        write_raw_item(tmp_path, "../escape", "ITM_example", "2026-10-17T21:30:00Z", payload)
+
+
+@pytest.mark.asyncio
+async def test_new_source_item_raw_path_uses_final_item_id_without_rewriting_old_reference(tmp_path):
+    from pathlib import Path
+
+    repo = Repo()
+    source = {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]}
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS))
+    ) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        await svc.poll_once("S30")
+        row = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
+        day = row["observed_at"][:10].replace("-", "/")
+        assert Path(row["raw_ref"]) == tmp_path.resolve() / "raw/items/S30" / day / (
+            row["item_id"] + ".json.zst"
+        )
+        assert zstandard.ZstdDecompressor().decompress(Path(row["raw_ref"]).read_bytes()) == RSS
+        original_path = row["raw_ref"]
+        await svc.poll_once("S30")
+        assert (await repo.get("ingest.source_items", row["item_id"]))["raw_ref"] == original_path
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_stage", ["file", "directory"])
+async def test_raw_durability_failure_prevents_source_item_and_job_persistence(
+    tmp_path, monkeypatch, failure_stage
+):
+    import os
+    import stat
+    from pathlib import Path
+
+    from tank.sources import raw_store
+
+    source = {"source_id": "S30", "feeds": []}
+    repo = Repo()
+    svc = SourceService(repo, settings(tmp_path, [source]))
+    raw_ref, raw_hash = svc.raw(RSS, source_id="S30")
+    original_fsync = os.fsync
+
+    def fail_fsync(descriptor):
+        is_directory = stat.S_ISDIR(os.fstat(descriptor).st_mode)
+        if is_directory == (failure_stage == "directory"):
+            raise OSError("Injected durable storage failure")
+        return original_fsync(descriptor)
+
+    monkeypatch.setattr(raw_store.os, "fsync", fail_fsync)
+    item = {
+        "external_id": "new-release",
+        "title": "Actual release",
+        "text": "Full wire evidence",
+        "observed_at": "2026-10-18T12:00:00Z",
+    }
+    with pytest.raises(OSError, match="durable storage failure"):
+        await svc.ingest(source, item, raw_ref, raw_hash)
+    assert not any(collection in {"ingest.source_items", "ops.source_dedup"} for collection, _ in repo.rows)
+    assert not repo.jobs
+    assert not list(Path(tmp_path).rglob("*.tmp"))
+    monkeypatch.setattr(raw_store.os, "fsync", original_fsync)
+    recovered = await svc.ingest(source, item, raw_ref, raw_hash)
+    assert recovered["raw_ref"].endswith(recovered["item_id"] + ".json.zst")
+    assert len(repo.jobs) == 1
+    await svc.close()
+
+
+@pytest.mark.asyncio
+async def test_supervised_retry_after_repository_failure_reuses_owned_real_http_client(tmp_path):
+    import asyncio
+
+    from tank.capture import CaptureService
+    from tank.storage import MemoryRepository
+
+    received = asyncio.Event()
+    paused = asyncio.Event()
+    retry = asyncio.Event()
+    requests = []
+    handlers = set()
+
+    async def respond(reader, writer):
+        task = asyncio.current_task()
+        handlers.add(task)
+        try:
+            request = await reader.readuntil(b"\r\n\r\n")
+            requests.append(request)
+            received.set()
+            number = str(len(requests)).encode()
+            body = RSS.replace(b"release-42", b"local-release-" + number).replace(
+                b"New protocol", b"New protocol " + number
+            )
+            writer.write(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/rss+xml\r\nConnection: close\r\nContent-Length: "
+                + str(len(body)).encode()
+                + b"\r\n\r\n"
+                + body
+            )
+            await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            handlers.discard(task)
+
+    class RecoveringRepository(MemoryRepository):
+        failed = False
+
+        async def list(self, collection, **kwargs):
+            if collection == "ops.source_escalations" and received.is_set() and not self.failed:
+                self.failed = True
+                raise OSError("Injected temporary repository ENOSPC")
+            return await super().list(collection, **kwargs)
+
+    server = await asyncio.start_server(respond, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    source = {
+        "source_id": "S30",
+        "feeds": [{"url": f"http://127.0.0.1:{port}/rss", "kind": "rss", "interval_s": 0.01}],
+    }
+    config = settings(tmp_path, [source])
+    config.capture_only = True
+    repo = RecoveringRepository()
+    await repo.open()
+    svc = SourceService(repo, config)  # Real owned httpx client; no MockTransport.
+    capture = CaptureService(repo, config, sources=svc, market=object())
+
+    async def pause(stop, seconds):
+        paused.set()
+        await retry.wait()
+
+    capture._pause = pause
+    stop = asyncio.Event()
+    supervised = asyncio.create_task(capture._supervise("sources", svc, stop))
+    try:
+        await asyncio.wait_for(paused.wait(), 3)
+        assert repo.failed and len(requests) == 1
+        assert not svc.http.is_closed
+        assert not svc.poller.active_acquisitions and not svc.poller.active_details
+        assert not any(
+            task.get_coro().__qualname__
+            in {"SourcePoller.loop", "SourcePoller.acquire", "SourcePoller.drain"}
+            for task in asyncio.all_tasks()
+            if not task.done()
+        )
+        retry.set()
+
+        async def recovered_items():
+            while len(await repo.list("ingest.source_items")) < 2:
+                await asyncio.sleep(0.005)
+
+        await asyncio.wait_for(recovered_items(), 3)
+        assert len(requests) >= 2
+        state = await repo.get("ops.source_checkpoints", "S30:0")
+        assert state["source_id"] == "S30"
+        assert state["updated_at"].endswith("Z")
+        assert state["updated_at_prec"] == "COLLECTION_ONLY"
+        assert not await repo.list("ops.jobs")
+        stop.set()
+        await asyncio.wait_for(supervised, 3)
+        assert not svc.http.is_closed  # Only the final resource owner closes it.
+    finally:
+        stop.set()
+        retry.set()
+        if not supervised.done():
+            supervised.cancel()
+        await asyncio.gather(supervised, return_exceptions=True)
+        await svc.close()
+        server.close()
+        await server.wait_closed()
+        if handlers:
+            await asyncio.gather(*handlers, return_exceptions=True)
+        await repo.close()
+    assert svc.http.is_closed
+
+
+def test_dtcc_retained_public_release_slugs_preserve_case_dots_and_document_boundaries():
+    urls = [
+        "https://www.dtcc.com/press-releases/2026/US-Treasury-Central-Clearing-Survey-Industry-Ready-for-Cash-Clearing-Repo-Work-Remains",
+        "https://www.dtcc.com/press-releases/2026/DTCC-FundSERV-Adds-Ondo-Finance-as-First-Tokenization-Member",
+        "https://www.dtcc.com/press-releases/2025/arianne-m.-collette-joins-dtcc-as-managing-director-and-head-of-u.s.-equities",
+        "https://www.dtcc.com/press-releases/2024/dtccs-ficc-launches-cclf-public-calculator-to-support-expansion-of-u.s.-treasury-clearing",
+        "https://www.dtcc.com/press-releases/2024/ici-sifma-and-dtcc-comment-on-u.s.-move-to-t1",
+    ]
+    excluded = [
+        "https://www.dtcc.com.evil.example/press-releases/2026/release",
+        "https://www.dtcc.com/press-releases/2026/release/extra",
+        "https://www.dtcc.com/press-releases/2026/release.pdf",
+        "https://www.dtcc.com/press-releases/2026/release.PDF",
+        "https://www.dtcc.com/~/media/Files/Downloads/release.pdf",
+        "https://www.dtcc.com/press-releases/2026/../release",
+        "https://www.dtcc.com/press-releases/2026/release%2Fextra",
+    ]
+    # URL forms are from the retained2026-10-18 official search response.
+    rows = [
+        {
+            "clickUri": url,
+            "title": "Release metadata",
+            "excerpt": "Official release",
+            "raw": {"news_date": 1790654400000},
+        }
+        for url in urls + excluded
+    ]
+    parsed = parsers.json_items({"results": rows}, "S08")
+    assert [row["url"] for row in parsed] == urls
+    assert all(row["external_id"] == row["url"] for row in parsed)
+    assert len(parsed.errors) == len(excluded)
+
+
+def test_binance_observed_child_tree_preserves_text_not_metadata():
+    body = {
+        "node": "root",
+        "child": [
+            {
+                "node": "element",
+                "tag": "p",
+                "attr": {"title": "NOT BODY"},
+                "child": [
+                    {
+                        "node": "element",
+                        "tag": "em",
+                        "child": [{"node": "text", "text": "Collateral &amp; margin"}],
+                    }
+                ],
+            },
+            {"node": "element", "tag": "p", "child": [{"node": "text", "text": "2026-10-14 08:00 (UTC)."}]},
+            {"node": "element", "text": {"metadata": "NOT BODY"}},
+        ],
+        "layout": "NOT BODY",
+    }
+    assert parsers.binance_body(json.dumps(body)) == "Collateral & margin 2026-10-14 08:00 (UTC)."
+
+
+@pytest.mark.asyncio
+async def test_binance_empty_body_pending_recovers_after_restart(tmp_path, monkeypatch):
+    from copy import deepcopy
+    from pathlib import Path
+
+    body = {"node": "root", "child": [{"node": "text", "text": "Actual authored release."}]}
+    detail = json.dumps({"data": {"publishDate": 1791948608368, "body": json.dumps(body)}}).encode()
+    calls = []
+
+    def handle(request):
+        calls.append(str(request.url))
+        if request.url.path.endswith("/query"):
+            return httpx.Response(200, content=detail)
+        return httpx.Response(
+            200,
+            json={
+                "data": {
+                    "total": 1,
+                    "articles": [
+                        {"code": "actual-code", "title": "Actual release", "releaseDate": 1791948608368}
+                    ],
+                }
+            },
+        )
+
+    repo = Repo()
+    cfg = settings(
+        tmp_path,
+        [
+            {
+                "source_id": "S09",
+                "feeds": [{"kind": "json", "url": "https://www.binance.com/list?pageNo=1&pageSize=20"}],
+            }
+        ],
+    )
+    parser = parsers.binance_body
+    monkeypatch.setattr(parsers, "binance_body", lambda _: "")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        first = SourceService(repo, cfg, http=http)
+        assert (await first.poll_once("S09"))["status"] == "DEGRADED"
+        before = deepcopy(await repo.get("ops.source_checkpoints", "S09:0"))
+        assert before["pending_batches"] and not before.get("discovery_checkpoint")
+        assert not any(table == "ingest.source_items" for table, _ in repo.rows)
+        await first.close()
+        monkeypatch.setattr(parsers, "binance_body", parser)
+        resumed = SourceService(repo, cfg, http=http)
+        result = await resumed.poller.drain(cfg.load_config("sources")["sources"][0], 0, force=True)
+        assert result["items"] == 1 and not result["errors"]
+        after = await repo.get("ops.source_checkpoints", "S09:0")
+        assert not after["pending_batches"] and after["discovery_checkpoint"] == "actual-code"
+        item = next(row for (table, _), row in repo.rows.items() if table == "ingest.source_items")
+        assert item["observed_at"] == before["pending_batches"][0]["rows"][0]["observed_at"]
+        assert item["text"] == "Actual authored release."
+        assert item["published_at"] == "2026-10-14T03:30:08.368000Z"
+        assert item["published_prec"] == "EXACT"
+        assert zstandard.ZstdDecompressor().decompress(Path(item["raw_ref"]).read_bytes()) == detail
+        assert len(calls) == 3  # One index, failed detail, then only pending detail.
+        await resumed.close()
+
+
+def test_legacy_metadata_proof_unknown_and_temporal_projection():
+    from copy import deepcopy
+
+    from tank.sources.legacy import (
+        needs_source_metadata_repair,
+        normalize_legacy_source_record,
+        source_metadata_at,
+    )
+    from tank.util import sha256
+
+    feed = {"kind": "rss", "url": "https://forum.example/latest.rss"}
+    raw = b'<rss version="2.0"><channel><item><link>https://forum.example/t/42</link><pubDate>Fri, 16 Oct 2026 12:00:00 GMT</pubDate></item></channel></rss>'
+    record = {
+        "source_id": "S23",
+        "external_id": "https://forum.example/t/42",
+        "feed": feed["url"],
+        "published_at": "2026-10-16T12:00:00Z",
+        "published_prec": "EXACT",
+        "published_at_precision": "SECOND",
+        "text": "Original text",
+        "extraction": {"verdict": "must not enter receipt"},
+    }
+    record.update(raw_ref="retained.zst", raw_sha256=sha256(raw))
+    original = deepcopy(record)
+    kwargs = {
+        "feed": feed,
+        "raw_ref": "retained.zst",
+        "raw_sha256": sha256(raw),
+        "converted_at": "2026-10-19T00:00:00Z",
+    }
+    verified = normalize_legacy_source_record(record, raw, **kwargs)
+    assert verified["source_metadata_repair"]["outcome"] == "VERIFIED"
+    assert (
+        verified["published_at"] == record["published_at"] and verified["published_at_precision"] == "EXACT"
+    )
+    assert source_metadata_at(verified, "2026-10-18T23:59:59Z") == original
+    assert source_metadata_at(verified, "2026-10-19T00:00:00Z") == verified
+    assert record == original
+    assert "must not enter receipt" not in json.dumps(verified["source_metadata_repair"])
+    assert "original_record" not in verified["source_metadata_repair"]
+    for altered, payload, digest in [
+        ({**record, "published_at": "2026-10-16T12:00:01Z"}, raw, sha256(raw)),
+        ({**record, "external_id": "42"}, raw, sha256(raw)),
+        (record, raw, "wrong-sha"),
+        (record, raw.replace(b"pubDate", b"updated"), sha256(raw.replace(b"pubDate", b"updated"))),
+    ]:
+        unknown = normalize_legacy_source_record(altered, payload, **{**kwargs, "raw_sha256": digest})
+        assert unknown["source_metadata_repair"]["outcome"] == "UNVERIFIABLE"
+        assert unknown["published_at"] == altered["published_at"]
+        assert (
+            unknown["published_prec"] is None and unknown["published_prec_reason"] == "UNVERIFIED_SEMANTICS"
+        )
+        assert unknown["text"] == record["text"] and unknown["extraction"] == record["extraction"]
+        assert needs_source_metadata_repair(unknown)
+    wrong_pair = normalize_legacy_source_record(record, raw, **{**kwargs, "raw_ref": "undeclared.zst"})
+    assert wrong_pair["source_metadata_repair"]["reason"] == "RAW_PROVENANCE_PAIR_NOT_DECLARED_BY_RECORD"
+    duplicate = raw.replace(
+        b"</channel>", raw[raw.index(b"<item>") : raw.index(b"</item>") + 7] + b"</channel>"
+    )
+    duplicate_record = {**record, "raw_sha256": sha256(duplicate)}
+    duplicate_result = normalize_legacy_source_record(
+        duplicate_record, duplicate, **{**kwargs, "raw_sha256": sha256(duplicate)}
+    )
+    assert duplicate_result["source_metadata_repair"]["reason"] == "EXTERNAL_ID_NOT_UNIQUELY_PROVEN"
+    assert not needs_source_metadata_repair(verified)
+
+
+@pytest.mark.asyncio
+async def test_legacy_metadata_exact_three_postgres_boundary(tmp_path):
+    import os
+    from pathlib import Path
+
+    import yaml
+
+    from tank.sources.legacy import (
+        normalize_legacy_source_record,
+        retained_source_payload,
+        source_metadata_at,
+    )
+    from tank.storage import PostgresRepository
+    from tank.util import sha256
+
+    database_url, packet = os.getenv("TANK_SOURCE_TEST_DATABASE_URL"), os.getenv("SOURCE_LEGACY_THREE_PACKET")
+    if not database_url or not packet:
+        pytest.skip("Requires isolated PostgreSQL and exact approved three-record packet")
+    packet_path = Path(packet)
+    packet_hash = sha256(packet_path.read_bytes())
+    rows = [json.loads(line) for line in packet_path.read_text().splitlines() if line.strip()]
+    assert len(rows) == 3 and {row["source_id"] for row in rows} == {"S23", "S03"}
+    config = yaml.safe_load(Path("config/sources.yaml").read_text())
+    sources = {source["source_id"]: source for source in config["sources"]}
+    repo = await PostgresRepository(database_url).open()
+    await repo.migrate()
+    try:
+        for original in rows:
+            feed = next(
+                feed for feed in sources[original["source_id"]]["feeds"] if feed["url"] == original["feed"]
+            )
+            raw_path = Path(original["raw_ref"])
+            raw_hash_before = sha256(raw_path.read_bytes())
+            normalized = normalize_legacy_source_record(
+                original,
+                retained_source_payload(raw_path),
+                feed=feed,
+                raw_ref=original["raw_ref"],
+                raw_sha256=original["raw_sha256"],
+                converted_at="2026-10-19T00:00:00Z",
+            )
+            assert normalized["source_metadata_repair"]["outcome"] == "VERIFIED"
+            await repo.put("ingest.source_items", original["item_id"], normalized)
+            stored = await repo.get("ingest.source_items", original["item_id"])
+            assert stored == normalized
+            assert source_metadata_at(stored, "2026-10-18T00:00:00Z") == original
+            assert stored["published_at"] == original["published_at"]
+            assert stored["text"] == original["text"]
+            assert stored["content_hash"] == original["content_hash"]
+            if original["source_id"] == "S03":
+                assert (
+                    stored["published_prec"] == "BUCKET" and stored["published_at_precision"] == "BUCKET(1d)"
+                )
+                assert stored["published_at_bucket_size_s"] == 86400
+            else:
+                assert stored["published_prec"] == stored["published_at_precision"] == "EXACT"
+            assert sha256(raw_path.read_bytes()) == raw_hash_before
+        assert sha256(packet_path.read_bytes()) == packet_hash
+    finally:
+        await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_legacy_repeat_preserves_original_metadata_without_blocking_valid_sibling(tmp_path):
+    from copy import deepcopy
+
+    from tank.util import sha256
+
+    repo = Repo()
+    feed = {"kind": "rss", "url": "https://example.org/rss"}
+    source = {"source_id": "S30", "feeds": [feed]}
+    raw = RSS.replace(
+        b"</channel>",
+        b"<item><guid>release-43</guid><title>Other valid release</title><link>https://example.org/b</link><pubDate>Fri, 16 Oct 2026 13:00:00 GMT</pubDate><description>Valid sibling</description></item></channel>",
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, content=raw))
+    ) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        ref, digest = svc.raw(RSS, source_id="S30")
+        old = {
+            "item_id": "legacy-unknown",
+            "source_id": "S30",
+            "external_id": "release-42",
+            "feed": feed["url"],
+            "raw_ref": ref,
+            "raw_sha256": digest,
+            "published_at": "2026-10-16T12:00:01Z",
+            "published_prec": "EXACT",
+            "published_at_precision": "SECOND",
+            "text": "Original text",
+        }
+        original = deepcopy(old)
+        await repo.put("ingest.source_items", old["item_id"], old)
+        await repo.put("ops.source_dedup", sha256("S30|release-42"), {"item_id": old["item_id"]})
+        try:
+            result = await svc.poll_once("S30")
+            assert result["status"] == "HEALTHY" and result["items"] == 2
+            repeated = await repo.get("ingest.source_items", old["item_id"])
+            assert {key: repeated[key] for key in original} == original
+            assert repeated["observation_count"] == 2
+            state = await repo.get("ops.source_checkpoints", "S30:0")
+            assert not state["pending_batches"] and not state["article_errors"]
+            assert len([1 for table, _ in repo.rows if table == "ingest.source_items"]) == 2
+        finally:
+            await svc.close()
+
+
+@pytest.mark.parametrize("prior_updated", [False, True])
+def test_legacy_s25_updated_assignment_corrected_with_temporal_projection(prior_updated):
+    from tank.sources.legacy import normalize_legacy_source_record, source_metadata_at
+    from tank.util import sha256
+
+    payload = b'<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>tag:github.com,2008:repo/v1</id><title>Release</title><updated>2026-10-10T12:00:00Z</updated><link href="https://github.com/example/repo/releases/tag/v1"/></entry></feed>'
+    feed = {"kind": "atom", "url": "https://github.com/example/repo/releases.atom"}
+    original = {
+        "source_id": "S25",
+        "feed": feed["url"],
+        "external_id": "tag:github.com,2008:repo/v1",
+        "published_at": "2026-10-10T12:00:00Z",
+        "published_prec": "EXACT",
+        "published_at_precision": "SECOND",
+        "raw_ref": "retained.zst",
+        "raw_sha256": sha256(payload),
+        "text": "Original text",
+    }
+    if prior_updated:
+        original.update(source_updated_at="2020-01-01T00:00:00Z", source_updated_at_precision="SECOND")
+    result = normalize_legacy_source_record(
+        original,
+        payload,
+        feed=feed,
+        raw_ref=original["raw_ref"],
+        raw_sha256=original["raw_sha256"],
+        converted_at="2026-10-19T00:00:00Z",
+    )
+    assert result["source_metadata_repair"]["outcome"] == "VERIFIED"
+    assert (
+        result["source_metadata_repair"]["provider_contract"] == "LEGACY_UPDATED_MISASSIGNED_AS_PUBLICATION"
+    )
+    assert result["source_metadata_repair"]["proven_raw_updated_field"] == "2026-10-10T12:00:00Z"
+    assert result["published_at"] is None and result["published_prec"] == "COLLECTION_ONLY"
+    assert result["published_at_missing_reason"] == "SOURCE_DID_NOT_PROVIDE_TIME"
+    assert (
+        result["source_updated_at"] == original["published_at"]
+        and result["source_updated_at_prec"] == "EXACT"
+    )
+    assert source_metadata_at(result, "2026-10-18T23:59:59Z") == original
+    assert source_metadata_at(result, "2026-10-19T00:00:00Z") == result
+    mismatch = {**original, "published_at": "2026-10-10T12:00:01Z"}
+    held = normalize_legacy_source_record(
+        mismatch, payload, feed=feed, raw_ref=original["raw_ref"], raw_sha256=original["raw_sha256"]
+    )
+    assert (
+        held["source_metadata_repair"]["outcome"] == "UNVERIFIABLE"
+        and held["published_at"] == mismatch["published_at"]
+    )
+
+
+def test_legacy_html_requires_exact_unique_canonical_identity():
+    from tank.sources.legacy import normalize_legacy_source_record
+    from tank.util import sha256
+
+    feed = {"kind": "html", "url": "https://publisher.example/news"}
+    url = "https://publisher.example/news/release"
+    payload = (
+        '<html><head><link rel="canonical" href="'
+        + url
+        + '"><meta property="article:published_time" content="2026-10-16"></head><body><article>Original release</article></body></html>'
+    ).encode()
+    original = {
+        "source_id": "S27",
+        "feed": feed["url"],
+        "external_id": url,
+        "url": url,
+        "published_at": "2026-10-16T00:00:00Z",
+        "published_prec": "EXACT",
+        "published_at_precision": "SECOND",
+        "raw_ref": "article.zst",
+        "raw_sha256": sha256(payload),
+        "text": "Original retained text",
+    }
+    result = normalize_legacy_source_record(
+        original, payload, feed=feed, raw_ref=original["raw_ref"], raw_sha256=original["raw_sha256"]
+    )
+    assert result["source_metadata_repair"]["outcome"] == "VERIFIED"
+    assert result["published_at_precision"] == "BUCKET(1d)" and result["text"] == original["text"]
+    for bad in (
+        payload.replace(url.encode(), (url + "/").encode()),
+        payload.replace(b'rel="canonical"', b'rel="alternate"'),
+    ):
+        record = {**original, "raw_sha256": sha256(bad)}
+        result = normalize_legacy_source_record(
+            record, bad, feed=feed, raw_ref=record["raw_ref"], raw_sha256=record["raw_sha256"]
+        )
+        assert result["source_metadata_repair"]["outcome"] == "UNVERIFIABLE"
+
+
+def test_configured_organization_normalization_proofs_and_authority_controls():
+    from copy import deepcopy
+
+    from tank.sources.organization import normalize_author_organization, resolve_author_organization
+    from tank.util import sha256
+
+    feed = {"kind": "rss", "url": "https://example.org/rss"}
+    source = {"source_id": "S01", "name": "SEC", "author_organization": "SEC", "feeds": [feed]}
+    item = parsers.feeds(RSS, "S01", feed)[0]
+    item.update(
+        source_id="S01",
+        feed=feed["url"],
+        author="SEC",
+        author_organization=None,
+        raw_ref="feed.zst",
+        raw_sha256=sha256(RSS),
+    )
+    item["content_hash"] = sha256(" ".join((item["title"] + " " + item["text"] + " ").split()))
+    original = deepcopy(item)
+    result, receipt = normalize_author_organization(item, sources=[source], raw_payloads={"feed.zst": RSS})
+    assert result == {**original, "author_organization": "SEC"}
+    assert receipt["outcome"] == "VERIFIED" and receipt["changed_fields"] == ["author_organization"]
+    assert item == original and receipt["original_record_sha256"] == sha256(original)
+    assert resolve_author_organization(source, item) == "SEC"
+    explicit = {**item, "author_organization": "Explicit author organization"}
+    assert resolve_author_organization(source, explicit) == explicit["author_organization"]
+    assert (
+        resolve_author_organization(
+            {**source, "feeds": [{**feed, "author_organization": "Feed publisher"}]}, item
+        )
+        == "Feed publisher"
+    )
+    # Display names and source IDs cannot supply undeclared authority.
+    undeclared = {**source, "author_organization": None}
+    unchanged, proof = normalize_author_organization(
+        item, sources=[undeclared], raw_payloads={"feed.zst": RSS}
+    )
+    assert unchanged == item and proof["outcome"] == "VERIFIED" and proof["organization"] is None
+    for rows, record, payloads in [
+        ([source, source], item, {"feed.zst": RSS}),
+        ([{**source, "feeds": [feed, {**feed, "author_organization": "Foreign"}]}], item, {"feed.zst": RSS}),
+        ([source], {**item, "feed": "https://foreign.example/rss"}, {"feed.zst": RSS}),
+        ([source], item, {"feed.zst": RSS + b"changed"}),
+        ([source], {**item, "content_hash": "forged"}, {"feed.zst": RSS}),
+        (
+            [source],
+            {**item, "text": "Foreign body", "content_hash": sha256("New protocol Foreign body")},
+            {"feed.zst": RSS},
+        ),
+    ]:
+        actual, failure = normalize_author_organization(record, sources=rows, raw_payloads=payloads)
+        assert actual == record and failure["outcome"] == "UNVERIFIABLE" and not failure["changed_fields"]
+
+
+def test_configured_organization_enriched_article_requires_index_and_body_proofs():
+    from tank.sources.organization import normalize_author_organization
+    from tank.util import sha256
+
+    url = "https://www.sec.gov/newsroom/press-releases/example"
+    index = (
+        '<rss version="2.0"><channel><item><guid>exact-uuid</guid><link>'
+        + url
+        + "</link><title>Index title</title><description>Summary</description></item></channel></rss>"
+    ).encode()
+    body = (
+        '<html><head><link rel="canonical" href="'
+        + url
+        + '"></head><body><article><h1>Full article</h1><p>Original full body.</p></article></body></html>'
+    ).encode()
+    feed = {"kind": "rss", "url": "https://www.sec.gov/news/pressreleases.rss"}
+    source = {"source_id": "S01", "author_organization": "SEC", "feeds": [feed]}
+    item = parsers.article(body, source_id="S01")
+    item.update(
+        source_id="S01",
+        external_id="exact-uuid",
+        url=url,
+        feed=feed["url"],
+        author_organization=None,
+        raw_ref="article.zst",
+        raw_sha256=sha256(body),
+        discovery_raw_ref="index.zst",
+        discovery_raw_sha256=sha256(index),
+    )
+    item["content_hash"] = sha256(" ".join((item["title"] + " " + item["text"] + " ").split()))
+    result, proof = normalize_author_organization(
+        item, sources=[source], raw_payloads={"article.zst": body, "index.zst": index}
+    )
+    assert result["author_organization"] == "SEC" and proof["outcome"] == "VERIFIED"
+    assert proof["identity_raw_sha256"] == sha256(index) and proof["body_raw_sha256"] == sha256(body)
+    wrong = body.replace(b"Original full body.", b"Wrong different body.")
+    tampered = {**item, "raw_sha256": sha256(wrong)}
+    result, proof = normalize_author_organization(
+        tampered, sources=[source], raw_payloads={"article.zst": wrong, "index.zst": index}
+    )
+    assert result == tampered and proof["outcome"] == "UNVERIFIABLE"

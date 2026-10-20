@@ -1,19 +1,20 @@
-"""V0-A source and BASE market capture before V0-B Jev calibration.
+"""Internal historical acquisition/supervisor fixture.
 
-PRD §10 separates source/market acceptance from event calibration. This service
-never starts the event workers, model gateway, sessions, scheduler or delivery.
+This helper is not an operator service mode. Normal startup requires offline
+calibration followed by tank serve; the public CLI does not expose this class.
 """
 
 import asyncio
 import logging
 
 from tank.bootstrap import sync_registry
+from tank.util import utcnow
 
 log = logging.getLogger(__name__)
 
 
 class CaptureService:
-    def __init__(self, repo, settings, *, sources=None, market=None):
+    def __init__(self, repo, settings, *, sources=None, market=None, maintenance=None):
         if not getattr(settings, "capture_only", False):
             raise ValueError("CaptureService requires capture_only settings")
         if getattr(settings, "replay", False):
@@ -28,6 +29,13 @@ class CaptureService:
 
             market = MarketService(repo, settings)
         self.sources, self.market = sources, market
+        self.maintenance = maintenance
+        if self.maintenance is None and getattr(settings, "backup_dir", None) is not None:
+            from tank.scheduler import Scheduler
+
+            # Reuse the verified backup/retention procedure without starting its
+            # event scheduler, model work or delivery jobs.
+            self.maintenance = Scheduler(repo, settings, None, None).maintenance
 
     @staticmethod
     async def _pause(stop, seconds):
@@ -61,6 +69,21 @@ class CaptureService:
                 continue
             await self._pause(stop, 3600)
 
+    async def _housekeeping(self, stop):
+        completed_day = None
+        while not stop.is_set():
+            now = utcnow()
+            if now.date() != completed_day:
+                try:
+                    result = await self.maintenance(now)
+                    if result.get("status") in {"created", "verified"}:
+                        completed_day = now.date()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    log.exception("Capture backup/retention failed; next maintenance tick will retry")
+            await self._pause(stop, 30)
+
     async def run(self, stop):
         tasks = []
         try:
@@ -74,6 +97,8 @@ class CaptureService:
             ]
             if hasattr(self.repo, "maintain_partitions"):
                 tasks.append(asyncio.create_task(self._partitions(stop), name="capture-partitions"))
+            if self.maintenance is not None:
+                tasks.append(asyncio.create_task(self._housekeeping(stop), name="capture-maintenance"))
             await stop.wait()
         finally:
             for task in tasks:

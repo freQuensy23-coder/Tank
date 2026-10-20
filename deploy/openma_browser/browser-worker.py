@@ -9,10 +9,13 @@ the context flushes the session's persistent Chromium profile to the VM disk.
 import argparse
 import asyncio
 import base64
+import ctypes
 import fcntl
 import hashlib
 import json
+import math
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -20,6 +23,16 @@ import time
 from pathlib import Path
 
 MAX_MESSAGE = 32 * 1024 * 1024
+REQUEST_TIMEOUT = 75.0
+# Fatal cleanup and its reply occur after operation expiry. Keep this receipt
+# window separate from the operation deadline: 75 + 5 remains below the
+# existing 90s Sandbox.exec cap, leaving 10s for execution/transport overhead.
+RESPONSE_GRACE = 5.0
+REPLY_PREFIX = "__TANK_BROWSER_RPC_V1__ "
+
+
+class BrowserLaunchFailure(Exception):
+    """A failed native launch requires recycling its supervised process tree."""
 
 
 def paths(state):
@@ -28,6 +41,102 @@ def paths(state):
     root.mkdir(mode=0o700, exist_ok=True)
     os.chmod(root, 0o700)
     return root / "rpc.sock", root / "start.lock"
+
+
+def supervise_descendants():
+    # Linux subreapers adopt only orphaned descendants. Chromium helpers can
+    # double-fork; keeping them under this worker is necessary for exact
+    # cleanup even before a timeout. This adds no privilege or isolation mode.
+    if sys.platform == "linux":
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(36, 1, 0, 0, 0) != 0:  # PR_SET_CHILD_SUBREAPER
+            code = ctypes.get_errno()
+            raise OSError(code, os.strerror(code))
+        handle = os.pidfd_open(os.getpid())
+        try:
+            signal.pidfd_send_signal(handle, 0)
+        finally:
+            os.close(handle)
+
+
+def terminate_owned_descendants(startup_pid=None):
+    """Freeze/kill/reap only this Linux worker's supervised descendant tree.
+
+    Stable pidfds avoid signaling a reused PID. Freeze parents before walking
+    their children. Subreaper adoption catches double-forked helpers and any
+    child fork that races SIGSTOP delivery; repeat until no live child remains.
+    """
+    handles = []
+
+    def stop_children(parent):
+        try:
+            children = Path(f"/proc/{parent}/task/{parent}/children").read_text().split()
+        except FileNotFoundError:
+            return
+        for child in children:
+            pid = int(child)
+            if parent == os.getpid() and startup_pid is not None and pid != startup_pid:
+                continue
+            try:
+                handle = os.pidfd_open(pid)
+            except ProcessLookupError:
+                continue
+            try:
+                fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+                if int(fields[1]) != parent:
+                    os.close(handle)
+                    continue
+                signal.pidfd_send_signal(handle, signal.SIGSTOP)
+                handles.append(handle)
+                stop_children(pid)
+            except (FileNotFoundError, ProcessLookupError):
+                os.close(handle)
+
+    # A CLI owns only its one startup subprocess; the daemon owns every
+    # descendant. After that subtree is killed, its orphaned descendants are
+    # adopted here and must be included in subsequent scans as well.
+    first = True
+    while True:
+        stop_children(os.getpid())
+        if not handles:
+            if first and startup_pid is not None:
+                # The startup parent may already have exited. Its helpers
+                # are now adopted by this dedicated CLI under different
+                # PIDs; they still belong to the one startup subtree.
+                startup_pid = None
+                first = False
+                continue
+            break
+        for handle in reversed(handles):
+            try:
+                signal.pidfd_send_signal(handle, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            finally:
+                os.close(handle)
+        handles.clear()
+        while True:
+            try:
+                reaped, _ = os.waitpid(-1, os.WNOHANG)
+                if not reaped:
+                    break
+            except ChildProcessError:
+                break
+        if first:
+            startup_pid = None
+            first = False
+        # Yield to killed processes and reap them on the next pass. This is
+        # cleanup of the expired request, not a new operation timeout.
+        time.sleep(0.001)
+
+
+def request_deadline(request):
+    deadline = request.get("deadline")
+    if isinstance(deadline, bool) or not isinstance(deadline, (float, int)) or not math.isfinite(deadline):
+        raise ValueError("Browser request requires a finite monotonic deadline")
+    if deadline > time.monotonic() + REQUEST_TIMEOUT:
+        raise ValueError("Browser request exceeds its allowed deadline")
+    return deadline
 
 
 async def serve(state):
@@ -42,7 +151,7 @@ async def serve(state):
     page = None
     async with async_playwright() as playwright:
 
-        async def operation(request):
+        async def operation(request, deadline):
             nonlocal context, page
             if request.get("version") != 1:
                 raise ValueError("Unsupported browser protocol version")
@@ -65,14 +174,19 @@ async def serve(state):
             }:
                 raise ValueError("Unsupported browser operation")
             if context is None:
-                context = await playwright.chromium.launch_persistent_context(
-                    str(state / "profile"),
-                    headless=True,
-                    channel="chromium",
-                    accept_downloads=True,
-                    downloads_path=str(state / "downloads"),
-                    viewport={"width": 1280, "height": 900},
-                )
+                try:
+                    context = await playwright.chromium.launch_persistent_context(
+                        str(state / "profile"),
+                        timeout=max(1, int(remaining(deadline, "browser launch") * 1000)),
+                        headless=True,
+                        accept_downloads=True,
+                        downloads_path=str(state / "downloads"),
+                        viewport={"width": 1280, "height": 900},
+                    )
+                except Exception as error:
+                    # Native launch can fail just before the outer budget expires.
+                    # Recycle its driver/partial Chromium tree on that path too.
+                    raise BrowserLaunchFailure(str(error)) from error
                 context.set_default_timeout(30_000)
             if page is None or page.is_closed():
                 page = context.pages[0] if context.pages else await context.new_page()
@@ -105,21 +219,61 @@ async def serve(state):
             return await locator.inner_text(timeout=timeout)
 
         async def handle(reader, writer):
+            fatal = acquired = False
+            task = None
             try:
                 raw = await asyncio.wait_for(reader.readline(), 10)
                 if len(raw) > MAX_MESSAGE:
                     raise ValueError("Browser request exceeds size limit")
-                async with lock:
+                request = json.loads(raw)
+                deadline = request_deadline(request)
+                # Expired queued requests never reach operation(), so they
+                # cannot perform a late navigation, click or mutation.
+                try:
+                    await asyncio.wait_for(lock.acquire(), remaining(deadline, "action queue"))
+                except TimeoutError as error:
+                    raise TimeoutError("Browser request exceeded its budget during action queue") from error
+                acquired = True
+                seconds = remaining(deadline, "browser action")
+                task = asyncio.create_task(operation(request, deadline))
+                # wait_for waits for cancellation to unwind; Playwright can
+                # await a stuck native launch while doing so. Wait without
+                # awaiting that cancellation, then recycle this daemon tree.
+                done, _ = await asyncio.wait({task}, timeout=seconds)
+                if not done:
+                    fatal = True
+                    task.cancel()
+                    raise TimeoutError(
+                        "Browser request exceeded its budget during browser action; worker recycled"
+                    )
+                result = task.result()
+                response = {
+                    "version": 1,
+                    "ok": True,
+                    "result": result,
+                    "url": page.url if page else "about:blank",
+                }
+            except Exception as error:  # noqa: BLE001 - RPC translates browser errors into tool results.
+                if isinstance(error, BrowserLaunchFailure):
+                    fatal = True
+                response = {"version": 1, "ok": False, "error": str(error)[:4000]}
+            finally:
+                if fatal:
                     try:
-                        result = await operation(json.loads(raw))
+                        terminate_owned_descendants()
+                    except Exception as cleanup_error:  # noqa: BLE001 - fatal cleanup must still flush and exit.
+                        # Still flush an explicit failure and exit; never unlock
+                        # the expired worker after a cleanup error.
                         response = {
                             "version": 1,
-                            "ok": True,
-                            "result": result,
-                            "url": page.url if page else "about:blank",
+                            "ok": False,
+                            "error": f"Browser worker cleanup failed: {cleanup_error}"[:4000],
                         }
-                    except Exception as error:  # noqa: BLE001 - RPC translates browser errors into tool results.
-                        response = {"version": 1, "ok": False, "error": str(error)[:4000]}
+                if acquired and not fatal:
+                    lock.release()
+                # On fatal expiry keep the lock until process exit: a queued
+                # action must never slip in while the error reply is flushed.
+            try:
                 encoded = json.dumps(response, ensure_ascii=True, allow_nan=False).encode() + b"\n"
                 if len(encoded) > MAX_MESSAGE:
                     encoded = b'{"version":1,"ok":false,"error":"Browser response exceeds size limit"}\n'
@@ -127,6 +281,12 @@ async def serve(state):
                 await writer.drain()
             finally:
                 writer.close()
+                if fatal:
+                    # Do not enter async Playwright teardown after killing its
+                    # children: that can await an already hung transport. The
+                    # small error was written first; next CLI gets a fresh
+                    # daemon through the normal refused-socket startup path.
+                    os._exit(0)
                 await writer.wait_closed()
 
         server = await asyncio.start_unix_server(handle, str(sock_path), limit=MAX_MESSAGE + 1)
@@ -135,10 +295,17 @@ async def serve(state):
             await server.serve_forever()
 
 
-def connect(sock_path):
+def remaining(deadline, phase):
+    seconds = deadline - time.monotonic()
+    if seconds <= 0:
+        raise TimeoutError(f"Browser request exceeded its {REQUEST_TIMEOUT:g}s budget during {phase}")
+    return seconds
+
+
+def connect(sock_path, deadline):
     client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    client.settimeout(75)
     try:
+        client.settimeout(remaining(deadline, "connect"))
         client.connect(str(sock_path))
     except Exception:
         client.close()
@@ -147,19 +314,35 @@ def connect(sock_path):
 
 
 def request(state, encoded):
+    # One budget covers startup and the RPC. Cold Playwright initialization in
+    # a real microVM can exceed 15s even when healthy; it is not a separate RPC.
+    deadline = time.monotonic() + REQUEST_TIMEOUT
     data = base64.b64decode(encoded, validate=True)
     if len(data) > MAX_MESSAGE:
         raise ValueError("Browser request exceeds size limit")
-    json.loads(data)  # Validate before starting a daemon.
+    request_data = json.loads(data)  # Validate before starting a daemon.
+    if not isinstance(request_data, dict):
+        raise TypeError("Browser request must be an object")
+    # Same VM monotonic clock in client and daemon. Never trust a caller's
+    # supplied deadline; include startup/lock time in the one original budget.
+    request_data["deadline"] = deadline
+    data = json.dumps(request_data, ensure_ascii=True, allow_nan=False).encode()
+    if len(data) > MAX_MESSAGE:
+        raise ValueError("Browser request exceeds size limit")
     sock_path, lock_path = paths(state)
     # Lock startup only: concurrent tool calls must never launch two Chromium
     # owners for one persistent profile. The daemon serializes actual actions.
     with lock_path.open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                time.sleep(min(0.05, remaining(deadline, "startup lock")))
         try:
-            client = connect(sock_path)
+            client = connect(sock_path, deadline)
         except (FileNotFoundError, ConnectionRefusedError):
-            subprocess.Popen(
+            process = subprocess.Popen(
                 [sys.executable, str(Path(__file__).resolve()), "--state-dir", str(state), "--serve"],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
@@ -167,24 +350,57 @@ def request(state, encoded):
                 start_new_session=True,
                 close_fds=True,
             )
-            deadline = time.monotonic() + 15
-            while True:
-                try:
-                    client = connect(sock_path)
-                    break
-                except (FileNotFoundError, ConnectionRefusedError):
-                    if time.monotonic() > deadline:
-                        raise RuntimeError(
-                            "Browser worker did not start; verify Python Playwright in the sandbox image"
-                        )
-                    time.sleep(0.05)
+            try:
+                while True:
+                    try:
+                        client = connect(sock_path, deadline)
+                        break
+                    except (FileNotFoundError, ConnectionRefusedError):
+                        exit_code = process.poll()
+                        if exit_code is not None:
+                            raise RuntimeError(
+                                f"Browser worker exited during startup (exit {exit_code}); "
+                                "verify Python Playwright in the sandbox image"
+                            )
+                        time.sleep(min(0.05, remaining(deadline, "worker startup")))
+            except BaseException:
+                # This CLI created the still-starting daemon, so its entire
+                # descendant tree belongs to this startup attempt. Do not
+                # leave a detached Python/Node driver after client expiry.
+                startup_pid = getattr(process, "pid", None)
+                if startup_pid is not None:
+                    terminate_owned_descendants(startup_pid)
+                raise
     with client:
+        client.settimeout(remaining(deadline, "request write"))
         client.sendall(data + b"\n")
-        with client.makefile("rb") as stream:
-            result = stream.readline(MAX_MESSAGE + 1)
-        if not result or len(result) > MAX_MESSAGE:
-            raise ValueError("Invalid browser worker response length")
-        sys.stdout.write(result.decode())
+        chunks, size = [], 0
+        # The daemon still receives the original operation deadline. Only
+        # receipt of its cleanup/error response gets this bounded grace;
+        # otherwise both clocks expire together and the client hides the
+        # structured failure behind a bare socket.timeout.
+        response_deadline = deadline + RESPONSE_GRACE
+        while True:
+            seconds = response_deadline - time.monotonic()
+            if seconds <= 0:
+                raise TimeoutError("Browser worker cleanup response exceeded its bounded grace")
+            client.settimeout(seconds)
+            try:
+                chunk = client.recv(min(65_536, MAX_MESSAGE + 1 - size))
+            except TimeoutError as error:
+                raise TimeoutError("Browser worker cleanup response exceeded its bounded grace") from error
+            if not chunk:
+                raise ValueError("Browser worker closed without a complete response")
+            chunks.append(chunk)
+            size += len(chunk)
+            if size > MAX_MESSAGE:
+                raise ValueError("Browser worker response exceeds size limit")
+            if b"\n" in chunk:
+                break
+        result = b"".join(chunks)
+        if not result.endswith(b"\n") or result.count(b"\n") != 1:
+            raise ValueError("Invalid browser worker response framing")
+        sys.stdout.write(REPLY_PREFIX + result.decode())
 
 
 def main():
@@ -195,13 +411,14 @@ def main():
     mode.add_argument("--request")
     args = parser.parse_args()
     state = Path(args.state_dir).resolve()
+    supervise_descendants()
     if args.serve:
         asyncio.run(serve(state))
     else:
         try:
             request(state, args.request)
         except Exception as error:  # noqa: BLE001 - CLI protocol must emit a structured transport error.
-            print(json.dumps({"version": 1, "ok": False, "error": str(error)[:4000]}))
+            print(REPLY_PREFIX + json.dumps({"version": 1, "ok": False, "error": str(error)[:4000]}))
 
 
 if __name__ == "__main__":

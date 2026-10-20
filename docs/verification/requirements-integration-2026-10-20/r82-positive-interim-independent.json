@@ -1,0 +1,49 @@
+{
+  "status": "INTERIM_FUNCTIONAL_CARD_AND_LEDGER_VERIFIED_FINAL_TRANSPORT_TEXT_PENDING",
+  "at": "2026-10-20T11:25:53.522153+00:00",
+  "scope": "Read-only independent copied interim artifacts; no DB/native/API calls",
+  "event_id": "EVT-01M5CGEY2T4MX9YXA139T24MN3",
+  "alert_id": "ALR-01M5CGHZHPJ3TZA889HXQNVHAT",
+  "source_item_id": "ITM-01M5CG85DD42M60DQD77ZZDFGZ",
+  "fetched_evidence_item_id": "web-4ec7dd01480acee20a364b363465f057",
+  "verified_table_exports": 18,
+  "verified_original_files": 3,
+  "bundle_sha256": "2ff59bc136d1efca308b0c3ceb94d7de07cfb9820157c78597533bd3ac0bddc8",
+  "immutable_bundle_exact_payload_hash": true,
+  "card_chars": 2675,
+  "only_decided_token": "bitcoin:BTC",
+  "action": "WAIT",
+  "eight_negative_layers_present": true,
+  "all_three_claims_unverified": true,
+  "stage": "unverified APPROVED",
+  "certainty": "MEDIUM",
+  "source_time": {
+    "feed_published_at": "2026-10-20T10:14:19Z",
+    "source_observed_at": "2026-10-20T11:13:22.280104Z",
+    "actual_article_fetched_at": "2026-10-20T11:15:26.605658Z",
+    "captured_entry_time_EDT": "2026-10-20T07:07:00-04:00",
+    "entry_time_UTC": "2026-10-20T11:07:00Z",
+    "agent_public_at": "2026-10-20T11:00:00Z",
+    "agent_public_at_precision": "BUCKET(1h)",
+    "bucket_contains_captured_entry": true,
+    "source_item_timestamp_unchanged": true
+  },
+  "direct_claim_pointer_limit": {
+    "all3_evidence_item_ids_reference": "immutable original feed item with noFINMA body/quote",
+    "quote_location": "captured same-URL fetched page, retained verbatim with rawref/hash in bundle.request_log",
+    "evidence_not_lost": true,
+    "agent_guidance_correction_planned_by_owner": true,
+    "deterministic_semantic_veto_proposed": false
+  },
+  "source_to_event_seconds": 222.248268,
+  "source_to_sent_seconds": 322.933946,
+  "sent_ledger": {
+    "message_ref": "12",
+    "sent_at": "2026-10-20T11:18:45.214050Z",
+    "attempt": 1,
+    "root_thread_no_reply": true
+  },
+  "actual_returned_telegram_text": "PENDING_FINAL_ORDINARY_DRIVER_RECEIPT",
+  "delivery_job_intent": "PENDING_ALL_TABLE_FINAL_EXPORT; immutable accepted publication receipt and matching ledger checked",
+  "system_e2e_final_acceptance": false
+}

@@ -1,0 +1,31 @@
+--- src/tank/agents/sessions.py	2026-10-20 14:03:58
++++ data/qa/session-rest-timeout-20261020/candidate/src/tank/agents/sessions.py	2026-10-20 14:16:59
+@@ -22,7 +22,9 @@
+ from .security import redact_tool_arguments
+ from .wire import tool_wire_result
+ 
++REST_TIMEOUT_S = 30
+ 
++
+ @dataclass(frozen=True)
+ class CapturedToolResult:
+     """An external capture's complete outcome, not a newly successful fetch."""
+@@ -48,7 +50,7 @@
+ class SessionService:
+     def __init__(self, repo, settings, tool_dispatch, *, http=None, stream_http=None):
+         self.repo, self.settings, self.tool_dispatch = repo, settings, tool_dispatch
+-        self.http = http or httpx.AsyncClient(timeout=httpx.Timeout(30, read=None))
++        self.http = http or httpx.AsyncClient(timeout=REST_TIMEOUT_S)
+         self.owns_http = http is None
+         # Long-lived idle subscriptions must not consume control-plane slots
+         # needed to acknowledge tools. No local session admission cap is added.
+@@ -141,6 +143,9 @@
+ 
+     async def request(self, method, path, **kwargs):
+         headers = self.headers(kwargs.pop("idem", None))
++        # Injected replay clients may also serve SSE with read=None. Every REST
++        # call still needs a finite transport deadline independently of that client.
++        kwargs.setdefault("timeout", REST_TIMEOUT_S)
+         response = await self.http.request(method, self.url(path), headers=headers, **kwargs)
+         response.raise_for_status()
+         return response.json()

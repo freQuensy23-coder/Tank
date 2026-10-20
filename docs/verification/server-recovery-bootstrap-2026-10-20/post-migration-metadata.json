@@ -1,0 +1,9 @@
+{
+  "ledger_count": 35,
+  "latest_migration": "035_remove_legacy_books_tickers.sql",
+  "archive_absent": true,
+  "linter_absent": true,
+  "tank_database_bytes": 8470010903,
+  "max_locks": "64",
+  "free_bytes": 16622071808
+}

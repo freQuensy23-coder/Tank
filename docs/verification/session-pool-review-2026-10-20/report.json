@@ -1,0 +1,57 @@
+{
+  "status": "PASS_ISOLATED_FIX_VERIFICATION",
+  "scope": "Network-free actual SessionService and PostgreSQL 16 concurrency; no model, Telegram, X, production or R81 database modifications",
+  "production_delta": [
+    "src/tank/agents/sessions.py"
+  ],
+  "change": "Reuse the existing external slow path for web_search and fetch_page so external waits do not retain a pooled connection or advisory transaction.",
+  "preserved": [
+    "16-connection pool",
+    "default PostgreSQL max_locks_per_transaction=64",
+    "per-session event serialization",
+    "execution provenance and fences",
+    "original requested_at/processed_at",
+    "CapturedToolResult status and is_error",
+    "persisted tool result before native ACK",
+    "lost-ACK recovery without refetch",
+    "call ordinal and duplicate-event semantics"
+  ],
+  "before": {
+    "web_search_entered": 16,
+    "web_search_pool_available": 0,
+    "worker_read_results": "8 PoolTimeout after 30.001 seconds",
+    "fetch_page": "16 entered and zero connections available until network release"
+  },
+  "after": {
+    "web_search_entered": 24,
+    "web_search_pool_available": 7,
+    "web_search_worker_reads_max_seconds": 0.006024,
+    "fetch_page_entered": 24,
+    "fetch_page_pool_available": 16,
+    "get_market_truth_entered": 24,
+    "get_market_truth_pool_available": 16,
+    "all_72_tools": "DONE, acknowledged, ordinal zero"
+  },
+  "tests": {
+    "combined_native_protocol_with_postgres": "99 passed in 47.98 seconds",
+    "new_pool_and_error_tests_with_postgres": "8 passed in 10.57 seconds",
+    "ruff": "check and format check passed"
+  },
+  "actual_r81_limit": "The isolated test proves a real burst starvation defect. It does not establish that every R81 PoolTimeout had this cause: the retained actual PG snapshot had 13 COMMIT-idle, 2 idle-in-transaction and 1 advisory waiter, and no Python borrower/task dump was captured before the process stopped. R81 MTA job committed DONE in 8 seconds; a later same-session truth call returned in 0.08 seconds. The next actual E2E needs metadata-only pool/task ownership snapshots if recurrence occurs.",
+  "resources": {
+    "owned_postgres_container": "tank-pool-review-20261020",
+    "removed": true,
+    "network_policy": "Only loopback PostgreSQL and HTTP MockTransport; no external network"
+  },
+  "sha256": {
+    "src/tank/agents/sessions.py": "7238bbdf4a5afd4d1b6116fe7cdd46265f6a812d4480b2f9c28cb8ceba252653",
+    "tests/test_agents_external_pool.py": "1f1fbffe5e6758bbad87d02cce45c37ca9f758a725c709e300f3708c2ba252ef"
+  },
+  "evidence": [
+    "repro-before.json",
+    "repro-after.json",
+    "product.diff",
+    "regression-pg.log",
+    "regression-all.log"
+  ]
+}

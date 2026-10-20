@@ -1,0 +1,50 @@
+F..                                                                      [100%]
+=================================== FAILURES ===================================
+_ test_state_emits_identical_title_body_once_without_mutating_capture[identical-headline-body-once] _
+
+title = 'OKX lists QNT', body = 'OKX lists QNT', expected = 'OKX lists QNT'
+
+    @pytest.mark.parametrize(
+        ("title", "body", "expected"),
+        [
+            ("OKX lists QNT", "OKX lists QNT", "OKX lists QNT"),
+            (
+                "OKX lists QNT",
+                "Deposits open at 10:00 UTC.\nTrading opens at 12:00 UTC; withdrawals follow tomorrow.",
+                "OKX lists QNT\n\nDeposits open at 10:00 UTC.\nTrading opens at 12:00 UTC; withdrawals follow tomorrow.",
+            ),
+            ("OKX lists QNT", "", "OKX lists QNT"),
+        ],
+        ids=["identical-headline-body-once", "different-full-body-preserved", "empty-body-headline-once"],
+    )
+    def test_state_emits_identical_title_body_once_without_mutating_capture(title, body, expected):
+        from copy import deepcopy
+    
+        item = {
+            "source_id": "S10",
+            "source": "OKX",
+            "author": "OKX",
+            "title": title,
+            "text": body,
+            "quoted": "Original quoted material",
+            "raw_ref": "immutable-original.zst",
+            "published_at": "2026-10-20T10:00:00Z",
+        }
+        original = deepcopy(item)
+>       assert Pipeline.state(item) == {
+            "source": "OKX",
+            "author": "OKX",
+            "text": expected,
+            "quoted": "Original quoted material",
+        }
+E       AssertionError: assert {'source': 'O...ted material'} == {'source': 'O...ted material'}
+E         
+E         Omitting 3 identical items, use -vv to show
+E         Differing items:
+E         {'text': 'OKX lists QNT\n\nOKX lists QNT'} != {'text': 'OKX lists QNT'}
+E         Use -v to get more diff
+
+tests/test_agents_pipeline_audit.py:403: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_agents_pipeline_audit.py::test_state_emits_identical_title_body_once_without_mutating_capture[identical-headline-body-once]
+1 failed, 2 passed, 29 deselected in 0.27s

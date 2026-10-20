@@ -1,0 +1,39 @@
+{
+  "case": {
+    "fixture_id": "F-13",
+    "case_description": "ONDO — 24 Sep 2026 12:00–16:00 UTC: Binance native OI +57.32%, USD OI +88.53%, price +13.56%, Binance spot taker-buy share 48.3%",
+    "cutoff_spec": "24 Sep 2026 16:00",
+    "assertion_spec": "`oi_class` REAL_NATIVE; move class PERP_LED_CHASE (directly or through the divergence discriminator), never SPOT_LED_ACCUMULATION; action ∈ {DONT_CHASE, WAIT}.",
+    "acceptance_input": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-13/inputs/input.json.zst",
+      "sha256": "37aeff12193d85f590d963a40f562acbf86905bcfb60d55d1a7257e6f298e929"
+    },
+    "private_name_map": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-13/private/map.json",
+      "sha256": "96dae1ff7514961ffe22824c7d27b34896b686a21907751449b64ccc3b939813"
+    },
+    "sealed_outcomes": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-13/sealed/outcomes.json",
+      "sha256": "6a89b08cdf99c93e079491d60c5593cc8218c06e4d5c21ea548d1b8df06c91b6"
+    }
+  },
+  "readiness_errors": [],
+  "sources_host_only": [
+    {
+      "path": "data/replay/candidates/pure-market-retained-20261019/F-13/manifest.json",
+      "sha256": "64da150dc7739a447848bd0606a0fbb3c1bb4e8404710b4464f7ee6deba7bbd6"
+    },
+    {
+      "path": "data/replay/candidates/pure-market-retained-20261019/F-13/input-89697e99763be54da140d343d881a0f180e97a88c90a8629c9dcff1796ee160e.json.zst",
+      "sha256": "5e7cf3924cba0c83efb3488264d6a837430be8a51df693b734065e0f6f1d2648",
+      "declared_path": "/srv/tank/data/replay/candidates/pure-market-retained-20261019/F-13/input-89697e99763be54da140d343d881a0f180e97a88c90a8629c9dcff1796ee160e.json",
+      "uncompressed_sha256": "89697e99763be54da140d343d881a0f180e97a88c90a8629c9dcff1796ee160e"
+    }
+  ],
+  "no_news_event_catalyst_or_assessment_seeded": true,
+  "original_cutoff_preserved": true,
+  "original_observations_and_times_preserved_before_identity_mask": true,
+  "benchmark_symbol_exception": null,
+  "financial_performance_claim": false,
+  "native_wording_phase": "PLANNED_NOT_RUN"
+}

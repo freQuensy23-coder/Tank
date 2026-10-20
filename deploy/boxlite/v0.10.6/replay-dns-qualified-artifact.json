@@ -1,0 +1,88 @@
+{
+  "schema": "tank.boxlite-qualified-replay-dns-artifact.v1",
+  "status": "QUALIFIED_NATIVE_REPLAY_NETWORK",
+  "source": {
+    "repository": "https://github.com/boxlite-ai/boxlite.git",
+    "version": "0.10.6",
+    "commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+    "libkrun_commit": "e12b9b3780ffa8df9f3e1797b217d13453479167",
+    "Cargo.lock": "720f5f70fdd48ca15d170d8ba8bf61832378e8615dadfb12a84b55761b571149",
+    "libkrun_Cargo.lock": "353fe6bb081d1cd4b4e24aa4ef323319709543c65b7304e015320a563688d3c2",
+    "gvproxy_go.sum": "84dddcab5d612e04cac72c140477a7eeeb8ec01088f237f1dd0de157d9217c47",
+    "source_tracked_diff": "clean pinned baseline; exact reviewed replay DNS overlay retained unchanged through compilation"
+  },
+  "files": {
+    "boxlite-guest": "90c4fb9b8525aedfd167d715a019a271100b055df4e715288fb1da726e276621",
+    "boxlite-shim": "b645c32295a3450c58536a7da9238ee44560a21800e16859ea906aa3801382fa",
+    "bwrap": "ff5634c3b9eb92135adacf974569ad9160f09898fefebe60cc687a4892ceb2d2",
+    "debugfs": "017e6bccb4c0ae757f961ab4241c8b0796613fef77d6410bf49590616d61cbca",
+    "guest-mke2fs": "e4685269fad901ae2408cd9b01653099d8220e2a6f52015677b44c5d4a15e963",
+    "guest-resize2fs": "47e2659d5577bedc109de8f3427d42a26af1234669c563e50cc099961a9d0aca",
+    "libkrunfw.so.5": "a47fad6c557420899b7e079c63227b4660c365bbb1c7def0428bf6352786a321",
+    "mke2fs": "2ffb7f930adaa5781aa124766d2686ab68b7a2108e50e9f0f2963b075e58088a"
+  },
+  "shim_sha256": "b645c32295a3450c58536a7da9238ee44560a21800e16859ea906aa3801382fa",
+  "provenance_sha256": "ed4d17b305f0695e7bcd1e82c8def8b541af07f7c069aa44c910389ebfbf3245",
+  "candidate_registration_sha256": "59778c46465ca34ba6609b36424b994e7d626ed7bf8510cafc34302501d82d24",
+  "historical_baseline": {
+    "path": "qualified-artifact.json",
+    "sha256": "4ae9258e00f457f709a56f4d4efc48360d8286cd566fc66286d83910e61fb451",
+    "shim_sha256": "d44e3d54bf227b288bd059ece8c751339c6db0fb62a3d7c2077cd93241421255",
+    "normal_deployment_accepted": false
+  },
+  "qualification": {
+    "status": "PASS",
+    "scope": "native factory replay network and read-only database component",
+    "date": "2026-10-19",
+    "evidence_root": "docs/verification/native-replay-network-r18-2026-10-19",
+    "evidence_sha256": {
+      "verification.json": "659f9ea665032bccd0ae8116e4a060089cb09aa73dccd91118a78e5bcbfb827e",
+      "proof/result.json": "026b49c01e2f47bc9bfc0d49f4902209ec4391f8b552930dbe74e75f0a51bc10",
+      "owner-return.json": "70c91e1d8bcefcb6ea3ab37ef8f17d57814560e85559c0ecff478fa6c87fc4f6",
+      "independent-catalog-after.json": "246d5227a63ee4ffc7f751ae2e4bd63bd812f37884143b9a6ef168ee2edb7fc3",
+      "proof/unrestricted-before/result.json": "af941dfb2847f2126cf2b3596c3a1723d8f6a213fe85c891acdf7a894ebf52dd",
+      "proof/unrestricted-before/configured-dns.json": "6c5d6d3ca21d3a935af99333b6d142f9ecfb0cb995d7122c6d62f7bcee32aa5c",
+      "proof/unrestricted-before/public-dns.json": "129e840be2335b12fac463142438b82e663c06eca50f3b8b573b4a4e939f00b2",
+      "proof/unrestricted-before/connections.json": "607920e75a2963fb2217fc7513ceb98effe992280ac041b7994eb31bf1bf0409",
+      "proof/unrestricted-before/native-network-projection.json": "f3cde838e3f951900cb9f1edfe9fe6a2e239cf90ce8ce502ffffa71c94f448ef",
+      "proof/unrestricted-before/cleanup.json": "8b22635a0ef6d8e4425c1b4ee9c4b05ab6571fed954b670cd0be70bde4948b33",
+      "proof/replay/result.json": "ef5e2eae509e1530e3e6bd7d592e627c2f675c07329ca8f522d1c16f94e8eb95",
+      "proof/replay/configured-dns.json": "6546f25fcdbe25c69ba397a29f840ae3ef22cea1d172c8efc4b80335092b54c9",
+      "proof/replay/public-dns.json": "e88e4d062deee783b8316afca4b0143e8fcaeea6e2a89817eb90d3d177fdaf01",
+      "proof/replay/connections.json": "cff134537986c4a72a4b56cc99e3c30ba812dff15c0d73ff302c025e050f3bcb",
+      "proof/replay/native-network-projection.json": "b2f8a53967f9075913bfb0a596fcebf22f5de22e9c576cd10909782897657315",
+      "proof/replay/cleanup.json": "03f9b81499adbcfde8caf6c37f426c026b0c0a90903105de70ca57f1a1c78c0c",
+      "proof/unrestricted-after/result.json": "2128b3051e57642f172a3c8b5deae876ec0ed838c95b204a4923a2dcafb48ed5",
+      "proof/unrestricted-after/configured-dns.json": "6c5d6d3ca21d3a935af99333b6d142f9ecfb0cb995d7122c6d62f7bcee32aa5c",
+      "proof/unrestricted-after/public-dns.json": "129e840be2335b12fac463142438b82e663c06eca50f3b8b573b4a4e939f00b2",
+      "proof/unrestricted-after/connections.json": "607920e75a2963fb2217fc7513ceb98effe992280ac041b7994eb31bf1bf0409",
+      "proof/unrestricted-after/native-network-projection.json": "d17cdaa2858626a5db8f0ffbddca3a0223273d4dec9b474765b8e1dd7389c034",
+      "proof/unrestricted-after/cleanup.json": "3eaee520f7bf5aaca7b8b762d3c7688d05a74c7a76cedb2714c88a658a75a3a1",
+      "proof/replay/database.json": "61fce1429401de47d9b8b6bdf1dbf45517fe435c030cd61c785b0cbbe3edd939"
+    },
+    "qualified_candidate": {
+      "image": "sha256:2dac3630e6120a87c92f9e03bd749d5736f315ad7aa24461fe1baf3b524dd479",
+      "identity": "45bb1495568f4559fc3dc5fd3dd205b3a2e1c172a9527d4c70df7b04caf3a58f",
+      "manifest": "666606ad3ecc92b145549cf44b5b14d4def2642e5fc2c5562ccd11c28313be58",
+      "shim": "b645c32295a3450c58536a7da9238ee44560a21800e16859ea906aa3801382fa",
+      "adapter": "de3acae49e3e71886386ce2a70ce5adc798d800f722d83c05f85ffe3edafe894",
+      "provider": "ce1a3cfc3db0c8939289be02615d52a419e9fca6fcc29a33e9dfd8a4c4478f14",
+      "worker": "8e3881b1e4de68a0f53c88321adc48691bd2d8f44f6e915b8843062c3c49a988",
+      "oci": "503e14efff3d32be6428821571e81735f017a1aae61275bb11f4c5d452130f17"
+    },
+    "guest_resources": {
+      "cpus": 2,
+      "memory_mib": 2048
+    },
+    "allocation_count": 3,
+    "sequential_only": true,
+    "checks": {
+      "unrestricted_before_and_after": "UDP/TCP configured and public DNS A/AAAA/TXT, TCP, validated HTTP over HTTPS including direct IP",
+      "replay": "configured DNS REFUSED; public DNS, external TCP and HTTPS blocked; private PostgreSQL read succeeds and write denied SQLSTATE42501",
+      "cleanup": "exact archive after every scope; native catalog empty; helper removed; HOME locks empty; root ownership returned"
+    },
+    "managed_session_or_full_E2E_acceptance": false,
+    "production_service_adoption_performed": false,
+    "raw_candidate_provenance_relabelled": false
+  }
+}

@@ -31,7 +31,8 @@
           "state_claim",
           "directionality",
           "evidence_class",
-          "quote"
+          "quote",
+          "verified"
         ],
         "properties": {
           "type": {
@@ -43,7 +44,8 @@
               "TIMESTAMP",
               "MECHANISM",
               "MILESTONE"
-            ]
+            ],
+            "description": "Atomic claim kind. Use STATE when the verbatim quote establishes an event or integration stage and set state_claim explicitly. FACT describes a fact but FACT with state_claim null does not advance the event stage. NUMBER, RELATION, TIMESTAMP, MECHANISM and MILESTONE retain their evidence contracts."
           },
           "subject": {
             "type": "string"
@@ -58,7 +60,28 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "enum": [
+              "RUMOR",
+              "PROPOSED",
+              "APPROVED",
+              "SIGNED",
+              "DEPLOYED",
+              "LIVE",
+              "MONEY_FLOWING",
+              "COMPATIBLE",
+              "IN_DEVELOPMENT",
+              "BUILT",
+              "SUBMITTED",
+              "MATERIAL_USAGE",
+              "ECONOMIC_FLOW",
+              "CANCELLED",
+              "REVERSED",
+              "REJECTED",
+              "PAUSED",
+              null
+            ],
+            "description": "Agent-assigned stage asserted by this claim. Use STATE for a stage assertion and the highest quote-supported stage; null is valid for unknown or non-stage claims. A proposal/request is PROPOSED; an official committed future plan is APPROVED, not deployment or live operation. One-sided compatibility, SDK or repository evidence supports at most BUILT on the integration ladder and never limits event state. Supply verified separately; Tank records both without semantic rechecking."
           },
           "directionality": {
             "enum": [
@@ -78,7 +101,83 @@
             ]
           },
           "quote": {
-            "type": "string"
+            "type": "string",
+            "description": "Verbatim atomic quote. Cite its actual saved document through evidence; a fetched page has its own item_id even when its URL matches the discovery item."
+          },
+          "approval_dependency": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "scope",
+              "token_ids",
+              "claim_ids"
+            ],
+            "properties": {
+              "scope": {
+                "enum": [
+                  "EVENT",
+                  "TOKEN"
+                ]
+              },
+              "token_ids": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "claim_ids": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "description": "Explicit model-authored thesis dependency. References must identify existing accepted causal RELATION claims; the service validates scope and token identity and does not infer dependencies from text."
+          },
+          "verified": {
+            "type": "boolean",
+            "description": "Agent-assigned verification under claim rule V2: true only for HIGH-certainty support; LIVE or higher also needs explicit availability or a market/technical artifact. Tank stores this flag without semantic rechecking."
+          },
+          "verification_missing": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Agent-supplied explanation of what confirmation is missing for this unverified claim (for example, no announcement from the named organization). Tank preserves and displays it verbatim; null means the reason was not established."
+          },
+          "supersedes_claim_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "uniqueItems": true,
+            "description": "Existing prior claim IDs in this event explicitly replaced by this claim for current-card presentation. Old claims remain historical evidence. Omit references to unrelated claims or remaining uncertainties."
+          },
+          "evidence": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Agent-supplied exact saved document containing this claim's quote. For text read with fetch_page or web_search, use that returned item_id, not the discovery item's ID merely because its URL matches. The root tool item_id remains the trigger/origin. Tank preserves these references without semantic rewriting.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "item_id",
+                "quote"
+              ],
+              "properties": {
+                "item_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
           }
         }
       }
@@ -129,7 +228,8 @@
         "HIGH",
         "MEDIUM",
         "LOW"
-      ]
+      ],
+      "description": "Optional agent-supplied certainty update when reassessed: HIGH, MEDIUM or LOW. Tank stores it as supplied; omission preserves the existing event certainty without implicit promotion."
     },
     "milestone_outcome": {
       "type": "object",
@@ -146,6 +246,18 @@
         "outcome",
         "quote"
       ]
+    },
+    "certainty_reason": {
+      "type": "string",
+      "description": "Optional reason when certainty is reassessed. Tank stores it as supplied; omission preserves the existing reason without inferring a new judgment."
+    },
+    "timing_confidence": {
+      "enum": [
+        "HIGH",
+        "MEDIUM",
+        "LOW"
+      ],
+      "description": "Agent-supplied confidence in the event timing: HIGH for an exact primary timestamp, MEDIUM for bucket precision, LOW for collection time only. Optional; omission leaves declared timestamp precision as the timing-confidence basis."
     }
   },
   "required": [
@@ -156,5 +268,5 @@
     "public_at",
     "freshness"
   ],
-  "description": "Same validators; state machine \u00a73.6. Returns: New stage, contradictions."
+  "description": "Add a sourced observation to an existing event and apply the event state machine. Supply public time and precision, freshness, and atomic claims with verbatim quotes, explicit stages and verified flags. When reassessed, supply certainty and its reason as optional updates; omission preserves existing values without implicit promotion. Follow the skill claim rules: you judge source authority, quote support, stage, timing and freshness. Tank stores these semantic fields as supplied; only entity resolution is performed by Tank. Null stages remain valid for non-stage or unknown claims. Deterministic event state transitions and downstream economic rules still apply. When a quote comes from a fetched page or search result, supply claim evidence with that result’s item_id; keep root item_id as the triggering collected item."
 }

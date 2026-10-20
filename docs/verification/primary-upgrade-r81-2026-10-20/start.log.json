@@ -1,0 +1,31 @@
+{
+  "argv": [
+    "/opt/homebrew/bin/colima",
+    "-p",
+    "tank",
+    "ssh",
+    "--",
+    "sudo",
+    "docker",
+    "compose",
+    "--env-file",
+    "/etc/tank/compose.env",
+    "-p",
+    "tank",
+    "-f",
+    "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/compose.yaml",
+    "-f",
+    "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/docs/verification/primary-upgrade-r81-2026-10-20/compose.r79.override.yaml",
+    "up",
+    "-d",
+    "--no-deps",
+    "--no-build",
+    "--pull",
+    "never",
+    "tank"
+  ],
+  "at": "2026-10-20T10:59:08.426671+00:00",
+  "exit_code": 0,
+  "stderr": " Container tank-tank-1 Recreate \n Container tank-tank-1 Recreated \n Container tank-tank-1 Starting \n Container tank-tank-1 Started \n",
+  "stdout": ""
+}

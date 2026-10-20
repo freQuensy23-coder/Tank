@@ -1,0 +1,253 @@
+.s.s.s.s.s............FFF............................................... [ 37%]
+....FFF...................s.....................s...........s...s....... [ 74%]
+...........s.s....s..............................                        [100%]
+=================================== FAILURES ===================================
+__ test_legacy_native_only_done_proof_cannot_hide_unfinished_source[PENDING] ___
+
+source_state = 'PENDING'
+
+    @pytest.mark.parametrize("source_state", ["PENDING", "FAILED", "MISSING"])
+    async def test_legacy_native_only_done_proof_cannot_hide_unfinished_source(source_state):
+        repo = MemoryRepository()
+        session = await seeded(repo)
+        session["message_log"][0]["turn_status"] = "DONE"
+        session["message_log"][0]["payload"]["kind"] = "NEW_ITEM"
+        session["native_execution_states"] = {
+            "accepted-message": {
+                "execution_id": "accepted-message",
+                "state": "COMPLETED",
+                "settled_outcome": "COMPLETED",
+            }
+        }
+        await repo.put("ops.agent_sessions", "s", session)
+        posts = []
+    
+        def handler(request):
+            if request.method == "POST":
+                posts.append(request.content)
+                return httpx.Response(200, json={"data": [{"id": "replacement"}]})
+            if request.url.path.endswith("/events"):
+                return httpx.Response(200, json={"data": []})
+            if request.url.path.endswith("/executions"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {"execution_id": i, "state": "COMPLETED", "settled_outcome": "COMPLETED"}
+                            for i in request.url.params.get_list("ids[]")
+                        ]
+                    },
+                )
+            raise AssertionError(request.url)
+    
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            service = SessionService(repo, config(), lambda *args: None, http=client)
+            await service.process_event("s", idle("legacy-end", "accepted-message"))
+            legacy = await repo.get("ops.agent_sessions", "s")
+            legacy["message_log"][0]["turn_status"] = "DONE"
+            legacy["verified_native_completion"] = await service.execution_barrier(legacy)
+            assert legacy["verified_native_completion"]["complete"]
+            await repo.put("ops.agent_sessions", "s", legacy)
+            if source_state == "MISSING":
+                await repo.delete("ingest.source_items", "item")
+            else:
+                await repo.put(
+                    "ingest.source_items", "item", {"item_id": "item", "extraction_status": source_state}
+                )
+>           assert not (await service.completed_turn("s"))["complete"]
+E           assert not True
+
+tests/test_agents_execution_barrier.py:618: AssertionError
+___ test_legacy_native_only_done_proof_cannot_hide_unfinished_source[FAILED] ___
+
+source_state = 'FAILED'
+
+    @pytest.mark.parametrize("source_state", ["PENDING", "FAILED", "MISSING"])
+    async def test_legacy_native_only_done_proof_cannot_hide_unfinished_source(source_state):
+        repo = MemoryRepository()
+        session = await seeded(repo)
+        session["message_log"][0]["turn_status"] = "DONE"
+        session["message_log"][0]["payload"]["kind"] = "NEW_ITEM"
+        session["native_execution_states"] = {
+            "accepted-message": {
+                "execution_id": "accepted-message",
+                "state": "COMPLETED",
+                "settled_outcome": "COMPLETED",
+            }
+        }
+        await repo.put("ops.agent_sessions", "s", session)
+        posts = []
+    
+        def handler(request):
+            if request.method == "POST":
+                posts.append(request.content)
+                return httpx.Response(200, json={"data": [{"id": "replacement"}]})
+            if request.url.path.endswith("/events"):
+                return httpx.Response(200, json={"data": []})
+            if request.url.path.endswith("/executions"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {"execution_id": i, "state": "COMPLETED", "settled_outcome": "COMPLETED"}
+                            for i in request.url.params.get_list("ids[]")
+                        ]
+                    },
+                )
+            raise AssertionError(request.url)
+    
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            service = SessionService(repo, config(), lambda *args: None, http=client)
+            await service.process_event("s", idle("legacy-end", "accepted-message"))
+            legacy = await repo.get("ops.agent_sessions", "s")
+            legacy["message_log"][0]["turn_status"] = "DONE"
+            legacy["verified_native_completion"] = await service.execution_barrier(legacy)
+            assert legacy["verified_native_completion"]["complete"]
+            await repo.put("ops.agent_sessions", "s", legacy)
+            if source_state == "MISSING":
+                await repo.delete("ingest.source_items", "item")
+            else:
+                await repo.put(
+                    "ingest.source_items", "item", {"item_id": "item", "extraction_status": source_state}
+                )
+>           assert not (await service.completed_turn("s"))["complete"]
+E           assert not True
+
+tests/test_agents_execution_barrier.py:618: AssertionError
+__ test_legacy_native_only_done_proof_cannot_hide_unfinished_source[MISSING] ___
+
+source_state = 'MISSING'
+
+    @pytest.mark.parametrize("source_state", ["PENDING", "FAILED", "MISSING"])
+    async def test_legacy_native_only_done_proof_cannot_hide_unfinished_source(source_state):
+        repo = MemoryRepository()
+        session = await seeded(repo)
+        session["message_log"][0]["turn_status"] = "DONE"
+        session["message_log"][0]["payload"]["kind"] = "NEW_ITEM"
+        session["native_execution_states"] = {
+            "accepted-message": {
+                "execution_id": "accepted-message",
+                "state": "COMPLETED",
+                "settled_outcome": "COMPLETED",
+            }
+        }
+        await repo.put("ops.agent_sessions", "s", session)
+        posts = []
+    
+        def handler(request):
+            if request.method == "POST":
+                posts.append(request.content)
+                return httpx.Response(200, json={"data": [{"id": "replacement"}]})
+            if request.url.path.endswith("/events"):
+                return httpx.Response(200, json={"data": []})
+            if request.url.path.endswith("/executions"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {"execution_id": i, "state": "COMPLETED", "settled_outcome": "COMPLETED"}
+                            for i in request.url.params.get_list("ids[]")
+                        ]
+                    },
+                )
+            raise AssertionError(request.url)
+    
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            service = SessionService(repo, config(), lambda *args: None, http=client)
+            await service.process_event("s", idle("legacy-end", "accepted-message"))
+            legacy = await repo.get("ops.agent_sessions", "s")
+            legacy["message_log"][0]["turn_status"] = "DONE"
+            legacy["verified_native_completion"] = await service.execution_barrier(legacy)
+            assert legacy["verified_native_completion"]["complete"]
+            await repo.put("ops.agent_sessions", "s", legacy)
+            if source_state == "MISSING":
+                await repo.delete("ingest.source_items", "item")
+            else:
+                await repo.put(
+                    "ingest.source_items", "item", {"item_id": "item", "extraction_status": source_state}
+                )
+>           assert not (await service.completed_turn("s"))["complete"]
+E           assert not True
+
+tests/test_agents_execution_barrier.py:618: AssertionError
+_ test_class_before_mapping_does_not_infer_no_concern_from_empty_mentions[MATERIAL-MATERIAL] _
+
+owner_service = <tank.event_tools.EventToolService object at 0x10bc84d70>
+klass = 'MATERIAL', criterion = 'MATERIAL'
+
+    @pytest.mark.parametrize("klass,criterion", [("MATERIAL", "MATERIAL"), ("MAJOR", "M2"), ("LOW", "LOW")])
+    async def test_class_before_mapping_does_not_infer_no_concern_from_empty_mentions(
+        owner_service, klass, criterion
+    ):
+        result, _ = await create(owner_service)
+        event = await owner_service.repo.get("evt.events", result["event_id"])
+        event.update(tokens_mentioned=[], entities=[{"entity_id": "sec", "role": "REGULATOR"}])
+        await owner_service.repo.put("evt.events", event["event_id"], event)
+        assert not await owner_service.rows("evt.beneficiary_maps", event["event_id"])
+        supplied = assessment(result["accepted_claims"][0]["claim_id"], klass=klass, criterion=criterion)
+        supplied["class_reasons"] = ["Analyst assessed the scope of the sector-level announcement."]
+        out = await owner_service.set_assessment({"event_id": event["event_id"], "assessment": supplied}, {})
+>       assert out["class"] == klass
+E       AssertionError: assert 'LOW' == 'MATERIAL'
+E         
+E         - MATERIAL
+E         + LOW
+
+tests/test_event_tools_agent_ownership.py:168: AssertionError
+_ test_class_before_mapping_does_not_infer_no_concern_from_empty_mentions[MAJOR-M2] _
+
+owner_service = <tank.event_tools.EventToolService object at 0x10bc87470>
+klass = 'MAJOR', criterion = 'M2'
+
+    @pytest.mark.parametrize("klass,criterion", [("MATERIAL", "MATERIAL"), ("MAJOR", "M2"), ("LOW", "LOW")])
+    async def test_class_before_mapping_does_not_infer_no_concern_from_empty_mentions(
+        owner_service, klass, criterion
+    ):
+        result, _ = await create(owner_service)
+        event = await owner_service.repo.get("evt.events", result["event_id"])
+        event.update(tokens_mentioned=[], entities=[{"entity_id": "sec", "role": "REGULATOR"}])
+        await owner_service.repo.put("evt.events", event["event_id"], event)
+        assert not await owner_service.rows("evt.beneficiary_maps", event["event_id"])
+        supplied = assessment(result["accepted_claims"][0]["claim_id"], klass=klass, criterion=criterion)
+        supplied["class_reasons"] = ["Analyst assessed the scope of the sector-level announcement."]
+        out = await owner_service.set_assessment({"event_id": event["event_id"], "assessment": supplied}, {})
+>       assert out["class"] == klass
+E       AssertionError: assert 'LOW' == 'MAJOR'
+E         
+E         - MAJOR
+E         + LOW
+
+tests/test_event_tools_agent_ownership.py:168: AssertionError
+_ test_class_before_mapping_does_not_infer_no_concern_from_empty_mentions[LOW-LOW] _
+
+owner_service = <tank.event_tools.EventToolService object at 0x10c8b5d00>
+klass = 'LOW', criterion = 'LOW'
+
+    @pytest.mark.parametrize("klass,criterion", [("MATERIAL", "MATERIAL"), ("MAJOR", "M2"), ("LOW", "LOW")])
+    async def test_class_before_mapping_does_not_infer_no_concern_from_empty_mentions(
+        owner_service, klass, criterion
+    ):
+        result, _ = await create(owner_service)
+        event = await owner_service.repo.get("evt.events", result["event_id"])
+        event.update(tokens_mentioned=[], entities=[{"entity_id": "sec", "role": "REGULATOR"}])
+        await owner_service.repo.put("evt.events", event["event_id"], event)
+        assert not await owner_service.rows("evt.beneficiary_maps", event["event_id"])
+        supplied = assessment(result["accepted_claims"][0]["claim_id"], klass=klass, criterion=criterion)
+        supplied["class_reasons"] = ["Analyst assessed the scope of the sector-level announcement."]
+        out = await owner_service.set_assessment({"event_id": event["event_id"], "assessment": supplied}, {})
+        assert out["class"] == klass
+>       assert out["class_reasons"] == supplied["class_reasons"]
+E       AssertionError: assert ['Analyst ass...ERSE_CONCERN'] == ['Analyst ass...nnouncement.']
+E         
+E         Left contains one more item: 'NO_UNIVERSE_CONCERN'
+E         Use -v to get more diff
+
+tests/test_event_tools_agent_ownership.py:169: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_agents_execution_barrier.py::test_legacy_native_only_done_proof_cannot_hide_unfinished_source[PENDING]
+FAILED tests/test_agents_execution_barrier.py::test_legacy_native_only_done_proof_cannot_hide_unfinished_source[FAILED]
+FAILED tests/test_agents_execution_barrier.py::test_legacy_native_only_done_proof_cannot_hide_unfinished_source[MISSING]
+FAILED tests/test_event_tools_agent_ownership.py::test_class_before_mapping_does_not_infer_no_concern_from_empty_mentions[MATERIAL-MATERIAL]
+FAILED tests/test_event_tools_agent_ownership.py::test_class_before_mapping_does_not_infer_no_concern_from_empty_mentions[MAJOR-M2]
+FAILED tests/test_event_tools_agent_ownership.py::test_class_before_mapping_does_not_infer_no_concern_from_empty_mentions[LOW-LOW]
+6 failed, 175 passed, 12 skipped in 36.02s

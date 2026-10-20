@@ -1,0 +1,870 @@
+{
+  "status": "NEGATIVE_ACTUAL_ATTEMPT_RETAINED_NOT_QUALIFIED",
+  "scope": "Actual SourceService.run and SourcePoller.loop; full unchanged S33 configured feed; prospectively restricted intake scope; no imported baseline",
+  "started_at": "2026-10-20T10:47:33.116964Z",
+  "finished_at": "2026-10-20T10:57:28.034505Z",
+  "image_sha256": "sha256:94a6ac799d1814dd810471c36b2ba4e869c48928b36dc6216bca39e137112e24",
+  "code_version": "91b9a765de200fc0212fc386909f0638cb1b32be32890b52935cea2c967ad308",
+  "config_version": "75ea469c9a84bf3e614eacdf108fb4e683cb79c0-dirty.a86fccf44673aef4caec48b1bcbacef6c0c332e4aa8f5f5248185d062bd52262",
+  "stop": {
+    "driver_status": "INPUT_FAILED",
+    "observer_error": {
+      "type": "PoolTimeout",
+      "reason": "OPERATION_FAILED"
+    },
+    "resource_bound": null,
+    "normal_runtime_drain": true,
+    "container_exit_code": 0,
+    "operator_forced_stop": false
+  },
+  "input_count": 25,
+  "total_source_rows_including_agent_fetches": 53,
+  "input_status_counts": {
+    "DONE": 18,
+    "SKIPPED": 3,
+    "PENDING": 4
+  },
+  "event_count": 18,
+  "event_lifecycle_counts": {
+    "TRACKED": 14,
+    "MERGED": 1,
+    "ANALYZING": 1,
+    "DETECTED": 2
+  },
+  "assessment_class_counts": {
+    "LOW": 12,
+    "MATERIAL": 3,
+    "MAJOR": 1
+  },
+  "all_major_plus": [
+    {
+      "event_id": "EVT-01M5CF125JZK6VG903XFMA0HYC",
+      "statement": "CoinDesk reports JPMorgan deployed JPM Coin on Ethereum mainnet and made it available to institutional clients.",
+      "class": "MAJOR",
+      "criterion": "M2",
+      "event_state": "LIVE",
+      "freshness": "OLD",
+      "public_at": "2026-10-19T10:03:47Z",
+      "public_at_prec": "EXACT",
+      "session_id": "session_w99sd3EdSRYvt2382sDvK",
+      "tools": [
+        {
+          "call_id": "call_95c177354b994b9ea29c3d83476469ca|fc_0a5a2885c31319b7016ad7481ab6ac8191ad8a82b44b9a2d13",
+          "tool": "get_market_truth",
+          "status": "REFUSED",
+          "requested_at": "2026-10-20T10:53:15.852144Z",
+          "returned_at": "2026-10-20T10:53:15.882372Z",
+          "answered_at": "2026-10-20T10:53:15.870179Z"
+        },
+        {
+          "call_id": "call_97c62f519bbf47ad90afeb43e1b59012|fc_0a5a2885c31319b7016ad748ae0e1c81918cdaa22d78f7c51c",
+          "tool": "get_market_truth",
+          "status": "DONE",
+          "requested_at": "2026-10-20T10:55:43.355313Z",
+          "returned_at": "2026-10-20T10:55:43.789866Z",
+          "answered_at": "2026-10-20T10:55:43.433218Z"
+        },
+        {
+          "call_id": "call_a701186621e2475eb52d7ce18e97e34a|fc_0a5a2885c31319b7016ad7482399fc81918ec0de74b9663381",
+          "tool": "get_market_truth",
+          "status": "ERROR",
+          "requested_at": "2026-10-20T10:53:24.516267Z",
+          "returned_at": "2026-10-20T10:55:37.199144Z",
+          "answered_at": "2026-10-20T10:55:36.732778Z"
+        }
+      ]
+    }
+  ],
+  "market_truth_rows": 1,
+  "decisions": 0,
+  "calls": 0,
+  "alert_rows": 0,
+  "alerts_sent": 0,
+  "ops_sent": 0,
+  "jobs_total": 95,
+  "jobs_status_counts": {
+    "DONE": 93,
+    "QUEUED": 2
+  },
+  "jobs_type_status_counts": {
+    "EVAL_CONDITIONS/DONE": 7,
+    "DELIVER/DONE": 1,
+    "FILTER_ITEM/DONE": 25,
+    "ROUTE_ITEM/DONE": 24,
+    "AGENT_MESSAGE/DONE": 25,
+    "REACTION_CAPTURE/DONE": 8,
+    "REACTION_CAPTURE/QUEUED": 2,
+    "SCOUT_REVIEW/DONE": 1,
+    "ESCALATE_TOKENS/DONE": 1,
+    "RUN_MARKET_TRUTH/DONE": 1
+  },
+  "due_failed_or_expired_jobs": [],
+  "due_pending_jobs": [],
+  "unfinished_accepted_delivery_job_ids": [],
+  "future_jobs": [
+    {
+      "job_id": "JOB-01M5CF2V1E5MRMABRZQ55ZT13G",
+      "type": "REACTION_CAPTURE",
+      "payload": {
+        "retro": false,
+        "anchor": {
+          "ts": "2026-10-19T10:03:47Z",
+          "type": "T1",
+          "ts_prec": "EXACT",
+          "ts_prec_reason": null
+        },
+        "cutoff": "2026-10-22T10:03:47Z",
+        "event_id": "EVT-01M5CF125JZK6VG903XFMA0HYC",
+        "token_id": "bitcoin:BTC",
+        "checkpoint": "POST_72H",
+        "cutoff_prec": "EXACT",
+        "cutoff_prec_reason": null
+      },
+      "run_after": "2026-10-22T10:03:47Z"
+    },
+    {
+      "job_id": "JOB-01M5CF2V1PD3EFH8G315CYN3XN",
+      "type": "REACTION_CAPTURE",
+      "payload": {
+        "retro": false,
+        "anchor": {
+          "ts": "2026-10-19T10:03:47Z",
+          "type": "T1",
+          "ts_prec": "EXACT",
+          "ts_prec_reason": null
+        },
+        "cutoff": "2026-10-22T10:03:47Z",
+        "event_id": "EVT-01M5CF125JZK6VG903XFMA0HYC",
+        "token_id": "ethereum:ETH",
+        "checkpoint": "POST_72H",
+        "cutoff_prec": "EXACT",
+        "cutoff_prec_reason": null
+      },
+      "run_after": "2026-10-22T10:03:47Z"
+    }
+  ],
+  "reaction_scheduler": {
+    "complete": true,
+    "missing": [],
+    "invalid_pre_job_ids": [],
+    "coverage": [
+      {
+        "event_id": "EVT-01M5CF125JZK6VG903XFMA0HYC",
+        "token_id": "bitcoin:BTC",
+        "pre_rows": [
+          "PRE_1H",
+          "PRE_24H",
+          "PRE_4H"
+        ],
+        "post_job_labels": [
+          "POST_15M",
+          "POST_1H",
+          "POST_24H",
+          "POST_4H",
+          "POST_72H"
+        ]
+      },
+      {
+        "event_id": "EVT-01M5CF125JZK6VG903XFMA0HYC",
+        "token_id": "ethereum:ETH",
+        "pre_rows": [
+          "PRE_1H",
+          "PRE_24H",
+          "PRE_4H"
+        ],
+        "post_job_labels": [
+          "POST_15M",
+          "POST_1H",
+          "POST_24H",
+          "POST_4H",
+          "POST_72H"
+        ]
+      }
+    ]
+  },
+  "source_to_event_latencies": [
+    {
+      "item_id": "ITM-01M5CES0NYNWXETAZJ9PADCZMP",
+      "url": "https://www.coindesk.com/markets/2026/10/20/bitcoin-drops-to-usd81-400-as-asian-chip-stocks-tumble-options-traders-seek-downside-protection",
+      "published_at": "2026-10-20T10:22:55Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "50d36306200235eb5090f7e139fe64e15d8817b9b7e45dcf95f4dd06f4c4790b",
+        "p_relevant": 0.98,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CEVDBRARKY23RMS193SQXG",
+      "source_to_record_event_seconds": 78.748507,
+      "event_within_90_seconds": true
+    },
+    {
+      "item_id": "ITM-01M5CES0PBEG2TG117MVW6VDCN",
+      "url": "https://www.coindesk.com/markets/2026/10/20/live-updates-market-jitters-persist-as-the-ai-selloff-deepens",
+      "published_at": "2026-10-20T10:14:19Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "2066e77a21a7303dfc7348a25c89d0a6bf74a31381ad4f7f4a035371b0ff13a8",
+        "p_relevant": 0.5,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CEVH5K8Y8SMNN16SGZ5G3G",
+      "source_to_record_event_seconds": 82.623002,
+      "event_within_90_seconds": true
+    },
+    {
+      "item_id": "ITM-01M5CES0Q238N55V59G1FDC205",
+      "url": "https://www.coindesk.com/business/2026/10/20/bitcoin-etfs-just-saw-their-biggest-day-in-a-month-thanks-entirely-to-blackrock",
+      "published_at": "2026-10-20T08:24:01Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "33bd1fbe5f144b4d3d9a307bc4d58b71269280fe2d3a97beec8337f35b3fc044",
+        "p_relevant": 0.99,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CEVBA5GN9YZ3GDNY9WQS8B",
+      "source_to_record_event_seconds": 76.604903,
+      "event_within_90_seconds": true
+    },
+    {
+      "item_id": "ITM-01M5CES0QFM1VYGFSBC8SB3K42",
+      "url": "https://www.coindesk.com/policy/2026/10/19/tether-senator-s-investigation-misses-positive-work-that-s-led-to-lower-iran-volumes",
+      "published_at": "2026-10-19T20:21:13Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "27cec1f57746888971c15151b96659d36f1bec6b7f18d3836b20109ca052b27c",
+        "p_relevant": 0.97,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CEY2H4RJYHQY7N8KSKBJTJ",
+      "source_to_record_event_seconds": 165.928856,
+      "event_within_90_seconds": false
+    },
+    {
+      "item_id": "ITM-01M5CES0QRMEYKYVD22H3CBVA5",
+      "url": "https://www.coindesk.com/policy/2026/10/19/u-s-cftc-rebuffs-cme-legal-stance-in-consequential-fight-over-perpetual-futures",
+      "published_at": "2026-10-19T16:47:00Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "5a9c288dc1f27b29db2acb85d3a1d57b5e0c771b961548f2c5483ce8c63e3cae",
+        "p_relevant": 0.91,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CEYH6BGQFD5R5KPHWWJRDM",
+      "source_to_record_event_seconds": 180.943135,
+      "event_within_90_seconds": false
+    },
+    {
+      "item_id": "ITM-01M5CES0R0AQ54SKJQRA9VB9R8",
+      "url": "https://www.coindesk.com/business/2026/10/19/zerohash-rolls-out-a-new-tool-to-move-crypto-without-copying-wallet-addresses",
+      "published_at": "2026-10-19T14:58:40Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "b624ab104202319b809701821fbc9aff6c6e5711d0f93258070949c8b6497567",
+        "p_relevant": 0.98,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CEYEZZ5AJSBTHC07EVJXET",
+      "source_to_record_event_seconds": 178.704239,
+      "event_within_90_seconds": false
+    },
+    {
+      "item_id": "ITM-01M5CES0R9HAMY05W8R573AZQ8",
+      "url": "https://www.coindesk.com/tech/2026/10/19/cardano-founder-charles-hoskinson-is-building-a-new-programming-language-for-the-network",
+      "published_at": "2026-10-19T12:16:58Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "c4e54b02f4c157efc4186f06a3df842a8ec5aa8684c7bcba8e616bb28e408879",
+        "p_relevant": 0.98,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CEY1P5EJ32JCE9SRN92X5X",
+      "source_to_record_event_seconds": 165.135067,
+      "event_within_90_seconds": false
+    },
+    {
+      "item_id": "ITM-01M5CES0RT5VFK9RBVP1SPP8WZ",
+      "url": "https://www.coindesk.com/markets/2026/10/19/live-updates-bitcoin-tags-usd83-000-and-slips-back-as-chip-stocks-lead-a-rebound",
+      "published_at": "2026-10-19T11:05:54Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "50b38e277bbdd92aedd34d443883c11d9f808766fa22758e656c9a2ce07b4883",
+        "p_relevant": 0.98,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CEZ47AEPP2Z2BNGRNJ6EHB",
+      "source_to_record_event_seconds": 200.39443,
+      "event_within_90_seconds": false
+    },
+    {
+      "item_id": "ITM-01M5CES0S7EC34PZRP1G9C91PV",
+      "url": "https://www.coindesk.com/markets/2026/10/19/bitcoin-extends-bounce-above-usd82-000-as-stocks-rebound-defi-tokens-lead-altcoin-gains",
+      "published_at": "2026-10-19T10:26:33Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "5c73fe0add55b98d562b73d69f5a73eaf0516a263133939a09c6e727c528b183",
+        "p_relevant": 0.99,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CF0R4F0J8XC32TS231Y9MB",
+      "source_to_record_event_seconds": 253.61392,
+      "event_within_90_seconds": false
+    },
+    {
+      "item_id": "ITM-01M5CES0SFR7DTY2299JBM4G7V",
+      "url": "https://www.coindesk.com/markets/2026/10/19/jpmorgan-s-jpm-coin-representing-dollar-deposits-is-coming-to-ethereum-bloomberg",
+      "published_at": "2026-10-19T10:03:47Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "38f20022a5924697bd5e8aadb0278c387158535b259ea4ab507101496a603d65",
+        "p_relevant": 0.98,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CF125JZK6VG903XFMA0HYC",
+      "source_to_record_event_seconds": 263.853987,
+      "event_within_90_seconds": false
+    },
+    {
+      "item_id": "ITM-01M5CES0SQ6WTY3HX6ADESA600",
+      "url": "https://www.coindesk.com/markets/2026/10/19/crypto-vault-deposits-top-usd10-billion-as-lending-risks-draw-regulatory-scrutiny",
+      "published_at": "2026-10-19T09:32:38Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "075b8dcd0a187511e60e3e8aecbec89a03b6a36151b7bfbdb6e2bbf32c8f65dc",
+        "p_relevant": 0.98,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CF3Q16DDWN0T22ACMJ1XKZ",
+      "source_to_record_event_seconds": 350.907224,
+      "event_within_90_seconds": false
+    },
+    {
+      "item_id": "ITM-01M5CES0SZRRVMQXSQQ0GX942E",
+      "url": "https://www.coindesk.com/tech/2026/10/19/bitcoin-mining-offshoot-nscale-loses-microsoft-ai-deal-as-power-delay-stretches-into-2030s",
+      "published_at": "2026-10-19T09:15:00Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "4bc28ab3da704ed3b29f088aaca534fee0b3e8dec881d03f538e3f8b4d1c452c",
+        "p_relevant": 0.93,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CEZD5VEN1T6B9270FERB30",
+      "source_to_record_event_seconds": 209.638125,
+      "event_within_90_seconds": false
+    },
+    {
+      "item_id": "ITM-01M5CES0T9TT489JV5W87CGEVX",
+      "url": "https://www.coindesk.com/markets/2026/10/19/cme-s-bitcoin-cash-uniswap-futures-global-pmis-crypto-week-ahead",
+      "published_at": "2026-10-19T09:12:39Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "64c3c6d4ffc1b3b7310fe013012d958a695a1b508b594b60b6d87c66abeb44ad",
+        "p_relevant": 0.98,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CF3FM2MA2Y02Z9XSK9BTQY",
+      "source_to_record_event_seconds": 343.148603,
+      "event_within_90_seconds": false
+    },
+    {
+      "item_id": "ITM-01M5CES0TN9A9SGD3KN8R4Y2B0",
+      "url": "https://www.coindesk.com/markets/2026/10/19/bitcoin-whale-moves-usd34-million-in-btc-it-got-in-2013-when-coins-traded-at-usd131",
+      "published_at": "2026-10-19T06:23:16Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "85d57873de6cc8615c8e5f59f6f1d24fc4ef69e149d0966de0b8ec9c8754c478",
+        "p_relevant": 0.99,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CF15VS532J1XTC3RCFANK7",
+      "source_to_record_event_seconds": 267.765451,
+      "event_within_90_seconds": false
+    },
+    {
+      "item_id": "ITM-01M5CES0V2Z0N0A3M6VYMM1TCR",
+      "url": "https://www.coindesk.com/tech/2026/10/19/zcash-developers-plan-a-fix-to-keep-zec-swaps-private-from-future-quantum-computers",
+      "published_at": "2026-10-19T05:23:02Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "2ef2d29f39f247c6e590f78ff2866e33208cecb43358586021d26a202be28afa",
+        "p_relevant": 0.98,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CF7QVZDYMPHDYACMXNKY1M",
+      "source_to_record_event_seconds": 482.946214,
+      "event_within_90_seconds": false
+    },
+    {
+      "item_id": "ITM-01M5CES0VDW9P140XA19305CWW",
+      "url": "https://www.coindesk.com/tech/2026/10/19/xrp-ledger-is-set-to-fix-its-lending-code-before-anyone-can-use-it",
+      "published_at": "2026-10-19T04:54:31Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "0fdc2818db9d2330dea0fd4d08cf2130601439c0b1ec13510a26b80569ea8a89",
+        "p_relevant": 0.98,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CF25SRC5TD75280MNGJYVV",
+      "source_to_record_event_seconds": 300.323421,
+      "event_within_90_seconds": false
+    },
+    {
+      "item_id": "ITM-01M5CES0VXJ61304X2STGGQB9F",
+      "url": "https://www.coindesk.com/business/2026/10/18/deutsche-bank-targets-asia-crypto-custody-expansion-in-2027-as-german-launch-nears",
+      "published_at": "2026-10-19T02:00:00Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "da082885a36691c0d5e711369b339fc2752d169af01259132e3a403cfa6b2391",
+        "p_relevant": 0.98,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CFAVHCR8NRD2GXH9Q39A85",
+      "source_to_record_event_seconds": 585.032486,
+      "event_within_90_seconds": false
+    },
+    {
+      "item_id": "ITM-01M5CES0W5S6RY5SFZTWMG4Q3K",
+      "url": "https://www.coindesk.com/business/2026/10/18/sec-tokenized-stock-framework-faces-issuer-pushback-as-broadcom-verizon-object-to-okx-ice-listing",
+      "published_at": "2026-10-18T23:28:06Z",
+      "published_prec": "EXACT",
+      "observed_at": "2026-10-20T10:47:37.376933Z",
+      "extraction_status": "DONE",
+      "filter": {
+        "model": "typesafe/jev-1.13-20260917",
+        "decision": "SEND",
+        "provider": "openrouter",
+        "usage_id": "078d12f87956b170ae9817b7196c6cfaa5c6e5e9d31417c23d4c55ce008e8b65",
+        "p_relevant": 0.96,
+        "requested_model": "typesafe/jev-1.13",
+        "semantic_model_id": "jev-1.13.0",
+        "model_pin_evidence": "OpenRouter dated 1.13 snapshot; upstream patch suffix is not exposed"
+      },
+      "route": {
+        "p_same": null,
+        "decision": "NEW_SESSION",
+        "event_id": null
+      },
+      "event_id": "EVT-01M5CFAVP42A6C76BYPCR6R22M",
+      "source_to_record_event_seconds": 585.079928,
+      "event_within_90_seconds": false
+    }
+  ],
+  "all_recorded_events_latency_range_seconds": [
+    76.604903,
+    585.079928
+  ],
+  "recorded_events_within90_seconds": 3,
+  "native_local_status_counts": {
+    "OPEN/REQUIRES_ACTION": 9,
+    "OPEN/IDLE": 10,
+    "ENDED/IDLE": 2,
+    "OPEN/RUNNING": 4
+  },
+  "native_original_states": {
+    "sessions_status_counts": {
+      "idle": 25
+    },
+    "archived_count": 2,
+    "executions_state_counts": {
+      "completed": 196,
+      "failed": 8
+    },
+    "failures_before_archive": [
+      {
+        "execution_id": "sevt_req_3822206aa11108e54f83f8641e8bd991ec168a9a3ff3d3f29c965e1c9f6777c2_0",
+        "session_id": "session_w99sd3EdSRYvt2382sDvK",
+        "state": "failed",
+        "failure": "Connection error.",
+        "admitted_at_ms": 1792493743768,
+        "settled_at_ms": 1792493851112
+      },
+      {
+        "execution_id": "sevt_req_b8966a6e34fdbdf37c2b0f2428c17c30d6a8a8e7ef7954e481168ba910e999cf_0",
+        "session_id": "session_lL3n4UAKx56KXd54S1b4e",
+        "state": "failed",
+        "failure": "Connection error.",
+        "admitted_at_ms": 1792493746259,
+        "settled_at_ms": 1792493852375
+      },
+      {
+        "execution_id": "sevt_req_140712292476c1b55471c67dae994d3cd08147895238ba64dc75948adedc798b_0",
+        "session_id": "session_h4nzwbAMnseHXrwXUXpFL",
+        "state": "failed",
+        "failure": "Connection error.",
+        "admitted_at_ms": 1792493842098,
+        "settled_at_ms": 1792493852947
+      },
+      {
+        "execution_id": "sevt_req_462540ce8fefce98a4077c105a1fcf26cfdb13558e98d8a9e566c870aa716893_0",
+        "session_id": "session_1mkFqRgYVcaxUqKUhSjlh",
+        "state": "failed",
+        "failure": "Connection error.",
+        "admitted_at_ms": 1792493842239,
+        "settled_at_ms": 1792493853969
+      },
+      {
+        "execution_id": "sevt_req_3b2f5a806299ee5c41915dd67dbab371c567fee35e035bf45dc0b2aa27081a2c_0",
+        "session_id": "session_Z9oLKu8CvuhEjzIKEaB-L",
+        "state": "failed",
+        "failure": "Connection error.",
+        "admitted_at_ms": 1792493842276,
+        "settled_at_ms": 1792493857215
+      },
+      {
+        "execution_id": "sevt_req_d41f7d42270823d63b2c52bc48f5a08477d7035838dc3ce73c2b9b7fa05a8090_0",
+        "session_id": "session_jcSpuzz0nEJKp-h4QWsRD",
+        "state": "failed",
+        "failure": "Connection error.",
+        "admitted_at_ms": 1792493842442,
+        "settled_at_ms": 1792493858525
+      },
+      {
+        "execution_id": "sevt_req_8469de5c5d536262ec5bbfb7716b75dbc75f17ec1a163f8cea0272a36cbcbf05_0",
+        "session_id": "session_8PtctF5gu02L7LqMvkH_j",
+        "state": "failed",
+        "failure": "Connection error.",
+        "admitted_at_ms": 1792493842487,
+        "settled_at_ms": 1792493859042
+      },
+      {
+        "execution_id": "sevt_req_dddb95a170061f69cb0eb0bd694ac2cf3446a3faec5ecdec9415a88a6a0b1c06_0",
+        "session_id": "session_um6xd-1hw5sUfaA3FXTVU",
+        "state": "failed",
+        "failure": "Connection error.",
+        "admitted_at_ms": 1792493842513,
+        "settled_at_ms": 1792493860104
+      }
+    ],
+    "failure_timing_note": "Eight Connection error execution failures settled during/after Runtime gateway shutdown; they are retained as actual native outcomes and are not asserted to be the root cause of observer PoolTimeout."
+  },
+  "tools_status_counts": {
+    "DONE": 171,
+    "ERROR": 4,
+    "REFUSED": 3
+  },
+  "actual_tool_errors": [
+    {
+      "call_id": "call_587caca74a354848956f9965586db1ed|fc_009066f5deff91c0016ad7482c2bb4819185371cd89da672b8",
+      "tool": "fetch_page",
+      "status": "ERROR",
+      "session_id": "session_BGljE3jBCK2hG3swoK5uO",
+      "requested_at": "2026-10-20T10:55:39.385087Z",
+      "returned_at": "2026-10-20T10:55:40.554785Z",
+      "error": {
+        "type": "HTTPStatusError",
+        "reason": "Source request failed (HTTP 301)",
+        "category": "SOURCE_HTTP"
+      }
+    },
+    {
+      "call_id": "call_1606d9036b8d45daaeaa1cd779af2222|fc_08acc931af947a00016ad74783a9c08191b48f0c4f4ef79010",
+      "tool": "fetch_page",
+      "status": "ERROR",
+      "session_id": "session_e4kOHiCVNNaifE2mdnAmU",
+      "requested_at": "2026-10-20T10:50:45.056645Z",
+      "returned_at": "2026-10-20T10:50:45.469243Z",
+      "error": {
+        "type": "HTTPStatusError",
+        "reason": "Source request failed (HTTP 404)",
+        "category": "SOURCE_HTTP"
+      }
+    },
+    {
+      "call_id": "call_703efda91ac34e83ab43da4daa5be9b3|fc_01911663fc3ad448016ad7471f3298819186abb8019955f4da",
+      "tool": "set_assessment",
+      "status": "REFUSED",
+      "session_id": "session_KW9WWjGws0S0xQMKvLLev",
+      "requested_at": "2026-10-20T10:49:12.194870Z",
+      "returned_at": "2026-10-20T10:49:12.597182Z",
+      "error": {
+        "type": "ValueError",
+        "reason": "NOW requires LIVE or evidenced immediately effective market access",
+        "category": "VALIDATION"
+      }
+    },
+    {
+      "call_id": "call_7c6bbd968ec14916ad1f5d8443969bd3|fc_089d5fd15d8d50ef016ad74741fe5081919e97aad088d570f7",
+      "tool": "fetch_page",
+      "status": "ERROR",
+      "session_id": "session_Ng0PTtZKP81XHhpA50qAu",
+      "requested_at": "2026-10-20T10:49:38.883975Z",
+      "returned_at": "2026-10-20T10:49:58.663710Z",
+      "error": {
+        "type": "TimeoutError",
+        "reason": "Tool execution failed; inspect the audited call and implementation",
+        "category": "TOOL_EXECUTION"
+      }
+    },
+    {
+      "call_id": "call_95c177354b994b9ea29c3d83476469ca|fc_0a5a2885c31319b7016ad7481ab6ac8191ad8a82b44b9a2d13",
+      "tool": "get_market_truth",
+      "status": "REFUSED",
+      "session_id": "session_w99sd3EdSRYvt2382sDvK",
+      "requested_at": "2026-10-20T10:53:15.852144Z",
+      "returned_at": "2026-10-20T10:53:15.882372Z",
+      "error": {
+        "type": "ValueError",
+        "reason": "Unsupported timestamp precision: MINUTE",
+        "category": "VALIDATION"
+      }
+    },
+    {
+      "call_id": "call_a701186621e2475eb52d7ce18e97e34a|fc_0a5a2885c31319b7016ad7482399fc81918ec0de74b9663381",
+      "tool": "get_market_truth",
+      "status": "ERROR",
+      "session_id": "session_w99sd3EdSRYvt2382sDvK",
+      "requested_at": "2026-10-20T10:53:24.516267Z",
+      "returned_at": "2026-10-20T10:55:37.199144Z",
+      "error": {
+        "type": "PoolTimeout",
+        "reason": "Tool execution failed; inspect the audited call and implementation",
+        "category": "TOOL_EXECUTION"
+      }
+    },
+    {
+      "call_id": "call_ac1325c467f64f229cd3789bd83b1165|fc_0a5a2885c31319b7016ad747ee063c8191a8a64000794a7685",
+      "tool": "set_beneficiaries",
+      "status": "REFUSED",
+      "session_id": "session_w99sd3EdSRYvt2382sDvK",
+      "requested_at": "2026-10-20T10:52:34.375153Z",
+      "returned_at": "2026-10-20T10:52:34.554471Z",
+      "error": {
+        "type": "ValueError",
+        "reason": "Layer SETTLEMENT_L1_L2 requires NONE/UNKNOWN reason",
+        "category": "VALIDATION"
+      }
+    }
+  ],
+  "original_native_inventory": "data/qa/normal-source-e2e-r81-20261020/native-originals/inventory.json",
+  "evidence_complete": true,
+  "independent_verification": {
+    "result": "docs/verification/normal-source-e2e-r81-2026-10-20/independent-result.json",
+    "all_exports_verified": 61,
+    "original_raw_verified": true,
+    "original_native_verified": true,
+    "positive_delivery_e2e": false
+  },
+  "acceptance": "Not a full positive E2E. Runtime stopped after observer PoolTimeout; no card/decision or Alerts delivery was produced. Native failed attempts and unfinished local work retained without resets. No latency guarantee on full cold feed; positive focus event recorded within90s but was correctly assessed LOW.",
+  "cleanup": {
+    "original_native_sql_captured_before_archive": true,
+    "requested_count": 23,
+    "http200_count": 23,
+    "already_archived_before_cleanup": 2,
+    "owned_total_archived_after": 25,
+    "owned_executions_running_queued_after": 0,
+    "global_qa_executions_running_queued_after": 0,
+    "original_event_export_unchanged": true,
+    "original_execution_export_unchanged": true,
+    "post_archive_inventory": "data/qa/normal-source-e2e-r81-20261020/native-post-archive-originals/inventory.json",
+    "original_api_response_inventory": {
+      "file": "data/qa/normal-source-e2e-r81-20261020/native-archive-originals.json",
+      "bytes": 944278,
+      "sha256": "d0b518df775d391b96d7c72021d31565c97334eb6564078bfd274cc53af07dbe",
+      "mode": "0o600"
+    },
+    "primary_or_shared_controller_restarted": false
+  }
+}

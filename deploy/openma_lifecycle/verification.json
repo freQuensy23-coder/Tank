@@ -1,0 +1,80 @@
+{
+  "version": 7,
+  "status": "SOURCE_FROZEN_INSTALL_BUILD_AND_STARTUP_PENDING",
+  "date": "2026-10-18",
+  "workcopy": "/tmp/tank-openma-retained-sdk-direct-v7-final",
+  "candidate": {
+    "upstream_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+    "integration": "isolated-retained-session-candidate",
+    "runtime_identity": "ef1720396cf2a0362a1bdd1937fea0c868df1c0ebf2ef0004e16241fac358512",
+    "source_sha256": {
+      "packages/sandbox-adapter-litebox/src/litebox.ts": "2029ccc872960bc2ca3d77e0e4e59d63501b7f4b3bc7208cfd26a12db7117455",
+      "packages/control-plane-node/src/lib/node-managed-session-runner.ts": "baf42748189959da43eed70e48991c5cb6838ffcfa02ac515002a1e065d404ba",
+      "packages/control-plane-node/src/modules/node-managed.ts": "5ceb2f13d75bd74d40ed60c4e2e75106a6690e4c2d90851cdbea6f9cb866cb02",
+      "packages/sandbox-adapter-litebox/src/tank-replay-evidence.ts": "4850cafe8c8d209d1f8d7b6e7db4cceb08e437d13a109153a786feb9d0444601",
+      "packages/sandbox-adapter-litebox/src/index.ts": "d6098f2f309f75ebfcf65d88eee6f6f9c708c2af9a2dc6c1e7fe42e93b4ea8dd"
+    },
+    "native_vm_proof": "NOT_RUN",
+    "production_integration": "NOT_ADOPTED",
+    "composite_manifest": {
+      "path": "tank-overlay.json",
+      "sha256": "1b77df20e28c45e7f3105d23b0440d944dfc7838cf5f5614c4576e2c1ca3de13",
+      "base_stage_sha256": "9604fb1cb41d59effd45bd65a44cac8b19b276ccc6d366740f1e73e2d1bd247d",
+      "final_source_count": 43
+    }
+  },
+  "scope": "Exact control-plane direct SDK dependency; lifecycle modules/provider/worker/public import behavior unchanged",
+  "prior_evidence": {
+    "path": "verification.v6.json",
+    "sha256": "6dff89424804dfb9e5801c43e6c3680a7cf8258ec62b3bd5b6eae5872de0d1f3",
+    "clarification": "v6 module import check did not call createManagedNodeRuntime and did not certify startup; actual645a isolated startup fails SDK bare-import resolution. SDK adapter-path native proof did not test production caller package resolution."
+  },
+  "checks": {
+    "exact_dependency_diff": "PASS only direct0.10.6 plus existing exactsnapshot importer",
+    "composite_final_hashes_verified": 43,
+    "manifest_python_test_passed": 1,
+    "ruff_format_lint": "PASS",
+    "sdk_check_node_syntax": "PASS",
+    "baseline_actual_native_ESM_package_context": "EXPECTED_FAILURE_ON645a; failed-645a-caller-resolution.json",
+    "corrected_frozen_offline_install": "PENDING_CONFIGURATION_OWNER",
+    "corrected_built_image_package_context_and_actual_assembly": "PREPARED_NOT_RUN",
+    "actual_server_boot_fresh_isolated_PostgreSQL_no_model": "REQUIRED_AFTER_BUILD_NOT_RUN",
+    "unrelated_broad_tests_rerun": false
+  },
+  "startup_check": {
+    "file": "sdk-context-initialization.check.mjs",
+    "method": "Clean nativeESM subprocess resolves/imports publicSDK from node-managed caller directory (no tsx CommonJS resolver); actual createNodeControlPlane/nodeDefaults then executes createManagedNodeRuntime dynamic import + SDK initialization on a new disposableSQLite DB, without starting listener/workers/Session/model/VM. Separate actual Postgresserver/API proof still required.",
+    "network": "none",
+    "kvm": "NOT_PASSED",
+    "scope": "diagnostic temporary init only, no production service change"
+  },
+  "production_source_sha256": {
+    "prepare.py": "2273e9d5abdf6fcdcb60cdf635f4a8864f92b2c0064cc67ae4c737eef16af9df",
+    "source-guards.json": "393cd8f73b0c7301633f73bcd7197cfbb0707c1d942c31436f9707060635b853",
+    "retained-session.ts": "57553be1a6716aa0395b851c71d0ec8aac06c16236c2c54d968e3699d4fd832d",
+    "boxlite-provider.ts": "0c9f5972ae005643985998f8ee68f092a8b7cad9627f176b5ad9245e92e16f1e",
+    "node-lifecycle.ts": "a10fd88706cb533459ed37690345f85220b8548091b06d4bc248f241ed5b9074",
+    "replay-attachment.ts": "ba6a8a372d7104d3f82c82032af823b907e9a4583fd0671d84eec0d3d067a7e1",
+    "package.json": "64c67398cef92bcf97907d1ecca4e3161acfad2da6470a4761d67a4d75fd4cc0"
+  },
+  "candidate_source_sha256": {
+    "packages/control-plane-node/package.json": "0da7af39f3da70db4206b12cae6d171da69d97cbb18616a7c47d8b78fde4d809",
+    "pnpm-lock.yaml": "85fff8559737ce2e7313cd18b21f9770a24591d211c84a23c1f97dbd8581fecc",
+    "packages/control-plane-node/src/modules/node-managed.ts": "2faf1ae7a106eb0bab542a99a269111ee2b3f866a78044daba087503374018a2",
+    "tank-overlay.json": "1b77df20e28c45e7f3105d23b0440d944dfc7838cf5f5614c4576e2c1ca3de13"
+  },
+  "focused_evidence_sha256": {
+    "deploy/openma_lifecycle/sdk-dependency-diff.check.py": "8b35865f1286dab9c04814806a809e6324b348d3e1bf4e4d452a8c60ea1bd74b",
+    "deploy/openma_lifecycle/sdk-context-initialization.check.mjs": "61bda9d8c982463c04eca5eb9e52d518323ef9f918d337efd49b5761773ef384",
+    "docs/verification/sdk-dependency-repair-2026-10-18/failed-645a-startup.log": "0bec698b8ace0b60ca862834604677b750a193ed2477782c1d11a0c1db3ae122",
+    "docs/verification/sdk-dependency-repair-2026-10-18/failed-645a-caller-resolution.log": "3a2a41ff14f1d7be0119f69bf418d0284779cef8b15b9d13267abb09cf41f93d",
+    "docs/verification/sdk-dependency-repair-2026-10-18/exact-dependency-diff.json": "713af1b0880445ba7614579714d5020938a019451372962b2690945515e8a93c"
+  },
+  "native_vm_or_model_execution": false,
+  "production_adopted": false,
+  "known_limits": [
+    "Existing645a browser startup failure and lack of retention/replay/APIhistory proof remain unchanged; dependency repair is not evidence that those pass.",
+    "New SDK/runtime identity intentionally differs; existing retained VM disks must not be restored across changed identity. Only exact-cleaned public OCI cache may be reused under separately authorized scope.",
+    "Corrected dependency installation and actual composed startup must pass before accepting this source repair."
+  ]
+}

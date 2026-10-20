@@ -1,0 +1,12 @@
+{
+  "fixture_id": "F-05",
+  "started_at": "2026-10-20T03:07:03.285415Z",
+  "finished_at": "2026-10-20T03:09:03.365353Z",
+  "frozen_output": {
+    "path": "docs/verification/replay-batch-r56-2026-10-20/F-05/actual/qa-r56-f05-driver/framework-bundles/146bf0728282adfc068966843324108045ddf669d4f1e63ea59a9005a045a985/outputs.json",
+    "sha256": "e48f0008ae4eda5cfd1e1b29a935f1f40076953f2baf480e2695a2a8232ca874"
+  },
+  "cli_exit_code": 0,
+  "scope": "Fresh isolated native replay; no external delivery",
+  "assertions_changed": false
+}

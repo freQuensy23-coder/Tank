@@ -1,0 +1,155 @@
+{
+  "status": "PASS_SINGLE_F08_NATIVE_CONTINUATION_QUALIFICATION_CARD_CONFORMANCE_HOLD",
+  "session_id": "session_WvpxzGt_9ToL1HQUSPzBJ",
+  "replay_run_id": "RPL-01M59PDNE800ZFVQFNEZHG6D2P",
+  "tank_image": "sha256:3fb9fce18f64add4735973dab6200a9065a08623b6b419c437cc10a0b7563f1e",
+  "openma_image": "sha256:44a085c855c6aab339c0aa5bdb43702802fb20b3e7b6e9ba0e7202d50c70cb33",
+  "runtime_identity": "813a5b7b1a4531c976fbdb3e7611d4718f3c890ed4b18fbc9010eb1a71420b90",
+  "code_version": "cacc1b158dd5ee2044c1d5f574e08589fed27e372279e3202029fe3f310df462",
+  "config_version": "1fb1bb55cbc5ce2701cbdaf9062aad64abecca1a-dirty.dbcf451257df7fb0f5998a21319ed2d0a708fab6957536372cc0f58ff7837930",
+  "packet_sha256": "f0c6453a6f9365aca91859abca1589ce51cc17beb7f64bd8ee314721efcb6ff7",
+  "bounds": {
+    "packet_timeout_override": "ABSENT",
+    "effective_operational_default_seconds": 240,
+    "driver_outer_seconds": 360,
+    "default240_is_protocol_run_bound_not_FULL480_SLA": true,
+    "native_product_budgets_unchanged": true
+  },
+  "actual": {
+    "cli_exit_code": 0,
+    "driver_elapsed_seconds": 119.3572383329738,
+    "framework_output_status": "COMPLETED",
+    "remote_archived": true,
+    "remote_public_status": "idle",
+    "local_logical_session_status": "OPEN",
+    "event_lifecycle": "ANALYZING",
+    "source_extraction_status": "DONE",
+    "source_turn_status": "DONE",
+    "source_workflow_proof_version": 1,
+    "host_retry_count": 0,
+    "accepted_input_count": 14,
+    "accepted_input_queue_states": "14/14 COMPLETED + settled_outcome COMPLETED",
+    "verified_native_completion": true,
+    "native_events": 98,
+    "model_request_spans": 11,
+    "zero_model_partial_ack_intakes": 4,
+    "terminal_end_turn_count": 1,
+    "tool_calls": 13,
+    "record_event_count": 1,
+    "assessment_count": 1,
+    "beneficiary_map_count": 1,
+    "market_truth_count": 1,
+    "decision_count": 1,
+    "generated_cards": [
+      "PARTIAL-v1",
+      "FULL-v2"
+    ],
+    "publish_attempts": 3,
+    "publication_refusal": {
+      "kind": "PARTIAL",
+      "reason": "LINTER",
+      "rules": [
+        "L3"
+      ],
+      "agent_corrected": true,
+      "not_native_input_duplication": true
+    }
+  },
+  "latency_native_user_message_to_result_accepted_seconds": {
+    "record_event": 46.052,
+    "publish_card:PARTIAL": 76.226,
+    "publish_card:FULL": 101.167
+  },
+  "latency_limits": {
+    "one_retrospective_processing_sample": true,
+    "historical_live_claim": false,
+    "performance_p95_claim": false,
+    "full_source_filter_route_e2e_claim": false,
+    "source_to_event_target_seconds": 90,
+    "PARTIAL_target_seconds": 180,
+    "FULL_target_seconds": 480,
+    "generation_to_transport_10s": "NOT_RUN"
+  },
+  "delivery": {
+    "frozen_reference_delivery_status": "NOT_RUN",
+    "intents": "QUEUED",
+    "delivery_records": "GENERATED; none SENT",
+    "telegram_requests": 0,
+    "hold": "Root PRD/market-evidence review; no send until separately released",
+    "card_texts": {
+      "PARTIAL": "docs/verification/f08-cli-r27-2026-10-19/cards/PARTIAL-v1.txt",
+      "FULL": "docs/verification/f08-cli-r27-2026-10-19/cards/FULL-v2.txt"
+    },
+    "actual_job_payloads": "docs/verification/f08-cli-r27-2026-10-19/cards/delivery-jobs.json"
+  },
+  "conformance": {
+    "full_fixture_passed": false,
+    "card_market_conformance": "HOLD_NOT_ACCEPTED",
+    "known_remaining_defect": {
+      "owner": "Root/replay fixture producer",
+      "finding": "Historical packet omits expected missing venue instruments while registry is broader and missing_inputs declares OTHER_VENUES_MISSING; actual truth excluded[] and estimated card coverage100% are misleading.",
+      "scope": "Fixture producer/evidence-universe repair required before card conformance or sending. Preserve r27 generated outputs unchanged; no synthetic data/outcomes."
+    },
+    "r28_separate_changes": "S15 parser/config and replay operational default480 were frozen after r27; excluded from r27 tuple."
+  },
+  "provenance": {
+    "original_r25_database": "tank_replay_f08_r25_fail_before_r27_20261019",
+    "original_r25_packet_and_failures_unchanged": true,
+    "producer_renewal": {
+      "status": "ACTUAL_R27_PRODUCER_REPROJECTION_AND_ADMISSION_PASS",
+      "proofs": [
+        {
+          "item_id": "ITM-01M58980T1PZ6N0M4MQNJ2SGTE",
+          "prior_producer_sha256": "a178839d2ea345470d1aad0030ec1d115c2231d0e4cbadbd5778799df6d9f5ef",
+          "new_producer_sha256": "4eda8dc87d94f1fc67ba594fa2c4f2a5d67f7c054b1fa4eb22d22b962062e3a5",
+          "original_sha256": "b7cd505094bd642cc34eb0207fb47fced095d80d23b2b85307df51020314b7a7",
+          "selected_sha256": "84ce2ab5b7b706def1fa934eee42304fbe5ec0108c3325a22569edfdc23983e8",
+          "body_sha256": "973feb8ec4e9113f3b85781ee24d2711d3fa0e8e5b87f13c81d6a9c938896a21",
+          "selected_bytes_identical": true,
+          "declared_body_derivation_pass": true
+        }
+      ],
+      "model_calls": 0,
+      "native_calls": 0,
+      "project_original_source_ast_unchanged_from_r25_producer": true,
+      "verify_derivation_ast_unchanged_from_r25_producer": true,
+      "new_packet": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/data/replay/prepared/F08-continuation-r27-renewed-20261019/replay/inputs/F-08.json",
+      "new_packet_sha256": "f0c6453a6f9365aca91859abca1589ce51cc17beb7f64bd8ee314721efcb6ff7"
+    },
+    "source_tuple_frozen_before_subsequent_S15_repair": true,
+    "r27_image_and_mounted_config_unchanged_during_run": true,
+    "concurrent_repository_changes": "Root-authorized S15 and replay-default480 source changes occurred separately; r27 used frozen image3fb/code cacc/config dbcf and did not incorporate them."
+  },
+  "cleanup": {
+    "checked_at": "2026-10-19T09:10:56.062548+00:00",
+    "native_catalog_empty": true,
+    "native_guest_or_shim_process_absent": true,
+    "native_home_active_container_holders": [
+      "tank-extract-v4-openma-1"
+    ],
+    "qa_controller_image": "sha256:44a085c855c6aab339c0aa5bdb43702802fb20b3e7b6e9ba0e7202d50c70cb33",
+    "qa_controller_healthy": true,
+    "owned_driver_container_absent": true,
+    "replay_database_connections": 0,
+    "sdk_imported_for_cleanup": false,
+    "guard_stopped": true
+  },
+  "resource_guard": {
+    "floor_bytes": 8589934592,
+    "sample_interval_seconds": 3,
+    "sample_count": 40,
+    "minimum_free_bytes": {
+      "host_free_bytes": 9058045952,
+      "docker_free_bytes": 10163351552
+    },
+    "errors": [],
+    "monitor_stopped": true
+  },
+  "remaining_proof_limits": [
+    "Real native run used Tank single-event POSTs; mixed public batches, crash/interrupt and fencing fault boundaries retain separate offline/PG proof limits.",
+    "Actual partial ACK intake coalescing and eventual end-turn/settled queue were observed; model-span interval attribution uses public REST history.",
+    "This is a retrospective fresh-session F08 protocol/workflow qualification, not a full fixture/business conformance pass or production full runtime E2E.",
+    "Actual Telegram branch is held; frozen replay delivery remains NOT_RUN.",
+    "QA remains exclusively owned and idle pending complete r28 freeze/root GO. No new build/native/model/delivery starts are authorized by this receipt."
+  ]
+}

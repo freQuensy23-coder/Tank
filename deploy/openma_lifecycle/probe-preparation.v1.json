@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "status": "PREPARED_NOT_RUN_NO_NATIVE_VM",
+  "date": "2026-10-18",
+  "production_verification": "verification.v5.json",
+  "production_verification_sha256": "90f24ed3a656dadb46ba86c2f46b8abb4777698e7a949f5fb821cabc69580ccc",
+  "production_runtime_identity": "decfc25c9876c2c21ff573d1d31e14b11735648b5411b4d5e5b8cb3e815ee723",
+  "production_source_unchanged_since_freeze": true,
+  "assets_sha256": {
+    "native-qualification.mjs": "25eb65439453d29639c785e7130cfaa25fd41b19ed73e77e44de3edb8a60eb91",
+    "native-qualification.test.mjs": "70926d1a1dade7393db9a8d942268bf708b7d39f652aab1b447f34f17a3e7ac3",
+    "native-startup-observer.py": "c64b14b2b107efaa4979d8e53c04e7744af7b5e6ced7e34731cc2b839f51a1b6",
+    "NATIVE_QUALIFICATION.md": "c29204443c42bc05d93ed302eeea69d21c1791572554e59feec0e45a19f22e95"
+  },
+  "observer_original": "docs/verification/browser-coherent-2026-10-18/next-startup-observer.py",
+  "observer_original_exact_copy": true,
+  "checks": {
+    "node24_guard_and_artifact_tests_passed": 3,
+    "node_syntax": "PASS",
+    "observer_python_compile": "PASS",
+    "actual_native_or_browser_execution": "NOT_RUN"
+  },
+  "planned_scope": {
+    "single_allocation_home_disk": true,
+    "cpus": 1,
+    "memory_mib": 2048,
+    "worker_sha256": "8e3881b1e4de68a0f53c88321adc48691bd2d8f44f6e915b8843062c3c49a988",
+    "transport": "exact shipping createSandboxBrowserHarness defaults; no launch flags or timeout changes",
+    "first_and_resume": "loopback DOM/PNG and persistent Chromium cookie/localStorage, stop releases owned PID/RSS, same disk and native ID",
+    "observer": "read-only proc/pressure/socket/profile telemetry, host-visible output mount, before first open through browser close/failure",
+    "bounded_child_wall_seconds": [
+      180,
+      180,
+      60
+    ],
+    "external_requests": 0,
+    "model_calls": 0
+  },
+  "remaining_proofs": [
+    "Deployment owner must inspect exact new image/OCI identity and current disk/RAM headroom before explicit native GO.",
+    "Actual native current-prefix readonly mounted directory visibility/cache behavior is not exercised by this standalone analysis-scope qualifier and still requires coordinated replay/service proof.",
+    "Actual OpenMA API session/history continuity, PostgreSQL fence and service shutdown/restart composition require separate native service proof."
+  ],
+  "native_GO_received": false,
+  "build_or_service_mutation_by_this_agent": false
+}

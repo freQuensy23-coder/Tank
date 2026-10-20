@@ -1,0 +1,2404 @@
+{
+  "schema_version": 1,
+  "performance_evidence": false,
+  "fixtures": [
+    {
+      "fixture_id": "F-01",
+      "case_description": "UNI — \"Arc\" fee/burn proposal; OI ≈ +10%, modest funding",
+      "cutoff_spec": "21 Sep 2026 15:02",
+      "assertion_spec": "Event state PROPOSED; capture conditional with score ≤ 5; EMS never STRUCTURAL; the card never says the burn is live (L3).",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-01.json",
+          "sha256": "972ee7379936996c7395a09d6603e0981cec31fb63923d42cb2440f7fdd14731",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-01.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_ACTUAL_FRESH_SESSION_REFERENCE_RESULT",
+          "path": "docs/verification/f01-cli-r19-2026-10-19/result.json",
+          "sha256": "ef46d43d73acc056f4527ca2a077a01fdd8d5808c2e89b7ba2b8259e9df6cb33",
+          "status": "COMPLETED_BELOW_MAJOR_STOP",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "acceptance_scope": "PARTIAL_ASSERTION_COVERAGE_NO_MAJOR_REQUIREMENT"
+        },
+        {
+          "kind": "HOST_ONLY_INDEPENDENT_SEMANTIC_ADJUDICATION",
+          "path": "docs/verification/f01-r19-independent-semantic-adjudication-2026-10-19.json",
+          "sha256": "7bdf9a4a0355f27d96f56eb607f1b609c2a9b8be13055f2ec799ad09aa83ceeb",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-01.json",
+          "sha256": "b18cb7b5f3d0eed253c3454cb5b12df775894bdb46a6ad3203e31fac981c76e9",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_CURRENT_PRODUCER_MISSING_MARKET_REVALIDATION",
+          "path": "docs/verification/fixture-source-gap-recheck-2026-10-19/candidate-result.json",
+          "sha256": "3307ad8ba2452dab8fe06d180576470a08d73c7f021e26a7ddfaf9977922d666",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PRODUCER_UNKNOWN_NO_NATIVE_EXECUTION"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f01-r39-2026-10-19/F-01/result.json",
+          "sha256": "fc05b65a92763c7f501de77080a050b09b06acbea52911242845929dee50f163",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "R39_SEALED_ACCEPTANCE_FAILED"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f01-r41-candidate-2026-10-19/F-01/result.json",
+          "sha256": "6c1901bdbccf80aa12617895269c803789458c126c2990e220c38dc279844cd5",
+          "full_fixture_passed": true,
+          "historical_acceptance_claimed": false,
+          "status": "R41_SEALED_AND_MANUAL_PASS"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_history": [
+        {
+          "readiness": "SOURCE_REFERENCE_EXECUTED_PARTIAL_ASSERTION_COVERAGE",
+          "missing": [
+            "Current signed-IPFS masked-source proof is explicitly limited to F17; F01 raw identity derivative would fail original CID verification. No CID relabel/bypass or source substitution prepared.",
+            "Retained UNI inventory declares zero eligible observations; current producer UNKNOWN is valid source behavior, not historical market completeness."
+          ],
+          "superseded_reason": "Approved authentic signed source and genuine UNI market supplement; original source clocks/cutoff and expectations preserved."
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-F01-signed-market-r39-prepared/inputs/input.json.zst",
+            "sha256": "a235b56a2a48ca49fbf36b4f5a9a06dd6b260a48ab35142e359c8c75be4f5dfd"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-F01-signed-market-r39-prepared/private/map.json",
+            "sha256": "278c3220a9f5d473f3b05018ae3e1c52e251e9d0725467a34212cd1a2b5532a1"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-F01-signed-market-r39-prepared/sealed/outcomes.json",
+            "sha256": "f872e0038ff371f23842a7ef268c0399bdb74d42ebe023713628545ce1cdfb9c"
+          },
+          "acceptance_run": {
+            "path": "docs/verification/masked-f01-r39-2026-10-19/F-01/acceptance-run-with-manual.json",
+            "sha256": "5f5bdd84878565cbeb21652feff2326a2c11d05d2baefbbbb96b23b4b6b98d33"
+          },
+          "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+          "missing": [
+            "required manual clause failed: Actual persisted evt.capture_chains for asset-k must be present, conditional=true and numeric capture_score<=5; missing chain is not a pass."
+          ],
+          "superseded_reason": "Validated agent skill clarification; complete native r41 outcome independently checked against unchanged sealed requirements."
+        }
+      ],
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r41-wire-prepared/F-01/inputs/input.json.zst",
+        "sha256": "c9af8490bd415194f2f062dc367c59eac884214dec0ad14e3b8325bc3acdf81d"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-F01-signed-market-r39-prepared/private/map.json",
+        "sha256": "278c3220a9f5d473f3b05018ae3e1c52e251e9d0725467a34212cd1a2b5532a1"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r41-wire-prepared/F-01/sealed/outcomes.json",
+        "sha256": "8ad2b6f7317cec84dbf4f5c559a5a82875ca3813227d423b9048299eb8f300d8"
+      },
+      "acceptance_run": {
+        "path": "docs/verification/masked-f01-r41-candidate-2026-10-19/F-01/acceptance-run-with-manual.json",
+        "sha256": "8b5a8d9d845621f3e9c2c98ea94d00f3cc9ec3d0335939ece40bdebeb31acd17"
+      }
+    },
+    {
+      "fixture_id": "F-02",
+      "case_description": "ZRO — Anchorage + post-unlock setup; futures-heavy; funding elevated; weak spot confirmation",
+      "cutoff_spec": "22 Sep 2026 18:52",
+      "assertion_spec": "Move class not SPOT_LED_ACCUMULATION or ORGANIC_MIXED; unlock recorded as potential supply, not a sale; action ≠ START.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-02.json",
+          "sha256": "abf5094cc68fed1784da64faedfff6ebb0f512bf7860ce8fad30d906448f9fca",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-02.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-02.json",
+          "sha256": "8558699da1d7edbc597f0c78e99ff929d5a00982bc66edf02f6c25dc49a5d101",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f02-r38-2026-10-19/F-02/result.json",
+          "sha256": "2f78a2bc7cffb8b1ead85d3eb8e6ca41aac808b3c72fbaa4abfb5a9eb9bd9701",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "R38_SEALED_ACCEPTANCE_FAILED"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+      "missing": [
+        "required manual clause failed: Move class not SPOT_LED_ACCUMULATION or ORGANIC_MIXED; unlock recorded as potential supply, not a sale; action ≠ START."
+      ],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-02/inputs/input.json.zst",
+        "sha256": "8411b6a5590fc22cac8121d74d331b7d939c26109dbb2c7a37a8b99a810fd04d"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-02/private/map.json",
+        "sha256": "20bdd594f77337cab900a91308a78cd498a4bceb3420040686fc3d20b93396c7"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-02/sealed/outcomes.json",
+        "sha256": "d0de8bddc5f75e2807cfab45987f68d799e193dec4af67cf536cd78a1925e4da"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-02/inputs/input.json.zst",
+            "sha256": "19b0475b1fc8155340cd74e6ace43fa9a18c5a5bd2a856474025be5e4c89a748"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-02/private/map.json",
+            "sha256": "20bdd594f77337cab900a91308a78cd498a4bceb3420040686fc3d20b93396c7"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-02/sealed/outcomes.json",
+            "sha256": "e2daf5e036cb834f646fc862361a4a0ac98565a5c68f1c364902d0ca6cb6eab7"
+          },
+          "readiness": "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "A completed native outcome satisfying all sealed clauses.",
+            "Existing captured rows retained; arbitrary new web_search/fetch requests fail closed. No search ranking/absence or company-size context invented."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-02/inputs/input.json.zst",
+            "sha256": "dcb1734127e3750ecb1c07ea31c8f16f7458903dbd0343dd3eb2203a5fa11d1c"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-02/private/map.json",
+            "sha256": "20bdd594f77337cab900a91308a78cd498a4bceb3420040686fc3d20b93396c7"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-02/sealed/outcomes.json",
+            "sha256": "30fe835594b93ec61b1e3fb3219abe20800240588fa54970644c98988047ac5c"
+          },
+          "readiness": "R37_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "Completed current-context native outcome with all sealed automated and manual clauses."
+          ]
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f02-r38-2026-10-19/F-02/acceptance-run-with-manual.json",
+        "sha256": "db9c2721283ce8659be53f1f45cb338f3a2eafd307943e7239c93ff212ef77bf"
+      }
+    },
+    {
+      "fixture_id": "F-03",
+      "case_description": "COW — Ondo / BlackRock Intelligent Portfolios settling through CoW; OI falling; laggard tape",
+      "cutoff_spec": "24 Sep 2026 16:12",
+      "assertion_spec": "CoW mapped as SECONDARY on LIQUIDITY_EXECUTION with integration state as evidenced; event not dropped; action ∈ {WATCH_TO_START, WAIT}.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "HOST_ONLY_UNRESOLVED_EVIDENCE_INVENTORY",
+          "path": "tests/fixtures/components/2026-10-19/F-03.components.json",
+          "sha256": "a836abadc946ba7cac1a21858dfe039c0b5482fc5beaba1e24aa79209a2962ca",
+          "source_capture_complete": false,
+          "agent_input_eligible": false
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-03.json",
+          "sha256": "a6412071fdf1d3b8174e42424062fbbf8a12000467306f1e43c37c59b16116f6",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_DATED_SECONDARY_ACQUISITION_PROJECTION_PROVENANCE",
+          "path": "docs/verification/fixture-source-gap-recheck-2026-10-19/review.json",
+          "sha256": "556d1426a9d7ad62cc6070d11b7ccfbeb787f23403586a7017e508b93c71387b",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "REAL_SECONDARY_SOURCE_PREPARED_NOT_RUN"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+      "missing": [
+        "Latest r47 analysis completed and published a 3260-character FULL card; all eight layer reasons retained once. CoW capture remains UNKNOWN and its edge is not credible under TDD4.7, so no CoW decision was produced and the sealed fixture still fails. No forced capture/decision change."
+      ],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-F03-code-r47/F-03/inputs/input.json.zst",
+        "sha256": "7c85f8ecebd12cbc99a7a66ed92426ef7d4c42779ded8bf84b668f5cd32bb61c"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-03/private/map.json",
+        "sha256": "f5c84ca3a0cff0b2dfcd49bd8f3c9bf83cc48f85be5b13bc3ab1f23b0b878a47"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-F03-code-r47/F-03/sealed/outcomes.json",
+        "sha256": "4af4cb4c837c6604bfcfe78c713184559856f7daffd8f0a6a05c598a81e07f86"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-03/inputs/input.json.zst",
+            "sha256": "fb8297bfede512a1ad53dd920c4887d5bb34a08cca2c8ad3e52e667b41013359"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-03/private/map.json",
+            "sha256": "f5c84ca3a0cff0b2dfcd49bd8f3c9bf83cc48f85be5b13bc3ab1f23b0b878a47"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-03/sealed/outcomes.json",
+            "sha256": "037ce2a40512fb75fe21ffa85b58464234eb9294a11f04adb863ceb20e08fdff"
+          },
+          "readiness": "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "A completed native outcome satisfying all sealed clauses.",
+            "Existing captured rows retained; arbitrary new web_search/fetch requests fail closed. No search ranking/absence or company-size context invented.",
+            "Prior r33 native execution encountered missing web_search capture; dated secondary source is valid input but does not fabricate that missing response."
+          ],
+          "superseded_reason": "One r45 run after explicit missing-evidence continuation fix; original evidence and expectations retained. New outcome remains unsuccessful."
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-F03-F10-context-r45-v2/F-03/inputs/input.json.zst",
+            "sha256": "3b7587d565e28ef44b16c8bde862562359d94a5ccd2b266e60e4bad8a0ac2430"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-03/private/map.json",
+            "sha256": "f5c84ca3a0cff0b2dfcd49bd8f3c9bf83cc48f85be5b13bc3ab1f23b0b878a47"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-F03-F10-context-r45-v2/F-03/sealed/outcomes.json",
+            "sha256": "589c1a5ddb299fb5278e7686348d2d79009cd87ae16991d97349358cfefc8e33"
+          },
+          "acceptance_run": {
+            "path": "docs/verification/masked-f03-r45-candidate-2026-10-19/F-03/acceptance-run-with-manual.json",
+            "sha256": "956236c00d9516d4678c2b28423317abdf0a6eb0239bf3a87aa75ed53d907243"
+          },
+          "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+          "missing": [
+            "F03 completed with CoW SECONDARY/LIQUIDITY_EXECUTION/LIVE but capture UNKNOWN; explicit TDD4.7 excludes it from the credible secondary analysis set. The sealed expectation of a CoW decision failed. No forced capture/decision change.",
+            "Separate product issue: both card publication attempts exceeded 3500 characters. Exact diagnostics and duplicated host-generated layer explanations are being repaired."
+          ],
+          "superseded_reason": "r47 fixes duplicate card text and nonterminal native retry coordination; actual FULL publication independently verified. Original CoW decision expectation remains failed."
+        }
+      ],
+      "execution_attempts": [
+        {
+          "path": "docs/verification/masked-f03-r45-candidate-2026-10-19/F-03/result.json",
+          "sha256": "fd62555ae63d4ffa6aac28dfa313588c74b97ca60c3b4519488a7539ab660ea6"
+        },
+        {
+          "path": "docs/verification/masked-f03-r46-candidate-2026-10-20/F-03/result.json",
+          "sha256": "c3d49bce44eeb1b69c08935547a48bbff97e9786aa127b86b24b135888e19579"
+        },
+        {
+          "path": "docs/verification/masked-f03-r47-candidate-2026-10-20/F-03/result.json",
+          "sha256": "f6f5ce2658bad9e8c8756497c6319fac27b78ffc0a0da966a34583bd0b83d519"
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f03-r47-candidate-2026-10-20/F-03/acceptance-run-with-manual.json",
+        "sha256": "3c1a080dd35cbe86422eab8ffb323490fd81f7e512c8c64c92e7c7eba2de3eab"
+      }
+    },
+    {
+      "fixture_id": "F-04",
+      "case_description": "ENA — fee-switch/buyback economics + equity-basis framework; strong spot; major supply overhang on 5 Oct",
+      "cutoff_spec": "25 Sep 2026 11:33",
+      "assertion_spec": "Capture DIRECT only if the mechanism is active and evidenced, otherwise conditional; overhang recorded as UNRESOLVED; START blocked while unresolved; overhang shown in WHAT CHANGES THE ACTION.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-04.json",
+          "sha256": "f1a081a7a09267b7749ecccb01df47ab69a886ae3f3c178054834894f9894290",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-04.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-04.json",
+          "sha256": "9fbabd71ffe99291af0ddad60216c563119b461965c04e8d46a178812371df72",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f04-r38-2026-10-19/F-04/result.json",
+          "sha256": "e725c84434cd1abcb3f118c31056d0a11b26c69bca6edeeca30e0f0b99af4ec7",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "R38_SEALED_ACCEPTANCE_FAILED"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+      "missing": [
+        "assertion failed: {\"path\":[\"decisions\"],\"some\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}",
+        "assertion failed: {\"path\":[\"decisions\",\"*\"],\"satisfies\":{\"not_equals\":\"START\",\"path\":[\"action\"],\"when\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}}",
+        "required manual clause failed: Capture DIRECT only if the mechanism is active and evidenced, otherwise conditional; overhang recorded as UNRESOLVED; START blocked while unresolved; overhang shown in WHAT CHANGES THE ACTION."
+      ],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-04/inputs/input.json.zst",
+        "sha256": "79c6a0a358f9f38817cb44d466b66e7ad6d254083d9b682c4c32d5f6af962432"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-04/private/map.json",
+        "sha256": "6dbc400956cd1fddce6e8345b4480002c03b684e64fd8cd7a4c3d54dae9070fc"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-04/sealed/outcomes.json",
+        "sha256": "bcbf002062a495644b176a9c30e917f425db8900044d9d5a4b210c7bdb4be4ed"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-04/inputs/input.json.zst",
+            "sha256": "2cb2dc516257f16afb23ff8148362738f95e5f83bb5e600575a3cf72d275bdb3"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-04/private/map.json",
+            "sha256": "6dbc400956cd1fddce6e8345b4480002c03b684e64fd8cd7a4c3d54dae9070fc"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-04/sealed/outcomes.json",
+            "sha256": "e048214bb7d9e3bb4eccd0fa5843bd34ab4677f8f751e620496d4a923aed3d6b"
+          },
+          "readiness": "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "A completed native outcome satisfying all sealed clauses.",
+            "Existing captured rows retained; arbitrary new web_search/fetch requests fail closed. No search ranking/absence or company-size context invented."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-04/inputs/input.json.zst",
+            "sha256": "bb4a4a4bc7af34e1e8a6e86f581e7fea81ae9b1392a44a049c956c49850eb95e"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-04/private/map.json",
+            "sha256": "6dbc400956cd1fddce6e8345b4480002c03b684e64fd8cd7a4c3d54dae9070fc"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-04/sealed/outcomes.json",
+            "sha256": "d79ca6bfc6cdf9cdb83a95a7861e08e73ccde6dcd166df267d34778d63b05f2c"
+          },
+          "readiness": "R37_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "Completed current-context native outcome with all sealed automated and manual clauses."
+          ]
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f04-r38-2026-10-19/F-04/acceptance-run-with-manual.json",
+        "sha256": "00d24290f69e52f767daf50817768414e0d882088a34d2bec7bfb3f6ae9eb7ef"
+      }
+    },
+    {
+      "fixture_id": "F-05",
+      "case_description": "WLD — World Money live in 150+ countries; strong flow; weak direct WLD capture",
+      "cutoff_spec": "26 Sep 2026 03:50",
+      "assertion_spec": "Event state LIVE; capture ≤ INDIRECT (NARRATIVE_ONLY without a token mechanism); thesis ≤ C; any positive action labeled tactical.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "HOST_ONLY_UNRESOLVED_EVIDENCE_INVENTORY",
+          "path": "tests/fixtures/components/2026-10-19/F-05.components.json",
+          "sha256": "a7abe5cccddf7fa542c0d8ba7bf76d0ee45e91b467868f0a236e984c14498bfa",
+          "source_capture_complete": false,
+          "agent_input_eligible": false
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-05.json",
+          "sha256": "68b7f52028ad6c2b61074d3a3da7b7945a52c1f54d89d903fd6ee03a2332faca",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_VERSIONED_WORLD_ARCHIVE_PROVENANCE",
+          "path": "docs/verification/f05-archive-candidate-2026-10-19/report.json",
+          "sha256": "4d8c94251eb2f6e615cd2f0740044e557b290bfc480366ccad7378896ab64763",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_VERSIONED_SOURCE_NOT_RUN"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+      "missing": [
+        "Sealed capture-class assertion failed (UNKNOWN versus NARRATIVE_ONLY); retained without reroll."
+      ],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/qa/replay-batch-r56/F-05/inputs/input.json.zst",
+        "sha256": "7252b0b032a7320938d58ff6e3cdcad8aa408ee32be21ffe37fee5b82fc13023"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-prepared/F-05/private/map.json",
+        "sha256": "93e9d77d1fb306dca66dd78a73596141386082c4dcec98aa85f65bdd8866a11d"
+      },
+      "sealed_outcomes": {
+        "path": "data/qa/replay-batch-r56/F-05/sealed-outcomes.json",
+        "sha256": "ac1bdc13c90753960acfbae1c8d6c645101f28b8f037bfac09d2ef9531d339a6"
+      },
+      "acceptance_run": {
+        "path": "docs/verification/replay-batch-r56-2026-10-20/F-05/acceptance-run.json",
+        "sha256": "fdd8c5c91ff5db01ac7b6d86c9a29860f6a99818a8b8024761aa2432725fe282"
+      }
+    },
+    {
+      "fixture_id": "F-06",
+      "case_description": "AAVE — V4 tokenized-equities collateral; strong relative strength; spot/OI supportive",
+      "cutoff_spec": "26 Sep 2026 16:34",
+      "assertion_spec": "LENDING_COLLATERAL edge present; announced vs live distinguished by evidence; BTC/ETH/sector-adjusted returns computed.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-06.json",
+          "sha256": "9573690a0ac811953f2ee630903d8561dc7c4e15a984e5208691ffc6104c9713",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-06.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-06.json",
+          "sha256": "8dc6af4c4677dc3d6aa0de080363092be55b83af5cff31a0257d19d94e755306",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f06-r39-2026-10-19/F-06/result.json",
+          "sha256": "30f2a8fc4fa984082c703c85117aac3bb41e66d48d837b056603270de36370de",
+          "full_fixture_passed": true,
+          "historical_acceptance_claimed": false,
+          "status": "R39_SEALED_ACCEPTANCE_PASS"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-F06-reference-flow-r39-candidate/inputs/input.r39.json.zst",
+        "sha256": "766db2ab8fbde45fc3d1784569110eefb9cdba5e6186313011ae2a734f77afa8"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-F06-reference-flow-r39-candidate/private/map.json",
+        "sha256": "6d30b92cac9c79fcba940201943f722d84766a105e7c54f9fcf96d25665c0839"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-F06-reference-flow-r39-candidate/sealed/outcomes.r39.json",
+        "sha256": "ef65a3c3e98a406fbb93b501791a3d4e8648eb3fbb041af27c4574c8e2b5e3d8"
+      },
+      "execution_attempts": [
+        {
+          "path": "docs/verification/masked-f06-r36-v5-2026-10-19/F-06/result.json",
+          "sha256": "3be9597c344178abf7416cba884ec2050e4b90587dcc5d3f8977bdf14b8e946e"
+        }
+      ],
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-prepared/F-06-protocol-v5/inputs/input.json.zst",
+            "sha256": "6b763746e78600532031afca9106c8d8455dae45ff830d5718dfe15a7eb324f2"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-06-protocol-v5/private/map.json",
+            "sha256": "0b1f5c24e31760e998ad29508f07282dea722c67a44efaa2531b8e4590a90e6d"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-prepared/F-06-protocol-v5/sealed/outcomes.json",
+            "sha256": "2752750d93fc3cd0728003dcd88b0a46f267b24fd177e65542df79bf023841b9"
+          },
+          "readiness": "EXECUTION_INTERRUPTED_RESOURCE_GUARD",
+          "missing": [
+            "First native run interrupted by host disk guard; same-input resource recovery pending."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-06/inputs/input.json.zst",
+            "sha256": "8a01a31cac86bb9c0a21b9319cab6cf6c2cb606fada652df04085a63573703ce"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-06-protocol-v5/private/map.json",
+            "sha256": "0b1f5c24e31760e998ad29508f07282dea722c67a44efaa2531b8e4590a90e6d"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-06/sealed/outcomes.json",
+            "sha256": "9fdc0765a0353239095604ac76359815e08f2cf81317b56aaf1f05c3ddf1b9b8"
+          },
+          "acceptance_run": {
+            "path": "docs/verification/masked-f06-r37-2026-10-19/F-06/acceptance-run-with-manual.json",
+            "sha256": "502c5493a34b4c21f9d7c5964e8e53cdf02d1a07b705edafcb4a608b007b3115"
+          },
+          "readiness": "R37_NATIVE_ACCEPTANCE_FAILED",
+          "missing": [
+            "assertion failed: {\"not_equals\":null,\"path\":[\"market_truth\",\"*\",\"relative\",\"windows\",\"W4H\",\"r_btc_adj\"]}",
+            "assertion failed: {\"not_equals\":null,\"path\":[\"market_truth\",\"*\",\"relative\",\"windows\",\"W4H\",\"r_eth_adj\"]}",
+            "assertion failed: {\"not_equals\":null,\"path\":[\"market_truth\",\"*\",\"relative\",\"windows\",\"W4H\",\"r_sector_adj\"]}"
+          ],
+          "superseded_reason": "Approved genuine Binance reference/flow supplement; original guard interruption and r37 missing-W4H outcome retained."
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f06-r39-2026-10-19/F-06/acceptance-run-with-manual.json",
+        "sha256": "c794398d7e79c3bd7a3934a9487d45f7305d6288a7b34ce976796e21a679651b"
+      }
+    },
+    {
+      "fixture_id": "F-07",
+      "case_description": "HYPE — Binance spot listing recovery; futures-heavy",
+      "cutoff_spec": "24 Sep 2026 17:05",
+      "assertion_spec": "Move class ≠ SPOT_LED_ACCUMULATION; action ∈ {WAIT, DONT_CHASE}.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-07.json",
+          "sha256": "68600d48d5e52855ef602d7cda2df5c49b570441dd3992c29b7707e630b28c2c",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-07.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-07.json",
+          "sha256": "5b2088e6da770283b14c003323300d2d650c3b8f0775863b6e5013b25f473fce",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f07-r38-2026-10-19/F-07/result.json",
+          "sha256": "2b9ae5229608f1d2a0c0e62c2704bc9280bdfbf75cbe5061922714b35a2e5944",
+          "full_fixture_passed": true,
+          "historical_acceptance_claimed": false,
+          "status": "R38_SEALED_ACCEPTANCE_PASS"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-07/inputs/input.json.zst",
+        "sha256": "88516a207cc0ef8ec48a82d164dc753bbf9ef74081c8ef984e85d4c3e25b8d87"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-prepared/F-07-protocol-v5/private/map.json",
+        "sha256": "56c6ab7167bd25ec38c4f2c7a88974b081fe12e14b9c01723edca57160164b7d"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-07/sealed/outcomes.json",
+        "sha256": "ee381030f631f5fdf36d3e248381a3b5c1934d98811909b0c0ee8bfe4773d064"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-prepared/F-07-protocol-v5/inputs/input.json.zst",
+            "sha256": "080a5e9311baa16c8783042da462f07a2c7bd1caeb204dfbf07050836f7eb928"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-07-protocol-v5/private/map.json",
+            "sha256": "56c6ab7167bd25ec38c4f2c7a88974b081fe12e14b9c01723edca57160164b7d"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-prepared/F-07-protocol-v5/sealed/outcomes.json",
+            "sha256": "c47417aac9ab23fe761e803c0a2d24de008a905d9b755a652cebac79dbdb8808"
+          },
+          "readiness": "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "A completed first native outcome satisfying all automated and required manual assertions."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-07/inputs/input.json.zst",
+            "sha256": "779d5d36c416ae0bebcf378b25160ff6f9e7724a5295fbbdd016bf8f4a7087ec"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-07-protocol-v5/private/map.json",
+            "sha256": "56c6ab7167bd25ec38c4f2c7a88974b081fe12e14b9c01723edca57160164b7d"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-07/sealed/outcomes.json",
+            "sha256": "6faf8e33e9acbe48fbbe3c6cfeeb479c9d168df13ef03eef2d3c82b50d5b346c"
+          },
+          "readiness": "R37_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "Completed current-context native outcome with all sealed automated and manual clauses."
+          ]
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f07-r38-2026-10-19/F-07/acceptance-run.json",
+        "sha256": "12b544bb4243383d46ac2bc77ddefbc8138eaf849b3cca05730c948d1956911c"
+      }
+    },
+    {
+      "fixture_id": "F-08",
+      "case_description": "QNT — The Clearing House partners with Quant to advance the On-Chain Money Initiative (TCH press release dated 24 Sep 2026, S27, verified 16 Oct 2026); QNT already ≈ +20% at the call",
+      "cutoff_spec": "24 Sep 2026 20:15",
+      "assertion_spec": "Class STRUCTURAL SHOCK (G4 or G6, with the TCH release as primary evidence); PARTIAL card before Market Truth; QNT repricing HEAVY → DONT_CHASE; beneficiary map lists credible secondaries or a per-layer reason for none.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-08.json",
+          "sha256": "17a67acdd7f3817e2d7c109ac6dcea88dcae8cc5f09a78007f078b6757afc9b4",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-08.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_ACTUAL_FRESH_SESSION_REFERENCE_RESULT",
+          "path": "docs/verification/f08-cli-r22-2026-10-19/result.json",
+          "sha256": "73a0e1c07ac0fffdda2f4e75f5579659771d9267e1da7017a03cc2dcdf79d51d",
+          "status": "COMPLETED_STRUCTURAL_PARTIAL_TO_FULL",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/F08-registry-universe-r27-successor-candidate-20261019/replay/inputs/F-08.json",
+          "sha256": "1ca41aee3e19191baa6ba98e9a0658c6579478e50d77228e15a4778a2424c641",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/replay-market-universe-audit-2026-10-19/r27/result.json"
+        },
+        {
+          "kind": "HOST_ONLY_ACTUAL_FRESH_SESSION_REFERENCE_RESULT",
+          "path": "docs/verification/f08-cli-r27-2026-10-19/result.json",
+          "sha256": "ee42282f7dc1863e812cae892a3c51cdd004411d5b9b4384229ac5844a329220",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "RUNTIME_PASS_MARKET_CARD_CONFORMANCE_HOLD"
+        },
+        {
+          "kind": "HOST_ONLY_REGISTRY_UNIVERSE_CORRECTION_PRODUCER_PROOF",
+          "path": "docs/verification/replay-market-universe-audit-2026-10-19/r27/result.json",
+          "sha256": "b56847a1d75a4dfaedb93fbbcdb7620577d903a624d893f46eb9fb800c920ed8",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "CORRECTED_INPUT_PREPARED_NOT_RUN"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f08-r38-2026-10-19/F-08/result.json",
+          "sha256": "9a10470daca42acac688e904cd870bcb321a4037cc65c0facbf497cc6cf012a7",
+          "full_fixture_passed": true,
+          "historical_acceptance_claimed": false,
+          "status": "R38_SEALED_ACCEPTANCE_PASS"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-08/inputs/input.json.zst",
+        "sha256": "8327ecf79622982034995e8927216ee28e1020a7e991fe8e94ef56db3fd5d8d9"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-08/private/map.json",
+        "sha256": "2d259f439c42aea393b20b1372849c75ff7affed608c5b7cff445caf18b3f63c"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-08/sealed/outcomes.json",
+        "sha256": "9cae9f03ddf49e60f2f51387cbc8268d3255595ddcfbb5f059ec10570c9f35a4"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-08/inputs/input.json.zst",
+            "sha256": "143538139dd444790c32f5422522f90b22322f26d755f5f068ded7f9b44acbb6"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-08/private/map.json",
+            "sha256": "2d259f439c42aea393b20b1372849c75ff7affed608c5b7cff445caf18b3f63c"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-08/sealed/outcomes.json",
+            "sha256": "4ac29ab53a1b25189065a5342690695f51042cb734f3844aab6bc88b622ac136"
+          },
+          "readiness": "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "A completed native outcome satisfying all sealed clauses.",
+            "Existing captured rows retained; arbitrary new web_search/fetch requests fail closed. No search ranking/absence or company-size context invented."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-08/inputs/input.json.zst",
+            "sha256": "6e6ab6f3825853ed2ee4f08ec4c3a72181f181f6df96095f6504ddb386a3e93c"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-08/private/map.json",
+            "sha256": "2d259f439c42aea393b20b1372849c75ff7affed608c5b7cff445caf18b3f63c"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-08/sealed/outcomes.json",
+            "sha256": "74de5ec2297a9e37c8a27b39d2beb0e8a22764c0f5bddced0c6ade83dffccfa6"
+          },
+          "readiness": "R37_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "Completed current-context native outcome with all sealed automated and manual clauses."
+          ]
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f08-r38-2026-10-19/F-08/acceptance-run-with-manual.json",
+        "sha256": "47b3f7366df98e3c6a8bd0a130d26a8dbf4044fb701384d6339b6252f0bcb5fb"
+      }
+    },
+    {
+      "fixture_id": "F-09",
+      "case_description": "ONDO — SEC tokenized-equity + DTCC context; very large derivatives activity; weak direct token capture",
+      "cutoff_spec": "18 Sep 2026 09:30",
+      "assertion_spec": "EMS ≥ MAJOR; capture ≤ INDIRECT → thesis ≤ C → positive action only as tactical; OI decomposition shown; no leverage claim from USD OI alone.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-09.json",
+          "sha256": "da343d7c4e2d4b7987c1eec733917da5dc420efa9cb59ee157a3e94eba8835fc",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-09.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-09.json",
+          "sha256": "e1d9e4bc09dc0230095d7ba066d688fe8d891c50951de4aa0f7c5ab773d75709",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f09-r38-2026-10-19/F-09/result.json",
+          "sha256": "1b729ce842e25671fce5e506adc17087e71bb477ed0abbdbc4c14d0a3abb6c1a",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "R38_SEALED_ACCEPTANCE_FAILED"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+      "missing": [
+        "assertion failed: {\"in\":[\"MAJOR\",\"STRUCTURAL_SHOCK\"],\"path\":[\"assessments\",\"*\",\"class\"]}",
+        "assertion failed: {\"path\":[\"beneficiary_edges\",\"*\"],\"satisfies\":{\"in\":[\"INDIRECT\",\"NARRATIVE_ONLY\",\"UNKNOWN\"],\"path\":[\"capture_class\"],\"when\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}}",
+        "assertion failed: {\"path\":[\"decisions\",\"*\"],\"satisfies\":{\"in\":[\"C\",\"D\"],\"path\":[\"thesis_grade\"],\"when\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}}",
+        "assertion failed: {\"path\":[\"decisions\",\"*\"],\"satisfies\":{\"any\":[{\"not_in\":[\"START\",\"WATCH_TO_START\",\"ADD\",\"HOLD\"],\"path\":[\"action\"]},{\"equals\":true,\"path\":[\"tactical\"]}],\"when\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}}",
+        "assertion failed: {\"path\":[\"beneficiary_edges\"],\"some\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}",
+        "required manual clause failed: OI decomposition must actually be shown from retained native/USD/price inputs, or assertion remains unproven if unavailable."
+      ],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-09/inputs/input.json.zst",
+        "sha256": "5a1f4211ea7a649b2c2afa39666f033c093509d7d08da7cbb503d1927eb04f59"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-prepared/F-09/private/map.json",
+        "sha256": "19aaba53535b71330b5d127681b17db5459c94675265ccfcce6ef0a5b5e7d8e2"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-09/sealed/outcomes.json",
+        "sha256": "96b97fe7782eeb76feca15a66c1aacfa53698bbbce980c1d1b14a6443eafbda2"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-prepared/F-09/inputs/input.json.zst",
+            "sha256": "40106f797e1e9f44592a2b2bc935ac5b00f6a0f8736ed1170fbcf39ba9547555"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-09/private/map.json",
+            "sha256": "19aaba53535b71330b5d127681b17db5459c94675265ccfcce6ef0a5b5e7d8e2"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-prepared/F-09/sealed/outcomes.json",
+            "sha256": "6d469404f87b080807627d0a17ed5a4331b97065882d5e05d6e4cb53ab5e8ded"
+          },
+          "readiness": "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "A completed first native outcome satisfying all automated and required manual assertions."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-09/inputs/input.json.zst",
+            "sha256": "86cba5c5e97c053397c0a45cd80d51278e18b6a809ea6f04c0c98746f427418a"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-09/private/map.json",
+            "sha256": "19aaba53535b71330b5d127681b17db5459c94675265ccfcce6ef0a5b5e7d8e2"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-09/sealed/outcomes.json",
+            "sha256": "86aecdf44076aba05f70e1c4204133bedbe881d102a914d6562e3383caade252"
+          },
+          "readiness": "R37_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "Completed current-context native outcome with all sealed automated and manual clauses."
+          ]
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f09-r38-2026-10-19/F-09/acceptance-run-with-manual.json",
+        "sha256": "cf403968a100f9d40abb61b4223275c570c83016d1abcc651e4b498133616c8e"
+      }
+    },
+    {
+      "fixture_id": "F-10",
+      "case_description": "AVAX — ICE/NYSE testing + Janus validator; spot improving; OI down",
+      "cutoff_spec": "18 Sep 2026 17:12",
+      "assertion_spec": "\"Testing\" maps to IN_DEVELOPMENT or BUILT, never LIVE; class MAJOR only through M2 with the ICE/NYSE claim quoted, never STRUCTURAL SHOCK while the stage is below APPROVED.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "HOST_ONLY_UNRESOLVED_EVIDENCE_INVENTORY",
+          "path": "tests/fixtures/components/2026-10-19/F-10.components.json",
+          "sha256": "49a055ca3c3be4f0ac80a03d5549ddeafb6e2f233052547c673f4fed10e361e4",
+          "source_capture_complete": false,
+          "agent_input_eligible": false
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-10.json",
+          "sha256": "49123e02933dc89c935fb7462062488f0b6ce84a80b9564101c7208c2a9a449e",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_DATED_SECONDARY_ACQUISITION_PROJECTION_PROVENANCE",
+          "path": "docs/verification/fixture-source-gap-recheck-2026-10-19/review.json",
+          "sha256": "556d1426a9d7ad62cc6070d11b7ccfbeb787f23403586a7017e508b93c71387b",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "REAL_SECONDARY_SOURCE_PREPARED_NOT_RUN"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_FAILED_RUN",
+          "path": "docs/verification/masked-f10-r38-2026-10-19/F-10/result.json",
+          "sha256": "c2d7f82966ddf41ab10ccafb06fab9910ad88e6f2c343cc904297d71bbdfa537",
+          "full_fixture_passed": false,
+          "status": "R38_MISSING_WEB_SEARCH_CAPTURE"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+      "missing": [
+        "ICE/NYSE testing was recorded IN_DEVELOPMENT, MEDIUM, MATERIAL. The next independent validator event was injected into the same bound session by this reference packet. Agent declined treating it as the same event; EVENT_ALREADY_BOUND and mandatory source completion ended the second turn FAILED. No completed replay or full acceptance claim."
+      ],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-F03-F10-context-r45-v2/F-10/inputs/input.json.zst",
+        "sha256": "7c98cb8fcfdbe21e136da767e6b8d838d649e1089d5777b5babc9c9e2df6eeee"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-prepared/F-10/private/map.json",
+        "sha256": "c5c3c09053d100517122ccfff601a9169cbd97d4446e23175ee935fda4c410cd"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-F03-F10-context-r45-v2/F-10/sealed/outcomes.json",
+        "sha256": "c3650a7a713d3b3e241c43a06af6b83aefcecc347ba6d625c6c46ee1941d07dc"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-prepared/F-10/inputs/input.json.zst",
+            "sha256": "9f59685647f95b7257df6d5a38d3966293155b9f95ed9e539c37b80ad5d46038"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-10/private/map.json",
+            "sha256": "c5c3c09053d100517122ccfff601a9169cbd97d4446e23175ee935fda4c410cd"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-prepared/F-10/sealed/outcomes.json",
+            "sha256": "afc7b227c57fe70582c1dcb8a78bad3a50afad69fd0d4d2ee0f5bb9b42b12f0e"
+          },
+          "readiness": "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "A completed first native outcome satisfying all automated and required manual assertions."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-10/inputs/input.json.zst",
+            "sha256": "ba0fbe81c1d9da52ed7be3eb68b89aae65f6b922422e855b911d5e4850a87c96"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-10/private/map.json",
+            "sha256": "c5c3c09053d100517122ccfff601a9169cbd97d4446e23175ee935fda4c410cd"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-10/sealed/outcomes.json",
+            "sha256": "7beb6bf0618450c9d85b6c681c4cb445631eb8d77a7101db752dd9dfe5ed4e0d"
+          },
+          "readiness": "R37_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "Completed current-context native outcome with all sealed automated and manual clauses."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r38-code-prepared/F-10/inputs/input.json.zst",
+            "sha256": "a04a77325e24990382a699bda316af4146d26a99e257f50db7492f0d832b820c"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-10/private/map.json",
+            "sha256": "c5c3c09053d100517122ccfff601a9169cbd97d4446e23175ee935fda4c410cd"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r38-code-prepared/F-10/sealed/outcomes.json",
+            "sha256": "de1d8e8c79c5291343a8558a752b685bdbfbdd525d7aff68619a5e85014edcd0"
+          },
+          "readiness": "EXECUTED_NATIVE_FAILED_MISSING_CAPTURE",
+          "missing": [
+            "Actual required web_search capture absent; source extraction did not complete. No completed output or semantic assertion pass claimed."
+          ],
+          "superseded_reason": "One r45 run after explicit missing-evidence continuation fix; original evidence and expectations retained. New outcome remains unsuccessful."
+        }
+      ],
+      "execution_attempts": [
+        {
+          "path": "docs/verification/masked-f10-r45-candidate-2026-10-19/F-10/result.json",
+          "sha256": "198f5fa16aab859045738f1661b6c0c5ef9a7d4551ef4a678bbfc2b264a50d5b"
+        }
+      ]
+    },
+    {
+      "fixture_id": "F-11",
+      "case_description": "WLD — Market Truth validation case (Addendum 002-B)",
+      "cutoff_spec": "16 Oct 2026 12:30 UTC",
+      "assertion_spec": "1h and 4h spot direction SELL; capital-weighted breadth on the sell side, Kraken shown as a small (~2.5%) buying venue; 4h native OI +8.18% → REAL_NATIVE with the markup component reported; divergence PERP_LED_MARKUP with ABSORPTION_CANDIDATE unresolved; venues with incomplete data in the window (in the Addendum case: Bybit spot current-day history) listed as excluded with reasons; action ∈ {DONT_CHASE, WAIT}.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "MARKET_COMPONENT_INPUTS_OR_INVENTORY_ONLY",
+          "path": "data/replay/components/F-11.json",
+          "sha256": "c68af1ea5c1f93b52615a75ede08dc0c8e0dcd7df7b4b47f9236c541c27d6baf",
+          "full_fixture_claimed": false
+        },
+        {
+          "kind": "HOST_ONLY_F11_RAW_FORMULA_SCOPE_AUDIT",
+          "path": "docs/verification/bybit-oi-f11-audit-2026-10-19/report.json",
+          "sha256": "05cd60c99a9924e59b1f5b38551c72bb83f831f020ada4636c0cdf3e6383b4d8",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "UNCLEARED_FULL_FIXTURE_DISCREPANCY"
+        },
+        {
+          "kind": "HOST_ONLY_MARKET_FORMULA_COMPONENT",
+          "path": "data/replay/components/F-11.json",
+          "sha256": "c68af1ea5c1f93b52615a75ede08dc0c8e0dcd7df7b4b47f9236c541c27d6baf",
+          "status": "COMPONENT_ONLY_NOT_FULL_ANALYST_FIXTURE",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false
+        }
+      ],
+      "readiness": "MARKET_PACKET_READY_FORMULA_COMPLETED_LITERAL_REVIEW_PENDING",
+      "missing": [
+        "No final combined stronger-component snapshot exists. Full24h crossvenue baseline/reference-ranking, missing Bybit spot, historical USD/mark alignment, and books/liquidations remain absent.",
+        "Actual captured four-venue 4hCVD +186034.8441 yields NEUTRAL; full registered cohort INSUFFICIENT_DATA. Literal SELL is not established; do not modify normative formula or fit data."
+      ],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/inputs/input.json.zst",
+        "sha256": "ecf32b75a0cdd25e4a6b3b851094397e4b22ad391e9290d711854aec4ad88e7d"
+      },
+      "private_name_map": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/private/map.json",
+        "sha256": "7c19f17b5b6f82f772934b26ec9872e102e953a2e87c14ca17cbeda816f1a711"
+      },
+      "sealed_outcomes": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/sealed/outcomes.json",
+        "sha256": "0f9b112ca2a36ab8ad0b1adb2809c2e8449a139d60ddfb406ab5b3e5923f47e0"
+      },
+      "acceptance_run": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-run-f11-baseline-v3/F-11/run.json",
+        "sha256": "ec07671c78c376c227509c3cfa00539524ac03b5e3433c4052e9b06fdb4ab1b0"
+      },
+      "candidate_canonical_adoption": false
+    },
+    {
+      "fixture_id": "F-12",
+      "case_description": "QNT — Binance perp, 26 Sep 2026 19:00–23:00 UTC: native OI +0.42%, USD OI +19.98%, price +23.43%",
+      "cutoff_spec": "26 Sep 2026 23:00",
+      "assertion_spec": "`oi_class` PRICE_MARKUP on Binance; flag PRICE_MARKUP_OI; the card never speaks of new positions or leverage (L2).",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "MARKET_COMPONENT_INPUTS_OR_INVENTORY_ONLY",
+          "path": "data/replay/components/F-12.json",
+          "sha256": "eeee76a61c034fe0c06d73dc24dc0e538ad4f350c67fc834790fb1d3833697b3",
+          "full_fixture_claimed": false
+        },
+        {
+          "kind": "HOST_ONLY_MARKET_FORMULA_COMPONENT",
+          "path": "data/replay/components/F-12.json",
+          "sha256": "eeee76a61c034fe0c06d73dc24dc0e538ad4f350c67fc834790fb1d3833697b3",
+          "status": "COMPONENT_ONLY_NOT_FULL_ANALYST_FIXTURE",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false
+        }
+      ],
+      "readiness": "MARKET_PACKET_READY_FORMULA_COMPLETED_LITERAL_REVIEW_PENDING",
+      "missing": [
+        "Full historical spot/crossvenue flow needed for composite PRICE_MARKUP_OI is absent; native OI PRICE_MARKUP subset retained."
+      ],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-12/inputs/input.json.zst",
+        "sha256": "dfae5ff60138ceded26f3809b1e61ef79d7335951150919f6d6772e740bb5dee"
+      },
+      "private_name_map": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-12/private/map.json",
+        "sha256": "ac99d42477a6cf8b1e0361ed244daf49eeb57e5c9222b3f36b6c12a9467175b5"
+      },
+      "sealed_outcomes": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-12/sealed/outcomes.json",
+        "sha256": "39d63627781a5ad177cc40d3afb897c05d1e1f10aa8045b63e3da620681b2951"
+      },
+      "acceptance_run": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-run-v2/F-12/run.json",
+        "sha256": "a6b3c323e840cb2a492f905c40ecbfa0dd335054accf298e533e177f3cf73e78"
+      },
+      "candidate_canonical_adoption": false
+    },
+    {
+      "fixture_id": "F-13",
+      "case_description": "ONDO — 24 Sep 2026 12:00–16:00 UTC: Binance native OI +57.32%, USD OI +88.53%, price +13.56%, Binance spot taker-buy share 48.3%",
+      "cutoff_spec": "24 Sep 2026 16:00",
+      "assertion_spec": "`oi_class` REAL_NATIVE; move class PERP_LED_CHASE (directly or through the divergence discriminator), never SPOT_LED_ACCUMULATION; action ∈ {DONT_CHASE, WAIT}.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "MARKET_COMPONENT_INPUTS_OR_INVENTORY_ONLY",
+          "path": "data/replay/components/F-13.json",
+          "sha256": "199ea4ce8069f06f11d5d68dbba418802b3bb1dfaf9b84385a3a0507575252b6",
+          "full_fixture_claimed": false
+        },
+        {
+          "kind": "HOST_ONLY_MARKET_FORMULA_COMPONENT",
+          "path": "data/replay/components/F-13.json",
+          "sha256": "199ea4ce8069f06f11d5d68dbba418802b3bb1dfaf9b84385a3a0507575252b6",
+          "status": "COMPONENT_ONLY_NOT_FULL_ANALYST_FIXTURE",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false
+        }
+      ],
+      "readiness": "MARKET_PACKET_READY_FORMULA_COMPLETED_LITERAL_REVIEW_PENDING",
+      "missing": [
+        "Historical spot/cohort absent: REAL_NATIVE subset retained but PERP_LED_CHASE and stated48.3% buy share unproved."
+      ],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-13/inputs/input.json.zst",
+        "sha256": "37aeff12193d85f590d963a40f562acbf86905bcfb60d55d1a7257e6f298e929"
+      },
+      "private_name_map": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-13/private/map.json",
+        "sha256": "96dae1ff7514961ffe22824c7d27b34896b686a21907751449b64ccc3b939813"
+      },
+      "sealed_outcomes": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-13/sealed/outcomes.json",
+        "sha256": "6a89b08cdf99c93e079491d60c5593cc8218c06e4d5c21ea548d1b8df06c91b6"
+      },
+      "acceptance_run": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-run-v2/F-13/run.json",
+        "sha256": "ee136a50795bda8ca4ab15521488d759c216286691d90fa61ca764107cbb7292"
+      },
+      "candidate_canonical_adoption": false
+    },
+    {
+      "fixture_id": "F-14",
+      "case_description": "QNT — 27 Sep 2026 19:00–23:00 UTC: native OI −30.36%, price +54.09% between the closes of the 19:00 and 23:00 hourly bars (+50.78% in the 22:00 hour)",
+      "cutoff_spec": "27 Sep 2026 23:00",
+      "assertion_spec": "Native OI change reported as positions closing during the rise; move class ∈ {SHORT_SQUEEZE, LIQUIDITY_VACUUM, UNKNOWN}; direction TWO_SIDED or UNKNOWN; never SPOT_LED_ACCUMULATION.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "MARKET_COMPONENT_INPUTS_OR_INVENTORY_ONLY",
+          "path": "data/replay/components/F-14.json",
+          "sha256": "1045a45281d5212f51b2d8e31828e068921059ec4acd0ae97d16b6ba0ceef4ab",
+          "full_fixture_claimed": false
+        },
+        {
+          "kind": "HOST_ONLY_MARKET_FORMULA_COMPONENT",
+          "path": "data/replay/components/F-14.json",
+          "sha256": "1045a45281d5212f51b2d8e31828e068921059ec4acd0ae97d16b6ba0ceef4ab",
+          "status": "COMPONENT_ONLY_NOT_FULL_ANALYST_FIXTURE",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false
+        }
+      ],
+      "readiness": "MARKET_PACKET_READY_FORMULA_COMPLETED_LITERAL_REVIEW_PENDING",
+      "missing": [
+        "Historical spot/depth absent; native closing measured. Quoted hourly-close price uses another bound and must not replace strict cutoff."
+      ],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-14/inputs/input.json.zst",
+        "sha256": "80701e8e92294c65ebe1d0d217fbd2aab162b7175af4d45b3ad180b51e0f53fd"
+      },
+      "private_name_map": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-14/private/map.json",
+        "sha256": "11b818dfae99b2a10ba297d42b4e6dd77ca021dc4b532bd0051d48fd94004b54"
+      },
+      "sealed_outcomes": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-14/sealed/outcomes.json",
+        "sha256": "00a7b8dcb955ac89e67b399beb7583792e14b38b2858ac9fbe89af9810372a9d"
+      },
+      "acceptance_run": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-run-v2/F-14/run.json",
+        "sha256": "c4aa10e13d29c72a5d27136fa5d0274598cfd604b1b4083f125297c787ddb605"
+      },
+      "candidate_canonical_adoption": false
+    },
+    {
+      "fixture_id": "F-15",
+      "case_description": "EUL — Binance spot, 23 Sep 2026 06:00–07:00 UTC: volume 46.9 × the 7-day hourly median, taker-buy share 63.1%, price +0.27%",
+      "cutoff_spec": "23 Sep 2026 07:00",
+      "assertion_spec": "No order-book depth in the archive, so weak_response is n/a and SELL_SIDE_ABSORPTION cannot be chosen; move class UNKNOWN; never SPOT_LED_ACCUMULATION; the card never says \"accumulation\".",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "MARKET_COMPONENT_INPUTS_OR_INVENTORY_ONLY",
+          "path": "data/replay/components/F-15.json",
+          "sha256": "573d1b3678084ea6f809142dd29a593d76c45e3215221651afcba10d65738fe6",
+          "full_fixture_claimed": false
+        },
+        {
+          "kind": "HOST_ONLY_MARKET_FORMULA_COMPONENT",
+          "path": "data/replay/components/F-15.json",
+          "sha256": "573d1b3678084ea6f809142dd29a593d76c45e3215221651afcba10d65738fe6",
+          "status": "COMPONENT_ONLY_NOT_FULL_ANALYST_FIXTURE",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false
+        },
+        {
+          "kind": "HOST_ONLY_CURRENT_PRODUCER_COMPONENT_RECHECK",
+          "path": "docs/verification/f15-f16-current-components-2026-10-20/report.v2.json",
+          "sha256": "7c7fd3aad27f8f75fc270fd5284ac29272bc08d79e3459a1581669ab42f24785",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "CURRENT_COMPONENT_CHECKS_PASSED_NOT_FULL_NATIVE_ACCEPTANCE"
+        }
+      ],
+      "readiness": "MARKET_PACKET_READY_FORMULA_COMPLETED_LITERAL_REVIEW_PENDING",
+      "missing": [
+        "Current production reader, Market Truth and deterministic renderer checks now pass on retained data: missing books, unknown weak response, literal n/a, no absorption or accumulation. Actual analyst/native/publication proof remains absent; component result is not full acceptance."
+      ],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-15/inputs/input.json.zst",
+        "sha256": "ff8b888cfd5b8d5056ffda3be81b20d45b4ff045fbc51e0bf4b1b8ae6236b868"
+      },
+      "private_name_map": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-15/private/map.json",
+        "sha256": "a8c10f4cb8d5f262aee8c530d1d30b3a9d79e9ae465ff76355f117b4c038c581"
+      },
+      "sealed_outcomes": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-15/sealed/outcomes.json",
+        "sha256": "28b67ed3a95ba267c7484b3a888c19367e25615fb042927808cbef38f10abc8d"
+      },
+      "acceptance_run": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-run-v2/F-15/run.json",
+        "sha256": "2dfb6b0d83672e0233c71ef6f0c3c7542d58d3c37e73883370a2883c83f6957a"
+      },
+      "candidate_canonical_adoption": false
+    },
+    {
+      "fixture_id": "F-16",
+      "case_description": "15 Sep 2026 UTC day: BTC −3.25% (worst BTC day between 4 Sep and 16 Oct 2026)",
+      "cutoff_spec": "15 Sep 2026 23:59",
+      "assertion_spec": "Market context STRESS: the day's −3.25% is below BTC's 24h normal range (lower edge −3.01% over the 90 days before); Trade Grade one notch lower for non-STRUCTURAL events; a non-STRUCTURAL beneficiary is never BULLISH; no veto of any action.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "MARKET_COMPONENT_INPUTS_OR_INVENTORY_ONLY",
+          "path": "data/replay/components/F-16.json",
+          "sha256": "ddf8cb130ed169c5145b06dde96a494fea17f6d0cfca3f00dc17a0a74f6f2db8",
+          "full_fixture_claimed": false
+        },
+        {
+          "kind": "HOST_ONLY_MARKET_FORMULA_COMPONENT",
+          "path": "data/replay/components/F-16.json",
+          "sha256": "ddf8cb130ed169c5145b06dde96a494fea17f6d0cfca3f00dc17a0a74f6f2db8",
+          "status": "COMPONENT_ONLY_NOT_FULL_ANALYST_FIXTURE",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false
+        },
+        {
+          "kind": "HOST_ONLY_CURRENT_PRODUCER_COMPONENT_RECHECK",
+          "path": "docs/verification/f15-f16-current-components-2026-10-20/report.v2.json",
+          "sha256": "7c7fd3aad27f8f75fc270fd5284ac29272bc08d79e3459a1581669ab42f24785",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "CURRENT_COMPONENT_CHECKS_PASSED_NOT_FULL_NATIVE_ACCEPTANCE"
+        }
+      ],
+      "readiness": "MARKET_PACKET_READY_FORMULA_COMPLETED_LITERAL_REVIEW_PENDING",
+      "missing": [
+        "Authentic retained Market Truth computes STRESS. Current actual-data LOW/D-floor and controlled-existing-call REDUCE checks pass; separate existing-synthetic-premise controls verify nonSTRUCTURAL non-BULLISH bias and no automatic action veto. Actual historical A/B/C-to-next-notch, credible economic beneficiary and STRUCTURAL resilience remain unproven without those premises. No fabricated catalyst or full acceptance claim."
+      ],
+      "known_conflict": null,
+      "expectation_status": "CURRENT_SPEC_ALIGNED",
+      "acceptance_input": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-16/inputs/input.json.zst",
+        "sha256": "b09fc2dc51dd85544a70a27963fd022e180c96d9e5c9a18fb7b2a959d0f992af"
+      },
+      "private_name_map": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-16/private/map.json",
+        "sha256": "985bbd9a884aaee28c8e9f20b0fd2a93a336af3c03a8ba63bb3e8be88430005d"
+      },
+      "sealed_outcomes": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-16/sealed/outcomes.json",
+        "sha256": "ec327ed1a8c464f8c0ba26a0107f59db5756cff39686c671e9ce834cedeb009e"
+      },
+      "acceptance_run": {
+        "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-run-v2/F-16/run.json",
+        "sha256": "cdda7ce1b757f2e0137227d9c81ab583c8caaf4b7d085c8d593a0d756b981352"
+      },
+      "candidate_canonical_adoption": false
+    },
+    {
+      "fixture_id": "F-17",
+      "case_description": "Snapshot `aavedao.eth`: \"[ARFC] Onboard USAT to Aave V3 Core Instance and Aave V4 Core Hub on Ethereum\", voting 15 Oct 2026 17:52 → 18 Oct 2026 17:52 UTC",
+      "cutoff_spec": "15 Oct 2026 18:00",
+      "assertion_spec": "State PROPOSED; class MATERIAL (a proposal); no card; milestone check scheduled for 18 Oct 2026 17:52 UTC.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-17.json",
+          "sha256": "38845f5d6e55315e1e8b9a6a03cb5a177b581dc3ce7811f08879f273eb0c7d1b",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-17.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-17.json",
+          "sha256": "52540f5904e8e36f0161709ce70af87e12bc6a2f5f89784cc9aa280ebb5a7bfb",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        }
+      ],
+      "readiness": "R37_NATIVE_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r37-context-prepared/F-17/inputs/input.json.zst",
+        "sha256": "fcddaec56e7bef12c3cf10a2afa61d10d8c851f78fdabf8bd338b71618a4a71f"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-prepared/F-17-vote-metadata-v6/private/map.json",
+        "sha256": "bcb33faf2770d8d3e7014f9f7acd57d12b0f7fb6d41e1b18ac0f6c7c03648dc1"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r37-context-prepared/F-17/sealed/outcomes.json",
+        "sha256": "0cc1bd06af4551238228a419f7c8428e2345492976f3ad355a8326a7e3f51562"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-prepared/F-17-canonical-private-v4/inputs/input.json.zst",
+            "sha256": "4bca94e8f368ca8e08c422cb01bdef32e77b30568a5338c8ad4752d362f655de"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-17-canonical-private-v4/private/map.json",
+            "sha256": "dd85691fc0e96680e07d954b1e0aa32732141f7ddbeb7f7a6aea4cf1107ec4e1"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-prepared/F-17-canonical-private-v4/sealed/outcomes.json",
+            "sha256": "ad46dd8a82418f41248ccf910c1c63446b38f797774fbd6525d3dca662c99354"
+          },
+          "acceptance_run": {
+            "path": "docs/verification/masked-f17-r36-v4-2026-10-19/F-17/acceptance-run-with-manual.json",
+            "sha256": "5084fa5cbec5e589c5de7fdfca881f62854f079cc50fe63f68dd19c9cf934079"
+          },
+          "readiness": "EXECUTED_INPUT_METADATA_DEFECT",
+          "missing": [
+            "Source packet omitted authentic Snapshot vote-end metadata; first outcome retained, corrected generation in preparation."
+          ]
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f17-r37-2026-10-19/F-17/acceptance-run-with-manual.json",
+        "sha256": "5097cabed5ab51413f02a0daa6724dd005593f393098d58fa5ce90bcbc780ed6"
+      }
+    },
+    {
+      "fixture_id": "F-18",
+      "case_description": "Federal Register 2026-20888 (CFTC), Proposed Rule \"Regulation Crypto Asset Transactions and Regulation Crypto Asset Markets\", published 13 Oct 2026",
+      "cutoff_spec": "13 Oct 2026",
+      "assertion_spec": "State PROPOSED; never STRUCTURAL_SHOCK; the card never says \"approved\" or \"in force\" (L3).",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-18.json",
+          "sha256": "38e38ac5ff0f47cba145f013475bb041742b95142445eea661e4f6723c2009b0",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-18.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-18.json",
+          "sha256": "9f3d55d13b138f5afe91157c02abfd7a9c41c962be83bbd02d4f62db46a9b72c",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_FAILED_RUN",
+          "path": "docs/verification/masked-f18-r38-2026-10-19/F-18/result.json",
+          "sha256": "6175f23b41fd05a0cd043a37e7f1f0addc2fe5b186909a9b81ce0a4926be09d7",
+          "full_fixture_passed": false,
+          "status": "R38_NORMAL_480S_DEADLINE_EXPIRED"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f18-r40-2026-10-19/F-18/result.json",
+          "sha256": "e66b19e1ca893e7daae6839e43f441b1b2bd201dbcddd7e3d73f68b0177b9b21",
+          "full_fixture_passed": true,
+          "historical_acceptance_claimed": false,
+          "status": "R40_SEALED_ACCEPTANCE_PASS"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-s03-api-r40-candidate-v3/F-18/inputs/input.r40.json.zst",
+        "sha256": "d15bc237717224e0bc351bf0e137cee6f4e8401f04eff817bb2429f72ac65f40"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-s03-api-r40-candidate-v3/F-18/private/map.json",
+        "sha256": "27a0083465a4bea14def979cc9308d3184dcf1a0721d13017d746306017a3cce"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-s03-api-r40-candidate-v3/F-18/sealed/outcomes.r40.json",
+        "sha256": "76921a7b2e637bd1555774be4506121ff285fb272ef5e2c7a8e49d36d14ded14"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-prepared/F-18/inputs/input.json.zst",
+            "sha256": "c177e60f6abf253fc8c5e6299cf3e3abf376ce160025df77a1304c072fa2118b"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-18/private/map.json",
+            "sha256": "d8c231776d622243718959c0ce1aee24a2e412901cea2a29290047ff7bee2ffb"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-prepared/F-18/sealed/outcomes.json",
+            "sha256": "226c06245c5761327ffdddd92c911a3d4ab5821a087a79b13a4205a973a5ca22"
+          },
+          "readiness": "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "A completed first native outcome satisfying all automated and required manual assertions."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-18/inputs/input.json.zst",
+            "sha256": "d6c219ea89ad88c50dbef5acca00e4d40e930a158ce95f83ed5e18ef60ae88cb"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-18/private/map.json",
+            "sha256": "d8c231776d622243718959c0ce1aee24a2e412901cea2a29290047ff7bee2ffb"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-18/sealed/outcomes.json",
+            "sha256": "4100289d98757020b3f952a2d2df2b47f3086ef3233e94d0f2f3510c65dac0f7"
+          },
+          "readiness": "R37_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "Completed current-context native outcome with all sealed automated and manual clauses."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r38-code-prepared/F-18/inputs/input.json.zst",
+            "sha256": "0ea9732320c5255f0dc7e61b19941e2ecfa0b1b51f78af6d698a5a83a216d398"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-18/private/map.json",
+            "sha256": "d8c231776d622243718959c0ce1aee24a2e412901cea2a29290047ff7bee2ffb"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r38-code-prepared/F-18/sealed/outcomes.json",
+            "sha256": "4917dcd7b3e0cd1022e5ede6f5bacdbd2c5f0647725bc161bbea57a7d67f1a07"
+          },
+          "readiness": "EXECUTED_NATIVE_DEADLINE_FAILED",
+          "missing": [
+            "Actual replay completion deadline expired after repeated source reads; extraction remained PENDING, no completed output/semantic acceptance. Source envelope fidelity under separate review."
+          ],
+          "superseded_reason": "Approved input-shape repair reproducing actual S03 API abstract parser; original r38 full-rule deadline failure retained."
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f18-r40-2026-10-19/F-18/acceptance-run-with-manual.json",
+        "sha256": "6172db96df04be7e0fa284950338d59cbbddb7a04511e63891ea59f8c57f6090"
+      }
+    },
+    {
+      "fixture_id": "F-19",
+      "case_description": "Federal Register 2026-20466 (SEC), Proposed Rule \"Adviser and Regulated Fund Custody Rules; Crypto Custody Rules\", published 6 Oct 2026",
+      "cutoff_spec": "6 Oct 2026",
+      "assertion_spec": "State PROPOSED; custody/compliance layer named if MAJOR; never STRUCTURAL_SHOCK.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-19.json",
+          "sha256": "3f9dff5b9aeb8097b40e247820d2c41ff6a1e1039f81dffb978788b286fd6acf",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-19.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-19.json",
+          "sha256": "fa980bd82aee437e1a103136a8caf2e82d1ae8264b8cc487d039f60acf071691",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f19-r40-2026-10-19/F-19/result.json",
+          "sha256": "c7be69006b4d490a4a2c72e99fac55caf3dde8e6e1c3da57b85b3aeb1f2ec5b8",
+          "full_fixture_passed": true,
+          "historical_acceptance_claimed": false,
+          "status": "R40_SEALED_ACCEPTANCE_PASS"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-s03-api-r40-candidate-v3/F-19/inputs/input.r40.json.zst",
+        "sha256": "5d24e92ec552aff86b8c46e402b3bc00a4b6118cd88f42f2c8c9976455d93b46"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-s03-api-r40-candidate-v3/F-19/private/map.json",
+        "sha256": "ada45a250cf2c7b5cb29bd80be3302f5298cfd25020879101f21cadb1410cd67"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-s03-api-r40-candidate-v3/F-19/sealed/outcomes.r40.json",
+        "sha256": "a311497ec9b6c0f67c8cfb722b4d7ffcddc5fadfad6edc3668587ada828d24a1"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-prepared/F-19/inputs/input.json.zst",
+            "sha256": "656aa480d3b91e37da3f1512c4ec7f790906093d5325dedf0b8e97b22df7ee3a"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-19/private/map.json",
+            "sha256": "a12895c5ec39e7a7089d4001103522fa611d383cbc7a2587bbfe00b14e808b89"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-prepared/F-19/sealed/outcomes.json",
+            "sha256": "df94872dc2ffe08e7d1160497ddc24fb99b5e3c228eb9f23f824742c957ad61c"
+          },
+          "readiness": "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "A completed first native outcome satisfying all automated and required manual assertions."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-19/inputs/input.json.zst",
+            "sha256": "7ac8f14f071dab92df89294d2c3a072ab46670bd29a00eda7a8fa7d94fa663c7"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-19/private/map.json",
+            "sha256": "a12895c5ec39e7a7089d4001103522fa611d383cbc7a2587bbfe00b14e808b89"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-19/sealed/outcomes.json",
+            "sha256": "212cd1af053ca0bdd0dfe7a3634d4de07211b52ea829fb7cf8694a8cfe6743bc"
+          },
+          "readiness": "R37_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "Completed current-context native outcome with all sealed automated and manual clauses."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r38-code-prepared/F-19/inputs/input.json.zst",
+            "sha256": "63e544f3893de9b9818e6679150813d6f23117e851c3c25f49967b2328e0f050"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-19/private/map.json",
+            "sha256": "a12895c5ec39e7a7089d4001103522fa611d383cbc7a2587bbfe00b14e808b89"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r38-code-prepared/F-19/sealed/outcomes.json",
+            "sha256": "e79b8be24b58540369ee644bf61c9968d720d96b7b77a40400faecb1b059e22e"
+          },
+          "readiness": "R38_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "Completed native outcome with all sealed automated and manual clauses."
+          ],
+          "superseded_reason": "Approved input-shape repair reproducing actual normal S03 API abstract parser; prior prepared full-rule generation preserved."
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f19-r40-2026-10-19/F-19/acceptance-run-with-manual.json",
+        "sha256": "7ab46814eee2f8dd3338467cfff284544aaaa45f4d7f523bc9706f0d76de14e7"
+      }
+    },
+    {
+      "fixture_id": "F-20",
+      "case_description": "Federal Register 2026-20371 (FinCEN), Proposed Rule \"Proposal of Special Measure Prohibiting the Transmittal of Funds Regarding Transactions Involving the A7 Network's Sub-Agents\", published 5 Oct 2026",
+      "cutoff_spec": "5 Oct 2026",
+      "assertion_spec": "State PROPOSED; class LOW (no universe token concerned); no card.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-20.json",
+          "sha256": "6863d353708518e33d2e0e29b7cbebc64238e90aca84ed829d9b7f53354ecbff",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-20.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-20.json",
+          "sha256": "79f9afb32214b6072c66fea589e53f9b63c22d091341fb025d95943d5ff6b17c",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f20-r40-2026-10-19/F-20/result.json",
+          "sha256": "044c2d9852e16265b49fb32b30bd6888fbfd5ffbeb0e12ab690e469c7c6b4ef4",
+          "full_fixture_passed": true,
+          "historical_acceptance_claimed": false,
+          "status": "R40_SEALED_ACCEPTANCE_PASS"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-s03-api-r40-candidate-v3/F-20/inputs/input.r40.json.zst",
+        "sha256": "a71a4b31ea852381125da9db14f1b16eb524ccf47cfd558b04ddb3d6a6f67436"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-s03-api-r40-candidate-v3/F-20/private/map.json",
+        "sha256": "fd2065decf291d6658db667d4c5217680ed27109aecd7c75a46f21a01aebffc2"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-s03-api-r40-candidate-v3/F-20/sealed/outcomes.r40.json",
+        "sha256": "dbc182fd99236c50dabbaacfc9927654d0f58a8bb58ced139480c83ba9cf9511"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-prepared/F-20/inputs/input.json.zst",
+            "sha256": "5976aac99896a424e27b14193f4c2cb1037f727408cec8ac949c3855662dd3c3"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-20/private/map.json",
+            "sha256": "07a35501322f4f871b4e8e5689811eea8bcaa91350f2fbc4c9c2b1ccae5e3cd7"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-prepared/F-20/sealed/outcomes.json",
+            "sha256": "6602399be9d196c9a2aaa8568621cbbb381c26ee94c9b419096b96fcdfe42991"
+          },
+          "readiness": "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "A completed first native outcome satisfying all automated and required manual assertions."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-20/inputs/input.json.zst",
+            "sha256": "b09d8994ab13b8beebe41071a9b00c52d158b3ddf82f2070cf7af47af364f81a"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-20/private/map.json",
+            "sha256": "07a35501322f4f871b4e8e5689811eea8bcaa91350f2fbc4c9c2b1ccae5e3cd7"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-20/sealed/outcomes.json",
+            "sha256": "ac8795b6bc80745b4708655efe19e5e24065a8f76c3a296b3b3fd1edf667fc60"
+          },
+          "readiness": "R37_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "Completed current-context native outcome with all sealed automated and manual clauses."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r38-code-prepared/F-20/inputs/input.json.zst",
+            "sha256": "e82aff26cd8bab6607c6ce2ebb0e19e0feff3ab7ec08ad141bc51fbc7db16f20"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-20/private/map.json",
+            "sha256": "07a35501322f4f871b4e8e5689811eea8bcaa91350f2fbc4c9c2b1ccae5e3cd7"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r38-code-prepared/F-20/sealed/outcomes.json",
+            "sha256": "607c40c457abd5ab4b36e73c22317cf3be247bf36ad062f6bb6a5e4360ca329b"
+          },
+          "readiness": "R38_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "Completed native outcome with all sealed automated and manual clauses."
+          ],
+          "superseded_reason": "Approved input-shape repair reproducing actual normal S03 API abstract parser; prior prepared full-rule generation retained."
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f20-r40-2026-10-19/F-20/acceptance-run.json",
+        "sha256": "120fce6e0adfffc5d92e668ce8f92e2ab46afdb2cd644f1a2afac21574683196"
+      }
+    },
+    {
+      "fixture_id": "F-21",
+      "case_description": "Bybit (S11): \"New listing: Listing of DNAUSDT on Bybit Perpetual on Oct 16, 2026, 11:45AM UTC\"",
+      "cutoff_spec": "16 Oct 2026 11:45",
+      "assertion_spec": "Token outside the universe; class LOW; no card.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-21.json",
+          "sha256": "9e93ec534c26782b6f578eedd918616f58401ad3d34877cd9efc25a008ede57e",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-21.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-21.json",
+          "sha256": "99f95f785491302b1581ea9f17e395870cfba767fd9a5427a2e255a481bb99f8",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_ACTUAL_FRESH_SESSION_REFERENCE_RESULT",
+          "path": "docs/verification/f21-cli-r23-2026-10-19/independent-result.json",
+          "sha256": "5f9b616ecfada57384cbeae00267db26f5c5ee101ef1ac26f9b400d03ace7441",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "OLDER_R23_LOW_NO_CARD_SCOPED_EXECUTION"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f21-r38-2026-10-19/F-21/result.json",
+          "sha256": "a2d3dfa4bbe6a6cfc9d36f14495cfe85498bbdbcdd1ea2a2257d4003b4aa872e",
+          "full_fixture_passed": true,
+          "historical_acceptance_claimed": false,
+          "status": "R38_SEALED_ACCEPTANCE_PASS"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-21/inputs/input.json.zst",
+        "sha256": "f7822e2bbef92b19f455d9e0992d4e49231ce430fd09b5c3eefd4043e6a4952e"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-prepared/F-21-protocol-v5/private/map.json",
+        "sha256": "584058688c73f1a7cbb6e3525e4c29534db02b40b2a49500be04cebc7eb8b3d2"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-21/sealed/outcomes.json",
+        "sha256": "3500625e239fec745485b11e0de6ae527184b0da071e0d05d7ea4de490ec6568"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-prepared/F-21-protocol-v5/inputs/input.json.zst",
+            "sha256": "76ee73812b2ea3aeb0e542e2d4ae24c5745611d9cbce210fcde5eb83662813ca"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-21-protocol-v5/private/map.json",
+            "sha256": "584058688c73f1a7cbb6e3525e4c29534db02b40b2a49500be04cebc7eb8b3d2"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-prepared/F-21-protocol-v5/sealed/outcomes.json",
+            "sha256": "1ed94cf6c60f55b475a35ff75e6ccfed4606873e8b2ba907e22cb3412d879503"
+          },
+          "readiness": "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "A completed first native outcome satisfying all automated and required manual assertions."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-21/inputs/input.json.zst",
+            "sha256": "d0fb09278d2456a3363c3e820872dc552e55b83bc967e41ab58ed93352317991"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-21-protocol-v5/private/map.json",
+            "sha256": "584058688c73f1a7cbb6e3525e4c29534db02b40b2a49500be04cebc7eb8b3d2"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-21/sealed/outcomes.json",
+            "sha256": "fba173e98a0a909608b941832910a2053928f8a7b953219e680e01246ba8873a"
+          },
+          "readiness": "R37_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "Completed current-context native outcome with all sealed automated and manual clauses."
+          ]
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f21-r38-2026-10-19/F-21/acceptance-run-with-manual.json",
+        "sha256": "f26aa001b6969be3f47b5a10bbcb3e2faf3fad6c4ee1a6b3955e740ffbe07bf2"
+      }
+    },
+    {
+      "fixture_id": "F-22",
+      "case_description": "Binance (S09, catalog 48): \"Binance Will Add 4 bStocks Tokenized Securities as Collateral Asset - 2026-10-14\", released 14 Oct 2026 03:30 UTC",
+      "cutoff_spec": "14 Oct 2026 03:30",
+      "assertion_spec": "State APPROVED (announced, effective later); never LIVE before the effective time stated in the article.",
+      "synthetic": false,
+      "capture_references": [
+        {
+          "kind": "HOST_ONLY_UNRESOLVED_EVIDENCE_INVENTORY",
+          "path": "tests/fixtures/components/2026-10-19/F-22.components.json",
+          "sha256": "33ca3a4115e08d5ef53cbf02ba64b907a86795a3375b92d17d6e531127f03b5b",
+          "source_capture_complete": false,
+          "agent_input_eligible": false
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-22.json",
+          "sha256": "0a0beddc764a06ace06d51b66d4f3da5a71e108751f66b654969d03efac9cfc3",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_UNIFORM_MINUTE_REFERENCE_PROVENANCE",
+          "path": "docs/verification/f22-minute-end-candidate-2026-10-19/report.json",
+          "sha256": "7c3930d4f1b558482d22176fbb5495c3a5771427a6d82a3461ec04fee637062f",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_UNIFORM_POLICY_NOT_RUN"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f22-r38-2026-10-19/F-22/result.json",
+          "sha256": "f466522bfae6a957013ea18ad903bcc5b8bcc04a4d0dc58016bbb3bacd5b2c95",
+          "full_fixture_passed": true,
+          "historical_acceptance_claimed": false,
+          "status": "R38_SEALED_ACCEPTANCE_PASS"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-22/inputs/input.json.zst",
+        "sha256": "6e513a236d8cba49e6f8dbbb033dfaa1efd493f1f31f0958276b29b545bd2933"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-prepared/F-22-protocol-v5/private/map.json",
+        "sha256": "da6a3c4ab3c608dddeb242fdeb5264962a21189264131feea3349a5e230d976c"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-22/sealed/outcomes.json",
+        "sha256": "3181870ec33d78cf23888fbf6ba3da5f541064cb9aa201499b8cdc0fa3ec44a9"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-prepared/F-22-protocol-v5/inputs/input.json.zst",
+            "sha256": "bf246186f691f5795d004f7edd1ae15410ba0f37d6a435c8d69c6129eb83761d"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-22-protocol-v5/private/map.json",
+            "sha256": "da6a3c4ab3c608dddeb242fdeb5264962a21189264131feea3349a5e230d976c"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-prepared/F-22-protocol-v5/sealed/outcomes.json",
+            "sha256": "794ab39c355282335450f06653cb60afdc29f0da70f97910cb18c90de3b3db9b"
+          },
+          "readiness": "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "A completed first native outcome satisfying all automated and required manual assertions."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-22/inputs/input.json.zst",
+            "sha256": "35f46d3144f9a65a51febad969262db0c6b9998f207af37ccad34a9374f8b17a"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-22-protocol-v5/private/map.json",
+            "sha256": "da6a3c4ab3c608dddeb242fdeb5264962a21189264131feea3349a5e230d976c"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-22/sealed/outcomes.json",
+            "sha256": "fc61edb085c7aeec7cf8599968f9055e1a9ac2d58e15ebb7c1f87508bac8a395"
+          },
+          "readiness": "R37_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "Completed current-context native outcome with all sealed automated and manual clauses."
+          ]
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f22-r38-2026-10-19/F-22/acceptance-run-with-manual.json",
+        "sha256": "86f0fed76464102b0e1c39d828390f76cc30586cadaee629d2cedfc3b559caf2"
+      }
+    },
+    {
+      "fixture_id": "F-23",
+      "case_description": "Constructed from S27: the TCH release of F-08, then the same fact as a news item 72 h later with no new claim",
+      "cutoff_spec": "27 Sep 2026",
+      "assertion_spec": "Second item linked to the F-08 event as CORROBORATION; `known_to_us_at` unchanged; no new card.",
+      "synthetic": true,
+      "capture_references": [
+        {
+          "kind": "PARTIAL_SAME_ITEM_REDELIVERY_ONLY",
+          "path": "data/replay/partial/F-23-same-item-redelivery.json",
+          "sha256": "3a3b838c2daba92b92766e4e9b6c737c7506836b8e0765681c0f19e496f0c1e2",
+          "full_fixture_claimed": false,
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/partial/F-23-same-item-redelivery.json",
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json",
+          "historical_acceptance_claimed": false
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-23.json",
+          "sha256": "db3767766b80e07547d3d9ef4e2fca5f8d170226ccc06382fde0e6f2ce23c312",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_DECLARED_CONSTRUCTED_SECOND_ITEM_PROVENANCE",
+          "path": "docs/verification/f23-constructed-second-item-2026-10-19/report.json",
+          "sha256": "d29ca2cd0197349563a3607849e7aeab688b871a56902526252959a5fb415f3c",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "CONSTRUCTED_SOURCE_PREPARED_NOT_RUN"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f23-r38-2026-10-19/F-23/result.json",
+          "sha256": "f128d5c29561eade428e5270b7a7c7ab190b05d50f67c4253b3259c5add088d2",
+          "full_fixture_passed": true,
+          "historical_acceptance_claimed": false,
+          "status": "R38_SEALED_ACCEPTANCE_PASS"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-23/inputs/input.json.zst",
+        "sha256": "537bb65d8808fcc33757ba662be15a8a85f201f91b738145859e825bc80d93f3"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-prepared/F-23/private/map.json",
+        "sha256": "b2bb3b77c81e8f468f62b91bdffd35b18ef5be41d4dcb27967229a2bc25b995f"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-23/sealed/outcomes.json",
+        "sha256": "ce1fd1fa448bbd39fb539f16ae768d02ac305ca1a221ee37e9e37bea26f4531e"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-prepared/F-23/inputs/input.json.zst",
+            "sha256": "5d86fb8c2c898c3065061aec6e3bd4493f417880e7c18e97279423755f20b000"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-23/private/map.json",
+            "sha256": "b2bb3b77c81e8f468f62b91bdffd35b18ef5be41d4dcb27967229a2bc25b995f"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-prepared/F-23/sealed/outcomes.json",
+            "sha256": "999824adc45f7833413aa7844820d3d9fee9621941ff595bf618ca8e596ca772"
+          },
+          "readiness": "MASKED_INPUT_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "A completed first native outcome satisfying all automated and required manual assertions."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-23/inputs/input.json.zst",
+            "sha256": "498fdba616c74f6001b9087fc3572a4a5999f7bfe45b58d90f634bab47118013"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-23/private/map.json",
+            "sha256": "b2bb3b77c81e8f468f62b91bdffd35b18ef5be41d4dcb27967229a2bc25b995f"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-23/sealed/outcomes.json",
+            "sha256": "21d2bbb3e017d15d4e3d9aa449413867a18458d6c77e723b1e0aa76b86b409b8"
+          },
+          "readiness": "R37_PREPARED_NATIVE_ACCEPTANCE_PENDING",
+          "missing": [
+            "Completed current-context native outcome with all sealed automated and manual clauses."
+          ]
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f23-r38-2026-10-19/F-23/acceptance-run-with-manual.json",
+        "sha256": "a5dab339b173f86a43d5cd0372626f8f4ddcaa22d31714dd95278b23d3b6094c"
+      }
+    },
+    {
+      "fixture_id": "F-24",
+      "case_description": "Synthetic: an S29 post by @tier10k, \"Robinhood to list LIT\"; S13 has no announcement",
+      "cutoff_spec": "post + 1 min",
+      "assertion_spec": "Class MAJOR (M1); certainty MEDIUM; one immediate check of S13 finds nothing; the analysis continues without waiting; the card carries NOT VERIFIED: \"no Robinhood announcement\"; a later S13 announcement raises certainty to HIGH and sends a threaded update.",
+      "synthetic": true,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-24.json",
+          "sha256": "77ffb88998ba5bf81997740407162a989f75073fe2ed606ad6100f409e1ddcca",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-24.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-24.json",
+          "sha256": "4ce1e973471634c2faf0f65610157bb89159c25a1fab50b19fc6de5e45a0fa92",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_PHASED_SYNTHETIC_REFERENCE_PROVENANCE",
+          "path": "docs/verification/reference-phases-implementation-2026-10-19/candidate-preparation.json",
+          "sha256": "055f5d09897f534aeacebfc8691dc92409de84920ad30e6a2705071917ada399",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "TWO_PHASE_INPUT_PREPARED_NATIVE_NOT_RUN"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_FAILED_RUN",
+          "path": "docs/verification/masked-f24-r42-candidate-2026-10-19/F-24/result.json",
+          "sha256": "bdd487b0597a08e142012400b810221eb3f62a38369e31b8ad6fd7ada3498010",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "R42_MISSING_RECORDED_SEARCH_RESPONSE"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f24-r45-candidate-2026-10-19/F-24/result.json",
+          "sha256": "95c7a2b9f1259e1a58c7adc7a3abc03873a496e5a927a89a2fb80e1fa683311e",
+          "full_fixture_passed": true,
+          "historical_acceptance_claimed": false,
+          "status": "R45_SEALED_AND_MANUAL_PASS_EXPLICIT_CLAIM_REPLACEMENT"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-F24-context-r45/F-24/inputs/input.json.zst",
+        "sha256": "29a4db3bdd77f6cd62b86b2a15a63ca09f4f260344431e1a291ec020c8dd6339"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-F24-reporter-context-r41/private/map.json",
+        "sha256": "27e96716d8c642c631e87d463d683ed19decc961098eafdc6ac3bd03990e3f54"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-F24-context-r45/F-24/sealed/outcomes.json",
+        "sha256": "71645f34d4812b407fd03a367c8146477be6c549b015b5118095ad98fc89c443"
+      },
+      "execution_attempts": [
+        {
+          "path": "docs/verification/masked-f24-r36-v5-2026-10-19/F-24/result.json",
+          "sha256": "dfe31f31952d6a76adf19e9353467b7d361cb0c3d8a66b645491d9c1558bc119"
+        },
+        {
+          "path": "docs/verification/masked-f24-r41-candidate-2026-10-19/F-24/result.json",
+          "sha256": "1adfdca160cc9ee9aa1dbaa3aed0b77ddeb4489683e2bc973929b5a756743b0e"
+        },
+        {
+          "path": "docs/verification/masked-f24-r42-candidate-2026-10-19/F-24/result.json",
+          "sha256": "bdd487b0597a08e142012400b810221eb3f62a38369e31b8ad6fd7ada3498010"
+        },
+        {
+          "path": "docs/verification/masked-f24-r44-candidate-2026-10-19/F-24/result.json",
+          "sha256": "59afb0a4134353f32c0e2b1a191d075c7415eaccdc6062616b167f31cb36083c"
+        },
+        {
+          "path": "docs/verification/masked-f24-r45-candidate-2026-10-19/F-24/result.json",
+          "sha256": "95c7a2b9f1259e1a58c7adc7a3abc03873a496e5a927a89a2fb80e1fa683311e"
+        }
+      ],
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-prepared/F-24-protocol-v5/inputs/input.json.zst",
+            "sha256": "09c44cc5b2c71cd5fbd77c4686fcc89ceb4be47e794a3b7fe36919680f716e95"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-24-protocol-v5/private/map.json",
+            "sha256": "b26fb144b23d7c89555d077ac2be8bcf00c3c001d318e3c985234e7f3c578524"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-prepared/F-24-protocol-v5/sealed/outcomes.json",
+            "sha256": "114548e06138e7905bff308a86cdf5ca1076b9ba880bd2856b06d9925f76cd08"
+          },
+          "readiness": "EXECUTED_REPLAY_INPUT_INCOMPLETE",
+          "missing": [
+            "Native replay requested an uncaptured web_search. No fabricated empty response or full acceptance claim."
+          ],
+          "superseded_reason": "Reporter identity preserved under §11.1; public verification-context contract repaired. Latest native run still fails on a missing stored search answer."
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-F24-claim-context-r42/F-24/inputs/input.json.zst",
+            "sha256": "3cb1e499ac835b7e04b5a0a10d9cb556f550741896edc7608b4bf9a77c55f7bd"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-F24-reporter-context-r41/private/map.json",
+            "sha256": "27e96716d8c642c631e87d463d683ed19decc961098eafdc6ac3bd03990e3f54"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-F24-claim-context-r42/F-24/sealed/outcomes.json",
+            "sha256": "84dcf0b1b60a5101067c5ff3bab3dd2266904008a26f245deddc717eebd4ddb6"
+          },
+          "readiness": "EXECUTED_NATIVE_FAILED_MISSING_CAPTURE",
+          "missing": [
+            "Stored response absent for web_search query site:robinhood.com \"ASSETK\" listing. Native run failed before event/card; neither phase nor verification-context output is proved."
+          ],
+          "superseded_reason": "Explicit missing-evidence replay continuation and agent-authored claim replacement implemented; r45 actual native result independently passes unchanged sealed requirements. All prior attempts retained."
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f24-r45-candidate-2026-10-19/F-24/acceptance-run-with-manual.json",
+        "sha256": "d971aebbf44194e9ac23568a6575a8b2f205803c51ba166ed6e0594be6b00b41"
+      }
+    },
+    {
+      "fixture_id": "F-25",
+      "case_description": "Synthetic: an S29 post by a founder at 16 Oct 2026 12:00 UTC — \"Yesterday we shipped X and told all the press, sorry for posting late\"; Tank has no earlier item on it",
+      "cutoff_spec": "16 Oct 2026 12:01",
+      "assertion_spec": "`public_at` on 15 Oct 2026 (precision DAY, quote \"Yesterday\"); freshness POOR or OLD, never FRESH, NORMAL or MEDIUM; no \"new\" or \"breaking\" wording (L10).",
+      "synthetic": true,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-25.json",
+          "sha256": "a8e396fa3d74a516a782cef64fdcb4f09929f30a063e3c03a90632389040f872",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-25.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-25.json",
+          "sha256": "fdb909479bc9ea93f52a21813c3f1dae6652df692ebb868a74d1cc4dcd028a99",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r36-prepared/F-25-canonical-private-v4/inputs/input.json.zst",
+        "sha256": "fd27c8ffe6dce293bb00685002ae330277a209037ad3b5aef51dcaaca0e126db"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-prepared/F-25-canonical-private-v4/private/map.json",
+        "sha256": "5a59f9170edb7ab2da99faa5194f8707dccba2076407053be6aed6808b9399a0"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r36-prepared/F-25-canonical-private-v4/sealed/outcomes.json",
+        "sha256": "cf8235bd95990cce375d5afeaeb2f46b99609f603ad909ee1f70e83388e5e52e"
+      },
+      "acceptance_run": {
+        "path": "docs/verification/masked-f25-r36-v4-2026-10-19/F-25/acceptance-run-with-manual.json",
+        "sha256": "2a4dcf49bd99c0e86ded9f9b76a235f0b16806793a5caeef586fc5e486c01220"
+      }
+    },
+    {
+      "fixture_id": "F-26",
+      "case_description": "Synthetic: @sama posts \"We will integrate WLD and OpenAI\" (S29); nothing else is published",
+      "cutoff_spec": "post + 1 min",
+      "assertion_spec": "Certainty HIGH (the CEO of OpenAI and co-founder of World speaking about both); no waiting; stage APPROVED (announced plan), verified by the post, never LIVE; freshness FRESH; class MAJOR (M2); the card's VERIFIED line names the post.",
+      "synthetic": true,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-26.json",
+          "sha256": "4b8e0f079a29a4be58ab95e2899b357ff66ba6277137ea29ca33f334a46da07f",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-26.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-26.json",
+          "sha256": "199e5f6db42ede8968098775343931f523b07e8f9e564f74ee7e7f509dc3e085",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_FAILED_RUN",
+          "path": "docs/verification/masked-f26-r37-2026-10-19/F-26/result.json",
+          "sha256": "e1a1068db1f0f998c244ce4b7527a91da6c9851f7e94e61c31870c89e6980223",
+          "full_fixture_passed": false,
+          "status": "FAILED_REGISTRY_HANDLE_LOOKUP_TRIGGERED_UNCAPTURED_SEARCH"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f26-r38-2026-10-19/F-26/result.json",
+          "sha256": "8bbb851a62b3d5f175cfbc1b3265b49ed4937a6a2af857f442650f8eeca37b2e",
+          "full_fixture_passed": true,
+          "historical_acceptance_claimed": false,
+          "status": "R38_REGISTRY_HANDLE_REGRESSION_FULL_SEALED_MANUAL_PASS"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-26/inputs/input.json.zst",
+        "sha256": "3077217e3aeb46dbd51df37045eaddb9b99c84ca5bea178db9e6377b58f992f2"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-prepared/F-26-required-context-v7/private/map.json",
+        "sha256": "4ee679431c1c845c39e6b1e6000a3fa7c26035ea632fff4b5e6abf61e750cfa3"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r38-code-prepared/F-26/sealed/outcomes.json",
+        "sha256": "a134ddec8b23a347a2e733d15af5595ccc856f309f44475068b8234a8661fad3"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-prepared/F-26-canonical-private-v4/inputs/input.json.zst",
+            "sha256": "d01aa6032b284496b95f9de441f100628a93f8f34decb2a6a8b91b34eec41c68"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-26-canonical-private-v4/private/map.json",
+            "sha256": "11db204078cf767d03a270dfb9d846d36fec9819a358cea2740a3c0bf8225fd6"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-prepared/F-26-canonical-private-v4/sealed/outcomes.json",
+            "sha256": "79ad5bcab8aa7d7286a8711366792d6d9f3d4d4c1da10576b67ba18e11fec79a"
+          },
+          "acceptance_run": {
+            "path": "docs/verification/masked-f26-r36-v4-2026-10-19/F-26/acceptance-run-with-manual.json",
+            "sha256": "55bf3fd378b388ebfb3b05ace214ed1a21ed82c564bdfac7e7f2157c9530b425"
+          },
+          "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+          "missing": [
+            "HIGH/APPROVED/verified/FRESH retained, but M2 class failed: masked counterparty has no company-scale context. Original result retained; no host class override."
+          ]
+        },
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-26/inputs/input.json.zst",
+            "sha256": "15bab9e0754fafc5ed1632868f5af6a7e334f67ffb6a0477159c3e7652abdfa1"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-26-required-context-v7/private/map.json",
+            "sha256": "4ee679431c1c845c39e6b1e6000a3fa7c26035ea632fff4b5e6abf61e750cfa3"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r37-context-prepared/F-26/sealed/outcomes.json",
+            "sha256": "6d37c821976df62dbdb089f6bcc0c7a51374d7b98adf209b0049b311d26c3bf9"
+          },
+          "readiness": "R37_NATIVE_ACCEPTANCE_FAILED_REGISTRY_HANDLE_LOOKUP",
+          "missing": [
+            "Registry @handle lookup fixed in r38; first regression outcome pending."
+          ]
+        }
+      ],
+      "acceptance_run": {
+        "path": "docs/verification/masked-f26-r38-2026-10-19/F-26/acceptance-run-with-manual.json",
+        "sha256": "dfa76fe3cb5efdbf4ae5193a3f3e1898d423d55c82be6ed81362f92f2b7b4459"
+      }
+    },
+    {
+      "fixture_id": "F-27",
+      "case_description": "Synthetic: an S29 account quotes an unknown account: \"Bybit pivots to making condoms\"",
+      "cutoff_spec": "quote + 1 min",
+      "assertion_spec": "Certainty LOW; recorded; no card.",
+      "synthetic": true,
+      "capture_references": [
+        {
+          "kind": "SOURCE_REFERENCE_RECONSTRUCTION_INPUT_PACKET",
+          "path": "data/replay/inputs/F-27.json",
+          "sha256": "ca0393ba1927dd1d4bf68ebca75491833c01034de355428a75e780a02bf143aa",
+          "immutable_generation_path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-27.json",
+          "source_and_clock_identity_verified": true,
+          "historical_acceptance_claimed": false,
+          "current_input_admission_ref": "docs/verification/fixture-r22-candidate-2026-10-19/candidate-manifest.json"
+        },
+        {
+          "kind": "HOST_ONLY_PREPARED_SOURCE_REFERENCE_SUCCESSOR_INPUT_PACKET",
+          "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-27.json",
+          "sha256": "2020420542c537415c7b0889433f02c18b577cb4aa4bb67f9650850a3bdc4544",
+          "full_fixture_passed": false,
+          "historical_acceptance_claimed": false,
+          "status": "PREPARED_NOT_RUN_REQUIRES_VERIFIED_R28_TUPLE",
+          "canonical_adopted": false,
+          "admission_provenance": "docs/verification/fixture-source-gap-recheck-2026-10-19/all-27-candidate-inventory-v2.json"
+        },
+        {
+          "kind": "HOST_ONLY_NATIVE_COMPLETED_RUN",
+          "path": "docs/verification/masked-f27-r41-candidate-2026-10-19/F-27/result.json",
+          "sha256": "165563018e27e8e452e01f459e0d206347d742813f62f8870f29eeae93aeb3fd",
+          "full_fixture_passed": true,
+          "historical_acceptance_claimed": false,
+          "status": "R41_SEALED_AND_MANUAL_PASS"
+        }
+      ],
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+      "missing": [],
+      "known_conflict": null,
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r41-wire-prepared/F-27/inputs/input.json.zst",
+        "sha256": "098a74580b6e3f3b88c30008f19ea7689e25d509dfa7021e2e377ee23d2ea50e"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r36-prepared/F-27-protocol-v5/private/map.json",
+        "sha256": "9ad84a02844d56ab908330e56c12bf95bbf4ce1d904cc6ae9ad300531c3a3450"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r41-wire-prepared/F-27/sealed/outcomes.json",
+        "sha256": "3ae88411ed32b8848c33b21fafa659fc5aa351b235380de88ea455bc8bd69e3b"
+      },
+      "acceptance_run": {
+        "path": "docs/verification/masked-f27-r41-candidate-2026-10-19/F-27/acceptance-run-with-manual.json",
+        "sha256": "c12e971b6c43c409420d2680bb7318c459eae77d5e342ec9470602e0567653d0"
+      },
+      "acceptance_history": [
+        {
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r36-prepared/F-27-protocol-v5/inputs/input.json.zst",
+            "sha256": "dcf5db62a8532186b0190822f9d13481f991ef477c5f54cdf39730d567e77282"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-27-protocol-v5/private/map.json",
+            "sha256": "9ad84a02844d56ab908330e56c12bf95bbf4ce1d904cc6ae9ad300531c3a3450"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r36-prepared/F-27-protocol-v5/sealed/outcomes.json",
+            "sha256": "fcc99290d000f79ca688fc4ad41bf0333bdc4e6903dd6030ef6c799f058c4349"
+          },
+          "acceptance_run": {
+            "path": "docs/verification/masked-f27-r36-v5-2026-10-19/F-27/acceptance-run-with-manual.json",
+            "sha256": "876c049a495fb546a5b06f5dedc5a6fc87f05aa1ab1bbcb0b7c3f8a7bf165425"
+          },
+          "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+          "missing": [
+            "Agent discarded the concrete implausible LOW-certainty claim as is_event=false. General skill clarification prepared; original failed outcome retained."
+          ],
+          "superseded_reason": "Validated agent skill clarification; complete native r41 outcome independently checked against unchanged sealed requirements."
+        }
+      ]
+    }
+  ]
+}

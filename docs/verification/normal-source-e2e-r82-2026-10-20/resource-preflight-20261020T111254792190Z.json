@@ -1,0 +1,10 @@
+{
+  "data_mount_path_checked": "/var/lib/docker/volumes/tank-extract-v4_probe-data/_data",
+  "data_available_bytes": 9319731200,
+  "mem_available_bytes": 9718575104,
+  "data_reserve_bytes": 1073741824,
+  "native_preflight_headroom_bytes": 6442450944,
+  "native_concurrency": 4,
+  "hardware_caps_changed": false,
+  "passed": true
+}

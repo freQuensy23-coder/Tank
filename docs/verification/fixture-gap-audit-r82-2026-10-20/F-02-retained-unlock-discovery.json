@@ -1,0 +1,41 @@
+{
+  "scope": "HOST_ONLY_REDISCOVERED_RETAINED_EVIDENCE_NOT_ADMITTED_INTO_FIXTURE",
+  "fixture_id": "F-02",
+  "receipt_path": "data/verification/fixture-unlock-supplement-20261020/receipt.json",
+  "raw_path": "data/verification/fixture-unlock-supplement-20261020/8d8fb64b6e327179ceeeba024dcbb521b4dd53a048bef96770621aa3592ca7df.json",
+  "raw_sha256": "8d8fb64b6e327179ceeeba024dcbb521b4dd53a048bef96770621aa3592ca7df",
+  "sha256_verified": true,
+  "actual_collected_at": "2026-10-20T03:07:08.736179+00:00",
+  "historical_availability_claimed": false,
+  "historical_calendar_publication_time": "NOT_RETAINED",
+  "original_source_file_modified": false,
+  "selected_provider_events": [
+    {
+      "source_array_index": 32,
+      "recorded_event": {
+        "description": "On {timestamp} {tokens[0]} of Core Contributors tokens were unlocked",
+        "timestamp": 1789844671,
+        "noOfTokens": [
+          10625000
+        ],
+        "category": "insiders",
+        "unlockType": "cliff"
+      },
+      "utc_display_of_recorded_epoch": "2026-09-19T19:04:31+00:00"
+    },
+    {
+      "source_array_index": 33,
+      "recorded_event": {
+        "description": "On {timestamp} {tokens[0]} of Strategic Partners tokens were unlocked",
+        "timestamp": 1789844671,
+        "noOfTokens": [
+          13000000
+        ],
+        "category": "insiders",
+        "unlockType": "cliff"
+      },
+      "utc_display_of_recorded_epoch": "2026-09-19T19:04:31+00:00"
+    }
+  ],
+  "limitation": "The provider was read on20Oct. An event epoch is not proof that this calendar/version was available by the22Sep fixture cutoff. These19Sep unlocks are also past, not upcoming14d unlocks. Do not backdate receipt or insert them into upcoming supply as a sale."
+}

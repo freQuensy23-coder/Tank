@@ -1,0 +1,18 @@
+{
+  "sdk_version": "0.10.6",
+  "pnpm_version": "11.0.8",
+  "upstream_openma_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+  "source_sha256": {
+    "pnpm-lock.yaml": "6d5b4aee16af9210f0e5d7f5071e8e1ec916d77ee81f9d6c1e4e8768e00fb822",
+    "pnpm-workspace.yaml": "2316fdc7c95fad20758ef6aea06c194a508b98c49ccb597977188afd536b7461"
+  },
+  "workspace_append": "\n# Tank observed-runtime compatibility pin; upstream OpenMA source commit is unchanged.\noverrides:\n  '@boxlite-ai/boxlite': '0.10.6'\n",
+  "lockfile_asset": "openma-pnpm-lock.yaml",
+  "lockfile_sha256": "8db697971714ee04b538d90653a370f1ce25cc792f7304da1c57ebff276aa128",
+  "policy": "Candidate runtime compatibility repair for reproduced mounted-boot and static-loader failures; no production adoption implied",
+  "native_host_security": {
+    "jailerEnabled": false,
+    "seccompEnabled": false
+  },
+  "security_basis": "Explicitly retain measured BoxLite0.9 Linux native defaults; outer Docker default seccomp/AppArmor remain enabled"
+}

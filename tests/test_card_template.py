@@ -1,0 +1,691 @@
+"""Literal PRD §7.1 card layout and detailed exclusion rendering."""
+
+from copy import deepcopy
+
+import pytest
+
+from tank.analysis.cards import compose_card
+
+
+def card_inputs():
+    event = {
+        "statement": "Approval changes access.",
+        "event_state": "APPROVED",
+        "state_verified": True,
+        "freshness": "FRESH",
+        "public_at": "2026-10-18T12:30:00Z",
+        "public_at_prec": "EXACT",
+        "known_to_us_at": "2026-10-18T12:31:00Z",
+        "known_to_us_at_prec": "EXACT",
+        "claims": [
+            {
+                "subject": "World",
+                "predicate": "approved",
+                "object": "product",
+                "accepted": True,
+                "verified": True,
+                "state_claim": "APPROVED",
+                "evidence": [{"item_id": "source-proof", "quote": "World approved product"}],
+            }
+        ],
+        "beneficiary_map": {
+            "no_credible_secondary_reason": "No eligible dependency rail",
+            "layers": {
+                "ISSUER_PRODUCT": {"note": "Issuer is the primary"},
+                "VENUE_DEX": {"note": "No listing identified"},
+                "SETTLEMENT_L1_L2": {"note": "No settlement rail identified"},
+                "LIQUIDITY_EXECUTION": {"note": "No execution dependency identified"},
+                "LENDING_COLLATERAL": {"note": "No lending pool identified"},
+                "ORACLE_DATA": {"note": "No oracle dependency identified"},
+                "INTEROPERABILITY": {"note": "No cross-chain dependency identified"},
+                "CUSTODY_COMPLIANCE": {"note": "No custody provider identified"},
+            },
+        },
+    }
+    assessment = {
+        "class": "MAJOR",
+        "criterion": "M2",
+        "certainty": "HIGH",
+        "dims": {
+            key: {"value": value}
+            for key, value in zip(
+                [
+                    "economic_directness",
+                    "magnitude",
+                    "permanence",
+                    "distribution_expansion",
+                    "mechanical_flows",
+                    "surprise",
+                    "implementation",
+                ],
+                [8, 7, 6, 5, 4, 3, 2],
+                strict=True,
+            )
+        },
+    }
+    beneficiary = {
+        "token_id": "world:WLD",
+        "entity_name": "World",
+        "role": "PRIMARY",
+        "credible": True,
+        "capture_class": "DIRECT",
+        "causal_chain": "Required token gas",
+        "mechanism_evidence": ["mechanism"],
+    }
+    decision = {
+        "token_id": "world:WLD",
+        "action": "WAIT",
+        "thesis_grade": "A",
+        "trade_grade": "B",
+        "outlook": {
+            "direction": "BULLISH",
+            "potential": "MEDIUM",
+            "best_horizon": "H4",
+            "horizon_reason": "event window",
+            "confidence": "HIGH",
+            "scenarios": {
+                "base": "Product remains available",
+                "upside": "Deployment verified",
+                "failure": "Approval reversed",
+            },
+        },
+        "conditions": [
+            {"role": "UPGRADE", "human_text": "Spot BUY persists"},
+            {"role": "DOWNGRADE", "human_text": "Spot SELL persists"},
+        ],
+    }
+    truth = {
+        "token_id": "world:WLD",
+        "cutoff": "2026-10-18T12:31:00Z",
+        "move_class": "ORGANIC_MIXED",
+        "data_confidence": {"class": "HIGH"},
+        "primary_window": "W4H",
+        "decisive_facts": [
+            {"metric": "price", "value": ".05", "unit": "DECIMAL_RETURN", "window": "W4H"},
+            {"metric": "spot.cvd", "value": "2000", "unit": "NATIVE_TOKEN", "window": "W4H"},
+        ],
+        "relative": {"repricing_band": "EARLY", "windows": {"EVENT": {"r_raw": ".03", "r_btc_adj": ".01"}}},
+    }
+    return event, assessment, beneficiary, decision, truth
+
+
+def render(inputs):
+    e, a, b, d, m = inputs
+    return compose_card(
+        e,
+        a,
+        [b],
+        [d],
+        [m],
+        verdict="Approval changes access.",
+        why=["The approval is confirmed", "not estimable"],
+    )
+
+
+def test_telegram_emphasis_preserves_text_and_escapes_untrusted_markup():
+    import html
+    import re
+
+    from tank.analysis.cards import telegram_card_html
+
+    values = card_inputs()
+    values[0]["claims"][0]["object"] = '<a href="https://example.test">claim & proof</a>'
+    text = render(values)
+    formatted = telegram_card_html(text)
+    assert "<b>MARKET TRUTH:</b>" in formatted
+    assert "<b>WHAT TO DO:</b>" in formatted
+    assert "<a href=" not in formatted
+    assert "&lt;a href=" in formatted
+    assert html.unescape(re.sub(r"</?b>", "", formatted)) == text
+
+
+def test_literal_prd_card_template():
+    values = card_inputs()
+    card = render(values)
+    assert (
+        card
+        == """MAJOR (M2) — Approval changes access.
+Scores D8 · M7 · P6 · X5 · F4 · S3 · I2
+Stage: APPROVED · Certainty: HIGH · Data HIGH
+Fresh: FRESH · public 12:30Z · known 12:31Z
+
+VERIFIED: World approved product [source in evidence bundle]
+NOT VERIFIED: none recorded
+
+WHY IT MATTERS
+• What changed: The approval is confirmed
+• Economic effect: not estimable
+• Token capture: WLD DIRECT — Required token gas
+
+WHO: primary WLD · secondary none — No eligible dependency rail
+• Issuer / product: Issuer is the primary
+• Exchanges / DEX: No listing identified
+• Settlement L1 / L2: No settlement rail identified
+• Liquidity / execution: No execution dependency identified
+• Lending / collateral: No lending pool identified
+• Oracles / data: No oracle dependency identified
+• Interoperability: No cross-chain dependency identified
+• Custody / compliance: No custody provider identified
+
+── WLD (PRIMARY) ──
+
+MARKET TRUTH: ORGANIC MIXED
+• 4h: price 5.00%
+• 4h: spot net flow 2000 WLD
+Priced: EARLY · EVENT 3.00% raw; 1.00% net BTC
+
+OUTLOOK: BULLISH · MEDIUM · best 4h
+• Base: Product remains available
+• Upside: Deployment verified
+• Failure: Approval reversed
+
+WHAT TO DO: WAIT — Thesis A · Trade B
+WHAT CHANGES THE ACTION:
+↑ Spot BUY persists
+↓ Spot SELL persists
+
+CONFIDENCE: HIGH — main unknown: none recorded"""
+    )
+    _e, _a, _b, _d, _m = values
+    assert "2026-10-18" not in card and "IMPACT:" not in card and "SECONDARIES:" not in card
+
+
+@pytest.mark.parametrize(
+    "exclusion,expected",
+    [
+        (
+            {"reason": "INCOMPLETE", "detail": "FULL_MINUTE_COVERAGE_INCOMPLETE"},
+            "full minute coverage incomplete",
+        ),
+        (
+            {"reason": "INCOMPLETE", "detail": "BOUNDARY_AGGREGATE_UNAVAILABLE"},
+            "boundary aggregate unavailable",
+        ),
+        (
+            {
+                "reason": "INCOMPLETE",
+                "detail": "FULL_MINUTE_COVERAGE_INCOMPLETE",
+                "source_reasons": ["CURRENT_DAY_ARCHIVE_UNAVAILABLE"],
+            },
+            "full minute coverage incomplete; current day archive unavailable",
+        ),
+        ({"reason": "SOURCE_FAILED", "source_reasons": ["PUBLIC_SOURCE_TIMEOUT"]}, "public source timeout"),
+        ({"reason": "INCOMPLETE"}, "coverage incomplete; specific cause unavailable"),
+    ],
+)
+def test_excluded_venue_displays_recorded_cause_without_inventing_one(exclusion, expected):
+    values = card_inputs()
+    values[4]["spot"] = {"W4H": {"coverage": {"excluded": [dict(exclusion, venue="Bybit")]}}}
+    card = render(values)
+    assert "Excluded: Bybit — " + expected in card
+    assert "Bybit — INCOMPLETE" not in card
+    if "CURRENT_DAY_ARCHIVE_UNAVAILABLE" not in exclusion.get("source_reasons", []):
+        assert "current day archive" not in card
+
+
+def test_impact_and_no_secondary_reasons_stay_in_existing_template_fields():
+    values = card_inputs()
+    values[1]["impact_horizon"] = {
+        "impact_start": "WEEKS",
+        "ramp_shape": "GRADUAL",
+        "dependencies": ["licence"],
+        "timing_confidence": "LOW",
+        "time_to_materiality": "Unknown",
+    }
+    values[0]["beneficiary_map"]["layers"] = {"SETTLEMENT": {"status": "NONE", "note": "No rail evidence"}}
+    card = render(values)
+    assert "• Economic effect: not estimable" in card
+    assert "No eligible dependency rail" in card
+    assert "SETTLEMENT: NONE" not in card
+    assert values[1]["impact_horizon"]["impact_start"] == "WEEKS"
+    assert values[0]["beneficiary_map"]["layers"]["SETTLEMENT"]["note"] == "No rail evidence"
+    assert not any(line.startswith(("IMPACT:", "SECONDARIES:", "SETTLEMENT:")) for line in card.splitlines())
+
+
+@pytest.mark.parametrize(
+    "missing,error",
+    [
+        ("decision", "MISSING_DECISION"),
+        ("action", "MISSING_DECISION_ACTION"),
+        ("truth", "MISSING_MARKET_TRUTH"),
+    ],
+)
+def test_selected_token_never_gets_a_fabricated_wait(missing, error):
+    e, a, b, d, m = deepcopy(card_inputs())
+    if missing == "action":
+        d.pop("action")
+    with pytest.raises(ValueError, match=error):
+        compose_card(e, a, [b], [] if missing == "decision" else [d], [] if missing == "truth" else [m])
+
+
+def test_inline_code_conditions_are_not_misrepresented_as_current_market_observations():
+    e, a, b, d, m = card_inputs()
+    m["spot"] = {"W4H": {"classification": "SINGLE_VENUE", "coverage": {"n_complete": 1}}}
+    d["conditions"][1]["human_text"] = (
+        "Spot cohort BROAD SELL with most volume selling for two hourly windows; REDUCE."
+    )
+    card = render((e, a, b, d, m))
+    condition_block = card.split("WHAT CHANGES THE ACTION:", 1)[1]
+    assert "Spot cohort BROAD SELL" in condition_block
+    assert "Spot cohort BROAD SELL" not in next(
+        line for line in card.splitlines() if line.startswith("MARKET TRUTH")
+    )
+
+
+def test_missing_fields_are_explained_and_structural_shock_uses_literal_heading():
+    e, a, b, d, m = card_inputs()
+    a["class"] = "STRUCTURAL_SHOCK"
+    d["outlook"]["potential"] = None
+    m["relative"]["repricing_band"] = None
+    card = render((e, a, b, d, m))
+    assert card.startswith("STRUCTURAL SHOCK (M2) — ")
+    assert "Priced: n/a (not available)" in card
+    assert "OUTLOOK: BULLISH · n/a (potential unavailable)" in card
+    assert "None" not in card
+
+
+def test_missing_scores_explain_the_gap_without_inventing_an_estimate():
+    values = card_inputs()
+    values[1]["dims"].update(
+        magnitude={
+            "value": None,
+            "reason": "NOT_ESTIMABLE",
+            "rationale": "No numeric basis in the source",
+        },
+        mechanical_flows={"value": None, "reason": "NOT_SUPPORTED"},
+        surprise={"value": 0, "rationale": "Already announced"},
+    )
+    original = deepcopy(values)
+    card = render(values)
+    scores = next(line for line in card.splitlines() if line.startswith("Scores "))
+    assert "M n/a (No numeric basis in the source)" in scores
+    assert "F n/a (not supported)" in scores
+    assert "S0" in scores and "M—" not in scores
+    assert values == original
+
+
+def test_who_excludes_unjustified_links_and_never_repeats_primary_as_secondary():
+    e, a, primary, d, m = card_inputs()
+    primary.update(token_id="uniswap:UNI", entity_id="uniswap")
+    d["token_id"] = m["token_id"] = primary["token_id"]
+    duplicate = dict(primary, role="SECONDARY", layer="VENUE_DEX", integration_state="LIVE")
+    candidate = {
+        "entity_id": "candidate",
+        "role": "SECONDARY",
+        "credible": False,
+        "tradable": False,
+        "integration_state": "COMPATIBLE",
+    }
+    loser = {
+        "entity_id": "OutsideLoser",
+        "role": "LOSER",
+        "tradable": False,
+    }
+    e["beneficiary_edges"] = [duplicate, candidate, loser]
+    card = compose_card(e, a, [primary, duplicate], [d], [m])
+    who = next(line for line in card.splitlines() if line.startswith("WHO:"))
+    assert who.count("primary UNI") == 1
+    assert "secondary UNI" not in who and "candidate" not in who
+    assert "loser OutsideLoser" in who
+    # A credible secondary is shown with its recorded layer and state, and
+    # removes the no-secondaries explanation instead of listing all candidates.
+    secondary = dict(
+        primary,
+        token_id="cow:COW",
+        entity_id="cow",
+        role="SECONDARY",
+        layer="LIQUIDITY_EXECUTION",
+        integration_state="LIVE",
+    )
+    second_decision, second_truth = dict(d, token_id="cow:COW"), dict(m, token_id="cow:COW")
+    card = compose_card(e, a, [primary, secondary], [d, second_decision], [m, second_truth])
+    who = next(line for line in card.splitlines() if line.startswith("WHO:"))
+    assert "secondary COW (LIQUIDITY_EXECUTION, unverified LIVE)" in who
+    assert "secondary none" not in who and "No listing identified" not in card
+
+
+@pytest.mark.parametrize("confirmation", [None, "ABSORPTION_CANDIDATE", "ABSORPTION_CONFIRMED", "flag"])
+def test_absorption_candidate_is_uncertain_and_keeps_recorded_alternatives(confirmation):
+    values = card_inputs()
+    truth = values[4]
+    truth["move_class"] = "PASSIVE_SPOT_ABSORPTION"
+    truth["divergence"] = {"state": confirmation, "unresolved": ["Derivative hedging", "Transfers"]}
+    if confirmation == "flag":
+        truth["absorption_confirmed"] = True
+    original = deepcopy(values)
+    card = render(values)
+    market = card.split("MARKET TRUTH:", 1)[1].split("OUTLOOK:", 1)[0]
+    assert "Unresolved: Derivative hedging, Transfers" in market
+    assert ("Possible passive spot absorption — unconfirmed" in market) is (
+        confirmation in {None, "ABSORPTION_CANDIDATE"}
+    )
+    assert values == original
+
+
+@pytest.mark.parametrize("source_reason", ["CURRENT_DAY_ARCHIVE_UNAVAILABLE", "WEBSOCKET_GAP"])
+def test_actual_spot_exclusion_cause_reaches_the_card(source_reason):
+    from datetime import timedelta
+
+    from tank.analysis.truth import spot_truth
+    from tank.util import iso, parse_time
+
+    values = card_inputs()
+    end = parse_time("2026-10-18T12:30:00Z")
+    start = end - timedelta(hours=4)
+    spot = spot_truth(
+        [
+            {
+                "instrument_id": "bybit:spot:world:WLD",
+                "minute_start": iso(start),
+                "buy_qty": 1,
+                "sell_qty": 1,
+                "sum_sq_qty": 2,
+                "complete": False,
+                "gap_reason": source_reason,
+            }
+        ],
+        [],
+        [],
+        start,
+        end,
+    )
+    exclusion = spot["coverage"]["excluded"][0]
+    assert exclusion["reason"] == "INCOMPLETE"
+    assert exclusion["detail"] == "FULL_MINUTE_COVERAGE_INCOMPLETE"
+    assert exclusion["source_reasons"] == [source_reason]
+    values[4]["spot"] = {"W4H": spot}
+    card = render(values)
+    assert source_reason.replace("_", " ").lower() in card
+    assert "bybit — INCOMPLETE" not in card
+
+
+@pytest.mark.parametrize(
+    "verdict,why",
+    [
+        ("Approval changes access.", ["The approval is confirmed", "not estimable"]),
+        (
+            "The institution selected the protocol for its planned network.",
+            [
+                "Selection is approved, not evidence of a live rollout.",
+                "No issuance volumes, effective fees or active value-accrual mechanism are established.",
+            ],
+        ),
+        (
+            "The agent's judgment is recorded without a prose checker.",
+            ["Live usage and token economics remain unverified.", "Economic effect: not estimable"],
+        ),
+    ],
+)
+async def test_current_full_publication_uses_literal_render_and_excludes_undecided_token(
+    tmp_path, verdict, why
+):
+    """Actual publish tool/composer/repository; no model/native/Telegram calls."""
+    from tank.event_tools import EventToolService
+    from tank.settings import Settings
+    from tank.storage import MemoryRepository
+    from tank.util import iso
+
+    event, assessment, beneficiary, decision, truth = deepcopy(card_inputs())
+    eid, token = "current-card-contract", "world:WLD"
+    now = iso()
+    event.update(
+        event_id=eid,
+        lifecycle="MONITORING",
+        current_ems_id="current-ems",
+        tokens_mentioned=[token, "ethereum:ETH"],
+        public_at=now,
+        known_to_us_at=now,
+    )
+    assessment.update(ems_id="current-ems", event_id=eid)
+    beneficiary.update(edge_id="selected-wld", event_id=eid, map_version=1, tradable=True, exposure_score=7)
+    extra = dict(
+        beneficiary,
+        edge_id="undecided-eth",
+        token_id="ethereum:ETH",
+        entity_name="Ethereum",
+        exposure_score=10,
+    )
+    truth.update(mta_id="current-truth", event_id=eid, cutoff=now)
+    decision.update(dec_id="current-decision", event_id=eid, cutoff=now, market_truth_id="current-truth")
+    for index, condition in enumerate(decision["conditions"]):
+        condition["cond_id"] = f"current-condition-{index}"
+    repo = MemoryRepository()
+    await repo.open()
+    try:
+        await repo.put("evt.events", eid, event)
+        await repo.put("evt.ems_assessments", "current-ems", assessment)
+        await repo.put(
+            "evt.beneficiary_maps",
+            "current-map",
+            {
+                "event_id": eid,
+                "map_version": 1,
+                "analysis_set": [token],
+                "no_credible_secondary_reason": "No eligible dependency rail",
+                "layers": event["beneficiary_map"]["layers"],
+            },
+        )
+        await repo.put("evt.beneficiary_edges", "selected-wld", beneficiary)
+        await repo.put("evt.beneficiary_edges", "undecided-eth", extra)
+        await repo.put("ana.market_truth", "current-truth", truth)
+        await repo.put("ana.decisions", "current-decision", decision)
+        claim = dict(event["claims"][0], claim_id="current-proof", event_id=eid)
+        await repo.put("evt.claims", "current-proof", claim)
+        await repo.put(
+            "ingest.source_items",
+            "source-proof",
+            {
+                "item_id": "source-proof",
+                "source_id": "S01",
+                "text": "World approved product",
+                "observed_at": now,
+                "source_class": "PRIMARY",
+            },
+        )
+        service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+        # Publication depends on stored structured inputs, not a host-imposed
+        # order of this turn's calls or a second opinion about the prose.
+        await repo.put("ops.agent_sessions", "card-session", {"session_id": "card-session", "event_id": eid})
+        result = await service.dispatch(
+            "publish_card",
+            {
+                "event_id": eid,
+                "kind": "FULL",
+                "verdict": verdict,
+                "why": why,
+            },
+            {"role": "analyst", "session_id": "card-session", "event_id": eid, "call_id": "current-render"},
+        )
+        assert result["published"] is True, result
+        alert = await repo.get("out.alerts", result["alert_id"] + ":1")
+        text = alert["card_text"]
+        assert text.splitlines()[0] == "MAJOR (M2) — " + verdict
+        assert why[0] in text
+        assert why[1].removeprefix("Economic effect: ") in text
+        lines = text.splitlines()
+        assert alert["shown_tokens"] == [token]
+        assert "primary ETH" not in text  # Unselected universe token has no decision.
+        assert "── ethereum:ETH" not in text  # No invented WAIT/token block.
+        assert len([line for line in lines if line.startswith("──")]) == 1
+        assert lines[1].startswith("Scores ") and lines[2].startswith("Stage: ")
+        assert not any(line.startswith(("IMPACT:", "SECONDARIES:")) for line in lines)
+        outlook = text.split("OUTLOOK:", 1)[1].split("WHAT TO DO:", 1)[0]
+        assert all("• " + name + ": " in outlook for name in ("Base", "Upside", "Failure"))
+        assert not any(now in line for line in lines if line.startswith("MARKET TRUTH:"))
+        assert len(text) <= 3500 and "linter" not in alert
+        assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == 1
+        assert not any(row.get("status") == "SENT" for row in await repo.list("out.deliveries"))
+    finally:
+        await repo.close()
+
+
+def test_header_preserves_agent_supplied_sentence_and_structured_action():
+    event, assessment, beneficiary, decision, truth = card_inputs()
+    event["statement"] = "The institution selected the protocol for its planned network."
+    verdict = "The institution chose this protocol as infrastructure for its planned network."
+    card = compose_card(event, assessment, [beneficiary], [decision], [truth], verdict=verdict)
+    assert card.splitlines()[0] == "MAJOR (M2) — " + verdict
+    assert verdict in card
+    assert "WHAT TO DO: WAIT — Thesis A · Trade B" in card
+    assert event["statement"].endswith("planned network.")
+
+
+@pytest.mark.parametrize(
+    "value,precision,expected",
+    [
+        ("2026-09-24T00:00:00Z", "BUCKET(1d)", "2026-09-24 (day precision)"),
+        ("2026-09-24T00:00:00Z", "DAY", "2026-09-24 (day precision)"),
+        ("2026-09-24T12:30:00Z", "EXACT", "12:30Z"),
+        ("2026-09-24T12:00:00Z", "BUCKET(1h)", "12:00Z–13:00Z (BUCKET(1h), end exclusive)"),
+        ("2026-09-24T12:00:00Z", "BUCKET(900s)", "12:00Z–12:15Z (BUCKET(900s), end exclusive)"),
+        (
+            "2026-09-24T23:00:00Z",
+            "BUCKET(2h)",
+            "2026-09-24 23:00Z–2026-09-25 01:00Z (BUCKET(2h), end exclusive)",
+        ),
+        (
+            "2026-09-24T00:00:00Z",
+            "BUCKET(1w)",
+            "2026-09-24 00:00Z–2026-10-01 00:00Z (BUCKET(1w), end exclusive)",
+        ),
+        ("2026-09-24T12:00:00Z", "BUCKET(5s)", "12:00:00Z–12:00:05Z (BUCKET(5s), end exclusive)"),
+        ("2026-09-24T00:00:00Z", None, "n/a (time precision unknown)"),
+        (None, None, "n/a (timestamp unavailable)"),
+        ("2026-09-24T20:15:00Z", "COLLECTION_ONLY", "n/a (publication time unavailable; collected 20:15Z)"),
+    ],
+)
+def test_public_clock_preserves_declared_precision_without_inventing_intraday_time(
+    value, precision, expected
+):
+    inputs = card_inputs()
+    inputs[0].update(public_at=value, public_at_prec=precision)
+    card = render(inputs)
+    assert "public " + expected + " · known 12:31Z" in card
+    assert "WHAT TO DO: WAIT" in card
+    assert len(card) <= 3500
+
+
+def test_end_labelled_bucket_and_unknown_edge_are_not_reinterpreted():
+    inputs = card_inputs()
+    inputs[0].update(
+        public_at="2026-09-25T00:00:00Z", public_at_prec="BUCKET(1d)", public_at_bucket_anchor="END"
+    )
+    assert "public 2026-09-24 (day precision)" in render(inputs)
+    inputs[0]["public_at_bucket_anchor"] = "UNSPECIFIED"
+    assert "public n/a (bucket edge unknown; BUCKET(1d))" in render(inputs)
+
+
+def test_nested_precision_and_known_collection_clock_are_preserved_independently():
+    inputs = card_inputs()
+    inputs[0].pop("public_at_prec")
+    inputs[0]["public_at"] = {"value": "2026-09-24", "precision": "BUCKET_1D"}
+    inputs[0].update(known_to_us_at="2026-09-24T20:15:00Z", known_to_us_at_prec="COLLECTION_ONLY")
+    assert "public 2026-09-24 (day precision) · known 20:15Z (collection)" in render(inputs)
+
+
+def test_current_claim_view_uses_only_explicit_replacements_and_preserves_full():
+    inputs = card_inputs()
+    event = inputs[0]
+    event["claims"] = [
+        {
+            "claim_id": "lead",
+            "subject": "World",
+            "predicate": "plans",
+            "object": "listing",
+            "accepted": True,
+            "verified": False,
+            "verification_missing": "Official confirmation needed",
+        },
+        {
+            "claim_id": "timing",
+            "subject": "World",
+            "predicate": "launch time",
+            "object": "unknown",
+            "accepted": True,
+            "verified": False,
+            "verification_missing": "Effective time needed",
+        },
+    ]
+    historical_full = render(inputs)
+    original = deepcopy(event["claims"])
+    event["claims"].append(
+        {
+            "claim_id": "confirmed",
+            "subject": "World",
+            "predicate": "confirms",
+            "object": "listing",
+            "accepted": True,
+            "verified": True,
+            "supersedes_claim_ids": ["lead"],
+        }
+    )
+    update = render(inputs)
+    assert "Official confirmation needed" not in update
+    assert "Effective time needed" in update
+    assert "World confirms listing" in update
+    assert "Official confirmation needed" in historical_full
+    assert event["claims"][:2] == original
+    event["claims"].append(
+        {
+            "claim_id": "latest",
+            "subject": "World",
+            "predicate": "reconfirms",
+            "object": "listing",
+            "accepted": True,
+            "verified": True,
+            "supersedes_claim_ids": ["confirmed"],
+        }
+    )
+    assert "World confirms listing" not in render(inputs)
+    event["claims"][-1]["accepted"] = False
+    assert "World confirms listing" in render(inputs)
+    event["claims"][2].pop("supersedes_claim_ids")
+    assert "Official confirmation needed" in render(inputs)
+
+
+def test_each_layer_reason_is_visible_without_generic_rule_reference_or_mutation():
+    inputs = card_inputs()
+    event = inputs[0]
+    layers = {
+        "ISSUER_PRODUCT": {"status": "UNKNOWN", "note": "Issuer proof absent"},
+        "VENUE_DEX": {"status": "NONE", "note": "No venue evidence"},
+    }
+    prefix = "No SECONDARY edge satisfies the credibility requirements in §4.7. "
+    summary = prefix.rstrip()
+    event["beneficiary_map"] = {"layers": layers, "no_credible_secondary_reason": summary}
+    original = deepcopy(inputs)
+    text = render(inputs)
+    assert text.count("Issuer proof absent") == 1
+    assert text.count("No venue evidence") == 1
+    assert summary not in text and "§4.7" not in text
+    who = text.split("WHO:", 1)[1].split("──", 1)[0]
+    assert len([line for line in who.splitlines() if line.startswith("• ")]) == 8
+    assert who.count("n/a (layer assessment not supplied)") == 6
+    assert inputs == original
+    event["beneficiary_map"]["no_credible_secondary_reason"] = "Additional independent uncertainty"
+    assert "Additional independent uncertainty" in render(inputs)
+    event["beneficiary_map"]["layers"] = {}
+    assert "Additional independent uncertainty" in render(inputs)
+
+
+def test_card_length_diagnostics_preserve_full_preview_and_structured_guidance():
+    import json
+
+    inputs = card_inputs()
+    inputs[0]["claims"][0]["object"] = "Unchanged material uncertainty " * 170
+    original = deepcopy(inputs)
+    with pytest.raises(ValueError, match="CARD_LENGTH") as caught:
+        render(inputs)
+    diagnostic = json.loads(str(caught.value).split(": ", 1)[1])
+    assert diagnostic["max"] == 3500
+    assert diagnostic["actual"] == len(diagnostic["preview"])
+    assert diagnostic["excess"] == diagnostic["actual"] - 3500
+    assert (
+        sum(s["chars"] for s in diagnostic["sections"]) + diagnostic["newline_chars"] == diagnostic["actual"]
+    )
+    assert inputs[0]["claims"][0]["object"] in diagnostic["preview"]
+    assert "publish-only shortening may be insufficient" in diagnostic["guidance"]
+    assert any("supersedes_claim_ids" in f for f in diagnostic["editable_fields"])
+    assert inputs == original
+    inputs[0]["thresholds"] = {"card_max_chars": 100000}
+    assert render(inputs) == diagnostic["preview"]

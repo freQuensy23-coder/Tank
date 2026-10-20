@@ -9,6 +9,50 @@ from tank.market.flow import FlowAccumulator
 TS = 1781654400000
 
 
+def test_market_timestamp_precision_tracks_source_and_collection_clocks():
+    row = n.liquidation(
+        instrument("binance", "PERP_LINEAR"), {"S": "SELL", "z": "1", "ap": "2", "T": TS}, received_ts=TS + 12
+    )
+    assert row["ts_prec"] == "EXACT"
+    assert row["received_ts_prec"] == "COLLECTION_ONLY"
+    book = OrderBook(instrument("coinbase"))
+    book.snapshot([["1", "2"]], [["2", "2"]], ts=TS, sequence=0, ts_prec="COLLECTION_ONLY")
+    assert book.summary(received_ts=TS + 12)["exchange_ts_prec"] == "COLLECTION_ONLY"
+    book.update([], [], sequence=1, ts=TS + 15)
+    summary = book.summary(received_ts=TS + 20)
+    assert summary["exchange_ts_prec"] == "EXACT"
+    assert summary["received_ts_prec"] == "COLLECTION_ONLY"
+    current = n.funding(
+        instrument("bybit", "PERP_LINEAR"),
+        {"fundingRate": "0.001"},
+        kind="CURRENT_ESTIMATE",
+        interval_h=8,
+        received_ts=TS,
+    )
+    settled = n.funding(
+        instrument("bybit", "PERP_LINEAR"),
+        {"fundingRate": "0.001", "fundingRateTimestamp": TS},
+        kind="SETTLED",
+        interval_h=8,
+        received_ts=TS + 12,
+    )
+    assert current["as_of_prec"] == "COLLECTION_ONLY"
+    assert settled["as_of_prec"] == settled["settlement_time_prec"] == settled["funding_time_prec"] == "EXACT"
+    assert current["received_ts_prec"] == settled["received_ts_prec"] == "COLLECTION_ONLY"
+    candle = n.kline(
+        instrument("binance"), [TS, "1", "1", "1", "1", "2", TS + 59999, "2", 2, "1", "1"], now=TS + 60000
+    )
+    assert candle["open_time_prec"] == "BUCKET(60s)" and candle["received_ts_prec"] == "COLLECTION_ONLY"
+    bucket = n.oi(
+        instrument("bybit", "PERP_LINEAR"), {"singleOpenInterest": "1", "timestamp": TS}, received_ts=TS + 12
+    )
+    assert bucket["ts_prec"] == "EXACT" and bucket["ts_bucket_size_s"] is None
+    flow = FlowAccumulator()
+    print_row = n.trade(instrument("binance"), {"a": 1, "p": "1", "q": "2", "T": TS, "m": False})
+    bar = flow.add(print_row)
+    assert bar["minute_start_prec"] == "BUCKET(60s)" and bar["received_ts_prec"] == "COLLECTION_ONLY"
+
+
 def instrument(venue, market="SPOT", **kwargs):
     return dict(
         instrument_id=f"{venue}:{market}:ABC",
@@ -82,16 +126,17 @@ def test_missing_or_future_usd_rate_never_assumed():
     assert n.trade(i, raw)["notional_usd"] is None
 
 
-def test_bybit_oi_no_division_fallback_and_runtime_semantics():
+def test_bybit_oi_no_division_fallback_and_immediate_registry_eligibility():
     i = instrument("bybit", "PERP_LINEAR")
     with pytest.raises(n.SemanticError, match="cannot substitute"):
         n.oi(i, {"openInterest": "200", "timestamp": TS})
     raw = {"openInterest": "200", "singleOpenInterest": "100", "timestamp": TS}
     row = n.oi(i, raw, mark="2", mark_ts=TS)
     assert row["oi_native"] == "100" and row["oi_usd"] == "200.00200"
-    assert row["semantic_confidence"] == "UNKNOWN" and not row["synchronized_eligible"]
-    i["semantic_verified_keys"] = ["bybit.linear.open-interest"]
-    assert n.oi(i, raw)["synchronized_eligible"]
+    assert "semantic_confidence" not in row
+    assert row["ts_prec"] == "EXACT" and row["ts_bucket_size_s"] is None
+    assert "ts_bucket_anchor" not in row
+    assert row["synchronized_eligible"]
 
 
 def test_hyperliquid_sidedness_never_eligible():
@@ -235,3 +280,56 @@ def test_evm_precision_products_and_squared_flow_sizes_are_not_rounded_to28digit
 def test_unknown_liquidation_side_or_negative_quantity_is_not_guessed(venue, raw):
     with pytest.raises(n.SemanticError):
         n.liquidation(instrument(venue, "PERP_LINEAR"), raw)
+
+
+def test_oi_canonical_precision_and_missing_exchange_timestamp_is_not_invented():
+    inst = instrument("binance", "PERP_LINEAR")
+    current = n.oi(inst, {"openInterest": "1", "time": TS})
+    historical = n.oi(inst, {"sumOpenInterest": "1", "timestamp": TS})
+    assert current["ts_prec"] == current["timestamp_precision"] == "EXACT"
+    assert historical["ts_prec"] == historical["timestamp_precision"] == "BUCKET(300s)"
+    with pytest.raises(n.SemanticError, match="source timestamp absent"):
+        n.oi(inst, {"openInterest": "1"})
+
+
+def test_native_only_flow_preserves_complete_native_evidence_and_explicit_null_reasons():
+    inst = instrument("binance", "PERP_LINEAR")
+    inst.pop("quote_usd_rate")
+    raw = {"a": 1, "p": "2", "q": "3", "T": TS, "m": False}
+    accumulator = FlowAccumulator()
+    row = accumulator.add(n.trade(inst, raw))
+    key = (inst["instrument_id"], row["minute_start"])
+    bar = accumulator.record(key, complete=True)
+    assert bar["complete"] and bar["buy_qty"] == "3" and bar["sum_sq_qty"] == "9"
+    assert bar["buy_notional"] is None and bar["sell_notional"] is None and bar["size_buckets"] is None
+    assert all(
+        bar["null_reasons"][field] == "INCOMPLETE" for field in ("buy_usd", "sell_usd", "size_buckets")
+    )
+    assert bar["notional_reason"] == "HISTORICAL_QUOTE_USD_RATE_UNAVAILABLE"
+
+
+@pytest.mark.parametrize(
+    "venue,raw",
+    [
+        ("binance", {"sumOpenInterest": "123.456", "timestamp": TS}),
+        ("bybit", {"singleOpenInterest": "123.456", "timestamp": TS}),
+    ],
+)
+def test_oi_verified_request_bucket_metadata_is_not_hardcoded(venue, raw):
+    inst = instrument(venue, "PERP_LINEAR")
+    default = n.oi(inst, raw)
+    hourly = n.oi(inst, raw, bucket_size_s=3600)
+    if venue == "binance":
+        assert default["ts_prec"] == "BUCKET(300s)"
+        assert default["ts_bucket_size_s"] == 300
+        assert hourly["ts_prec"] == "BUCKET(3600s)"
+        assert hourly["ts_bucket_size_s"] == 3600
+        assert hourly["ts_bucket_anchor"] == "END"
+    else:
+        assert default["ts_prec"] == hourly["ts_prec"] == "EXACT"
+        assert default["ts_bucket_size_s"] is hourly["ts_bucket_size_s"] is None
+        assert "ts_bucket_anchor" not in default and "ts_bucket_anchor" not in hourly
+    assert hourly["ts"] == default["ts"] and hourly["oi_native"] == "123.456"
+    for invalid in (0, -300, 0.5, True, 301):
+        with pytest.raises(n.SemanticError, match="documented source request period"):
+            n.oi(inst, raw, bucket_size_s=invalid)

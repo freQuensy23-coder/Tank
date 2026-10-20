@@ -1,0 +1,68 @@
+{
+  "actual_owned_tool_order": [
+    {
+      "tool": "publish_card",
+      "index": 11,
+      "kind": "PARTIAL",
+      "status": "DONE"
+    },
+    {
+      "tool": "publish_card",
+      "index": 15,
+      "kind": "FULL",
+      "status": "DONE"
+    },
+    {
+      "tool": "get_market_truth",
+      "index": 13,
+      "kind": null,
+      "status": "DONE"
+    }
+  ],
+  "map_layers": {
+    "CUSTODY_COMPLIANCE": {
+      "edges": [],
+      "note": "No custody or compliance vendor selected in supplied evidence.",
+      "status": "UNKNOWN"
+    },
+    "INTEROPERABILITY": {
+      "edges": [
+        "EDG-01M5AS95N11QHTCJHD46MXWX6B"
+      ],
+      "note": "Counterparty confirms Name01 selection; no rival share-loss evidence.",
+      "status": "UNKNOWN"
+    },
+    "ISSUER_PRODUCT": {
+      "edges": [],
+      "note": "No registered tokenized deposit issuer specified.",
+      "status": "UNKNOWN"
+    },
+    "LENDING_COLLATERAL": {
+      "edges": [],
+      "note": "No lending or collateral change stated.",
+      "status": "NONE"
+    },
+    "LIQUIDITY_EXECUTION": {
+      "edges": [],
+      "note": "No execution or liquidity vendor identified.",
+      "status": "UNKNOWN"
+    },
+    "ORACLE_DATA": {
+      "edges": [],
+      "note": "No oracle provider identified.",
+      "status": "UNKNOWN"
+    },
+    "SETTLEMENT_L1_L2": {
+      "edges": [
+        "EDG-01M5AS95P4NGKG4Y22K61YJJBJ"
+      ],
+      "note": "Bank network is described, but no token-bearing settlement chain identified.",
+      "status": "UNKNOWN"
+    },
+    "VENUE_DEX": {
+      "edges": [],
+      "note": "No exchange role announced.",
+      "status": "NONE"
+    }
+  }
+}

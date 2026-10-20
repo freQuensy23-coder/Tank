@@ -1,0 +1,490 @@
+{
+  "status": "FROZEN_ISOLATED_CANDIDATE_NOT_PRODUCTION",
+  "date": "2026-10-18",
+  "workcopy": "/tmp/tank-openma-retained-replay-prefix-final",
+  "candidate": {
+    "upstream_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+    "integration": "isolated-retained-session-candidate",
+    "runtime_identity": "decfc25c9876c2c21ff573d1d31e14b11735648b5411b4d5e5b8cb3e815ee723",
+    "source_sha256": {
+      "packages/sandbox-adapter-litebox/src/litebox.ts": "2029ccc872960bc2ca3d77e0e4e59d63501b7f4b3bc7208cfd26a12db7117455",
+      "packages/control-plane-node/src/lib/node-managed-session-runner.ts": "baf42748189959da43eed70e48991c5cb6838ffcfa02ac515002a1e065d404ba",
+      "packages/control-plane-node/src/modules/node-managed.ts": "5ceb2f13d75bd74d40ed60c4e2e75106a6690e4c2d90851cdbea6f9cb866cb02",
+      "packages/sandbox-adapter-litebox/src/tank-replay-evidence.ts": "4850cafe8c8d209d1f8d7b6e7db4cceb08e437d13a109153a786feb9d0444601",
+      "packages/sandbox-adapter-litebox/src/index.ts": "d6098f2f309f75ebfcf65d88eee6f6f9c708c2af9a2dc6c1e7fe42e93b4ea8dd"
+    },
+    "native_vm_proof": "NOT_RUN",
+    "production_integration": "NOT_ADOPTED"
+  },
+  "runtime_api_assumptions": {
+    "openma_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+    "sdk_0_9_sync_info_supported": true,
+    "official_sdk_0_10_6_async_info_supported": true,
+    "official_sdk_source_commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+    "sdk_declaration_hashes_match_actual_colima_control_install": true,
+    "sdk_hashes": {
+      "package.json": "ffccbfdc8290bc0b51baadf609c0c7e5e56ac5054fd03d33e4f98e22d0d872df",
+      "dist/index.d.ts": "fd2e4686b0e0363029b6d383b20198bd87055a05c0aeb8cc3d2396623eec87a6",
+      "dist/native-contracts.d.ts": "67a1d067ab168e41bff61c35eff3934298d555d24448111a93068158d890d884"
+    }
+  },
+  "checks": {
+    "node24_unit_tests": {
+      "passed": 40,
+      "failed": 0,
+      "skipped": 0,
+      "includes_native_qualifier_no_start_guards": 2
+    },
+    "integrations": [
+      {
+        "status": "PASS",
+        "actual_pinned_provider": true,
+        "actual_patched_adapter": true,
+        "actual_sql_fence": true,
+        "persistent_sqlite_pointer": true,
+        "native_client": "SYNTHETIC_NO_VM",
+        "retention_scenario_allocation_count": 1,
+        "failure_compensation": true,
+        "partial_idle_retry": true,
+        "initial_publication_ambiguous_commit": true,
+        "release_ambiguous_commit": true,
+        "real_child_process_exit_before_publication": true,
+        "durable_allocation_intent_recovery": true,
+        "fence_loss_orphan_receipt": true,
+        "warm_replay_prefix_revalidation": true,
+        "mutable_prefix_excluded_static_identity": true,
+        "interrupted_prefix_fail_closed": true,
+        "replay_mount_root_inode_stable": true,
+        "controller_restart_same_prefix_scope": true,
+        "native_mount_visibility": "NOT_PROVED",
+        "retained_rootfs_workspace_profile_binary": true,
+        "per_exec_secret_rotation": true,
+        "cold_archive_reaped": true,
+        "calls": [
+          [
+            "allocate",
+            "native_1"
+          ],
+          [
+            "start",
+            "native_1"
+          ],
+          [
+            "stop",
+            "native_1"
+          ],
+          [
+            "fresh-get",
+            "native_1"
+          ],
+          [
+            "start",
+            "native_1"
+          ],
+          [
+            "stop",
+            "native_1"
+          ],
+          [
+            "fresh-get",
+            "native_1"
+          ],
+          [
+            "remove-owned",
+            "native_1"
+          ],
+          [
+            "allocate",
+            "native_2"
+          ],
+          [
+            "start",
+            "native_2"
+          ],
+          [
+            "remove-owned",
+            "native_2"
+          ],
+          [
+            "fresh-get",
+            "native_2"
+          ],
+          [
+            "remove-owned",
+            "native_2"
+          ],
+          [
+            "allocate",
+            "native_3"
+          ],
+          [
+            "fresh-get",
+            "native_3"
+          ],
+          [
+            "remove-owned",
+            "native_3"
+          ],
+          [
+            "allocate",
+            "native_4"
+          ],
+          [
+            "start",
+            "native_4"
+          ],
+          [
+            "stop",
+            "native_4"
+          ],
+          [
+            "fresh-get",
+            "native_4"
+          ],
+          [
+            "start",
+            "native_4"
+          ],
+          [
+            "fresh-get",
+            "native_4"
+          ],
+          [
+            "stop",
+            "native_4"
+          ],
+          [
+            "fresh-get",
+            "native_4"
+          ],
+          [
+            "start",
+            "native_4"
+          ],
+          [
+            "stop",
+            "native_4"
+          ],
+          [
+            "fresh-get",
+            "native_4"
+          ],
+          [
+            "start",
+            "native_4"
+          ],
+          [
+            "stop",
+            "native_4"
+          ],
+          [
+            "fresh-get",
+            "native_4"
+          ],
+          [
+            "remove-owned",
+            "native_4"
+          ],
+          [
+            "allocate",
+            "native_5"
+          ],
+          [
+            "start",
+            "native_5"
+          ],
+          [
+            "stop",
+            "native_5"
+          ],
+          [
+            "fresh-get",
+            "native_5"
+          ],
+          [
+            "start",
+            "native_5"
+          ],
+          [
+            "stop",
+            "native_5"
+          ],
+          [
+            "fresh-get",
+            "native_5"
+          ],
+          [
+            "remove-owned",
+            "native_5"
+          ],
+          [
+            "allocate",
+            "native_6"
+          ],
+          [
+            "start",
+            "native_6"
+          ],
+          [
+            "fresh-get",
+            "native_6"
+          ],
+          [
+            "stop",
+            "native_6"
+          ],
+          [
+            "fresh-get",
+            "native_6"
+          ],
+          [
+            "start",
+            "native_6"
+          ],
+          [
+            "stop",
+            "native_6"
+          ],
+          [
+            "fresh-get",
+            "native_6"
+          ],
+          [
+            "remove-owned",
+            "native_6"
+          ],
+          [
+            "allocate",
+            "native_7"
+          ],
+          [
+            "fresh-get",
+            "native_7"
+          ],
+          [
+            "start",
+            "native_7"
+          ],
+          [
+            "stop",
+            "native_7"
+          ],
+          [
+            "fresh-get",
+            "native_7"
+          ],
+          [
+            "remove-owned",
+            "native_7"
+          ],
+          [
+            "fresh-get",
+            "native_crash"
+          ],
+          [
+            "start",
+            "native_crash"
+          ],
+          [
+            "stop",
+            "native_crash"
+          ],
+          [
+            "fresh-get",
+            "native_crash"
+          ],
+          [
+            "remove-owned",
+            "native_crash"
+          ],
+          [
+            "allocate",
+            "native_8"
+          ],
+          [
+            "start",
+            "native_8"
+          ],
+          [
+            "stop",
+            "native_8"
+          ],
+          [
+            "fresh-get",
+            "native_8"
+          ],
+          [
+            "start",
+            "native_8"
+          ],
+          [
+            "stop",
+            "native_8"
+          ],
+          [
+            "fresh-get",
+            "native_8"
+          ],
+          [
+            "start",
+            "native_8"
+          ],
+          [
+            "stop",
+            "native_8"
+          ],
+          [
+            "fresh-get",
+            "native_8"
+          ],
+          [
+            "remove-owned",
+            "native_8"
+          ]
+        ]
+      },
+      {
+        "status": "PASS",
+        "actual_patched_node_runner": true,
+        "lease_lost_abandon_after_draining": true,
+        "publication_failure_finalization": true,
+        "concurrent_user_interrupt_preserved": true,
+        "native_vm": "NOT_RUN"
+      }
+    ],
+    "strict_public_contract_typecheck": "PASS including four production modules, actual pinned provider/fence, official0.10.6 SDK, direct dynamic adapter and current-prefix helper",
+    "actual_assembly_import": "PASS",
+    "python_ruff": "PASS",
+    "full_control_plane_typecheck": {
+      "baseline_errors": 6,
+      "candidate_errors": 6,
+      "additional_errors": 0,
+      "status": "BASELINE_DIAGNOSTICS_REMAIN",
+      "evidence": "typecheck-baseline.json"
+    },
+    "execution_deadline": {
+      "status": "PASS",
+      "phases": [
+        "native_spawn_acknowledgement",
+        "stdin_close",
+        "stdout_stderr",
+        "native_exit"
+      ],
+      "one_original_deadline": true,
+      "late_exact_process_kill": true,
+      "unconfirmed_kill_poison_blocks_subsequent_guest_io": true,
+      "deferred_spawn_stdin_kill_exit_regressions": true
+    },
+    "security_allocation_passthrough": "PASS (exact typed property forwarding, no policy change)",
+    "direct_patched_adapter_strict_typecheck": "PASS (explicitly supplied dynamically loaded adapter file, including name/security fields)",
+    "native_qualifier_syntax_and_default_no_start_guards": "PASS; native phases NOT_RUN",
+    "current_prefix_attachment": {
+      "status": "PASS",
+      "warm_bind_latest_metadata": true,
+      "actual_public_filesystem_verifier": true,
+      "exact_readonly_mount": true,
+      "mutable_hash_cutoff_excluded_static_fingerprint": true,
+      "changed_run_stale_hash_unlisted_staging_fail_closed": true,
+      "stable_directory_inode": true,
+      "controller_restart_same_synthetic_disk": true,
+      "native_guest_mount_visibility": "NOT_PROVED"
+    }
+  },
+  "offline_environment": {
+    "container_image": "tank-openma:85d5361f535c7221de975838dc48444e468cc02e-tank5-startup",
+    "image_id": "sha256:f8239897843606077ad730c022096856c917f021ff07c7c72d6bd456469579c7",
+    "network": "none",
+    "kvm_device_passed": false,
+    "native_vm_started": false,
+    "real_model_or_credentials_used": false,
+    "qualification_scope": "New prepared TS composition mounted into existing Node24 dependency image; official SDK0.10.6 declarations checked explicitly. New native image has not been built/tested by this agent."
+  },
+  "integration_boundary": [
+    "Only new deployment assets and isolated workcopy changed",
+    "No running services or production overlay modified",
+    "Native OpenMA session IDs/history/archive policy untouched",
+    "No synthetic calibration or business event state",
+    "No new service/S3 or arbitrary idle/session cap"
+  ],
+  "known_limits": [
+    "Hard crash after durable allocating intent but before native allocation leaves no disk and fails closed; no empty replacement is created. Confirmed compensated catchable startup records aborted and can retry.",
+    "Native VM rootfs/workspace/browser profile persistence across idle and graceful/hard controller restart has NOT been proved by this candidate. Synthetic disk tests must not be presented as native durability.",
+    "Final runtime/boot overlay adoption, actual autoDelete=0 info, real persistent volumes/database, competing-controller behavior and final archive cleanup require coordinated native/service proof.",
+    "Primary-spec conformance review remains independent and required before production acceptance.",
+    "Current-prefix native mounted-directory visibility/cache behavior remains NOT_PROVED; filesystem/synthetic tests are not a native mount proof.",
+    "Actual OpenMA API session/history continuity across service/controller restart remains NOT_PROVED separately from bridge/native qualification.",
+    "Host replay CLI process resume is not implemented or claimed; a new CLI run requires a fresh isolated DB/run."
+  ],
+  "production_adopted": false,
+  "version": 5,
+  "prior_evidence": {
+    "path": "verification.v4.json",
+    "sha256": "5a7c50e2b5c41ea512d562c9d7a8c8478a75e421ad7b43497e10487967646a01",
+    "superseded_assessment": "Version5 rebases onto current-prefix final3, adds warm attachment verification against latest Session.metadata without changing static allocation identity, exercises actual public verifier and controller replacement, and strictly checks direct adapter/helper composition. No native proof or production adoption."
+  },
+  "integration_base": {
+    "path": "/tmp/tank-openma-replay-prefix-final3",
+    "overlay": "tank8-replay-sealed/current-prefix-final3",
+    "sdk_override": "0.10.6",
+    "native_shim_sha256": "d44e3d54bf227b288bd059ece8c751339c6db0fb62a3d7c2077cd93241421255",
+    "native_security": {
+      "jailerEnabled": false,
+      "seccompEnabled": false
+    },
+    "security_basis": "Preserve deployment owner explicit prior Linux native baseline. No new native hardening is claimed; outer Docker policy remains deployment-owned.",
+    "source_guards": {
+      "packages/managed-runtime-boxlite/src/boxlite.ts": "72bcf42641a42adcc1f240478a018f82a6711bf39f62f155d8536ea132f3290b",
+      "packages/runtime-resource-fence-sql/src/index.ts": "e4dddf3fd931b5a521f267c82d59ba1b12306d6d351563e9b845e69e9d338855",
+      "packages/runtime-resource-contract/src/fence.ts": "63247d78f98abdd373ce53abe213b2c9a24b2690229b043bc163c72bd5d8e373"
+    },
+    "source_sha256": {
+      "tank-overlay.json": "711cae85382b1ac3917b3b6517c85322d41f942a3fb7b48c1d0c0d6c3ba25b20",
+      "pnpm-lock.yaml": "8db697971714ee04b538d90653a370f1ce25cc792f7304da1c57ebff276aa128",
+      "pnpm-workspace.yaml": "280eeb1cf424dec6b8a03173813f83db2350b9f8aabd3f1e315804e6087ca711",
+      "apps/main-node/Dockerfile.tank": "1fca06d08663a6567e6988bb09dcf7ee2425de4eb16097902825f0ab9c1eb07c",
+      "tank-deploy/boxlite-runtime/provenance.json": "4ae9258e00f457f709a56f4d4efc48360d8286cd566fc66286d83910e61fb451"
+    },
+    "actual_native_lifecycle_qualification": "NOT_RUN",
+    "built_image_qualification": "PENDING_DEPLOYMENT_OWNER_BUILD",
+    "final_native_qualification_tuple": {
+      "cpus": 1,
+      "memory_mib": 2048,
+      "historical_512_evidence_not_reused": true
+    }
+  },
+  "prepared_native_qualification": {
+    "script": "native-qualification.mjs",
+    "invocation": "NATIVE_QUALIFICATION.md",
+    "status": "PREPARED_NOT_RUN; diagnostic-only DOM/PNG/observer extension pending after production freeze",
+    "requires_explicit_deployment_owner_GO": true,
+    "scope": "Actual bridge/provider/SQL/native/browser only; separate real OpenMA API session/history continuity proof required",
+    "bounded_child_phase_seconds": [
+      180,
+      180,
+      60
+    ],
+    "dedicated_runtime_home_required": true,
+    "external_requests_or_model_calls": 0
+  },
+  "production_source_sha256": {
+    "prepare.py": "abb396c0a94f69641b9229f4ecaed33093a3b9ee844da6c8eae77ee236fcdaf2",
+    "retained-session.ts": "57553be1a6716aa0395b851c71d0ec8aac06c16236c2c54d968e3699d4fd832d",
+    "boxlite-provider.ts": "0c9f5972ae005643985998f8ee68f092a8b7cad9627f176b5ad9245e92e16f1e",
+    "node-lifecycle.ts": "a10fd88706cb533459ed37690345f85220b8548091b06d4bc248f241ed5b9074",
+    "replay-attachment.ts": "ba6a8a372d7104d3f82c82032af823b907e9a4583fd0671d84eec0d3d067a7e1",
+    "source-guards.json": "4725011cfbb10c3526520dc999166ef1f95a102ec511d4405f1f6144738d922c",
+    "package.json": "64c67398cef92bcf97907d1ecca4e3161acfad2da6470a4761d67a4d75fd4cc0"
+  },
+  "evidence_sha256": {
+    "offline-check.log": "f5e45ca8c9a4f56975dcbdc8b2934496bd84ee5f7148d106a97a0bd47ca5d194",
+    "typecheck-baseline.json": "2f02729b22e41f3f3b3f77e20272d7b9378bf3abf62082f8c3f6d711aa2ab3d6",
+    "pinned-provider.integration.mjs": "88babdbb3d19e750560d06c0f6743737630d14ed0924664a3194323063a0a722",
+    "pinned-runner.integration.mjs": "4a0a41482e969473fff4a27ac00981ec67223535f403879ab9cc35d40f89db30",
+    "replay-attachment.test.mjs": "4c3c348b3c95e4dbdf031aa346703430eb32a53c9f222e43c781789e307ed1d7",
+    "node-lifecycle.test.mjs": "f3d3bf1188d45339685dca841b70a9aada66bdbbd00ed2259d57663574ceb1bc",
+    "boxlite-provider.test.mjs": "80a308776cc45f61cc836d73b21cb38ba273ca78832f52bce94e9675bd4bf722",
+    "retained-session.test.mjs": "75745c356d355a106036f16c3bd54c0405010b029d7d79aec5725bd53ce1915a",
+    "pinned-type-compatibility.check.ts": "7237b2dece2fab987d9f703d4b54cc87fd308e2595807eca6bb14b080e77f2e8",
+    "sdk-0106-compatibility.check.ts": "2d9bada1710598d8087c1aa07a12fdba5632ed4d100cc08a9879ce0188d97785"
+  }
+}

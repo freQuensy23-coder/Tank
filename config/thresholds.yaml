@@ -1,10 +1,12 @@
-version: baseline-2.3
-filter_cutoff: null
-routing_cutoff: null
-filter_model: jev-1.13.0
+version: baseline-2.4
+filter_cutoff: 0.23
+routing_cutoff: 0.67
+filter_model: typesafe/jev-1.13
+routing_selection_objective: max_f1
 calibration_required:
 - 'filter_cutoff: V0-B highest cutoff retaining >=95% relevant items'
-- 'routing_cutoff: V0-B precision and recall >=0.90'
+- 'routing_cutoff: maximum measured event-level F1; user-authorized checkpoint 2026-10-20;
+  precision/recall 0.90 remain reported targets'
 - 'tank_agent_statement_timeout_ms: V0-G'
 - 'tank_agent_connection_limit: V0-G'
 tank_agent_statement_timeout_ms: null
@@ -57,4 +59,10 @@ quiet_socket_s: 30
 archive_retry_s: 3600
 routing_window_days: 3
 market_context_rule: normal_range
-known_f16_conflict: 'Resolved by corrected F-16: STRESS under §5.7. The normal-range rule is unchanged; the record-extreme proposal is rejected.'
+calibration_evidence:
+  report: docs/verification/prompt-selection-2026-10-20/calibration/calibration-report.json
+  report_sha256: 997e6955ac0459469118c1add2a0d25bf5871b9c1c491ebc206430608b314b64
+  independent_retest: docs/verification/prompt-selection-2026-10-20/d6/evaluation.json
+  independent_retest_sha256: d4b16ea316644346212c7951966df53a306d64bb45a5b59b837b6cb393dc7aa7
+  authorization: '2026-10-20 user: select the best measured prompt and threshold,
+    then proceed;90/90 is not a launch blocker.'

@@ -1,0 +1,22 @@
+{
+  "name": "@open-managed-agents/session-runtime-contract",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./coordination": "./src/coordination.ts",
+    "./context": "./src/context.ts",
+    "./dispatch": "./src/dispatch.ts",
+    "./history": "./src/history.ts",
+    "./lifecycle": "./src/lifecycle.ts",
+    "./stream": "./src/stream.ts",
+    "./continuation": "./src/continuation.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@open-managed-agents/domain": "workspace:*"
+  }
+}

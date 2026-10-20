@@ -26,19 +26,26 @@ def test_compose_topology_and_credential_boundaries():
         assert service["logging"]["options"]["max-file"] == "5"
     tank = c["services"]["tank"]
     oma = c["services"]["openma"]
+    assert oma["environment"]["LITEBOX_MEMORY_MIB"] == "${TANK_SANDBOX_MEMORY_MIB:-2048}"
+    assert oma["environment"]["LITEBOX_CPUS"] == "${TANK_SANDBOX_CPUS:-2}"
     assert tank["environment"]["TANK_JEV_PROVIDER"] == "openrouter"
     assert tank["environment"]["TANK_OPENROUTER_API_KEY_FILE"] == "/run/secrets/openrouter_api_key"
     assert "openrouter_api_key" in tank["secrets"] and "openrouter_api_key" in oma["secrets"]
     assert "typesafe_api_key" not in c["secrets"]
     assert "x_session" not in tank["secrets"] and "x_session" not in c["secrets"]
-    assert tank["environment"]["TANK_X_ENABLED"] == "${TANK_X_ENABLED:-true}"
-    assert tank["environment"]["TANK_X_LIST_ID"] == "${TANK_X_LIST_ID:-}"
+    assert tank["environment"]["TANK_X_ENABLED"] == "${TANK_X_ENABLED:-false}"
+    assert "TANK_X_LIST_ID" not in tank["environment"]
     x = yaml.safe_load((ROOT / "compose.x.yaml").read_text())
     assert x["services"]["tank"]["secrets"] == ["x_session"]
+    assert x["services"]["tank"]["environment"]["TANK_X_ENABLED"] == "true"
     assert any(
         isinstance(v, dict) and v.get("target") == "/config" and v.get("read_only") for v in tank["volumes"]
     )
     assert "codex-auth:/codex-auth" in tank["volumes"]
+    assert "sealed-replay-evidence:/data/replay/evidence" in tank["volumes"]
+    assert "sealed-replay-evidence:/app/replay-evidence:ro" in oma["volumes"]
+    assert oma["environment"]["TANK_REPLAY_EVIDENCE_ROOT"] == "/app/replay-evidence"
+    assert all("tank-data" not in str(volume) for volume in oma["volumes"])
     assert all("codex-auth" not in str(v) for v in oma["volumes"])
     assert "/dev/kvm:/dev/kvm" in oma["devices"]
     assert not {"telegram_bot_token", "x_session", "codex_gateway_key"} & set(oma["secrets"])
@@ -254,3 +261,211 @@ def test_local_oci_export_verifier_checks_referenced_blobs_and_safe_paths(tmp_pa
     bundle({"../escape": b"unsafe"})
     with pytest.raises(ValueError, match="Unsafe"):
         helper.prepare(archive, tmp_path / "unsafe")
+
+
+def test_bootstrap_hba_denies_all_sandbox_roles_until_actual_source_is_observed(tmp_path):
+    helper = module("prepare_network")
+    text = helper.prepare("172.30.42.0/24", None, tmp_path / "bootstrap", bootstrap_only=True)
+    assert "host tank,tank_replay tank " in text
+    assert "host oma oma " in text
+    assert "host tank tank_agent " not in text
+    assert "host tank_replay tank_replay_agent " not in text
+    assert "host all all 0.0.0.0/0 reject" in text
+    with pytest.raises(ValueError):
+        helper.prepare("172.30.42.0/24", "172.30.42.3/32", tmp_path / "bad", bootstrap_only=True)
+
+
+def test_colima_installer_uses_only_approved_api_credentials_and_preserves_internal_keys(tmp_path):
+    helper = module("prepare_colima_secrets")
+    source = tmp_path / "approved.env"
+    source.write_text(
+        "OPENROUTER_API_KEY=synthetic-or\nTelegram_BOT_TOKEN=synthetic-telegram\nETHERSCAN=synthetic-etherscan\n"
+    )
+    payload = helper.payload_from_env(source)
+    assert payload["openrouter_api_key"] == {"value": "synthetic-or", "preserve": False}
+    assert payload["telegram_bot_token"]["value"] == "synthetic-telegram"
+    assert payload["etherscan_api_key"]["value"] == "synthetic-etherscan"
+    assert all(payload[name]["preserve"] for name in helper.GENERATED)
+    assert "x_session" not in payload and "typesafe_api_key" not in payload
+
+
+def test_boxlite_bundle_rejects_static_shim_changed_firmware_and_bad_hash(tmp_path, monkeypatch):
+    import hashlib
+    import struct
+
+    helper = module("prepare_boxlite_runtime")
+    template = json.loads((ROOT / "deploy/boxlite/provenance-template.json").read_text())
+    root = tmp_path / "bundle"
+    root.mkdir()
+    interpreter = b"/lib/ld-linux-aarch64.so.1\0"
+    elf = bytearray(120 + len(interpreter))
+    elf[:6] = b"\x7fELF\x02\x01"
+    struct.pack_into("<H", elf, 18, 183)
+    struct.pack_into("<Q", elf, 32, 64)
+    struct.pack_into("<HH", elf, 54, 56, 1)
+    struct.pack_into("<I", elf, 64, 3)
+    struct.pack_into("<Q", elf, 72, 120)
+    struct.pack_into("<Q", elf, 96, len(interpreter))
+    elf[120:] = interpreter
+    for name in template["files"]:
+        (root / name).write_bytes(bytes(elf) if name == "boxlite-shim" else name.encode())
+    template["files"] = {
+        name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in template["files"]
+    }
+    template["artifact_sha256"] = template["files"]["boxlite-shim"]
+    base = tmp_path / "recipe"
+    (base / "boxlite").mkdir(parents=True)
+    (base / "boxlite/provenance-template.json").write_text(json.dumps(template))
+    monkeypatch.setattr(helper, "BASE", base)
+    (root / "provenance.json").write_text(json.dumps(template))
+    assert helper.verify_runtime(root)["artifact_sha256"] == template["artifact_sha256"]
+    (root / ".env").write_text("synthetic")
+    with pytest.raises(ValueError, match="Unexpected file"):
+        helper.verify_runtime(root)
+    (root / ".env").unlink()
+    (root / "libkrunfw.so.5").write_bytes(b"changed")
+    with pytest.raises(ValueError, match="hash mismatch"):
+        helper.verify_runtime(root)
+    forged = json.loads(json.dumps(template))
+    forged["files"]["libkrunfw.so.5"] = hashlib.sha256(b"changed").hexdigest()
+    (root / "provenance.json").write_text(json.dumps(forged))
+    with pytest.raises(ValueError, match="Original pinned runtime modified"):
+        helper.verify_runtime(root)
+    (root / "libkrunfw.so.5").write_bytes(b"libkrunfw.so.5")
+    struct.pack_into("<HH", elf, 54, 56, 0)
+    (root / "boxlite-shim").write_bytes(elf)
+    forged = json.loads(json.dumps(template))
+    forged["files"]["boxlite-shim"] = hashlib.sha256(elf).hexdigest()
+    forged["artifact_sha256"] = forged["files"]["boxlite-shim"]
+    (root / "provenance.json").write_text(json.dumps(forged))
+    with pytest.raises(ValueError, match="dynamic loader"):
+        helper.verify_runtime(root)
+
+
+def test_boxlite0106_rejects_relabelled_or_mixed_version_artifacts(tmp_path, monkeypatch):
+    import hashlib
+    import struct
+
+    helper = module("prepare_boxlite_runtime")
+    expected = json.loads((ROOT / "deploy/boxlite/v0.10.6/qualified-artifact.json").read_text())
+    root, recipe = tmp_path / "bundle", tmp_path / "recipe"
+    root.mkdir()
+    interpreter = b"/lib/ld-linux-aarch64.so.1\0"
+    elf = bytearray(120 + len(interpreter))
+    elf[:6] = b"\x7fELF\x02\x01"
+    struct.pack_into("<H", elf, 18, 183)
+    struct.pack_into("<Q", elf, 32, 64)
+    struct.pack_into("<HH", elf, 54, 56, 1)
+    struct.pack_into("<I", elf, 64, 3)
+    struct.pack_into("<Q", elf, 72, 120)
+    struct.pack_into("<Q", elf, 96, len(interpreter))
+    elf[120:] = interpreter
+    for name in expected["files"]:
+        (root / name).write_bytes(bytes(elf) if name == "boxlite-shim" else name.encode())
+    expected["files"] = {
+        name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in expected["files"]
+    }
+    expected["shim_sha256"] = expected["files"]["boxlite-shim"]
+    target = recipe / "boxlite/v0.10.6/qualified-artifact.json"
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps(expected))
+    monkeypatch.setattr(helper, "BASE", recipe)
+    provenance = root / "provenance.json"
+    provenance.write_text(json.dumps(expected))
+    # Normal 0.10.6 deployment now uses the separate strict-DNS registration;
+    # the historical baseline remains immutable for builder pin validation.
+    registration = {
+        "status": "QUALIFIED_NATIVE_REPLAY_NETWORK",
+        "source": expected["source"],
+        "files": expected["files"],
+        "shim_sha256": expected["shim_sha256"],
+        "provenance_sha256": hashlib.sha256(provenance.read_bytes()).hexdigest(),
+        "qualification": {"status": "PASS", "managed_session_or_full_E2E_acceptance": False},
+    }
+    (target.parent / "replay-dns-qualified-artifact.json").write_text(json.dumps(registration))
+    (root / "SHA256SUMS").write_text(
+        "".join(f"{digest}  {name}\n" for name, digest in sorted(expected["files"].items()))
+    )
+    assert helper.verify_runtime(root)["boxlite_version"] == "0.10.6"
+
+    relabelled = json.loads(json.dumps(expected))
+    relabelled["source"]["commit"] = "0" * 40
+    provenance.write_text(json.dumps(relabelled))
+    with pytest.raises(ValueError, match="provenance hash mismatch"):
+        helper.verify_runtime(root)
+    mixed = json.loads(json.dumps(expected))
+    (root / "libkrunfw.so.5").write_bytes(b"different runtime firmware")
+    mixed["files"]["libkrunfw.so.5"] = hashlib.sha256(b"different runtime firmware").hexdigest()
+    provenance.write_text(json.dumps(mixed))
+    with pytest.raises(ValueError, match="Strict replay DNS-qualified"):
+        helper.verify_runtime(root)
+    relabelled["source"]["version"] = "0.10.7"
+    provenance.write_text(json.dumps(relabelled))
+    with pytest.raises(ValueError, match="Unsupported"):
+        helper.verify_runtime(root)
+
+
+def test_boxlite0106_sdk_lock_is_exact_and_has_no_old_sdk_resolution():
+    import hashlib
+
+    base = ROOT / "deploy/boxlite/v0.10.6"
+    metadata = json.loads((base / "openma-sdk-patch.json").read_text())
+    lock = base / metadata["lockfile_asset"]
+    assert hashlib.sha256(lock.read_bytes()).hexdigest() == metadata["lockfile_sha256"]
+    parsed = yaml.safe_load(lock.read_text())
+    assert parsed["overrides"]["@boxlite-ai/boxlite"] == "0.10.6"
+    sdk_packages = [name for name in parsed["packages"] if name.startswith("@boxlite-ai/boxlite")]
+    assert sdk_packages and all(name.endswith("@0.10.6") for name in sdk_packages)
+
+
+def test_raw_new_runtime_export_is_not_relabelled_or_marked_qualified(tmp_path):
+    helper = module("prepare_boxlite_runtime")
+    (tmp_path / "guest-resize2fs").write_bytes(b"unqualified fresh export")
+    with pytest.raises(ValueError, match="versioned provenance and qualification"):
+        helper.prepare(tmp_path)
+    assert not (tmp_path / "provenance.json").exists()
+
+
+def test_sandbox_route_defaults_and_validated_isolated_override():
+    import shutil
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node executable required for actual deployment entrypoint contract")
+    script = """
+import {sandboxDatabaseRoute} from './deploy/openma_entrypoint.mjs';
+const readSecret = name => {if(name!=='tank_agent_db_password')throw Error('wrong secret');return 'synthetic:p@ss';};
+const defaults=sandboxDatabaseRoute({},readSecret);
+const isolated=sandboxDatabaseRoute({TANK_SANDBOX_DATABASE_NAME:'tank_integration_extract_20261018',TANK_SANDBOX_DATABASE_ROLE:'tank_integration_extract_agent'},readSecret);
+let rejected=0;
+for(const value of ['', 'tank;DROP', '../tank', 'A', 'x'.repeat(64)])for(const key of ['TANK_SANDBOX_DATABASE_NAME','TANK_SANDBOX_DATABASE_ROLE']){try{sandboxDatabaseRoute({[key]:value},readSecret);}catch{rejected++;}}
+console.log(JSON.stringify({defaults,isolated,rejected}));
+"""
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", script], cwd=ROOT, check=True, capture_output=True, text=True
+    )
+    data = json.loads(result.stdout)
+    assert data["defaults"] == "postgresql://tank_agent:synthetic%3Ap%40ss@postgres:5432/tank"
+    assert data["isolated"].endswith("@postgres:5432/tank_integration_extract_20261018")
+    assert data["rejected"] == 10
+
+
+def test_replay_route_resolves_only_declared_private_service_for_l4_acl():
+    import shutil
+
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node executable required")
+    script = """import {replayDatabaseRoute} from './deploy/openma_entrypoint.mjs';
+let called=false;
+const resolved=await replayDatabaseRoute(()=> 'synthetic',async(host,opts)=>{if(host!=='postgres'||opts.family!==4)throw Error('wrong host');called=true;return {address:'172.30.42.2'};});
+let denied=0;for(const address of ['8.8.8.8','0.0.0.0','127.0.0.1','::1'])try{await replayDatabaseRoute(()=> 'synthetic',async()=>({address}));}catch{denied++;}
+console.log(JSON.stringify({called,resolved,denied}));"""
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", script], cwd=ROOT, check=True, capture_output=True, text=True
+    )
+    data = json.loads(result.stdout)
+    assert data["called"] and data["denied"] == 4
+    assert data["resolved"]["url"] == "postgresql://tank_replay_agent:synthetic@172.30.42.2:5432/tank_replay"
+    prep = (ROOT / "deploy/prepare_openma_source.py").read_text()
+    assert "allowed.push(env.TANK_SANDBOX_DATABASE_IPV4)" in prep

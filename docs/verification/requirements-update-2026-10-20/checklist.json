@@ -1,0 +1,168 @@
+{
+  "authority": "Latest direct user request, supersedes conflicting earlier preferences",
+  "request_sha256": "69adceb1e05981482653931b63c9d8411f899ed133769fb787a9cd6284925362",
+  "items": [
+    {
+      "id": 1,
+      "reported": "10:00 ушла карточка по QNT, стадия APPROVED. 10:05 вышел официальный пост «now live», стадия стала LIVE. Агент вызывает publish_card, а Tank отвечает «рано, с прошлой карточки прошло меньше 15 минут». Апдейт нигде не сохраняется и на 10:15 не планируется. Оператор узнает о LIVE, только если позже придёт ещё одна новость и агент опубликует заново. Сразу, в обход 15 минут, уходят только START, EXIT и сломанный тезис",
+      "required": "Апдейт «стадия LIVE» не теряется: Tank сам отправит его в 10:15, когда пройдут 15 минут",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 2,
+      "reported": "По свежему событию пришла перепечатка новости трёхдневной давности, и она двигает стадию. Оператору уходит апдейт, как будто это новость",
+      "required": "Стадия в базе меняется, но апдейт не отправляется: новость старая",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 3,
+      "reported": "Пост про токен, которого нет в нашем списке из 22. Агент ошибся и поставил MAJOR, и оператору уходит карточка без единого токена",
+      "required": "set_assessment видит, что ни один из 22 токенов не затронут, и сам ставит LOW, карточки нет",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 4,
+      "reported": "По открытому событию пришла новость. Агент решил, что она ничего не меняет, и не записал её в событие. Tank просит агента доделать, а со второго раза помечает событие FAILED. После этого по нему не будет апдейтов, коллы бросаются, следующая новость откроет новое событие",
+      "required": "Агент сам решает, записывать ли новость. Событие ломается только если упала сама сессия OpenMA",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 5,
+      "reported": "В карточке вместо пустых значений «—»: Scores D— M— P—, NOT VERIFIED: —. Непонятно, почему пусто",
+      "required": "M n/a (нельзя оценить: нет цифр в источнике): видно, почему пусто",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 6,
+      "reported": "Событие «Uniswap запускает X»: в строке WHO сам Uniswap стоит как «secondary uniswap (unverified COMPATIBLE)», рядом все найденные связи подряд",
+      "required": "В WHO только главный токен, подтверждённые вторичные и проигравший",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 7,
+      "reported": "Вторичных нет, и карточка пишет «ни одна связь не прошла проверку §4.7»",
+      "required": "По каждому из 8 слоёв написано, почему там никого нет: «биржи — нет листинга, кредитование — нет пула…»",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 8,
+      "reported": "Цена растёт, на споте продают, поглощение продаж ещё не подтверждено, а карточка пишет «PASSIVE SPOT ABSORPTION» как факт",
+      "required": "«Возможное поглощение, не подтверждено», рядом альтернативы",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 9,
+      "reported": "STRUCTURAL SHOCK дан по критерию «обязательная инфраструктура». Проверка пропускает его, если в событии есть хоть одна цитата, даже про другое",
+      "required": "Нужна цитата, которая подтверждает именно «обязательную инфраструктуру»",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 10,
+      "reported": "publish_card ответил агенту «опубликовано», потом доставка ещё раз проверяет правила и может молча не отправить карточку. Агент думает, что она ушла",
+      "required": "Что прошло publish_card, то и уходит в Telegram",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 11,
+      "reported": "ADD (добавить к позиции) запрещён, если уверенность в данных не HIGH, есть нерешённое противоречие или токен проигравший. Этих условий в спеке нет",
+      "required": "ADD по правилу B3 матрицы, без лишних условий",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 12,
+      "reported": "Уверенность в данных падает до MEDIUM, если у биржи нет записи об инструменте, хотя сделки по нему идут",
+      "required": "Уверенность зависит только от покрытия спота, покрытия деривативов и свежести",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 13,
+      "reported": "Новость присоединяется к существующему событию при оценке Jev ≥ 0.67 (подобрано по максимуму F1)",
+      "required": "По спеке порог — самый высокий, при котором и точность, и полнота ≥ 0.90. Если ты одобрял 0.67, я впишу его в спеку",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 14,
+      "reported": "Утилизация кредитования берётся из DefiLlama /pools. 13 ноября он становится платным, и у всех токенов метрика станет пустой",
+      "required": "Брать из /lendBorrow, он остаётся бесплатным",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 15,
+      "reported": "Песочница агента (BoxLite) собрана только под ARM (Mac M1, ARM-серверы). На обычном x86-сервере Tank не запустится",
+      "required": "Запускается на любом Linux-сервере, x86 или ARM",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 16,
+      "reported": "DTCC читается через их внутренний поиск Coveo. Ключ к нему Tank вытаскивает из JS-файла сайта. Поменяют JS — источник сломается молча",
+      "required": "Tank открывает dtcc.com/press-releases и собирает ссылки на статьи",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 17,
+      "reported": "ID приватного списка X берётся только из переменной TANK_X_LIST_ID, а в compose.x.yaml её нет. Прод с X падает на каждом чтении X",
+      "required": "ID списка лежит в sources.yaml",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 18,
+      "reported": "Для запуска нужны секреты postgres_password, tank_db_password, oma_db_password, oma_auth_secret, tank_replay_agent_db_password и тома openma-data, sealed-replay-evidence. В HLD их нет, и по документации систему не поднять",
+      "required": "Всё, что нужно для запуска, перечислено в HLD",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 19,
+      "reported": "Сайт поменял вёрстку: страница грузится, статей находится 0, источник показан «здоровым». Новости с него перестают приходить, и никто не узнаёт",
+      "required": "0 статей на загруженной странице → источник помечается DEGRADED и виден в мониторинге",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 20,
+      "reported": "По событию MAJOR создаётся 8 задач замера реакции (−24h, −4h, −1h, +15m, +1h, +4h, +24h, +72h), их ставит инструмент агента",
+      "required": "Планировщик ставит 5 задач после события (+15m … +72h), окна до события считаются сразу при создании",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 21,
+      "reported": "В базе лишняя схема archive со старыми таблицами, которая никогда не чистится, и лишняя папка raw/market_frames",
+      "required": "Только схемы и папки из HLD, у каждой свой срок хранения",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 22,
+      "reported": "Страницу Franklin Templeton рендерит отдельный Chromium, а X читает второй",
+      "required": "Один браузер на оба",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 23,
+      "reported": "В таблице карточек out.alerts осталась пустая колонка linter",
+      "required": "Колонки нет",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 24,
+      "reported": "OpenMA пропатчен ещё 6 этапами сверх HLD. Среди них openma_lifecycle (6.4 тыс. строк), который в своём README помечен «не принят в прод», но всё равно применяется",
+      "required": "Только патчи из HLD. Нужные этапы вписать в HLD, ненужные убрать",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 25,
+      "reported": "Калибровка порогов Jev — фреймворк на 2.9 тыс. строк",
+      "required": "Одна команда tank calibrate: 200 размеченных новостей прогоняются через Jev, по результату выбираются пороги",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 26,
+      "reported": "В коде два пути к Jev: OpenRouter и TypeSafe напрямую. Если настройка не задана, код идёт в TypeSafe",
+      "required": "Только OpenRouter /api/v1/systemone",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    },
+    {
+      "id": 27,
+      "reported": "Сохранённые новости источников переписываются при каждом опросе и старте: меняются метаданные, текст Binance пересобирается из сырых файлов",
+      "required": "Новость записывается один раз при сборе и больше не меняется",
+      "status": "PENDING_CODE_AND_BEHAVIOR_CHECK"
+    }
+  ]
+}

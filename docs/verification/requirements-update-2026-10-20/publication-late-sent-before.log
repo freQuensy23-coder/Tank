@@ -1,0 +1,54 @@
+Fs                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_queued_updates_keep_actual_sent_spacing_through_late_send_and_restart[memory] _
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x107ff0500>
+backend = 'memory'
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("backend", ["memory", "postgres"])
+    async def test_queued_updates_keep_actual_sent_spacing_through_late_send_and_restart(monkeypatch, backend):
+        import copy
+        import json
+        import os
+        from datetime import timedelta
+    
+        from tank.storage import PostgresRepository
+        from tank.util import iso, new_id, utcnow
+    
+        database_url = os.getenv("TANK_TEST_DATABASE_URL")
+        if backend == "postgres" and not database_url:
+            pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
+        repo = PostgresRepository(database_url) if backend == "postgres" else MemoryRepository()
+        await repo.open()
+        if backend == "postgres":
+            await repo.migrate()
+        base = utcnow() - timedelta(hours=1)
+        clock = [base + timedelta(minutes=25)]
+        monkeypatch.setattr("tank.delivery.utcnow", lambda: clock[0])
+        aid = new_id("alert")
+        event_id = new_id("event")
+        settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+        requests = []
+    
+        def send(request):
+            requests.append(json.loads(request.content))
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": 42 + len(requests)}})
+    
+        try:
+            for version, due in [(1, 0), (2, 15), (3, 30)]:
+                await repo.put("out.alerts", f"{aid}:{version}", {"alert_id": aid, "version": version, "event_id": event_id, "kind": "FULL" if version == 1 else "UPDATE", "card_text": f"Accepted immutable version {version}", "decisions": [], "delivery_immediate": False, "generated_at": iso(base + timedelta(minutes=version)), "delivery_not_before": iso(base + timedelta(minutes=due))}, immutable=True)
+            await repo.put("out.deliveries", new_id("delivery"), {"alert_id": aid, "version": 1, "channel": "telegram:alerts", "status": "SENT", "message_ref": "42", "attempt": 1, "at": iso(base), "at_prec": "COLLECTION_ONLY"}, immutable=True)
+            frozen = copy.deepcopy(await repo.get("out.alerts", f"{aid}:3"))
+            async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+                await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 2})
+                assert len(requests) == 1
+                clock[0] = base + timedelta(minutes=30)
+>               with pytest.raises(DeliveryError) as deferred:
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E               Failed: DID NOT RAISE DeliveryError
+
+tests/test_delivery.py:890: Failed
+=========================== short test summary info ============================
+FAILED tests/test_delivery.py::test_queued_updates_keep_actual_sent_spacing_through_late_send_and_restart[memory]
+1 failed, 1 skipped, 29 deselected in 0.25s

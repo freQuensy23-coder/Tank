@@ -4,8 +4,9 @@
 import argparse
 import hashlib
 import json
-import subprocess
 from pathlib import Path
+
+from tank.settings import _git_config_identity
 
 SUFFIXES = {".yaml", ".yml", ".json", ".md"}
 
@@ -21,17 +22,7 @@ def prepare_config(config_dir):
             if path.is_symlink():
                 raise ValueError("Versioned config cannot contain symlinks")
             digest.update(relative.as_posix().encode() + b"\0" + path.read_bytes() + b"\0")
-    commit = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-    ).stdout.strip()
-    dirty = bool(
-        subprocess.run(
-            ["git", "-C", str(root), "status", "--porcelain", "--", "."],
-            capture_output=True,
-            text=True,
-            check=True,
-        ).stdout.strip()
-    )
+    commit, dirty = _git_config_identity(root, digest.hexdigest())
     result = {"git_commit": commit, "content_sha256": digest.hexdigest(), "git_dirty": dirty}
     (root / ".tank-config-version.json").write_text(json.dumps(result, indent=2) + "\n")
     return result

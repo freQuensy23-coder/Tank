@@ -1,0 +1,29 @@
+✔ real Python guest file worker transfers binary with NUL, invalid UTF8, quotes, spaces and shell metacharacters (49.169042ms)
+✔ multi-chunk transfer is streamed without losing bytes and text API bytes remain UTF8 intact (108.210125ms)
+✔ empty regular files succeed in both directions (43.770917ms)
+✔ missing path and directory errors cannot replace host destination and do not poison a confirmed-exited runtime (64.567083ms)
+✔ kernel read/write permission errors preserve existing bytes and allow later ordinary I/O (67.903375ms)
+✔ upstream512MiB cap is checked before read/write transfer, including a sparse source (22.485917ms)
+✔ NUL/oversized path is refused before process launch (1.875458ms)
+✔ strict read protocol refuses absent/duplicate headers, oversized lines, wrong digest and nonzero success (13.671333ms)
+✔ deferred spawn and stalled pipe still obey original requested exec deadline and refuse overlap (12.762041ms)
+✔ hung write kills only its exact child, poisons the runtime, and permits recovery only on a fresh runtime (236.583917ms)
+✔ malformed read while process remains live triggers exact transport cleanup and no queued file side effects (1.461709ms)
+✔ write producer cannot enqueue a second64KiB chunk before an actual-write ACK despite an unbounded fake SDK sink (52.820709ms)
+✔ actual read worker produces only one data chunk until the consumer ACKs its staged bytes (90.58875ms)
+✔ public provider bridge resumes a fresh handle and reaps without resume or allocating secret env (1.741333ms)
+✔ SimpleBox-compatible command/file bridge preserves current per-exec env and binary files (56.405292ms)
+✔ command timeout kills the native process rather than leaving background work (5.675125ms)
+✔ crash recovery quiesces orphan processes then resumes using a second fresh native handle (0.218583ms)
+✔ unpublished existing native disk and missing published disk fail closed without provider allocation (0.211792ms)
+✔ unconfirmed timeout poisons all further guest I/O until fresh stopped/resumed runtime (7.825167ms)
+✔ one original deadline bounds deferred spawn and kills its late exact process without stdin or overlap (12.191583ms)
+✔ one original deadline bounds deferred stdin close and refuses new I/O while kill and exit remain unconfirmed (11.846084ms)
+ℹ tests 21
+ℹ suites 0
+ℹ pass 21
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 804.124667

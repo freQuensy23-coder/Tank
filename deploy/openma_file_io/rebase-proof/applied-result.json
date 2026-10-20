@@ -1,0 +1,18 @@
+{
+  "stage": "guest-streamed-file-io",
+  "status": "OFFLINE_TESTED_NATIVE_NOT_QUALIFIED",
+  "source_sha256": {
+    "packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts": "ecbbe30d29a7e2c48ff918681d4816a0af57ecda2ece093bcf023f101763fca9"
+  },
+  "patched_file_hashes": {
+    "packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts": "ce1a3cfc3db0c8939289be02615d52a419e9fca6fcc29a33e9dfd8a4c4478f14"
+  },
+  "added_file_hashes": {
+    "packages/control-plane-node/src/lib/tank-retained/guest-file-io.ts": "d149658b6e95b2aae3690a9538f9a52a7123cdab18d77ebf788e36cfcb4360bc",
+    "packages/control-plane-node/src/lib/tank-retained/guest-file-worker.ts": "5381ce39bd0bdc62db18df95aa04e0a5411972b12482d07fc9cf7f3f1605cc28"
+  },
+  "asset_manifest_sha256": "119b79be9502d80910a307866025405117a6b96eaac8f77198199cdbaf00a34c",
+  "file_operation_budget_seconds": 120,
+  "browser_budgets_unchanged": true,
+  "native_vm_proof": "NOT_RUN"
+}

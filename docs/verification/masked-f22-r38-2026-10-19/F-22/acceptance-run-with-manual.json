@@ -1,0 +1,12 @@
+{
+  "started_at": "2026-10-19T19:00:01.439420+00:00",
+  "frozen_output": {
+    "path": "docs/verification/masked-f22-r38-2026-10-19/F-22/actual/qa-r38-masked-f22-driver/framework-bundles/ab8167e735c54e3cc2677a21466baab2ea6de3511505d97e97a382b110f41208/outputs.json",
+    "sha256": "c52a772a67d0113f12e74f8adc8bd563302e1b558171d0f4c80db7fc28023759"
+  },
+  "scope": "Actual single masked reference first outcome; no normal Runtime or SENT claim",
+  "manual_review": {
+    "path": "docs/verification/masked-f22-r38-2026-10-19/F-22/manual-review.json",
+    "sha256": "7dd2c6b8888c08dac24ad8bc6d700b2c45e562e02b747d3a2a8a0b5366f92ab1"
+  }
+}

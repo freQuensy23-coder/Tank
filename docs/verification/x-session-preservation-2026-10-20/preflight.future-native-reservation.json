@@ -1,0 +1,14 @@
+{
+  "resources": {
+    "epoch_ms": 1792510998980,
+    "mem_available_bytes": 8163397632,
+    "disk_available_bytes": 8892788736
+  },
+  "probe_limit_bytes": 1073741824,
+  "future_native_limit_reserved_bytes": 5368709120,
+  "warm_remaining_reserved_bytes": 105486746,
+  "projected_reserve_bytes": 1615459942,
+  "minimum_reserve_bytes": 2147483648,
+  "disk_floor_bytes": 8589934592,
+  "state_file_read_or_hashed": false
+}

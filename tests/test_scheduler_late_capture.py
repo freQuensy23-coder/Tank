@@ -46,8 +46,17 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
     def external(req):
         requests.append(req.url.path)
         if req.url.path.endswith("aggTrades"):
-            start = int(req.url.params["startTime"])
+            if "fromId" in req.url.params:
+                first = int(req.url.params["fromId"])
+                return httpx.Response(
+                    200,
+                    json=[
+                        {"a": first + n, "p": "100", "q": "1", "T": (first + n) * 60000, "m": False}
+                        for n in range(int(req.url.params.get("limit", 1000)))
+                    ],
+                )
             end = int(req.url.params["endTime"])
+            start = int(req.url.params.get("startTime", end - 60000))
             return httpx.Response(
                 200,
                 json=[
@@ -131,6 +140,8 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
             "m": False,
         }
         assert await market.ingest_trade(inst, late)
+        await market._flush_flow()
+        await market.flush_market()
         await scheduler.detect_late_data(utcnow())
         previous_ids = {job["job_id"] for job in jobs}
         live_jobs = [

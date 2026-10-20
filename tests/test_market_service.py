@@ -12,6 +12,18 @@ from tank.storage import MemoryRepository
 from tank.util import utcnow
 
 
+def test_market_redaction_covers_nested_keys_and_values_and_current_credentials():
+    from types import SimpleNamespace
+
+    market = object.__new__(MarketService)
+    market.settings = SimpleNamespace(telegram_token="private-token")
+    value = {"private-token": [{"url": "https://example.test/private-token"}, (7, None)]}
+    assert market._redact(value) == {"[REDACTED]": [{"url": "https://example.test/[REDACTED]"}, [7, None]]}
+    assert "private-token" in value
+    market.settings.telegram_token = "rotated-token"
+    assert market._redact({"key": "rotated-token"}) == {"key": "[REDACTED]"}
+
+
 @pytest.fixture
 def setup(tmp_path):
     config = tmp_path / "config"
@@ -59,6 +71,40 @@ def setup(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_trade_archive_contention_keeps_event_loop_responsive(setup):
+    import asyncio
+    from threading import Event, Thread
+
+    repo, settings, inst = setup
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        await service._ensure_market_restore()
+        locked, release, fallback = Event(), Event(), Event()
+
+        def writer():
+            with service.trade_archive._lock:
+                locked.set()
+                if not release.wait(2):
+                    fallback.set()
+
+        thread = Thread(target=writer)
+        thread.start()
+        await asyncio.to_thread(locked.wait, 2)
+        raw = {"a": 1, "p": "2", "q": "3", "T": int(utcnow().timestamp() * 1000), "m": False}
+        task = asyncio.create_task(service.ingest_trade(inst, raw))
+        try:
+            # This coroutine must release the archive writer before its fallback;
+            # a synchronous archive lock on the event loop prevents that.
+            await asyncio.sleep(0.05)
+            assert not fallback.is_set()
+            assert not task.done()
+        finally:
+            release.set()
+            await asyncio.to_thread(thread.join, 3)
+        assert await task
+
+
+@pytest.mark.asyncio
 async def test_trade_dedup_restart_and_precise_bar_reconstruction(setup):
     repo, settings, inst = setup
     http = httpx.AsyncClient()
@@ -67,17 +113,21 @@ async def test_trade_dedup_restart_and_precise_bar_reconstruction(setup):
     raw = {"a": 1, "p": "2.123456789012345678", "q": "3", "T": ts, "m": False}
     assert await service.ingest_trade(inst, raw)
     assert not await service.ingest_trade(inst, raw)
+    await service._flush_flow()
+    await service.flush_market()
     # Restart resumes durable trade IDs and reconstructs existing minute before next print.
     restarted = MarketService(repo, settings, http=http)
     assert not await restarted.ingest_trade(inst, raw)
     second = dict(raw, a=2, q="1", T=ts + 1, m=True)
     assert await restarted.ingest_trade(inst, second)
+    await restarted._flush_flow()
+    await restarted.flush_market()
     bars = await repo.list("mkt.flow_bars_1m")
     assert len(bars) == 1
     assert bars[0]["buy_qty"] == "3" and bars[0]["sell_qty"] == "1" and bars[0]["sum_sq_qty"] == "10"
     assert Decimal(bars[0]["buy_notional"]) == Decimal("6.370370367037037034")
     semantics = await repo.get("qa.reviews", "semantic:" + inst["instrument_id"] + ":binance.spot.aggTrade")
-    assert semantics["semantic_confidence"] == "VERIFIED"
+    assert semantics is None  # No runtime semantic promotion or self-test records.
     await http.aclose()
 
 
@@ -103,16 +153,33 @@ async def test_snapshot_exact_cutoff_anchor_and_benchmark_history(setup):
     await repo.put(
         "mkt.oi_obs",
         "before",
-        {"instrument_id": inst["instrument_id"], "ts": "2026-06-17T00:01:00Z", "oi_native": "3"},
+        {
+            "instrument_id": inst["instrument_id"],
+            "metric_key": "binance.usdm.openInterest",
+            "ts": "2026-06-17T00:01:00Z",
+            "oi_native": "3",
+        },
     )
     await repo.put(
         "mkt.oi_obs",
         "future",
-        {"instrument_id": inst["instrument_id"], "ts": "2026-06-17T00:03:00Z", "oi_native": "9"},
+        {
+            "instrument_id": inst["instrument_id"],
+            "metric_key": "binance.usdm.openInterest",
+            "ts": "2026-06-17T00:03:00Z",
+            "oi_native": "9",
+        },
     )
     anchor = {"ts": "2026-06-16T23:00:00Z", "type": "T0"}
     snapshot = await service.snapshot(inst["token_id"], cutoff, anchor)
-    assert snapshot["anchor"] == anchor and len(snapshot["klines"]) == 2 and len(snapshot["oi"]) == 1
+    assert snapshot["anchor"]["ts"] == anchor["ts"] and snapshot["anchor"]["type"] == anchor["type"]
+    assert snapshot["anchor"]["ts_prec"] is None and snapshot["anchor"]["ts_prec_reason"] == "INCOMPLETE"
+    assert snapshot["assembled_at_prec"] == "COLLECTION_ONLY" and snapshot["requested_cutoff_prec"] == "EXACT"
+    assert len(snapshot["klines"]) == 2 and len(snapshot["oi"]) == 1
+    from tank.time_precision import Timestamp
+
+    uncertain = await service.snapshot(inst["token_id"], Timestamp(cutoff, "BUCKET(1h)"), anchor)
+    assert uncertain["cutoff_prec"] == uncertain["requested_cutoff_prec"] == "BUCKET(1h)"
     assert any(i["token_id"] == "bitcoin:BTC" for i in snapshot["instruments"])
     assert (await service.snapshot(inst["token_id"], cutoff))["anchor"] is None
     await http.aclose()
@@ -126,11 +193,15 @@ async def test_connected_empty_minute_zero_and_disconnected_absence(setup):
     now = utcnow().replace(second=0, microsecond=0)
     iid = inst["instrument_id"]
     service._connected_since[iid] = now - timedelta(minutes=2)
+    service._stream_watermarks[iid] = {"ts": now.isoformat()}
     await service._flush_flow()
+    await service.flush_market()
     bars = await repo.list("mkt.flow_bars_1m")
-    assert len(bars) == 2 and all(b["complete"] and b["buy_qty"] == "0" and b["open"] is None for b in bars)
+    closed = [b for b in bars if b["complete"]]
+    assert len(closed) == 2 and all(b["buy_qty"] == "0" and b["open"] is None for b in closed)
+    assert len(bars) == 3 and sum(not b["complete"] for b in bars) == 1
     await service._flush_flow()
-    assert len(await repo.list("mkt.flow_bars_1m")) == 2
+    assert len(await repo.list("mkt.flow_bars_1m")) == 3
     other = "binance:spot:BTCUSD"
     assert not await repo.list("mkt.flow_bars_1m", filters={"instrument_id": other})
     await http.aclose()
@@ -144,11 +215,14 @@ async def test_backfill_complete_survives_flush_without_live_connection(setup):
     ts = int((utcnow() - timedelta(hours=1)).timestamp() * 1000)
     raw = {"a": 1, "p": "2", "q": "3", "T": ts, "m": False}
     await service.ingest_trade(inst, raw, backfill=True)
-    key = next(iter(service.flow.bars))
-    service.flow.bars[key].update(_backfill_verified=True, gap_reason=None, complete=True)
+    minute = utcnow().fromtimestamp(ts / 1000, tz=utcnow().tzinfo).replace(second=0, microsecond=0)
+    await service._persist_rest_flow_ranges(
+        inst, minute, minute + timedelta(minutes=1), [(minute, minute + timedelta(minutes=1))]
+    )
     await service._flush_flow()
-    bar = await repo.get("mkt.flow_bars_1m", key[0] + ":" + key[1])
-    assert bar["complete"] and bar["gap_reason"] is None
+    await service.flush_market()
+    bars = await repo.list("mkt.flow_bars_1m")
+    assert len(bars) == 1 and bars[0]["complete"] and bars[0]["gap_reason"] is None
     await http.aclose()
 
 
@@ -169,7 +243,7 @@ async def test_polling_venue_error_preserves_gap_not_zero(setup):
 
 
 @pytest.mark.asyncio
-async def test_independent_rest_confirmation_reachable_and_raw_saved(setup):
+async def test_independent_rest_confirmation_returns_evidence_without_duplicate_frame(setup):
     repo, settings, inst = setup
 
     def handler(request):
@@ -179,7 +253,10 @@ async def test_independent_rest_confirmation_reachable_and_raw_saved(setup):
     service = MarketService(repo, settings, http=http)
     out = await service._independent_book(inst, {"mid": "100", "spread_bps": "200"})
     assert out["second_path_confirmed"] and out["independent_rest"]["source"] == "PUBLIC_REST"
-    assert len(await repo.list("mkt.raw_archives")) == 1
+    await service.flush_market()
+    assert not await repo.list("mkt.raw_archives")
+    assert out["independent_rest"]["mid"] == "100"
+    assert not (settings.data_dir / "raw/market_frames").exists()
     await http.aclose()
 
 
@@ -295,11 +372,9 @@ async def test_market_transport_and_recursive_metadata_never_persist_api_key(set
     )
     assert secret not in str(await repo.list("mkt.supply_obs"))
     await service._raw(inst, "sensitive_response", {"nested": [{"error": secret}]})
-    rows = await repo.list("mkt.raw_archives")
-    from tank.market.archive import RawArchive
-
-    archive = RawArchive.read_verified(rows[0]["path"], rows[0]["sha256"])
-    assert secret not in str(archive)
+    await service.flush_market()
+    assert not await repo.list("mkt.raw_archives")
+    assert not (settings.data_dir / "raw/market_frames").exists()
     await http.aclose()
 
 
@@ -385,7 +460,7 @@ async def test_backfill_prerequisite_is_durable_without_orphan_completion_jobs(s
 
 
 @pytest.mark.asyncio
-async def test_semantic_proof_scope_cannot_certify_another_instrument_and_anchor_is_actual_trade(setup):
+async def test_registry_available_for_cold_benchmark_and_anchor_is_actual_trade(setup):
     from tank.util import iso, utcnow
 
     repo, settings, inst = setup
@@ -400,14 +475,13 @@ async def test_semantic_proof_scope_cannot_certify_another_instrument_and_anchor
     snapshot = await service.snapshot(inst["token_id"], iso(utcnow()), {"ts": iso(anchor), "type": "T0"})
     target = [s for s in snapshot["semantics"] if s["instrument_id"] == inst["instrument_id"]]
     benchmark = [s for s in snapshot["semantics"] if s["instrument_id"] == "binance:spot:BTCUSD"]
-    assert (
-        target[0]["semantic_confidence"] == "VERIFIED"
-        and benchmark[0]["semantic_confidence"] == "DOCUMENTED_UNTESTED"
-    )
-    assert snapshot["anchor_trades"][inst["instrument_id"]]["trade_id"] == "1"
-    assert snapshot["anchor_trades"][inst["instrument_id"]]["price"] == "2.1"
-    assert snapshot["cutoff_trades"][inst["instrument_id"]]["trade_id"] == "2"
-    assert len(snapshot["trades"]) == 2
+    assert target and benchmark
+    assert all("semantic_confidence" not in row for row in target + benchmark)
+    assert not await repo.list("qa.reviews", filters={"subject": "METRIC_SEMANTICS"})
+    points = [point for point in snapshot["reference_points"] if point["boundary"] == iso(anchor)]
+    # A source frame alone is not a proof that the boundary was exhaustively enumerated.
+    assert not any(point["complete"] for point in points)
+    assert "trades" not in snapshot
     await http.aclose()
 
 
@@ -415,7 +489,7 @@ async def test_semantic_proof_scope_cannot_certify_another_instrument_and_anchor
 async def test_exhausted_bounded_rest_proves_first_last_and_empty_minutes_despite_live_flush(
     setup, monkeypatch
 ):
-    from tank.util import parse_time
+    from tank.util import iso, parse_time
 
     repo, settings, inst = setup
     http = httpx.AsyncClient(
@@ -437,7 +511,18 @@ async def test_exhausted_bounded_rest_proves_first_last_and_empty_minutes_despit
     begin = anchor - timedelta(hours=24)
 
     class Adapter:
-        async def trades(self, *, start, end, cursor=None):
+        async def trades(self, *, start=None, end=None, cursor=None):
+            if cursor is not None:
+                # Quiet initial minute: the true ID predecessor is older.
+                return [
+                    {
+                        "a": 0,
+                        "p": "2",
+                        "q": "1",
+                        "T": int((begin - timedelta(minutes=5)).timestamp() * 1000),
+                        "m": False,
+                    }
+                ], None
             # Concurrent live housekeeping can evict old provisional accumulators.
             service._last_flow_flush = 0
             await service._flush_flow()
@@ -458,8 +543,29 @@ async def test_exhausted_bounded_rest_proves_first_last_and_empty_minutes_despit
             return rows
 
     service.adapter = lambda instrument, **kwargs: Adapter()
-    await service.backfill(inst, anchor)
+    import asyncio
+
+    await repo.put(
+        "evt.events",
+        "pre24-event",
+        {"event_id": "pre24-event", "public_at": iso(anchor), "known_to_us_at": iso(anchor)},
+    )
+    settings.replay = False
+    await service.escalate("pre24-event", [inst["token_id"]])
+    await asyncio.gather(*service._background)
+    readiness = await service.capture_readiness("pre24-event", inst["token_id"], anchor=anchor)
+    assert readiness["status"] == "COMPLETE"
+    assert readiness["result"]["benchmark_klines"][0]["complete"]
+    pre24 = await service.snapshot(inst["token_id"], anchor, {"ts": begin, "type": "T0"})
+    reference = next(
+        p["last_trade"]
+        for p in pre24["reference_points"]
+        if p["instrument_id"] == inst["instrument_id"] and p["boundary"] == iso(begin) and p["complete"]
+    )
+    assert parse_time(reference["ts"]) == begin - timedelta(minutes=5)
+    assert reference["price"] == "2"
     rows = await repo.list("mkt.flow_bars_1m", filters={"instrument_id": inst["instrument_id"]}, limit=2000)
+    rows = [r for r in rows if begin <= parse_time(r["minute_start"]) < anchor]
     assert len(rows) == 1440 and all(r["complete"] for r in rows)
     first = next(r for r in rows if r["minute_start"] == "2026-06-16T00:00:00Z")
     empty = next(r for r in rows if r["minute_start"] == "2026-06-16T00:01:00Z")
@@ -470,12 +576,35 @@ async def test_exhausted_bounded_rest_proves_first_last_and_empty_minutes_despit
     assert (await repo.get("mkt.flow_bars_1m", inst["instrument_id"] + ":2026-06-16T00:00:00Z"))["complete"]
     coverage = await service._capture_window_coverage(inst, anchor)
     assert coverage["complete"] and coverage["windows"]["W24H"]["flow"]["complete_minutes"] == 1440
+    from tank.scheduler import Scheduler
+    from tank.util import iso
+
+    await repo.put(
+        "evt.events",
+        "pre24-event",
+        {
+            "event_id": "pre24-event",
+            "public_at": iso(anchor),
+            "known_to_us_at": iso(anchor),
+        },
+    )
+    (settings.config_dir / "thresholds.yaml").write_text("{}\n")
+    checkpoint = await Scheduler(repo, settings, service, None).reaction_capture(
+        {
+            "event_id": "pre24-event",
+            "token_id": inst["token_id"],
+            "checkpoint": "PRE_24H",
+            "anchor": {"ts": iso(anchor), "type": "T1"},
+            "retro": True,
+        }
+    )
+    assert Decimal(str(checkpoint["r_raw"])) == 0
+    assert Decimal(str(checkpoint["r_btc_adj"])) == 0
     await http.aclose()
 
 
 @pytest.mark.asyncio
 async def test_fractional_boundary_actual_trades_and_proven_range_never_include_future(setup):
-    from tank.market.normalize import trade
     from tank.util import parse_time
 
     repo, settings, inst = setup
@@ -484,6 +613,7 @@ async def test_fractional_boundary_actual_trades_and_proven_range_never_include_
     anchor = parse_time("2026-06-17T00:00:17Z")
     cutoff = parse_time("2026-06-17T01:02:33Z")
     start = anchor.replace(second=0)
+    service._register_capture_boundaries({inst["instrument_id"]}, cutoff, {"ts": anchor})
     for tid, stamp in enumerate(
         [
             anchor - timedelta(seconds=1),
@@ -493,42 +623,85 @@ async def test_fractional_boundary_actual_trades_and_proven_range_never_include_
         ],
         1,
     ):
-        raw = {"a": tid, "p": "2", "q": "1", "T": int(stamp.timestamp() * 1000), "m": False}
-        row = trade(inst, raw)
-        await repo.put("mkt.trades", inst["instrument_id"] + ":" + str(tid), row)
+        await service.ingest_trade(
+            inst,
+            {"a": tid, "p": "2", "q": "1", "T": int(stamp.timestamp() * 1000), "m": False},
+            backfill=True,
+        )
     await service._persist_rest_flow_ranges(inst, start, cutoff, [(start, cutoff)])
-    trades, proofs = await service._boundary_capture(
-        {inst["instrument_id"]}, cutoff, {"ts": anchor, "type": "T0"}
+    snapshot = await service.snapshot(inst["token_id"], cutoff, {"ts": anchor, "type": "T0"})
+    segments = snapshot["flow_segments"]
+    ending = [
+        p
+        for p in segments
+        if parse_time(p["end"]) == cutoff and parse_time(p["start"]) == cutoff.replace(second=0)
+    ]
+    assert len(ending) == 1 and ending[0]["complete"] and Decimal(ending[0]["buy_qty"]) == 1
+    prefix = [p for p in segments if parse_time(p["end"]) == anchor and parse_time(p["start"]) == start]
+    assert len(prefix) == 1 and prefix[0]["complete"] and prefix[0]["last_trade"]["trade_id"] == "1"
+    # Ordinary truth is durable aggregates, independent of raw retention. An
+    # unrequested historical boundary remains unavailable, never interpolated.
+    unknown = await service.snapshot(
+        inst["token_id"], cutoff, {"ts": anchor + timedelta(seconds=1), "type": "T0"}
     )
-    assert {t["trade_id"] for t in trades} == {"1", "2", "3"}
-    assert any(
-        p["complete"]
-        and parse_time(p["start"]) <= anchor
-        and parse_time(p["end"]) >= anchor + timedelta(seconds=1)
-        for p in proofs
-    )
-    assert any(
-        p["complete"]
-        and parse_time(p["start"]) <= cutoff - timedelta(seconds=1)
-        and parse_time(p["end"]) >= cutoff
-        for p in proofs
-    )
-    assert any(not p["complete"] and p["reason"] == "BOUNDARY_CONTINUITY_NOT_PROVEN" for p in proofs)
-    # Simulate raw retention without changing the intact aggregate/capture proof.
-    repo._data["mkt.trades"].pop(inst["instrument_id"] + ":1")
-    service._connected_since[inst["instrument_id"]] = start
-    service.flow.last[inst["instrument_id"]] = {"ts": cutoff + timedelta(seconds=1)}
-    _, after_purge = await service._boundary_capture(
-        {inst["instrument_id"]}, cutoff, {"ts": anchor, "type": "T0"}
-    )
-    assert not any(
-        p["complete"]
-        and parse_time(p["start"]) <= anchor
-        and parse_time(p["end"]) >= anchor + timedelta(seconds=1)
-        for p in after_purge
-    )
-    assert any(p.get("reason") == "RAW_BOUNDARY_ENUMERATION_UNVERIFIED" for p in after_purge)
+    assert not any(parse_time(p["end"]) == anchor + timedelta(seconds=1) for p in unknown["flow_segments"])
     await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_fractional_current_and_previous_15minute_flow_requires_retained_raw(setup):
+    from tank.analysis.truth import spot_truth
+    from tank.util import parse_time
+
+    repo, settings, inst = setup
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        cutoff = parse_time("2026-06-17T12:00:17Z")
+        anchor = cutoff - timedelta(hours=1)
+        start = cutoff.replace(second=0) - timedelta(hours=2)
+        service._register_capture_boundaries({inst["instrument_id"]}, cutoff, {"ts": anchor})
+        tid = 0
+        for minute in range(121):
+            for second, qty, maker in ((10, "1", True), (20, "2", False)):
+                tid += 1
+                stamp = start + timedelta(minutes=minute, seconds=second)
+                await service.ingest_trade(
+                    inst,
+                    {"a": tid, "p": "2", "q": qty, "T": int(stamp.timestamp() * 1000), "m": maker},
+                    backfill=True,
+                )
+        await service._persist_rest_flow_ranges(inst, start, cutoff, [(start, cutoff)])
+
+        async def windows():
+            snapshot = await service.snapshot(inst["token_id"], cutoff, {"ts": anchor, "type": "T0"})
+            assert all(parse_time(row["end"]) <= cutoff for row in snapshot["flow_segments"])
+            return [
+                spot_truth(
+                    snapshot["flow_bars"],
+                    snapshot["tickers"],
+                    [inst],
+                    cutoff - timedelta(minutes=offset + 15),
+                    cutoff - timedelta(minutes=offset),
+                    flow_segments=snapshot["flow_segments"],
+                    assembled_at=snapshot["assembled_at"],
+                )
+                for offset in (0, 15)
+            ]
+
+        current, previous = await windows()
+        for result in (current, previous):
+            assert len(result["venues"]) == 1
+            assert result["venues"][0]["buy_qty"] == Decimal(30)
+            assert result["venues"][0]["sell_qty"] == Decimal(15)
+
+        # Removing a required typed boundary segment leaves the exact window incomplete.
+        missing = cutoff - timedelta(minutes=15)
+        for key, row in list(repo._data["mkt.flow_bars_1m"].items()):
+            if parse_time(row["minute_start"]) == missing.replace(second=0):
+                row["boundary_segments"] = []
+                await repo.put_market_batch("mkt.flow_bars_1m", [row], keys=[key])
+        current, _ = await windows()
+        assert len(current["venues"]) == 0
 
 
 def add_perp_instrument(settings, spot):
@@ -540,7 +713,132 @@ def add_perp_instrument(settings, spot):
 
 
 @pytest.mark.asyncio
-async def test_actual_producer_tier_metadata_controls_90second_oi_and_funding_freshness(setup):
+async def test_kraken_pre24_reference_search_expands_quiet_time_and_follows_forward_cursor(setup):
+    from tank.util import iso, parse_time
+
+    repo, settings, spot = setup
+    inst = dict(spot, venue="kraken", instrument_id="kraken:spot:ABCUSD")
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        anchor = parse_time("2026-06-17T00:00:00Z")
+        begin = anchor - timedelta(hours=24)
+        calls = []
+
+        def raw(stamp, tid):
+            return ["2", "1", str(stamp.timestamp()), "b", "m", "", tid]
+
+        class Adapter:
+            async def trades(self, *, start=None, end=None, cursor=None):
+                calls.append((start, cursor))
+                if end is not None:
+                    return [raw(begin, 10), raw(anchor, 11)], "main-end"
+                if cursor == "older-page":
+                    return [raw(begin - timedelta(minutes=5), 9), raw(begin, 10)], "crossed-bound"
+                if start <= begin - timedelta(minutes=8):
+                    return [raw(begin - timedelta(minutes=7), 8)], "older-page"
+                return [raw(begin, 10)], "no-earlier"
+
+            async def klines(self, **kwargs):
+                return []
+
+        service.adapter = lambda instrument, **kwargs: Adapter()
+        await service.backfill(inst, anchor)
+        reference = service.flow.references[(inst["instrument_id"], iso(begin))]["last_trade"]
+        assert parse_time(reference["ts"]) == begin - timedelta(minutes=5)
+        assert any(cursor == "older-page" for _, cursor in calls)
+        assert len(calls) <= 33
+
+
+@pytest.mark.asyncio
+async def test_wholly_quiet_binance_spot_pre24_uses_documented_end_bound_not_fake_zero_price(setup):
+    from tank.util import iso, parse_time
+
+    repo, settings, inst = setup
+    begin = parse_time("2026-06-16T00:00:00Z")
+    calls = []
+
+    class Adapter:
+        async def trades(self, *, start=None, end=None, cursor=None):
+            calls.append((start, end, cursor))
+            if start is None and cursor is None:
+                return [
+                    {
+                        "a": 19,
+                        "p": "7",
+                        "q": "1",
+                        "T": int((begin - timedelta(hours=3)).timestamp() * 1000),
+                        "m": False,
+                    }
+                ], None
+            return [], None
+
+        async def klines(self, **kwargs):
+            return []
+
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        service.adapter = lambda instrument, **kwargs: Adapter()
+        await service.backfill(inst, begin + timedelta(days=1))
+        reference = service.flow.references[(inst["instrument_id"], iso(begin))]["last_trade"]
+        assert reference["price"] == "7" and parse_time(reference["ts"]) == begin - timedelta(hours=3)
+        assert (None, begin - timedelta(milliseconds=1), None) in calls
+
+
+@pytest.mark.asyncio
+async def test_capture_tier_uses_durable_activation_and_demotion_history_not_future_hot_state(
+    setup, monkeypatch
+):
+    import tank.market.service as module
+    from tank.util import iso, parse_time
+
+    repo, settings, inst = setup
+    perp = add_perp_instrument(settings, inst)
+    clock = parse_time("2026-06-17T11:00:00Z")
+    monkeypatch.setattr(module, "iso", lambda value=None: iso(clock if value is None else value))
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        token = inst["token_id"]
+        assert (await service._capture_metadata(token, clock))["tier"] == "UNKNOWN"
+        await repo.put(
+            "mkt.oi_obs",
+            "unknown-tier-oi",
+            {
+                "instrument_id": perp["instrument_id"],
+                "token_id": token,
+                "ts": iso(clock - timedelta(seconds=90)),
+                "metric_key": "binance.usdm.openInterest",
+                "oi_native": "1",
+                "oi_usd": "2",
+            },
+        )
+        from tank.analysis.truth import compute_market_truth
+
+        unknown_truth = compute_market_truth(await service.snapshot(token, clock))
+        check = next(
+            row for row in unknown_truth["data_confidence"]["freshness"] if row["collection"] == "oi"
+        )
+        assert check["cadence_s"] is None and check["reason"] == "NOT_ESTIMABLE"
+        assert check["cadence_source"] == "CAPTURE_TIER_HISTORY_UNAVAILABLE"
+        await service._record_capture_tier(token, "BASE", "CAPTURE_POLICY_STARTED")
+        baseline = clock
+        clock += timedelta(hours=1)
+        await repo.put("evt.events", "tier-event", {"event_id": "tier-event", "public_at": iso(clock)})
+        await service.escalate("tier-event", [token])
+        active = clock
+        assert (await service._capture_metadata(token, active - timedelta(minutes=1)))["tier"] == "BASE"
+        assert (await service._capture_metadata(token, active))["tier"] == "HOT"
+        clock += timedelta(minutes=1)
+        await service.demote(token)
+        restarted = MarketService(repo, settings, http=http)
+        assert (await restarted._capture_metadata(token, active))["tier"] == "HOT"
+        assert (await restarted._capture_metadata(token, clock))["tier"] == "BASE"
+        assert (await restarted._capture_metadata(token, baseline - timedelta(seconds=1)))[
+            "tier"
+        ] == "UNKNOWN"
+
+
+@pytest.mark.asyncio
+async def test_actual_producer_tier_metadata_controls_90second_oi_and_funding_freshness(setup, monkeypatch):
     from tank.analysis.truth import compute_market_truth
     from tank.util import iso, utcnow
 
@@ -582,6 +880,11 @@ async def test_actual_producer_tier_metadata_controls_90second_oi_and_funding_fr
         spot["token_id"] + ":event",
         {"token_id": spot["token_id"], "event_id": "event", "since": stamp},
     )
+    import tank.market.service as service_module
+
+    clock = cutoff - timedelta(seconds=1)
+    monkeypatch.setattr(service_module, "iso", lambda value=None: iso(clock if value is None else value))
+    await service._record_capture_tier(spot["token_id"], "HOT", "TEST_ACTUAL_POLICY_ACTIVATED")
     hot_snapshot = await service.snapshot(spot["token_id"], cutoff)
     assert hot_snapshot["capture_tier"] == hot_snapshot["capture_metadata"]["tier"] == "HOT"
     hot = compute_market_truth(hot_snapshot)
@@ -599,8 +902,12 @@ async def test_actual_producer_tier_metadata_controls_90second_oi_and_funding_fr
     )
     assert hot_snapshot["capture_metadata"]["collections"]["supply"]["by_kind"]["EXCHANGE_INVENTORY"] == 900
     assert hot_snapshot["capture_metadata"]["collections"]["supply"]["by_kind"]["FUNDAMENTALS"] == 21600
+    clock = cutoff + timedelta(seconds=1)
     await service.demote(spot["token_id"], "event")
-    base_snapshot = await service.snapshot(spot["token_id"], cutoff)
+    assert (await MarketService(repo, settings, http=http).snapshot(spot["token_id"], cutoff))[
+        "capture_tier"
+    ] == "HOT"
+    base_snapshot = await service.snapshot(spot["token_id"], clock)
     assert base_snapshot["capture_tier"] == "BASE"
     base = compute_market_truth(base_snapshot)
     checks = [
@@ -675,6 +982,7 @@ async def test_backfill_cannot_regress_reconnect_checkpoint(setup):
     await service.ingest_trade(
         inst, {"a": 90, "p": "2", "q": "1", "T": now - 1000, "m": False}, backfill=True
     )
+    await service.flush_market()
     checkpoint = await repo.get("mkt.capture_state", inst["instrument_id"])
     assert checkpoint["last_trade_id"] == "100"
     await service.close()
@@ -701,15 +1009,20 @@ async def test_missing_quote_volume_requires_complete_matching_prints(setup):
         "volume_usd": "7",
         "complete": False,
     }
-    await repo.put("mkt.flow_bars_1m", key, flow)
+    await service._put("mkt.flow_bars_1m", key, flow)
+    await service.flush_market()
     await service._store_kline(inst, dict(row))
+    await service.flush_market()
     assert (await repo.get("mkt.klines_1m", key))["quote_volume"] is None
     flow["complete"] = True
-    await repo.put("mkt.flow_bars_1m", key, flow)
+    await service._put("mkt.flow_bars_1m", key, flow)
+    await service.flush_market()
     await service._store_kline(inst, dict(row))
+    await service.flush_market()
     saved = await repo.get("mkt.klines_1m", key)
     assert saved["quote_volume_usd"] == "7" and saved["quote_volume_method"] == "COMPLETE_MATCHING_RAW_PRINTS"
     await service._store_kline(inst, {**row, "volume_native": "4"})
+    await service.flush_market()
     assert (await repo.get("mkt.klines_1m", key))["quote_volume"] is None
     await service.close()
 
@@ -722,30 +1035,27 @@ def test_verified_exact_event_time_selects_t0():
         "state_verified": True,
         "public_at": "2026-01-01T00:01:00Z",
     }
-    assert event_anchor(event) == {"type": "T0", "ts": "2026-01-01T00:00:00Z"}
+    assert event_anchor(event) == {
+        "type": "T0",
+        "ts": "2026-01-01T00:00:00Z",
+        "ts_prec": "EXACT",
+        "ts_prec_reason": None,
+    }
     event["state_verified"] = False
     assert event_anchor(event)["type"] == "T1"
 
 
-@pytest.mark.asyncio
-async def test_live_family_schema_change_invalidates_prior_scoped_proof(setup):
-    repo, settings, inst = setup
-    service = MarketService(repo, settings)
-    inst = {**inst, "market_type": "PERP_LINEAR"}
-    key = "binance.usdm.openInterest"
-    service.semantics.append(
-        {"metric_key": key, "metric_family": "oi", "semantic_confidence": "DOCUMENTED_UNTESTED"}
-    )
-    await service._verify_semantic(
-        inst, key, {"openInterest": "123", "time": int(utcnow().timestamp() * 1000)}
-    )
-    assert (inst["instrument_id"], key) in service._semantic_verified
+def test_missing_oi_field_is_data_error_without_runtime_semantic_promotion():
+    from tank.market import normalize
+
+    inst = {
+        "venue": "binance",
+        "market_type": "PERP_LINEAR",
+        "instrument_id": "binance:perp:T",
+        "token_id": "T",
+    }
     with pytest.raises((KeyError, ValueError)):
-        await service._verify_semantic(inst, key, {"unexpected_open_interest_v2": "123"})
-    assert (inst["instrument_id"], key) not in service._semantic_verified
-    review = max(await repo.list("qa.reviews", filters={"metric_key": key}), key=lambda row: row["at"])
-    assert review["label"] == "UNKNOWN" and review["semantics"]["verification_status"] == "SELF_TEST_FAILED"
-    await service.close()
+        normalize.oi(inst, {"unexpected_open_interest_v2": "123"})
 
 
 @pytest.mark.asyncio
@@ -790,6 +1100,8 @@ async def test_disconnect_invalidates_evicted_durable_flow_but_preserves_archive
     raw = {"a": 1, "p": "2", "q": "1", "T": int(minute.timestamp() * 1000), "m": False}
     await service.ingest_trade(inst, raw)
     key = inst["instrument_id"] + ":" + iso(minute)
+    await service._flush_flow()
+    await service.flush_market()
     bar = await repo.get("mkt.flow_bars_1m", key)
     bar["complete"] = True
     await repo.put("mkt.flow_bars_1m", key, bar)
@@ -797,6 +1109,7 @@ async def test_disconnect_invalidates_evicted_durable_flow_but_preserves_archive
     await service.mark_capture_gap(
         inst, minute + timedelta(seconds=10), minute + timedelta(seconds=20), "DISCONNECTED"
     )
+    await service.flush_market()
     assert not (await repo.get("mkt.flow_bars_1m", key))["complete"]
     bar.update(complete=True, source_archive="verified-archive")
     await repo.put("mkt.flow_bars_1m", key, bar)
@@ -887,7 +1200,7 @@ async def test_hot_expiry_protection_is_scoped_to_event_and_token(setup):
     await repo.put("ana.watch_conditions", "armed", condition)
     await service.refresh_hot_expiry()
     restored = await repo.get("mkt.hot_tokens", key)
-    from tank.util import parse_time
+    from tank.util import iso, parse_time
 
     assert restored["expires_at"] == iso(parse_time(restored["since"]) + timedelta(hours=72))
     await service.close()
@@ -1163,6 +1476,8 @@ async def test_live_late_normalized_arrivals_coalesce_stably_and_ignore_future_p
     await service.ingest_trade(inst, {**raw, "a": 2})
 
     async def changes():
+        await service._flush_flow()
+        await service.flush_market()
         return [
             r
             async for r in service.capture_changes(iso(captured), iso(utcnow() + timedelta(seconds=10)))
@@ -1170,7 +1485,9 @@ async def test_live_late_normalized_arrivals_coalesce_stably_and_ignore_future_p
         ]
 
     first = await changes()
-    assert len(first) == 1 and first[0]["source_count"] == 3  # 2prints +one actual changed flowbar.
+    assert (
+        len(first) == 1 and first[0]["source_count"] == 1
+    )  # One actual changed aggregate; prints remain Parquet-only.
     assert first[0]["event_id"] == "E-late" and first[0]["anchor"] == iso(anchor)
     assert (await changes())[0]["change_id"] == first[0]["change_id"]
     assert not await service.ingest_trade(inst, raw)  # Immutable dedup creates no new arrival.
@@ -1198,12 +1515,96 @@ async def test_identical_normalized_poll_does_not_fabricate_new_availability(set
         "received_ts": "2026-01-01T00:01:00Z",
     }
     await service._store_kline(inst, row)
+    await service.flush_market()
     key = inst["instrument_id"] + ":" + minute
     original = await repo.get("mkt.klines_1m", key)
     await service._store_kline(inst, {**row, "received_ts": iso()})
+    await service.flush_market()
     unchanged = await repo.get("mkt.klines_1m", key)
     assert unchanged["recorded_at"] == original["recorded_at"]
     assert unchanged["received_ts"] == original["received_ts"]
     await service._store_kline(inst, {**row, "volume_native": "2"})
+    await service.flush_market()
     assert (await repo.get("mkt.klines_1m", key))["recorded_at"] != original["recorded_at"]
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_cold_bybit_oi_uses_registry_without_runtime_probe(setup):
+    from tank.analysis.truth import derivatives_truth
+    from tank.market import normalize as norm
+
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+    inst = {
+        **inst,
+        "instrument_id": "bybit:perp_linear:ABCUSD",
+        "venue": "bybit",
+        "market_type": "PERP_LINEAR",
+    }
+    key = "bybit.linear.open-interest"
+    service.semantics = [
+        {
+            "metric_key": key,
+            "metric_family": "oi",
+            "timestamp_semantics": "EXCHANGE_EVENT_TIME",
+            "unit": "BASE_QTY",
+            "sidedness": "SINGLE_SIDED",
+            "aggregation_class": "oi_native_single_sided",
+        }
+    ]
+    end = utcnow().replace(second=0, microsecond=0)
+    start = end - timedelta(hours=4)
+    endpoints = [
+        norm.oi(inst, {"singleOpenInterest": "123.45", "timestamp": str(int(t.timestamp() * 1000))})
+        for t in (start, end)
+    ]
+    definitions = service._instrument_semantics([inst])
+    actual = derivatives_truth(
+        {"token_id": inst["token_id"], "instruments": [inst], "oi": endpoints, "semantics": definitions},
+        start,
+        end,
+    )
+    assert actual["synchronized"] is not None
+    assert actual["per_venue"][0]["oi_native_chg_pct"] == 0
+    assert all(row["ts_prec"] == "EXACT" and row["synchronized_eligible"] for row in endpoints)
+    assert not hasattr(service, "self_test")
+    assert not await repo.list("qa.reviews", filters={"subject": "METRIC_SEMANTICS"})
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_bybit_legacy_temporal_proof_not_reused_by_condition_loader(setup):
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+    inst = {**inst, "venue": "bybit", "market_type": "PERP_LINEAR"}
+    service.instruments = {inst["instrument_id"]: inst}
+    key = "bybit.linear.open-interest"
+    definition = {
+        "metric_key": key,
+        "timestamp_semantics": "EXCHANGE_EVENT_TIME",
+    }
+    service.semantics = [definition]
+    await repo.put(
+        "qa.reviews",
+        "old-bybit-proof",
+        {
+            "subject": "METRIC_SEMANTICS",
+            "instrument_id": inst["instrument_id"],
+            "metric_key": key,
+            "at": utcnow().isoformat(),
+            "semantics": {
+                **definition,
+                "timestamp_semantics": "BUCKET_START",
+                "semantic_confidence": "VERIFIED",
+            },
+        },
+    )
+    snapshot = await service.condition_snapshot(
+        inst["token_id"], utcnow(), requirements=[{"metric": "deriv.native_oi_chg_pct", "window": "W4H"}]
+    )
+    assert len(snapshot["semantics"]) == 1
+    assert "semantic_confidence" not in snapshot["semantics"][0]
+    assert snapshot["semantics"][0]["timestamp_semantics"] == "EXCHANGE_EVENT_TIME"
+    assert await repo.get("qa.reviews", "old-bybit-proof")  # old audit evidence remains immutable
     await service.close()

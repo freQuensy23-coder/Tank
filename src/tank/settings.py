@@ -1,5 +1,6 @@
 import base64
 import hashlib
+import io
 import json
 import os
 import subprocess
@@ -38,6 +39,58 @@ def _digest(captured: dict[str, bytes]) -> str:
     return digest.hexdigest()
 
 
+def _git_config_identity(root: Path, content_digest: str) -> tuple[str, bool]:
+    """A clean Git label requires exact captured payload bytes at pinned HEAD.
+
+    Status alone misses ignored/untracked roots, ignored extra files and tracked
+    files marked assume-unchanged/skip-worktree. Read objects directly, without
+    checkout filters, and compare the same versioned-file policy as runtime.
+    """
+    root = root.resolve()
+
+    def git(*arguments, data=None, directory=None):
+        return subprocess.run(
+            ["git", "--literal-pathspecs", "-C", str(directory or root), *arguments],
+            input=data,
+            check=True,
+            capture_output=True,
+            timeout=5,
+        ).stdout
+
+    commit = git("rev-parse", "HEAD").decode().strip()
+    repository = Path(git("rev-parse", "--show-toplevel").decode().strip()).resolve()
+    prefix = root.relative_to(repository)
+    tree = git("ls-tree", "-r", "-z", "--full-tree", commit, "--", prefix.as_posix(), directory=repository)
+    objects = []
+    for row in tree.split(b"\0"):
+        if not row:
+            continue
+        metadata, name = row.split(b"\t", 1)
+        mode, kind, oid = metadata.split()
+        relative = Path(os.fsdecode(name)).relative_to(prefix)
+        if relative.suffix not in _CONFIG_SUFFIXES or any(
+            part.startswith(".") or part == "__pycache__" for part in relative.parts
+        ):
+            continue
+        if kind != b"blob" or mode == b"120000":
+            return commit, True
+        objects.append((relative.as_posix(), oid))
+    head_payload = {}
+    if objects:
+        output = io.BytesIO(git("cat-file", "--batch", data=b"".join(oid + b"\n" for _, oid in objects)))
+        for name, expected_oid in objects:
+            header = output.readline().strip().split()
+            if len(header) != 3 or header[0] != expected_oid or header[1] != b"blob":
+                return commit, True
+            size = int(header[2])
+            content = output.read(size)
+            if len(content) != size or output.read(1) != b"\n":
+                return commit, True
+            head_payload[name] = content
+    dirty_status = bool(git("status", "--porcelain", "--", ".").strip())
+    return commit, dirty_status or _digest(head_payload) != content_digest
+
+
 def _config_version(root: Path, digest: str) -> str:
     """Use the deployment commit; identify uncommitted development precisely."""
     manifest_path = root / ".tank-config-version.json"
@@ -53,20 +106,7 @@ def _config_version(root: Path, digest: str) -> str:
         clean = manifest.get("content_sha256") == digest and manifest.get("git_dirty") is False
         return commit if clean else f"{commit}-dirty.{digest}"
     try:
-        commit = subprocess.run(
-            ["git", "-C", str(root.resolve()), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout.strip()
-        dirty = subprocess.run(
-            ["git", "-C", str(root.resolve()), "status", "--porcelain", "--", "."],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-        ).stdout.strip()
+        commit, dirty = _git_config_identity(root, digest)
         return f"{commit}-dirty.{digest}" if dirty else commit
     except (OSError, subprocess.SubprocessError):
         return f"uncommitted.{digest}"
@@ -81,6 +121,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="TANK_", env_file=".env", extra="ignore")
     data_dir: Path = Path("data")
     config_dir: Path = Path("config")
+    replay_private_mask_path: Path | None = Field(default=None, repr=False, exclude=True)
     database_url: str = "postgresql:///tank"
     openma_url: str = "http://127.0.0.1:8787"
     openma_database_url: str = "postgresql:///oma"
@@ -91,13 +132,12 @@ class Settings(BaseSettings):
     codex_gateway_port: int = 8790
     codex_gateway_key: str | None = None
     codex_auth_path: Path = Field(default_factory=_default_codex_auth_path)
-    jev_provider: Literal["openrouter", "typesafe"] = "openrouter"
+    jev_provider: Literal["openrouter"] = "openrouter"
     openrouter_api_key: str | None = Field(
         default=None,
         repr=False,
         validation_alias=AliasChoices("TANK_OPENROUTER_API_KEY", "OPENROUTER_API_KEY", "openrouter_api_key"),
     )
-    typesafe_api_key: str | None = None
     telegram_token: str | None = None
     telegram_alerts_chat: str | None = None
     telegram_ops_chat: str | None = None
@@ -107,7 +147,6 @@ class Settings(BaseSettings):
     x_profile_dir: Path = Path("data/chrome-profile")
     x_storage_state_path: Path = Path("/run/secrets/x_session")
     x_headless: bool = True
-    x_list_id: str | None = None
     config_version: str = "unversioned"
     code_version: str = "0.1.0"
     workers: int = 8
@@ -135,7 +174,6 @@ class Settings(BaseSettings):
             )
             aliases = {
                 "openma_api_key": "oma_api_key",
-                "typesafe_api_key": "typesafe_api_key",
                 "openrouter_api_key": "openrouter_api_key",
                 "telegram_token": "telegram_bot_token",
                 "etherscan_api_key": "etherscan_api_key",
@@ -224,7 +262,7 @@ def resolve_versions(settings: Settings) -> Settings:
         elif name.endswith(".json"):
             json.loads(content)
     if _PROCESS_CODE_VERSION is None:
-        _PROCESS_CODE_VERSION = _digest(_capture_tree(Path(__file__).parent, {".py", ".sql"}))
+        _PROCESS_CODE_VERSION = _digest(_capture_tree(Path(__file__).parent, {".py", ".sql", ".json"}))
     resolved = settings.model_copy(update={"config_version": version, "code_version": _PROCESS_CODE_VERSION})
     resolved._config_snapshot = MappingProxyType(captured)
     deployment_values = {}

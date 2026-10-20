@@ -1,0 +1,60 @@
+{
+  "scope": "EXACT_HASH_BOUND_MANUAL_EVIDENCE_LEAVES",
+  "files": [
+    {
+      "path": "docs/verification/masked-f01-r41-candidate-2026-10-19/F-01/capture-chains.json",
+      "sha256": "4e5a261f6a6ac1def2e491200cb97834a06013d12ad5b858cf537545eef69cc1",
+      "fixture_id": "F-01"
+    },
+    {
+      "path": "docs/verification/masked-f08-r38-2026-10-19/F-08/publication-market-order.json",
+      "sha256": "2b149f27d86bc776188a33a38ce6ba57cd9220e4b44a0e688db2a6443a5556cd",
+      "fixture_id": "F-08"
+    },
+    {
+      "path": "docs/verification/masked-f17-r37-2026-10-19/F-17/job-ledger.json",
+      "sha256": "c9cd7be3665f60006ba6598bf1ea5cd2898725a82f86eb3d0af302c02c5eaee4",
+      "fixture_id": "F-17"
+    },
+    {
+      "path": "docs/verification/masked-f21-r38-2026-10-19/F-21/registry-lookup.json",
+      "sha256": "5ab90ad4b440480176eb7134190eaa141b2e664a4088df183f673dc331cc3317",
+      "fixture_id": "F-21"
+    },
+    {
+      "path": "docs/verification/masked-f23-r38-2026-10-19/F-23/message-publication-ownership.json",
+      "sha256": "c63c74754396c7652513d209095221bda2b28b0311838cb7e604d52ede30bdef",
+      "fixture_id": "F-23"
+    },
+    {
+      "path": "docs/verification/masked-f24-r45-candidate-2026-10-19/F-24/phase-checkpoints/RPL-01M5AZKR0S50XVQZAFQP7CEJ89-phase-confirmation.json",
+      "sha256": "483bb5383b9a6b2dae456c62634f3fa221f886a30cdfe6af5ac391f68433a9dd",
+      "fixture_id": "F-24"
+    },
+    {
+      "path": "docs/verification/masked-f24-r45-candidate-2026-10-19/F-24/phase-checkpoints/RPL-01M5AZKR0S50XVQZAFQP7CEJ89-phase-initial.json",
+      "sha256": "3042c8992995e736ceb2dd1ab326674e45e2baac060c42d001556559052d7a60",
+      "fixture_id": "F-24"
+    },
+    {
+      "path": "docs/verification/masked-f24-r45-candidate-2026-10-19/F-24/phase-claim-tool-receipts.json",
+      "sha256": "a37ec43b4ccdf9e50651760fbd29252510d7a55ff8b6381391d7244717d61f29",
+      "fixture_id": "F-24"
+    },
+    {
+      "path": "docs/verification/masked-f25-r36-v4-2026-10-19/F-25/day-quote-review-evidence.json",
+      "sha256": "33b9858bc51b23c0d2adaad45d87a9415a7b84a6ea0101a3aa5a000a92dd8a10",
+      "fixture_id": "F-25"
+    },
+    {
+      "path": "docs/verification/masked-f26-r38-2026-10-19/F-26/authority-lookup.json",
+      "sha256": "d67a2d941766f924607854a8e692c9886e247d6fbdcbb993c23a66b4a4642e31",
+      "fixture_id": "F-26"
+    },
+    {
+      "path": "docs/verification/masked-f27-r41-candidate-2026-10-19/F-27/recorded-claim.json",
+      "sha256": "77830200aabb57c808dfc625f08f4ca3599d2e9dcdcdb7901cc6bb98bdb880aa",
+      "fixture_id": "F-27"
+    }
+  ]
+}

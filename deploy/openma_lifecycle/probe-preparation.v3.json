@@ -1,0 +1,70 @@
+{
+  "version": 3,
+  "status": "PREPARED_CORRECTED_DIAGNOSTIC_NOT_RUN",
+  "date": "2026-10-18",
+  "production_verification": "verification.v6.json",
+  "production_verification_sha256": "6dff89424804dfb9e5801c43e6c3680a7cf8258ec62b3bd5b6eae5872de0d1f3",
+  "production_runtime_identity": "f492c9c3e1b12fdfcde945745b6c629be85464951f4f23c55a8d1de0f3b39314",
+  "production_source_unchanged_since_freeze": true,
+  "assets_sha256": {
+    "native-qualification.mjs": "7a1d803a278bee6c11947453312271d0a600abb43e29fea8889a55126a7c5c74",
+    "native-qualification.test.mjs": "6380386446fd69f7a2927a67a7c85b0fd19554234c65c340a2dc80bd32b06e2e",
+    "native-startup-observer.py": "910dec01b037465d0692050deea3604b62e6967e42f88869c5bb43de77cf3b0c",
+    "NATIVE_QUALIFICATION.md": "9fc01a2279d9e1912f79210c0c6774ae7fc5c9fa30a5b346b088519669148072"
+  },
+  "observer_original": "docs/verification/browser-coherent-2026-10-18/next-startup-observer.py",
+  "observer_original_exact_copy": false,
+  "checks": {
+    "node24_guard_and_artifact_tests_passed": 7,
+    "node_syntax": "PASS",
+    "observer_python_compile": "PASS",
+    "actual_native_or_browser_execution": "NOT_RUN",
+    "observer_ruff_format_and_lint": "PASS"
+  },
+  "planned_scope": {
+    "single_allocation_home_disk": true,
+    "cpus": 1,
+    "memory_mib": 2048,
+    "worker_sha256": "8e3881b1e4de68a0f53c88321adc48691bd2d8f44f6e915b8843062c3c49a988",
+    "transport": "exact shipping createSandboxBrowserHarness defaults; no launch flags or timeout changes",
+    "first_and_resume": "loopback DOM/PNG and persistent Chromium cookie/localStorage, stop releases owned PID/RSS, same disk and native ID",
+    "observer": "read-only proc/pressure/socket/profile telemetry, host-visible output mount, before first open through browser close/failure",
+    "bounded_child_wall_seconds": [
+      1080,
+      900,
+      60
+    ],
+    "external_requests": 0,
+    "model_calls": 0,
+    "separate_preparation_watchdog_seconds": 240,
+    "preparation_timeout_behavior": "Write PREPARATION_TIMEOUT receipt, exit exact phase child86 before browser, parent exact scoped cleanup; no retry",
+    "outer_timeout_behavior": "OUTER_DIAGNOSTIC_TIMEOUT with last-stage progress; not browser failure classification",
+    "mounted_output_nonce": "Normal guest Python exec, base64 bytes,5000ms; no SDK transfer under mount",
+    "cache_reuse": "Existing exact-cleaned owned volume/home, matching image/runtime/OCI/resources receipt, empty native catalog, fresh proof directory/random session/native disk/profile",
+    "fresh_profile_receipt": "browser-first-freshness.json before first open explicitly asserts both state and profile absent",
+    "next_proof_directory": "/proof/native-browser-v7",
+    "retained_runtime_home": "/proof/native-browser-v6/boxlite",
+    "next_owned_container": "tank-native-browser-retained-20261018-v7",
+    "existing_owned_cache_volume": "tank-native-browser-retained-20261018-v6"
+  },
+  "remaining_proofs": [
+    "Deployment owner must inspect exact new image/OCI identity and current disk/RAM headroom before explicit native GO.",
+    "Actual native current-prefix readonly mounted directory visibility/cache behavior is not exercised by this standalone analysis-scope qualifier and still requires coordinated replay/service proof.",
+    "Actual OpenMA API session/history continuity, PostgreSQL fence and service shutdown/restart composition require separate native service proof.",
+    "Observer samples for175s after its startup only; missing later snapshots do not prove process cleanup/readiness.",
+    "A browser error stops observer promptly and exact VM cleanup follows; two post-failure empty snapshots/same-VM recovery are not proved."
+  ],
+  "native_GO_received": false,
+  "build_or_service_mutation_by_this_agent": false,
+  "observer_formatting_only_ast_identical": true,
+  "observer_original_sha256": "c64b14b2b107efaa4979d8e53c04e7744af7b5e6ced7e34731cc2b839f51a1b6",
+  "prior_evidence": {
+    "path": "probe-preparation.v2.json",
+    "sha256": "e146b46f8013bf1b868eb22d427f4fa3604001e060b273063c21c726c694271a",
+    "failed_actual_run": "../../docs/verification/native-browser-retained-2026-10-18-v6/result.json",
+    "failed_actual_helper_copy": "../../docs/verification/native-browser-retained-2026-10-18-v6/native-qualification.failed-v6.mjs",
+    "failed_actual_helper_sha256": "d67e207487946c2f1c383cf2e2e9165deecbf6463d5e9ac554a2d702022d79a5",
+    "failure_stage": "Mounted output nonce copyIn unsupported before any browser/observer invocation; not a browser-startup failure"
+  },
+  "new_native_GO_received": false
+}

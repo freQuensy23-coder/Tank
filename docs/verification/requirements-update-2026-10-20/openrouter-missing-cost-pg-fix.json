@@ -1,0 +1,27 @@
+{
+  "at": "2026-10-20T10:29:20.039340Z",
+  "status": "NARROW_FIX_VERIFIED_AND_REFROZEN",
+  "problem": "Missing OpenRouter usage.cost stored as null without the canonical SQL-required missing_fields.cost_usd reason",
+  "change": "When cost_usd is None only, missing_fields.cost_usd records the same actual omission reason as cost_reason",
+  "sql_changed": false,
+  "unknown_cost_replaced_with_zero": false,
+  "reported_zero_and_nonzero_preserved": true,
+  "tests": {
+    "passed": 21,
+    "skipped": 0,
+    "database": "Disposable loopback PostgreSQL16; each PG test creates/drops a unique child database",
+    "scope": [
+      "Memory OpenRouter producer tests",
+      "Actual PostgreSQL missing-cost/zero/nonzero persistence and exact-score caching",
+      "Both SSE/PostgreSQL E2E variants",
+      "Autonomous source-to-Telegram runtime E2E"
+    ],
+    "log": "docs/verification/requirements-update-2026-10-20/openrouter-missing-cost-pg-regression.log"
+  },
+  "changed_scope": {
+    "src/tank/agents/pipeline.py": "c770d5da45a862492b5ed2cf6930cfc96030e138c3f76247ecf5bf3b765025e7",
+    "tests/test_agents_openrouter.py": "f8c81e5efdfad43a73928b4a9f11d4ee431fc4b0d9ad590530169713d2b5933c",
+    "tests/test_pipeline_postgres.py": "e50e138467162a9c2e3d3eb0fb7c3fd706121c9c5257536facb729eea6e2a4a0"
+  },
+  "deployment": "NOT_DEPLOYED; parent owns coherent r80 image and integration run"
+}

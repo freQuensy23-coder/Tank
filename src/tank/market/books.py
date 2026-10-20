@@ -5,9 +5,10 @@ from __future__ import annotations
 import zlib
 from decimal import Decimal
 
+from tank.time_precision import collection_clock
 from tank.util import iso, jsonable
 
-from .normalize import SemanticError, decimal, precise, venue_key
+from .normalize import SemanticError, decimal, precise, timestamp_fields, venue_key
 
 
 class OrderBook:
@@ -19,6 +20,7 @@ class OrderBook:
         self.integrity_ok = False
         self.gap_reason = "NO_SNAPSHOT"
         self.exchange_ts = None
+        self.exchange_ts_prec = None
         self.integrity_method = (
             "SEQUENCE"
             if venue_key(instrument).startswith(("binance", "okx"))
@@ -52,13 +54,30 @@ class OrderBook:
                 book[price] = size
                 strings[price] = (p, q)
 
-    def snapshot(self, bids, asks, *, sequence=None, ts=None, checksum=None):
+    def snapshot(self, bids, asks, *, sequence=None, ts=None, checksum=None, ts_prec="EXACT"):
         self._levels("bid", bids, snapshot=True)
         self._levels("ask", asks, snapshot=True)
         self.sequence = sequence
         self.exchange_ts = iso(ts)
+        self.exchange_ts_prec = ts_prec if ts is not None else "COLLECTION_ONLY"
         self.integrity_ok = bool(self.bids and self.asks)
         self.gap_reason = None if self.integrity_ok else "EMPTY_BOOK"
+        self.pending_snapshot = jsonable(
+            {
+                "instrument_id": self.instrument["instrument_id"],
+                "market_type": self.instrument["market_type"],
+                "venue": self.instrument["venue"],
+                "venue_symbol": self.instrument["venue_symbol"],
+                **timestamp_fields("exchange_ts", self.exchange_ts, self.exchange_ts_prec),
+                **collection_clock().fields("received_ts"),
+                "bids": bids,
+                "asks": asks,
+                "sequence": sequence,
+                "checksum": checksum,
+                "quantity_basis": "PROVIDER_RAW_LEVEL_SIZE",
+                "contract_multiplier": self.instrument.get("contract_multiplier"),
+            }
+        )
         if checksum is not None:
             if venue_key(self.instrument).startswith("okx") and int(checksum) == 0:
                 self.integrity_method = "SEQ_ID_PREV_SEQ_ID_CHECKSUM_DEPRECATED_20260623"
@@ -93,6 +112,7 @@ class OrderBook:
         if sequence is not None:
             self.sequence = sequence
         self.exchange_ts = iso(ts)
+        self.exchange_ts_prec = "EXACT" if ts is not None else "COLLECTION_ONLY"
         if key.startswith("kraken"):
             for side, book in (("bid", self.bids), ("ask", self.asks)):
                 keep = set(sorted(book, reverse=side == "bid")[:1000])
@@ -179,8 +199,8 @@ class OrderBook:
             {
                 "instrument_id": self.instrument["instrument_id"],
                 "token_id": self.instrument["token_id"],
-                "exchange_ts": self.exchange_ts,
-                "received_ts": iso(received_ts),
+                **timestamp_fields("exchange_ts", self.exchange_ts, self.exchange_ts_prec),
+                **collection_clock(received_ts).fields("received_ts"),
                 "mid": mid,
                 "best_bid": bid,
                 "best_ask": ask,

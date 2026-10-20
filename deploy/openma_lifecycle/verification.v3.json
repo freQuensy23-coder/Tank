@@ -1,0 +1,168 @@
+{
+  "status": "FROZEN_ISOLATED_CANDIDATE_NOT_PRODUCTION",
+  "date": "2026-10-18",
+  "workcopy": "/tmp/tank-openma-retained-0106-shell-v3",
+  "candidate": {
+    "upstream_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+    "integration": "isolated-retained-session-candidate",
+    "runtime_identity": "5befa6e02bcc3e1f8051685a6da007a3a930ec8a3d9010540c99132a5c8bb83f",
+    "source_sha256": {
+      "packages/sandbox-adapter-litebox/src/litebox.ts": "150740df69190074ed875b6b4c63967af8dc6cf52a1377ed5d4cb9ae3de08750",
+      "packages/control-plane-node/src/lib/node-managed-session-runner.ts": "baf42748189959da43eed70e48991c5cb6838ffcfa02ac515002a1e065d404ba",
+      "packages/control-plane-node/src/modules/node-managed.ts": "06f7ce963d1d6cea2aff5c57cd4e87e744d2019e405338a18640efafff58af3a"
+    },
+    "native_vm_proof": "NOT_RUN",
+    "production_integration": "NOT_ADOPTED"
+  },
+  "runtime_api_assumptions": {
+    "openma_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+    "sdk_0_9_sync_info_supported": true,
+    "official_sdk_0_10_6_async_info_supported": true,
+    "official_sdk_source_commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+    "sdk_declaration_hashes_match_actual_colima_control_install": true,
+    "sdk_hashes": {
+      "package.json": "ffccbfdc8290bc0b51baadf609c0c7e5e56ac5054fd03d33e4f98e22d0d872df",
+      "dist/index.d.ts": "fd2e4686b0e0363029b6d383b20198bd87055a05c0aeb8cc3d2396623eec87a6",
+      "dist/native-contracts.d.ts": "67a1d067ab168e41bff61c35eff3934298d555d24448111a93068158d890d884"
+    }
+  },
+  "checks": {
+    "node24_unit_tests": {
+      "passed": 34,
+      "failed": 0,
+      "skipped": 0
+    },
+    "integrations": [
+      {
+        "status": "PASS",
+        "actual_pinned_provider": true,
+        "actual_patched_adapter": true,
+        "actual_sql_fence": true,
+        "persistent_sqlite_pointer": true,
+        "native_client": "SYNTHETIC_NO_VM",
+        "retention_scenario_allocation_count": 1,
+        "failure_compensation": true,
+        "partial_idle_retry": true,
+        "initial_publication_ambiguous_commit": true,
+        "release_ambiguous_commit": true,
+        "real_child_process_exit_before_publication": true,
+        "durable_allocation_intent_recovery": true,
+        "fence_loss_orphan_receipt": true,
+        "retained_rootfs_workspace_profile_binary": true,
+        "per_exec_secret_rotation": true,
+        "cold_archive_reaped": true
+      },
+      {
+        "status": "PASS",
+        "actual_patched_node_runner": true,
+        "lease_lost_abandon_after_draining": true,
+        "publication_failure_finalization": true,
+        "concurrent_user_interrupt_preserved": true,
+        "native_vm": "NOT_RUN"
+      }
+    ],
+    "strict_public_contract_typecheck": "PASS",
+    "actual_assembly_import": "PASS",
+    "python_ruff": "PASS",
+    "full_control_plane_typecheck": {
+      "baseline_errors": 6,
+      "candidate_errors": 6,
+      "additional_errors": 0,
+      "status": "BASELINE_DIAGNOSTICS_REMAIN",
+      "evidence": "typecheck-baseline.json"
+    },
+    "execution_deadline": {
+      "status": "PASS",
+      "phases": [
+        "native_spawn_acknowledgement",
+        "stdin_close",
+        "stdout_stderr",
+        "native_exit"
+      ],
+      "one_original_deadline": true,
+      "late_exact_process_kill": true,
+      "unconfirmed_kill_poison_blocks_subsequent_guest_io": true,
+      "deferred_spawn_stdin_kill_exit_regressions": true
+    },
+    "security_allocation_passthrough": "PASS (exact typed property forwarding, no policy change)"
+  },
+  "offline_environment": {
+    "container_image": "tank-openma:85d5361f535c7221de975838dc48444e468cc02e-tank5-startup",
+    "image_id": "sha256:f8239897843606077ad730c022096856c917f021ff07c7c72d6bd456469579c7",
+    "network": "none",
+    "kvm_device_passed": false,
+    "native_vm_started": false,
+    "real_model_or_credentials_used": false,
+    "qualification_scope": "New prepared TS composition mounted into existing Node24 dependency image; official SDK0.10.6 declarations checked explicitly. New native image has not been built/tested by this agent."
+  },
+  "integration_boundary": [
+    "Only new deployment assets and isolated workcopy changed",
+    "No running services or production overlay modified",
+    "Native OpenMA session IDs/history/archive policy untouched",
+    "No synthetic calibration or business event state",
+    "No new service/S3 or arbitrary idle/session cap"
+  ],
+  "known_limits": [
+    "Hard crash after durable allocating intent but before native allocation leaves no disk and fails closed; no empty replacement is created. Confirmed compensated catchable startup records aborted and can retry.",
+    "Native VM rootfs/workspace/browser profile persistence across idle and graceful/hard controller restart has NOT been proved by this candidate. Synthetic disk tests must not be presented as native durability.",
+    "Final runtime/boot overlay adoption, actual autoDelete=0 info, real persistent volumes/database, competing-controller behavior and final archive cleanup require coordinated native/service proof.",
+    "Primary-spec conformance review remains independent and required before production acceptance."
+  ],
+  "production_adopted": false,
+  "asset_sha256": {
+    "README.md": "e0417cf5efb528bf2fe25acb0875e9c878472b1c7aaea1bdcaa2b5a1cd57b422",
+    "boxlite-provider.test.mjs": "80a308776cc45f61cc836d73b21cb38ba273ca78832f52bce94e9675bd4bf722",
+    "boxlite-provider.ts": "22dce605c6a3d63a7312735b776b379661828e9872f7ba26f8c0526d07c907c2",
+    "fakes.mjs": "ff8a0ef033026240b3271be8419893165a65e2bfa4193db103a236a1b6795620",
+    "node-lifecycle.test.mjs": "a753a863395fa66ac400351f5d4df6819d786671c8997b7909f8f88ac093ddee",
+    "node-lifecycle.ts": "63fd1b4ab5ce40acfe430ab651066386424067a2009c88daf0328dcaefca7bc1",
+    "offline-check.log": "051da3119efb4c48e393888b06906615bbb5fc0bd296eca80bc322be85d50d2a",
+    "offline-check.v1.log": "c9d0a326b01bee255f55fd66dece8d10a1bd155ef677b5b0036716d3dab89f4b",
+    "offline-check.v2.log": "debb9aa371a9d06a291638d312c9a4a2032ee2a8db725d4309947847098e005b",
+    "package.json": "64c67398cef92bcf97907d1ecca4e3161acfad2da6470a4761d67a4d75fd4cc0",
+    "pinned-provider.integration.mjs": "a8014a269d1c51b6dc2f166fab585669d0fc65cb05a62109d0c0f5d7a2b251ba",
+    "pinned-runner.integration.mjs": "4a0a41482e969473fff4a27ac00981ec67223535f403879ab9cc35d40f89db30",
+    "pinned-type-compatibility.check.ts": "7237b2dece2fab987d9f703d4b54cc87fd308e2595807eca6bb14b080e77f2e8",
+    "prepare.py": "83930571b3c648664ede235580adc009e7439400fdf29f46695bf12d863274e3",
+    "retained-session.test.mjs": "75745c356d355a106036f16c3bd54c0405010b029d7d79aec5725bd53ce1915a",
+    "retained-session.ts": "57553be1a6716aa0395b851c71d0ec8aac06c16236c2c54d968e3699d4fd832d",
+    "sdk-0106-compatibility.check.ts": "2d9bada1710598d8087c1aa07a12fdba5632ed4d100cc08a9879ce0188d97785",
+    "source-guards.json": "4725011cfbb10c3526520dc999166ef1f95a102ec511d4405f1f6144738d922c",
+    "typecheck-baseline.json": "0b564f3351b4551d7a175669ca6218ca0585f2fbfaecf8de2acdad8ff7c1d915",
+    "typecheck-baseline.v1.json": "74957cfc408824ab6b464306b6aae9fc975aabaccf0aee27d661e77f698088b0",
+    "typecheck-baseline.v2.json": "875b7edb4ef42b64e0efaabad08b4646a6c472543faf607914cc4fdfd3dea5b9",
+    "verification.v1.json": "963af99edd216e1ff0a4e3afbf91563cde497fcf8fafe59b6f57dcd1461affb6",
+    "verification.v2.json": "6f39c2e1ef2dd9196f79ac9ab6c3bd557f324fa60e79209b5e0df7fb92831b9a"
+  },
+  "version": 3,
+  "prior_evidence": {
+    "path": "verification.v2.json",
+    "sha256": "6f39c2e1ef2dd9196f79ac9ab6c3bd557f324fa60e79209b5e0df7fb92831b9a",
+    "superseded_assessment": "Version3 regenerates the deadline-correct v2 lifecycle on the tank7 shell/SDK0.10.6/runtime-d44 base and admits its explicit security policy in typed allocation. No production/native lifecycle proof is claimed."
+  },
+  "integration_base": {
+    "path": "/tmp/tank-openma-candidate0106-shell",
+    "overlay": "tank7-headless-shell",
+    "sdk_override": "0.10.6",
+    "native_shim_sha256": "d44e3d54bf227b288bd059ece8c751339c6db0fb62a3d7c2077cd93241421255",
+    "native_security": {
+      "jailerEnabled": false,
+      "seccompEnabled": false
+    },
+    "security_basis": "Preserve deployment owner explicit prior Linux native baseline. No new native hardening is claimed; outer Docker policy remains deployment-owned.",
+    "source_guards": {
+      "packages/managed-runtime-boxlite/src/boxlite.ts": "72bcf42641a42adcc1f240478a018f82a6711bf39f62f155d8536ea132f3290b",
+      "packages/runtime-resource-fence-sql/src/index.ts": "e4dddf3fd931b5a521f267c82d59ba1b12306d6d351563e9b845e69e9d338855",
+      "packages/runtime-resource-contract/src/fence.ts": "63247d78f98abdd373ce53abe213b2c9a24b2690229b043bc163c72bd5d8e373"
+    },
+    "source_sha256": {
+      "tank-overlay.json": "077a49bf5256fdca360274b5c6ea15dc7bf409a527246b9d99cbc476328e5e79",
+      "pnpm-lock.yaml": "8db697971714ee04b538d90653a370f1ce25cc792f7304da1c57ebff276aa128",
+      "pnpm-workspace.yaml": "280eeb1cf424dec6b8a03173813f83db2350b9f8aabd3f1e315804e6087ca711",
+      "apps/main-node/Dockerfile.tank": "c952b9d9a592526a7a7e2cd8d21e42546bc7e0ac5c8925c9d682214ea3fe1111",
+      "tank-deploy/boxlite-runtime/provenance.json": "4ae9258e00f457f709a56f4d4efc48360d8286cd566fc66286d83910e61fb451"
+    },
+    "actual_native_lifecycle_qualification": "NOT_RUN",
+    "built_image_qualification": "PENDING_DEPLOYMENT_OWNER_BUILD"
+  }
+}

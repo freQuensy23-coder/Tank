@@ -92,7 +92,10 @@ async def test_pre_event_capture_uses_pre_window_and_is_immutable(monkeypatch):
     await scheduler.reaction_capture(payload)
     await scheduler.reaction_capture(payload)
     args, kwargs = market.snapshot.call_args
-    assert args == ("bitcoin:BTC", iso(now))
+    assert args[0] == "bitcoin:BTC"
+    assert args[1].value == iso(now)
+    assert args[1].precision is None
+    assert args[1].precision_reason == "INCOMPLETE"
     assert kwargs["anchor"]["ts"] == iso(now - timedelta(days=1))
     assert market.snapshot.await_count == 1
     rows = await repo.list("out.reaction_checkpoints")
@@ -180,6 +183,84 @@ async def test_failed_backup_never_prunes_market(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_planned_backup_copies_bundles_and_dumps_only(monkeypatch, tmp_path):
+    import asyncio
+    from pathlib import Path
+
+    from tank.scheduler import verify_backup
+
+    data, config, backup = (tmp_path / key for key in ("data", "config", "backup"))
+    for root in (data / "bundles", config, backup):
+        root.mkdir(parents=True)
+    (data / "bundles" / "hash.json.zst").write_bytes(b"fixture bundle")
+    (data / "market-cache").write_bytes(b"not selected")
+    (config / "registry.yaml").write_text("not selected")
+
+    async def dump(*args, **kwargs):
+        Path(args[args.index("--file") + 1]).write_bytes(b"fixture dump")
+        return SimpleNamespace(communicate=AsyncMock(return_value=(b"", b"")), returncode=0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", dump)
+    repo = MemoryRepository()
+    await repo.put(
+        "ingest.source_items", "missing", {"item_id": "missing", "raw_ref": str(data / "absent.zst")}
+    )
+    settings = SimpleNamespace(
+        backup_dir=backup,
+        database_url="postgresql:///tank",
+        openma_database_url="postgresql:///oma",
+        data_dir=data,
+        config_dir=config,
+    )
+    result = await Scheduler(repo, settings, None, None).maintenance(utcnow(), force=True, prune=False)
+    final = Path(result["path"])
+    manifest = verify_backup(final)
+    assert set(manifest["roots"]) == {"bundles"}
+    assert set(manifest["files"]) == {"tank.dump", "oma.dump", "bundles/hash.json.zst"}
+    assert not (final / "data").exists() and not (final / "config").exists()
+    assert (data / "market-cache").exists()
+
+
+@pytest.mark.asyncio
+async def test_missing_unselected_source_reference_does_not_expand_backup_scope(monkeypatch, tmp_path):
+    import asyncio
+    from pathlib import Path
+
+    from tank.scheduler import verify_backup
+
+    data, config, backup = (tmp_path / key for key in ("data", "config", "backup"))
+    for root in (data / "bundles", config, backup):
+        root.mkdir(parents=True)
+    (data / "bundles" / "hash.json.zst").write_bytes(b"fixture bundle")
+    (data / "market-cache").write_bytes(b"not selected")
+    (config / "registry.yaml").write_text("not selected")
+
+    async def dump(*args, **kwargs):
+        Path(args[args.index("--file") + 1]).write_bytes(b"fixture dump")
+        return SimpleNamespace(communicate=AsyncMock(return_value=(b"", b"")), returncode=0)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", dump)
+    repo = MemoryRepository()
+    await repo.put(
+        "ingest.source_items", "missing", {"item_id": "missing", "raw_ref": str(data / "absent.zst")}
+    )
+    settings = SimpleNamespace(
+        backup_dir=backup,
+        database_url="postgresql:///tank",
+        openma_database_url="postgresql:///oma",
+        data_dir=data,
+        config_dir=config,
+    )
+    result = await Scheduler(repo, settings, None, None).maintenance(utcnow(), force=True, prune=False)
+    final = Path(result["path"])
+    manifest = verify_backup(final)
+    assert set(manifest["roots"]) == {"bundles"}
+    assert set(manifest["files"]) == {"tank.dump", "oma.dump", "bundles/hash.json.zst"}
+    assert not (final / "data").exists() and not (final / "config").exists()
+    assert (data / "market-cache").exists()
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_preserves_unknown_llm_cost():
     from tank.settings import Settings
 
@@ -249,6 +330,7 @@ async def test_relocated_backup_recovers_source_web_replay_config_logs_and_both_
         load_config=lambda name: {"instruments": []},
     )
     now = utcnow().replace(hour=8)
+    legacy_full_backup_fixture(settings, now)
     await Scheduler(repo, settings, None, None).maintenance(now)
     final = backup / f"tank-{now.date()}"
     verify_backup(final)
@@ -349,6 +431,7 @@ async def test_market_file_retention_preserves_event_windows_and_permanent_evide
         load_config=lambda name: {"instruments": []},
     )
     scheduler = Scheduler(repo, settings, None, None)
+    legacy_full_backup_fixture(settings, now)
     await scheduler.maintenance(now)
     assert paths["event"].exists() and paths["new"].exists() and paths["unknown"].exists()
     assert (
@@ -357,7 +440,17 @@ async def test_market_file_retention_preserves_event_windows_and_permanent_evide
     assert source.exists()
     final = backup / f"tank-{now.date()}"
     assert resolve_backup_reference(final, str(paths["old"])).is_file()
-    assert (data / "retention/removed-market-files.jsonl").read_text().count("removed_at") == 2
+    import json
+
+    tombstones = [
+        json.loads(line) for line in (data / "retention/removed-market-files.jsonl").read_text().splitlines()
+    ]
+    assert len(tombstones) == 4
+    assert [row["status"] for row in tombstones].count("REMOVAL_COMPLETE") == 2
+    assert {row["archive_id"] for row in tombstones} == {"old", "cache"}
+    assert all(
+        row["removed_at"] == iso(now) and row["removed_at_prec"] == "COLLECTION_ONLY" for row in tombstones
+    )
     await scheduler.maintenance(now)
     repo.prune_jobs.assert_awaited_once()
 
@@ -405,7 +498,8 @@ async def test_real_generated_conditions_use_two_closed_nonoverlapping_hours(mon
 
     async def assess(event_id, token_id, cutoff):
         calls.append(cutoff)
-        stamp = parse_time(cutoff)
+        stamp = parse_time(cutoff.value)
+        assert cutoff.precision == ("EXACT" if stamp.minute == 0 and stamp.second == 0 else None)
         # A rolling first-minute sample disagrees; only completed-hour observations qualify.
         direction = "BUY" if stamp.minute == 0 and stamp.second == 0 else "SELL"
         return {
@@ -830,8 +924,9 @@ async def test_backup_excludes_fake_auth_secrets_and_browser_state_in_every_evid
     manifest = verify_backup(backup)
     all_bytes = b"".join(path.read_bytes() for path in backup.rglob("*") if path.is_file())
     assert b"PRIVATE_" not in all_bytes and b"FAKE_STALE" not in all_bytes
-    assert (backup / "data/retained.txt").read_text() == "permanent data"
-    assert (backup / "config/registry.yaml").exists() and (backup / "logs/service.log").exists()
+    assert not (backup / "data").exists()
+    assert not (backup / "config").exists() and not (backup / "logs").exists()
+    assert manifest["roots"] == {"bundles": str((data / "bundles").resolve())}
     assert "subscription sign-in directory" in manifest["excluded"]
     assert all(path.exists() for path in (auth, storage, profile / "Cookies", secrets / "gateway_key"))
 
@@ -1079,3 +1174,230 @@ async def test_reaction_targets_use_current_analysis_map_not_historical_edges():
     )
     await repo.put("evt.beneficiary_edges", "edge", {"event_id": "e", "map_version": 1, "token_id": "old"})
     assert await scheduler.analysis_tokens({"event_id": "e"}) == {"current", "bitcoin:BTC", "ethereum:ETH"}
+
+
+def legacy_full_backup_fixture(settings, now):
+    """Historical manifest compatibility fixture, not the current backup policy."""
+    import json
+    import shutil
+    from pathlib import Path
+
+    from tank.scheduler import file_digest, is_protected_evidence_path, protected_evidence_paths
+
+    final = Path(settings.backup_dir) / f"tank-{now.date()}"
+    final.mkdir()
+    protected = protected_evidence_paths(settings)
+    roots = {"data": Path(settings.data_dir), "config": Path(settings.config_dir)}
+    if Path(settings.logs_dir).is_dir():
+        roots["logs"] = Path(settings.logs_dir)
+    for label, root in roots.items():
+        for source in root.rglob("*"):
+            if source.is_file() and not is_protected_evidence_path(source, protected):
+                target = final / label / source.relative_to(root)
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(source, target)
+    for name, payload in (("tank.dump", b"dump tank"), ("oma.dump", b"dump oma")):
+        (final / name).write_bytes(payload)
+    files = {
+        path.relative_to(final).as_posix(): file_digest(path) for path in final.rglob("*") if path.is_file()
+    }
+    (final / "manifest.json").write_text(
+        json.dumps({"files": files, "roots": {label: str(root.resolve()) for label, root in roots.items()}})
+    )
+    (final / "COMPLETE").write_text(iso(now))
+    return final
+
+
+@pytest.mark.asyncio
+async def test_reaction_measurement_releases_database_scope_and_duplicate_commit_is_idempotent(monkeypatch):
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    import tank.analysis.truth
+
+    class TransactionalLocks(MemoryRepository):
+        @asynccontextmanager
+        async def lock(self, key):
+            async with super().lock(key), self.transaction():
+                yield self
+
+    repo = TransactionalLocks()
+    entered = 0
+    both_reading = asyncio.Event()
+
+    async def snapshot(*args, **kwargs):
+        nonlocal entered
+        assert repo._owner is None, "Market capture would inherit a long database transaction"
+        entered += 1
+        if entered == 2:
+            both_reading.set()
+        await asyncio.wait_for(both_reading.wait(), 2)
+        return {}
+
+    monkeypatch.setattr(tank.analysis.truth, "compute_market_truth", lambda snapshot, config: {})
+    scheduler = Scheduler(
+        repo,
+        SimpleNamespace(config_version="cfg", code_version="code"),
+        SimpleNamespace(snapshot=snapshot),
+        None,
+    )
+    payload = {
+        "event_id": "e",
+        "token_id": "T",
+        "checkpoint": "POST_1H",
+        "anchor": {"type": "T1", "ts": iso(utcnow() - timedelta(hours=1))},
+    }
+    first, duplicate = await asyncio.gather(
+        scheduler.reaction_capture(payload), scheduler.reaction_capture(payload)
+    )
+    assert first == duplicate
+    assert len(await repo.list("out.reaction_checkpoints")) == 1
+
+
+@pytest.mark.asyncio
+async def test_reaction_creation_registers_only_five_post_jobs_and_starts_pre_without_waiting():
+    import asyncio
+
+    repo = MemoryRepository()
+    now = utcnow()
+    event = {"event_id": "new-major", "public_at": iso(now), "public_at_prec": "EXACT"}
+    scheduler = Scheduler(repo, SimpleNamespace(), object(), None)
+    scheduler.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
+    scheduler.analysis_tokens = AsyncMock(return_value={"token:T"})
+    started, release = asyncio.Event(), asyncio.Event()
+    captured = []
+
+    async def capture(payload):
+        captured.append(payload)
+        started.set()
+        await release.wait()
+
+    scheduler.reaction_capture = capture
+    try:
+        await asyncio.wait_for(scheduler.ensure_reactions(event, now=now), timeout=1)
+        await asyncio.wait_for(started.wait(), timeout=1)
+        await scheduler.ensure_reactions(event, now=now)
+        jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+        assert {j["payload"]["checkpoint"] for j in jobs} == {
+            "POST_15M",
+            "POST_1H",
+            "POST_4H",
+            "POST_24H",
+            "POST_72H",
+        }
+        assert len(jobs) == 5
+        assert len(scheduler.background) == 1
+        assert len(captured) == 1 and captured[0]["checkpoint"] == "PRE_24H"
+        assert captured[0]["retro"] is True
+        assert all(j["priority"] == 2 and j["max_attempts"] == 5 for j in jobs)
+        release.set()
+        await asyncio.gather(*scheduler.background.values())
+        assert [p["checkpoint"] for p in captured] == ["PRE_24H", "PRE_4H", "PRE_1H"]
+    finally:
+        await scheduler.close()
+
+
+@pytest.mark.asyncio
+async def test_reaction_pre_capture_restart_resumes_only_missing_immutable_rows(monkeypatch):
+    import asyncio
+
+    monkeypatch.setattr("tank.analysis.truth.compute_market_truth", lambda *a, **k: {})
+    repo = MemoryRepository()
+    now = utcnow()
+    event = {"event_id": "resume-major", "public_at": iso(now), "public_at_prec": "EXACT"}
+    settings = SimpleNamespace(config_version="config", code_version="code")
+    market = SimpleNamespace(snapshot=AsyncMock(return_value={}))
+    first = Scheduler(repo, settings, market, None)
+    first.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
+    first.analysis_tokens = AsyncMock(return_value={"token:T"})
+    original = await first.reaction_capture(
+        {
+            "event_id": event["event_id"],
+            "token_id": "token:T",
+            "checkpoint": "PRE_24H",
+            "anchor": first.anchor(event),
+            "retro": True,
+        }
+    )
+    await first.close()
+    restarted = Scheduler(repo, settings, market, None)
+    restarted.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
+    restarted.analysis_tokens = AsyncMock(return_value={"token:T"})
+    try:
+        await restarted.ensure_reactions(event, now=now)
+        await asyncio.gather(*restarted.background.values())
+        rows = await repo.list("out.reaction_checkpoints")
+        assert len(rows) == 3
+        assert next(r for r in rows if r["checkpoint"] == "PRE_24H") == original
+        assert market.snapshot.await_count == 3
+        assert len(await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})) == 5
+    finally:
+        await restarted.close()
+
+
+@pytest.mark.asyncio
+async def test_reaction_pre_error_retries_missing_windows_and_close_cancels_owned_work():
+    import asyncio
+
+    repo = MemoryRepository()
+    event = {"event_id": "e", "public_at": iso(), "public_at_prec": "EXACT"}
+    scheduler = Scheduler(repo, SimpleNamespace(), object(), None)
+    scheduler.latest_assessment = AsyncMock(return_value={"class": "MAJOR"})
+    scheduler.analysis_tokens = AsyncMock(return_value={"T"})
+    scheduler.reaction_capture = AsyncMock(side_effect=RuntimeError("synthetic capture failure"))
+    await scheduler.ensure_reactions(event)
+    await asyncio.gather(*scheduler.background.values())  # failure remains retryable, never a PRE job
+    assert scheduler.reaction_capture.await_count == 1
+    started = asyncio.Event()
+
+    async def block(payload):
+        started.set()
+        await asyncio.Event().wait()
+
+    scheduler.reaction_capture = block
+    await scheduler.ensure_reactions(event)
+    await asyncio.wait_for(started.wait(), timeout=1)
+    task = next(iter(scheduler.background.values()))
+    await scheduler.close()
+    assert task.cancelled() and not scheduler.background
+    assert len(await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})) == 5
+
+
+@pytest.mark.asyncio
+async def test_dynamic_scheduler_work_does_not_retain_completed_task_frames():
+    import asyncio
+
+    scheduler = Scheduler(MemoryRepository(), SimpleNamespace(), None, None)
+    operation = AsyncMock()
+    for number in range(200):
+        scheduler.launch(f"reaction-pre:event-{number}:token", operation)
+    tasks = tuple(scheduler.background.values())
+    await asyncio.gather(*tasks)
+    assert operation.await_count == 200
+    assert not scheduler.background
+    await scheduler.close()
+
+
+@pytest.mark.asyncio
+async def test_older_completion_callback_preserves_same_name_replacement_until_shutdown():
+    import asyncio
+
+    scheduler = Scheduler(MemoryRepository(), SimpleNamespace(), None, None)
+    started = asyncio.Event()
+
+    async def replacement():
+        started.set()
+        await asyncio.Event().wait()
+
+    async def first():
+        # This callback runs after the first task finishes but before its done
+        # callbacks, exercising replacement while the old cleanup is queued.
+        asyncio.get_running_loop().call_soon(scheduler.launch, "same", replacement)
+
+    scheduler.launch("same", first)
+    original = scheduler.background["same"]
+    await asyncio.wait_for(started.wait(), timeout=1)
+    current = scheduler.background["same"]
+    assert current is not original and not current.done()
+    await scheduler.close()
+    assert current.cancelled() and not scheduler.background

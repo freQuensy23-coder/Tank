@@ -1,0 +1,53 @@
+{
+  "applied_migrations": [
+    "001_initial.sql",
+    "002_constraints.sql",
+    "003_capture.sql",
+    "004_daily_partitions.sql",
+    "005_pending_filter.sql",
+    "006_required_identity.sql",
+    "007_session_tool_identity.sql",
+    "008_references.sql",
+    "009_decision_array_projection.sql",
+    "010_job_lifecycle.sql",
+    "011_backfill_routing.sql",
+    "012_market_time_indexes.sql",
+    "013_outcome_ledger.sql",
+    "014_retire_daily_budget.sql",
+    "015_release_retired_budget_jobs.sql",
+    "016_latest_query_indexes.sql",
+    "017_assessment_retention_index.sql",
+    "018_scheduler_checkpoints.sql",
+    "019_controlled_raw_retention.sql",
+    "020_typed_completeness.sql",
+    "021_retire_host_partial_and_repair_reaction_expiry.sql",
+    "022_safe_partition_relocation.sql",
+    "023_market_recorded_availability.sql",
+    "024_native_flow_missing_usd.sql",
+    "025_capture_tier_transitions.sql",
+    "026_timestamp_precision_metadata.sql",
+    "027_typed_market.sql",
+    "028_oi_bucket_anchor.sql",
+    "029_agent_owned_judgment.sql",
+    "030_kline_instrument_availability_index.sql",
+    "031_remove_retired_linter_column.sql",
+    "032_remove_verified_legacy_archive.sql",
+    "033_remove_legacy_price_flow.sql",
+    "034_remove_legacy_derivatives.sql",
+    "035_remove_legacy_books_tickers.sql"
+  ],
+  "documents": {
+    "out.alerts": {
+      "document_chain_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "row_count": 0
+    },
+    "out.evidence_bundles": {
+      "document_chain_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "row_count": 0
+    },
+    "out.reaction_checkpoints": {
+      "document_chain_sha256": "3cbe932d39f97be7fe3db3f41e8d59783d73ad6a6eaae2f867f5518e8e084334",
+      "row_count": 21
+    }
+  }
+}

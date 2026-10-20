@@ -11,5 +11,5 @@
   "required": [
     "query"
   ],
-  "description": "DuckDuckGo text search through the ddgs library (02 \u00a79): 10 results, DuckDuckGo only; results stored as evidence. Returns: Titles, URLs and snippets."
+  "description": "Search public web text using pinned ddgs with DuckDuckGo only. Requests are spaced by at least 2 seconds; rate-limit, block and timeout failures retry after 5,15,45 seconds, then return an explicit error without another search engine. Returns up to 10 titles, URLs and snippets stored as evidence. Search snippets are discovery data; fetch the source page before using a factual quote."
 }

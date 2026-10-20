@@ -1,0 +1,806 @@
+{
+  "request_sha256": "69adceb1e05981482653931b63c9d8411f899ed133769fb787a9cd6284925362",
+  "authority": "Latest direct user request, supersedes conflicting earlier preferences",
+  "baseline_image": "sha256:81e2d555ae3f8882551c97504a3b1c28c234b95a6bdce6f0309fa49ab6602819",
+  "candidate_status": "R82_FROZEN_IMAGE_AND_NATIVE_PROTOCOL_VERIFIED_ACTUAL_E2E_RUNNING",
+  "items": [
+    {
+      "id": 1,
+      "reported": "10:00 ушла карточка по QNT, стадия APPROVED. 10:05 вышел официальный пост «now live», стадия стала LIVE. Агент вызывает publish_card, а Tank отвечает «рано, с прошлой карточки прошло меньше 15 минут». Апдейт нигде не сохраняется и на 10:15 не планируется. Оператор узнает о LIVE, только если позже придёт ещё одна новость и агент опубликует заново. Сразу, в обход 15 минут, уходят только START, EXIT и сломанный тезис",
+      "required": "Апдейт «стадия LIVE» не теряется: Tank сам отправит его в 10:15, когда пройдут 15 минут",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "publication_assessment",
+      "regression_group": "publication",
+      "authority": [
+        "PRD FR-A-04",
+        "TDD7.4",
+        "latest request1"
+      ],
+      "acceptance_checks": [
+        "Fresh APPROVED10:00 → LIVE10:05 persists immutable version and exactly one due job for10:15.",
+        "Reopen PostgreSQL/recreate services; no new item or agent call is needed; original thread receives snapshot at due boundary.",
+        "Concurrent publication/due workers, 429 retry and post-ack restart must not lose update or send twice."
+      ],
+      "required_evidence": [
+        "PostgreSQL durable queue/restart",
+        "synthetic Telegram",
+        "actual coordinated Telegram"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../requirements-update-2026-10-20/publication-assessment-report.json",
+        "../requirements-update-2026-10-20/publication-test-isolation.json",
+        "r80-affected-regression.json"
+      ],
+      "scope_note": "Durable queue/restart/spacing/retry/contended-lock components verified; actual delayed Telegram sequence on this candidate not claimed."
+    },
+    {
+      "id": 2,
+      "reported": "По свежему событию пришла перепечатка новости трёхдневной давности, и она двигает стадию. Оператору уходит апдейт, как будто это новость",
+      "required": "Стадия в базе меняется, но апдейт не отправляется: новость старая",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "publication_assessment",
+      "regression_group": "publication",
+      "authority": [
+        "TDD3.4",
+        "TDD7.4"
+      ],
+      "acceptance_checks": [
+        "A three-day-old reprint advances stored verified stage but produces no alert or delayed delivery job.",
+        "A later condition/timer must not resurrect the stale state-change update; original event freshness stays origin-owned."
+      ],
+      "required_evidence": [
+        "offline state chain",
+        "PostgreSQL persistent trigger"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../requirements-update-2026-10-20/publication-assessment-report.json",
+        "../requirements-update-2026-10-20/publication-test-isolation.json",
+        "r80-affected-regression.json"
+      ],
+      "scope_note": "Component evidence reviewed; system acceptance requires coordinated final-candidate evidence and is not inferred from isolated tests."
+    },
+    {
+      "id": 3,
+      "reported": "Пост про токен, которого нет в нашем списке из 22. Агент ошибся и поставил MAJOR, и оператору уходит карточка без единого токена",
+      "required": "set_assessment видит, что ни один из 22 токенов не затронут, и сам ставит LOW, карточки нет",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "publication_assessment",
+      "regression_group": "publication",
+      "authority": [
+        "PRD4.1",
+        "latest request3"
+      ],
+      "acceptance_checks": [
+        "An agent MAJOR assessment with no resolved universe token is normalized to LOW.",
+        "Neither an empty map nor unresolved/outside-universe-only identities can produce a card.",
+        "A valid registered token is not lost through alias resolution."
+      ],
+      "required_evidence": [
+        "offline tool dispatch",
+        "native producer/consumer boundary"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../requirements-update-2026-10-20/publication-assessment-report.json",
+        "../requirements-update-2026-10-20/publication-test-isolation.json",
+        "r80-affected-regression.json"
+      ],
+      "scope_note": "Component evidence reviewed; system acceptance requires coordinated final-candidate evidence and is not inferred from isolated tests."
+    },
+    {
+      "id": 4,
+      "reported": "По открытому событию пришла новость. Агент решил, что она ничего не меняет, и не записал её в событие. Tank просит агента доделать, а со второго раза помечает событие FAILED. После этого по нему не будет апдейтов, коллы бросаются, следующая новость откроет новое событие",
+      "required": "Агент сам решает, записывать ли новость. Событие ломается только если упала сама сессия OpenMA",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "agent_workflow",
+      "regression_group": "agent_lifecycle",
+      "authority": [
+        "TDD3.2",
+        "latest request4"
+      ],
+      "acceptance_checks": [
+        "Successful native idle after optional ITEM_ADDED requires no add_observation or prescribed tool order.",
+        "Repeated valid optional turns keep event/calls/session usable; later item attaches to same event.",
+        "Only actual OpenMA session failure triggers FAILED; transport/tool errors retain their normal retry contracts."
+      ],
+      "required_evidence": [
+        "session stream integration",
+        "PostgreSQL restart",
+        "coordinated native OpenMA"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "r80-affected-regression.json",
+        "../normal-source-e2e-final-2026-10-20/",
+        "r82-image-session-pool-postgres.json",
+        "r82-native-protocol.xml"
+      ],
+      "scope_note": "r82 actual-image PG external wait ownership/lostACK/error/sessionOPEN and60 protocol cases pass; actual r81 incomplete negative preserved, final r82 full lifecycle remains in progress."
+    },
+    {
+      "id": 5,
+      "reported": "В карточке вместо пустых значений «—»: Scores D— M— P—, NOT VERIFIED: —. Непонятно, почему пусто",
+      "required": "M n/a (нельзя оценить: нет цифр в источнике): видно, почему пусто",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "cards_decisions",
+      "regression_group": "card_and_actions",
+      "authority": [
+        "PRD7.1",
+        "TDD7.5"
+      ],
+      "acceptance_checks": [
+        "Null scores and missing facts display n/a with their actual recorded reason rather than unexplained dashes/zero.",
+        "A deliberately empty NOT VERIFIED set may display its prescribed no-unknown explanation; the card invents no evidence.",
+        "Render full/partial/update cards with escaping, <=3500 chars and <=3 decided token blocks."
+      ],
+      "required_evidence": [
+        "frozen card render",
+        "actual Telegram layout"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../requirements-cards-decisions-2026-10-20/report.md"
+      ],
+      "scope_note": "Component render/length tests and preview reviewed; actual final-candidate Telegram layout pending."
+    },
+    {
+      "id": 6,
+      "reported": "Событие «Uniswap запускает X»: в строке WHO сам Uniswap стоит как «secondary uniswap (unverified COMPATIBLE)», рядом все найденные связи подряд",
+      "required": "В WHO только главный токен, подтверждённые вторичные и проигравший",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "cards_decisions",
+      "regression_group": "card_and_actions",
+      "authority": [
+        "PRD6.4",
+        "PRD7.1",
+        "TDD4.7"
+      ],
+      "acceptance_checks": [
+        "WHO contains primary, confirmed credible secondary and loser only.",
+        "Primary never repeats as secondary; unresolved/COMPATIBLE-only candidates are omitted.",
+        "Token identities remain project-qualified internally even when human-readable labels are displayed."
+      ],
+      "required_evidence": [
+        "card structured identity cases"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../requirements-cards-decisions-2026-10-20/report.md"
+      ],
+      "scope_note": "Component evidence reviewed; system acceptance requires coordinated final-candidate evidence and is not inferred from isolated tests."
+    },
+    {
+      "id": 7,
+      "reported": "Вторичных нет, и карточка пишет «ни одна связь не прошла проверку §4.7»",
+      "required": "По каждому из 8 слоёв написано, почему там никого нет: «биржи — нет листинга, кредитование — нет пула…»",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "cards_decisions",
+      "regression_group": "card_and_actions",
+      "authority": [
+        "TDD4.7",
+        "F08",
+        "latest request7"
+      ],
+      "acceptance_checks": [
+        "With no credible secondary, each of eight required beneficiary layers displays its own reason.",
+        "Generic section-reference text does not substitute for per-layer reasoning.",
+        "Render without losing detail under Telegram length limit; actionable token blocks stay readable."
+      ],
+      "required_evidence": [
+        "eight-layer card fixture",
+        "Quant replay when ready"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../requirements-cards-decisions-2026-10-20/report.md"
+      ],
+      "scope_note": "Eight-layer component coverage reviewed; full F08/current-candidate formal replay acceptance is not inferred."
+    },
+    {
+      "id": 8,
+      "reported": "Цена растёт, на споте продают, поглощение продаж ещё не подтверждено, а карточка пишет «PASSIVE SPOT ABSORPTION» как факт",
+      "required": "«Возможное поглощение, не подтверждено», рядом альтернативы",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "cards_decisions",
+      "regression_group": "card_and_actions",
+      "authority": [
+        "PRD FR-A-02",
+        "TDD5.8",
+        "TDD5.9",
+        "TDD7.5 L12"
+      ],
+      "acceptance_checks": [
+        "Price up + spot SELL + no absorption confirmation prints possible/unconfirmed absorption and recorded alternatives.",
+        "Confirmed passive absorption label requires the actual confirmed divergence state.",
+        "Card and action use same frozen Market Truth cutoff; no positive absorption claim appears merely from rising price."
+      ],
+      "required_evidence": [
+        "divergence/action/card integration"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../requirements-cards-decisions-2026-10-20/report.md"
+      ],
+      "scope_note": "Component evidence reviewed; system acceptance requires coordinated final-candidate evidence and is not inferred from isolated tests."
+    },
+    {
+      "id": 9,
+      "reported": "STRUCTURAL SHOCK дан по критерию «обязательная инфраструктура». Проверка пропускает его, если в событии есть хоть одна цитата, даже про другое",
+      "required": "Нужна цитата, которая подтверждает именно «обязательную инфраструктуру»",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "publication_assessment",
+      "regression_group": "publication",
+      "authority": [
+        "PRD6.3 G4",
+        "TDD4.3",
+        "latest request9"
+      ],
+      "acceptance_checks": [
+        "G4 rejects an unrelated quote even when event has other accepted evidence.",
+        "The agent-declared support must identify the specific required-infrastructure criterion and evidence.",
+        "Relevant paraphrase is not rejected by unrelated keyword/source-class heuristics; verify exact tool contract."
+      ],
+      "required_evidence": [
+        "assessment evidence binding",
+        "native analyst fixture"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../requirements-update-2026-10-20/publication-assessment-report.json",
+        "../requirements-update-2026-10-20/publication-test-isolation.json",
+        "r80-affected-regression.json"
+      ],
+      "scope_note": "Specific criterion/evidence binding is structural; agent retains semantic assessment ownership."
+    },
+    {
+      "id": 10,
+      "reported": "publish_card ответил агенту «опубликовано», потом доставка ещё раз проверяет правила и может молча не отправить карточку. Агент думает, что она ушла",
+      "required": "Что прошло publish_card, то и уходит в Telegram",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "publication_assessment",
+      "regression_group": "publication",
+      "authority": [
+        "TDD7.4",
+        "TDD7.6",
+        "latest request10"
+      ],
+      "acceptance_checks": [
+        "publish_card is sole semantic gate; accepted immutable snapshot is sent even if mutable event later changes.",
+        "Delivery checks only due-time/transport/idempotence; no silent semantic suppression or false published response.",
+        "Persist GENERATED/FAILED/SENT and actual thread reference; failure after attempts produces one Ops notice."
+      ],
+      "required_evidence": [
+        "PostgreSQL boundary",
+        "synthetic transport failures",
+        "actual Telegram receipt"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../requirements-update-2026-10-20/publication-assessment-report.json",
+        "../requirements-update-2026-10-20/publication-test-isolation.json",
+        "r80-affected-regression.json"
+      ],
+      "scope_note": "Component evidence reviewed; system acceptance requires coordinated final-candidate evidence and is not inferred from isolated tests."
+    },
+    {
+      "id": 11,
+      "reported": "ADD (добавить к позиции) запрещён, если уверенность в данных не HIGH, есть нерешённое противоречие или токен проигравший. Этих условий в спеке нет",
+      "required": "ADD по правилу B3 матрицы, без лишних условий",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "cards_decisions",
+      "regression_group": "card_and_actions",
+      "authority": [
+        "TDD7.2 B1-B4"
+      ],
+      "acceptance_checks": [
+        "B3 ADD requires upgrade fired, TradeA, ThesisA/B, repricing not HEAVY, with no extra HIGH/unresolved/role veto.",
+        "B1 EXIT and B2 REDUCE retain ordered precedence; no-call START restrictions stay intact."
+      ],
+      "required_evidence": [
+        "parameterized decision matrix",
+        "open-call lifecycle integration"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../requirements-cards-decisions-2026-10-20/report.md"
+      ],
+      "scope_note": "Component evidence reviewed; system acceptance requires coordinated final-candidate evidence and is not inferred from isolated tests."
+    },
+    {
+      "id": 12,
+      "reported": "Уверенность в данных падает до MEDIUM, если у биржи нет записи об инструменте, хотя сделки по нему идут",
+      "required": "Уверенность зависит только от покрытия спота, покрытия деривативов и свежести",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "market_confidence_lending",
+      "regression_group": "market_confidence_supply",
+      "authority": [
+        "TDD5.10"
+      ],
+      "acceptance_checks": [
+        "Confidence depends only on spot coverage, derivatives coverage, observation freshness in stated order.",
+        "Deleting only instrument-catalog/selftest/semantic-status metadata cannot lower otherwise identical observed HIGH.",
+        "Actually missing/stale measurements still produce correct MEDIUM/LOW and main unknown; selective path matches full path."
+      ],
+      "required_evidence": [
+        "full/selective truth equivalence",
+        "frozen numeric observations"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../lending-free-endpoint-2026-10-20/report.md",
+        "../lending-typed-boundary-2026-10-20/receipt.json",
+        "r81-image-supply-postgres-sequential.json",
+        "r81-market-supply-regression.log",
+        "r81-lending-postgres-sequential.log"
+      ],
+      "scope_note": "Component evidence reviewed; system acceptance requires coordinated final-candidate evidence and is not inferred from isolated tests."
+    },
+    {
+      "id": 13,
+      "reported": "Новость присоединяется к существующему событию при оценке Jev ≥ 0.67 (подобрано по максимуму F1)",
+      "required": "По спеке порог — самый высокий, при котором и точность, и полнота ≥ 0.90. Если ты одобрял 0.67, я впишу его в спеку",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "calibration_provider",
+      "regression_group": "provider_deployment_config",
+      "authority": [
+        "TDD3.1",
+        "PRD V0-B",
+        "recorded user best-quality authorization"
+      ],
+      "acceptance_checks": [
+        "Default spec objective selects highest cutoff satisfying precision>=.90 and recall>=.90; ties/candidate order agree online.",
+        "Explicit previously authorized best-quality .67 baseline is recorded as that objective with measured metrics, never falsely marked90/90.",
+        "No automatic model/provider/threshold change; document final resolved authority and exact scored dataset."
+      ],
+      "required_evidence": [
+        "offline threshold vectors",
+        "recorded real calibration provenance",
+        "independent label audit"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../requirements-update-2026-10-20/calibration-provider-review.json",
+        "../requirements-update-2026-10-20/openrouter-missing-cost-pg-fix.json",
+        "r80-affected-regression.json"
+      ],
+      "scope_note": "Component evidence reviewed; system acceptance requires coordinated final-candidate evidence and is not inferred from isolated tests."
+    },
+    {
+      "id": 14,
+      "reported": "Утилизация кредитования берётся из DefiLlama /pools. 13 ноября он становится платным, и у всех токенов метрика станет пустой",
+      "required": "Брать из /lendBorrow, он остаётся бесплатным",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "market_confidence_lending",
+      "regression_group": "market_confidence_supply",
+      "authority": [
+        "HLD4.8",
+        "TDD5.6"
+      ],
+      "acceptance_checks": [
+        "Only yields.llama.fi/lendBorrow is requested; no pools/chart fallback.",
+        "Utilization and borrow APY derive from actual free endpoint fields and exact registered identity.",
+        "Unknown schema/missing token stays n/a with reason; one chain failure does not erase unrelated observations."
+      ],
+      "required_evidence": [
+        "mocked contract integration",
+        "coordinated public API read"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../lending-free-endpoint-2026-10-20/report.md",
+        "../lending-typed-boundary-2026-10-20/receipt.json",
+        "r81-image-supply-postgres-sequential.json",
+        "r81-market-supply-regression.log",
+        "r81-lending-postgres-sequential.log"
+      ],
+      "scope_note": "Independent actual-image all6-kind flush/readback passed; mapped/unknown lending preserved under named identity_evidence; actual endpoint capture is earlier scoped evidence."
+    },
+    {
+      "id": 15,
+      "reported": "Песочница агента (BoxLite) собрана только под ARM (Mac M1, ARM-серверы). На обычном x86-сервере Tank не запустится",
+      "required": "Запускается на любом Linux-сервере, x86 или ARM",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "platform_openma",
+      "regression_group": "provider_deployment_config",
+      "authority": [
+        "HLD8",
+        "latest request15"
+      ],
+      "acceptance_checks": [
+        "Compose/Docker build chooses matching Linux arm64 or amd64 BoxLite wheel/native libraries/runtime image.",
+        "Pinned artifact integrity/architecture checks fail closed on mismatches.",
+        "Create and run isolated native analysis/replay sandboxes on both actual architectures with KVM."
+      ],
+      "required_evidence": [
+        "both-arch manifest/build",
+        "arm64 native runtime",
+        "amd64 native runtime"
+      ],
+      "acceptance_status": "BUILD_CONTRACT_REVIEWED_NATIVE_AMD64_PENDING",
+      "evidence_reviewed": [
+        "../platform-openma-req15-24-2026-10-20/verification.json"
+      ],
+      "scope_note": "Architecture/build contracts verified; actual native amd64 KVM execution remains untested."
+    },
+    {
+      "id": 16,
+      "reported": "DTCC читается через их внутренний поиск Coveo. Ключ к нему Tank вытаскивает из JS-файла сайта. Поменяют JS — источник сломается молча",
+      "required": "Tank открывает dtcc.com/press-releases и собирает ссылки на статьи",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "sources_corrections",
+      "regression_group": "sources",
+      "authority": [
+        "HLD S07/DTCC catalog",
+        "latest request16"
+      ],
+      "acceptance_checks": [
+        "DTCC discovery requests public dtcc.com/press-releases and parses article links.",
+        "No Coveo internal search or JS-token scraping; captured article bodies retain authored content/time.",
+        "404/5xx/empty article siblings degrade visibly without losing valid articles."
+      ],
+      "required_evidence": [
+        "retained authored HTTP fixtures",
+        "coordinated public discovery read"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../source-corrections-2026-10-20/result.json",
+        "legacy-source-projection-review.json"
+      ],
+      "scope_note": "Component evidence reviewed; system acceptance requires coordinated final-candidate evidence and is not inferred from isolated tests."
+    },
+    {
+      "id": 17,
+      "reported": "ID приватного списка X берётся только из переменной TANK_X_LIST_ID, а в compose.x.yaml её нет. Прод с X падает на каждом чтении X",
+      "required": "ID списка лежит в sources.yaml",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "sources_corrections",
+      "regression_group": "sources",
+      "authority": [
+        "HLD3.7",
+        "latest request17"
+      ],
+      "acceptance_checks": [
+        "Private X list ID resolves from sources.yaml through ordinary S29 startup without env-only dependency.",
+        "Conflicting/missing invalid identity fails clearly without reading or changing original session.",
+        "Compose carries same config into runtime; all test cookies/profile state remain synthetic."
+      ],
+      "required_evidence": [
+        "config→xsensor integration",
+        "synthetic browser only until coordinated X"
+      ],
+      "acceptance_status": "ACTUAL_X_EXCLUDED_COMPONENT_ONLY",
+      "evidence_reviewed": [
+        "../source-corrections-2026-10-20/result.json",
+        "legacy-source-projection-review.json"
+      ],
+      "scope_note": "Implementation component proof reviewed; actual X excluded and source session untouched. Missing list_id prevents an actual X readiness claim."
+    },
+    {
+      "id": 18,
+      "reported": "Для запуска нужны секреты postgres_password, tank_db_password, oma_db_password, oma_auth_secret, tank_replay_agent_db_password и тома openma-data, sealed-replay-evidence. В HLD их нет, и по документации систему не поднять",
+      "required": "Всё, что нужно для запуска, перечислено в HLD",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "configuration",
+      "regression_group": "provider_deployment_config",
+      "authority": [
+        "HLD7",
+        "HLD8",
+        "HLD11"
+      ],
+      "acceptance_checks": [
+        "Every required Compose secret and volume is listed with service scope/ownership/bootstrap in HLD.",
+        "Include PostgreSQL/role/OpenMA/replay credentials, openma-data and sealed-replay-evidence; explain generated versus supplied secrets.",
+        "A clean isolated documented startup validates Compose with no undocumented file/secret dependency."
+      ],
+      "required_evidence": [
+        "parsed Compose/HLD inventory",
+        "isolated fresh deployment"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../../RUNTIME_SPEC_NOTES.md",
+        "../../../tests/test_deployment_documentation.py"
+      ],
+      "scope_note": "Component evidence reviewed; system acceptance requires coordinated final-candidate evidence and is not inferred from isolated tests."
+    },
+    {
+      "id": 19,
+      "reported": "Сайт поменял вёрстку: страница грузится, статей находится 0, источник показан «здоровым». Новости с него перестают приходить, и никто не узнаёт",
+      "required": "0 статей на загруженной странице → источник помечается DEGRADED и виден в мониторинге",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "sources_corrections",
+      "regression_group": "sources",
+      "authority": [
+        "HLD10",
+        "latest request19"
+      ],
+      "acceptance_checks": [
+        "HTTP200 discovery body with zero matched articles marks durable source health DEGRADED and retains raw payload.",
+        "Monitor sees reason/status; parser recovery returns healthy only after actual valid parse.",
+        "Do not confuse valid conditional304 or duplicate known articles with parser-zero on a newly loaded page."
+      ],
+      "required_evidence": [
+        "source adapter monitor integration",
+        "zero/malformed/recovery cases"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../source-corrections-2026-10-20/result.json",
+        "legacy-source-projection-review.json"
+      ],
+      "scope_note": "Component evidence reviewed; system acceptance requires coordinated final-candidate evidence and is not inferred from isolated tests."
+    },
+    {
+      "id": 20,
+      "reported": "По событию MAJOR создаётся 8 задач замера реакции (−24h, −4h, −1h, +15m, +1h, +4h, +24h, +72h), их ставит инструмент агента",
+      "required": "Планировщик ставит 5 задач после события (+15m … +72h), окна до события считаются сразу при создании",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "storage_reactions",
+      "regression_group": "reaction_retention",
+      "authority": [
+        "HLD6.4",
+        "TDD8"
+      ],
+      "acceptance_checks": [
+        "At MAJOR+ creation compute -24h/-4h/-1h immediately; agent tool does not schedule eight jobs.",
+        "Scheduler creates exactly five post-event checkpoints per analysis token and BTC/ETH; past ones run retro=true.",
+        "Concurrent tick/restart/late data uses same frozen anchor, no duplicates; revisions append reason and never overwrite."
+      ],
+      "required_evidence": [
+        "PostgreSQL scheduler concurrency",
+        "pre-window missing-data/restart",
+        "full checkpoint query"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../storage-reactions-update-2026-10-20/source-manifest.json"
+      ],
+      "scope_note": "Default64 PostgreSQL scheduler/migration components verified; full final native assessment to checkpoint chain remains a separate proof."
+    },
+    {
+      "id": 21,
+      "reported": "В базе лишняя схема archive со старыми таблицами, которая никогда не чистится, и лишняя папка raw/market_frames",
+      "required": "Только схемы и папки из HLD, у каждой свой срок хранения",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "storage_reactions",
+      "regression_group": "reaction_retention",
+      "authority": [
+        "HLD7.1",
+        "HLD7.2",
+        "PRD9 retention"
+      ],
+      "acceptance_checks": [
+        "Fresh DB has only documented application schemas; obsolete archive schema and raw/market_frames are absent after safe upgrade.",
+        "Legacy raw evidence exports durably before destructive removal; interrupted migration preserves recoverable originals.",
+        "Actual paths/partitions have retention and event-window preservation, without perpetual raw market growth."
+      ],
+      "required_evidence": [
+        "fresh/legacy isolated PostgreSQL",
+        "filesystem retention/temp-data tests",
+        "migration evidence"
+      ],
+      "acceptance_status": "ISOLATED_AND_PRIMARY_RETIREMENT_FULL_READBACK_VERIFIED",
+      "evidence_reviewed": [
+        "../storage-reactions-update-2026-10-20/source-manifest.json",
+        "primary-r81-independent-audit.json"
+      ],
+      "scope_note": "Physical primary schema/raw-frame retirement, full SQL row-chain and raw archive member readback, private modes/expiry and frozen document chains independently verified on deployedr81."
+    },
+    {
+      "id": 22,
+      "reported": "Страницу Franklin Templeton рендерит отдельный Chromium, а X читает второй",
+      "required": "Один браузер на оба",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "sources_corrections",
+      "regression_group": "sources",
+      "authority": [
+        "HLD5 xsensor",
+        "latest request22"
+      ],
+      "acceptance_checks": [
+        "S19 and S29 share one browser owner/Chromium process with independently isolated pages.",
+        "Failure/closure of S19 page does not close X browser, clear storage or mutate source session export.",
+        "Lifecycle closes shared browser once and preserves X-disabled behavior without touching profile."
+      ],
+      "required_evidence": [
+        "synthetic Chromium lifecycle integration",
+        "process owner inspection"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../source-corrections-2026-10-20/result.json",
+        "legacy-source-projection-review.json"
+      ],
+      "scope_note": "Component evidence reviewed; system acceptance requires coordinated final-candidate evidence and is not inferred from isolated tests."
+    },
+    {
+      "id": 23,
+      "reported": "В таблице карточек out.alerts осталась пустая колонка linter",
+      "required": "Колонки нет",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "storage_reactions",
+      "regression_group": "reaction_retention",
+      "authority": [
+        "TDD14",
+        "latest request23"
+      ],
+      "acceptance_checks": [
+        "Actual migrated out.alerts columns have no linter column on fresh and legacy DB.",
+        "Historical frozen alert documents/evidence remain byte-equal; no runtime producer/query expects linter."
+      ],
+      "required_evidence": [
+        "PostgreSQL information_schema",
+        "historical payload equality"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../storage-reactions-update-2026-10-20/source-manifest.json"
+      ],
+      "scope_note": "Component evidence reviewed; system acceptance requires coordinated final-candidate evidence and is not inferred from isolated tests."
+    },
+    {
+      "id": 24,
+      "reported": "OpenMA пропатчен ещё 6 этапами сверх HLD. Среди них openma_lifecycle (6.4 тыс. строк), который в своём README помечен «не принят в прод», но всё равно применяется",
+      "required": "Только патчи из HLD. Нужные этапы вписать в HLD, ненужные убрать",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "platform_openma",
+      "regression_group": "provider_deployment_config",
+      "authority": [
+        "HLD8",
+        "latest request24"
+      ],
+      "acceptance_checks": [
+        "Prepared deployment records exact applied overlay stages and each is documented/justified in HLD.",
+        "Rejected historical lifecycle stage is not silently applied; intentionally necessary behavior has clear owner and tests.",
+        "Original source hash/match guards prevent patching unknown upstream or losing a prior patch."
+      ],
+      "required_evidence": [
+        "actual prepared source delta",
+        "overlay tests",
+        "deployed file manifest"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../platform-openma-req15-24-2026-10-20/verification.json"
+      ],
+      "scope_note": "Prepared new-install patch inventory checked separately. Retained qualified ARM OpenMA used for actual E2E does not qualify a new OpenMA build."
+    },
+    {
+      "id": 25,
+      "reported": "Калибровка порогов Jev — фреймворк на 2.9 тыс. строк",
+      "required": "Одна команда tank calibrate: 200 размеченных новостей прогоняются через Jev, по результату выбираются пороги",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "calibration_provider",
+      "regression_group": "provider_deployment_config",
+      "authority": [
+        "TDD3.1",
+        "PRD V0-B",
+        "latest request25"
+      ],
+      "acceptance_checks": [
+        "One tank calibrate command scores200 independently labeled source items via same Jev prompt/provider as production and selects thresholds.",
+        "Report includes real model/prompt/dataset/code provenance, labels/repeats/cross-source counts and measured metrics.",
+        "No extra acquisition framework/product modes; synthetic/insufficient labels cannot masquerade as production calibration."
+      ],
+      "required_evidence": [
+        "CLI end-to-end with fixture HTTP",
+        "recorded actual200-item call run"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../requirements-update-2026-10-20/calibration-provider-review.json",
+        "../requirements-update-2026-10-20/openrouter-missing-cost-pg-fix.json",
+        "r80-affected-regression.json"
+      ],
+      "scope_note": "User-authorized best measured Jev baseline continuation applies. Below90/90 is neither a blocker nor a claimed90/90 pass; command/protocol/recorded metrics are distinct from system E2E."
+    },
+    {
+      "id": 26,
+      "reported": "В коде два пути к Jev: OpenRouter и TypeSafe напрямую. Если настройка не задана, код идёт в TypeSafe",
+      "required": "Только OpenRouter /api/v1/systemone",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "calibration_provider",
+      "regression_group": "provider_deployment_config",
+      "authority": [
+        "HLD9",
+        "latest request26"
+      ],
+      "acceptance_checks": [
+        "Only OpenRouter /api/v1/systemone and pinned Jev binding remain, including unset-config/default path.",
+        "TypeSafe direct settings/dependency/dead branch removed; errors retry exact provider rather than fallback.",
+        "No key/secret appears in logs, dataset, native messages or exception receipt."
+      ],
+      "required_evidence": [
+        "mock HTTP contract",
+        "dependency/config audit",
+        "coordinated actual Jev call"
+      ],
+      "acceptance_status": "NON_FINAL_COMPONENT_EVIDENCE_REVIEWED",
+      "evidence_reviewed": [
+        "../requirements-update-2026-10-20/calibration-provider-review.json",
+        "../requirements-update-2026-10-20/openrouter-missing-cost-pg-fix.json",
+        "r80-affected-regression.json"
+      ],
+      "scope_note": "Only OpenRouter SystemOne contract/dependency path retained. Actual r81 E2E result pending; r80 actual cost-missing bug fixed and PG-persisted missing/zero/nonzero verified."
+    },
+    {
+      "id": 27,
+      "reported": "Сохранённые новости источников переписываются при каждом опросе и старте: меняются метаданные, текст Binance пересобирается из сырых файлов",
+      "required": "Новость записывается один раз при сборе и больше не меняется",
+      "status": "COMPONENT_IMPLEMENTATION_AND_REPORTED_EVIDENCE_REVIEWED",
+      "owner": "sources_corrections",
+      "regression_group": "sources",
+      "authority": [
+        "HLD2 raw-first",
+        "PRD9 auditability",
+        "latest request27"
+      ],
+      "acceptance_checks": [
+        "Source item canonical content/raw reference/metadata are written once at collection and remain unchanged during poll/restart/bootstrap.",
+        "Same external identity with changed text/metadata, source classification enrichment and Binance reparse cannot rewrite history.",
+        "Concurrent duplicates preserve one row/raw capture and one processing chain; evolving downstream outcomes remain separate.",
+        "Distinguish immutable collected evidence fields from mutable observation/routing bookkeeping in the same row; do not claim whole-row byte equality."
+      ],
+      "required_evidence": [
+        "PostgreSQL concurrent ingest/bootstrap",
+        "raw hash equality",
+        "legacy migration preservation"
+      ],
+      "acceptance_status": "COMPONENT_AND_ACTUAL_OBSERVED_CANONICAL_IMMUTABILITY_VERIFIED",
+      "evidence_reviewed": [
+        "../source-corrections-2026-10-20/result.json",
+        "legacy-source-projection-review.json",
+        "r81-actual-independent-review.json"
+      ],
+      "scope_note": "Canonical collected title/body/publication/source/raw/hash stay immutable; same-row observation/routing bookkeeping may evolve. Pure legacy read/import projections do not rewrite originals."
+    }
+  ],
+  "final_acceptance": false,
+  "known_evidence_gaps": [
+    "Actual r81 ordinary-source to native agent to market and Telegram result; workflow authorized and given exact tuple",
+    "Final-candidate concurrent historical BTC/ETH market-job timing",
+    "All27 historical fixture acceptance on one candidate; 7 formal evidence tests still fail, including full F11–F16 packets",
+    "Primary legacy schema/raw-frame operational retirement and final deployment receipt, coordinated by parent",
+    "Native amd64 KVM runtime, 72-hour source availability and 14-day shadow operation"
+  ],
+  "current_candidate": {
+    "candidate": "r82",
+    "recorded_at": "2026-10-20T11:12:22.171633+00:00",
+    "image": "sha256:aeff9822a0a29414e5563f05c3f0e1b05fb222e30331cb0ff71f99c654a81402",
+    "code_version": "43977ae5a00fed630eb80aa1a482312f9dcb6a544cb0c87be0837d9bb4af92b8",
+    "source_candidate_sha256": "99f06d57cbec7380c256da59ca41750f411b17258d62c692f3fce441a430ff39",
+    "configs": {
+      "primary": {
+        "version": "75ea469c9a84bf3e614eacdf108fb4e683cb79c0-dirty.7e8cea9c76a679ced51d8eb77fdc3a40e07c5325cf69137030a8b79d35ef1177",
+        "content_sha256": "7e8cea9c76a679ced51d8eb77fdc3a40e07c5325cf69137030a8b79d35ef1177"
+      },
+      "qa": {
+        "version": "75ea469c9a84bf3e614eacdf108fb4e683cb79c0-dirty.a86fccf44673aef4caec48b1bcbacef6c0c332e4aa8f5f5248185d062bd52262",
+        "content_sha256": "a86fccf44673aef4caec48b1bcbacef6c0c332e4aa8f5f5248185d062bd52262"
+      }
+    },
+    "qualified_openma_image": "sha256:da8d1b4c986fb852d856453a62ad56fa0cd26df17139114b9c5adf9656f00f16",
+    "only_product_delta_vs_r81": [
+      "src/tank/agents/sessions.py"
+    ],
+    "exact_sessions_sha256": "7238bbdf4a5afd4d1b6116fe7cdd46265f6a812d4480b2f9c28cb8ceba252653",
+    "source_config_and_dependencies_sealed": true,
+    "exact_image_verification": "overlay-20261020T110824.373251Z/result.json",
+    "actual_image_session_service_to_postgres_probe": "r82-image-session-pool-postgres.json",
+    "native_protocol_tests": {
+      "passed": 60,
+      "failed": 0,
+      "skipped": 0,
+      "log": "r82-native-protocol.log",
+      "junit": "r82-native-protocol.xml"
+    },
+    "actual_live_e2e": "PENDING_COORDINATOR_RUN",
+    "production_deployed_here": false,
+    "final_acceptance": false
+  },
+  "combined_evidence": "combined-status-r81.json",
+  "current_evidence_boundaries": "current-acceptance-boundaries-r82.json"
+}

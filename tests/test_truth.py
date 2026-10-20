@@ -119,8 +119,10 @@ def test_real_rest_fixture_endpoints():
         assert result["oi_native_chg_pct"] == pytest.approx(expected, abs=0.0001)
 
 
-def test_t6_funding_and_t8_semantics():
-    from tank.analysis.truth import data_confidence, derivatives_truth
+def test_t6_funding_and_t8_funding_freshness():
+    from runpy import run_path
+
+    from tank.analysis.truth import derivatives_truth
 
     end = parse_time("2026-10-16T12:00:00Z")
     start = end - timedelta(hours=4)
@@ -136,13 +138,16 @@ def test_t6_funding_and_t8_semantics():
         Decimal(".00016"),
     ]
     assert d["funding_dispersion_8h"] == Decimal(".00006")
-    spot = dict(coverage=dict(n_complete=3, covered_share_est=0.8))
-    snap = dict(
-        semantics=[dict(metric_key="aggressor", critical=True, semantic_confidence="DOCUMENTED_UNTESTED")]
-    )
-    c = data_confidence(snap, spot, dict(per_venue=[]), end)
-    assert c["class_"] == "MEDIUM"
-    assert c["limiting"]["condition"] == "semantics"
+    snap = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
+        "synthetic_start_snapshot"
+    ]()
+    snap["funding"] = [
+        row for row in snap["funding"] if parse_time(row["settlement_time"]) <= end - timedelta(minutes=10)
+    ]
+    c = compute_market_truth(snap)["data_confidence"]
+    assert c["class"] == "MEDIUM"
+    assert c["limiting"]["condition"] == "freshness"
+    assert c["limiting"]["collection"] == "funding"
 
 
 def test_f11_rest_synchronized_native():
@@ -366,7 +371,7 @@ def test_asymmetric_depth_uses_actual_hit_side_and_excludes_perps(side):
     assert len(r["per_venue"]) == 1
 
 
-def test_confidence_rejects_descriptive_fake_semantics_without_actual_data():
+def test_descriptive_semantics_cannot_replace_actual_spot_coverage():
     from tank.analysis.truth import data_confidence
 
     end = parse_time("2026-10-16T12:00:00Z")
@@ -376,12 +381,13 @@ def test_confidence_rejects_descriptive_fake_semantics_without_actual_data():
                 {"metric_key": "aggressor depth price", "semantic_confidence": "VERIFIED", "critical": True}
             ]
         },
-        {"venues": [{"venue": "A"}, {"venue": "B"}], "coverage": {"n_complete": 2, "covered_share_est": 1}},
+        {"venues": [], "coverage": {"n_complete": 0, "covered_share_est": None}},
         {"per_venue": []},
         end,
     )
-    assert result["class_"] != "HIGH"
-    assert result["critical_semantics_verified"] is False
+    assert result["class_"] == "LOW"
+    assert result["limiting"]["condition"] == "spot_coverage"
+    assert "critical_semantics_verified" not in result
 
 
 def test_confidence_requires_present_fresh_reference_and_books():
@@ -755,7 +761,11 @@ def test_reference_requires_complete_24h_flow_and_last_actual_trade():
     ]()
     end = parse_time(snapshot["cutoff"])
     start = parse_time(snapshot["anchor"]["ts"])
-    snapshot["anchor_trades"][0]["price"] = 99
+    next(
+        bar
+        for bar in snapshot["flow_bars"]
+        if bar.get("reference_points") and bar["reference_points"][0]["boundary"] == iso(start)
+    )["reference_points"][0]["last_trade"]["price"] = 99
     result = relative_truth(snapshot, start, end)
     assert result["ref_venue"] == "A:spot:T"
     assert result["anchor"]["ref_price"] == 99
@@ -766,7 +776,10 @@ def test_reference_requires_complete_24h_flow_and_last_actual_trade():
     result = relative_truth(snapshot, start, end)
     assert result["ref_venue"] == "B:spot:T"
     assert result["anchor"]["ref_price"] == 100
-    snapshot["anchor_trades"] = []
+    for bar in snapshot["flow_bars"]:
+        if any(point["boundary"] == iso(start) for point in bar.get("reference_points", [])):
+            bar["reference_points"] = []
+            bar.pop("last_trade", None)
     result = relative_truth(snapshot, start, end)
     assert result["anchor"]["ref_price"] is None
     assert result["windows"]["EVENT"]["r_raw"] is None
@@ -783,10 +796,10 @@ def test_slug_identity_wld_sector_is_not_applicable_and_self_is_excluded():
     ]()
     snapshot["token_id"] = "worldcoin:WLD"
     snapshot["tokens"] = [
-        {"token_id": "worldcoin:WLD", "symbol": "WLD"},
+        {"token_id": "worldcoin:WLD", "symbol": "WLD", "sector": "IDENTITY_PAYMENTS"},
         {"token_id": "bitcoin:BTC", "symbol": "BTC"},
     ]
-    for collection in ("instruments", "flow_bars", "klines", "books", "oi", "funding", "anchor_trades"):
+    for collection in ("instruments", "flow_bars", "klines", "books", "oi", "funding"):
         for row in snapshot[collection]:
             if row.get("token_id") == "T":
                 row["token_id"] = "worldcoin:WLD"
@@ -911,21 +924,37 @@ def test_fractional_window_boundary_trades_need_continuity_proof_and_are_exact()
                 },
             ]
         )
-    unknown = spot_truth(rows, [], instruments, start, end, boundary_trades=trades)
+    pieces = []
+    for proof in proofs:
+        lo = max(parse_time(proof["start"]), start)
+        hi = min(parse_time(proof["end"]), end)
+        selected = [
+            row
+            for row in trades
+            if row["instrument_id"] == proof["instrument_id"] and lo <= parse_time(row["ts"]) < hi
+        ]
+        pieces.append(
+            dict(
+                proof,
+                start=iso(lo),
+                end=iso(hi),
+                buy_qty=sum(Decimal(str(r["qty_native"])) for r in selected if r["side"] == "BUY"),
+                sell_qty=sum(Decimal(str(r["qty_native"])) for r in selected if r["side"] == "SELL"),
+                sum_sq_qty=sum(Decimal(str(r["qty_native"])) ** 2 for r in selected),
+            )
+        )
+    unknown = spot_truth(rows, [], instruments, start, end)
     assert unknown["coverage"]["n_complete"] == 0
     assert unknown["composite_max"]["cvd"] is None
-    assert all(
-        x["detail"] == "BOUNDARY_TRADES_OR_CONTINUITY_PROOF_UNAVAILABLE"
-        for x in unknown["coverage"]["excluded"]
-    )
-    measured = spot_truth(rows, [], instruments, start, end, boundary_trades=trades, boundary_coverage=proofs)
+    assert all(x["detail"] == "BOUNDARY_AGGREGATE_UNAVAILABLE" for x in unknown["coverage"]["excluded"])
+    measured = spot_truth(rows, [], instruments, start, end, flow_segments=pieces)
     assert measured["coverage"]["n_complete"] == 2
     assert measured["composite_max"]["cvd"] == 10
     assert measured["composite_max"]["volume"] == 22
     assert all(v["sum_sq_qty"] == 39 for v in measured["venues"])
     assert all(len(v["boundary_segments"]) == 2 for v in measured["venues"])
-    for proof in proofs:
-        proof["observed_at"] = iso(end + timedelta(seconds=1))
+    for piece in pieces:
+        piece["observed_at"] = iso(end + timedelta(seconds=1))
     assert (
         spot_truth(
             rows,
@@ -933,8 +962,7 @@ def test_fractional_window_boundary_trades_need_continuity_proof_and_are_exact()
             instruments,
             start,
             end,
-            boundary_trades=trades,
-            boundary_coverage=proofs,
+            flow_segments=pieces,
             assembled_at=iso(end),
         )["coverage"]["n_complete"]
         == 0
@@ -946,8 +974,7 @@ def test_fractional_window_boundary_trades_need_continuity_proof_and_are_exact()
             instruments,
             start,
             end,
-            boundary_trades=trades,
-            boundary_coverage=proofs,
+            flow_segments=pieces,
             assembled_at=iso(end + timedelta(seconds=2)),
         )["coverage"]["n_complete"]
         == 2
@@ -1527,7 +1554,7 @@ def test_distribution_cohort_buy_to_sell_does_not_require_current_selling_majori
         ("2026-10-16T08:00:00Z", "EXACT", True, "T0"),
         ({"value": "2026-10-16T08:00:00Z", "precision": "EXACT"}, None, True, "T0"),
         ("2026-10-16T08:00:00Z", "EXACT", False, "T1"),
-        ({"value": "2026-10-16T08:00:00Z", "precision": "DATE_ONLY"}, None, True, "T1"),
+        ({"value": "2026-10-16T08:00:00Z", "precision": "BUCKET(1d)"}, None, True, "T1"),
     ],
 )
 async def test_assessment_calls_snapshot_with_shared_canonical_anchor(
@@ -1567,3 +1594,45 @@ async def test_assessment_calls_snapshot_with_shared_canonical_anchor(
     assert market.calls == [event_anchor(event)]
     assert market.calls[0]["type"] == kind
     assert result["relative"]["anchor"]["ts"] == market.calls[0]["ts"]
+
+
+@pytest.mark.parametrize(
+    "classification,usd_change,expected",
+    [
+        ("PRICE_MARKUP", 0.2, True),
+        ("PRICE_MARKUP", 0, False),
+        ("PRICE_MARKUP", -0.2, False),
+        ("PRICE_MARKUP", None, False),
+        ("REAL_NATIVE", 0.2, False),
+        (None, None, False),
+    ],
+)
+def test_price_markup_flag_keeps_measured_venue_when_composite_is_unavailable(
+    classification, usd_change, expected
+):
+    from tank.analysis.truth import select_move
+
+    spot = {"direction": "INSUFFICIENT_DATA", "classification": "INSUFFICIENT_DATA"}
+    derivatives = {
+        "synchronized": None,
+        "per_venue": [
+            {"venue": "binance", "oi_class": classification, "oi_usd_chg_pct": usd_change},
+            {"venue": "okx", "oi_class": None, "oi_usd_chg_pct": None},
+        ],
+        "lead_lag": {"first_mover": "UNKNOWN"},
+        "liquidations": {"complete_venues_total": {"long": None, "short": None}},
+    }
+    liquidity = {
+        "elasticity": {"weak_response": None, "excess_response": None},
+        "depth_drop": None,
+        "liquidity_state": None,
+        "replenishment": {"bursts": None, "replenished": None, "resilient_bursts": None},
+    }
+    relative = {"windows": {"W4H": {"r_btc_adj": None, "normal_range": None}}}
+    result = select_move(
+        spot, derivatives, liquidity, {"supply_in_evidence": "UNKNOWN"}, relative, "LOW", "W4H"
+    )
+    assert ("PRICE_MARKUP_OI" in result["flags"]) is expected
+    assert result["move_class"] == "UNKNOWN"
+    assert result["class_confidence"] == "LOW"
+    assert derivatives["synchronized"] is None

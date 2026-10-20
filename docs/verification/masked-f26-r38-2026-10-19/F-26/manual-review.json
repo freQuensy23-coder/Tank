@@ -1,0 +1,36 @@
+{
+  "input_sha256": "bcdb41132adbf027e6e93c777be4a557cabf8a7572d1f2cc67fac11eff666100",
+  "frozen_output_sha256": "117ac10cdab3948618d7096c9aa645ab380e62adaf08a4f7c2102e96c4e706c1",
+  "checks": [
+    {
+      "requirement": "No waiting; class MAJOR specifically through M2, not a forced alternate grade.",
+      "passed": true,
+      "reason": "The actual handle lookup returned both authorities; the agent immediately recorded HIGH/APPROVED and graded MAJOR through M2 with the exact integration quote, without external confirmation or delayed identity verification. The trading WAIT in the card concerns missing market coverage, not uncertainty about author authority.",
+      "evidence": [
+        {
+          "path": "docs/verification/masked-f26-r38-2026-10-19/F-26/actual/qa-r38-masked-f26-driver/framework-bundles/bcdb41132adbf027e6e93c777be4a557cabf8a7572d1f2cc67fac11eff666100/outputs.json",
+          "sha256": "117ac10cdab3948618d7096c9aa645ab380e62adaf08a4f7c2102e96c4e706c1"
+        },
+        {
+          "path": "docs/verification/masked-f26-r38-2026-10-19/F-26/authority-lookup.json",
+          "sha256": "d67a2d941766f924607854a8e692c9886e247d6fbdcbb993c23a66b4a4642e31"
+        }
+      ]
+    },
+    {
+      "requirement": "The accepted card VERIFIED line names the declared post; role evidence remains CEO of the counterparty and co-founder of the project after consistent identity masking.",
+      "passed": true,
+      "reason": "Accepted card VERIFIED lines cite the declared post item; headline and rationale name @AuthorityK. Actual returned registry account retains both project leadership and OpenAI CEO role scopes.",
+      "evidence": [
+        {
+          "path": "docs/verification/masked-f26-r38-2026-10-19/F-26/actual/qa-r38-masked-f26-driver/framework-bundles/bcdb41132adbf027e6e93c777be4a557cabf8a7572d1f2cc67fac11eff666100/outputs.json",
+          "sha256": "117ac10cdab3948618d7096c9aa645ab380e62adaf08a4f7c2102e96c4e706c1"
+        },
+        {
+          "path": "docs/verification/masked-f26-r38-2026-10-19/F-26/authority-lookup.json",
+          "sha256": "d67a2d941766f924607854a8e692c9886e247d6fbdcbb993c23a66b4a4642e31"
+        }
+      ]
+    }
+  ]
+}

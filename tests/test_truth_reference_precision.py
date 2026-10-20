@@ -15,11 +15,9 @@ def test_raw_trade_references_survive_truth_json_and_call_freeze_boundary():
     packet = synthetic_start_snapshot()
     anchor = "10000000000000000.01"
     entry = "10000000000000000.02"
-    for row in packet["anchor_trades"]:
-        row["price"] = anchor
-    packet["cutoff_trades"] = [
-        dict(row, price=entry, ts="2026-10-16T11:59:59Z") for row in packet["anchor_trades"]
-    ]
+    for bar in packet["flow_bars"]:
+        for point in bar.get("reference_points", []):
+            point["last_trade"]["price"] = anchor if point["boundary"] == packet["anchor"]["ts"] else entry
     result = compute_market_truth(packet)
     relative = result["relative"]
     assert Decimal(relative["anchor"]["ref_price"]) == Decimal(anchor)
@@ -34,6 +32,10 @@ def test_kline_fallback_saved_entry_and_hourly_close_remain_exact():
     exact = "100.00000000000000000000000000001"
     for row in packet["klines"]:
         row["c"] = exact
+    for bar in packet["flow_bars"]:
+        if any(point["boundary"] == packet["cutoff"] for point in bar.get("reference_points", [])):
+            bar.pop("last_trade", None)
+            bar["reference_points"] = []
     result = compute_market_truth(packet)
     relative = result["relative"]
     assert Decimal(relative["entry_ref_price"]) == Decimal(exact)

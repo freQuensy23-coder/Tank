@@ -1,0 +1,12 @@
+{
+  "started_at": "2026-10-19T19:11:06.856354+00:00",
+  "frozen_output": {
+    "path": "docs/verification/masked-f08-r38-2026-10-19/F-08/actual/qa-r38-masked-f08-driver/framework-bundles/12fe3f3880baeceddfb3ac7b378ebaa32fd79c17b48facf0220ec2b00e88d322/outputs.json",
+    "sha256": "8451c333b56432a6b8f2afece8c8db684fa71138929d90248cd668d8e00b834d"
+  },
+  "scope": "Actual single masked reference first outcome; no normal Runtime or SENT claim",
+  "manual_review": {
+    "path": "docs/verification/masked-f08-r38-2026-10-19/F-08/manual-review.json",
+    "sha256": "c4344d9c048a032de9525b185582a27d786d3989a60cdb6d44150c1150c59573"
+  }
+}

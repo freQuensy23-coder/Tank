@@ -1,0 +1,12 @@
+{
+  "started_at": "2026-10-19T19:48:47.877899+00:00",
+  "frozen_output": {
+    "path": "docs/verification/masked-f01-r41-candidate-2026-10-19/F-01/actual/qa-r41-candidate-masked-f01-driver/framework-bundles/b3478f0d3204fd273f1af4893576970b4218474fc1e82b3a7189c5fc5e0b8673/outputs.json",
+    "sha256": "14dbde11283d29d7950822d683b1d5ae74c21ff2d8a262ce8cc8eaa3861eafe6"
+  },
+  "scope": "Actual single masked reference first outcome; no normal Runtime or SENT claim",
+  "manual_review": {
+    "path": "docs/verification/masked-f01-r41-candidate-2026-10-19/F-01/manual-review.json",
+    "sha256": "d8671b820ebe42eb1523c88bd109d4e63c749c81eb09c282965f035955168582"
+  }
+}

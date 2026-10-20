@@ -1,0 +1,291 @@
+"""Source ingestion boundaries from the 2026-10-20 requirements update."""
+
+import asyncio
+import json
+import os
+import time
+from copy import deepcopy
+from pathlib import Path
+from types import SimpleNamespace
+
+import httpx
+import pytest
+import yaml
+
+from tank.sources import SourceService, parsers
+from tank.sources.browser import BrowserReader
+from tank.sources.xsensor import XSensor
+from tank.storage import MemoryRepository
+
+
+def config(tmp_path, sources):
+    return SimpleNamespace(
+        data_dir=tmp_path,
+        user_agent="Tank source regression",
+        config_version="test",
+        code_version="test",
+        capture_only=True,
+        x_enabled=False,
+        load_config=lambda name: {"sources": sources} if name == "sources" else {},
+    )
+
+
+@pytest.mark.asyncio
+async def test_dtcc_official_html_only_and_zero_links_stays_degraded(tmp_path):
+    source = next(
+        s
+        for s in yaml.safe_load(Path("config/sources.yaml").read_text())["sources"]
+        if s["source_id"] == "S08"
+    )
+    index = source["feeds"][0]["url"]
+    assert index == "https://www.dtcc.com/press-releases"
+    assert source["feeds"][0]["kind"] == "html"
+    release = index + "/2026/DTCC-Official-release"
+    mode = ["release"]
+    calls = []
+
+    def transport(request):
+        calls.append((request.method, str(request.url)))
+        assert request.url.host == "www.dtcc.com"
+        assert not request.headers.get("authorization")
+        if str(request.url) == index:
+            body = '<a href="' + release + '">Release</a>' if mode[0] == "release" else '<a href="/">Home</a>'
+            return httpx.Response(200, text=body)
+        assert str(request.url) == release
+        return httpx.Response(
+            200,
+            text='<main><h1>DTCC release</h1><div class="content-item--richtextblock"><div class="rtf">An authored official release.</div></div></main>',
+        )
+
+    repo = MemoryRepository()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
+        service = SourceService(repo, config(tmp_path, [source]), http=http)
+        try:
+            first = await service.poll_once("S08")
+            assert first["status"] == "HEALTHY" and first["items"] == 1
+            mode[0] = "empty"
+            for _ in range(2):
+                outcome = await service.poll_once("S08")
+                state = await repo.get("ops.source_checkpoints", "S08:0")
+                assert outcome["status"] == state["status"] == "DEGRADED"
+                assert "No article links matched" in state["acquisition_error"]
+            assert len(await repo.list("ingest.source_items")) == 1
+            assert all(method == "GET" for method, _ in calls)
+            assert not any("coveo" in url or "/_next/" in url for _, url in calls)
+        finally:
+            await service.close()
+
+
+@pytest.mark.asyncio
+async def test_duplicate_preserves_capture_and_retains_each_real_observation(tmp_path):
+    repo = MemoryRepository()
+    source = {"source_id": "S30", "name": "Original publisher", "feeds": []}
+    service = SourceService(repo, config(tmp_path, [source]))
+    first_time, later = "2026-10-20T10:00:00Z", "2026-10-20T10:05:00Z"
+    ref, digest = service.raw(b"Original publication bytes", source_id="S30")
+    incoming = {
+        "external_id": "one",
+        "title": "Original title",
+        "text": "Original text",
+        "published_at": first_time,
+        "published_at_precision": "EXACT",
+        "observed_at": first_time,
+        "observation_id": "first",
+    }
+    first = deepcopy(await service.ingest(source, incoming, ref, digest))
+    second_ref, second_digest = service.raw(b"Observed edited publication bytes", source_id="S30")
+    changed = {
+        **incoming,
+        "title": "Edited title",
+        "text": "Edited text",
+        "published_at": later,
+        "observed_at": later,
+        "observation_id": "second",
+    }
+    duplicate = await service.ingest(
+        {**source, "name": "New config name"}, changed, second_ref, second_digest
+    )
+    retry = await service.ingest(source, changed, second_ref, second_digest)
+    older = {**changed, "observed_at": "2026-10-20T09:59:00Z", "observation_id": "old-backlog"}
+    final = await service.ingest(source, older, second_ref, second_digest)
+    try:
+        tracking = {
+            "observation_count",
+            "last_observed_at",
+            "last_observed_at_prec",
+            "last_observed_at_precision",
+            "last_observed_at_prec_reason",
+            "last_observed_at_precision_reason",
+            "observation_watermarks",
+            "observation_evidence",
+        }
+        assert {k: v for k, v in final.items() if k not in tracking} == {
+            k: v for k, v in first.items() if k not in tracking
+        }
+        assert duplicate["item_id"] == retry["item_id"] == final["item_id"] == first["item_id"]
+        assert final["observation_count"] == 2
+        assert final["last_observed_at"] == later
+        assert final["observation_evidence"][-1]["raw_ref"] == second_ref
+        assert final["observation_evidence"][-1]["raw_sha256"] == second_digest
+        assert len(await repo.list("ingest.source_items")) == 1
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_poll_and_loop_never_reconstruct_legacy_binance_body_or_metadata(tmp_path, monkeypatch):
+    repo = MemoryRepository()
+    source = {"source_id": "S09", "feeds": []}
+    service = SourceService(repo, config(tmp_path, [source]))
+    ref, digest = service.raw(
+        json.dumps(
+            {
+                "data": {
+                    "code": "legacy",
+                    "publishDate": 1791948608368,
+                    "body": {"child": [{"text": "A later parser could read this"}]},
+                }
+            }
+        ).encode(),
+        source_id="S09",
+    )
+    original = {
+        "item_id": "legacy",
+        "source_id": "S09",
+        "external_id": "legacy",
+        "title": "First capture",
+        "text": "",
+        "published_at": "2026-10-14T03:30:08.368000Z",
+        "published_at_precision": "SECOND",
+        "published_prec": "EXACT",
+        "detail_raw_ref": ref,
+        "detail_raw_sha256": digest,
+        "raw_ref": ref,
+        "raw_sha256": digest,
+    }
+    await repo.put("ingest.source_items", "legacy", deepcopy(original))
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Captured news must not be reparsed")
+
+    monkeypatch.setattr(parsers, "binance_body", forbidden)
+    try:
+        for _ in range(2):
+            assert (await service.poll_once("S09"))["status"] == "HEALTHY"
+        stop = asyncio.Event()
+        stop.set()
+        await service.poller.loop(source, stop)
+        assert await repo.get("ingest.source_items", "legacy") == original
+        assert not await repo.list("ops.source_checkpoints")
+        assert not await repo.list("ops.jobs")
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_x_list_comes_only_from_source_config(tmp_path, monkeypatch):
+    source = {
+        "source_id": "S29",
+        "list_id": "configured-list",
+        "feeds": [{"kind": "x", "url": "https://x.com/i/lists/{list_id}"}],
+    }
+    settings = config(tmp_path, [source])
+    settings.x_enabled = True
+    settings.x_list_id = "obsolete-env-override"
+    service = SourceService(MemoryRepository(), settings)
+    calls = []
+
+    async def posts(list_id, checkpoint, **kwargs):
+        calls.append(list_id)
+        service.xsensor.raw_pages = [{"raw_ref": "retained-dom", "raw_sha256": "retained-sha"}]
+        return [], None
+
+    monkeypatch.setattr(service.xsensor, "posts", posts)
+    try:
+        rows, _, _ = await service.poller._fetch_rows(source, source["feeds"][0], "S29:0", {})
+        assert not rows and calls == ["configured-list"]
+    finally:
+        await service.close()
+
+
+@pytest.mark.asyncio
+async def test_s19_and_x_share_chromium_with_isolated_storage_and_unchanged_input(tmp_path):
+    if os.getenv("TANK_BROWSER_TESTS") != "1":
+        pytest.skip("Requires TANK_BROWSER_TESTS=1")
+    secret = tmp_path / "synthetic-session.json"
+    profile = tmp_path / "dedicated-profile"
+    exported = json.dumps(
+        {
+            "cookies": [
+                {
+                    "name": "auth_token",
+                    "value": "synthetic-auth-only",
+                    "domain": ".x.com",
+                    "path": "/",
+                    "expires": time.time() + 86400,
+                    "secure": True,
+                    "httpOnly": True,
+                    "sameSite": "Lax",
+                }
+            ],
+            "origins": [],
+        }
+    ).encode()
+    secret.write_bytes(exported)
+    secret.chmod(0o400)
+    sensor = XSensor(SimpleNamespace(x_profile_dir=profile, x_storage_state_path=secret), shared_browser=True)
+    renderer = BrowserReader(SimpleNamespace(), shared_sensor=sensor)
+    try:
+        await renderer.open()
+        # Public rendering can start without reading the session export.
+        assert not (profile / ".tank-x-session-seeded.json").exists()
+        await sensor.open()
+        assert renderer.browser is sensor.context.browser
+        assert renderer.context is not sensor.context
+        assert await renderer.context.cookies() == []
+        assert any(c["name"] == "auth_token" for c in await sensor.context.cookies())
+        await renderer.context.route(
+            "**/*",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="text/html",
+                body="<article><h1>Public issuer</h1><p>Authored news.</p></article>",
+            ),
+        )
+        assert (
+            parsers.article(await renderer.html("https://public.synthetic.example/release"))["title"]
+            == "Public issuer"
+        )
+        assert secret.read_bytes() == exported and secret.stat().st_mode & 0o777 == 0o400
+        await renderer.close()
+        assert sensor.context.browser.is_connected()
+    finally:
+        await renderer.close()
+        await sensor.close()
+
+
+@pytest.mark.asyncio
+async def test_invalid_x_input_keeps_shared_public_browser_available(tmp_path):
+    if os.getenv("TANK_BROWSER_TESTS") != "1":
+        pytest.skip("Requires TANK_BROWSER_TESTS=1")
+    secret = tmp_path / "invalid-synthetic-session.json"
+    secret.write_text('{"cookies": "INVALID_SYNTHETIC_INPUT"}')
+    settings = SimpleNamespace(x_profile_dir=tmp_path / "dedicated-profile", x_storage_state_path=secret)
+    sensor = XSensor(settings, shared_browser=True)
+    renderer = BrowserReader(SimpleNamespace(), shared_sensor=sensor)
+    try:
+        await renderer.open()
+        browser = renderer.browser
+        with pytest.raises(ValueError, match="invalid, expired, or unreadable"):
+            await sensor.open()
+        assert browser.is_connected() and renderer.browser is sensor.context.browser
+        await renderer.context.route(
+            "**/*",
+            lambda route: route.fulfill(status=200, content_type="text/html", body="<h1>Public page</h1>"),
+        )
+        assert b"Public page" in await renderer.html("https://public.synthetic.example/release")
+        assert secret.read_text() == '{"cookies": "INVALID_SYNTHETIC_INPUT"}'
+        assert not (settings.x_profile_dir / ".tank-x-session-seeded.json").exists()
+    finally:
+        await renderer.close()
+        await sensor.close()

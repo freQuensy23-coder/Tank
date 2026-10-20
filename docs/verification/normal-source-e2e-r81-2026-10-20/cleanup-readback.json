@@ -1,0 +1,19 @@
+{
+  "original_native_sql_captured_before_archive": true,
+  "requested_count": 23,
+  "http200_count": 23,
+  "already_archived_before_cleanup": 2,
+  "owned_total_archived_after": 25,
+  "owned_executions_running_queued_after": 0,
+  "global_qa_executions_running_queued_after": 0,
+  "original_event_export_unchanged": true,
+  "original_execution_export_unchanged": true,
+  "post_archive_inventory": "data/qa/normal-source-e2e-r81-20261020/native-post-archive-originals/inventory.json",
+  "original_api_response_inventory": {
+    "file": "data/qa/normal-source-e2e-r81-20261020/native-archive-originals.json",
+    "bytes": 944278,
+    "sha256": "d0b518df775d391b96d7c72021d31565c97334eb6564078bfd274cc53af07dbe",
+    "mode": "0o600"
+  },
+  "primary_or_shared_controller_restarted": false
+}

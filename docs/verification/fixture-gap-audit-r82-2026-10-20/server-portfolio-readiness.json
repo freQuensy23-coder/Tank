@@ -1,0 +1,196 @@
+{
+  "scope": "PROPOSED_PORTFOLIO_ONLY_NOT_CANONICAL_ADOPTION_OR_FULL_ACCEPTANCE",
+  "canonical_manifest_sha256_unchanged": "980c3836a1cd12106376cf3615e0339b47a7c916e3b9906df1cf63def93256ee",
+  "ready_packets": 27,
+  "cases": [
+    {
+      "fixture_id": "F-01",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-02",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-03",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-04",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-05",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-06",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-07",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-08",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-09",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-10",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-11",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-12",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-13",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-14",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-15",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-16",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-17",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-18",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-19",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-20",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-21",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-22",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-23",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-24",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-25",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-26",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    },
+    {
+      "fixture_id": "F-27",
+      "ready_errors": [],
+      "literal_spec_preserved": true
+    }
+  ],
+  "formula_cases": [
+    {
+      "fixture_id": "F-11",
+      "automated_passed": false,
+      "full_completed_errors": [
+        "assertion failed: {\"equals\":\"SELL\",\"path\":[\"market_truth\",0,\"spot\",\"W1H\",\"direction\"]}",
+        "assertion failed: {\"equals\":\"SELL\",\"path\":[\"market_truth\",0,\"spot\",\"W4H\",\"direction\"]}",
+        "required manual clause failed: 1h and 4h spot direction SELL; capital-weighted breadth on the sell side, Kraken shown as a small (~2.5%) buying venue; 4h native OI +8.18% → REAL_NATIVE with the markup component reported; divergence PERP_LED_MARKUP with ABSORPTION_CANDIDATE unresolved; venues with incomplete data in the window (in the Addendum case: Bybit spot current-day history) listed as excluded with reasons; action ∈ {DONT_CHASE, WAIT}."
+      ]
+    },
+    {
+      "fixture_id": "F-12",
+      "automated_passed": true,
+      "full_completed_errors": [
+        "required manual clause failed: `oi_class` PRICE_MARKUP on Binance; flag PRICE_MARKUP_OI; the card never speaks of new positions or leverage (L2)."
+      ]
+    },
+    {
+      "fixture_id": "F-13",
+      "automated_passed": false,
+      "full_completed_errors": [
+        "assertion failed: {\"equals\":\"PERP_LED_CHASE\",\"path\":[\"market_truth\",0,\"move_class\"]}",
+        "required manual clause failed: `oi_class` REAL_NATIVE; move class PERP_LED_CHASE (directly or through the divergence discriminator), never SPOT_LED_ACCUMULATION; action ∈ {DONT_CHASE, WAIT}."
+      ]
+    },
+    {
+      "fixture_id": "F-14",
+      "automated_passed": true,
+      "full_completed_errors": [
+        "required manual clause failed: Native OI change reported as positions closing during the rise; move class ∈ {SHORT_SQUEEZE, LIQUIDITY_VACUUM, UNKNOWN}; direction TWO_SIDED or UNKNOWN; never SPOT_LED_ACCUMULATION."
+      ]
+    },
+    {
+      "fixture_id": "F-15",
+      "automated_passed": true,
+      "full_completed_errors": [
+        "required manual clause failed: No order-book depth in the archive, so weak_response is n/a and SELL_SIDE_ABSORPTION cannot be chosen; move class UNKNOWN; never SPOT_LED_ACCUMULATION; the card never says \"accumulation\"."
+      ]
+    },
+    {
+      "fixture_id": "F-16",
+      "automated_passed": true,
+      "full_completed_errors": [
+        "required manual clause failed: Market context STRESS: the day's −3.25% is below BTC's 24h normal range (lower edge −3.01% over the 90 days before); Trade Grade one notch lower for non-STRUCTURAL events; a non-STRUCTURAL beneficiary is never BULLISH; no veto of any action."
+      ]
+    }
+  ],
+  "automated_checks_passed": 14,
+  "automated_checks_failed": 3,
+  "native_wording_phase": "NOT_RUN_PLATFORM_QUALIFICATION_AND_ROOT_RELEASE_REQUIRED",
+  "policy_controls": "F16 synthetic rule controls remain separate and unclaimed",
+  "new_product_or_canonical_source_edits": false,
+  "masking_and_sealed_outcomes": "Host-only separate directories,0700dirs/0600files; not mounted into native environment",
+  "limits": "All formula processes CPUQuota100%,MemoryMax512M; no PG/native/external calls"
+}

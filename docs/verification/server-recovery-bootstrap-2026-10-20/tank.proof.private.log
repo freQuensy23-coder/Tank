@@ -1,0 +1,16 @@
+ Volume tank_backup  Creating
+ Volume tank_backup  Created
+ Volume tank_openma-data  Creating
+ Volume tank_openma-data  Created
+ Volume tank_tank-data  Creating
+ Volume tank_tank-data  Created
+ Volume tank_sealed-replay-evidence  Creating
+ Volume tank_sealed-replay-evidence  Created
+ Volume tank_tank-browser  Creating
+ Volume tank_tank-browser  Created
+ Volume tank_codex-auth  Creating
+ Volume tank_codex-auth  Created
+[WARN  tini (7)] Tini is not running as PID 1 and isn't registered as a child subreaper.
+Zombie processes will not be re-parented to Tini, so zombie reaping won't work.
+To fix the problem, use the -s option or set the environment variable TINI_SUBREAPER to register Tini as a child subreaper, or run Tini as PID 1.
+{"tables": 1002, "verified": true, "passed": true}

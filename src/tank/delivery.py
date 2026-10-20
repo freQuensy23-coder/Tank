@@ -1,11 +1,15 @@
 """Immutable Telegram delivery ledger and delivered-call activation."""
 
+import asyncio
 import html
+from contextlib import AsyncExitStack
 from datetime import timedelta
 
 import httpx
 
-from tank.util import iso, new_id, parse_time, utcnow
+from tank.analysis.cards import telegram_card_html
+from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
+from tank.util import new_id, parse_time, utcnow
 
 
 class DeliveryError(RuntimeError):
@@ -15,9 +19,14 @@ class DeliveryError(RuntimeError):
 
 
 class DeliveryDeferred(DeliveryError):
-    def __init__(self, run_after):
-        super().__init__("Ordinary update awaits the durable delivery rate window")
-        self.run_after = run_after
+    """An accepted card remains queued; no network attempt has occurred."""
+
+    def __init__(self, not_before):
+        self.not_before = not_before
+        super().__init__(
+            "Accepted card is scheduled for later delivery",
+            retry_after=max(1, (parse_time(not_before.value) - utcnow()).total_seconds()),
+        )
 
 
 class DeliveryService:
@@ -46,20 +55,36 @@ class DeliveryService:
         async with self.repo.lock("deliver:" + subject + ":" + channel):
             async with self.repo.transaction():
                 ledger = await self._all("out.deliveries", filters=filters)
-                if any(row["status"] == "SENT" or row.get("suppressed") for row in ledger):
+                if any(row["status"] == "SENT" for row in ledger):
                     return
                 if not any(row.get("terminal") for row in ledger):
+                    source = payload
+                    if not payload.get("notice_id"):
+                        alerts = await self._all(
+                            "out.alerts",
+                            filters={"alert_id": payload["alert_id"], "version": payload["version"]},
+                        )
+                        source = alerts[0] if alerts else payload
+                    source_times = {
+                        key: value
+                        for field in ("generated_at", "delivery_not_before")
+                        if field in source
+                        for key, value in propagate_timestamp(source, field).fields(field).items()
+                    }
+                    failed_at = collection_clock(utcnow())
                     await self.repo.put(
                         "out.deliveries",
                         new_id("delivery"),
                         {
                             **filters,
+                            **source_times,
                             "status": "FAILED",
                             "terminal": True,
                             "attempt": attempt
                             if attempt is not None
                             else max((r.get("attempt", 0) for r in ledger), default=0),
-                            "at": iso(),
+                            **failed_at.fields("at"),
+                            **failed_at.fields("failed_at"),
                             "error": type(error).__name__ if isinstance(error, BaseException) else str(error),
                         },
                         immutable=True,
@@ -76,7 +101,7 @@ class DeliveryService:
                             "kind": "DELIVERY_FAILED",
                             "subject_id": payload["alert_id"],
                             "text": f"Delivery failed: {subject}",
-                            "created_at": iso(),
+                            **collection_clock(utcnow()).fields("created_at"),
                             "created_by": "delivery",
                         },
                         immutable=True,
@@ -87,8 +112,19 @@ class DeliveryService:
                     notice_id,
                     priority=0,
                     max_attempts=5,
-                    expires_at=iso(utcnow() + timedelta(days=1)),
+                    expires_at=offset_schedule(collection_clock(utcnow()), timedelta(days=1)),
                 )
+
+    async def _enter_delivery_lock(self, stack, key):
+        try:
+            # Bound acquisition only. A competing event mutation or network send
+            # is scheduling contention, not an attempted Telegram delivery.
+            async with asyncio.timeout(1):
+                await stack.enter_async_context(self.repo.lock(key))
+        except TimeoutError:
+            raise DeliveryDeferred(
+                offset_schedule(collection_clock(utcnow()), timedelta(seconds=1))
+            ) from None
 
     async def deliver(self, payload):
         if payload.get("notice_id"):
@@ -99,8 +135,9 @@ class DeliveryService:
             )
             if not rows:
                 raise ValueError("Delivery subject does not exist")
-            # Serialization includes policy checks and the network send, not just ledger writes.
-            async with self.repo.lock("event:" + rows[0]["event_id"]):
+            # Serialize each event's network sends so updates retain their original reply anchor.
+            async with AsyncExitStack() as locks:
+                await self._enter_delivery_lock(locks, "event:" + rows[0]["event_id"])
                 error = await self._deliver(payload)
         if isinstance(error, DeliveryError):
             if getattr(error, "terminal", False):
@@ -110,7 +147,8 @@ class DeliveryService:
     async def _deliver(self, payload):
         subject = payload.get("notice_id") or f"{payload['alert_id']}:{payload['version']}"
         channel = payload.get("channel", "telegram:ops" if payload.get("notice_id") else "telegram:alerts")
-        async with self.repo.lock("deliver:" + subject + ":" + channel):
+        async with AsyncExitStack() as locks:
+            await self._enter_delivery_lock(locks, "deliver:" + subject + ":" + channel)
             filters = {"channel": channel}
             filters.update(
                 {"notice_id": payload["notice_id"]}
@@ -118,7 +156,7 @@ class DeliveryService:
                 else {"alert_id": payload["alert_id"], "version": payload["version"]}
             )
             ledger = await self._all("out.deliveries", filters=filters)
-            if any(row["status"] == "SENT" or row.get("suppressed") or row.get("terminal") for row in ledger):
+            if any(row["status"] == "SENT" or row.get("terminal") for row in ledger):
                 return
             attempt = max((r["attempt"] for r in ledger), default=0) + 1
             if attempt > 5:
@@ -147,93 +185,86 @@ class DeliveryService:
                         )
                     )
 
-                def newer(candidate):
-                    return (
-                        candidate["alert_id"] == record["alert_id"]
-                        and candidate["version"] > record["version"]
-                    ) or (
-                        candidate.get("generated_at")
-                        and record.get("generated_at")
-                        and parse_time(candidate["generated_at"]) > parse_time(record["generated_at"])
-                    )
-
-                newer_candidates = [r for r in prior if newer(r)]
-                sent_subjects = {(r["alert_id"], r["version"]) for r in sent}
-                obsolete = (
-                    record.get("kind") == "UPDATE"
-                    and newer_candidates
-                    or any((r["alert_id"], r["version"]) in sent_subjects for r in newer_candidates)
-                )
-                if obsolete:
-                    await self.repo.put(
-                        "out.deliveries",
-                        new_id("delivery"),
-                        {
-                            **filters,
-                            "status": "GENERATED",
-                            "attempt": 0,
-                            "at": iso(),
-                            "suppressed": True,
-                            "suppression_reason": "SUPERSEDED_BY_NEWER_EVENT_VERSION",
-                        },
-                        immutable=True,
-                    )
-                    return
-                decisions = [await self.repo.get("ana.decisions", key) for key in record.get("decisions", [])]
-                actionable = [
-                    d
-                    for d in decisions
-                    if d and not d.get("tracking_ended") and d.get("actionable") is not False
-                ]
-                event_snapshot = (record.get("card_struct") or {}).get("event") or {}
-                immediate = (
-                    record.get("delivery_immediate", False)
-                    or any(d.get("action") in {"START", "EXIT"} for d in actionable)
-                    or any(
-                        c.get("type") == "FATAL" and not c.get("resolved_at")
-                        for c in event_snapshot.get("contradictions", [])
-                    )
-                )
-                if record.get("kind") == "UPDATE" and not immediate:
-                    limits = (
-                        [parse_time(record["delivery_not_before"])]
-                        if record.get("delivery_not_before")
-                        else []
-                    )
+                boundaries = []
+                if record.get("delivery_not_before"):
+                    boundaries.append(propagate_timestamp(record, "delivery_not_before"))
+                if record.get("kind") == "UPDATE" and not record.get("delivery_immediate", False):
                     if sent:
-                        limits.append(
-                            max(parse_time(r["at"]) for r in sent)
-                            + timedelta(
-                                seconds=event_snapshot.get("thresholds", {}).get("update_rate_limit_s", 900)
+                        latest_sent = max(sent, key=lambda row: parse_time(row["at"]))
+                        limits = ((record.get("card_struct") or {}).get("event") or {}).get(
+                            "thresholds"
+                        ) or {}
+                        boundaries.append(
+                            offset_schedule(
+                                propagate_timestamp(latest_sent, "at"),
+                                timedelta(seconds=limits.get("update_rate_limit_s", 900)),
                             )
                         )
-                    if limits and utcnow() < max(limits):
-                        return DeliveryDeferred(iso(max(limits)))
-            if not notice:
-                for dec_id in record.get("decisions", []):
-                    dec = await self.repo.get("ana.decisions", dec_id)
-                    if not dec or (
-                        dec["action"] == "START"
-                        and not dec.get("tracking_ended")
-                        and dec.get("actionable") is not False
-                        and (dec.get("entry_ref_price") is None or dec.get("invalidation_price") is None)
-                    ):
-                        raise ValueError(
-                            "Delivery requires complete frozen decisions and START reference prices"
+                    delivery_jobs = None
+                    # A delayed retry must not let a later accepted ordinary
+                    # version overtake it. Immediate cards retain their bypass.
+                    for older in prior:
+                        if older["alert_id"] != record["alert_id"] or older["version"] >= record["version"]:
+                            continue
+                        older_ledger = await self._all(
+                            "out.deliveries",
+                            filters={
+                                "alert_id": older["alert_id"],
+                                "version": older["version"],
+                                "channel": channel,
+                            },
                         )
+                        if any(row["status"] == "SENT" or row.get("terminal") for row in older_ledger):
+                            continue
+                        if delivery_jobs is None:
+                            delivery_jobs = await self._all("ops.jobs", filters={"type": "DELIVER"})
+                        active = [
+                            job
+                            for job in delivery_jobs
+                            if job["status"] in {"QUEUED", "RUNNING"}
+                            and job["payload"].get("alert_id") == older["alert_id"]
+                            and job["payload"].get("version") == older["version"]
+                        ]
+                        if active:
+                            boundaries.append(
+                                offset_schedule(collection_clock(utcnow()), timedelta(seconds=1))
+                            )
+                            boundaries.extend(propagate_timestamp(job, "run_after") for job in active)
+                if boundaries:
+                    due = max(boundaries, key=lambda stamp: parse_time(stamp.value))
+                    if utcnow() < parse_time(due.value):
+                        return DeliveryDeferred(due)
             chat = self.settings.telegram_ops_chat if notice else self.settings.telegram_alerts_chat
             if not self.settings.telegram_token or not chat:
                 raise ValueError("Telegram token and destination must be configured")
             body = {
                 "chat_id": chat,
-                "text": html.escape(record["text"] if notice else record["card_text"]),
+                "text": html.escape(record["text"]) if notice else telegram_card_html(record["card_text"]),
                 "parse_mode": "HTML",
+                "link_preview_options": {"is_disabled": True},
             }
             if not notice:
                 sent = sorted(sent, key=lambda r: r["at"])
                 if sent:
                     body["reply_parameters"] = {"message_id": int(sent[0]["message_ref"])}
-            transition = {**filters, "attempt": attempt, "at": iso(), "status": "GENERATED"}
+            attempted = collection_clock(utcnow())
+            source_times = {
+                key: value
+                for field in ("generated_at", "delivery_not_before")
+                if field in record
+                for key, value in propagate_timestamp(record, field).fields(field).items()
+            }
+            transition = {
+                **filters,
+                **source_times,
+                "attempt": attempt,
+                **attempted.fields("at"),
+                **attempted.fields("attempted_at"),
+                "status": "GENERATED",
+                "request_reply_to_message_ref": (
+                    str(body["reply_parameters"]["message_id"]) if body.get("reply_parameters") else None
+                ),
+            }
             await self.repo.put("out.deliveries", new_id("delivery"), transition, immutable=True)
             try:
                 response = await self.http.post(
@@ -246,11 +277,24 @@ class DeliveryService:
                         f"Telegram API rejected delivery (HTTP {response.status_code})", delay
                     )
                 message_ref = str(data["result"]["message_id"])
+                returned_reply = data["result"].get("reply_to_message") or {}
+                response_reply_to_message_ref = (
+                    str(returned_reply["message_id"])
+                    if returned_reply.get("message_id") is not None
+                    else None
+                )
             except Exception as exc:
+                failed_at = collection_clock(utcnow())
                 await self.repo.put(
                     "out.deliveries",
                     new_id("delivery"),
-                    {**transition, "at": iso(), "status": "FAILED", "error": type(exc).__name__},
+                    {
+                        **transition,
+                        **failed_at.fields("at"),
+                        **failed_at.fields("failed_at"),
+                        "status": "FAILED",
+                        "error": type(exc).__name__,
+                    },
                     immutable=True,
                 )
                 failure = DeliveryError(
@@ -262,19 +306,27 @@ class DeliveryService:
                 async with self.repo.lock(
                     "event:" + record["event_id"] if not notice else "notice:" + payload["notice_id"]
                 ):
+                    sent_at = collection_clock(utcnow())
                     await self.repo.put(
                         "out.deliveries",
                         new_id("delivery"),
-                        {**transition, "at": iso(), "status": "SENT", "message_ref": message_ref},
+                        {
+                            **transition,
+                            **sent_at.fields("at"),
+                            **sent_at.fields("sent_at"),
+                            "status": "SENT",
+                            "message_ref": message_ref,
+                            "response_reply_to_message_ref": response_reply_to_message_ref,
+                        },
                         immutable=True,
                     )
                     if not notice:
-                        await self._activate_calls(record)
+                        await self._activate_calls(record, sent_at)
                         event = await self.repo.get("evt.events", record["event_id"])
                         if event and not event.get("first_card_delivered_at"):
                             delivered = utcnow()
                             event.update(
-                                first_card_delivered_at=iso(delivered),
+                                **collection_clock(delivered).fields("first_card_delivered_at"),
                                 first_card_latency_s=(
                                     delivered - parse_time(event["known_to_us_at"])
                                 ).total_seconds()
@@ -283,10 +335,12 @@ class DeliveryService:
                             )
                             assessment = (record.get("card_struct") or {}).get("assessment") or {}
                             if assessment.get("class") == "STRUCTURAL_SHOCK" and event.get("known_to_us_at"):
-                                event.setdefault(
-                                    "first_card_deadline",
-                                    iso(parse_time(event["known_to_us_at"]) + timedelta(minutes=3)),
-                                )
+                                if not event.get("first_card_deadline"):
+                                    event.update(
+                                        offset_schedule(
+                                            propagate_timestamp(event, "known_to_us_at"), timedelta(minutes=3)
+                                        ).fields("first_card_deadline")
+                                    )
                             if event.get("first_card_deadline"):
                                 event["first_card_deadline_met"] = delivered <= parse_time(
                                     event["first_card_deadline"]
@@ -296,7 +350,11 @@ class DeliveryService:
                             await self.repo.put(
                                 "evt.events",
                                 event["event_id"],
-                                {**event, "lifecycle": "ALERTED", "alerted_at": iso()},
+                                {
+                                    **event,
+                                    "lifecycle": "ALERTED",
+                                    **collection_clock(utcnow()).fields("alerted_at"),
+                                },
                             )
                         if (
                             event
@@ -312,7 +370,7 @@ class DeliveryService:
                                     event["event_id"],
                                     {
                                         **event,
-                                        "session_finalized_at": iso(),
+                                        **collection_clock(utcnow()).fields("session_finalized_at"),
                                         "terminal_alert_id": record["alert_id"],
                                         "terminal_alert_version": record["version"],
                                     },
@@ -346,11 +404,12 @@ class DeliveryService:
                                     "expiry_notices_sent": sorted(
                                         set(event.get("expiry_notices_sent", [])) | set(expired_ids)
                                     ),
-                                    "last_expiry_notice_at": iso(),
+                                    **collection_clock(utcnow()).fields("last_expiry_notice_at"),
                                 },
                             )
 
-    async def _activate_calls(self, alert):
+    async def _activate_calls(self, alert, sent_at=None):
+        sent_at = sent_at or collection_clock(utcnow())
         for dec_id in alert.get("decisions", []):
             decision = await self.repo.get("ana.decisions", dec_id)
             if not decision:
@@ -378,7 +437,8 @@ class DeliveryService:
                         "token_id": decision["token_id"],
                         "opened_by_alert": alert["alert_id"],
                         "opened_by_version": alert["version"],
-                        "opened_at": iso(),
+                        **sent_at.fields("opened_at"),
+                        **propagate_timestamp(alert, "generated_at").fields("alert_generated_at"),
                         "entry_ref_price": entry,
                         "invalidation_price": invalidation,
                         "status": "OPEN",
@@ -389,5 +449,5 @@ class DeliveryService:
                     await self.repo.put(
                         "ana.calls",
                         call["call_id"],
-                        {**call, "status": "CLOSED", "closed_by": "EXIT", "closed_at": iso()},
+                        {**call, "status": "CLOSED", "closed_by": "EXIT", **sent_at.fields("closed_at")},
                     )

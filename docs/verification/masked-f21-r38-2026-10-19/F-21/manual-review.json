@@ -1,0 +1,21 @@
+{
+  "input_sha256": "7efcd980e231578940343fdaa9a5a45fb755f75b12d20cf2ad3be26830d539aa",
+  "frozen_output_sha256": "d2edc982e79a6ae319574b263985922af9a4c3309d11675ff6574cc2ab830634",
+  "checks": [
+    {
+      "requirement": "Masked listed asset remains outside the captured universe; no registry token is added to make the case qualify.",
+      "passed": true,
+      "reason": "Actual get_registry(ASSETK) returned no captured token. The event has no universe tokens, LOW assessment explicitly cites NO_UNIVERSE_TOKEN, and no card or beneficiary was created. No registry mutation was performed.",
+      "evidence": [
+        {
+          "path": "docs/verification/masked-f21-r38-2026-10-19/F-21/actual/qa-r38-masked-f21-driver/framework-bundles/7efcd980e231578940343fdaa9a5a45fb755f75b12d20cf2ad3be26830d539aa/outputs.json",
+          "sha256": "d2edc982e79a6ae319574b263985922af9a4c3309d11675ff6574cc2ab830634"
+        },
+        {
+          "path": "docs/verification/masked-f21-r38-2026-10-19/F-21/registry-lookup.json",
+          "sha256": "5ab90ad4b440480176eb7134190eaa141b2e664a4088df183f673dc331cc3317"
+        }
+      ]
+    }
+  ]
+}

@@ -5,6 +5,7 @@ The container is a fake VM executor for this test; KVM is not certified here.
 """
 
 import base64
+import hashlib
 import importlib
 import importlib.metadata
 import json
@@ -19,6 +20,17 @@ from pathlib import Path
 
 def main():
     assert sys.version_info[:2] == (3, 12), sys.version
+    cache = json.loads(Path("/opt/tank/browser-font-cache.json").read_text())
+    assert cache["engine"] == "Playwright default bundled Chromium headless shell"
+    assert cache["cache_format"] == 12 and cache["chromium"] == "156.0.8078.4"
+    assert cache["temporary_profile_removed"] and cache["original_cache8_unchanged"]
+    assert (
+        cache["worker_sha256"] == hashlib.sha256(Path("/opt/tank/browser-worker.py").read_bytes()).hexdigest()
+    )
+    assert cache["cache12"]
+    for name, expected in cache["cache12"].items():
+        actual = hashlib.sha256((Path("/var/cache/fontconfig") / name).read_bytes()).hexdigest()
+        assert actual == expected, name
     for name in (
         "pandas",
         "numpy",
@@ -54,7 +66,10 @@ def main():
                 text=True,
                 timeout=90,
             )
-            response = json.loads(result.stdout)
+            prefix = "__TANK_BROWSER_RPC_V1__ "
+            replies = [line[len(prefix) :] for line in result.stdout.splitlines() if line.startswith(prefix)]
+            assert len(replies) == 1, result.stdout
+            response = json.loads(replies[0])
             assert response["ok"], response
             return response["result"]
 
@@ -77,6 +92,7 @@ def main():
                         "python": sys.version.split()[0],
                         "playwright": importlib.metadata.version("playwright"),
                         "checks": [
+                            "font-cache-ABI-and-worker-binding",
                             "analysis-libraries",
                             "navigation",
                             "fill",

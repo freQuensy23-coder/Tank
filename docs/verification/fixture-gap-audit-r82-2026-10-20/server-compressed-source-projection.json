@@ -1,0 +1,53 @@
+{
+  "scope": "LOSSLESS_STORAGE_REPRESENTATION_ONLY_HOST_PATH_ADAPTER_REQUIRED",
+  "canonical_manifests_or_semantic_source_fields_rewritten": false,
+  "files": [
+    {
+      "declared_path": "data/replay/candidates/pure-market-retained-20261019/F-12/input-f87f1202439d446cb593f4d924c1734734ba89952b9adb2275f073d2284f93ff.json",
+      "stored_path": "data/replay/candidates/pure-market-retained-20261019/F-12/input-f87f1202439d446cb593f4d924c1734734ba89952b9adb2275f073d2284f93ff.json.zst",
+      "uncompressed_bytes": 26518901,
+      "uncompressed_sha256": "f87f1202439d446cb593f4d924c1734734ba89952b9adb2275f073d2284f93ff",
+      "compressed_bytes": 963901,
+      "compressed_sha256": "187d0b5084283cbcd4b60d593b13339704c26b804ee5b085b86cc6ac87b0f4c0",
+      "roundtrip_verified": true
+    },
+    {
+      "declared_path": "data/replay/candidates/pure-market-retained-20261019/F-13/input-89697e99763be54da140d343d881a0f180e97a88c90a8629c9dcff1796ee160e.json",
+      "stored_path": "data/replay/candidates/pure-market-retained-20261019/F-13/input-89697e99763be54da140d343d881a0f180e97a88c90a8629c9dcff1796ee160e.json.zst",
+      "uncompressed_bytes": 26738309,
+      "uncompressed_sha256": "89697e99763be54da140d343d881a0f180e97a88c90a8629c9dcff1796ee160e",
+      "compressed_bytes": 1078963,
+      "compressed_sha256": "5e7cf3924cba0c83efb3488264d6a837430be8a51df693b734065e0f6f1d2648",
+      "roundtrip_verified": true
+    },
+    {
+      "declared_path": "data/replay/candidates/pure-market-retained-20261019/F-14/input-84db6fd98c3ba968cb7161a1abafeafeef122742e0f900e56fe961cd463c9e0c.json",
+      "stored_path": "data/replay/candidates/pure-market-retained-20261019/F-14/input-84db6fd98c3ba968cb7161a1abafeafeef122742e0f900e56fe961cd463c9e0c.json.zst",
+      "uncompressed_bytes": 26520485,
+      "uncompressed_sha256": "84db6fd98c3ba968cb7161a1abafeafeef122742e0f900e56fe961cd463c9e0c",
+      "compressed_bytes": 965135,
+      "compressed_sha256": "a0aedc963889ca6c24f0b94cb7746e806d6fb810658dfb5a4e20849bfd698afb",
+      "roundtrip_verified": true
+    },
+    {
+      "declared_path": "data/replay/candidates/pure-market-retained-20261019/F-15/input-12ae1d21e754d37e9b9b4f17e0391163cc847006e8b2dded56808034d51609b2.json",
+      "stored_path": "data/replay/candidates/pure-market-retained-20261019/F-15/input-12ae1d21e754d37e9b9b4f17e0391163cc847006e8b2dded56808034d51609b2.json.zst",
+      "uncompressed_bytes": 40421380,
+      "uncompressed_sha256": "12ae1d21e754d37e9b9b4f17e0391163cc847006e8b2dded56808034d51609b2",
+      "compressed_bytes": 1824672,
+      "compressed_sha256": "ccc3b1bbbeb61d582c3e981f68ac3e093d4706069da0cb6dc8225f6225f10e2c",
+      "roundtrip_verified": true
+    },
+    {
+      "declared_path": "data/replay/candidates/pure-market-retained-20261019/F-16/input-d6ad61f9cd575e5309c27a35cbedd9263b3930af6d01553b35cfb94c84217fbf.json",
+      "stored_path": "data/replay/candidates/pure-market-retained-20261019/F-16/input-d6ad61f9cd575e5309c27a35cbedd9263b3930af6d01553b35cfb94c84217fbf.json.zst",
+      "uncompressed_bytes": 19239563,
+      "uncompressed_sha256": "d6ad61f9cd575e5309c27a35cbedd9263b3930af6d01553b35cfb94c84217fbf",
+      "compressed_bytes": 1343966,
+      "compressed_sha256": "14e707f1eb4e4b3f45a049833aa37e2b8ae525a5944057cd7ded7ac6a36965af",
+      "roundtrip_verified": true
+    }
+  ],
+  "bytes_before": 139438638,
+  "bytes_after": 6176637
+}

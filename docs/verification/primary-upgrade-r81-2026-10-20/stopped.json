@@ -1,0 +1,19 @@
+{
+  "at": "2026-10-20T10:52:07.565934+00:00",
+  "container_id": "c98d86407ab942b520225b3820e51af71d42868f4eb96a038d86f385d3645856",
+  "dependencies_unchanged": true,
+  "image": "sha256:81e2d555ae3f8882551c97504a3b1c28c234b95a6bdce6f0309fa49ab6602819",
+  "state": {
+    "Dead": false,
+    "Error": "",
+    "ExitCode": 0,
+    "FinishedAt": "2026-10-20T10:52:07.347138859Z",
+    "OOMKilled": false,
+    "Paused": false,
+    "Pid": 0,
+    "Restarting": false,
+    "Running": false,
+    "StartedAt": "2026-10-20T09:28:48.478754092Z",
+    "Status": "exited"
+  }
+}

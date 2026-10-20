@@ -1,7 +1,9 @@
 import re
 from copy import deepcopy
 
-from tank.analysis.cards import alert_gate, compose_card, lint_card
+import pytest
+
+from tank.analysis.cards import alert_gate, compose_card
 from tank.analysis.decisions import DecisionEngine
 
 
@@ -13,7 +15,7 @@ def inputs():
         {
             "token_id": "T",
             "move_class": "SPOT_LED_ACCUMULATION",
-            "data_confidence": {"class": "HIGH", "critical_semantics_verified": True},
+            "data_confidence": {"class": "HIGH"},
             "relative": {
                 "repricing_band": "EARLY",
                 "market_context": "NEUTRAL",
@@ -33,7 +35,7 @@ def test_start_and_ordered_blockers():
     cases = [
         ({"class": "LOW"}, "WAIT"),
         ({"class": "MEDIUM"}, "WATCH_TO_START"),
-        ({"class": "HIGH", "critical_semantics_verified": False}, "WAIT"),
+        ({"class": "HIGH", "critical_semantics_verified": False}, "START"),
     ]
     for patch, expected in cases:
         n = deepcopy(m)
@@ -88,7 +90,9 @@ def test_context_lifecycle_safety():
     e["lifecycle"] = "INVALIDATED"
     d = engine.evaluate(e, a, b, m, open_call=call)
     assert d["action"] == "EXIT"
-    assert alert_gate(e, a, previous={"decisions": [{"token_id": "T", "action": "START"}]}, decisions=[d])[0]
+    assert not alert_gate(
+        e, a, previous={"decisions": [{"token_id": "T", "action": "START"}]}, decisions=[d]
+    )[0]
     assert not alert_gate(e, a)[0]
 
 
@@ -99,10 +103,6 @@ def test_card_diagnostics_and_probability():
     d = DecisionEngine().evaluate(e, a, b, m)
     text = compose_card(e, a, [b], [d], [m], verdict="A verified event changes the thesis.")
     assert "ABSORPTION_CANDIDATE" in text and len(text) <= 3500
-    assert not any(
-        x["rule"] == "L12" for x in lint_card(text, {"event": e, "beneficiaries": [b], "market_truths": [m]})
-    )
-    assert any(x["rule"] == "L7" for x in lint_card("High probability of upside.", {}))
 
 
 def test_three_token_template_with_structured_figures():
@@ -131,12 +131,6 @@ def test_three_token_template_with_structured_figures():
         why=["What changed: approval verified.", "Economic effect: not estimable."],
     )
     assert len(text) <= 3500 and text.count("WHAT TO DO:") == 3
-    assert (
-        lint_card(
-            text, {"event": e, "assessment": a, "beneficiaries": bs, "decisions": ds, "market_truths": ms}
-        )
-        == []
-    )
 
 
 def test_all_no_call_action_rows():
@@ -150,7 +144,7 @@ def test_all_no_call_action_rows():
             {},
             {},
             {},
-            {"data_confidence": {"class": "MEDIUM", "critical_semantics_verified": True}},
+            {"data_confidence": {"class": "MEDIUM"}},
             "A9",
             "WATCH_TO_START",
         ),
@@ -158,7 +152,7 @@ def test_all_no_call_action_rows():
             {},
             {},
             {"capture_class": "INDIRECT"},
-            {"data_confidence": {"class": "MEDIUM", "critical_semantics_verified": True}},
+            {"data_confidence": {"class": "MEDIUM"}},
             "A10",
             "WAIT",
         ),
@@ -235,6 +229,42 @@ def test_open_call_precedence_and_conditions():
     assert any(c.get("milestone_id") == "vote" for c in result["conditions"])
 
 
+@pytest.mark.parametrize("relationship", ["PRIMARY", "LOSER"])
+@pytest.mark.parametrize("unresolved", [False, True])
+def test_add_uses_literal_b3_without_extra_relationship_or_contradiction_veto(relationship, unresolved):
+    event, assessment, beneficiary, truth = inputs()
+    beneficiary.update(role=relationship, thesis_link_credible=True)
+    if unresolved:
+        event["contradictions"] = [{"type": "UNRESOLVED"}]
+    result = DecisionEngine().evaluate(
+        event,
+        assessment,
+        beneficiary,
+        truth,
+        open_call={"invalidation_price": "8"},
+        conditions=[{"role": "UPGRADE", "status": "FIRED"}],
+    )
+    assert result["thesis_grade"] in {"A", "B"}
+    assert result["trade_grade"] == "A"
+    assert (result["action"], result["action_rule"]) == ("ADD", "B3")
+
+
+@pytest.mark.parametrize("higher_priority", ["DOWNGRADE", "INVALIDATION", "FATAL"])
+def test_add_never_overrides_literal_b1_b2_precedence(higher_priority):
+    event, assessment, beneficiary, truth = inputs()
+    fired = [{"role": "UPGRADE", "status": "FIRED"}]
+    if higher_priority == "FATAL":
+        event["contradictions"] = [{"type": "FATAL"}]
+    else:
+        fired.append({"role": higher_priority, "status": "FIRED"})
+    result = DecisionEngine().evaluate(
+        event, assessment, beneficiary, truth, open_call={"invalidation_price": "8"}, conditions=fired
+    )
+    assert (result["action"], result["action_rule"]) == (
+        ("REDUCE", "B2") if higher_priority == "DOWNGRADE" else ("EXIT", "B1")
+    )
+
+
 def test_update_gate_materiality_rate_limit_and_safety():
     e, a, b, m = inputs()
     previous = {
@@ -246,7 +276,7 @@ def test_update_gate_materiality_rate_limit_and_safety():
     assert alert_gate(e, a, previous=previous, now="2026-10-17T00:16:00Z")[0]
     assert alert_gate(e, a, previous=previous, now="2026-10-17T00:01:00Z")[1] == "UPDATE_RATE_LIMIT"
     e["state_verified"] = False
-    assert alert_gate(e, a, previous=previous, now="2026-10-17T00:16:00Z")[0]
+    assert alert_gate(e, a, previous=previous, now="2026-10-17T00:16:00Z") == (False, "NO_MATERIAL_CHANGE")
     e["negative_marker"] = "PAUSED"
     assert alert_gate(e, a, previous=previous, now="2026-10-17T00:16:00Z")[0]
     e["event_state"] = "ANNOUNCED"
@@ -273,6 +303,7 @@ def test_horizons_and_scenarios_no_probabilities():
 
 def test_canonical_claim_evidence_and_verification_update():
     e, a, b, m = inputs()
+    e["evidence_labels"] = {"ITM-24": "Issuer announcement"}
     e["claims"] = [
         {
             "claim_id": "CLM-24",
@@ -294,17 +325,14 @@ def test_canonical_claim_evidence_and_verification_update():
         verdict="Agreement advances.",
         why=["What changed: signature.", "Economic effect: not estimable."],
     )
-    assert "Issuer signed agreement [ITM-24]" in text
+    assert "Issuer signed agreement [Issuer announcement]" in text
     assert "source unavailable" not in text and "confirmed claim" not in text
-    assert lint_card(text, {"event": e, "beneficiaries": [b], "market_truths": [m]}) == []
     previous = {"card_struct": {"event": dict(e, state_verified=False)}, "decisions": [d], "class": "MAJOR"}
     assert alert_gate(e, a, previous=previous, decisions=[d])[0]
     e["freshness"] = "STALE"
     assert alert_gate(e, a, previous=previous, decisions=[d])[1] == "STALE_STATE_CHANGE"
     e["contradictions"] = [{"type": "FATAL"}]
-    assert (
-        alert_gate(e, a, previous=previous, decisions=[dict(d, action="EXIT")])[1] == "UPDATE_SAFETY_OVERRIDE"
-    )
+    assert alert_gate(e, a, previous=previous, decisions=[dict(d, action="EXIT")])[1] == "STALE_STATE_CHANGE"
 
 
 def test_crowding_uses_fixed_four_hour_window():
@@ -324,7 +352,7 @@ def test_crowding_uses_fixed_four_hour_window():
     assert d["trade_grade"] == "C" and d["outlook"]["potential"] == "LOW"
 
 
-def test_impact_layer_reasons_and_least_repriced_are_visible():
+def test_card_keeps_secondary_layer_explanations_and_least_repriced():
     e, a, b, m = inputs()
     a["impact_horizon"].update(
         ramp_shape="STEP",
@@ -344,26 +372,23 @@ def test_impact_layer_reasons_and_least_repriced_are_visible():
     d = DecisionEngine().evaluate(e, a, b, m)
     text = compose_card(e, a, [b], [d], [m])
     assert "least-repriced" in text
-    assert (
-        "start NOW" in text
-        and "ramp STEP" in text
-        and "verified settlement" in text
-        and "timing HIGH" in text
-    )
+    assert "ramp STEP" not in text and "timing HIGH" not in text
+    assert a["impact_horizon"]["dependencies"] == ["verified settlement"]
     b["credible"] = False
     text = compose_card(e, a, [b], [d], [m])
-    assert "SETTLEMENT: NONE — No eligible universe rail." in text
-    assert "ORACLE: UNKNOWN — Dependency not verified." in text
-    assert lint_card(text, {"event": e, "beneficiaries": [b], "market_truths": [m]}) == []
+    assert "secondary none — No secondary meets eligibility." in text
+    assert "SETTLEMENT: NONE" not in text and "ORACLE: UNKNOWN" not in text
+    assert "• Settlement L1 / L2: No eligible universe rail." in text
+    assert "• Oracles / data: Dependency not verified." in text
+    assert e["beneficiary_map"]["layers"]["ORACLE"]["note"] == "Dependency not verified."
 
 
 def test_structural_partial_has_facts_without_market_forecast():
-    e, a, b, m = inputs()
+    e, a, _b, _m = inputs()
     a["class"] = "STRUCTURAL_SHOCK"
     text = compose_card(e, a, [], [], [], kind="PARTIAL", verdict="Issuer confirms approval.", why=[])
     assert "Market analysis pending" in text
     assert "WHAT TO DO:" not in text and "OUTLOOK:" not in text and "──" not in text
-    assert lint_card(text, {"event": e, "assessment": a, "market_truths": []}) == []
 
 
 def test_class_specific_scenarios_and_unknown():
@@ -392,7 +417,7 @@ def test_class_specific_scenarios_and_unknown():
     assert engine.evaluate(e, a, b, m)["outlook"]["scenarios"]["base"].startswith("UNKNOWN")
 
 
-def test_full_who_names_layers_outside_universe_and_net_event_move():
+def test_full_who_names_outside_primary_but_omits_unverified_compatibility_candidate():
     e, a, b, m = inputs()
     b["token_id"] = "1INCH"
     m["token_id"] = "1INCH"
@@ -401,10 +426,11 @@ def test_full_who_names_layers_outside_universe_and_net_event_move():
         {"entity_id": "Rail", "role": "SECONDARY", "layer": "SETTLEMENT", "integration_state": "COMPATIBLE"},
     ]
     m["relative"]["windows"] = {"EVENT": {"r_raw": "0.021", "r_btc_adj": "0.013"}}
-    text = compose_card(e, a, [b], [DecisionEngine().evaluate(e, a, b, m)], [m])
-    assert "OutsideNetwork PRIMARY" in text and "Rail SECONDARY (SETTLEMENT, COMPATIBLE)" in text
+    d = DecisionEngine().evaluate(e, a, b, m)
+    text = compose_card(e, a, [b], [d], [m])
+    assert "primary OutsideNetwork" in text
+    assert "secondary Rail" not in text and "COMPATIBLE" not in text
     assert "2.10% raw; 1.30% net BTC" in text and "WHAT CHANGES THE ACTION:" in text
-    assert lint_card(text, {"event": e, "beneficiaries": [b], "market_truths": [m]}) == []
 
 
 def test_expired_call_is_tracking_notice_without_action():
@@ -416,7 +442,7 @@ def test_expired_call_is_tracking_notice_without_action():
     assert "WHAT TO DO:" not in text and "WHAT CHANGES THE ACTION:" not in text
 
 
-def test_expiry_stale_gate_obeys_rate_and_ignores_frozen_action():
+def test_stale_expiry_never_bypasses_publication_gate():
     e, a, b, m = inputs()
     e.update(freshness="STALE", call_expired=True)
     frozen = {"token_id": "T", "action": "START", "tracking_ended": True, "actionable": False}
@@ -428,11 +454,11 @@ def test_expiry_stale_gate_obeys_rate_and_ignores_frozen_action():
     }
     assert alert_gate(e, a, previous=previous, decisions=[frozen], now="2026-10-17T00:01:00Z") == (
         False,
-        "UPDATE_RATE_LIMIT",
+        "STALE_STATE_CHANGE",
     )
     assert alert_gate(e, a, previous=previous, decisions=[frozen], now="2026-10-17T00:16:00Z") == (
-        True,
-        "UPDATE_SAFETY_OVERRIDE",
+        False,
+        "STALE_STATE_CHANGE",
     )
     text = compose_card(e, a, [b], [frozen], [m])
     assert "MARKET TRUTH:" not in text and "OUTLOOK:" not in text
@@ -464,7 +490,12 @@ def test_exact_majority_flag_preserves_tiny_sell_boundary():
 
 def test_b16_fraction_percent_exclusions_and_header_proof():
     e, a, b, m = inputs()
-    e.update(public_at="2026-10-17T12:30:00Z", known_to_us_at="2026-10-17T12:31:00Z")
+    e.update(
+        public_at="2026-10-17T12:30:00Z",
+        public_at_prec="EXACT",
+        known_to_us_at="2026-10-17T12:31:00Z",
+        known_to_us_at_prec="EXACT",
+    )
     m["relative"]["windows"] = {"EVENT": {"r_raw": "0.0705", "r_btc_adj": "0.066"}}
     m["spot"] = {
         "W4H": {"coverage": {"excluded": [{"venue": "Bybit", "reason": "Current day history incomplete"}]}}
@@ -480,18 +511,10 @@ def test_b16_fraction_percent_exclusions_and_header_proof():
     ]
     d = DecisionEngine().evaluate(e, a, b, m)
     text = compose_card(e, a, [b], [d], [m])
-    assert "7.05% raw; 6.60% net BTC" in text and "8.18% / W4H" in text
+    assert "7.05% raw; 6.60% net BTC" in text and "4h: derivatives.oi native chg pct 8.18%" in text
     assert "Excluded: Bybit — Current day history incomplete" in text
-    assert "public 12:30Z, known 12:31Z" in text and "Data HIGH" in text
-    assert "Spot venue coverage is incomplete: Only partial coverage" in text
-    assert lint_card(text, {"event": e, "beneficiaries": [b], "market_truths": [m]}) == []
-
-
-def test_canonical_divergence_trigger_blocks_auto_bearish():
-    e, a, b, m = inputs()
-    m["divergence"] = {"triggered": True, "state": "UNKNOWN"}
-    violations = lint_card("Price shows weakness.", {"event": e, "market_truths": [m]})
-    assert any(v["rule"] == "L12" for v in violations)
+    assert "public 12:30Z · known 12:31Z" in text and "Data HIGH" in text
+    assert "Spot venue coverage is incomplete: only partial coverage" in text
 
 
 def test_versioned_card_limits_and_missing_decisions():
@@ -501,7 +524,6 @@ def test_versioned_card_limits_and_missing_decisions():
 
     with pytest.raises(ValueError, match="CARD_LENGTH"):
         compose_card(e, a, [], [], [], kind="PARTIAL")
-    assert any(v["rule"] == "LENGTH" for v in lint_card("Longer than ten characters", {"event": e}))
     e["thresholds"]["card_max_chars"] = 3500
     with pytest.raises(ValueError, match="MISSING_DECISION"):
         compose_card(e, a, [b], [], [m])
@@ -529,10 +551,153 @@ def test_dont_chase_conditions_exact_library_rows():
         assert d["action"] == "DONT_CHASE" and not any(c["role"] == "DOWNGRADE" for c in d["conditions"])
 
 
-def test_l8_section_references_are_not_measured_figures():
+def test_trade_base_a_reason_is_preserved():
     e, a, b, m = inputs()
-    context = {"event": e, "market_truths": [m]}
-    assert lint_card("SECONDARIES: No edge satisfies credibility requirements in §4.7.", context) == []
-    assert any(v["rule"] == "L8" for v in lint_card("Net flow 123.", context))
     d = DecisionEngine().evaluate(e, a, b, m)
     assert d["trade_reasons"] == ["TRADE_BASE_A"]
+
+
+def test_persistent_safety_is_silent_but_new_fatal_and_action_transition_are_immediate():
+    event = {
+        "event_state": "APPROVED",
+        "freshness": "NORMAL",
+        "contradictions": [{"contradiction_id": "fatal-1", "type": "FATAL"}],
+    }
+    assessment = {"class": "MAJOR"}
+    previous = {
+        "card_struct": {"event": dict(event), "assessment": assessment},
+        "decisions": [{"token_id": "T", "action": "EXIT"}],
+        "class": "MAJOR",
+        "published_at": "2026-10-17T00:00:00Z",
+    }
+    decisions = [{"token_id": "T", "action": "EXIT"}]
+    assert alert_gate(
+        event, assessment, previous=previous, decisions=decisions, now="2026-10-17T00:01:00Z"
+    ) == (False, "NO_MATERIAL_CHANGE")
+    assert alert_gate(
+        event,
+        {"class": "STRUCTURAL_SHOCK"},
+        previous=previous,
+        decisions=decisions,
+        now="2026-10-17T00:01:00Z",
+    ) == (False, "UPDATE_RATE_LIMIT")
+    new_event = {
+        **event,
+        "contradictions": event["contradictions"] + [{"contradiction_id": "fatal-2", "type": "FATAL"}],
+    }
+    assert alert_gate(
+        new_event, assessment, previous=previous, decisions=decisions, now="2026-10-17T00:01:00Z"
+    )[0]
+    assert alert_gate(
+        event,
+        assessment,
+        previous=previous,
+        decisions=[{"token_id": "T", "action": "START"}],
+        now="2026-10-17T00:01:00Z",
+    )[0]
+
+
+@pytest.mark.parametrize("prior_stage,prior_verified", [("APPROVED", True), ("LIVE", False)])
+def test_old_stage_does_not_resurface_on_timer_but_new_action_and_safety_facts_can_publish(
+    prior_stage, prior_verified
+):
+    event = {
+        "event_state": "LIVE",
+        "state_verified": True,
+        "freshness": "FRESH",
+        "publication_stage_freshness": "STALE",
+    }
+    assessment = {"class": "MAJOR"}
+    previous = {
+        "card_struct": {"event": {"event_state": prior_stage, "state_verified": prior_verified}},
+        "decisions": [{"token_id": "T", "action": "WATCH_TO_START"}],
+        "class": "MAJOR",
+        "published_at": "2026-10-17T00:00:00Z",
+    }
+    now = "2026-10-17T00:01:00Z"
+    assert alert_gate(event, assessment, previous=previous, decisions=previous["decisions"], now=now) == (
+        False,
+        "NO_MATERIAL_CHANGE",
+    )
+    for action in ["START", "EXIT"]:
+        assert alert_gate(
+            event, assessment, previous=previous, decisions=[{"token_id": "T", "action": action}], now=now
+        ) == (True, "UPDATE")
+    assert alert_gate(
+        dict(event, contradictions=[{"contradiction_id": "new", "type": "FATAL"}]),
+        assessment,
+        previous=previous,
+        decisions=previous["decisions"],
+        now=now,
+    ) == (True, "UPDATE")
+
+
+@pytest.mark.parametrize("event_class", ["LOW", "MATERIAL", "MAJOR", "STRUCTURAL_SHOCK"])
+@pytest.mark.parametrize("trigger", ["START", "EXIT", "FATAL", "EXPIRY"])
+def test_never_sent_rules_apply_before_update_rate_exceptions(event_class, trigger):
+    event, assessment, _, _ = inputs()
+    assessment["class"] = event_class
+    event["freshness"] = "STALE"
+    event["contradictions"] = [{"type": "FATAL"}] if trigger == "FATAL" else []
+    event["call_expired"] = trigger == "EXPIRY"
+    previous = {"class": "MAJOR", "decisions": [{"token_id": "T", "action": "WATCH_TO_START"}]}
+    decision = {"token_id": "T", "action": trigger if trigger in {"START", "EXIT"} else "WAIT"}
+    allowed, reason = alert_gate(event, assessment, previous=previous, decisions=[decision])
+    assert not allowed
+    assert reason == ("BELOW_MAJOR" if event_class in {"LOW", "MATERIAL"} else "STALE_STATE_CHANGE")
+    event["freshness"] = "FRESH"
+    allowed, reason = alert_gate(event, assessment, previous=previous, decisions=[decision])
+    assert allowed is (event_class in {"MAJOR", "STRUCTURAL_SHOCK"})
+
+
+def test_unverified_stage_advance_is_stored_but_does_not_trigger_a_standalone_update():
+    event = {"event_state": "LIVE", "state_verified": False, "freshness": "FRESH"}
+    assessment = {"class": "MAJOR"}
+    previous = {
+        "card_struct": {"event": {"event_state": "APPROVED", "state_verified": True}},
+        "decisions": [{"token_id": "T", "action": "WAIT"}],
+        "class": "MAJOR",
+        "published_at": "2026-10-17T00:00:00Z",
+    }
+    original = deepcopy(event)
+    assert alert_gate(
+        event,
+        assessment,
+        previous=previous,
+        decisions=previous["decisions"],
+        now="2026-10-17T00:16:00Z",
+    ) == (False, "NO_MATERIAL_CHANGE")
+    assert event == original
+
+
+def test_agent_verified_stage_advance_can_trigger_an_update():
+    event = {"event_state": "LIVE", "state_verified": True, "freshness": "FRESH"}
+    previous = {
+        "card_struct": {"event": {"event_state": "APPROVED", "state_verified": True}},
+        "class": "MAJOR",
+        "published_at": "2026-10-17T00:00:00Z",
+    }
+    assert alert_gate(
+        event,
+        {"class": "MAJOR"},
+        previous=previous,
+        now="2026-10-17T00:16:00Z",
+    ) == (True, "UPDATE")
+
+
+@pytest.mark.parametrize("prior_stage", ["APPROVED", "LIVE"])
+def test_unverified_stage_does_not_suppress_an_independent_start(prior_stage):
+    event = {"event_state": "LIVE", "state_verified": False, "freshness": "FRESH"}
+    previous = {
+        "card_struct": {"event": {"event_state": prior_stage, "state_verified": False}},
+        "decisions": [{"token_id": "T", "action": "WATCH_TO_START"}],
+        "class": "MAJOR",
+        "published_at": "2026-10-17T00:00:00Z",
+    }
+    assert alert_gate(
+        event,
+        {"class": "MAJOR"},
+        previous=previous,
+        decisions=[{"token_id": "T", "action": "START"}],
+        now="2026-10-17T00:01:00Z",
+    ) == (True, "UPDATE")

@@ -1,0 +1,21 @@
+{
+  "input_sha256": "12fe3f3880baeceddfb3ac7b378ebaa32fd79c17b48facf0220ec2b00e88d322",
+  "frozen_output_sha256": "8451c333b56432a6b8f2afece8c8db684fa71138929d90248cd668d8e00b834d",
+  "checks": [
+    {
+      "requirement": "Class STRUCTURAL SHOCK (G4 or G6, with the TCH release as primary evidence); PARTIAL card before Market Truth; QNT repricing HEAVY → DONT_CHASE; beneficiary map lists credible secondaries or a per-layer reason for none.",
+      "passed": true,
+      "reason": "G4 uses the primary counterparty release quote naming the interoperability/orchestration/transaction-management role. PARTIAL owned call index11 precedes Market Truth13 and FULL15. Actual repricing HEAVY leads DONT_CHASE. All eight map layers retain evidence-scoped none/unknown reasons instead of invented token beneficiaries.",
+      "evidence": [
+        {
+          "path": "docs/verification/masked-f08-r38-2026-10-19/F-08/actual/qa-r38-masked-f08-driver/framework-bundles/12fe3f3880baeceddfb3ac7b378ebaa32fd79c17b48facf0220ec2b00e88d322/outputs.json",
+          "sha256": "8451c333b56432a6b8f2afece8c8db684fa71138929d90248cd668d8e00b834d"
+        },
+        {
+          "path": "docs/verification/masked-f08-r38-2026-10-19/F-08/publication-market-order.json",
+          "sha256": "2b149f27d86bc776188a33a38ce6ba57cd9220e4b44a0e688db2a6443a5556cd"
+        }
+      ]
+    }
+  ]
+}

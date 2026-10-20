@@ -1,0 +1,193 @@
+{
+  "scope": [
+    1,
+    2,
+    3,
+    9,
+    10
+  ],
+  "status": "CODE_VERIFIED_AWAITING_PARENT_DEPLOYMENT_AND_LIVE_E2E",
+  "changed_files": [
+    {
+      "path": "src/tank/event_tools.py",
+      "sha256": "f4dc109aa4e50a2f5540e341777fea3cd718a834cd0e4fac19dd21d4e56cf3e9"
+    },
+    {
+      "path": "src/tank/delivery.py",
+      "sha256": "7caf990faaa34fbc31432bde1344e68899da8edeb2c4cb824425a603ce9e9137"
+    },
+    {
+      "path": "src/tank/runtime.py",
+      "sha256": "366e2cb393db40d0ffcb42683efd5ea90ba76ee25c82669d9afdaab749d94302"
+    },
+    {
+      "path": "tests/test_event_tools.py",
+      "sha256": "027b830713898b6f15de57484d977a13650281d716c73c23a07dcf0d2b9101e2"
+    },
+    {
+      "path": "tests/test_delivery.py",
+      "sha256": "aeff37046a8f2c0175c3649a841aa7e40dca80582d2f7c0eb7ba46e25c37b9bb"
+    },
+    {
+      "path": "tests/test_event_tools_agent_ownership.py",
+      "sha256": "318b5a306faab52290ce24b2d5f6d0ab47d59784d4a2aadeea7e9f2a1c3ed82d"
+    },
+    {
+      "path": "tests/test_runtime.py",
+      "sha256": "d913aeb75643a92978e851f1bc8d458358364291f5eaeafd86b664fdfc0ce85b"
+    }
+  ],
+  "behaviors": {
+    "1": "Ordinary accepted updates persist immutable card, bundle and a DELIVER job due900seconds after the last successful send. Repeated pending input reuses the version, including after nonterminal transport failure. Subsequent distinct pending versions have ordered due slots. Queue expiry starts after the scheduled due boundary.",
+    "2": "A STALE current news observation may advance stored stage but cannot publish. Frozen publication context also identifies a stage supported only by STALE observations, so a later timer does not resurface that stage as fresh news. Independent new market/safety changes remain possible; no contextual freshness flags are persisted on evt.events.",
+    "3": "No intersection between the watched registry tokens and mentioned/current beneficiary tokens forces LOW with NO_UNIVERSE_CONCERN. An actual watched secondary preserves eligibility even when the primary is outside the universe.",
+    "9": "Selected structural criterion requires a nonempty quote matching accepted verified claim evidence. A supplied satisfied gate must be the selected criterion and reference matching verified evidence. Whitespace normalization only; no keyword semantics or second LLM judge. Agent still determines whether the quoted facts establish the chosen criterion.",
+    "10": "Delivery preserves the accepted immutable card and semantic publication decision. It honors the frozen immediate flag and postpones ordinary UPDATE transport until900seconds after the latest actual SENT, also waiting for older accepted pending versions. Timing waits requeue the same durable job without consuming network attempts or extending its original expiry. SENT idempotence and explicit terminal errors remain; class/freshness/action judgments are never rerun. Historical suppression rows remain unchanged and no historical jobs are reset.",
+    "20_coordination": "Post-commit set_assessment callback delegates reactions to the existing runtime Scheduler. Scheduler owns POST timers and recoverable PRE calculations. An independent task acquires a transaction and the same event lock during the callback test, proving assessment locks are released first."
+  },
+  "verification": [
+    {
+      "log": "publication-integrated-final.log",
+      "result": "212 passed,16 skipped",
+      "command": "pytest -q tests/test_event_tools.py tests/test_event_tools_agent_ownership.py tests/test_delivery.py tests/test_card_template.py tests/test_agents_workflow.py"
+    },
+    {
+      "log": "publication-postgres-final-v2.log",
+      "result": "2 passed",
+      "command": "TANK_TEST_DATABASE_URL=<isolated localhost fixture> pytest -q tests/test_event_tools.py -k live_update_survives",
+      "boundary": "Real PostgreSQL16 on a temporary tmpfs container; DB connection closed and reopened; immutable alert and queue preserved; real due claim and persisted429retry reclaim finished DONE; original Telegram reply anchor and no duplicate HTTP asserted. HTTP itself mocked. Container removed."
+    },
+    {
+      "log": "publication-runtime-wiring.log",
+      "result": "23 passed",
+      "command": "pytest -q tests/test_runtime.py tests/test_runtime_precision.py"
+    },
+    {
+      "log": "publication-static-final.log",
+      "result": "Passed",
+      "command": "ruff check --select E9,F63,F7,F82 <owned Python files>"
+    },
+    {
+      "log": "publication-format-final.log",
+      "result": "5 files already formatted",
+      "command": "ruff format --check <owned Python files except shared runtime>"
+    }
+  ],
+  "preserved_negative_logs": [
+    "publication-initial.log",
+    "publication-pass1.log",
+    "assessment-binding.log",
+    "assessment-binding-pass1.log",
+    "publication-postgres.log",
+    "publication-postgres-pass1.log",
+    "publication-postgres-final.log",
+    "publication-integrated.log",
+    "publication-late-sent-before.log",
+    "publication-late-sent-pass2.log",
+    "publication-late-sent-postgres.log",
+    "publication-late-sent-postgres-pass1.log"
+  ],
+  "limits": [
+    "No production deployment/restart performed.",
+    "No real Telegram messages sent by this agent.",
+    "No real X session touched.",
+    "Live E2E of the final integrated image remains parent responsibility.",
+    "Existing real FAILED histories and historical suppression rows were not rewritten."
+  ],
+  "followup_transport_timing": {
+    "authority": [
+      "01_Tank_V0_PRD.md FR-A-04 line336",
+      "03_Tank_V0_Technical_Design.md section7.4 line1498",
+      "Latest direct user requirements1and10"
+    ],
+    "reproduced_bug": "Fixed accepted slots allowed v2(actualSENT10:25) and v3(fixedslot10:30) only5minutes apart. publication-late-sent-before.log preserves the failing case before the correction.",
+    "minimal_change": "DeliveryDeferred contains the next transport timestamp. Runtime requeues the same accepted payload, subtracts the nonnetwork claim attempt, preserves original expiry and ledger, and resumes without another news item. No new tables or repository APIs.",
+    "verification": [
+      {
+        "log": "publication-late-sent-postgres-pass2.log",
+        "result": "4passed(memory+realPostgreSQL16)",
+        "claims": [
+          "v2lateSENT10:25postpones v3from10:30to10:40",
+          "DBclose/open preserves immutable version and original replyanchor",
+          "Seven timing postponements preserve attempts0 and originalexpiry",
+          "Older terminal failure does not block subsequent accepted versions",
+          "GenuineHTTP503consumesattempt1; retrySENTusesattempt2; duplicate delivery sends no extraHTTP"
+        ]
+      },
+      {
+        "log": "publication-final-with-spacing.log",
+        "result": "237passed,18skipped",
+        "command": "pytest -q tests/test_event_tools.py tests/test_event_tools_agent_ownership.py tests/test_delivery.py tests/test_card_template.py tests/test_agents_workflow.py tests/test_runtime.py tests/test_runtime_precision.py"
+      },
+      {
+        "log": "publication-spacing-static.log",
+        "result": "All selected staticchecks passed"
+      },
+      {
+        "log": "publication-spacing-format.log",
+        "result": "7filesalreadyformatted"
+      }
+    ],
+    "environment": "Temporary isolated PostgreSQL16tmpfs container on127.0.0.1:15457was removed. HTTP was mocked; production and real Telegram were not touched."
+  },
+  "followup_transport_locks": {
+    "authority": "Parent-approved independentQA reproduction: Runtime DELIVER timeout must not charge a network attempt for waiting on an event or delivery lock.",
+    "minimal_change": "AsyncExitStack acquires each delivery lock inside an acquisition-only1second asyncio.timeout. Contention raises existingDeliveryDeferred; Runtime requeues unchanged accepted intent with attempts decremented, original expiry preserved and no attempted/FAILED ledger row. Actual HTTP timeout remains8seconds and durable DELIVER timeout10seconds. Cancellation propagates and releases borrowed PG transactions/locks.",
+    "verification": [
+      {
+        "log": "delivery-lock-contention-production-after.json",
+        "result": "Exact independent11second held-lock Memoryprobe at production10secondRuntime bound: QUEUED0, HTTP0, terminalhandlers0, accepted snapshotunchanged."
+      },
+      {
+        "log": "delivery-transport-postgres-final.log",
+        "result": "8passed",
+        "scope": "Memory+realPostgreSQL16: event and subject lock contention, cancellation cleanup, max_attempts1 QUEUED0 then releaseSENT1; prior actualSENT900second spacing and seven ordinary-order waits regressions."
+      },
+      {
+        "log": "publication-final-with-locks.log",
+        "result": "239passed,20skipped",
+        "command": "pytest -q tests/test_event_tools.py tests/test_event_tools_agent_ownership.py tests/test_delivery.py tests/test_card_template.py tests/test_agents_workflow.py tests/test_runtime.py tests/test_runtime_precision.py"
+      },
+      {
+        "log": "publication-lock-static.log",
+        "result": "Allselectedchecks passed"
+      },
+      {
+        "log": "publication-lock-format.log",
+        "result": "7filesalreadyformatted"
+      }
+    ],
+    "cleanup": "Temporary isolated PostgreSQL16tmpfs container on127.0.0.1:15458removed after validation. Production, Telegram and X untouched."
+  },
+  "followup_test_isolation": {
+    "scope": "Test-only: live_update_survives PostgreSQL variant and two new runtime worker variants create/drop function-scoped owned databases rather than consuming the shared admin queue. Product files unchanged.",
+    "verification": [
+      {
+        "log": "publication-isolation-first.log",
+        "result": "2passed"
+      },
+      {
+        "log": "publication-isolation-repeat.log",
+        "result": "2passedagain"
+      },
+      {
+        "log": "transport-isolation.log",
+        "result": "6passed"
+      },
+      {
+        "receipt": "publication-test-isolation.json",
+        "result": "Deliberatelydue foreign DELIVER in a separatelyowned adminDB remainsQUEUED0; no ownedpublication/transportDB remains after teardown."
+      },
+      {
+        "log": "transport-isolation-static.log",
+        "result": "Selectedstaticchecks passed"
+      },
+      {
+        "log": "transport-isolation-format.log",
+        "result": "2filesalreadyformatted"
+      }
+    ],
+    "assertions": "No claim/delivery/immutability/retry/timing assertions removed or weakened.",
+    "cleanup": "Temporary isolated PostgreSQL16tmpfs container on127.0.0.1:15459removed after validation. Integration mainPG55437 and production untouched."
+  }
+}

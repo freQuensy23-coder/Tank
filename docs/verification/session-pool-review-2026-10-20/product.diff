@@ -1,0 +1,18 @@
+--- data/qa/session-pool-review-20261020/r81-sessions.py	2026-10-20 12:48:51
++++ src/tank/agents/sessions.py	2026-10-20 14:03:58
+@@ -888,10 +888,13 @@
+         slow_error_status = "REFUSED"
+         if (
+             not credential_reason
+-            and event["name"] == "get_market_truth"
++            and event["name"] in {"get_market_truth", "web_search", "fetch_page"}
+             and (not prior or prior.get("status") not in ("DONE", "REFUSED", "ERROR"))
+         ):
+-            # Its durable queue jobs must commit before separate workers run.
++            # External waits must not hold a pooled connection or advisory
++            # transaction. Market jobs also need committed queue intents before
++            # separate workers can run. Per-session event processing still
++            # serializes execution; the ledger below commits the result before ACK.
+             try:
+                 slow_result = await self.invoke_tool(session, event["name"], event["input"], call_id)
+             except Exception as error:  # noqa: BLE001 - complete the durable tool error protocol; cancellation remains recoverable

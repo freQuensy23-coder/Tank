@@ -1,0 +1,24 @@
+{
+  "status": "FROZEN_OFFLINE_PASS",
+  "upstream_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+  "target": "packages/control-plane-node/src/lib/node-managed-harness-runtime.ts",
+  "input_sha256": "258395cac7cb72b51c7c5aaf90d7658aa52a78919e78074fc2f1cbe9868a7e1e",
+  "patched_sha256": "173e72cd4089433d0d1b8717055d6c343a242acb07288d480f36ba74286e994e",
+  "overlay_sha256": "5924431e37c3e0f91e2e98b45d736af278398fe705e8a191945d93736ccc8d9d",
+  "unchanged_preparer_sha256": "2316d843b73774955281357f5d91d0e7ad63f2ac3f6353dda71a687f12aa21f0",
+  "assets_sha256": {
+    "output-lifetime-child.mjs": "0b98264e19879e7e095fe83a353cb509580b7e8778d1c46613083154e0375985",
+    "run-output-lifetime-tests.py": "167d3636c04b8b891800abeb2e841e826cf5c01b2e242e5923f0725417ca2e3c",
+    "OUTPUT_LIFETIME.md": "031aa07b4e7e5386784a16a00c941702ce038e6f14a7275364e37c44da55e6b4"
+  },
+  "tests": {
+    "actual_Node24_child_before": "EXIT1_SAME_UNHANDLED_FENCE_STACK",
+    "actual_Node24_child_after": 7,
+    "source_guards": 2,
+    "guards_and_composer_tests": 17,
+    "strict_module_typecheck": "IDENTICAL_BASELINE_TS2322_ZERO_NEW_DIAGNOSTICS"
+  },
+  "lifetime_invariant": "immediate rejection observer; original rejected chain retained and returned; drain errors unchanged; later frames blocked",
+  "driver_fence_and_process_handler_changed": false,
+  "native_models_or_service_actions": 0
+}

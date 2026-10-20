@@ -1,0 +1,84 @@
+{
+  "status": "PREPARED_ADMITTED_CONSTRUCTED_SECOND_ITEM_NOT_EXECUTED_NOT_ADOPTED",
+  "spec_ref": "03_Tank_V0_Technical_Design.md:1646",
+  "spec_sha256": "93b6895648fa2189598f85615899aac01d5813c4a80897f2ab9873c2eadeb7e2",
+  "spec_quote": "Constructed from S27: the TCH release of F-08, then the same fact as a news item 72 h later with no new claim",
+  "finding": "The spec expressly permits construction. Requiring an actually collected secondary article72h later was an invented prerequisite. Earlier same-item redelivery remains partial evidence, but not the complete case input.",
+  "packet": "data/replay/prepared/F23-constructed-news-candidate-20261019/replay/inputs/F-23.json",
+  "packet_sha256": "30687b711adead011da3b12e07f2001ca1c8af01cc5c075293d4fb307ac69144",
+  "code_version": "78dcbb74fcbb94f9183a8c6947299cb96a7dd07960f71099aa0da9c6be928b3d",
+  "config_version": "1b860c8ab2add6ae17d3d515fd1e67f4c5ba595d-dirty.db8fcccf8d4a5a9d55ad87c905f9fb3ec45f0610900cfe21ad1d155a1e381564",
+  "primary_source_unchanged": true,
+  "primary_publication_clock_unchanged": true,
+  "secondary_distinct_item_id": "ITM-01M59H921C3N3YM6JQBRJGP6QV",
+  "secondary_declared_synthetic": true,
+  "secondary_body_exact_original_fact": true,
+  "reference_delay_hours": 72,
+  "actual_authoring_clock": "2026-10-19T07:33:36.940164Z",
+  "logical_publication_clock": "2026-09-27T20:15:00Z",
+  "logical_publication_basis": "Explicit synthetic coordinate, not historical first-publication evidence",
+  "admission": "PASS_EXPLICIT_HOST_PATH_ADAPTER",
+  "model_native_network_database_actions": 0,
+  "outcomes_in_input": false,
+  "full_fixture_passed": false,
+  "remaining_limits": [
+    "No execution/routing/CORROBORATION/known_to_us_at/no-new-card assertion has been observed for this new candidate.",
+    "ITEM_ADDED is authored input delivery within the reference session, not a preseeded CORROBORATION result or independent live Pipeline routing proof.",
+    "Current packet code pin is historical78dc... and must be repinned only after next verified source/image freeze."
+  ],
+  "failed_r25_ref": "docs/verification/f08-cli-r25-2026-10-19/result.json",
+  "next_non_X_gaps": {
+    "primary_source_or_version_gaps": [
+      {
+        "fixture_id": "F-03",
+        "gap": "Exact primary CoW settlement claim not retained; current Ondo page known modified after cutoff. Secondary embedded social posts locate a claim but do not supply non-X primary evidence."
+      },
+      {
+        "fixture_id": "F-05",
+        "gap": "Known post-cutoff World edits; no retained original as-of body or independent earlier official core-fact corroboration."
+      },
+      {
+        "fixture_id": "F-10",
+        "gap": "NYSE testing primary excerpt retained; Janus validator claim lacks retained non-X primary evidence."
+      }
+    ],
+    "reference_policy_not_missing_source": [
+      {
+        "fixture_id": "F-22",
+        "gap": "Actual original publication03:30:08.368 exists; selected MINUTE_START03:30:00 excludes it. Root-proposed uniform minute-end reference policy is pending and must not be selectively applied or rewrite raw clocks."
+      }
+    ],
+    "constructed_phase_inputs": [
+      {
+        "fixture_id": "F-24",
+        "gap": "First synthetic lead and declared empty official-feed lookup prepared; later+5minute synthetic S13 phase must be separately preregistered after phase1 output freeze. No live X/HTTP acquisition claim."
+      }
+    ],
+    "market_and_harness_gaps": [
+      {
+        "fixture_ids": [
+          "F-11",
+          "F-12",
+          "F-13",
+          "F-14",
+          "F-15",
+          "F-16"
+        ],
+        "gap": "Retained genuine market/formula components exist. They are pure-market cases, so absence of a news catalyst is not a source-data requirement; current component/native-reader entrypoint integration remains distinct from actual analyst-news replay."
+      },
+      {
+        "fixture_id": "F-11",
+        "gap": "Same-label Binance+Bybit native arithmetic rounds8.18%; historical venue qualification/Bybit timestamp edge/receipt and complete flow/mark/FX/venue-exclusion lineage are not a fully admitted historical packet. No fabricated historical books/liquidations."
+      },
+      {
+        "fixture_id": "F-08",
+        "gap": "Genuine coarse bars plus actual archive flow/funding enriched snapshot retained. Full historical HEAVY repricing/DONT_CHASE not established; actual r24 timed out and r25 failed mandatory analysis after one retry. Neither is PASS."
+      },
+      {
+        "fixture_id": "F-01",
+        "gap": "Retained no-eligible-UNI market inventory is a scoped missing-input declaration, not synthetic zero data. Original older r19 MATERIAL/PROPOSED/conditional5 proof is not current-code full market/publication acceptance."
+      }
+    ],
+    "global_acceptance_gap": "Source-reference admission is not behavioral execution or fullV0C/D. Remaining admitted cases still require bounded actual execution and evaluator checks against unchanged assertions; no new model runs performed here."
+  }
+}

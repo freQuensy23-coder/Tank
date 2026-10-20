@@ -12,8 +12,10 @@ from tank.util import iso, utcnow
 
 
 class XSensor:
-    def __init__(self, settings, *, raw_capture=None):
+    def __init__(self, settings, *, raw_capture=None, shared_browser=False):
         self.settings = settings
+        self.shared_browser = shared_browser
+        self.open_lock = asyncio.Lock()
         self.context = None
         self.driver = None
         self.lock = asyncio.Lock()
@@ -21,22 +23,35 @@ class XSensor:
         self.raw_pages = []
         self.scan_status = "COMPLETE"
 
-    async def open(self):
-        if self.context is None:
-            from playwright.async_api import async_playwright
+    async def _open_context(self):
+        if self.context is not None:
+            return self.context
+        from playwright.async_api import async_playwright
 
-            profile = Path(self.settings.x_profile_dir)
-            profile.mkdir(parents=True, exist_ok=True, mode=0o700)
-            profile.chmod(0o700)
-            self.driver = await async_playwright().start()
-            headless = getattr(self.settings, "x_headless", True)
-            self.context = await self.driver.chromium.launch_persistent_context(
-                str(profile), headless=headless, args=["--headless=new"] if headless else []
-            )
+        profile = Path(self.settings.x_profile_dir)
+        profile.mkdir(parents=True, exist_ok=True, mode=0o700)
+        profile.chmod(0o700)
+        self.driver = await async_playwright().start()
+        headless = getattr(self.settings, "x_headless", True)
+        self.context = await self.driver.chromium.launch_persistent_context(
+            str(profile), headless=headless, args=["--headless=new"] if headless else []
+        )
+        return self.context
+
+    async def browser_context(self):
+        """Open the process without importing or using the operator session input."""
+        async with self.open_lock:
+            return await self._open_context()
+
+    async def open(self):
+        async with self.open_lock:
+            await self._open_context()
             try:
-                await self._bootstrap_storage_state(profile)
+                await self._bootstrap_storage_state(Path(self.settings.x_profile_dir))
             except Exception:  # noqa: BLE001 — secret-bearing browser errors must never escape
-                await self.close()
+                # A bad X input must not terminate the shared public-page context.
+                if not self.shared_browser:
+                    await self.close()
                 raise ValueError(
                     "X session bootstrap failed: invalid, expired, or unreadable storage state"
                 ) from None
@@ -134,7 +149,7 @@ class XSensor:
 
     async def posts(self, list_id, checkpoint=None, *, known_ids=None):
         if not list_id:
-            raise ValueError("TANK_X_LIST_ID/private list configuration required")
+            raise ValueError("S29.list_id in sources.yaml is required")
         async with self.lock:
             await self.open()
             page = await self.context.new_page()
@@ -225,6 +240,7 @@ class XSensor:
                             "text_missing_reason": "MEDIA_ONLY_OR_EMPTY" if not own_pieces else None,
                             "url": f"https://x.com/{handle}/status/{status_id}",
                             "published_at": await time.get_attribute("datetime"),
+                            "published_at_precision": "EXACT",
                         }
                     if reached:
                         break

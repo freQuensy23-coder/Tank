@@ -1,0 +1,34 @@
+{
+  "scope": "AUTHENTIC_PREWINDOW_BASELINE_ONLY_TEST_SUCCESSOR",
+  "component": "f11-component-with-baseline/manifest.json",
+  "original_cutoff": "2026-10-16T12:30:00Z",
+  "before_code_version": "69f1e3bbc2828bfc4d0edf5f1d2734bcad2bda607e82b3082e1e094227a204da",
+  "after_code_version": "69f1e3bbc2828bfc4d0edf5f1d2734bcad2bda607e82b3082e1e094227a204da",
+  "before_output_file_sha256": "cfbd4fe7040cfbeadaa22518c3a76957e07a68bab1e46b85e922f1999f41dd8f",
+  "after_output_file_sha256": "34c8d26187dc4e147fc9df5534112e3c09f418c0d0ea10f54968957caa8dc393",
+  "actual_change": {
+    "binance_oi_class_before": null,
+    "binance_oi_class_after": "REAL_NATIVE",
+    "native_chg_pct_before": 0.0817617184994776,
+    "native_chg_pct_after": 0.0817617184994776,
+    "aggregate_native_normal_range_after": [
+      -0.06714302909105853,
+      0.036891064802528246
+    ],
+    "aggregate_native_vs_normal_after": "ABOVE",
+    "aggregate_usd_reason": "SYNCHRONIZED_MARK_OR_QUOTE_RATE_UNAVAILABLE",
+    "spot_directions_before": {
+      "W1H": "NEUTRAL",
+      "W4H": "NEUTRAL"
+    },
+    "spot_directions_after": {
+      "W1H": "NEUTRAL",
+      "W4H": "NEUTRAL"
+    },
+    "move_class_before": "UNKNOWN",
+    "move_class_after": "UNKNOWN"
+  },
+  "sealed_literal_tdd_unchanged": true,
+  "full_case_passed": false,
+  "native_wording_phase": "NOT_RUN"
+}

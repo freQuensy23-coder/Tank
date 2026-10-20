@@ -1,0 +1,1 @@
+{"scope": "Synthetic lock contention; no settings, secrets or real network", "runtime_timeout_seconds": 10, "max_attempts": 1, "job_status": "QUEUED", "attempts": 0, "card_http_calls": 0, "terminal_handler_calls": [], "accepted_snapshot_unchanged": true, "timing_wait_preserved_attempts": true}

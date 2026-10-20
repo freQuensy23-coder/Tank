@@ -1,0 +1,113 @@
+okx-history-130 200 11923
+okx-history-131 200 11915
+okx-history-132 200 11975
+okx-history-133 200 11923
+okx-history-134 200 11971
+okx-history-135 200 11742
+okx-history-136 200 11868
+okx-history-137 200 11923
+okx-history-138 200 11834
+okx-history-139 200 11930
+okx-history-140 200 11909
+okx-history-141 200 11875
+okx-history-142 200 11886
+okx-history-143 200 11887
+okx-history-144 200 11871
+okx-history-145 200 11889
+okx-history-146 200 11868
+okx-history-147 200 11884
+okx-history-148 200 11866
+okx-history-149 200 11855
+okx-history-150 200 11860
+okx-history-151 200 11801
+okx-history-152 200 11818
+okx-history-153 200 11838
+okx-history-154 200 11885
+okx-history-155 200 11866
+okx-history-156 200 11902
+okx-history-157 200 11942
+okx-history-158 200 11845
+okx-history-159 200 11831
+okx-history-160 200 11905
+okx-history-161 200 11896
+okx-history-162 200 11932
+okx-history-163 200 11906
+okx-history-164 200 11883
+okx-history-165 200 11849
+okx-history-166 200 11925
+okx-history-167 200 11916
+okx-history-168 200 11938
+okx-history-169 200 11888
+okx-history-170 200 11913
+okx-history-171 200 11957
+okx-history-172 200 11967
+okx-history-173 200 11945
+okx-history-174 200 11884
+okx-history-175 200 11896
+okx-history-176 200 11883
+okx-history-177 200 11903
+okx-history-178 200 11903
+okx-history-179 200 11826
+okx-history-180 200 11833
+okx-history-181 200 11870
+okx-history-182 200 11879
+okx-history-183 200 11863
+okx-history-184 200 11925
+okx-history-185 200 11870
+okx-history-186 200 11900
+okx-history-187 200 11875
+okx-history-188 200 11871
+okx-history-189 200 11898
+okx-history-190 200 11877
+okx-history-191 200 11961
+okx-history-192 200 11906
+okx-history-193 200 11948
+okx-history-194 200 11936
+okx-history-195 200 11911
+okx-history-196 200 11942
+okx-history-197 200 11901
+okx-history-198 200 11833
+okx-history-199 200 11873
+okx-history-200 200 11911
+okx-history-201 200 11900
+okx-history-202 200 11857
+okx-history-203 200 11908
+okx-history-204 200 11786
+okx-history-205 200 11803
+okx-history-206 200 11925
+okx-history-207 200 11846
+okx-history-208 200 11830
+okx-history-209 200 11838
+okx-history-210 200 11821
+okx-history-211 200 11875
+okx-history-212 200 11878
+okx-history-213 200 11920
+Traceback (most recent call last):
+  File "/Users/a.mametyev/Library/Application Support/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/a.mametyev/Library/Application Support/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 686, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/docs/verification/f11-public-acquisition-2026-10-19/resume.py", line 15, in main
+    z=await get('okx-history-%03d'%page,'https://www.okx.com/api/v5/market/history-trades',{'instId':'WLD-USDT','type':'1','after':after,'limit':'100'});j=z.json();rs=j.get('data',[])
+      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/docs/verification/f11-public-acquisition-2026-10-19/resume.py", line 11, in get
+    started=now();z=await c.get(url,params=params);body=z.content;f=P/(name+'.body');f.write_bytes(body);r={'name':name,'url':url,'params':params,'started_at':started,'received_at':now(),'status':z.status_code,'bytes':len(body),'sha256':hashlib.sha256(body).hexdigest(),'path':f.name,'headers':dict(z.headers)};records.append(r);(P/'resume-receipts.json').write_text(json.dumps(records,indent=2)+'\n');print(name,z.status_code,len(body),flush=True);await asyncio.sleep(.75);return z
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                 ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/a.mametyev/Library/Application Support/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/tasks.py", line 665, in sleep
+    return await future
+           ^^^^^^^^^^^^
+asyncio.exceptions.CancelledError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/docs/verification/f11-public-acquisition-2026-10-19/resume.py", line 44, in <module>
+    asyncio.run(main())
+  File "/Users/a.mametyev/Library/Application Support/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 194, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/a.mametyev/Library/Application Support/uv/python/cpython-3.12-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 123, in run
+    raise KeyboardInterrupt()
+KeyboardInterrupt

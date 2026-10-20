@@ -22,5 +22,5 @@
   "required": [
     "query"
   ],
-  "description": "Full-text search over everything collected (\u2264 90 days, \u2264 20 hits). Returns: Hits with item ids."
+  "description": "Search collected source items by text over at most the preceding 90 days, returning at most 20 matching item IDs and excerpts. This queries stored observations without external network requests. Read the full item before citing an excerpt or deciding that two items describe the same event."
 }

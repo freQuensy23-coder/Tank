@@ -7,7 +7,7 @@
 | IDs | ULID-based, typed prefixes: `ITM-` item, `EVT-` event, `OBS-` observation, `CLM-` claim, `EMS-`, `EDG-` beneficiary edge, `MTA-` Market Truth assessment, `OUT-` outlook, `DEC-` decision, `CND-` watch condition, `CAL-` call, `ALR-` alert (+ integer version), `RWP-` reaction pack, `JOB-`, `PRP-` proposal, `FIX-` fixture. `source_id`, `entity_id`, `token_id`, `instrument_id` are readable slugs (e.g. `binance:spot:UNIUSDT`). Evidence bundles are content-addressed: `EVB-<sha256>`. |
 | Time | UTC everywhere; stored with microsecond resolution. Every timestamp field has a sibling precision: `EXACT`, `BUCKET(<size>)`, `COLLECTION_ONLY`. |
 | Units | Native token quantity and USD notional are separate decimal fields. Returns are decimal fractions. Funding is stored as rate per interval + `interval_h`, with derived `rate_8h_eq`. Basis in bps. |
-| Missing data | Never 0. Every measurable is `Measured{value, unit, window, observed_at, precision, coverage, reason}`; when `value = null`, `reason ∈ {NOT_SUPPORTED, SOURCE_FAILED, INCOMPLETE, UNVERIFIED_SEMANTICS, NOT_APPLICABLE, NOT_ESTIMABLE, PENDING}`. |
+| Missing data | Never 0. Every measurable is `Measured{value, unit, window, observed_at, precision, coverage, reason}`; when `value = null`, `reason ∈ {NOT_SUPPORTED, SOURCE_FAILED, INCOMPLETE, NOT_APPLICABLE, NOT_ESTIMABLE, PENDING}`. |
 | Scores | 0–10 rubric levels (§4.1–4.2, §4.5, §4.7), or `null` with a reason. Scores are never averaged into one number. |
 | Normal range | For a per-token measure with base-tier history — BTC-adjusted return, volume, native and USD open-interest change, funding, exchange-inventory change, BTC realized volatility — the normal range is the middle 95% of the token's own values for the same window length over its stored history (up to 90 days, 01 §9; at least 7 days, one weekly cycle, else n/a). "Beyond normal" means outside it. Each token is judged against itself; 95% is the usual significance level. |
 | Majority | "Most" means more than half — of volume, of net flow, of a USD change. |
@@ -92,6 +92,7 @@ SourceItem
   relevance: {decision: ALWAYS | SEND | SKIP, p_relevant: 0..1?, model: str?}   # §3.1
   route: {decision: NEW_SESSION | ADDED, event_id: str?, p_same: 0..1?}?        # §3.1
   extraction_status: PENDING | DONE | SKIPPED | FAILED
+  # A successful native turn may ignore an item: SKIPPED, not event/call failure.
 ```
 
 ### 2.3 Events
@@ -223,7 +224,7 @@ MetricSemantics
   meaning: str
   unit: BASE_QTY | CONTRACTS | QUOTE_NOTIONAL | USD_NOTIONAL | RATE_PER_INTERVAL | PRICE | BPS | COUNT
   contract_multiplier_ref: instrument_id?
-  sidedness: SINGLE_SIDED | BOTH_SIDES | N_A | UNKNOWN
+  sidedness: SINGLE_SIDED | BOTH_SIDES | NOT_PUBLISHED | N_A
   side_semantics: TAKER_SIDE | MAKER_SIDE | BUYER_IS_MAKER_FLAG | N_A
   trade_aggregation: PER_FILL | PER_TAKER_ORDER_SAME_PRICE | N_A
   scope: str                         # per instrument / per venue / provider aggregate
@@ -235,7 +236,6 @@ MetricSemantics
   requires_native_normalization: bool
   aggregation_class: str             # only identical classes may be combined
   inference_limits: [str]            # what this metric cannot prove
-  semantic_confidence: SemanticConfidence
   verified_at: ts?; verified_by: str?; doc_ref: str?
   critical: bool
 
@@ -346,7 +346,6 @@ DataConfidence
   class: LOW | MEDIUM | HIGH          # §5.10 conditions
   failed: [{condition, reason}]      # conditions that keep it from HIGH
   limiting: {condition, reason}      # printed as the card's "main unknown"
-  critical_semantics_verified: bool
 
 MarketTruthAssessment
   mta_id, token_id, event_id?, cutoff, primary_window
@@ -416,7 +415,6 @@ Alert                                # append-only; one row per version
   card_text: str; card_struct: {section: content}
   decisions: [dec_id]
   evidence_bundle_id: str
-  linter: {passed: bool, violations: [rule_id], regenerations: int}
   supersedes_version: int?
 
 DeliveryRecord                       # append-only ledger; one row per transition
@@ -437,7 +435,7 @@ EvidenceBundle                       # content-addressed JSON
   contradictions[], data_confidence[], unresolved_fields[],
   config_hash, code_version, model_ids, agent_version, skill_version, session_id, tool_call_ids
 
-ReactionWindowPack
+ReactionWindowPack                         # scheduler owns the five POST jobs; PRE windows computed immediately
   rwp_id, event_id, token_id
   anchor: {type: T0 | T1 | KNOWN_TO_US_AT, ts}
   checkpoints: [{label: PRE_24H | PRE_4H | PRE_1H | POST_15M | POST_1H | POST_4H | POST_24H | POST_72H,
@@ -516,33 +514,33 @@ Core DDL: §14.
 
 Trade aggressor side, units and IDs:
 
-| `metric_key` | Field | Meaning in Tank | Unit / time | Dedup key | Confidence |
+| `metric_key` | Field | Meaning in Tank | Unit / time | Dedup key | Evidence |
 |---|---|---|---|---|---|
-| `binance.spot.aggTrade` / `binance.usdm.aggTrade` | `m` | `m = true` → buyer was maker → aggressor SELL | `q` base units; `T` ms | `a` (agg ID; `f`–`l` trade range) | VERIFIED (live sample `"m":false` on WLDUSDT) |
-| `coinbase.spot.matches` / REST `trades` | `side` | Maker order side → aggressor is the opposite side | `size` base; `time` ISO-8601 µs | `trade_id` | VERIFIED (exchange documentation; live sample `"side":"sell"`) |
-| `okx.spot.trades` / `okx.swap.trades` | `side` | Taker side | `sz` base (spot) or contracts (swap, × `ctVal`); `ts` ms | `tradeId` | VERIFIED |
-| `bybit.spot.publicTrade` / `bybit.linear.publicTrade` | `S` (WS), `side` (REST) | Taker side | `v`/`size` base; `T`/`time` ms | `i` / `execId` | VERIFIED |
-| `kraken.spot.trade` | `side` (WS v2), `b`/`s` (REST) | Taker side | `qty` base; REST time = seconds (float) | `trade_id` | VERIFIED |
-| `hyperliquid.perp.trades` | `side` | `B` → aggressor BUY, `A` → aggressor SELL | `sz` coin; `time` ms | `tid` | VERIFIED (16 Oct 2026, BTC/ETH/HYPE/SOL against the book: of trades printed at the bid or ask, 104 of 115 `B` at the ask, 49 of 62 `A` at the bid) |
+| `binance.spot.aggTrade` / `binance.usdm.aggTrade` | `m` | `m = true` → buyer was maker → aggressor SELL | `q` base units; `T` ms | `a` (agg ID; `f`–`l` trade range) | Live sample `"m":false` on WLDUSDT |
+| `coinbase.spot.matches` / REST `trades` | `side` | Maker order side → aggressor is the opposite side | `size` base; `time` ISO-8601 µs | `trade_id` | Exchange documentation; live sample `"side":"sell"` |
+| `okx.spot.trades` / `okx.swap.trades` | `side` | Taker side | `sz` base (spot) or contracts (swap, × `ctVal`); `ts` ms | `tradeId` | — |
+| `bybit.spot.publicTrade` / `bybit.linear.publicTrade` | `S` (WS), `side` (REST) | Taker side | `v`/`size` base; `T`/`time` ms | `i` / `execId` | — |
+| `kraken.spot.trade` | `side` (WS v2), `b`/`s` (REST) | Taker side | `qty` base; REST time = seconds (float) | `trade_id` | — |
+| `hyperliquid.perp.trades` | `side` | `B` → aggressor BUY, `A` → aggressor SELL | `sz` coin; `time` ms | `tid` | 16 Oct 2026, BTC/ETH/HYPE/SOL against the book: of trades printed at the bid or ask, 104 of 115 `B` at the ask, 49 of 62 `A` at the bid |
 
 Open interest:
 
-| `metric_key` | Field used | Unit / sidedness | Not to be used | Confidence |
+| `metric_key` | Field used | Unit / sidedness | Not to be used | Evidence |
 |---|---|---|---|---|
-| `binance.usdm.openInterest` | `openInterest` | Base units, single-sided (WLDUSDT 16 Oct 2026: 203,999,216 WLD) | — | VERIFIED |
-| `binance.usdm.openInterestHist` | `sumOpenInterest`; `sumOpenInterestValue` | Base units, single-sided; USD notional (price-contaminated); 5m buckets, 30-day history | `CMCCirculatingSupply` (not OI) | VERIFIED |
-| `okx.swap.open-interest` | `oiCcy` | Coin units, single-sided (`oi` = contracts; `oi × ctVal` = `oiCcy`; WLD `ctVal` = 1) | `oiUsd` alone | VERIFIED |
-| `bybit.linear.open-interest` | `singleOpenInterest` | Base units, single-sided | `openInterest` = both sides counted (ratio 2.000 on BTCUSDT, ETHUSDT, WLDUSDT, 16 Oct 2026) | VERIFIED |
-| `hyperliquid.perp.ctx` | `openInterest` | Coin units; sidedness not published by Hyperliquid | Summing with other venues | VERIFIED for per-venue % change only (a sidedness factor cancels in a ratio) |
+| `binance.usdm.openInterest` | `openInterest` | Base units, single-sided (WLDUSDT 16 Oct 2026: 203,999,216 WLD) | — | — |
+| `binance.usdm.openInterestHist` | `sumOpenInterest`; `sumOpenInterestValue` | Base units, single-sided; USD notional (price-contaminated); 5m buckets, 30-day history | `CMCCirculatingSupply` (not OI) | — |
+| `okx.swap.open-interest` | `oiCcy` | Coin units, single-sided (`oi` = contracts; `oi × ctVal` = `oiCcy`; WLD `ctVal` = 1) | `oiUsd` alone | — |
+| `bybit.linear.open-interest` | `singleOpenInterest` | Base units, single-sided | `openInterest` = both sides counted (ratio 2.000 on BTCUSDT, ETHUSDT, WLDUSDT, 16 Oct 2026) | — |
+| `hyperliquid.perp.ctx` | `openInterest` | Coin units; sidedness not published by Hyperliquid | Summing with other venues | Per-venue % change only (a sidedness factor cancels in a ratio) |
 
 Funding:
 
-| `metric_key` | Settled value | Current estimate | Interval | Confidence |
+| `metric_key` | Settled value | Current estimate | Interval | Evidence |
 |---|---|---|---|---|
-| Binance USDⓈ-M | `/fapi/v1/fundingRate` → `fundingRate` at `fundingTime` | `/fapi/v1/premiumIndex` → `lastFundingRate` (+ `nextFundingTime`); WS `r` | `fundingIntervalHours` from `/fapi/v1/fundingInfo`, else 8 h | VERIFIED |
-| OKX SWAP | `settFundingRate` (`settState`), history `fundingRate` | `fundingRate` (`method: current_period`) applying at `fundingTime` | spacing of `prevFundingTime` → `fundingTime` (8 h on WLD) | VERIFIED |
-| Bybit linear | `/v5/market/funding/history` → `fundingRate` | tickers `fundingRate` (+ `nextFundingTime`) | `fundingIntervalHour` (8 on WLD) | VERIFIED |
-| Hyperliquid | `fundingHistory` | `metaAndAssetCtxs` → `funding` | 1 h | VERIFIED (WLD 16 Oct 2026: 0.0000125 per hour = 0.0100% per 8 h, equal to Binance, OKX and Bybit) |
+| Binance USDⓈ-M | `/fapi/v1/fundingRate` → `fundingRate` at `fundingTime` | `/fapi/v1/premiumIndex` → `lastFundingRate` (+ `nextFundingTime`); WS `r` | `fundingIntervalHours` from `/fapi/v1/fundingInfo`, else 8 h | — |
+| OKX SWAP | `settFundingRate` (`settState`), history `fundingRate` | `fundingRate` (`method: current_period`) applying at `fundingTime` | spacing of `prevFundingTime` → `fundingTime` (8 h on WLD) | — |
+| Bybit linear | `/v5/market/funding/history` → `fundingRate` | tickers `fundingRate` (+ `nextFundingTime`) | `fundingIntervalHour` (8 on WLD) | — |
+| Hyperliquid | `fundingHistory` | `metaAndAssetCtxs` → `funding` | 1 h | WLD 16 Oct 2026: 0.0000125 per hour = 0.0100% per 8 h, equal to Binance, OKX and Bybit |
 
 Liquidations:
 
@@ -553,7 +551,7 @@ Liquidations:
 | OKX `liquidation-orders` | SAMPLED — OKX documentation: "This data doesn't represent the total number of liquidations on OKX" |
 | Hyperliquid | NOT_SUPPORTED (no public stream) |
 
-Every row above ships with an adapter self-test that fetches a live sample and asserts unit, field presence and ID behavior; a failed self-test downgrades the row to UNKNOWN until fixed.
+Tank always reads venue fields by this table; there is no runtime check of their meaning. When a venue changes a field, this table and `semantics.yaml` are updated.
 
 
 ### 2.11 Registry — initial content (`registry.yaml`)
@@ -672,7 +670,7 @@ HTML page sources: Tank collects every link on the page that matches the source'
 | S05 | `https://www.federalreserve.gov/feeds/press_all.xml` | RSS | `guid` | title, link, pubDate, description | 120 s |
 | S06 | `https://www.occ.gov/rss/occ_news.xml` | RSS | `guid` | title, link, pubDate | 300 s |
 | S07 | `https://home.treasury.gov/news/press-releases` (response ≈ 8 s) · `https://ofac.treasury.gov/rss.xml` (≈ 11 s) | HTML page · RSS | article URL · `guid` | Article pattern `^/news/press-releases/[a-z]{2}\d{4}/?$` (e.g. `/news/press-releases/sb0661`) · title, link, pubDate, description | 300 s |
-| S08 | `https://www.dtcc.com/news` | HTML page | article URL | Article pattern `https://www.dtcc.com/press-releases/\d{4}/[a-z0-9-]+` (e.g. `/press-releases/2026/dtcc-turns-tokenization-into-reality`) | 300 s |
+| S08 | `https://www.dtcc.com/press-releases` (`/news` now redirects to Insights; checked 19 Oct 2026) | HTML page | article URL | Article pattern `https://www.dtcc.com/press-releases/\d{4}/[a-z0-9-]+` (e.g. `/press-releases/2026/dtcc-turns-tokenization-into-reality`) | 300 s |
 
 ### 3.2 Exchanges and brokers (CORE)
 
@@ -682,7 +680,7 @@ HTML page sources: Tank collects every link on the page that matches the source'
 | S10 | `https://www.okx.com/api/v5/support/announcements?annType={type}` for `announcements-new-listings`, `announcements-delistings`, `announcements-trading-updates`, `latest-events` | JSON | `url` + `pTime` | `annType`, `title`, `url`, `pTime`, `businessPTime` (ms) | 60 s |
 | S11 | `https://api.bybit.com/v5/announcements/index?locale=en-US&type={type}&limit=20` for `new_crypto`, `delistings`, `latest_bybit_news` | JSON | `url` | `title`, `description`, `type.key`, `tags`, `url`, `dateTimestamp`, `publishTime` (ms) | 60 s |
 | S12 | `https://blog.kraken.com/feed` | RSS | `guid` | title, link, pubDate, categories, content | 120 s |
-| S13 | `https://newsroom.aboutrobinhood.com/` | HTML page | article URL | Article pattern `/newsroom/(?!category/)[A-Za-z0-9-]+/?` (e.g. `/newsroom/robinhood-cryptocom`) | 300 s |
+| S13 | `https://robinhood.com/newsroom/` (moved from `newsroom.aboutrobinhood.com`; checked 19 Oct 2026) | HTML page | article URL | Article pattern `^/(?:us/en/)?newsroom/(?!category/)[A-Za-z0-9-]+/?$` (e.g. `/us/en/newsroom/hood-summit-2026`) | 300 s |
 | S14 | Binance `https://api.binance.com/api/v3/exchangeInfo` + `https://fapi.binance.com/fapi/v1/exchangeInfo`; Coinbase `https://api.exchange.coinbase.com/products`; Kraken `https://api.kraken.com/0/public/AssetPairs`; OKX `https://www.okx.com/api/v5/public/instruments?instType=SPOT` and `instType=SWAP`; Bybit `https://api.bybit.com/v5/market/instruments-info?category=spot` and `category=linear` (`limit=1000`); Hyperliquid `POST https://api.hyperliquid.xyz/info` body `{"type":"meta"}` | JSON | venue + symbol + status | symbol, base, quote, status / state, contract type; diff against the previous snapshot | 60 s (Kraken 120 s) |
 
 ### 3.3 Protocols and issuers (CORE)
@@ -702,7 +700,7 @@ HTML page sources: Tank collects every link on the page that matches the source'
 
 | ID | Endpoint(s) | Format | Item key | Fields parsed | Interval |
 |---|---|---|---|---|---|
-| S23 | `https://gov.uniswap.org/latest.rss`, `https://governance.aave.com/latest.rss`, `https://gov.ethenafoundation.com/latest.rss`, `https://forum.cow.fi/latest.rss`, `https://forum.morpho.org/latest.rss`, `https://forum.euler.finance/latest.rss`, `https://gov.1inch.io/latest.rss`, `https://gov.near.org/latest.rss` | RSS (Discourse) | topic URL | title, link, pubDate, category, first-post text; only topics not seen before | 300 s (Euler, 1inch, NEAR: 600 s) |
+| S23 | `https://gov.uniswap.org/latest.rss`, `https://governance.aave.com/latest.rss`, `https://gov.ethenafoundation.com/latest.rss`, `https://forum.cow.fi/latest.rss`, `https://forum.morpho.org/latest.rss`, `https://forum.euler.finance/latest.rss`, `https://gov.1inch.network/latest.rss` (moved from `gov.1inch.io`), `https://gov.near.org/latest.rss` | RSS (Discourse) | topic URL | title, link, pubDate, category, first-post text; only topics not seen before | 300 s (Euler, 1inch, NEAR: 600 s) |
 | S24 | `POST https://hub.snapshot.org/graphql` — `proposals(first: 20, where: {space_in: ["uniswapgovernance.eth","aavedao.eth","cakevote.eth","cow.eth","morpho.eth","1inch.eth"]}, orderBy: "created", orderDirection: desc) { id title body state start end scores scores_total space { id } }` | GraphQL | `id` (+ `state`) | new proposals; state changes (`active` → `closed`) and final scores become STATE_UPDATE items; `end` schedules a milestone check | 120 s |
 
 ### 3.5 Technical artifacts (SECONDARY)
@@ -766,15 +764,20 @@ Tank-side request budgets are set at ≤ 50% of each venue's documented limit. B
 | Purpose | Endpoint | Key fields |
 |---|---|---|
 | Hot trades | WSS `wss://fstream.binance.com/market/stream?streams={s}@aggTrade` — the market path; the old `/stream` and `/ws` paths accept connections but push no market data (checked 17 Oct 2026) | as spot |
+| Order book | WSS `wss://fstream.binance.com/public/stream?streams={s}@depth@100ms`; initialize with `GET https://fapi.binance.com/fapi/v1/depth?symbol={S}&limit=1000` | `U`, `u`, `pu` sequence bridge; `b`, `a` price/quantity updates. Keep this public connection separate from the market connection; a book disconnect does not establish a trade gap. |
 | Mark / funding estimate | WSS `{s}@markPrice@1s` on the same `/market/stream` connection | `p` mark, `i` index, `r` current funding estimate, `T` next funding time |
 | Liquidations | WSS `{s}@forceOrder` on the same `/market/stream` connection | `o.S` side, `o.q` qty, `o.ap` avg price, `o.T` — **SAMPLED**: at most the latest liquidation per symbol per 1,000 ms |
 | OI now | `GET https://fapi.binance.com/fapi/v1/openInterest?symbol={S}` | `openInterest` (base units, single-sided), `time` |
 | OI history | `GET /futures/data/openInterestHist?symbol={S}&period=5m` | `sumOpenInterest` (base), `sumOpenInterestValue` (USD), `timestamp`; last 30 days only |
+
+Binance historical OI `timestamp` is the **end** of its requested period. Keep the raw timestamp and actual period duration; normalized anchor `END` makes a five-minute bucket cover the preceding five minutes. Bybit historical OI is a timestamped stock observation with `EXACT` precision (`SOURCE_TIMESTAMP_POINT`), not a bucket whose edge is inferred from request cadence. Request cadence remains collection provenance. The field registry supplies these meanings without runtime semantic re-verification. The Binance documentation receipt hashes its quoted field description only; direct local retrieval returned HTTP 202 with an empty body, so no full-page capture is claimed.
 | Funding estimate | `GET /fapi/v1/premiumIndex?symbol={S}` | `markPrice`, `indexPrice`, `lastFundingRate` (current estimate), `nextFundingTime`, `interestRate` |
 | Funding settled | `GET /fapi/v1/fundingRate?symbol={S}` | `fundingTime`, `fundingRate`, `markPrice` |
 | Funding interval | `GET /fapi/v1/fundingInfo` | `fundingIntervalHours` for symbols with non-default interval (default 8 h) |
 | Taker volume | `GET /futures/data/takerlongshortRatio?symbol={S}&period=5m` | `buyVol`, `sellVol`, `buySellRatio` |
 | Limits | 2,400 request weight / min / IP; Tank budget ≤ 1,200 | — |
+
+The separate futures depth route follows Binance's [WebSocket change notice](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/websocket-market-streams/Important-WebSocket-Change-Notice) and was checked with actual BTC/ETH depth streams on 18 October 2026. Preserve snapshot and stream sequence checks when reconnecting.
 
 ### 4.3 Coinbase Exchange
 
@@ -836,7 +839,7 @@ Tank-side request budgets are set at ≤ 50% of each venue's documented limit. B
 | Source | Endpoint | Use |
 |---|---|---|
 | Binance public data archive | `https://data.binance.vision/data/spot/daily/klines/{S}/1m/{S}-1m-{YYYY-MM-DD}.zip`, `…/spot/daily/aggTrades/{S}/{S}-aggTrades-{date}.zip`, `…/futures/um/daily/klines/{S}/1m/…`, `…/futures/um/daily/metrics/{S}/{S}-metrics-{date}.zip` (5m OI), `…/futures/um/monthly/fundingRate/{S}/{S}-fundingRate-{YYYY-MM}.zip`; each with `.CHECKSUM` = `"<sha256>  <file name>"` | Pre-event windows older than REST retention, retro reaction checkpoints, fixture replay (03 §5.2) |
-| DefiLlama API | `https://api.llama.fi/summary/fees/{protocol}?dataType=dailyFees` / `dailyRevenue` / `dailyHoldersRevenue` (`total24h`, `total30d`, `totalDataChart`); `https://stablecoins.llama.fi/stablecoincharts/{chain}`; `https://yields.llama.fi/lendBorrow` | Capture chain, stablecoin supply of the settlement chain, lending utilization |
+| DefiLlama API | `https://api.llama.fi/summary/fees/{protocol}?dataType=dailyFees` / `dailyRevenue` / `dailyHoldersRevenue` (`total24h`, `total30d`, `totalDataChart`); `https://stablecoins.llama.fi/stablecoincharts/{chain}`; `https://yields.llama.fi/lendBorrow` (DefiLlama shuts down the free yield endpoints `/pools` and `/chart/{pool}` on 13 Nov 2026, moving them to the paid API; Tank uses only `/lendBorrow`, which the notice does not name and which still answered on 19 Oct 2026) | Capture chain, stablecoin supply of the settlement chain, lending utilization |
 | DefiLlama unlock datasets | `https://defillama-datasets.llama.fi/emissions/{slug}` (list: `…/emissionsProtocolsList`, 371 protocols on 16 Oct 2026); slugs per token in 03 §2.11; none published for 1INCH, ZRX, QNT | `unlocks` for supply context, refreshed daily |
 | Exchange wallets | DefiLlama-Adapters `projects/binance/index.js` at commit `4a6ef31a4eed4f24882a7d82bff50306b40b6d6c` (17 EVM addresses) and `projects/okex/index.js` at commit `b70f0fb4dc9ff463866d676c14d21b0ed0930d76` (323 EVM addresses) → `exchange_addresses.yaml` | Exchange inventory and wallet flows (Bybit, Coinbase, Kraken: no public list → n/a) |
 | Etherscan API v2 (free key) | `https://api.etherscan.io/v2/api?chainid={id}&module=account&action=tokenbalance&contractaddress={token}&address={wallet}&apikey={key}`; `action=tokentx` for transfers | Balances and transfers of the wallets above for EVM tokens of the universe |
@@ -870,10 +873,54 @@ Every token has at least three spot venues and two perpetual venues. Binance spo
 ---
 
 
-# Production DDL
- (PostgreSQL 16)
+# Design table contracts and deployed schema (PostgreSQL 16)
 
-Analysis objects of §2.6 are stored as `jsonb` inside the rows below; the columns that queries filter or join on are typed.
+The DDL excerpt below records the design document's table vocabulary and field meanings. It is not an executable dump of the deployed database. Versioned migrations define the implementation. Non-market registry/event/operational rows retain JSONB `document` plus typed projections. Market observations use the 15 explicit typed schemas below: no whole-row `document`, `extras` or SQL trade store. Their named JSONB fields hold domain structures such as boundary segments, coverage and per-field missing reasons. Inspect the live read-only schema before composing a query; do not assume that an illustrative primary-key declaration is the physical storage key.
+
+```sql
+SELECT table_schema, table_name
+FROM information_schema.tables
+WHERE table_schema IN ('reg','ingest','evt','mkt','ana','out','ops','scout','qa')
+  AND table_type = 'BASE TABLE'
+ORDER BY table_schema, table_name;
+
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'mkt' AND table_name = 'oi_obs'
+ORDER BY ordinal_position;
+
+SELECT instrument_id, metric_key, ts, ts_prec, received_ts, oi_native, oi_usd, oi_usd_reason
+FROM mkt.oi_obs
+WHERE instrument_id = %s AND ts <= %s
+ORDER BY ts DESC
+LIMIT 20;
+```
+
+Migration 026 adds nullable precision and precision-reason projections for the 88 declared SQL timestamp fields. It does not backfill old rows, assign exactness from ISO formatting or require newly declared precision on legacy values. SQL NULL precision means unknown; newly propagated legacy evidence carries reason `INCOMPLETE`. Read the precision and its reason with the timestamp. Registry clocks remain in JSONB: bootstrap recursively preserves captured `verified_at`, `resolved_at`, `checked_at` and `identity_reviewed_at` values and their declared precision; it never replaces a historical date with the current collection clock.
+
+```sql
+SELECT ts, ts_prec, ts_prec_reason,
+       received_ts, received_ts_prec, received_ts_prec_reason
+FROM mkt.oi_obs
+WHERE instrument_id = %s AND ts <= %s
+ORDER BY ts DESC LIMIT 20;
+
+SELECT published_at, published_prec, published_prec_reason,
+       published_at_bucket_size_s, observed_at, observed_at_prec
+FROM ingest.source_items
+WHERE source_id = %s
+ORDER BY observed_at DESC LIMIT 20;
+
+SELECT token_id,
+       document #> '{fundamentals_evidence,verified_at}' AS verified_at,
+       document #> '{fundamentals_evidence,verified_at_prec}' AS verified_at_prec,
+       document #> '{fundamentals_evidence,verified_at_prec_reason}' AS precision_reason
+FROM reg.tokens WHERE token_id = %s;
+```
+
+Source publication is the compatibility exception: SQL `published_prec` retains the existing enum `EXACT`, `BUCKET`, `COLLECTION_ONLY`; bucket duration is explicit in `published_at_bucket_size_s`, while JSON `published_at_precision` carries rich `BUCKET(size)` provenance. A missing publication time can be `COLLECTION_ONLY` with a missing-value reason; it is not the observation time. Other canonical projections use `<field>_prec` (for example `received_ts_prec`) and `<field>_prec_reason`. Never infer occurrence precision from collection time, field formatting, or database microsecond storage.
+
+Use bound parameters for values. Market provenance and null reasons are explicit typed columns or named domain JSONB fields. Missing `buy_usd`, `sell_usd` or USD size buckets require their own standard `null_reasons` entry; valid native quantities and coverage survive missing quote/USD conversion. Never substitute USD zero. Open-interest `ts_prec` and funding `as_of` remain required. Read the actual columns/constraints when a design excerpt and the live projection differ; report the difference rather than inventing a value or altering the schema.
 
 ```sql
 CREATE SCHEMA reg; CREATE SCHEMA ingest; CREATE SCHEMA evt; CREATE SCHEMA mkt;
@@ -993,68 +1040,6 @@ CREATE TABLE evt.ems_assessments (
   UNIQUE (event_id, version)
 );
 
-CREATE TABLE mkt.flow_bars_1m (
-  instrument_id  text NOT NULL,
-  minute_start   timestamptz NOT NULL,
-  buy_qty        numeric NOT NULL,  sell_qty  numeric NOT NULL,   -- native, aggressor side
-  buy_usd        numeric NOT NULL,  sell_usd  numeric NOT NULL,
-  n_buy          int NOT NULL,      n_sell    int NOT NULL,
-  sum_sq_qty     numeric NOT NULL,                     -- Σ q² of the minute's trades (§0)
-  o numeric, h numeric, l numeric, c numeric, vwap numeric,
-  size_buckets   jsonb NOT NULL,                       -- B1..B5 × {buy_qty, sell_qty, buy_usd, sell_usd, n}
-  first_trade_id text, last_trade_id text,
-  complete       boolean NOT NULL,
-  gap_reason     text,
-  PRIMARY KEY (instrument_id, minute_start)
-) PARTITION BY RANGE (minute_start);                   -- daily partitions
-
-CREATE TABLE mkt.oi_obs (
-  instrument_id  text NOT NULL,
-  metric_key     text NOT NULL,                        -- e.g. 'bybit.linear.open-interest'
-  ts             timestamptz NOT NULL,
-  ts_prec        text NOT NULL,
-  received_ts    timestamptz NOT NULL,
-  raw_value      numeric NOT NULL,
-  raw_unit       text NOT NULL,
-  sidedness      text NOT NULL,
-  oi_native      numeric,                              -- single-sided base units (null if unverified)
-  oi_usd         numeric,
-  PRIMARY KEY (instrument_id, metric_key, ts)
-) PARTITION BY RANGE (ts);
-
-CREATE TABLE mkt.funding_obs (
-  instrument_id  text NOT NULL,
-  kind           text NOT NULL CHECK (kind IN ('SETTLED','CURRENT_ESTIMATE')),
-  rate           numeric NOT NULL,
-  interval_h     numeric NOT NULL,
-  rate_8h_eq     numeric NOT NULL,
-  funding_time   timestamptz,
-  as_of          timestamptz NOT NULL,
-  metric_key     text NOT NULL,
-  PRIMARY KEY (instrument_id, kind, as_of)
-);
-
-CREATE TABLE mkt.liq_obs (
-  id             bigserial,
-  instrument_id  text NOT NULL,
-  ts             timestamptz NOT NULL,
-  side           text NOT NULL CHECK (side IN ('LONG_LIQ','SHORT_LIQ')),
-  qty_native     numeric NOT NULL,
-  notional_usd   numeric NOT NULL,
-  price          numeric,
-  coverage       text NOT NULL CHECK (coverage IN ('COMPLETE','SAMPLED','UNKNOWN')),
-  PRIMARY KEY (id, ts)
-) PARTITION BY RANGE (ts);
-
-CREATE TABLE mkt.hot_tokens (                          -- hot set; read on start to subscribe again
-  token_id    text NOT NULL,
-  event_id    text NOT NULL,
-  priority    smallint NOT NULL,                       -- EMS class rank
-  since       timestamptz NOT NULL,
-  expires_at  timestamptz,                             -- null while an open call or armed condition exists
-  PRIMARY KEY (token_id, event_id)
-);
-
 CREATE TABLE ana.market_truth (
   mta_id            text PRIMARY KEY,
   token_id          text NOT NULL,
@@ -1116,7 +1101,6 @@ CREATE TABLE out.alerts (                              -- append-only, one row p
   card_struct         jsonb NOT NULL,
   decisions           text[] NOT NULL,
   evidence_bundle_id  char(64) NOT NULL,
-  linter              jsonb NOT NULL,
   supersedes_version  int,
   config_version      text NOT NULL,
   code_version        text NOT NULL,
@@ -1230,7 +1214,7 @@ UPDATE ops.jobs
 RETURNING *;
 ```
 
-Initial semantic rows remain DOCUMENTED_UNTESTED until current-run adapter checks pass.
+Metric meaning and units come from the authoritative field registry, without runtime semantic-confidence or self-test gates. Any `semantic_confidence` columns retained in the physical schema are legacy storage and do not gate interpretation, Data Confidence or decisions.
 
 
 # Executable sandbox access and shared API limits
@@ -1245,13 +1229,13 @@ with psycopg.connect(os.environ["TANK_DB_URL"]) as connection:
     recent = pd.read_sql_query("SELECT item_id,source_id,observed_at FROM ingest.source_items ORDER BY observed_at DESC LIMIT 20", connection)
 ```
 
-The current deployment explicitly routes Jev through OpenRouter: `POST https://openrouter.ai/api/v1/systemone`, `Authorization: Bearer` with `OPENROUTER_API_KEY`, and pinned request model `jev-1.13`. `TANK_JEV_PROVIDER=openrouter` selects this route; the official TypeSafe SDK remains pinned at `typesafe-sdk==0.7.5` with base URL `https://openrouter.ai/api`. This does not route the analyst through OpenRouter: analyst/scout models continue through the Codex subscription gateway. Calibration must use Pipeline's exact versioned filter/routing questions and state, not a paraphrase. A read-only research call can use HTTP directly without printing the key:
+The current deployment explicitly routes Jev through OpenRouter: `POST https://openrouter.ai/api/v1/systemone`, `Authorization: Bearer` with `OPENROUTER_API_KEY`, and pinned request model `typesafe/jev-1.13`. `TANK_JEV_PROVIDER=openrouter` selects this route; the production adapter uses plain `httpx` with the unchanged typed state/questions body. The current primary design specifies this System One endpoint. An earlier chat/completions specification was corrected after its typed-body HTTP400 failure; that is historical evidence, not an outstanding endpoint deviation. No chat wrapping is used. This does not route the analyst through OpenRouter: analyst/scout models continue through the Codex subscription gateway. Calibration must use Pipeline's exact versioned filter/routing questions and state, not a paraphrase. A read-only research call can use HTTP directly without printing the key:
 
 ```python
 import os
 import httpx
 payload = {
-    "model": "jev-1.13",
+    "model": "typesafe/jev-1.13",
     "state": {"text": "the source text being assessed"},
     "questions": {"relevant": {"type": "noul", "instructions": "Is this text about crypto?", "criteria": {"true": "About crypto", "false": "Not about crypto"}}}
 }
@@ -1263,13 +1247,564 @@ with httpx.Client(timeout=20, trust_env=False) as client:
         raise ValueError("Unverified Jev model revision")
 ```
 
-The observed and accepted OpenRouter revision is `typesafe/jev-1.13-20260917`; preserve returned request/model/usage provenance and reject an unverified revision. This illustrative research question is not a replacement for Pipeline's calibration prompts. Honor the configured OpenRouter account's actual rate limits and retry metadata; no universal free quota is assumed. Do not change provider or select `latest`/another model as a fallback. Direct TypeSafe compatibility remains an explicit alternative (`TANK_JEV_PROVIDER=typesafe`, separate `TYPESAFE_API_KEY`, `jev-1.13.0`); the current Compose deployment does not require that account or mount that key. Production sandbox scripts receive only OPENROUTER_API_KEY and TANK_JEV_PROVIDER=openrouter for this route. Replay receives neither provider key nor provider-routing environment.
+The observed and accepted OpenRouter revision is `typesafe/jev-1.13-20260917`; preserve returned request/model/usage provenance and reject an unverified revision. This illustrative research question is not a replacement for Pipeline's calibration prompts. Honor the configured OpenRouter account's actual rate limits and retry metadata; no universal free quota is assumed. Do not change provider or select `latest`/another model as a fallback. Only OpenRouter `/api/v1/systemone` is supported; there is no direct TypeSafe credential, SDK route or provider fallback. Production sandbox scripts receive only OPENROUTER_API_KEY and TANK_JEV_PROVIDER=openrouter for this route. Replay receives neither provider key nor provider-routing environment.
 
 DuckDuckGo search needs **no API key** and costs zero. Use Tank's custom `web_search(query)` for facts: it stores titles, URLs and snippets as durable evidence. It uses pinned `ddgs==9.16.0`, exact DuckDuckGo backend only, 10 results, declared source User-Agent, at least 2 seconds between requests, and retry delays 5/15/45 seconds for the specified rate-limit/block/timeout failures. Its audited transport permits one `POST https://html.duckduckgo.com/html/` per attempt, does not follow redirects and does not load ambient proxies/credentials. It prevents DDGS metasearch fallback; a generic `DDGS().text(backend="duckduckgo")` is not a safe substitute because the library can substitute engines internally. Empty/failure results return explicit errors, never a paid or alternate-engine search. Search has no credential secret.
 
-Etherscan reads use `GET https://api.etherscan.io/v2/api` with `chainid`, `module=account`, `action=tokenbalance` or `tokentx`, token contract/wallet and `apikey=os.environ["ETHERSCAN_API_KEY"]`. Use the verified token contract and chain ID; no ticker guessing. Do not print a request URL containing its API key. DefiLlama uses key-free `https://api.llama.fi/summary/fees/{verified_slug}?dataType=dailyFees|dailyRevenue|dailyHoldersRevenue`, `https://api.llama.fi/protocols`, `https://api.llama.fi/v2/chains`, `https://defillama-datasets.llama.fi/emissions/{unlock_slug}`, `https://stablecoins.llama.fi/stablecoincharts/{chain}`, and `https://yields.llama.fi/lendBorrow`. Fee protocol slugs and unlock slugs are different namespaces. Do not sum parent rollups and children twice. Missing provider metrics remain unavailable, never zero.
+Etherscan reads use `GET https://api.etherscan.io/v2/api` with `chainid`, `module=account`, `action=tokenbalance` or `tokentx`, token contract/wallet and `apikey=os.environ["ETHERSCAN_API_KEY"]`. Use the verified token contract and chain ID; no ticker guessing. Do not print a request URL containing its API key. DefiLlama uses key-free `https://api.llama.fi/summary/fees/{verified_slug}?dataType=dailyFees|dailyRevenue|dailyHoldersRevenue`, `https://api.llama.fi/protocols`, `https://api.llama.fi/v2/chains`, `https://defillama-datasets.llama.fi/emissions/{unlock_slug}`, `https://stablecoins.llama.fi/stablecoincharts/{chain}`, and `https://yields.llama.fi/lendBorrow`. Fee protocol slugs and unlock slugs are different namespaces. Do not sum parent rollups and children twice. Missing provider metrics remain unavailable, never zero. Lending utilization fetches only `/lendBorrow`; its UUIDs are resolved using versioned `registry.yaml` `lending_pool_catalog` entries (`pool_id`, `project`, `chain`, `underlying_tokens`) with retained source hash/capture time. Runtime never fetches `/pools` for identity enrichment, and unknown UUIDs stay explicitly unmapped rather than guessing chain/protocol.
 
-The sandbox and Tank service **share the same venue/IP limits**. The combined service plus sandbox budget must remain at most one half of every documented limit. Own scripts may use only the remaining measured budget within that half, never assume an independent quota. If you cannot establish remaining shared capacity, use cached database data or Tank custom tools and defer direct provider calls; a separate local sleep loop does not establish global capacity. Consult cached Tank data first. Known baseline ceilings for the service are Binance spot 3,000 request-weight/minute (documented 6,000), Binance USD-M 1,200/minute (documented 2,400), Coinbase 5 requests/second, Kraken 1 request/second, and SEC 5 requests/second (half of documented 10). Respect endpoint weights and independent endpoint buckets, not just request counts. Read Binance used-weight headers. For endpoint-specific undocumented quotas, record UNKNOWN and honor actual Retry-After rather than fabricate a universal cap. Agents must never print keys, persist them to files, or send them to endpoints other than their own API. Replay receives only its read-only database URL and no external API credentials.
+The sandbox and Tank service **share the same venue/IP limits**. The service reserves at most one half of each documented limit; sandbox scripts share the other half across all active sessions. The combined service plus sandbox traffic must remain within the full documented venue/IP quota. Do not spend the service half again or assume every sandbox has its own quota. If you cannot establish remaining capacity in the sandbox half, use cached database data or Tank custom tools and defer direct provider calls; a separate local sleep loop does not establish global capacity. Consult cached Tank data first. Known baseline ceilings for the service are Binance spot 3,000 request-weight/minute (documented 6,000), Binance USD-M 1,200/minute (documented 2,400), Coinbase 5 requests/second, Kraken 1 request/second, and SEC 5 requests/second (half of documented 10). Respect endpoint weights and independent endpoint buckets, not just request counts. Read Binance used-weight headers. For endpoint-specific undocumented quotas, record UNKNOWN and honor actual Retry-After rather than fabricate a universal cap. Agents must never print keys, persist them to files, or send them to endpoints other than their own API. Replay receives only its read-only database URL and no external API credentials.
+
+
+# Actual typed market tables after migration 027
+
+This column inventory is generated from the frozen `MARKET_COLUMNS` producer/storage contract, not an executable schema creation script. Inspect `information_schema` on the selected database to verify migration status and nullability. Numeric values remain Decimal/numeric; never turn unavailable USD into zero. Migration 027 has not been applied to the persistent local database at this guide revision. Existing local tables are not evidence that this new physical layout is deployed.
+
+There is no `mkt.trades` SQL table. Native trades live in immutable, verified hourly Parquet, indexed by `mkt.raw_archives`; journals and checksums are explicit references. Read only manifests selected for the instrument/hour/cutoff through the verified archive reader. Never glob the live data tree. Replay guests use only the selected run's sealed evidence mapping under `/replay/evidence`, not original live paths or evaluator outcomes. Legacy SQL trade export requires an explicitly authorized migration export directory and verified manifest; a raw reference alone does not grant sandbox file access.
+
+```sql
+SELECT minute_start, minute_start_prec, buy_qty, sell_qty, sum_sq_qty,
+       first_trade, last_trade, boundary_segments, reference_points, null_reasons
+FROM mkt.flow_bars_1m
+WHERE instrument_id = %s AND minute_start >= %s AND minute_start < %s
+ORDER BY minute_start;
+
+SELECT instrument_id, kind, as_of, as_of_prec, rate, rate_8h_eq,
+       funding_time, funding_time_prec, source_observations, null_reasons
+FROM mkt.funding_obs
+WHERE instrument_id = %s AND as_of <= %s
+ORDER BY as_of DESC LIMIT 20;
+
+SELECT instrument_id, hour_start, kind, path, parquet_path, sha256,
+       byte_length, checksum_scope, row_count, integrity
+FROM mkt.raw_archives
+WHERE instrument_id = %s AND hour_start >= %s AND hour_start < %s
+ORDER BY hour_start;
+```
+
+Ticker natural identity is instrument plus timestamp; funding identity is instrument plus kind plus as-of. Preserve component clocks and source observations when combining a mark/index/ticker point. Named structures such as `first_trade`, `boundary_segments`, `reference_points`, `source_observations`, `integrity`, `capture_proof` and `null_reasons` are evidence/provenance, not arbitrary row copies. Point/receipt/recording precision remains explicit; legacy unknown is null with its reason.
+
+## mkt.flow_bars_1m
+
+| Column | PostgreSQL type |
+|---|---|
+| `backfill_verified` | `boolean` |
+| `buy_qty` | `numeric` |
+| `buy_usd` | `numeric` |
+| `c` | `numeric` |
+| `capture_method` | `text` |
+| `code_version` | `text` |
+| `complete` | `boolean` |
+| `config_version` | `text` |
+| `first_trade_id` | `text` |
+| `gap_reason` | `text` |
+| `h` | `numeric` |
+| `instrument_id` | `text` |
+| `l` | `numeric` |
+| `last_trade_id` | `text` |
+| `market_type` | `text` |
+| `minute_start` | `timestamptz` |
+| `minute_start_prec` | `text` |
+| `minute_start_prec_reason` | `text` |
+| `n_buy` | `bigint` |
+| `n_sell` | `bigint` |
+| `notional_reason` | `text` |
+| `o` | `numeric` |
+| `quote_asset` | `text` |
+| `quote_volume` | `numeric` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `sell_qty` | `numeric` |
+| `sell_usd` | `numeric` |
+| `source_archive` | `text` |
+| `sum_sq_qty` | `numeric` |
+| `token_id` | `text` |
+| `trade_aggregation` | `text` |
+| `venue` | `text` |
+| `volume_usd` | `numeric` |
+| `vwap` | `numeric` |
+| `zero_trade_minute` | `boolean` |
+| `size_buckets` | `jsonb` |
+| `null_reasons` | `jsonb` |
+| `capture_proof` | `jsonb` |
+| `first_trade` | `jsonb` |
+| `last_trade` | `jsonb` |
+| `boundary_segments` | `jsonb` |
+| `reference_points` | `jsonb` |
+| `semantic_fingerprint` | `text` |
+
+## mkt.klines_1m
+
+| Column | PostgreSQL type |
+|---|---|
+| `c` | `numeric` |
+| `code_version` | `text` |
+| `complete` | `boolean` |
+| `config_version` | `text` |
+| `h` | `numeric` |
+| `instrument_id` | `text` |
+| `interval_s` | `bigint` |
+| `l` | `numeric` |
+| `market_type` | `text` |
+| `n_trades` | `bigint` |
+| `o` | `numeric` |
+| `open_time` | `timestamptz` |
+| `open_time_prec` | `text` |
+| `open_time_prec_reason` | `text` |
+| `quote_asset` | `text` |
+| `quote_usd_rate` | `numeric` |
+| `quote_usd_rate_as_of` | `timestamptz` |
+| `quote_usd_rate_as_of_prec` | `text` |
+| `quote_usd_rate_as_of_prec_reason` | `text` |
+| `quote_volume` | `numeric` |
+| `quote_volume_method` | `text` |
+| `quote_volume_usd` | `numeric` |
+| `quote_volume_usd_reason` | `text` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `source_archive` | `text` |
+| `taker_buy_native` | `numeric` |
+| `taker_buy_quote` | `numeric` |
+| `token_id` | `text` |
+| `venue` | `text` |
+| `volume_native` | `numeric` |
+| `semantic_fingerprint` | `text` |
+
+## mkt.oi_obs
+
+| Column | PostgreSQL type |
+|---|---|
+| `code_version` | `text` |
+| `config_version` | `text` |
+| `gap_reason` | `text` |
+| `index_as_of` | `timestamptz` |
+| `index_as_of_prec` | `text` |
+| `index_as_of_prec_reason` | `text` |
+| `index_price` | `numeric` |
+| `instrument_id` | `text` |
+| `mark_as_of` | `timestamptz` |
+| `mark_as_of_prec` | `text` |
+| `mark_as_of_prec_reason` | `text` |
+| `mark_price` | `numeric` |
+| `metric_key` | `text` |
+| `oi_native` | `numeric` |
+| `oi_usd` | `numeric` |
+| `oi_usd_reason` | `text` |
+| `raw_unit` | `text` |
+| `raw_value` | `numeric` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `semantic_confidence` | `text` |
+| `sidedness` | `text` |
+| `source_archive` | `text` |
+| `synchronized_eligible` | `boolean` |
+| `timestamp_precision` | `text` |
+| `token_id` | `text` |
+| `ts` | `timestamptz` |
+| `ts_prec` | `text` |
+| `ts_prec_reason` | `text` |
+| `ts_bucket_size_s` | `numeric` |
+| `semantic_fingerprint` | `text` |
+| `ts_bucket_anchor` | `text` |
+
+## mkt.funding_obs
+
+| Column | PostgreSQL type |
+|---|---|
+| `as_of` | `timestamptz` |
+| `as_of_prec` | `text` |
+| `as_of_prec_reason` | `text` |
+| `capture_source` | `text` |
+| `code_version` | `text` |
+| `config_version` | `text` |
+| `funding_time` | `timestamptz` |
+| `funding_time_prec` | `text` |
+| `funding_time_prec_reason` | `text` |
+| `instrument_id` | `text` |
+| `interval_h` | `numeric` |
+| `kind` | `text` |
+| `metric_key` | `text` |
+| `primary_source` | `text` |
+| `rate` | `numeric` |
+| `rate_8h_eq` | `numeric` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `semantic_confidence` | `text` |
+| `source_archive` | `text` |
+| `source_path` | `text` |
+| `token_id` | `text` |
+| `source_observations` | `jsonb` |
+| `source_disagreement` | `jsonb` |
+| `semantic_fingerprint` | `text` |
+| `null_reasons` | `jsonb` |
+
+## mkt.liq_obs
+
+| Column | PostgreSQL type |
+|---|---|
+| `id` | `bigint` |
+| `code_version` | `text` |
+| `config_version` | `text` |
+| `coverage` | `text` |
+| `instrument_id` | `text` |
+| `metric_key` | `text` |
+| `notional_usd` | `numeric` |
+| `price` | `numeric` |
+| `price_kind` | `text` |
+| `qty_native` | `numeric` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `side` | `text` |
+| `token_id` | `text` |
+| `ts` | `timestamptz` |
+| `ts_prec` | `text` |
+| `ts_prec_reason` | `text` |
+| `usd_reason` | `text` |
+| `null_reasons` | `jsonb` |
+| `semantic_fingerprint` | `text` |
+
+## mkt.book_summaries
+
+| Column | PostgreSQL type |
+|---|---|
+| `best_ask` | `numeric` |
+| `best_bid` | `numeric` |
+| `code_version` | `text` |
+| `config_version` | `text` |
+| `confirmation_observed_at` | `timestamptz` |
+| `confirmation_observed_at_prec` | `text` |
+| `confirmation_observed_at_prec_reason` | `text` |
+| `exchange_ts` | `timestamptz` |
+| `exchange_ts_prec` | `text` |
+| `exchange_ts_prec_reason` | `text` |
+| `gap_reason` | `text` |
+| `instrument_id` | `text` |
+| `integrity_method` | `text` |
+| `integrity_ok` | `boolean` |
+| `levels_received` | `bigint` |
+| `metric_key` | `text` |
+| `mid` | `numeric` |
+| `quote_asset` | `text` |
+| `quote_usd_rate` | `numeric` |
+| `raw_levels_range_pct` | `numeric` |
+| `raw_levels_scope` | `text` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `second_path_confirmed` | `boolean` |
+| `second_path_reason` | `text` |
+| `spread_bps` | `numeric` |
+| `token_id` | `text` |
+| `depth` | `jsonb` |
+| `bids` | `jsonb` |
+| `asks` | `jsonb` |
+| `range_covered_pct` | `jsonb` |
+| `independent_rest` | `jsonb` |
+| `semantic_fingerprint` | `text` |
+
+## mkt.tickers_24h
+
+| Column | PostgreSQL type |
+|---|---|
+| `capture_source` | `text` |
+| `code_version` | `text` |
+| `config_version` | `text` |
+| `index_as_of` | `timestamptz` |
+| `index_as_of_prec` | `text` |
+| `index_as_of_prec_reason` | `text` |
+| `index_price` | `numeric` |
+| `index_reason` | `text` |
+| `instrument_id` | `text` |
+| `kind` | `text` |
+| `last` | `numeric` |
+| `mark_as_of` | `timestamptz` |
+| `mark_as_of_prec` | `text` |
+| `mark_as_of_prec_reason` | `text` |
+| `mark_price` | `numeric` |
+| `quote_asset` | `text` |
+| `quote_volume` | `numeric` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `source_provenance_complete` | `boolean` |
+| `token_id` | `text` |
+| `ts` | `timestamptz` |
+| `ts_prec` | `text` |
+| `ts_prec_reason` | `text` |
+| `usd_reason` | `text` |
+| `volume_native` | `numeric` |
+| `volume_usd` | `numeric` |
+| `field_sources` | `jsonb` |
+| `unclocked_components` | `jsonb` |
+| `capture_sources` | `text[]` |
+| `semantic_fingerprint` | `text` |
+
+## mkt.supply_obs
+
+| Column | PostgreSQL type |
+|---|---|
+| `available` | `boolean` |
+| `chain` | `text` |
+| `classification_required` | `boolean` |
+| `code_version` | `text` |
+| `config_version` | `text` |
+| `fee_scope` | `text` |
+| `instrument_id` | `text` |
+| `kind` | `text` |
+| `reason` | `text` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `token_id` | `text` |
+| `transfer_queries_succeeded` | `bigint` |
+| `ts` | `timestamptz` |
+| `ts_prec` | `text` |
+| `ts_prec_reason` | `text` |
+| `unlocks` | `jsonb` |
+| `flows` | `jsonb` |
+| `coverage_errors` | `jsonb` |
+| `balances` | `jsonb` |
+| `pools` | `jsonb` |
+| `series` | `jsonb` |
+| `metrics` | `jsonb` |
+| `protocols` | `jsonb` |
+| `identity_evidence` | `jsonb` |
+| `inference_limits` | `text[]` |
+| `unsupported_venues` | `text[]` |
+| `semantic_fingerprint` | `text` |
+
+## mkt.supply
+
+| Column | PostgreSQL type |
+|---|---|
+| `available` | `boolean` |
+| `chain` | `text` |
+| `classification_required` | `boolean` |
+| `code_version` | `text` |
+| `config_version` | `text` |
+| `fee_scope` | `text` |
+| `instrument_id` | `text` |
+| `kind` | `text` |
+| `reason` | `text` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `token_id` | `text` |
+| `transfer_queries_succeeded` | `bigint` |
+| `ts` | `timestamptz` |
+| `ts_prec` | `text` |
+| `ts_prec_reason` | `text` |
+| `unlocks` | `jsonb` |
+| `flows` | `jsonb` |
+| `coverage_errors` | `jsonb` |
+| `balances` | `jsonb` |
+| `pools` | `jsonb` |
+| `series` | `jsonb` |
+| `metrics` | `jsonb` |
+| `protocols` | `jsonb` |
+| `identity_evidence` | `jsonb` |
+| `inference_limits` | `text[]` |
+| `unsupported_venues` | `text[]` |
+| `semantic_fingerprint` | `text` |
+
+## mkt.unlocks
+
+| Column | PostgreSQL type |
+|---|---|
+| `code_version` | `text` |
+| `config_version` | `text` |
+| `date` | `timestamptz` |
+| `date_prec` | `text` |
+| `date_prec_reason` | `text` |
+| `instrument_id` | `text` |
+| `kind` | `text` |
+| `label` | `text` |
+| `observed_at` | `timestamptz` |
+| `observed_at_prec` | `text` |
+| `observed_at_prec_reason` | `text` |
+| `qty` | `numeric` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `sale_inferred` | `boolean` |
+| `token_id` | `text` |
+| `semantic_fingerprint` | `text` |
+
+## mkt.hot_tokens
+
+| Column | PostgreSQL type |
+|---|---|
+| `code_version` | `text` |
+| `config_version` | `text` |
+| `event_id` | `text` |
+| `expires_at` | `timestamptz` |
+| `expires_at_prec` | `text` |
+| `expires_at_prec_reason` | `text` |
+| `instrument_id` | `text` |
+| `priority` | `bigint` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `since` | `timestamptz` |
+| `since_prec` | `text` |
+| `since_prec_reason` | `text` |
+| `token_id` | `text` |
+| `semantic_fingerprint` | `text` |
+
+## mkt.capture_state
+
+| Column | PostgreSQL type |
+|---|---|
+| `code_version` | `text` |
+| `config_version` | `text` |
+| `instrument_id` | `text` |
+| `last_trade_id` | `text` |
+| `last_ts` | `timestamptz` |
+| `last_ts_prec` | `text` |
+| `last_ts_prec_reason` | `text` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `token_id` | `text` |
+| `updated_at` | `timestamptz` |
+| `updated_at_prec` | `text` |
+| `updated_at_prec_reason` | `text` |
+| `last_trade` | `jsonb` |
+| `missing_id_ranges` | `jsonb` |
+| `semantic_fingerprint` | `text` |
+
+## mkt.capture_gaps
+
+| Column | PostgreSQL type |
+|---|---|
+| `code_version` | `text` |
+| `config_version` | `text` |
+| `end` | `timestamptz` |
+| `end_prec` | `text` |
+| `end_prec_reason` | `text` |
+| `gap_id` | `text` |
+| `instrument_id` | `text` |
+| `kind` | `text` |
+| `observed_at` | `timestamptz` |
+| `observed_at_prec` | `text` |
+| `observed_at_prec_reason` | `text` |
+| `reason` | `text` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `start` | `timestamptz` |
+| `start_prec` | `text` |
+| `start_prec_reason` | `text` |
+| `status` | `text` |
+| `token_id` | `text` |
+| `semantic_fingerprint` | `text` |
+
+## mkt.raw_archives
+
+| Column | PostgreSQL type |
+|---|---|
+| `archive_id` | `text` |
+| `byte_length` | `bigint` |
+| `checksum_scope` | `text` |
+| `code_version` | `text` |
+| `config_version` | `text` |
+| `hour_start` | `timestamptz` |
+| `hour_start_prec` | `text` |
+| `hour_start_prec_reason` | `text` |
+| `import_complete` | `boolean` |
+| `instrument_id` | `text` |
+| `journal_path` | `text` |
+| `kind` | `text` |
+| `parquet_path` | `text` |
+| `path` | `text` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `row_count` | `bigint` |
+| `sha256` | `text` |
+| `source_url` | `text` |
+| `status` | `text` |
+| `token_id` | `text` |
+| `integrity` | `jsonb` |
+| `semantic_fingerprint` | `text` |
+
+## mkt.backfill_runs
+
+| Column | PostgreSQL type |
+|---|---|
+| `anchor` | `timestamptz` |
+| `anchor_prec` | `text` |
+| `anchor_prec_reason` | `text` |
+| `backfill_id` | `text` |
+| `code_version` | `text` |
+| `config_version` | `text` |
+| `event_id` | `text` |
+| `finished_at` | `timestamptz` |
+| `finished_at_prec` | `text` |
+| `finished_at_prec_reason` | `text` |
+| `instrument_id` | `text` |
+| `reason` | `text` |
+| `received_ts` | `timestamptz` |
+| `received_ts_prec` | `text` |
+| `received_ts_prec_reason` | `text` |
+| `recorded_at` | `timestamptz` |
+| `recorded_at_prec` | `text` |
+| `recorded_at_prec_reason` | `text` |
+| `started_at` | `timestamptz` |
+| `started_at_prec` | `text` |
+| `started_at_prec_reason` | `text` |
+| `status` | `text` |
+| `token_id` | `text` |
+| `result` | `jsonb` |
+| `semantic_fingerprint` | `text` |
+
 
 # Current executable information-source manifest
 
@@ -1328,7 +1863,7 @@ This manifest is generated from current `sources.yaml` and takes precedence for 
 | S23 | Governance forums | 300 | rss | GET https://forum.cow.fi/latest.rss |
 | S23 | Governance forums | 300 | rss | GET https://forum.morpho.org/latest.rss |
 | S23 | Governance forums | 600 | rss | GET https://forum.euler.finance/latest.rss |
-| S23 | Governance forums | 600 | rss | GET https://gov.1inch.io/latest.rss |
+| S23 | Governance forums | 600 | rss | GET https://gov.1inch.network/latest.rss |
 | S23 | Governance forums | 600 | rss | GET https://gov.near.org/latest.rss |
 | S24 | Snapshot | 120 | graphql | POST https://hub.snapshot.org/graphql |
 | S25 | GitHub | 600 | atom | GET https://github.com/Uniswap/v4-core/releases.atom |
@@ -1358,11 +1893,11 @@ This manifest is generated from current `sources.yaml` and takes precedence for 
 
 Binance spot/futures weights depend on endpoint and limit; see config/api_limits.yaml and the documented used-weight headers. USD-M fundingRate/fundingInfo have a shared500requests/5minutes cap (Tank≤250), and openInterestHist has a separate1000requests/5minutes cap (Tank≤500). The native archive endpoints remain read-only and checksum verified.
 
-Bybit official HTTP IP quota is600requests/5seconds, so the combined reserved Tank budget is at most300/5seconds. Hyperliquid official aggregate HTTP quota is1200weight/minute, Tank≤600: l2Book/allMids cost2; the ordinary info requests Tank uses cost20; userRole costs60. fundingHistory/recentTrades add weight per20returned items and candleSnapshot per60. Preserve these response-size weights. Etherscan free tier documents3calls/second and100000/day on selected chains; the half-budget is1.5/second and50000/day shared by service and sandbox. An unsupported free-tier chain remains n/a.
+Bybit official HTTP IP quota is600requests/5seconds, so the service budget is at most300/5seconds; all sandbox sessions share the other300/5seconds. Hyperliquid official aggregate HTTP quota is1200weight/minute, Tank≤600: l2Book/allMids cost2; the ordinary info requests Tank uses cost20; userRole costs60. fundingHistory/recentTrades add weight per20returned items and candleSnapshot per60. Preserve these response-size weights. Etherscan free tier documents3calls/second and100000/day on selected chains; the service half-budget is1.5/second and50000/day; all sandbox sessions share the remaining half. An unsupported free-tier chain remains n/a.
 
-OKX official endpoint limits are per2seconds; service plus sandbox may reserve at most half:
+OKX official endpoint limits are per2seconds; the service may reserve at most half, while all sandbox sessions share the other half:
 
-| Endpoint | Documented requests/2s | Tank shared budget/2s | Scope |
+| Endpoint | Documented requests/2s | Service budget/2s | Scope |
 |---|---|---|---|
 | /api/v5/market/books | 40 | 20 | IP |
 | /api/v5/market/trades | 100 | 50 | IP |
@@ -1380,4 +1915,4 @@ OKX official endpoint limits are per2seconds; service plus sandbox may reserve a
 
 Official sources: https://www.okx.com/docs-v5/en/ ; https://bybit-exchange.github.io/docs/v5/rate-limit ; https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/rate-limits-and-user-limits ; https://docs.etherscan.io/resources/rate-limits . Verified on17October2026; provider changes require adapter verification, not guessed fallback limits.
 
-Hyperliquid recentTrades has no documented maximum response count. The adapter reserves its documented base, serializes calls and debits actual returned-size weight before releasing the provider slot. It does not claim a mathematically proven precharge bound for an undocumented response size, and does not invent a maximum. OKX index-tickers additionally documents20requests/2seconds perIP (Tank shared reserve≤10).
+Hyperliquid recentTrades has no documented maximum response count. The adapter reserves its documented base, serializes calls and debits actual returned-size weight before releasing the provider slot. It does not claim a mathematically proven precharge bound for an undocumented response size, and does not invent a maximum. OKX index-tickers additionally documents20requests/2seconds perIP (service reserve≤10).

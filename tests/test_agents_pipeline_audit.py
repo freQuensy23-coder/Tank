@@ -6,7 +6,7 @@ import httpx
 import pytest
 import yaml
 
-from tank.agents.pipeline import FILTER, ROUTE, PendingRouting, Pipeline
+from tank.agents.pipeline import FILTER, ROUTE, Pipeline
 from tank.storage import MemoryRepository
 from tank.util import iso
 
@@ -17,7 +17,7 @@ def options():
         "thresholds": {"filter_cutoff": 0.7, "routing_cutoff": 0.8},
     }
     return SimpleNamespace(
-        load_config=config.__getitem__, typesafe_api_key="test", config_version="test", code_version="test"
+        load_config=config.__getitem__, openrouter_api_key="test", config_version="test", code_version="test"
     ), config
 
 
@@ -33,7 +33,16 @@ def test_audit_2_10_11_20_exact_filter_title_outlet():
     }
 
 
-@pytest.mark.parametrize("text", ["near the world curve quant cow lit plasma", "lighter", "linear unrelated"])
+@pytest.mark.parametrize(
+    "text",
+    [
+        "near the world curve quant cow lit plasma",
+        "lighter",
+        "linear unrelated",
+        "all this hype",
+        "EUL CRV ZRX",
+    ],
+)
 def test_audit_2_12_generic_words_do_not_resolve(text):
     opts, _ = options()
     assert not Pipeline(MemoryRepository(), opts, http=object()).identities({"text": text})
@@ -57,11 +66,77 @@ def test_audit_2_12_canonical_aliases(text, entity, token):
 
 
 @pytest.mark.asyncio
+async def test_scored_match_joins_running_event_despite_other_pending_extraction():
+    opts, _ = options()
+    repo = MemoryRepository()
+    at = iso()
+    await repo.put("ingest.source_items", "item", {"item_id": "item", "title": "Aave product approved"})
+    await repo.put(
+        "evt.events", "event", {"event_id": "event", "entities": ["aave"], "lifecycle": "ANALYZING"}
+    )
+    await repo.put(
+        "ops.agent_sessions",
+        "running",
+        {"session_id": "running", "event_id": "event", "status": "RUNNING", "last_item_at": at},
+    )
+    await repo.put(
+        "ops.routing_reservations",
+        "other",
+        {"reservation_id": "other", "entities": ["aave"], "status": "PENDING", "last_item_at": at},
+    )
+    pipe = Pipeline(repo, opts, http=object())
+
+    async def score(item, name, state):
+        assert name == "same_event"
+        return 0.95
+
+    pipe.score = score
+    routed = await pipe.route_item({"item_id": "item"})
+    assert routed["route"]["decision"] == "ADDED"
+    assert routed["route_event_id"] == "event"
+    assert routed["routing_message"] == {"kind": "ITEM_ADDED", "item_id": "item", "event_id": "event"}
+    assert len(await repo.list("ops.routing_reservations")) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("precision", ["BUCKET(1d)", None])
+async def test_filter_job_expiry_preserves_source_observation_precision(precision):
+    opts, _ = options()
+    repo = MemoryRepository()
+    item = {
+        "item_id": "promoted",
+        "title": "Official item",
+        "relevance": {"decision": "ALWAYS"},
+        "observed_at": "2026-10-18T00:00:00.123456Z",
+    }
+    if precision:
+        item["observed_at_precision"] = precision
+    await repo.put("ingest.source_items", item["item_id"], item)
+    await Pipeline(repo, opts, http=object()).filter_item({"item_id": item["item_id"]})
+    jobs = await repo.list("ops.jobs")
+    assert len(jobs) == 1
+    assert jobs[0]["expires_at"] == "2026-10-18T06:00:00.123456Z"
+    assert jobs[0]["expires_at_prec"] == precision
+    assert jobs[0]["expires_at_prec_reason"] == (None if precision else "INCOMPLETE")
+
+
+@pytest.mark.asyncio
+async def test_new_item_routes_without_reservation_state():
+    opts, _ = options()
+    repo = MemoryRepository()
+    await repo.put("ingest.source_items", "new", {"item_id": "new", "title": "Aave announcement"})
+    routed = await Pipeline(repo, opts, http=object()).route_item({"item_id": "new"})
+    assert routed["routing_message"] == {"kind": "NEW_ITEM", "item_id": "new"}
+    assert routed["route"] == {"decision": "NEW_SESSION", "event_id": None, "p_same": None}
+    assert await repo.list("ops.routing_reservations") == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("same,decision", [(0.95, "ADDED"), (0.1, "NEW_SESSION")])
-async def test_audit_2_13_pending_extraction_defers_then_uses_event_question(same, decision):
+async def test_pending_extraction_is_not_a_candidate_then_real_event_is_scored(same, decision):
     opts, config = options()
     repo = MemoryRepository()
-    for key in ("first", "next"):
+    for key in ("first", "pending", "next"):
         await repo.put("ingest.source_items", key, {"item_id": key, "title": "Aave product approved"})
     calls = []
 
@@ -73,7 +148,7 @@ async def test_audit_2_13_pending_extraction_defers_then_uses_event_question(sam
         return httpx.Response(
             200,
             json={
-                "model": "jev-1.13.0",
+                "model": "typesafe/jev-1.13-20260917",
                 "usage": {},
                 "answers": {"same_event": {"type": "noul", "noul": same}},
             },
@@ -84,13 +159,11 @@ async def test_audit_2_13_pending_extraction_defers_then_uses_event_question(sam
         config["thresholds"]["routing_cutoff"] = None
         first = await pipe.route_item({"item_id": "first"})
         config["thresholds"]["routing_cutoff"] = 0.8
-        with pytest.raises(PendingRouting) as blocked:
-            await pipe.route_item({"item_id": "next"})
-        assert blocked.value.run_after and not calls
-        rid = first["route"]["reservation_id"]
-        reservation = await repo.get("ops.routing_reservations", rid)
-        reservation.update(status="BOUND", event_id="evt")
-        await repo.put("ops.routing_reservations", rid, reservation)
+        pending = await pipe.route_item({"item_id": "pending"})
+        assert pending["routing_message"]["kind"] == "NEW_ITEM" and not calls
+        assert first["routing_message"] == {"kind": "NEW_ITEM", "item_id": "first"}
+        assert "reservation_id" not in pending["route"]
+        assert await repo.list("ops.routing_reservations") == []
         await repo.put(
             "ops.agent_sessions", "ses", {"session_id": "ses", "event_id": "evt", "last_item_at": iso()}
         )
@@ -108,7 +181,7 @@ async def test_audit_2_13_pending_extraction_defers_then_uses_event_question(sam
 
 @pytest.mark.parametrize("status", ["ENDED", "FAILED"])
 @pytest.mark.asyncio
-async def test_terminal_pending_session_releases_identity_barrier(status):
+async def test_other_pending_session_never_blocks_unmatched_item(status):
     opts, _ = options()
     repo = MemoryRepository()
     await repo.put("ingest.source_items", "i", {"item_id": "i", "title": "Aave other event"})
@@ -126,7 +199,26 @@ async def test_terminal_pending_session_releases_identity_barrier(status):
     await repo.put("ops.agent_sessions", "ses", {"session_id": "ses", "status": status})
     result = await Pipeline(repo, opts, http=object()).route_item({"item_id": "i"})
     assert result["route"]["decision"] == "NEW_SESSION"
-    assert (await repo.get("ops.routing_reservations", "old"))["status"] == "CLOSED"
+    assert (await repo.get("ops.routing_reservations", "old"))["status"] == "PENDING"
+
+
+def test_identity_matching_uses_registry_aliases_and_qualifiers_without_code_overrides():
+    opts, config = options()
+    config["registry"]["entities"] = [
+        {
+            "entity_id": "lighter",
+            "names": ["Generic"],
+            "aliases": ["New Venue"],
+            "qualified_aliases": [{"alias": "Registered", "requires_any": ["Qualifier"]}],
+            "tokens": ["lighter:LIT"],
+        }
+    ]
+    pipe = Pipeline(MemoryRepository(), opts, http=object())
+    assert "lighter" in pipe.identities({"text": "NEW VENUE"})
+    assert "lighter" in pipe.identities({"quoted": "Registered with qualifier"})
+    for text in ("Generic", "Registered", "Lighter DEX", "xNew Venuex"):
+        assert "lighter" not in pipe.identities({"text": text})
+    assert "lighter" in pipe.identities({"text": "$LIT"})
 
 
 def test_explicit_token_identity_expands_to_its_entity():
@@ -169,7 +261,11 @@ async def test_official_repost_promotion_during_filter_request_preserves_latest_
             await repo.put("ingest.source_items", "i", item)
         return httpx.Response(
             200,
-            json={"model": "jev-1.13.0", "usage": {}, "answers": {"relevant": {"type": "noul", "noul": 0.1}}},
+            json={
+                "model": "typesafe/jev-1.13-20260917",
+                "usage": {},
+                "answers": {"relevant": {"type": "noul", "noul": 0.1}},
+            },
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
@@ -220,3 +316,94 @@ async def test_failed_event_is_not_a_routing_candidate():
     routed = await Pipeline(repo, opts, http=object()).route_item({"item_id": "i"})
     assert routed["route"]["decision"] == "NEW_SESSION"
     assert routed["routing_scores"] == {}
+
+
+@pytest.mark.asyncio
+async def test_candidate_questions_overlap_and_reduce_in_stable_order():
+    import asyncio
+
+    opts, _ = options()
+    repo = MemoryRepository()
+    await repo.put("ingest.source_items", "i", {"item_id": "i", "text": "Aave"})
+    events = [{"event_id": key, "statement": key} for key in ("a", "b", "c")]
+    pipe = Pipeline(repo, opts, http=object())
+
+    async def candidates(*args):
+        return events
+
+    pipe._candidate_events = candidates
+    arrived, ready = set(), asyncio.Event()
+
+    async def score(item, name, state):
+        key = state["event"]["statement"]
+        arrived.add(key)
+        if len(arrived) == 3:
+            ready.set()
+        await ready.wait()
+        return {"a": 0.95, "b": 0.95, "c": 0.9}[key]
+
+    pipe.score = score
+    async with asyncio.timeout(2):
+        result = await pipe.route_item({"item_id": "i"})
+    assert result["route_event_id"] == "a"
+    assert list(result["routing_scores"]) == ["a", "b", "c"]
+
+
+@pytest.mark.asyncio
+async def test_candidate_window_includes_equal_clock_and_lower_boundary_only():
+    from datetime import timedelta
+
+    from tank.util import utcnow
+
+    opts, _ = options()
+    repo = MemoryRepository()
+    now = utcnow()
+    since = now - timedelta(days=3)
+    for key, at in (
+        ("z_equal", now),
+        ("a_lower", since),
+        ("future", now + timedelta(microseconds=1)),
+        ("old", since - timedelta(microseconds=1)),
+    ):
+        await repo.put("evt.events", key, {"event_id": key, "entities": ["aave"]})
+        await repo.put(
+            "ops.agent_sessions", key, {"session_id": key, "event_id": key, "last_item_at": iso(at)}
+        )
+    events = await Pipeline(repo, opts, http=object())._candidate_events({"aave"}, iso(since), now)
+    assert [event["event_id"] for event in events] == ["a_lower", "z_equal"]
+
+
+@pytest.mark.parametrize(
+    ("title", "body", "expected"),
+    [
+        ("OKX lists QNT", "OKX lists QNT", "OKX lists QNT"),
+        (
+            "OKX lists QNT",
+            "Deposits open at 10:00 UTC.\nTrading opens at 12:00 UTC; withdrawals follow tomorrow.",
+            "OKX lists QNT\n\nDeposits open at 10:00 UTC.\nTrading opens at 12:00 UTC; withdrawals follow tomorrow.",
+        ),
+        ("OKX lists QNT", "", "OKX lists QNT"),
+    ],
+    ids=["identical-headline-body-once", "different-full-body-preserved", "empty-body-headline-once"],
+)
+def test_state_emits_identical_title_body_once_without_mutating_capture(title, body, expected):
+    from copy import deepcopy
+
+    item = {
+        "source_id": "S10",
+        "source": "OKX",
+        "author": "OKX",
+        "title": title,
+        "text": body,
+        "quoted": "Original quoted material",
+        "raw_ref": "immutable-original.zst",
+        "published_at": "2026-10-20T10:00:00Z",
+    }
+    original = deepcopy(item)
+    assert Pipeline.state(item) == {
+        "source": "OKX",
+        "author": "OKX",
+        "text": expected,
+        "quoted": "Original quoted material",
+    }
+    assert item == original

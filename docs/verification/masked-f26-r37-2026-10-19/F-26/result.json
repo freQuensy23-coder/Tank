@@ -1,0 +1,63 @@
+{
+  "fixture_id": "F-26",
+  "code_version": "bbb87ee13781e9c96a703d6e4b66e4879770271caf7e25e847352c25ef32ab4a",
+  "config_version": "58daf19e9ed36d477dca6ff543523fd5b7b6cfed-dirty.0d13e63eceb399ec1b73d92bac684067be86b72a7c9a7b6f4484448666dd5508",
+  "cli_exit_code": 1,
+  "elapsed_seconds": 67.5025920830667,
+  "framework_status": "FAILED",
+  "source_outcomes": [
+    {
+      "item_id": "ITM-01M58JCQVJV3D0MFTB6S50G58J",
+      "source_id": "S29",
+      "extraction_status": "PENDING"
+    }
+  ],
+  "turn_outcomes": [
+    {
+      "turn_status": "FAILED",
+      "retry_count": 0,
+      "failure": null
+    }
+  ],
+  "cards": [],
+  "tool_counts": {
+    "get_registry": 2,
+    "list_open_events": 1,
+    "search_tank_items": 2,
+    "web_search": 1,
+    "get_item": 1
+  },
+  "tool_refusals": [
+    {
+      "tool": "web_search",
+      "status": "REFUSED",
+      "result": {
+        "ok": false,
+        "error": {
+          "type": "ReplayError",
+          "reason": "insufficient_fixture: no unambiguous eligible fixture page capture",
+          "category": "VALIDATION"
+        }
+      }
+    }
+  ],
+  "native_errors": [],
+  "failed_attempts": [
+    {
+      "error_type": "ReplayError",
+      "reason": "insufficient_fixture: required replay tool capture is absent"
+    }
+  ],
+  "delivery": "NOT_RUN",
+  "exports_complete": true,
+  "large_inputs_retained_losslessly": [],
+  "frozen_database": "tank_replay_r37_masked_f26_failed_20261019",
+  "database_oid": 986853,
+  "native_cleanup": {
+    "catalog_empty": true,
+    "qa_healthy": true,
+    "no_active_replay_connections": true
+  },
+  "guard_errors": [],
+  "acceptance_scope": "masked_F26_first_outcome;sealed_evaluator_separate;not_normalRuntime_or_SENT"
+}

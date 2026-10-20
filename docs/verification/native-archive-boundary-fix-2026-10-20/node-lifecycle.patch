@@ -1,0 +1,160 @@
+--- data/qa/openma-archive-boundary-fix-20261020/baseline/packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts	2026-10-20 13:58:24
++++ data/qa/openma-archive-boundary-fix-20261020/candidate/packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts	2026-10-20 14:16:45
+@@ -16,9 +16,10 @@
+   executionFence: unknown;
+   signal?: AbortSignal;
+ }
++interface Lifetime { final: boolean; binds: number }
+ interface Entry {
+-  context: Context; controller?: RetainedSessionLifecycle<BoxLiteRuntime>;
+-  allocation?: Allocation; beginning?: Promise<void>; started: boolean;
++  lifetime: Lifetime; context: Context; controller?: RetainedSessionLifecycle<BoxLiteRuntime>;
++  allocation?: Allocation; beginning?: Promise<void>; finalizing?: Promise<void>; started: boolean;
+ }
+ export interface NodeRetainedOptions {
+   fences: Fences;
+@@ -45,6 +46,8 @@
+   readonly options: NodeRetainedOptions;
+   private entries = new Map<string, Entry>();
+   private sandboxes = new WeakMap<object, Entry>();
++  private archives = new Map<string, Promise<void>>();
++  private lifetimes = new Map<string, Lifetime>();
+   constructor(options: NodeRetainedOptions) { this.options = options; }
+   /** Reconcile only this module's failed unpublished allocations, using the
+    * pinned durable orphan queue. Never delete a published retained workspace. */
+@@ -86,35 +89,56 @@
+             sandbox, reason: 'failed', error: new Error('retained_initial_cleanup_failed') });
+         } }) });
+   }
++  private assertOpen(lifetime: Lifetime): void {
++    if (lifetime.final) throw Error('retained_session_archiving');
++  }
++  private releaseLifetime(scopeKey: string, lifetime: Lifetime): void {
++    if (!lifetime.binds && !this.entries.has(scopeKey) && !this.archives.has(scopeKey)
++      && this.lifetimes.get(scopeKey) === lifetime) this.lifetimes.delete(scopeKey);
++  }
+   /** Call on both warm reuse and cold acquisition, BEFORE prepare/guest I/O. */
+   async bind(context: Context): Promise<void> {
+-    const scope = scopeOf(context);
++    const scope = scopeOf(context), scopeKey = key(scope);
++    const lifetime = this.lifetimes.get(scopeKey) ?? { final: false, binds: 0 };
++    this.lifetimes.set(scopeKey, lifetime);
++    lifetime.binds++;
++    try { await this.bindOpen(context, scope, lifetime); }
++    finally { lifetime.binds--; this.releaseLifetime(scopeKey, lifetime); }
++  }
++  private async bindOpen(context: Context, scope: Omit<Scope, 'workId'>, lifetime: Lifetime): Promise<void> {
++    this.assertOpen(lifetime);
+     if (!context.executionFence) throw Error('retained_execution_fence_required');
+     await this.options.assertExecutionCurrent(context.executionFence);
++    this.assertOpen(lifetime);
+     let entry = this.sandboxes.get(context.sandbox);
+     if (entry) {
++      this.assertOpen(entry.lifetime);
+       if (key(scopeOf(entry.context)) !== key(scope)) throw Error('retained_sandbox_scope_changed');
+       if (entry.beginning) throw Error('retained_previous_turn_not_quiescent');
+       if (entry.started && entry.controller?.isStopped()) {
+         await this.idleEntry(entry, () => this.options.assertExecutionCurrent(context.executionFence));
++        this.assertOpen(lifetime);
+       }
+       if (entry.started) throw Error('retained_previous_turn_not_quiescent');
+       if (entry.allocation) {
+         // Validation also runs when an earlier lazy initialization failed before
+         // a controller existed. A current prefix may not reuse a stale binding.
+         const fingerprint = await this.options.fingerprint(context, entry.allocation);
++        this.assertOpen(lifetime);
+         if (entry.controller && fingerprint !== entry.controller.options.fingerprint) throw Error('retained_configuration_changed');
+       }
+       entry.context = context;
+       return;
+     }
+-    entry = { context, started: false };
++    entry = { lifetime, context, started: false };
+     this.entries.set(key(scope), entry);
+     this.sandboxes.set(context.sandbox, entry);
+     const owned = entry;
+     context.sandbox.setRetainedBoxFactory(async allocation => {
++      this.assertOpen(lifetime);
+       owned.allocation = allocation;
+       const fingerprint = await this.options.fingerprint(owned.context, allocation);
++      this.assertOpen(lifetime);
+       owned.controller = this.controller(scope, fingerprint, allocation);
+       const use = async <T>(operation: (runtime: BoxLiteRuntime) => Promise<T>): Promise<T> => {
+         await this.ensureActive(owned);
+@@ -126,6 +150,7 @@
+     });
+   }
+   private async ensureActive(entry: Entry): Promise<void> {
++    this.assertOpen(entry.lifetime);
+     if (entry.started) return;
+     entry.beginning ??= entry.controller!.begin(
+       () => this.options.assertExecutionCurrent(entry.context.executionFence),
+@@ -135,9 +160,13 @@
+   }
+   private async idleEntry(entry: Entry, authorized?: () => Promise<void>): Promise<void> {
+     await entry.beginning;
++    if (entry.finalizing) return entry.finalizing;
+     if (!entry.started) return;
+-    await entry.controller!.idle(authorized ?? (() => this.options.assertExecutionCurrent(entry.context.executionFence)));
+-    entry.started = false;
++    const finalizing: Promise<void> = entry.controller!.idle(authorized ?? (() => this.options.assertExecutionCurrent(entry.context.executionFence)))
++      .then(() => { entry.started = false; })
++      .finally(() => { if (entry.finalizing === finalizing) entry.finalizing = undefined; });
++    entry.finalizing = finalizing;
++    await finalizing;
+   }
+   /** Call only after tool/browser disposal, synchronization, drain, publication. */
+   async idle(context: Pick<Context, 'workspaceId' | 'sessionId' | 'session' | 'environment'>): Promise<void> {
+@@ -157,15 +186,44 @@
+     if (!['archived', 'deleted'].includes(input.reason)) throw Error('retained_final_stop_reason_required');
+     const scope = { workspaceId: input.workspaceId, environmentId: input.session.environmentId, sessionId: input.sessionId };
+     if (input.session.id !== scope.sessionId) throw Error('retained_scope_mismatch');
+-    const entry = this.entries.get(key(scope));
++    const scopeKey = key(scope);
++    const existing = this.archives.get(scopeKey);
++    if (existing) return existing;
++    // Seal every bind/factory sharing this lifetime before any await. Stale
++    // closures retain the seal after the scope map is released on completion.
++    const lifetime = this.lifetimes.get(scopeKey) ?? { final: false, binds: 0 };
++    lifetime.final = true;
++    this.lifetimes.set(scopeKey, lifetime);
++    const entry = this.entries.get(scopeKey);
+     const authorized = async () => { if (!['archived', 'deleted'].includes(input.reason)) throw Error('retained_final_stop_reason_required'); };
+-    if (entry) await this.idleEntry(entry, authorized);
+-    // Cold archive never restores or executes the VM, so its configuration is
+-    // intentionally irrelevant; the old manifest's hash/scope is still checked.
+-    const fingerprint = 'sha256:' + createHash('sha256').update('archive-only').digest('hex');
+-    const controller = entry?.controller ?? this.controller(scope, fingerprint, { image: 'archive-only-no-allocation' });
+-    await controller.archive(authorized, new AbortController().signal);
+-    this.entries.delete(key(scope));
++    const expectedCancellation = (error: unknown) => error instanceof Error && error.name === 'AbortError'
++      && entry?.context.signal?.aborted && entry.context.signal.reason === error
++      && [`session_${input.reason}`, 'session_stopped'].includes(error.message);
++    const archive: Promise<void> = (async () => {
++      let startupFailed = false, startupError: unknown;
++      try { await entry?.beginning; } catch (error) { startupFailed = true; startupError = error; }
++      if (entry) {
++        try { await this.idleEntry(entry, authorized); }
++        catch (error) {
++          if (!expectedCancellation(error)) throw error;
++          // A cancelled turn may have started finalizing with its old execution
++          // assertion. Drain it, then stop under this authorized final cleanup.
++          await this.idleEntry(entry, authorized);
++        }
++      }
++      // Final cleanup never restores a VM or changes the old allocation identity.
++      const fingerprint = 'sha256:' + createHash('sha256').update('archive-only').digest('hex');
++      const controller = entry?.controller ?? this.controller(scope, fingerprint, { image: 'archive-only-no-allocation' });
++      await controller.archive(authorized, new AbortController().signal);
++      this.entries.delete(scopeKey);
++      // Ignore only this exact operator-stop cancellation, after owned cleanup.
++      if (startupFailed && !expectedCancellation(startupError)) throw startupError;
++    })().finally(() => {
++      if (this.archives.get(scopeKey) === archive) this.archives.delete(scopeKey);
++      this.releaseLifetime(scopeKey, lifetime);
++    });
++    this.archives.set(scopeKey, archive);
++    await archive;
+   }
+   /** The host calls this only after execution-worker shutdown/drain. It keeps
+    * canonical pointers and native session rows; it does not perform archive. */

@@ -1,0 +1,14 @@
+{
+  "complete": true,
+  "status": "PROBE_FAILED",
+  "authenticated": true,
+  "challenge": false,
+  "account_identity_readback": true,
+  "list_inventory_readback": false,
+  "list_found": false,
+  "exact_86_members_verified": false,
+  "login_attempted": false,
+  "cookies_saved_or_overwritten": false,
+  "list_mutations": 0,
+  "private_identity_report": "/etc/tank/private/x-connection-20261020/probe-ui-navigation-report.json"
+}

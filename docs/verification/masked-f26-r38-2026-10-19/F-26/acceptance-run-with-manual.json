@@ -1,0 +1,12 @@
+{
+  "started_at": "2026-10-19T18:38:48.091018+00:00",
+  "frozen_output": {
+    "path": "docs/verification/masked-f26-r38-2026-10-19/F-26/actual/qa-r38-masked-f26-driver/framework-bundles/bcdb41132adbf027e6e93c777be4a557cabf8a7572d1f2cc67fac11eff666100/outputs.json",
+    "sha256": "117ac10cdab3948618d7096c9aa645ab380e62adaf08a4f7c2102e96c4e706c1"
+  },
+  "scope": "Actual single masked reference first outcome; no normal Runtime or SENT claim",
+  "manual_review": {
+    "path": "docs/verification/masked-f26-r38-2026-10-19/F-26/manual-review.json",
+    "sha256": "0a1c7a6802587a65d33ce4b185ad9333e397b88b0fb2af7eb15605564f650fcc"
+  }
+}

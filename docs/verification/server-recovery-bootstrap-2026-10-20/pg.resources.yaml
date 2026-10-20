@@ -1,0 +1,4 @@
+services:
+  postgres:
+    cpus: '2.0'
+    mem_limit: 2g

@@ -1,0 +1,119 @@
+{
+  "checks": [
+    {
+      "assertion": {
+        "path": [
+          "assessments",
+          "*",
+          "class"
+        ],
+        "in": [
+          "MAJOR",
+          "STRUCTURAL_SHOCK"
+        ]
+      },
+      "passed": false
+    },
+    {
+      "assertion": {
+        "path": [
+          "beneficiary_edges",
+          "*"
+        ],
+        "satisfies": {
+          "when": {
+            "path": [
+              "token_id"
+            ],
+            "equals": "asset-k"
+          },
+          "path": [
+            "capture_class"
+          ],
+          "in": [
+            "INDIRECT",
+            "NARRATIVE_ONLY",
+            "UNKNOWN"
+          ]
+        }
+      },
+      "passed": false
+    },
+    {
+      "assertion": {
+        "path": [
+          "decisions",
+          "*"
+        ],
+        "satisfies": {
+          "when": {
+            "path": [
+              "token_id"
+            ],
+            "equals": "asset-k"
+          },
+          "path": [
+            "thesis_grade"
+          ],
+          "in": [
+            "C",
+            "D"
+          ]
+        }
+      },
+      "passed": false
+    },
+    {
+      "assertion": {
+        "path": [
+          "decisions",
+          "*"
+        ],
+        "satisfies": {
+          "when": {
+            "path": [
+              "token_id"
+            ],
+            "equals": "asset-k"
+          },
+          "any": [
+            {
+              "path": [
+                "action"
+              ],
+              "not_in": [
+                "START",
+                "WATCH_TO_START",
+                "ADD",
+                "HOLD"
+              ]
+            },
+            {
+              "path": [
+                "tactical"
+              ],
+              "equals": true
+            }
+          ]
+        }
+      },
+      "passed": false
+    },
+    {
+      "assertion": {
+        "path": [
+          "beneficiary_edges"
+        ],
+        "some": {
+          "path": [
+            "token_id"
+          ],
+          "equals": "asset-k"
+        }
+      },
+      "passed": false
+    }
+  ],
+  "passed": false,
+  "manual_review_still_required": true
+}

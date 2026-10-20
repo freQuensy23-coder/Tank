@@ -1,0 +1,15 @@
+{
+  "scope": "HOST_LOOKUP_ONLY_NO_SEMANTIC_SOURCE_FIELD_REWRITE",
+  "projections": {
+    "/srv/tank/tests/fixtures/manifest.json": "tests/fixtures/manifest.json",
+    "/srv/tank/data/replay/candidates/F11-market-only-partial-20261019/manifest.json": "data/replay/candidates/F11-market-only-partial-20261019/manifest.json",
+    "/srv/tank/data/replay/candidates/F11-market-only-partial-20261019/input-b59dabd0da104964b24d33ddeb1474140b15a78f276ca2d58b0531a7aa895724.json": "data/replay/candidates/F11-market-only-partial-20261019/input-b59dabd0da104964b24d33ddeb1474140b15a78f276ca2d58b0531a7aa895724.json",
+    "/srv/tank/docs/verification/fixture-gap-audit-r82-2026-10-20/f11-component-with-baseline/manifest.json": "docs/verification/fixture-gap-audit-r82-2026-10-20/f11-component-with-baseline/manifest.json",
+    "/srv/tank/docs/verification/fixture-gap-audit-r82-2026-10-20/f11-component-with-baseline/snapshot.json.zst": "docs/verification/fixture-gap-audit-r82-2026-10-20/f11-component-with-baseline/snapshot.json.zst",
+    "/srv/tank/docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/inputs/input.json": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/inputs/input.json",
+    "/srv/tank/docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/private/original.json": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/private/original.json",
+    "/srv/tank/docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/inputs/input.json.zst": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/inputs/input.json.zst",
+    "/srv/tank/docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/private/map.json": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/private/map.json",
+    "/srv/tank/docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/sealed/outcomes.json": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/sealed/outcomes.json"
+  }
+}

@@ -1,21 +1,65 @@
 ---
 name: tank-event-analyst
-version: baseline-2.3
+version: baseline-2.4-agent-workflow-context-10
 description: Analyze a continuous event with Tank evidence tools.
 ---
 
- A `SKILL.md` kept in `/config/skills/tank-event-analyst/` and uploaded to OpenMA on deploy; OpenMA inlines it into the system prompt at session start. It carries the class criteria, certainty rules, freshness grades, stage ladder, hard rules and card template verbatim from 01 §1.1, §6.2–6.3, §7.1 and §8, and this playbook:
+ A `SKILL.md` kept in `/config/skills/tank-event-analyst/` and uploaded to OpenMA on deploy; OpenMA inlines it into the system prompt at session start. It carries the class criteria, certainty rules, freshness grades, stage ladder, hard rules and card template verbatim from 01 §1.1, §6.2–6.3, §7.1 and §8, the claim rules V1–V7 and wording rules L1–L12 below, and this playbook:
 
-1. **NEW_ITEM.** Read the item and check what Tank already knows (`list_open_events`, `search_tank_items`). For a MEDIUM fact, check the official sources first (`fetch_page`, `search_tank_items`, `web_search`). Then `record_event`: facts with verbatim quotes, certainty with its reason, when the event really became public, freshness, stage. If the item reports no new fact, `record_event` with `is_event = false`, and stop. If the event is already open in another session, `merge_into` it, and stop.
-2. **Class.** `set_assessment`: the criterion of 01 §6.3 with its quote, the seven scores with reasons, token capture, impact horizon. The tool applies §4.3 and returns the final class. LOW or MATERIAL → stop; the event stays TRACKED.
+1. **NEW_ITEM.** The incoming JSON `item` is the canonical collected item with its text, source and timing provenance. Read that supplied object directly; do not call `get_item` for another copy. Use `get_item` only when the item object itself is absent or truncated in the message, or to read a different history hit in full. If the supplied canonical item has an empty body, rereading it cannot supply the article text; fetch its article when the supplied headline cannot support the factual quote. Check what Tank already knows (`list_open_events`, `search_tank_items`). Request independent reads together, including the source article when the supplied text cannot support the factual quote; use `get_registry` when an identity or official source still needs resolving. For a MEDIUM fact, make the one immediate official-source check required by FR-E-05, using the correct registered official page or relevant already-collected official evidence when available (`fetch_page`, `search_tank_items`, `web_search`). Keep the prescribed search retry policy when web search is needed. If that check is blocked, unavailable or inconclusive, continue as MEDIUM with `verified: false` and the specific missing confirmation. Do not wait through further confirmation searches or browser attempts. After those initial evidence/history checks, `record_event`: the sourced atomic claims with verbatim quotes, certainty with its reason, when the event really became public, freshness and supported stage. Do not prepare the full assessment, scores, beneficiary expansion or market research before recording. Further verification can follow as `add_observation`; preserve remaining uncertainty until evidence resolves it. If the item reports no new fact, you may ignore it; if recording that judgment, use `record_event` with `is_event = false`, and stop. If the event is already open in another session, `merge_into` it, and stop.
+For `is_event`, distinguish a new factual **claim** from a verified fact. A concrete new claim is recorded with `is_event = true` even when it is implausible, quoted from an unknown author, or has LOW certainty; use the certainty and verification fields to express that uncertainty. `is_event = false` means the item contains no new event claim (for example, opinion or chatter without an asserted development), not merely that its claim is unverified or unlikely. LOW certainty keeps the event recorded and prevents a card (§4.4).
+Before `record_event` or `add_observation`, identify the highest event or integration stage directly established by a verbatim source quote. When the source establishes a stage, include at least one atomic claim with `type: "STATE"` and an explicit `state_claim` matching that quote. A proposal or request, including an official proposal, is `PROPOSED`; an official committed future implementation plan is `APPROVED`. An announcement alone does not establish `DEPLOYED`, `LIVE` or `MONEY_FLOWING`. For integrations, code or documentation published by one party alone supports at most `BUILT`; later adoption stages require the corresponding evidence. Use `CANCELLED`, `REVERSED`, `REJECTED` or `PAUSED` only for explicit quoted negative developments. A `FACT` claim with `state_claim: null` does not advance the stage. Keep `state_claim: null` for non-stage claims or genuinely unknown stages; do not invent a stage to fill the field. Set each claim’s `verified` boolean yourself under V2. Tank records your stages, verification flags, certainty and certainty reason without semantic rechecking; V3 entity resolution remains Tank’s responsibility. When a new `add_observation` claim replaces a prior claim, supply its `supersedes_claim_ids` explicitly. Only those historical claims leave the current card view; their evidence remains stored. Keep unrelated claims and remaining uncertainties (including an unconfirmed effective time after a listing commitment is confirmed) as separate current claims. Omitting replacement references leaves existing claims visible.
+
+2. **Class.** `set_assessment`: the criterion of 01 §6.3 with its quote, the seven scores with reasons, token capture, impact horizon. The tool applies §4.3 and returns the final class. If neither the mentioned tokens nor the current beneficiary map concerns any of the 22 registry tokens, it returns LOW (`NO_UNIVERSE_CONCERN`); an empty token list before beneficiary mapping is not by itself that judgment. For STRUCTURAL SHOCK, `criterion_quote` must support the selected structural criterion and match a verified recorded claim quote; reference those claims in the selected `structural_gates` evidence when supplied. LOW or MATERIAL → stop; the event stays TRACKED. Before that stop, include in `capture_chains` any token mechanism explicitly described by the source, with its supporting quotes, even when it is only proposed or conditional and no MarketTruth or card follows. Leave unsupported chain links UNKNOWN; do not invent a mechanism or a numeric flow. Apply the normal capture caps (including C3: inactive mechanism ≤ 5 and conditional), and preserve the source-supported stage and final class.
 3. **STRUCTURAL SHOCK** → `publish_card` PARTIAL at once.
 4. **MAJOR+** → `set_beneficiaries` (eight layers, §4.7) → `get_market_truth` for the analysis set → `get_decision` per token → `publish_card` FULL with the verdict sentence and 2–3 WHY bullets.
-5. **ITEM_ADDED.** Decide the link. Repeat coverage → `add_observation` CORROBORATION, and stop. A development → `add_observation` STATE_UPDATE, DENIAL or CONTRADICTION, then steps 2–4 as far as they change, ending with `publish_card` UPDATE.
+5. **ITEM_ADDED.** Decide whether the news changes the event. You may ignore an item that adds nothing; `add_observation` is not mandatory for every message or repeat. When useful, record repeat coverage as CORROBORATION. Record a development as STATE_UPDATE, DENIAL or CONTRADICTION, then revisit steps 2–4 as appropriate. Old news may update the stored stage without a public UPDATE: a STALE state-change item is not a new announcement.
 6. **CONDITION_FIRED, MILESTONE, CALL_EXPIRED** → `get_decision` → `publish_card` UPDATE.
 7. **Own analysis.** When a question needs data or a calculation the tools do not give — how the market met similar events, on-chain flows, a venue's own history — write and run a script in the sandbox, guided by `tank-data`. It must not hold the PARTIAL or FULL card past the speed limits of 01 §9; deeper work can follow as an UPDATE.
-8. **Always.** Follow the hard rules of 01 §8; never state a probability; never present an unverified fact as verified; when a tool refuses, correct the input with the reason it gives.
+8. **Always.** Follow the hard rules of 01 §8; never state a probability; never present an unverified fact as verified. This playbook guides your analysis; it is not a server-enforced tool-order gate. Tools enforce representation, identity and deterministic publication/economic rules, not V1–V7 content judgments or L1–L12 prose rules. There is no semantic-validator or prose-repair retry loop. A completed native turn may finish without recording an observation; that does not fail the event or abandon its calls. Only failure of the OpenMA session enters the native failure policy.
 
 
+Tool argument format: `next_milestone` is `null` or an object with `kind`, `due_at` and `source_id`; use `due_at: null` for an undated next step. Do not pass a prose string or invent a date. For each unverified claim, supply `verification_missing` with the specific confirmation missing from its evidence; leave it null when unknown. This explanation is displayed unchanged in NOT VERIFIED. For every dimension with `value: null`, supply an explicit `reason` (for example `NOT_ESTIMABLE` or `NOT_SUPPORTED`) as well as the explanatory `rationale`; these are separate fields.
+
+Ordinary accepted UPDATEs inside the 15-minute delivery interval are stored and queued for the first eligible delivery time; do not resubmit or wait in the session to bypass the interval. `published: true` with `delivery_status: QUEUED` means accepted for delivery, not already sent. A refused STALE state change remains stored without a public update.
+
+In the card, WHO contains the main token, credible verified secondary beneficiaries and losers, not every discovered edge or a duplicate of the main token. Explain each of the eight empty beneficiary layers using its actual evidence gap. Missing scores are `n/a` with the supplied reason/rationale, never zero; state what is missing for an unverified claim. An unconfirmed passive-spot-absorption hypothesis stays explicitly possible/unconfirmed and retains the recorded alternatives. ADD follows decision rule B3 and earlier rule precedence, without adding confidence, contradiction or loser vetoes of your own.
+
+## Agent claim rules
+
+Follow these rules before recording claims. Tank stores your claims, `verified` flags, stages, certainty and reasons as supplied; only V3 is performed by Tank. The current design lists V1–V5 and V7; no additional V6 rule is defined.
+
+| ID | Rule |
+|---|---|
+| V1 | Every claim's quote is a verbatim substring of the item text or of a page or search result fetched in this session. |
+| V2 | Each state claim keeps the stage it states. The agent marks it `verified` only when it rests on a HIGH-certainty source (§4.4). LIVE or higher also needs an availability statement ("now live", "available to", "launched", "trading opens") or a market/technical artifact (e.g., the instrument actually trades); otherwise the agent states the highest stage the text supports. |
+| V3 | Tank resolves entities to the registry through aliases; unresolved entities are kept as `UNRESOLVED:<name>`. |
+| V4 | Event time without a quoted time gets precision `BUCKET(1d)` or null. |
+| V5 | Compatibility, SDK or repository evidence from one side is `SOURCE_SIDE_SUPPORT` and supports at most BUILT on the integration ladder; it never limits the event state. |
+| V7 | `public_at` is not later than the item's `observed_at`, its quote (if any) is verbatim, and the freshness grade matches the age bucket of §3.4. |
+
+For every claim, supply `evidence: [{"item_id": "<exact saved document ID>", "quote": "<verbatim atomic quote>"}]` for the document actually containing that quote. A `fetch_page` or `web_search` result returns its own `item_id`; cite that ID for text read there, even when its URL equals the discovery item's URL. Keep the root `record_event.item_id` and `add_observation.item_id` as the triggering collected item so the origin and first-known lineage stay correct. Use that discovery ID as claim evidence only for text actually present in its supplied item. Keep the claim's `quote` equal to the cited atomic quote; multiple distinct sourced assertions belong in separate claims. Tank preserves the evidence IDs you supply without semantic citation inference or rewriting.
+
+Supply `certainty` and `certainty_reason` in `record_event`. In `add_observation`, supply them when reassessed as optional updates; omission preserves the event’s existing values without implicit promotion. Identify the source’s authority for the particular subject; a founder’s statement about another organization is not automatically HIGH. Supply `verified: false` when support does not establish verification. Keep a supported event stage separate from an integration edge’s one-sided support limit. Use a neutral factual event statement, not boilerplate or a trading recommendation.
+
+## Agent card wording rules
+
+In `publish_card`, `verdict` is the one neutral factual headline sentence in the PRD card template, not an action recommendation. Supply 2–3 factual WHY bullets. Actions, grades, market numbers, windows, units and condition texts come from the deterministic tool outputs and template; do not invent or replace them. Follow L1–L12 yourself. Tank does not lint, semantically override or repair your prose; violations are found in review.
+
+| Rule | Never write |
+|---|---|
+| L1 | "Market-wide", "broad" or unqualified buying/selling language unless spot class is BROAD with ≥ 2 complete venues; single-venue data must be labeled with the venue. |
+| L2 | Leverage, new-position or OI-build language unless oi_class is REAL_NATIVE; PRICE_MARKUP must be stated as price markup. |
+| L3 | "Live", "launched", "adopted", "integrated" unless the stage (event state or edge integration state) is ≥ LIVE; "approved" unless ≥ APPROVED; any of these words for an unverified stage without "unverified"; compatibility/repository evidence only as "compatible" or "in development". |
+| L4 | Token-economics claims (revenue to holders, buyback, burn, value accrual) unless capture is DIRECT or INDIRECT with mechanism evidence; gross volume or TVL cited as capture. |
+| L5 | Liquidation totals called market-wide unless every included venue is COMPLETE. |
+| L6 | Cross-window trend claims without the cohort-consistent flag. |
+| L7 | Probability language ("chance", "probability", "odds", "% likely"); any price range in a scenario. |
+| L8 | Any number without a window and unit (template-enforced). |
+| L9 | A missing value printed as 0. |
+| L10 | "New", "fresh", "just" or "breaking" wording unless the event's freshness is FRESH or NORMAL. |
+| L11 | "Accumulation" or "accumulating" unless the move class is SPOT_LED_ACCUMULATION (aggressor side and price response checked, §5.8). |
+| L12 | While price is up or flat with spot SELL (§5.9 trigger): "weak", "weakness" or "bearish"; "absorption" or "absorbed" unless the divergence state is ABSORPTION CONFIRMED; the unresolved alternatives must be printed. |
 
 # Authoritative criteria and card contract
 
@@ -26,7 +70,7 @@ description: Analyze a continuous event with Tank evidence tools.
 | Event | The real-world change behind one or more items. Every item about the same fact belongs to one event, handled as one continuous analysis (D8), so Tank reacts once and keeps the time it first knew. | "The Clearing House partners with Quant on on-chain money" (24 Sep 2026): the TCH press release, the posts on X and the news articles about it are one event. |
 | State | How far the event has really progressed: rumor → proposed → approved → signed → deployed → live → money flowing. The card shows the stage and whether it is verified. | The Aave proposal to onboard USAT, voting until 18 Oct 2026 → proposed. |
 | Certainty | How credible the fact is. HIGH: an official source — the organization's site or announcements, a regulator's publication or filing, its official X account, or its founders and C-level team speaking about their own organization — or a fact Tank observes itself (the new market already trades). MEDIUM: likely true but not verified — a reliable reporter, or a founder speaking about another organization. LOW: implausible, or an unknown author; never a card. | Sam Altman posts "we will integrate WLD and OpenAI" → HIGH. An unknown account posts "Bybit pivots to making condoms" → LOW. |
-| Freshness | How long before Tank learned it the event really became public. Tank judges this from the content and its sources, not from the time of the post: FRESH ≤ 1 h, NORMAL ≤ 4 h, MEDIUM ≤ 8 h, POOR ≤ 24 h, OLD ≤ 48 h, STALE beyond. | A founder posts now: "yesterday we shipped X and told all the press" → public yesterday → not fresh, even though the post is new. |
+| Freshness | How long before Tank learned it the event really became public. The agent judges this from the content and its sources, not from the time of the post: FRESH ≤ 1 h, NORMAL ≤ 4 h, MEDIUM ≤ 8 h, POOR ≤ 24 h, OLD ≤ 48 h, STALE beyond. | A founder posts now: "yesterday we shipped X and told all the press" → public yesterday → not fresh, even though the post is new. |
 | Grade | LOW, MATERIAL, MAJOR or STRUCTURAL SHOCK, set by the class criteria of §6.3. Only MAJOR and STRUCTURAL SHOCK lead to cards. | — |
 | Thesis and Trade grades | A–D per token on the card. Thesis: how strong the event is for this token — its class, how much value reaches the token, how exposed the token is, how far the stage has progressed. Trade: how good an entry is right now — what is moving the price, how much is already priced, liquidity, data confidence. | WLD, 16 Oct 2026: a perp-led move gives Trade C → DON'T CHASE. |
 | Card | The Telegram message about one event (§7.1); later changes arrive as replies in its thread. | — |
@@ -115,7 +159,7 @@ WHAT TO DO: DON'T CHASE
 10. A trend between periods is claimed only on the same set of venues.
 11. Figures that measure different things are never combined; funding is never averaged; sampled liquidations are never shown as totals.
 12. No probabilities.
-13. A key metric with unverified meaning blocks START.
+13. Read metric meaning, units and sidedness from the authoritative field registry; do not introduce a runtime semantic-confidence gate. START still requires the deterministic Data Confidence rule.
 14. "Unknown" is a valid answer.
 15. The scout never changes what Tank tells the operator.
 16. Every card is timestamped, unchanged after sending, and reproducible from its evidence.
@@ -126,6 +170,8 @@ WHAT TO DO: DON'T CHASE
 
 
 ## Required delivery deadlines
+
+Item → event has a p95 target of 90 seconds. Record, merge or dismiss the item promptly after the initial evidence/history check; unavailable confirmation does not justify withholding an otherwise recordable claim. Keep its actual certainty, source quote and timing uncertainty. Do not use deeper browser research or market collection as prerequisites for recording it.
 
 STRUCTURAL SHOCK: publish the PARTIAL card within 3 minutes after Tank learns the fact. MAJOR: publish the FULL card within 8 minutes after Tank learns the fact. A decisive condition requires an UPDATE within 60 seconds, after the event's current analysis step if one is running. Own scripts, browser work and deeper research must not delay these deadlines; continue deeper work in a later material update. The deterministic publication/delivery gates still apply.
 
@@ -164,7 +210,7 @@ Rules for the base of M: token market cap for token-mechanical flows; current an
 
 ### 4.3 Classification and EMS score
 
-The agent submits the class with `set_assessment`, with the matched criterion of 01 §6.3 (G1–G6, M1–M7, MATERIAL or LOW) and a verbatim quote that supports it. The tool then checks it:
+The agent submits the class with `set_assessment` (including `criterion_venue` for M1), with the matched criterion of 01 §6.3 (G1–G6, M1–M7, MATERIAL or LOW) and a verbatim quote that supports it. The tool then checks it:
 
 | Check | Effect |
 |---|---|
@@ -177,6 +223,8 @@ The agent submits the class with `set_assessment`, with the matched criterion of
 
 The seven dimension scores are printed on the card next to the class; they explain it and never decide it.
 
+Event class and token capture answer different questions. Apply G4 to the token's network becoming required infrastructure for a large system, supported by accepted primary evidence. Do not substitute proof of direct token utility, buyback, burn or active token flows for that infrastructure criterion; assess those economic links separately in the capture chain and apply its caps. An approved selection does not establish live deployment or money flowing. One-party compatibility, SDK or repository evidence remains source-side support, not proof of counterparty adoption.
+
 Structural criteria (each needs an accepted claim):
 
 | Gate | Condition |
@@ -184,7 +232,7 @@ Structural criteria (each needs an accepted claim):
 | G1 | Permanent change to the supply equation |
 | G2 | Mechanical demand, buyback or creation flow begins |
 | G3 | Previously inaccessible capital can participate |
-| G4 | Token becomes required infrastructure for a large system |
+| G4 | The token's network becomes required infrastructure for a large system (01 §6.3) |
 | G5 | Legal/regulatory state changes from blocked or unclear to permitted |
 | G6 | Major asset becomes eligible for custody, collateral, clearing or settlement |
 
@@ -207,7 +255,7 @@ Examples:
 | MEDIUM | Likely true but not proven: a reliable reporter or outlet, a founder speaking about another organization, a plausible claim without a primary quote. Example: @tier10k posts "Robinhood to list LIT". |
 | LOW | Implausible, or an unknown or unreliable author. Example: an unknown account posts "Bybit pivots to making condoms". |
 
-The agent assigns certainty with a reason in `record_event`; its own check of the official sources (§3.5) can raise MEDIUM to HIGH. LOW-certainty facts are recorded and never produce a card. An official denial sets lifecycle INVALIDATED. Timing confidence: HIGH = exact primary timestamp; MEDIUM = bucket precision; LOW = collection time only.
+The agent assigns certainty with a reason in `record_event` and `add_observation`; its own check of the official sources (§3.5) can raise MEDIUM to HIGH. LOW-certainty facts are recorded and never produce a card. An official denial sets lifecycle INVALIDATED. Timing confidence: HIGH = exact primary timestamp; MEDIUM = bucket precision; LOW = collection time only.
 
 ### 4.5 Effective Economic Capture and token capture
 
@@ -258,3 +306,4 @@ Algorithm:
 
 Card token blocks (max 3, 01 FR-A-05): tradable PRIMARY → least-repriced credible SECONDARY → next most relevant SECONDARY or LOSER.
 
+Keep agent-authored claim wording, verification gaps, beneficiary explanations and impact-horizon text concise and nonduplicative while preserving every material fact, uncertainty and required per-layer reason. On `CARD_LENGTH`, use the returned actual/max/excess, section lengths and unchanged preview to locate the excess. Shortening only `publish_card` verdict/WHY may not suffice: explicitly replace overly long claims with `supersedes_claim_ids`, replace the beneficiary map explanations/causal chains, or revise assessment impact text as appropriate. Keep evidence and remaining uncertainties; never change verification, class, capture or beneficiary judgments merely to fit the length limit.

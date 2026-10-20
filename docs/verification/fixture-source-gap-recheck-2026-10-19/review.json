@@ -1,0 +1,74 @@
+{
+  "source_review": [
+    {
+      "fixture_id": "F-03",
+      "selected_source_raw_sha_verified": true,
+      "future_sidebar_canaries_excluded": [
+        "Plus d'articles",
+        "Derni\u00e8res nouvelles"
+      ],
+      "source_classes": [
+        "SECONDARY"
+      ],
+      "publication_clocks": [
+        "2026-09-24T14:02:26Z"
+      ],
+      "actual_observation_clocks": [
+        "2026-10-19T09:00:28.765584+00:00"
+      ]
+    },
+    {
+      "fixture_id": "F-10",
+      "selected_source_raw_sha_verified": true,
+      "future_sidebar_canaries_excluded": [
+        "KolanHook",
+        "Qubic",
+        "Avalanche Activates Helicon"
+      ],
+      "source_classes": [
+        "PRIMARY",
+        "SECONDARY"
+      ],
+      "publication_clocks": [
+        "2026-09-18T07:00:00Z",
+        "2026-09-17T15:34:54Z"
+      ],
+      "actual_observation_clocks": [
+        "2026-10-18T22:53:29.788972+00:00",
+        "2026-10-19T09:00:31.201874+00:00"
+      ]
+    }
+  ],
+  "source_version_limit": "No immutable historical attestation for the new current dated secondary pages. Selected dated narrative supports retrospective behavior reference; no conversion to primary, no historical full-HTTP tool-call claim.",
+  "F03_unusable_alternative": {
+    "edgex_publication": "2026-09-24T21:16:52Z",
+    "reason": "After fixture minute, excluded; not a fallback source"
+  },
+  "F10_primary_projection_limit": "Current retained Avalanche press page repeats same testing summary twice. Unique exact date+duplicate-summary boundaries preserve both original copies and exclude later related news; first failed nonunique projection preserved.",
+  "F01": "Fresh390-file original fixture corpus inventory has no UNI-symbol market file. Current ReplayMarketReader and compute_market_truth executed at15:03 with explicit absence declaration, UNKNOWN; no market zeros, no exchange-response or universal DB absence claim.",
+  "candidate_failures_preserved": [
+    "source-gap-successor-candidate-20261019-failed-id-range",
+    "source-gap-successor-candidate-20261019-failed-nonunique-primary",
+    "source-gap-successor-candidate-20261019-failed-basis",
+    "all-source-successor-candidate-20261019 (GovInfo old parser pin + missing phase2 dependency)"
+  ],
+  "default_wall_budget": {
+    "old_default": 240,
+    "new_default": 480,
+    "basis": "TDD3.9 FULL card target8min; operational replay harness only",
+    "explicit_override_preserved": true,
+    "lower_helper_and_production_job_timeouts_unchanged": true,
+    "completion_drain_is_not_full_card_generation_latency": true,
+    "phase_update60s_measured_separately": true,
+    "prior_runs_unchanged": true
+  },
+  "tests": {
+    "command": ".venv/bin/pytest -q tests/test_replay.py tests/test_fixture_reference.py -k \"not postgres\" --junitxml=docs/verification/fixture-source-gap-recheck-2026-10-19/replay-focused.xml",
+    "passed": 128,
+    "deselected": 4,
+    "seconds": 21.32
+  },
+  "full_fixture_passed": false,
+  "canonical_adopted": false,
+  "native_model_database_calls": 0
+}

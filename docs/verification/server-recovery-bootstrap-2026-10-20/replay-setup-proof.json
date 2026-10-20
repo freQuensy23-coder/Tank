@@ -1,0 +1,11 @@
+{
+  "passed": true,
+  "scope": "Fresh initially empty tank_replay, normal CLI; no primary history copied",
+  "elapsed_seconds": 30.26,
+  "ledger_count": 35,
+  "archive_absent": true,
+  "read_only_sql_applied": true,
+  "primary_event_count": 1,
+  "replay_event_count": 0,
+  "free_bytes": 10265489408
+}

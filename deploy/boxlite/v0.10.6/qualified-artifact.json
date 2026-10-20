@@ -1,0 +1,85 @@
+{
+  "status": "Matched credential-free KVM boot and output mount controls passed; browser and production adoption pending",
+  "source": {
+    "repository": "https://github.com/boxlite-ai/boxlite.git",
+    "version": "0.10.6",
+    "commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+    "libkrun_commit": "e12b9b3780ffa8df9f3e1797b217d13453479167",
+    "Cargo.lock": "720f5f70fdd48ca15d170d8ba8bf61832378e8615dadfb12a84b55761b571149",
+    "libkrun_Cargo.lock": "353fe6bb081d1cd4b4e24aa4ef323319709543c65b7304e015320a563688d3c2",
+    "gvproxy_go.sum": "84dddcab5d612e04cac72c140477a7eeeb8ec01088f237f1dd0de157d9217c47",
+    "source_tracked_diff": "clean before and after compilation"
+  },
+  "official_runtime": {
+    "url": "https://github.com/boxlite-ai/boxlite/releases/download/v0.10.6/boxlite-runtime-v0.10.6-linux-arm64-gnu.tar.gz",
+    "archive_sha256": "fdf36eec030a6291d0cf321aed02506ea6d339b1b8abfc385b404569b7164f3a",
+    "size": 31760491
+  },
+  "original_files": {
+    "bwrap": "ff5634c3b9eb92135adacf974569ad9160f09898fefebe60cc687a4892ceb2d2",
+    "guest-mke2fs": "e4685269fad901ae2408cd9b01653099d8220e2a6f52015677b44c5d4a15e963",
+    "mke2fs": "2ffb7f930adaa5781aa124766d2686ab68b7a2108e50e9f0f2963b075e58088a",
+    "libkrunfw.so.5": "a47fad6c557420899b7e079c63227b4660c365bbb1c7def0428bf6352786a321",
+    "guest-resize2fs": "47e2659d5577bedc109de8f3427d42a26af1234669c563e50cc099961a9d0aca",
+    "boxlite-shim": "195b86c731425e94c32d7d749ada4ad79a0c910152db0ad7bf672918bb91146b",
+    "boxlite-guest": "90c4fb9b8525aedfd167d715a019a271100b055df4e715288fb1da726e276621",
+    "debugfs": "017e6bccb4c0ae757f961ab4241c8b0796613fef77d6410bf49590616d61cbca"
+  },
+  "files": {
+    "bwrap": "ff5634c3b9eb92135adacf974569ad9160f09898fefebe60cc687a4892ceb2d2",
+    "guest-mke2fs": "e4685269fad901ae2408cd9b01653099d8220e2a6f52015677b44c5d4a15e963",
+    "mke2fs": "2ffb7f930adaa5781aa124766d2686ab68b7a2108e50e9f0f2963b075e58088a",
+    "libkrunfw.so.5": "a47fad6c557420899b7e079c63227b4660c365bbb1c7def0428bf6352786a321",
+    "guest-resize2fs": "47e2659d5577bedc109de8f3427d42a26af1234669c563e50cc099961a9d0aca",
+    "boxlite-shim": "d44e3d54bf227b288bd059ece8c751339c6db0fb62a3d7c2077cd93241421255",
+    "boxlite-guest": "90c4fb9b8525aedfd167d715a019a271100b055df4e715288fb1da726e276621",
+    "debugfs": "017e6bccb4c0ae757f961ab4241c8b0796613fef77d6410bf49590616d61cbca"
+  },
+  "changed_files": [
+    "boxlite-shim"
+  ],
+  "shim_sha256": "d44e3d54bf227b288bd059ece8c751339c6db0fb62a3d7c2077cd93241421255",
+  "build": {
+    "rust": "1.90.0",
+    "base_image": "rust:1.90.0-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f",
+    "debian_snapshot": "20261018T000000Z",
+    "go": "1.25.14",
+    "go_archive_sha256": "9bf234ea70ffec9347fdf6b22ce4add51717d3386a38a441e8c8743fceb5eaee",
+    "GOTOOLCHAIN": "local",
+    "command": "cargo build --locked --release -p boxlite-shim --target aarch64-unknown-linux-gnu",
+    "upstream_features": "Shim crate depends on boxlite with default-features=false and features gvproxy,krun",
+    "flags": "-C target-feature=-crt-static -C relocation-model=static -C link-arg=-Wl,-z,stack-size=2097152 -C link-arg=-Wl,--allow-multiple-definition",
+    "only_build_policy_change": "Upstream +crt-static becomes -crt-static; all other upstream shim flags retained",
+    "elapsed_compile_seconds": 175
+  },
+  "elf": {
+    "architecture": "aarch64",
+    "type": "dynamically linked executable; upstream static relocation model retained",
+    "interpreter": "/lib/ld-linux-aarch64.so.1",
+    "needed": [
+      "libgcc_s.so.1",
+      "libm.so.6",
+      "libc.so.6"
+    ],
+    "RUNPATH": "$ORIGIN",
+    "highest_required_glibc": "2.34",
+    "build_system_glibc": "2.36",
+    "shipped_libc_or_loader": false
+  },
+  "qualification": {
+    "date": "2026-10-18",
+    "owner": "configuration agent",
+    "log": "/tmp/tank-dynamic0106-paired.log",
+    "unmounted_cold_preparation_and_start_seconds": 61.66,
+    "mounted_warm_start_seconds": 3.26,
+    "cpus": 1,
+    "memory_mib": 512,
+    "outer_security": "Docker default seccomp and AppArmor; UID1000:GID1000 plus KVM group994; no added capabilities",
+    "native_security": "jailerEnabled=false and seccompEnabled=false, explicitly matching the existing 0.9 Linux baseline; diagnostic qualification only",
+    "mount_read_write": "passed in both directions",
+    "guest_worker_sha256": "3ca1e4eb97aceb12091be22cf4907354b555607c2d15c615c2386f2c9aafbfd3",
+    "owned_vms": "both stopped",
+    "production_adoption": false
+  },
+  "reproducibility": "Source/dependency/toolchain reproducibility is pinned. No claim of bit-identical rebuilds; record each actual output SHA."
+}

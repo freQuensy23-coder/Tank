@@ -1,0 +1,239 @@
+[
+  {
+    "fixture_id": "F-01",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-02",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_FAILED",
+    "ready_errors": [],
+    "completed_errors": [
+      "required manual clause failed: Move class not SPOT_LED_ACCUMULATION or ORGANIC_MIXED; unlock recorded as potential supply, not a sale; action ≠ START."
+    ],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-03",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_FAILED",
+    "ready_errors": [],
+    "completed_errors": [
+      "assertion failed: {\"path\":[\"decisions\"],\"some\":{\"equals\":\"asset-m\",\"path\":[\"token_id\"]}}",
+      "required manual clause failed: CoW mapped as SECONDARY on LIQUIDITY_EXECUTION with integration state as evidenced; event not dropped; action ∈ {WATCH_TO_START, WAIT}."
+    ],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-04",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_FAILED",
+    "ready_errors": [],
+    "completed_errors": [
+      "assertion failed: {\"path\":[\"decisions\"],\"some\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}",
+      "assertion failed: {\"path\":[\"decisions\",\"*\"],\"satisfies\":{\"not_equals\":\"START\",\"path\":[\"action\"],\"when\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}}",
+      "required manual clause failed: Capture DIRECT only if the mechanism is active and evidenced, otherwise conditional; overhang recorded as UNRESOLVED; START blocked while unresolved; overhang shown in WHAT CHANGES THE ACTION."
+    ],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-05",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_FAILED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-06",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-07",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-08",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-09",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_FAILED",
+    "ready_errors": [],
+    "completed_errors": [
+      "assertion failed: {\"in\":[\"MAJOR\",\"STRUCTURAL_SHOCK\"],\"path\":[\"assessments\",\"*\",\"class\"]}",
+      "assertion failed: {\"path\":[\"beneficiary_edges\",\"*\"],\"satisfies\":{\"in\":[\"INDIRECT\",\"NARRATIVE_ONLY\",\"UNKNOWN\"],\"path\":[\"capture_class\"],\"when\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}}",
+      "assertion failed: {\"path\":[\"decisions\",\"*\"],\"satisfies\":{\"in\":[\"C\",\"D\"],\"path\":[\"thesis_grade\"],\"when\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}}",
+      "assertion failed: {\"path\":[\"decisions\",\"*\"],\"satisfies\":{\"any\":[{\"not_in\":[\"START\",\"WATCH_TO_START\",\"ADD\",\"HOLD\"],\"path\":[\"action\"]},{\"equals\":true,\"path\":[\"tactical\"]}],\"when\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}}",
+      "assertion failed: {\"path\":[\"beneficiary_edges\"],\"some\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}",
+      "required manual clause failed: OI decomposition must actually be shown from retained native/USD/price inputs, or assertion remains unproven if unavailable."
+    ],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-10",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_FAILED",
+    "ready_errors": [],
+    "completed_errors": [
+      "acceptance run: missing file reference and SHA256"
+    ],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-11",
+    "manifest_readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+    "ready_errors": [
+      "input is a placeholder, not a replay packet"
+    ],
+    "completed_errors": [
+      "input is a placeholder, not a replay packet",
+      "acceptance run: missing file reference and SHA256"
+    ],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-12",
+    "manifest_readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+    "ready_errors": [
+      "input is a placeholder, not a replay packet"
+    ],
+    "completed_errors": [
+      "input is a placeholder, not a replay packet",
+      "acceptance run: missing file reference and SHA256"
+    ],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-13",
+    "manifest_readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+    "ready_errors": [
+      "input is a placeholder, not a replay packet"
+    ],
+    "completed_errors": [
+      "input is a placeholder, not a replay packet",
+      "acceptance run: missing file reference and SHA256"
+    ],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-14",
+    "manifest_readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+    "ready_errors": [
+      "input is a placeholder, not a replay packet"
+    ],
+    "completed_errors": [
+      "input is a placeholder, not a replay packet",
+      "acceptance run: missing file reference and SHA256"
+    ],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-15",
+    "manifest_readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+    "ready_errors": [
+      "input is a placeholder, not a replay packet"
+    ],
+    "completed_errors": [
+      "input is a placeholder, not a replay packet",
+      "acceptance run: missing file reference and SHA256"
+    ],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-16",
+    "manifest_readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+    "ready_errors": [
+      "input is a placeholder, not a replay packet"
+    ],
+    "completed_errors": [
+      "input is a placeholder, not a replay packet",
+      "acceptance run: missing file reference and SHA256"
+    ],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-17",
+    "manifest_readiness": "R37_NATIVE_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-18",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-19",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-20",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-21",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-22",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-23",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-24",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-25",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-26",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  },
+  {
+    "fixture_id": "F-27",
+    "manifest_readiness": "EXECUTED_ACCEPTANCE_PASSED",
+    "ready_errors": [],
+    "completed_errors": [],
+    "literal_spec_matches": true
+  }
+]

@@ -9,6 +9,45 @@ from tank.storage import MemoryRepository
 
 
 @pytest.mark.asyncio
+async def test_timeout_reports_suspended_operation_without_exception_values(monkeypatch, caplog):
+    import tank.runtime as module
+
+    repo = MemoryRepository()
+    stop = asyncio.Event()
+    job = await repo.enqueue("RUN_MARKET_TRUTH", {}, "timeout-frames", max_attempts=1)
+    runtime = object.__new__(Runtime)
+    runtime.repo = repo
+
+    async def wait_for_snapshot(payload):
+        private_url = "https://example.test/private-token"
+        try:
+            await asyncio.Event().wait()
+        finally:
+            stop.set()
+        return private_url
+
+    monkeypatch.setitem(module.TIMEOUTS, "RUN_MARKET_TRUTH", 0.01)
+    runtime.handlers = {"RUN_MARKET_TRUTH": wait_for_snapshot}
+    await runtime.worker(stop)
+    assert (await repo.get("ops.jobs", job["job_id"]))["status"] == "FAILED"
+    assert "wait_for_snapshot" in caplog.text
+    assert "TimeoutError" in caplog.text
+    assert "private-token" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_supervisor_rejects_acquisition_settings_before_starting_any_service():
+    from tank.runtime import RuntimeSupervisor
+    from tank.settings import Settings
+
+    factory = AsyncMock()
+    supervisor = RuntimeSupervisor(None, Settings(capture_only=True, _env_file=None), factory=factory)
+    with pytest.raises(ValueError, match="acquisition settings"):
+        await supervisor.run(asyncio.Event(), asyncio.Event())
+    factory.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_worker_survives_bad_job_and_persists_result():
     repo = MemoryRepository()
     stop = asyncio.Event()
@@ -58,8 +97,12 @@ def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tm
     from tank.cli import readiness_checks
     from tank.settings import Settings
 
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    for name in ("sources", "registry", "semantics", "dependency_map", "thresholds", "openma"):
+        (config_dir / (name + ".yaml")).write_text("{}\n")
     settings = Settings(
-        config_dir=__import__("pathlib").Path("config"),
+        config_dir=config_dir,
         x_profile_dir=tmp_path / "profile",
         openma_api_key="sensitive-secret",
         x_list_id="REPLACE_WITH_LIST",
@@ -127,35 +170,6 @@ def test_manual_backup_defaults_to_no_retention_and_forwards_force(monkeypatch):
     assert calls[-1] == {"force": True, "prune": False}
     assert CliRunner().invoke(cli.main, ["backup", "--prune"]).exit_code == 0
     assert calls[-1] == {"force": False, "prune": True}
-
-
-@pytest.mark.asyncio
-async def test_delivery_rate_deferral_requeues_without_ttl_or_attempt_cost():
-    from datetime import timedelta
-
-    from tank.delivery import DeliveryDeferred
-    from tank.util import iso, utcnow
-
-    now = utcnow()
-    repo = MemoryRepository()
-    stop = asyncio.Event()
-    expires = iso(now + timedelta(days=1))
-    due = iso(now + timedelta(minutes=13))
-    job = await repo.enqueue(
-        "DELIVER", {"alert_id": "a", "version": 2}, "a:2", expires_at=expires, max_attempts=5
-    )
-
-    async def deferred(payload):
-        stop.set()
-        raise DeliveryDeferred(due)
-
-    runtime = object.__new__(Runtime)
-    runtime.repo = repo
-    runtime.handlers = {"DELIVER": deferred}
-    await runtime.worker(stop)
-    row = await repo.get("ops.jobs", job["job_id"])
-    assert row["status"] == "QUEUED" and row["run_after"] == due and row["attempts"] == 0
-    assert row["expires_at"] == expires
 
 
 @pytest.mark.asyncio
@@ -443,7 +457,7 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
     config.mkdir()
     backup = tmp_path / "backup"
     backup.mkdir()
-    for name in ("sources", "registry", "semantics", "dependency_map"):
+    for name in ("sources", "registry", "semantics", "dependency_map", "exchange_addresses"):
         (config / f"{name}.yaml").write_text("{}\n")
     thresholds = config / "thresholds.yaml"
     thresholds.write_text("filter_cutoff: 0.4\nrouting_cutoff: 0.5\n")
@@ -503,6 +517,16 @@ async def test_reload_uses_real_immutable_settings_snapshot_and_rejects_malforme
         await until(lambda: len(loads) == 2)
         await asyncio.sleep(0.01)
         assert len(started) == 2 and supervisor.settings.load_config("thresholds")["filter_cutoff"] == 0.8
+        thresholds.write_text("filter_cutoff: 0.8\nrouting_cutoff: 0.5\n")
+        (config / "registry.yaml").write_text(
+            "entities:\n- entity_id: broken\n  aliases: [Valid]\n"
+            "  qualified_aliases:\n  - alias: Generic\n    requires_any: []\n"
+        )
+        reload_event.set()
+        await until(lambda: len(loads) == 3)
+        await asyncio.sleep(0.01)
+        assert len(started) == 2 and not task.done()
+        assert supervisor.settings.load_config("registry") == {}
     finally:
         stop.set()
         await task
@@ -558,6 +582,8 @@ async def test_controlled_generation_timeout_preserves_last_job_attempt(monkeypa
     preserved = await repo.get("ops.jobs", job["job_id"])
     assert preserved["status"] == "QUEUED" and preserved["attempts"] == 0
     assert preserved["interruption_reason"] == "CONTROLLED_GENERATION_STOP"
+    assert preserved["run_after"] == preserved["interrupted_at"]
+    assert preserved["run_after_prec"] == preserved["interrupted_at_prec"] == "COLLECTION_ONLY"
 
 
 def test_doctor_only_checks_fake_subscription_auth_presence_and_internal_key(monkeypatch, tmp_path):
@@ -705,20 +731,26 @@ async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_valida
     notices = await repo.list("out.ops_notices")
     assert len(notices) == 2 and all(row["kind"] == "DELIVERY_FAILED" for row in notices)
     assert len(await repo.list("ops.jobs", filters={"status": "QUEUED"})) == 2
+    for status in ("FAILED", "EXPIRED"):
+        for job in await repo.list("ops.jobs", filters={"type": "DELIVER", "status": status}):
+            assert job["delivery_failure_recorded_at_prec"] == "COLLECTION_ONLY"
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_status", ["PARTIAL", "FAILED"])
-async def test_real_capture_producer_truth_worker_defers_then_uses_terminal_partial(
-    tmp_path, terminal_status
+async def test_real_capture_first_truth_uses_bounded_incomplete_then_terminal_history(
+    tmp_path, terminal_status, monkeypatch
 ):
     from datetime import timedelta
 
     import httpx
 
+    import tank.runtime as runtime_module
     from tank.analysis.truth import MarketTruthService
     from tank.market.service import MarketService
     from tank.util import iso, utcnow
+
+    monkeypatch.setattr(runtime_module, "CAPTURE_WAIT_S", 0.02)
 
     class CaptureRepository(MemoryRepository):
         def __init__(self):
@@ -726,9 +758,10 @@ async def test_real_capture_producer_truth_worker_defers_then_uses_terminal_part
             self.started = asyncio.Event()
             self.release = asyncio.Event()
 
-        async def put(self, collection, key, row, **kwargs):
-            result = await super().put(collection, key, row, **kwargs)
-            if collection == "mkt.backfill_runs" and row["status"] == "RUNNING":
+        async def put_market_batch(self, collection, rows, **kwargs):
+            rows = list(rows)
+            result = await super().put_market_batch(collection, rows, **kwargs)
+            if collection == "mkt.backfill_runs" and any(row["status"] == "RUNNING" for row in rows):
                 self.started.set()
                 await self.release.wait()
                 if terminal_status == "FAILED":
@@ -775,22 +808,27 @@ async def test_real_capture_producer_truth_worker_defers_then_uses_terminal_part
         await asyncio.wait_for(repo.started.wait(), 1)
         job = await repo.enqueue(
             "RUN_MARKET_TRUTH",
-            {"event_id": "e", "token_id": "T", "cutoff": iso(now)},
+            {"event_id": "e", "token_id": "T", "cutoff": iso(now - timedelta(minutes=1))},
             "truth",
             max_attempts=2,
         )
         stop = asyncio.Event()
         worker = asyncio.create_task(runtime.worker(stop))
         try:
-            async with asyncio.timeout(2):
-                while True:
-                    row = await repo.get("ops.jobs", job["job_id"])
-                    if row.get("last_deferred_reason") == "PendingBackfill":
-                        break
-                    await asyncio.sleep(0.001)
-            assert row["attempts"] == 0 and row["expires_at"] == job["expires_at"]
-            truth.assess.assert_not_awaited()
-            # A different anchor's completed request must not release this dependency.
+            async with asyncio.timeout(3):
+                while (await repo.get("ops.jobs", job["job_id"]))["status"] != "DONE":
+                    await asyncio.sleep(0.01)
+            first = await repo.get("ops.jobs", job["job_id"])
+            assert first["attempts"] == 1
+            assert first["result"]["data_confidence"]["class"] == "LOW"
+            assert first["result"]["detail"]["capture_status"]["status"] == "INCOMPLETE"
+            assert (
+                first["result"]["detail"]["capture_status"]["reason"] == "BOUNDED_PREREQUISITE_WAIT_EXPIRED"
+            )
+            assert first["result"]["detail"]["capture_status"]["bounded_wait_s"] >= 0.02
+            assert not repo.release.is_set()
+            truth.assess.assert_awaited_once()
+            # Another anchor must not change this event's actual pending status.
             await repo.put(
                 "mkt.backfill_runs",
                 "different",
@@ -803,19 +841,381 @@ async def test_real_capture_producer_truth_worker_defers_then_uses_terminal_part
                     "status": "COMPLETE",
                 },
             )
-            await asyncio.sleep(0.02)
-            truth.assess.assert_not_awaited()
+            assert (await market.capture_readiness("e", "T", anchor=anchor))["status"] == "RUNNING"
             repo.release.set()
             async with asyncio.timeout(3):
-                while (await repo.get("ops.jobs", job["job_id"]))["status"] != "DONE":
+                while (await market.capture_readiness("e", "T", anchor=anchor))["status"] != terminal_status:
                     await asyncio.sleep(0.01)
-            done = await repo.get("ops.jobs", job["job_id"])
-            assert done["attempts"] == 1 and done["result"]["token_id"] == "T"
-            assert (await market.capture_readiness("e", "T", anchor=anchor))["status"] == terminal_status
+            next_job = await repo.enqueue(
+                "RUN_MARKET_TRUTH",
+                {"event_id": "e", "token_id": "T", "cutoff": iso(now)},
+                "truth-after-capture",
+                max_attempts=2,
+            )
+            async with asyncio.timeout(3):
+                while (await repo.get("ops.jobs", next_job["job_id"]))["status"] != "DONE":
+                    await asyncio.sleep(0.01)
+            done = await repo.get("ops.jobs", next_job["job_id"])
             assert done["result"]["data_confidence"]["class"] == "LOW"
             assert done["result"]["detail"]["capture_status"]["status"] == terminal_status
+            assert (await repo.get("ops.jobs", job["job_id"]))["result"] == first["result"]
         finally:
             stop.set()
             repo.release.set()
             await worker
             await market.close()
+
+
+@pytest.fixture
+async def transport_database(backend):
+    """Keep durable worker claims independent from every other test's queue."""
+    if backend == "memory":
+        yield None
+        return
+    import os
+    import uuid
+
+    from psycopg import AsyncConnection, sql
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
+    source = os.getenv("TANK_TEST_DATABASE_URL")
+    if not source:
+        pytest.skip("Requires isolated PostgreSQL with CREATE DATABASE permission")
+    admin = await AsyncConnection.connect(source, autocommit=True)
+    name = "tank_transport_" + uuid.uuid4().hex
+    created = False
+    try:
+        await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        created = True
+        parameters = conninfo_to_dict(source)
+        parameters["dbname"] = name
+        yield make_conninfo(**parameters)
+    finally:
+        try:
+            if created:
+                await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
+        finally:
+            await admin.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["memory", "postgres"])
+async def test_delivery_order_wait_requeues_without_spending_network_attempts(
+    monkeypatch, backend, transport_database
+):
+    from datetime import timedelta
+
+    import httpx
+
+    from tank.delivery import DeliveryService
+    from tank.storage import PostgresRepository
+    from tank.util import iso, new_id, parse_time, sha256, utcnow
+
+    database_url = transport_database
+    repo = PostgresRepository(database_url) if backend == "postgres" else MemoryRepository()
+    await repo.open()
+    if backend == "postgres":
+        await repo.migrate()
+    base = utcnow() - timedelta(hours=1)
+    clock = [base + timedelta(minutes=30)]
+    for module in ("tank.util", "tank.storage", "tank.delivery", "tank.runtime"):
+        monkeypatch.setattr(module + ".utcnow", lambda: clock[0])
+    aid = new_id("alert")
+    eid = new_id("event")
+    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    sent_requests = []
+
+    def send(request):
+        sent_requests.append(request)
+        if len(sent_requests) == 1:
+            return httpx.Response(503, json={"ok": False})
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 43}})
+
+    try:
+        await repo.put(
+            "evt.events",
+            eid,
+            {
+                "event_id": eid,
+                "statement": "Synthetic accepted event",
+                "theme_tags": [],
+                "tokens_mentioned": [],
+                "public_at": iso(base),
+                "public_at_prec": "EXACT",
+                "public_at_basis": "Synthetic fixture timestamp",
+                "known_to_us_at": iso(base),
+                "freshness": "FRESH",
+                "event_state": "APPROVED",
+                "state_verified": True,
+                "certainty": "HIGH",
+                "timing_confidence": "HIGH",
+                "best_source_class": "PRIMARY",
+                "lifecycle": "MONITORING",
+            },
+        )
+        digest = sha256({"fixture": aid})
+        await repo.put(
+            "out.evidence_bundles",
+            digest,
+            {"bundle_id": "EVB-" + digest, "sha256": digest, "payload": {"fixture": aid}},
+            immutable=True,
+        )
+        for version in (1, 2, 3):
+            await repo.put(
+                "out.alerts",
+                f"{aid}:{version}",
+                {
+                    "alert_id": aid,
+                    "version": version,
+                    "event_id": eid,
+                    "kind": "FULL" if version == 1 else "UPDATE",
+                    "card_text": f"Immutable accepted version {version}",
+                    "decisions": [],
+                    "card_struct": {"event": {"thresholds": {"update_rate_limit_s": 900}}},
+                    "evidence_bundle_id": digest,
+                    "config_version": "fixture",
+                    "code_version": "fixture",
+                    "delivery_immediate": False,
+                    "generated_at": iso(base + timedelta(minutes=version)),
+                    "delivery_not_before": iso(base + timedelta(minutes=(version - 1) * 15)),
+                },
+                immutable=True,
+            )
+        await repo.put(
+            "out.deliveries",
+            new_id("delivery"),
+            {
+                "alert_id": aid,
+                "version": 1,
+                "channel": "telegram:alerts",
+                "status": "SENT",
+                "message_ref": "42",
+                "attempt": 1,
+                "at": iso(base),
+            },
+            immutable=True,
+        )
+        older = await repo.enqueue(
+            "DELIVER",
+            {"alert_id": aid, "version": 2},
+            f"{aid}:2",
+            run_after=iso(base + timedelta(minutes=15)),
+            max_attempts=5,
+        )
+        claimed_older = await repo.claim_job()
+        assert claimed_older["job_id"] == older["job_id"]
+        current = await repo.enqueue(
+            "DELIVER", {"alert_id": aid, "version": 3}, f"{aid}:3", run_after=iso(clock[0]), max_attempts=5
+        )
+        original_expiry = current["expires_at"]
+        async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+            delivery = DeliveryService(repo, settings, http=http)
+
+            async def run_one():
+                stop = asyncio.Event()
+                runtime = object.__new__(Runtime)
+                runtime.repo = repo
+                runtime.delivery = delivery
+
+                async def handle(payload):
+                    try:
+                        return await delivery.deliver(payload)
+                    finally:
+                        stop.set()
+
+                runtime.handlers = {"DELIVER": handle}
+                await asyncio.wait_for(runtime.worker(stop), 3)
+
+            # Another worker owns the earlier network send. Repeated scheduling
+            # waits are not five failed HTTP attempts or a terminal queue error.
+            for _ in range(7):
+                await run_one()
+                postponed = await repo.get("ops.jobs", current["job_id"])
+                assert postponed["status"] == "QUEUED" and postponed["attempts"] == 0
+                assert postponed["expires_at"] == original_expiry
+                assert postponed["last_error"] is None
+                clock[0] = parse_time(postponed["run_after"])
+            assert not sent_requests
+            assert not await repo.list("out.deliveries", filters={"alert_id": aid, "version": 3})
+            # An explicit terminal outcome of the older send cannot hold the
+            # remaining accepted versions forever. Preserve that outcome.
+            await repo.put(
+                "out.deliveries",
+                "terminal-" + aid,
+                {
+                    "alert_id": aid,
+                    "version": 2,
+                    "channel": "telegram:alerts",
+                    "status": "FAILED",
+                    "terminal": True,
+                    "attempt": 5,
+                    "at": iso(clock[0]),
+                },
+                immutable=True,
+            )
+            old_job = await repo.get("ops.jobs", older["job_id"])
+            await repo.put("ops.jobs", older["job_id"], {**old_job, "status": "FAILED", "attempts": 5})
+            await run_one()
+            failed_http = await repo.get("ops.jobs", current["job_id"])
+            assert failed_http["status"] == "QUEUED" and failed_http["attempts"] == 1
+            assert len(sent_requests) == 1
+            clock[0] = parse_time(failed_http["run_after"])
+            await run_one()
+            finished = await repo.get("ops.jobs", current["job_id"])
+            assert finished["status"] == "DONE" and finished["attempts"] == 2
+            assert finished["expires_at"] == original_expiry
+            assert len(sent_requests) == 2
+            await delivery.deliver(current["payload"])
+            assert len(sent_requests) == 2
+            ledger = await repo.list("out.deliveries", filters={"alert_id": aid, "version": 3})
+            assert [row["status"] for row in ledger] == ["GENERATED", "FAILED", "GENERATED", "SENT"]
+            assert (await repo.get("out.deliveries", "terminal-" + aid))["terminal"]
+    finally:
+        await repo.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["memory", "postgres"])
+@pytest.mark.parametrize("lock_kind", ["event", "delivery"])
+async def test_contended_delivery_lock_is_scheduling_then_sends_once(
+    monkeypatch, backend, lock_kind, transport_database
+):
+    from datetime import timedelta
+
+    import httpx
+
+    from tank.delivery import DeliveryService
+    from tank.runtime import TIMEOUTS
+    from tank.storage import PostgresRepository
+    from tank.util import iso, new_id, parse_time, sha256, utcnow
+
+    database_url = transport_database
+    repo = PostgresRepository(database_url) if backend == "postgres" else MemoryRepository()
+    await repo.open()
+    if backend == "postgres":
+        await repo.migrate()
+    aid, eid = new_id("alert"), new_id("event")
+    now = utcnow()
+    held, release, acquiring = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    key = "event:" + eid if lock_kind == "event" else f"deliver:{aid}:1:telegram:alerts"
+    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    requests = []
+
+    async def holder():
+        async with repo.lock(key):
+            held.set()
+            await release.wait()
+
+    holder_task = waiter = None
+    try:
+        await repo.put(
+            "evt.events",
+            eid,
+            {
+                "event_id": eid,
+                "statement": "Synthetic accepted event",
+                "theme_tags": [],
+                "public_at": iso(now),
+                "public_at_prec": "EXACT",
+                "public_at_basis": "Synthetic fixture",
+                "known_to_us_at": iso(now),
+                "freshness": "FRESH",
+                "event_state": "APPROVED",
+                "state_verified": True,
+                "certainty": "HIGH",
+                "timing_confidence": "HIGH",
+                "best_source_class": "PRIMARY",
+                "lifecycle": "MONITORING",
+            },
+        )
+        digest = sha256({"fixture": aid})
+        await repo.put(
+            "out.evidence_bundles",
+            digest,
+            {"bundle_id": "EVB-" + digest, "sha256": digest, "payload": {"fixture": aid}},
+            immutable=True,
+        )
+        alert = {
+            "alert_id": aid,
+            "version": 1,
+            "event_id": eid,
+            "kind": "FULL",
+            "generated_at": iso(now),
+            "card_text": "Accepted immutable snapshot",
+            "card_struct": {"event": {}},
+            "evidence_bundle_id": digest,
+            "decisions": [],
+            "config_version": "fixture",
+            "code_version": "fixture",
+        }
+        await repo.put("out.alerts", aid + ":1", alert, immutable=True)
+        job = await repo.enqueue("DELIVER", {"alert_id": aid, "version": 1}, aid + ":1", max_attempts=1)
+        holder_task = asyncio.create_task(holder())
+        await asyncio.wait_for(held.wait(), 2)
+
+        def transport(request):
+            requests.append(request)
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(transport), timeout=8) as http:
+            delivery = DeliveryService(repo, settings, http=http)
+            original_enter = delivery._enter_delivery_lock
+
+            async def observed_enter(stack, target):
+                if target == key:
+                    acquiring.set()
+                return await original_enter(stack, target)
+
+            monkeypatch.setattr(delivery, "_enter_delivery_lock", observed_enter)
+            # Cancellation during a blocked PG advisory acquire must roll back
+            # and return its borrowed connection; the holder remains untouched.
+            waiter = asyncio.create_task(delivery.deliver(job["payload"]))
+            await asyncio.wait_for(acquiring.wait(), 2)
+            await asyncio.sleep(0.01)
+            waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await waiter
+            assert not requests and not await repo.list("out.deliveries", filters={"alert_id": aid})
+
+            async def run_one():
+                stop = asyncio.Event()
+                runtime = object.__new__(Runtime)
+                runtime.repo, runtime.delivery = repo, delivery
+
+                async def handle(payload):
+                    try:
+                        return await delivery.deliver(payload)
+                    finally:
+                        stop.set()
+
+                runtime.handlers = {"DELIVER": handle}
+                await asyncio.wait_for(runtime.worker(stop), TIMEOUTS["DELIVER"] + 2)
+
+            assert TIMEOUTS["DELIVER"] == 10 and http.timeout.read == 8
+            await run_one()
+            queued = await repo.get("ops.jobs", job["job_id"])
+            assert queued["status"] == "QUEUED" and queued["attempts"] == 0
+            assert queued["expires_at"] == job["expires_at"]
+            assert queued["last_error"] is None
+            assert not requests and not await repo.list("out.deliveries", filters={"alert_id": aid})
+            release.set()
+            await asyncio.wait_for(holder_task, 2)
+            # A fresh connection can immediately acquire both locks after the
+            # cancelled waiter and timed acquire clean up their transactions.
+            async with repo.lock("event:" + eid), repo.lock(f"deliver:{aid}:1:telegram:alerts"):
+                assert await repo.get("out.alerts", aid + ":1") == alert
+            await asyncio.sleep(max(0, (parse_time(queued["run_after"]) - utcnow()).total_seconds()) + 0.02)
+            await run_one()
+            done = await repo.get("ops.jobs", job["job_id"])
+            assert done["status"] == "DONE" and done["attempts"] == 1
+            assert len(requests) == 1
+            ledger = await repo.list("out.deliveries", filters={"alert_id": aid})
+            assert sorted(row["status"] for row in ledger) == ["GENERATED", "SENT"]
+    finally:
+        release.set()
+        if waiter is not None and not waiter.done():
+            waiter.cancel()
+        await asyncio.gather(
+            *(task for task in (waiter, holder_task) if task is not None), return_exceptions=True
+        )
+        await repo.close()

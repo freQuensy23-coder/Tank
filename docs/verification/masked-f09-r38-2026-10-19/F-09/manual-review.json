@@ -1,0 +1,28 @@
+{
+  "input_sha256": "dcafb3fafff45084469966f1fc0406a49a947f7cf528eb18eff4d8b3777c723f",
+  "frozen_output_sha256": "9c043a09ced18a6873d2bf1f9218cd81a10b381e80e02f1259ca26244a046556",
+  "checks": [
+    {
+      "requirement": "OI decomposition must actually be shown from retained native/USD/price inputs, or assertion remains unproven if unavailable.",
+      "passed": false,
+      "reason": "No Market Truth was requested or emitted after the agent classified the sector relief LOW/NO_UNIVERSE_TOKEN. Required actual native/USD/price OI decomposition is unproven.",
+      "evidence": [
+        {
+          "path": "docs/verification/masked-f09-r38-2026-10-19/F-09/actual/qa-r38-masked-f09-driver/framework-bundles/dcafb3fafff45084469966f1fc0406a49a947f7cf528eb18eff4d8b3777c723f/outputs.json",
+          "sha256": "9c043a09ced18a6873d2bf1f9218cd81a10b381e80e02f1259ca26244a046556"
+        }
+      ]
+    },
+    {
+      "requirement": "No published leverage/new-position claim may be inferred from USD OI alone (L2); examine published card and actual causal inputs, including negation.",
+      "passed": true,
+      "reason": "No card was published, so no published leverage or new-position claim was inferred from USD OI. This does not repair the missing decomposition or failed class/beneficiary predicates.",
+      "evidence": [
+        {
+          "path": "docs/verification/masked-f09-r38-2026-10-19/F-09/actual/qa-r38-masked-f09-driver/framework-bundles/dcafb3fafff45084469966f1fc0406a49a947f7cf528eb18eff4d8b3777c723f/outputs.json",
+          "sha256": "9c043a09ced18a6873d2bf1f9218cd81a10b381e80e02f1259ca26244a046556"
+        }
+      ]
+    }
+  ]
+}

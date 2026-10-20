@@ -1,0 +1,26 @@
+{
+  "exit_code": 0,
+  "elapsed_seconds": 9.047547535999911,
+  "abort_reason": null,
+  "samples": [
+    {
+      "epoch_ms": 1792511182548,
+      "mem_available_bytes": 8068419584,
+      "disk_available_bytes": 11206066176
+    },
+    {
+      "epoch_ms": 1792511185551,
+      "mem_available_bytes": 7760478208,
+      "disk_available_bytes": 11186921472
+    },
+    {
+      "epoch_ms": 1792511188554,
+      "mem_available_bytes": 7243132928,
+      "disk_available_bytes": 11185401856
+    }
+  ],
+  "owned_container_absent": true,
+  "source_state_overwritten": false,
+  "login_attempted": false,
+  "full_runtime_started": false
+}

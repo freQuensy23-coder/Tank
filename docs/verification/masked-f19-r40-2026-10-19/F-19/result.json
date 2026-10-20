@@ -1,0 +1,73 @@
+{
+  "fixture_id": "F-19",
+  "code_version": "dbf5e66bcddd269f578eff6090eb45c03d4cfced825ca0092c9e770070e8cd3c",
+  "config_version": "58daf19e9ed36d477dca6ff543523fd5b7b6cfed-dirty.03dcbed01ca0df322be63eff1e68a911f16af300161c605f08e82a547e7cccf8",
+  "cli_exit_code": 0,
+  "elapsed_seconds": 51.50028,
+  "framework_status": "COMPLETED",
+  "source_outcomes": [
+    {
+      "item_id": "ITM-01M58FWP5T47DP6ZW7GJK5D7W3",
+      "source_id": "S03",
+      "extraction_status": "DONE"
+    }
+  ],
+  "turn_outcomes": [
+    {
+      "turn_status": "DONE",
+      "retry_count": 0,
+      "failure": null
+    }
+  ],
+  "cards": [],
+  "tool_counts": {
+    "get_item": 1,
+    "search_tank_items": 1,
+    "set_assessment": 2,
+    "record_event": 1,
+    "list_open_events": 1
+  },
+  "tool_refusals": [
+    {
+      "tool": "set_assessment",
+      "status": "REFUSED",
+      "result": {
+        "ok": false,
+        "error": {
+          "type": "ValueError",
+          "reason": "Missing score requires reason",
+          "category": "VALIDATION"
+        }
+      }
+    }
+  ],
+  "native_errors": [],
+  "failed_attempts": [
+    null
+  ],
+  "delivery": "NOT_RUN",
+  "exports_complete": true,
+  "large_inputs_retained_losslessly": [
+    {
+      "path": "qa-r40-masked-f19-driver/framework-bundles/2f843edb5a4dd57be34b97b233324de47303e3e9cc34a813f91e062f5ae9e4d5/inputs.json",
+      "bytes": 211677,
+      "sha256": "c3be120578fb12156b211a6af331cc18a626d2e4daf9b352dd649f3cbef40f06",
+      "retained": "losslessharvestarchive+canonicalbundle+hostpreparedcompressedpacket"
+    }
+  ],
+  "frozen_database": "tank_replay_r40_masked_f19_completed_20261019",
+  "database_oid": 1284963,
+  "native_cleanup": {
+    "catalog_empty": true,
+    "qa_healthy": true,
+    "no_active_replay_connections": true
+  },
+  "guard_errors": [],
+  "acceptance_scope": "masked_F19_first_outcome;sealed_evaluator_separate;not_normalRuntime_or_SENT",
+  "postcase_finalization_recovery": {
+    "original_assertion": "pg_stat_activity count was1 after completed harvest; retained sql log",
+    "fresh_activity_count": 0,
+    "no_model_rerun": true,
+    "elapsed_measurement": "UTC gateway lifecycle seconds; original runner monotonic value unavailable after diagnostic assertion"
+  }
+}

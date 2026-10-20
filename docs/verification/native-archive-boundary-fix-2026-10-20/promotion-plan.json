@@ -1,0 +1,25 @@
+{
+  "status": "PREPARED_ISOLATED_NOT_APPLIED_TO_FROZEN_MAIN",
+  "asset_replacements": {
+    "deploy/openma_continuation/manifest.json": "7a097c0dbc976844ba9cdaa320e68f63fc2fad17ae87d91809ef4f11d10bc886",
+    "deploy/openma_continuation/source/packages/control-plane-node/src/lib/node-managed-session-runtime.ts": "87291a579358a0043d93a54a6bd8684bea6eb75ba0364ae7e8d986217333368f",
+    "deploy/openma_continuation/source-guards.json": "d22318efb880660d78f940dade3f5a7aaf92da8558c59376db5271d4dd4a9fbd",
+    "deploy/openma_lifecycle/node-lifecycle.ts": "118ec500c1ccc1f32ccdee27b12231d3225576037b480713410915cac9ee3377"
+  },
+  "existing_stage_count": 8,
+  "new_runtime_stage_count": 0,
+  "fresh_install": "The normal retained-lifecycle and continuation stages consume these assets. Normal finalization uses fresh controller/guest identity with no compatibility exception and no architecture registration.",
+  "existing_allocation_upgrade": {
+    "entrypoint": "deploy/prepare_openma_deployment.py:sandbox_identity",
+    "current_policy": "queue-only normalized source delta; correctly rejects isolated archive host delta",
+    "proposed_policy": "An additional versioned exact host-only transition descriptor verifies both reviewed before/after pairs, same complete tracked file set, all other source hashes unchanged, upstream/native hashes unchanged, and recursively validates prior controller evidence. No broad filename exemption.",
+    "qualification_required": "Old da8 native allocation \u2192 candidate fresh process exact ID/workspace/browser/profile/per-execution env rotation, concurrent idle+duplicate archive, exact removal, no models/network/public API history claimed. Bind actual native receipt hash after approved run.",
+    "preserved_guest_identity": "d1d3eb4031e45f848c0b7f44c41029a53e3e955b2e6301ec44bbce678d5957f9",
+    "qualification": "NOT_RUN"
+  },
+  "pending_before_main_apply": [
+    "Independent source re-review",
+    "Coordinated native qualification window after r82",
+    "Root architecture review and promotion GO"
+  ]
+}

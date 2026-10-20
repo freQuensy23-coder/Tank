@@ -1,0 +1,139 @@
+.F                                                                       [100%]
+=================================== FAILURES ===================================
+_ test_live_update_survives_restart_and_delivers_at_boundary_with_retry[postgres] _
+
+service = <tank.event_tools.EventToolService object at 0x10bd46600>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10bc8d790>
+backend = 'postgres'
+
+    @pytest.mark.parametrize("backend", ["memory", "postgres"])
+    async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
+        service, monkeypatch, backend
+    ):
+        """Exercise real publication, immutable storage, durable queue and transport ledger."""
+        import copy
+        import json
+        import os
+    
+        import httpx
+    
+        from tank.delivery import DeliveryError, DeliveryService
+        from tank.storage import PostgresRepository
+        from tank.util import new_id, parse_time
+    
+        database_url = os.getenv("TANK_TEST_DATABASE_URL")
+        if backend == "postgres":
+            if not database_url:
+                pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
+            service.repo = PostgresRepository(database_url)
+            await service.repo.open()
+            await service.repo.migrate()
+        repo = service.repo
+        # PostgreSQL's queue uses its actual clock. The simulated due boundary is
+        # just before that clock so the due worker can claim without changing jobs.
+        base = utcnow() - timedelta(minutes=15, seconds=3)
+        clock = [base]
+        for module in ("tank.util", "tank.event_tools", "tank.analysis.cards", "tank.delivery", "tank.storage"):
+            monkeypatch.setattr(module + ".utcnow", lambda: clock[0])
+        eid = new_id("event")
+        token = "world:WLD"
+        ems = eid + "-ems"
+        decision = complete_decision_fixture(eid + "-wait", eid, token, iso(base), eid + "-truth")
+        assert decision["action"] == "WAIT"
+        for table, key, value in [
+            (
+                "evt.events",
+                eid,
+                complete_event_fixture(
+                    eid, current_ems_id=ems, event_state="APPROVED", freshness="FRESH", known_to_us_at=iso(base)
+                ),
+            ),
+            ("evt.ems_assessments", ems, complete_assessment_fixture(ems, eid)),
+            ("evt.beneficiary_maps", eid + ":1", {"event_id": eid, "map_version": 1, "analysis_set": [token]}),
+            (
+                "evt.beneficiary_edges",
+                eid + "-edge",
+                {
+                    "edge_id": eid + "-edge",
+                    "event_id": eid,
+                    "map_version": 1,
+                    "token_id": token,
+                    "role": "PRIMARY",
+                    "tradable": True,
+                    "credible": True,
+                    "exposure_score": 8,
+                },
+            ),
+            ("ana.market_truth", eid + "-truth", complete_truth_fixture(eid + "-truth", eid, token, iso(base))),
+            ("ana.decisions", decision["dec_id"], decision),
+        ]:
+            await repo.put(table, key, value)
+        args = {
+            "event_id": eid,
+            "kind": "FULL",
+            "verdict": "Access approved",
+            "why": ["Official approval", "Defined access"],
+        }
+        requests = []
+        reject_next = [False]
+    
+        def telegram(request):
+            requests.append(json.loads(request.content))
+            if reject_next[0]:
+                reject_next[0] = False
+                return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 20}})
+            return httpx.Response(
+                200, json={"ok": True, "result": {"message_id": 42 if len(requests) == 1 else 43}}
+            )
+    
+        service.settings.telegram_token = "fixture"
+        service.settings.telegram_alerts_chat = "1"
+        service.settings.telegram_ops_chat = "2"
+        try:
+            async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+                original = await service.dispatch("publish_card", args, {})
+                first_job = await repo.claim_job()
+                assert first_job["payload"]["alert_id"] == original["alert_id"]
+                await DeliveryService(repo, service.settings, http=http).deliver(first_job["payload"])
+                await repo.finish_job(first_job["job_id"])
+                assert len(requests) == 1
+                clock[0] = base + timedelta(minutes=5)
+                event = await repo.get("evt.events", eid)
+                await repo.put("evt.events", eid, {**event, "event_state": "LIVE", "lifecycle": "ANALYZING"})
+                args.update(kind="UPDATE", verdict="Access is now live")
+                accepted = await service.dispatch("publish_card", args, {})
+                assert accepted["published"] and accepted["reason"] == "QUEUED_RATE_LIMIT"
+                assert parse_time(accepted["delivery_not_before"]) == base + timedelta(minutes=15)
+                frozen = copy.deepcopy(await repo.get("out.alerts", original["alert_id"] + ":2"))
+                repeated = await service.dispatch("publish_card", args, {})
+                assert repeated["version"] == 2 and repeated["reason"] == "IDENTICAL_PENDING"
+                assert len(await repo.list("out.alerts", filters={"event_id": eid})) == 2
+                update_jobs = await repo.list(
+                    "ops.jobs",
+                    filters={"type": "DELIVER", "idem_key": original["alert_id"] + ":2:telegram:alerts"},
+                )
+                assert len(update_jobs) == 1
+                assert update_jobs[0]["run_after"] == accepted["delivery_not_before"]
+                with pytest.raises(DeliveryError):
+                    await DeliveryService(repo, service.settings, http=http).deliver(update_jobs[0]["payload"])
+                assert len(requests) == 1
+                if backend == "memory":
+                    assert await repo.claim_job() is None
+                else:
+                    await repo.close()
+                    repo = PostgresRepository(database_url)
+                    await repo.open()
+                    service.repo = repo
+                # Recreate services after restart. No new source item/tool invocation.
+                clock[0] = base + timedelta(minutes=15)
+                job = await repo.claim_job()
+>               assert job["job_id"] == update_jobs[0]["job_id"]
+E               AssertionError: assert 'JOB-01M5CB9V...WN2KM769JZVSJ' == 'JOB-01M5CBBH...TNC5S90E8CQ7D'
+E                 
+E                 - JOB-01M5CBBH6GRXTTNC5S90E8CQ7D
+E                 + JOB-01M5CB9VJRCV8WN2KM769JZVSJ
+
+tests/test_event_tools.py:4422: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_event_tools.py::test_live_update_survives_restart_and_delivers_at_boundary_with_retry[postgres]
+1 failed, 1 passed, 104 deselected in 1.24s

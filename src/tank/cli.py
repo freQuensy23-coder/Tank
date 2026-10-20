@@ -9,6 +9,7 @@ import click
 
 from tank.logging import configure_logging
 from tank.settings import Settings, resolve_versions
+from tank.time_precision import collection_clock
 from tank.util import iso, jsonable, new_id
 
 
@@ -69,38 +70,23 @@ def serve():
     run_db(launch)
 
 
-@main.command()
-def capture():
-    """Run V0-A source and BASE market capture before event calibration."""
-
-    async def launch(repo, settings):
-        from tank.capture import CaptureService
-
-        settings = settings.model_copy(update={"capture_only": True})
-        stop = asyncio.Event()
-        loop = asyncio.get_running_loop()
-        signals = (signal.SIGINT, signal.SIGTERM)
-        for sig in signals:
-            loop.add_signal_handler(sig, stop.set)
-        try:
-            await CaptureService(repo, settings).run(stop)
-        finally:
-            for sig in signals:
-                loop.remove_signal_handler(sig)
-        return {"status": "stopped", "phase": "capture"}
-
-    run_db(launch)
-
-
 @main.group()
 def db():
     """Database schema management."""
 
 
 @db.command()
-def migrate():
+@click.option(
+    "--market-export-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    help="Durable directory for verified Parquet export of legacy SQL trades before migration 027.",
+)
+def migrate(market_export_dir):
     async def command(repo, settings):
-        await repo.migrate()
+        await repo.migrate(
+            market_export_dir=market_export_dir,
+            legacy_bundle_dir=settings.data_dir / "bundles",
+        )
         return {"status": "migrated"}
 
     run_db(command)
@@ -217,7 +203,7 @@ def review_label(subject, label, miss_reason, notes, reviewer, version):
                 "miss_reason": miss_reason,
                 "notes": notes,
                 "reviewer": reviewer,
-                "at": iso(),
+                **collection_clock().fields("at"),
             },
             immutable=True,
         )
@@ -303,7 +289,9 @@ def scout_decide(prp_id, action):
         if record is None:
             raise ValueError("Unknown scout proposal")
         return await repo.put(
-            "scout.expansion_proposals", prp_id, {**record, "human_action": action, "decided_at": iso()}
+            "scout.expansion_proposals",
+            prp_id,
+            {**record, "human_action": action, **collection_clock().fields("decided_at")},
         )
 
     run_db(command)
@@ -369,11 +357,18 @@ def archive_fetch(symbol, date):
 @click.option(
     "--database-url", required=True, help="Dedicated empty replay database, distinct from production."
 )
-def replay(fixture_id, database_url):
+@click.option(
+    "--mode",
+    type=click.Choice(["fresh-session", "captured-tools"]),
+    default="fresh-session",
+    show_default=True,
+    help="Captured tools is a diagnostic only; full replay starts a fresh tank-replay session.",
+)
+def replay(fixture_id, database_url, mode):
     async def command(repo, settings):
         from tank.replay import replay_fixture
 
-        return await replay_fixture(repo, settings, fixture_id)
+        return await replay_fixture(repo, settings, fixture_id, mode=mode)
 
     run_db(command, database_url=database_url, replay=True)
 
@@ -388,11 +383,17 @@ def bundle():
 @click.option(
     "--database-url", required=True, help="Dedicated empty replay database, distinct from production."
 )
-def bundle_reproduce(sha, database_url):
+@click.option(
+    "--mode",
+    type=click.Choice(["fresh-session", "captured-tools"]),
+    default="fresh-session",
+    show_default=True,
+)
+def bundle_reproduce(sha, database_url, mode):
     async def command(repo, settings):
         from tank.replay import reproduce_bundle
 
-        return await reproduce_bundle(repo, settings, sha)
+        return await reproduce_bundle(repo, settings, sha, mode=mode)
 
     run_db(command, database_url=database_url, replay=True)
 
@@ -424,12 +425,9 @@ def readiness_checks(settings):
                     checks.append({"check": "openma_" + key, "ok": configured(config.get(key))})
         except Exception as exc:
             checks.append({"check": name + "_syntax", "ok": False, "reason": type(exc).__name__})
-    provider = getattr(settings, "jev_provider", "typesafe")
-    checks.append(
-        {"check": "jev_provider", "ok": provider in ("openrouter", "typesafe"), "provider": provider}
-    )
-    jev_key_name = "openrouter_api_key" if provider == "openrouter" else "typesafe_api_key"
-    checks.append({"check": jev_key_name, "ok": configured(getattr(settings, jev_key_name, None))})
+    provider = getattr(settings, "jev_provider", "openrouter")
+    checks.append({"check": "jev_provider", "ok": provider == "openrouter", "provider": provider})
+    checks.append({"check": "openrouter_api_key", "ok": configured(getattr(settings, "openrouter_api_key", None))})
     for name in (
         "openma_api_key",
         "codex_gateway_key",
@@ -503,14 +501,31 @@ def doctor():
 @click.argument("input_path", type=click.Path(exists=True, dir_okay=False, path_type=Path))
 @click.option("--output-dir", required=True, type=click.Path(file_okay=False, path_type=Path))
 def calibrate(input_path, output_dir):
-    """Produce an offline calibration report and proposed configuration patch."""
-    configure_logging(Settings())
-    from tank.calibration import write_report
+    """Score >=200 frozen labeled news items with Jev and propose measured cutoffs."""
+    import httpx
 
+    from tank.calibration import acquire
+    from tank.settings import resolve_versions
+
+    settings = resolve_versions(Settings())
+    configure_logging(settings)
     try:
-        output(write_report(input_path, output_dir))
+        result = asyncio.run(acquire(input_path, output_dir, settings=settings))
+        summary = {key: result[key] for key in (
+            "status", "counts", "selected", "routing_target_90_90_met", "rejection_reasons",
+        )}
+        best = result["best_measured_routing"]
+        summary["best_measured_routing"] = {
+            **best, "metrics": {key: value for key, value in best["metrics"].items() if key != "decisions"}
+        }
+        output(summary)
     except (ValueError, OSError) as exc:
         raise click.ClickException(str(exc)) from None
+    except (httpx.HTTPError, KeyError, TypeError, RuntimeError) as exc:
+        raise click.ClickException(
+            "Calibration failed (" + type(exc).__name__
+            + "); completed usage and failures are retained in the output directory"
+        ) from None
 
 
 @main.command()

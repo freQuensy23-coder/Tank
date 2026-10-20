@@ -1,0 +1,301 @@
+{
+  "status": "UNPINNED_DATA_CANDIDATES_ONLY_NO_ADOPTION_NO_MODEL",
+  "code_version": "UNPINNED_REQUIRES_VERIFIED_PHASE_IMAGE",
+  "config_version": "1b860c8ab2add6ae17d3d515fd1e67f4c5ba595d-dirty.db8fcccf8d4a5a9d55ad87c905f9fb3ec45f0610900cfe21ad1d155a1e381564",
+  "F24": {
+    "packet": "data/replay/prepared/F24-phased-implementation-candidate-v2-20261019/replay/inputs/F-24.json",
+    "packet_sha256": "4d7e15a4ba77fe63dfb6cb9148c78c1054d87cf0a583bd3fc0b66e39b3ab1c01",
+    "admission": "PASS_MATCHING_PROVISIONAL_PIN_ONLY",
+    "initial_boundary": "2026-10-16T12:01:00Z",
+    "final_observation_horizon": "2026-10-16T12:05:00Z",
+    "original_initial_source_unchanged": true,
+    "later_source_explicit_synthetic": true,
+    "no_acquired_primary_or_live_X_claim": true,
+    "delivery": "NOT_RUN_REFERENCE_INTENTS_ONLY",
+    "actual_native_model_execution": "NOT_RUN"
+  },
+  "uniform_minute_policy": {
+    "literal_count": 20,
+    "rows": [
+      {
+        "fixture_id": "F-01",
+        "original_cutoff_spec": "21 Sep 2026 15:02",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-21T15:03:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "POLICY_PROJECTED_EXISTING_ARTIFACT_SCOPE_REVALIDATION_REQUIRED",
+        "admission_error": "insufficient_fixture: Missing market declaration cannot contain observations, computed truth or semantic seeds",
+        "packet": "data/replay/prepared/uniform-minute-end-candidate-v2-20261019/replay/inputs/F-01.json",
+        "packet_sha256": "6956441925d0b6ac11e3bd54ee9039fc69455f46b73bb193fb989d99d5947d14",
+        "source_original_and_raw_bytes_unchanged": true,
+        "market_limit": "Existing exact-cutoff market artifacts remain at their original bounds; no observation times shifted. Reassembly or explicit missing coverage is required if analysis requests the newly selected boundary."
+      },
+      {
+        "fixture_id": "F-02",
+        "original_cutoff_spec": "22 Sep 2026 18:52",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-22T18:53:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "SCHEMA_ADMITTED_UNPINNED_NOT_EXECUTED",
+        "packet": "data/replay/prepared/uniform-minute-end-candidate-v2-20261019/replay/inputs/F-02.json",
+        "packet_sha256": "0bcda0cd3f10ca162f2dbf541462fa0aadb8515fbe2179190d117a7908f9c39a",
+        "source_original_and_raw_bytes_unchanged": true,
+        "market_limit": "Existing exact-cutoff market artifacts remain at their original bounds; no observation times shifted. Reassembly or explicit missing coverage is required if analysis requests the newly selected boundary."
+      },
+      {
+        "fixture_id": "F-03",
+        "original_cutoff_spec": "24 Sep 2026 16:12",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-24T16:13:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "INPUT_GAP_OR_MARKET_COMPONENT_ONLY_NO_FABRICATED_PACKET",
+        "missing": [
+          "Exact primary CoW settlement claim not retained; present Ondo article has known post-cutoff modification"
+        ]
+      },
+      {
+        "fixture_id": "F-04",
+        "original_cutoff_spec": "25 Sep 2026 11:33",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-25T11:34:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "SCHEMA_ADMITTED_UNPINNED_NOT_EXECUTED",
+        "packet": "data/replay/prepared/uniform-minute-end-candidate-v2-20261019/replay/inputs/F-04.json",
+        "packet_sha256": "dcaa4a80fda79c1c2c55024219cc567ca8faaf33a3fc236c07597ce85a5386a4",
+        "source_original_and_raw_bytes_unchanged": true,
+        "market_limit": "Existing exact-cutoff market artifacts remain at their original bounds; no observation times shifted. Reassembly or explicit missing coverage is required if analysis requests the newly selected boundary."
+      },
+      {
+        "fixture_id": "F-05",
+        "original_cutoff_spec": "26 Sep 2026 03:50",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-26T03:51:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "INPUT_GAP_OR_MARKET_COMPONENT_ONLY_NO_FABRICATED_PACKET",
+        "missing": [
+          "Current official World article is modified after cutoff; no retained original as-of version or independent earlier official core-fact corroboration"
+        ]
+      },
+      {
+        "fixture_id": "F-06",
+        "original_cutoff_spec": "26 Sep 2026 16:34",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-26T16:35:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "SCHEMA_ADMITTED_UNPINNED_NOT_EXECUTED",
+        "packet": "data/replay/prepared/uniform-minute-end-candidate-v2-20261019/replay/inputs/F-06.json",
+        "packet_sha256": "743a5c255a79cef6eafc0551a5b7702006ec87d2cd082d69ee54debe1a50f309",
+        "source_original_and_raw_bytes_unchanged": true,
+        "market_limit": "Existing exact-cutoff market artifacts remain at their original bounds; no observation times shifted. Reassembly or explicit missing coverage is required if analysis requests the newly selected boundary."
+      },
+      {
+        "fixture_id": "F-07",
+        "original_cutoff_spec": "24 Sep 2026 17:05",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-24T17:06:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "SCHEMA_ADMITTED_UNPINNED_NOT_EXECUTED",
+        "packet": "data/replay/prepared/uniform-minute-end-candidate-v2-20261019/replay/inputs/F-07.json",
+        "packet_sha256": "eb6d316d800e4f5fcac765efc89814e1c525de9fa89b191c1e85af50c90929bf",
+        "source_original_and_raw_bytes_unchanged": true,
+        "market_limit": "Existing exact-cutoff market artifacts remain at their original bounds; no observation times shifted. Reassembly or explicit missing coverage is required if analysis requests the newly selected boundary."
+      },
+      {
+        "fixture_id": "F-08",
+        "original_cutoff_spec": "24 Sep 2026 20:15",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-24T20:16:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "SCHEMA_ADMITTED_UNPINNED_NOT_EXECUTED",
+        "packet": "data/replay/prepared/uniform-minute-end-candidate-v2-20261019/replay/inputs/F-08.json",
+        "packet_sha256": "dd6c8d7cae98162f06083e731df6307b802031cbffc7d3f52d217abbe7fd6374",
+        "source_original_and_raw_bytes_unchanged": true,
+        "market_limit": "Existing exact-cutoff market artifacts remain at their original bounds; no observation times shifted. Reassembly or explicit missing coverage is required if analysis requests the newly selected boundary."
+      },
+      {
+        "fixture_id": "F-09",
+        "original_cutoff_spec": "18 Sep 2026 09:30",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-18T09:31:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "SCHEMA_ADMITTED_UNPINNED_NOT_EXECUTED",
+        "packet": "data/replay/prepared/uniform-minute-end-candidate-v2-20261019/replay/inputs/F-09.json",
+        "packet_sha256": "3a39c9abf1ed658bd6191c7fb21adb64e6a754ce5d065cba381e993914218e04",
+        "source_original_and_raw_bytes_unchanged": true,
+        "market_limit": "Existing exact-cutoff market artifacts remain at their original bounds; no observation times shifted. Reassembly or explicit missing coverage is required if analysis requests the newly selected boundary."
+      },
+      {
+        "fixture_id": "F-10",
+        "original_cutoff_spec": "18 Sep 2026 17:12",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-18T17:13:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "INPUT_GAP_OR_MARKET_COMPONENT_ONLY_NO_FABRICATED_PACKET",
+        "missing": [
+          "Primary NYSE testing excerpt retained; Janus validator primary claim remains unverified (secondary social embeds are not primary captures)"
+        ]
+      },
+      {
+        "fixture_id": "F-11",
+        "original_cutoff_spec": "16 Oct 2026 12:30 UTC",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-10-16T12:31:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "INPUT_GAP_OR_MARKET_COMPONENT_ONLY_NO_FABRICATED_PACKET",
+        "missing": [
+          "Only retained market component inputs/inventories are available; fresh-agent pure-market reference entrypoint is not implemented",
+          "No catalyst, event state, absent historical order-book/liquidation observation, or expected verdict is fabricated"
+        ]
+      },
+      {
+        "fixture_id": "F-12",
+        "original_cutoff_spec": "26 Sep 2026 23:00",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-26T23:01:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "INPUT_GAP_OR_MARKET_COMPONENT_ONLY_NO_FABRICATED_PACKET",
+        "missing": [
+          "Only retained market component inputs/inventories are available; fresh-agent pure-market reference entrypoint is not implemented",
+          "No catalyst, event state, absent historical order-book/liquidation observation, or expected verdict is fabricated"
+        ]
+      },
+      {
+        "fixture_id": "F-13",
+        "original_cutoff_spec": "24 Sep 2026 16:00",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-24T16:01:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "INPUT_GAP_OR_MARKET_COMPONENT_ONLY_NO_FABRICATED_PACKET",
+        "missing": [
+          "Only retained market component inputs/inventories are available; fresh-agent pure-market reference entrypoint is not implemented",
+          "No catalyst, event state, absent historical order-book/liquidation observation, or expected verdict is fabricated"
+        ]
+      },
+      {
+        "fixture_id": "F-14",
+        "original_cutoff_spec": "27 Sep 2026 23:00",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-27T23:01:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "INPUT_GAP_OR_MARKET_COMPONENT_ONLY_NO_FABRICATED_PACKET",
+        "missing": [
+          "Only retained market component inputs/inventories are available; fresh-agent pure-market reference entrypoint is not implemented",
+          "No catalyst, event state, absent historical order-book/liquidation observation, or expected verdict is fabricated"
+        ]
+      },
+      {
+        "fixture_id": "F-15",
+        "original_cutoff_spec": "23 Sep 2026 07:00",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-23T07:01:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "INPUT_GAP_OR_MARKET_COMPONENT_ONLY_NO_FABRICATED_PACKET",
+        "missing": [
+          "Only retained market component inputs/inventories are available; fresh-agent pure-market reference entrypoint is not implemented",
+          "No catalyst, event state, absent historical order-book/liquidation observation, or expected verdict is fabricated"
+        ]
+      },
+      {
+        "fixture_id": "F-16",
+        "original_cutoff_spec": "15 Sep 2026 23:59",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-09-16T00:00:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "INPUT_GAP_OR_MARKET_COMPONENT_ONLY_NO_FABRICATED_PACKET",
+        "missing": [
+          "Only retained market component inputs/inventories are available; fresh-agent pure-market reference entrypoint is not implemented",
+          "No catalyst, event state, absent historical order-book/liquidation observation, or expected verdict is fabricated"
+        ]
+      },
+      {
+        "fixture_id": "F-17",
+        "original_cutoff_spec": "15 Oct 2026 18:00",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-10-15T18:01:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "SCHEMA_ADMITTED_UNPINNED_NOT_EXECUTED",
+        "packet": "data/replay/prepared/uniform-minute-end-candidate-v2-20261019/replay/inputs/F-17.json",
+        "packet_sha256": "98929c687c8886dcedc4e0157494054717925adbf4a2fdcb51d06c864ddb6dce",
+        "source_original_and_raw_bytes_unchanged": true,
+        "market_limit": "Existing exact-cutoff market artifacts remain at their original bounds; no observation times shifted. Reassembly or explicit missing coverage is required if analysis requests the newly selected boundary."
+      },
+      {
+        "fixture_id": "F-21",
+        "original_cutoff_spec": "16 Oct 2026 11:45",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-10-16T11:46:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "SCHEMA_ADMITTED_UNPINNED_NOT_EXECUTED",
+        "packet": "data/replay/prepared/uniform-minute-end-candidate-v2-20261019/replay/inputs/F-21.json",
+        "packet_sha256": "1cbfbf68a71e3110b8e8741bb473e5f605f3b92c98acb21a1fbe71ef48dfd88c",
+        "source_original_and_raw_bytes_unchanged": true,
+        "market_limit": "Existing exact-cutoff market artifacts remain at their original bounds; no observation times shifted. Reassembly or explicit missing coverage is required if analysis requests the newly selected boundary."
+      },
+      {
+        "fixture_id": "F-22",
+        "original_cutoff_spec": "14 Oct 2026 03:30",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-10-14T03:31:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "INPUT_GAP_OR_MARKET_COMPONENT_ONLY_NO_FABRICATED_PACKET",
+        "missing": [
+          "Selected MINUTE_START03:30:00 excludes original publication03:30:08.368; uniform minute-end reference policy remains a separate pending generation"
+        ]
+      },
+      {
+        "fixture_id": "F-25",
+        "original_cutoff_spec": "16 Oct 2026 12:01",
+        "original_call_precision": "BUCKET(1m)",
+        "selected_observation_boundary": "2026-10-16T12:02:00Z",
+        "source_clock_changed": false,
+        "full_fixture_passed": false,
+        "status": "SCHEMA_ADMITTED_UNPINNED_NOT_EXECUTED",
+        "packet": "data/replay/prepared/uniform-minute-end-candidate-v2-20261019/replay/inputs/F-25.json",
+        "packet_sha256": "f75daa578ad639a6bfbf401a53772e7cb95d166c912bc40daba9f0ee86200489",
+        "source_original_and_raw_bytes_unchanged": true,
+        "market_limit": "Existing exact-cutoff market artifacts remain at their original bounds; no observation times shifted. Reassembly or explicit missing coverage is required if analysis requests the newly selected boundary."
+      }
+    ],
+    "policy_applies_uniformly": true,
+    "unknown_source_cases_not_fabricated": true
+  },
+  "canonical_inputs_or_evaluator_manifest_changed": false,
+  "network_native_model_database_actions": 0,
+  "additional_retained_source_candidates": [
+    {
+      "fixture_id": "F-05",
+      "report": "docs/verification/f05-archive-candidate-2026-10-19/report.json",
+      "scope": "Archived original Sep17 publication, Sep26 logical observation, physicalOct19 receipt. Not current-body retrofit; externalCDXdigest mismatch retained."
+    },
+    {
+      "fixture_id": "F-22",
+      "report": "docs/verification/f22-minute-end-candidate-2026-10-19/report.json",
+      "scope": "Original CMS version1/raw03:30:08.368 under uniform minute-end convention. No source backdate, actual effective12:00 quote intact."
+    }
+  ],
+  "actual_failed_runs_preserved": [
+    "docs/verification/f08-cli-r24-2026-10-19/result.json",
+    "docs/verification/f08-cli-r25-2026-10-19/result.json"
+  ],
+  "actual_failed_runs_are_not_pending_or_pass": true,
+  "source_hashes_still_frozen": true
+}

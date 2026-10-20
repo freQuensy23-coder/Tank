@@ -1,0 +1,49 @@
+{
+  "source_repository": "https://github.com/boxlite-ai/boxlite.git",
+  "source_commit": "690794512fde9491836c1aa3d087d64c80bf4849",
+  "upstream_tag": "v0.9.0",
+  "libkrun_commit": "e12b9b3780ffa8df9f3e1797b217d13453479167",
+  "lockfile_sha256": {
+    "Cargo.lock": "1915d7b9b6bc9bd8c50d0720df1ff3ef7e1cabcdd1f2eed963cb8b70915832d0",
+    "src/deps/libkrun-sys/vendor/libkrun/Cargo.lock": "353fe6bb081d1cd4b4e24aa4ef323319709543c65b7304e015320a563688d3c2",
+    "src/deps/libgvproxy-sys/gvproxy-bridge/go.sum": "210de408d7199b801f549a7602e487cd2cd5b0bea9f2ca5bcdc83a14e56b23d6"
+  },
+  "artifact_sha256": "c8259b301afd790cb8d52930fdb971c4bdf34324420c7c20647d3d9360c892b8",
+  "target": "aarch64-unknown-linux-gnu",
+  "linkage": "system dynamic glibc",
+  "builder_base_image": "rust:1.90.0-bookworm@sha256:3914072ca0c3b8aad871db9169a651ccfce30cf58303e5d6f2db16d1d8a7e58f",
+  "rust_toolchain": "1.90.0",
+  "go_toolchain": "1.24.6",
+  "source_changes": false,
+  "isolation_changes": false,
+  "schema_version": 1,
+  "boxlite_version": "0.9.0",
+  "upstream_runtime_url": "https://github.com/boxlite-ai/boxlite/releases/download/v0.9.0/boxlite-runtime-v0.9.0-linux-arm64-gnu.tar.gz",
+  "upstream_runtime_archive_sha256": "cce6512be469c826c0cb62c604af240849980fa130ac8708e8d1e5ca289d0f31",
+  "files": {
+    "boxlite-guest": "8c162da10749bd50ee5d7305aa772624a6dcf821689a6996f165430500e6e245",
+    "boxlite-shim": "c8259b301afd790cb8d52930fdb971c4bdf34324420c7c20647d3d9360c892b8",
+    "bwrap": "55fda2d0eac897a5b1a1a3ed7c707a08272c71808ad36018c003bfb8f9bc8b4e",
+    "debugfs": "664c4eb38399e08bc76663416035e8c444aaddeaaec930676a14a1b4e736dee0",
+    "libkrunfw.so.5": "f30112748a09cefccb9b3d98098fe2b770e785debfafea5dc9e0523f17b8d74a",
+    "mke2fs": "892c54bc5204d315eae67ca0074bc371c4d653b724c74cdd1718d90bd88bea7e"
+  },
+  "modified_runtime_files": [
+    "boxlite-shim"
+  ],
+  "firmware_modified": false,
+  "elf_interpreter": "/lib/ld-linux-aarch64.so.1",
+  "maximum_required_glibc": "2.34",
+  "target_system_glibc": "2.36",
+  "runtime_needed": [
+    "libgcc_s.so.1",
+    "libm.so.6",
+    "libc.so.6"
+  ],
+  "debian_snapshot": "20261018T000000Z",
+  "verification": {
+    "real_kvm_guest_exec": "REQUIRED_FOR_THIS_ARTIFACT"
+  },
+  "rebuild_byte_identity": false,
+  "rebuild_note": "Upstream generated build inputs can be nondeterministic; compare source/lock/toolchain contracts and verify the actual rebuilt artifact SHA plus KVM probe."
+}

@@ -1,0 +1,87 @@
+{
+  "fixture_id": "F-13",
+  "ready": true,
+  "formula_phase": "COMPLETED",
+  "automated_checks": [
+    {
+      "assertion": {
+        "path": [
+          "market_truth",
+          0,
+          "derivatives",
+          "per_venue",
+          0,
+          "oi_class"
+        ],
+        "equals": "REAL_NATIVE"
+      },
+      "passed": true
+    },
+    {
+      "assertion": {
+        "path": [
+          "market_truth",
+          0,
+          "move_class"
+        ],
+        "equals": "PERP_LED_CHASE"
+      },
+      "passed": false
+    },
+    {
+      "assertion": {
+        "path": [
+          "market_truth",
+          0,
+          "move_class"
+        ],
+        "not_equals": "SPOT_LED_ACCUMULATION"
+      },
+      "passed": true
+    },
+    {
+      "assertion": {
+        "path": [
+          "decisions",
+          0,
+          "action"
+        ],
+        "in": [
+          "DONT_CHASE",
+          "WAIT"
+        ]
+      },
+      "passed": true
+    }
+  ],
+  "automated_passed": false,
+  "full_completed_errors": [
+    "assertion failed: {\"equals\":\"PERP_LED_CHASE\",\"path\":[\"market_truth\",0,\"move_class\"]}",
+    "required manual clause failed: `oi_class` REAL_NATIVE; move class PERP_LED_CHASE (directly or through the divergence discriminator), never SPOT_LED_ACCUMULATION; action ∈ {DONT_CHASE, WAIT}."
+  ],
+  "case": {
+    "fixture_id": "F-13",
+    "case_description": "ONDO — 24 Sep 2026 12:00–16:00 UTC: Binance native OI +57.32%, USD OI +88.53%, price +13.56%, Binance spot taker-buy share 48.3%",
+    "cutoff_spec": "24 Sep 2026 16:00",
+    "assertion_spec": "`oi_class` REAL_NATIVE; move class PERP_LED_CHASE (directly or through the divergence discriminator), never SPOT_LED_ACCUMULATION; action ∈ {DONT_CHASE, WAIT}.",
+    "acceptance_input": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-13/inputs/input.json.zst",
+      "sha256": "37aeff12193d85f590d963a40f562acbf86905bcfb60d55d1a7257e6f298e929"
+    },
+    "private_name_map": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-13/private/map.json",
+      "sha256": "96dae1ff7514961ffe22824c7d27b34896b686a21907751449b64ccc3b939813"
+    },
+    "sealed_outcomes": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-v2/F-13/sealed/outcomes.json",
+      "sha256": "6a89b08cdf99c93e079491d60c5593cc8218c06e4d5c21ea548d1b8df06c91b6"
+    },
+    "acceptance_run": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-run-v2/F-13/run.json",
+      "sha256": "ee136a50795bda8ca4ab15521488d759c216286691d90fa61ca764107cbb7292"
+    }
+  },
+  "economic_context": "EMPTY_UNINVENTED",
+  "native_wording_phase": "PLANNED_NOT_RUN",
+  "canonical_adopted": false
+}

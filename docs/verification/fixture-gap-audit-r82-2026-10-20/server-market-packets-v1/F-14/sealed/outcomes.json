@@ -1,0 +1,56 @@
+{
+  "fixture_id": "F-14",
+  "input_sha256": "9947fe897d1fce0b4cec4ccd3f308a9d15d2f8f06da037abbc887ec09b75e2f3",
+  "assertion_spec": "Native OI change reported as positions closing during the rise; move class ∈ {SHORT_SQUEEZE, LIQUIDITY_VACUUM, UNKNOWN}; direction TWO_SIDED or UNKNOWN; never SPOT_LED_ACCUMULATION.",
+  "sealed_at": "2026-10-20T12:11:34.312922Z",
+  "assertions": [
+    {
+      "path": [
+        "market_truth",
+        0,
+        "derivatives",
+        "per_venue",
+        0,
+        "oi_native_chg_pct"
+      ],
+      "lte": 0
+    },
+    {
+      "path": [
+        "market_truth",
+        0,
+        "move_class"
+      ],
+      "in": [
+        "SHORT_SQUEEZE",
+        "LIQUIDITY_VACUUM",
+        "UNKNOWN"
+      ]
+    },
+    {
+      "path": [
+        "decisions",
+        0,
+        "outlook",
+        "direction"
+      ],
+      "in": [
+        "TWO_SIDED",
+        "UNKNOWN"
+      ]
+    },
+    {
+      "path": [
+        "market_truth",
+        0,
+        "move_class"
+      ],
+      "not_equals": "SPOT_LED_ACCUMULATION"
+    }
+  ],
+  "manual_predicates": [
+    {
+      "requirement": "Native OI change reported as positions closing during the rise; move class ∈ {SHORT_SQUEEZE, LIQUIDITY_VACUUM, UNKNOWN}; direction TWO_SIDED or UNKNOWN; never SPOT_LED_ACCUMULATION."
+    }
+  ]
+}

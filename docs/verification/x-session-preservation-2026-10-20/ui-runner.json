@@ -1,0 +1,31 @@
+{
+  "exit_code": 0,
+  "elapsed_seconds": 12.03182008001022,
+  "abort_reason": null,
+  "samples": [
+    {
+      "epoch_ms": 1792511971670,
+      "mem_available_bytes": 9890525184,
+      "disk_available_bytes": 11400347648
+    },
+    {
+      "epoch_ms": 1792511974673,
+      "mem_available_bytes": 10123493376,
+      "disk_available_bytes": 11400454144
+    },
+    {
+      "epoch_ms": 1792511977677,
+      "mem_available_bytes": 10019782656,
+      "disk_available_bytes": 11400478720
+    },
+    {
+      "epoch_ms": 1792511980679,
+      "mem_available_bytes": 9974759424,
+      "disk_available_bytes": 11400306688
+    }
+  ],
+  "owned_container_absent": true,
+  "source_state_overwritten": false,
+  "login_attempted": false,
+  "full_runtime_started": false
+}

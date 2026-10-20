@@ -1,0 +1,460 @@
+{
+  "status": "COMPLETED_FUNCTIONAL_REFERENCE_STRUCTURAL_PARTIAL_TO_FULL_PARTIAL_HISTORICAL_ASSERTION_COVERAGE",
+  "recorded_at": "2026-10-19T04:41:01.324987+00:00",
+  "cli_status": "COMPLETED",
+  "cli_exit_code": 0,
+  "elapsed_seconds": 175.907087,
+  "replay_run_id": "RPL-01M5974XW9RV8XRW11RASNHEV1",
+  "session_id": "session_SEpvzFFdH98x-JzQXwf3i",
+  "packet_sha256": "17a67acdd7f3817e2d7c109ac6dcea88dcae8cc5f09a78007f078b6757afc9b4",
+  "snapshot_sha256": "d10086d99515acca0233fc55c6e86be26531c907f886c5ae5914225fac084dda",
+  "assessments": [
+    {
+      "class": "STRUCTURAL_SHOCK",
+      "criterion": "G4",
+      "reasons": [
+        "Primary adopting counterparty selects Quant as infrastructure for a bank tokenized-deposit payments network connected to RTP and CHIPS.",
+        "Infrastructure criterion is distinct from QNT value capture; no live deployment or token flows established."
+      ]
+    },
+    {
+      "class": "STRUCTURAL_SHOCK",
+      "criterion": "G4",
+      "reasons": [
+        "Counterparty selection makes Quant infrastructure part of the committed design for a major clearing initiative; token capture is a separate unknown."
+      ]
+    }
+  ],
+  "event": [
+    {
+      "event_id": "EVT-01M59768G040KGE05KV0GYC1VM",
+      "state": "APPROVED",
+      "certainty": "HIGH",
+      "freshness": "POOR",
+      "public_at": "2026-09-24T00:00:00Z",
+      "public_at_prec": "BUCKET(1d)"
+    }
+  ],
+  "cards": [
+    {
+      "kind": "PARTIAL",
+      "version": 1,
+      "alert_id": "ALR-01M5977GRWB37G77BVB5EPQ4XX",
+      "linter": {
+        "passed": true,
+        "violations": [],
+        "regenerations": 0,
+        "removed_prose": []
+      },
+      "card_text_sha256": "89f3f4418c6144c6dc293e3f3bc4f25b1ff08ec1f53882d80ebcdf9dd2eedcdf"
+    },
+    {
+      "kind": "FULL",
+      "version": 2,
+      "alert_id": "ALR-01M5977GRWB37G77BVB5EPQ4XX",
+      "linter": {
+        "passed": true,
+        "violations": [],
+        "regenerations": 0,
+        "removed_prose": []
+      },
+      "card_text_sha256": "9204fc68c55f032487729d32a3ff899ef54a15fc89b19e53b4b67e453d410a01"
+    }
+  ],
+  "market_truth": [
+    {
+      "mta_id": "MTA-01M5978G00MVTH802STWGB6T20",
+      "token_id": "quant:QNT",
+      "confidence": "LOW",
+      "move": "UNKNOWN",
+      "repricing": null
+    }
+  ],
+  "decisions": [
+    {
+      "action": "WAIT",
+      "grade": "D"
+    },
+    {
+      "action": "WAIT",
+      "grade": "D"
+    }
+  ],
+  "tool_chronology": [
+    {
+      "ordinal": 0,
+      "tool": "get_item",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 1,
+      "tool": "list_open_events",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 2,
+      "tool": "search_tank_items",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 3,
+      "tool": "get_registry",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 4,
+      "tool": "get_token_facts",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 5,
+      "tool": "record_event",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 6,
+      "tool": "record_event",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": "EVENT_ALREADY_BOUND"
+    },
+    {
+      "ordinal": 7,
+      "tool": "set_assessment",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 8,
+      "tool": "set_assessment",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 9,
+      "tool": "publish_card",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 10,
+      "tool": "publish_card",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": "FIRST_CARD_ALREADY_GENERATED"
+    },
+    {
+      "ordinal": 11,
+      "tool": "set_beneficiaries",
+      "status": "REFUSED",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 12,
+      "tool": "set_beneficiaries",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 13,
+      "tool": "set_beneficiaries",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 14,
+      "tool": "get_market_truth",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 15,
+      "tool": "get_market_truth",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 16,
+      "tool": "get_decision",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 17,
+      "tool": "get_decision",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 18,
+      "tool": "publish_card",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": null
+    },
+    {
+      "ordinal": 19,
+      "tool": "publish_card",
+      "status": "DONE",
+      "returned_at": "2026-09-24T20:15:00Z",
+      "reason": "NO_MATERIAL_CHANGE"
+    }
+  ],
+  "source_status": "DONE",
+  "workflow_proofs": {
+    "a262f0f3c60ba40da0f8417613b06bfc28728ca99d099556e546da34f790e78e": {
+      "item_id": "ITM-01M58980T1PZ6N0M4MQNJ2SGTE",
+      "outcome": "DONE",
+      "version": 3,
+      "workflow": {
+        "valid": true,
+        "reason": "PUBLICATION_SUPPRESSED",
+        "attempt": 0,
+        "version": 1,
+        "bindings": [
+          {
+            "sha256": "e076bbf91e624d16ff99294fab48a4411fdd6e2a9d4cf2e4eda9cdb944004dd2",
+            "call_id": "call_0c1e4c24f9b54112ab47a94a3a21e38d|fc_0598c597e7839619016ad59e722fd48191b03988157569f61a"
+          },
+          {
+            "sha256": "a6175ab599c7ae8863993a780db31e1b4195cf1f6be2f024e9be0f939e3ecfb4",
+            "call_id": "call_7f39c31a5ffa4028ae9c33219f0b6ca5|fc_0598c597e7839619016ad59e7393888191ba3b51a88d57f629"
+          },
+          {
+            "sha256": "e29febed533a14d2049d05ec53b756a6b138d2fbd3b263faa4f1a5983c35aee8",
+            "call_id": "call_7e300d43408b459cabbdf6d278fc69bf|fc_0598c597e7839619016ad59e73938881918ac41f9c02b63197"
+          },
+          {
+            "sha256": "38436b18efc3830d382872c47d1b4ba49ece43bb1f414b899c0511fcda4ec579",
+            "call_id": "call_45fed84946f444ca9940da17d2dbf561|fc_0598c597e7839619016ad59e73938881918e99667737df4475"
+          },
+          {
+            "sha256": "5ba2d1c3f6fcf4af9cc4b3bf9cec8f821a3a8cf22da42cf4bb73141d9d73117a",
+            "call_id": "call_1fb2c0f586324a4faccd47543f3ac7d4|fc_0598c597e7839619016ad59e739388819183994c73cecb48da"
+          },
+          {
+            "sha256": "50440e4aa906411b56c363f2b95e1ae0fa6a2c91a822a1595b0b94ef38fd5805",
+            "call_id": "call_486573d62da344d889c4b21c6115f92e|fc_0598c597e7839619016ad59e778100819199cc3e25a38456f2"
+          },
+          {
+            "sha256": "717dffc878568f227d42151d731a7175f8c15d47058cb218d424a932f1ba95b1",
+            "call_id": "call_06adb0f797294f39b06231d02c1397a3|fc_0598c597e7839619016ad59e8af598819183271f8d08744bec"
+          },
+          {
+            "sha256": "597ab67eabfb3d8ad1f99c99f7549c475d1e8981d57ac5d5d1a97e5955cafb55",
+            "call_id": "call_cf944244e29040f19f01c968c61c7fa8|fc_0598c597e7839619016ad59e99c1d48191ae39f30346f9b7ab"
+          },
+          {
+            "sha256": "108ed4fd17a2844eaadccbe3c75a12afeea2369174ef3594ad21baffc5f94b80",
+            "call_id": "call_b86c50245fb945e4ae0c21a229c1211c|fc_0598c597e7839619016ad59ea725f881919e60f6f7ed86f45e"
+          },
+          {
+            "sha256": "c0dcb03e13cb61775287b29b8080499ab9074839263aeb43dc1663c684e0b01d",
+            "call_id": "call_042c82627c794aa39e9a5e459a7bd00e|fc_0598c597e7839619016ad59eaa9290819181ccb6f8f513fbd1"
+          },
+          {
+            "sha256": "a5836f0eac0fa9901a8f5b00b9a7f7eda7cb22beb7949219cb6fcd07956cc596",
+            "call_id": "call_d3a9949841b04505addc0fe57b15f601|fc_0598c597e7839619016ad59eb75df48191b0f9cb3fc2f39fda"
+          },
+          {
+            "sha256": "85d905f58322b5922cf39ca7b70efefb94c63ce46dcfcf83bf0056530b706ddb",
+            "call_id": "call_16df4d000f234d87b26c6f4f2af7864a|fc_0598c597e7839619016ad59ec12be481919e4679b770b4fcf6"
+          },
+          {
+            "sha256": "9f1aa95825378af6219c3e887de524ba70238a7d16ef1cde8cdc3300bbfe3732",
+            "call_id": "call_f9081ba4f91b462db9ec057bafa6736b|fc_0598c597e7839619016ad59ec6a8b88191b3cbdf85512a47ca"
+          },
+          {
+            "sha256": "955064ffbd97b1ad8ffbf5eb10af6abae4cf3e5bdd1812533c9a3ffa58cccb31",
+            "call_id": "call_777894604193440394df8b3bd47869f1|fc_0598c597e7839619016ad59ec9c1a48191b05d55a20ffa05d1"
+          },
+          {
+            "sha256": "0159320271be6cde7cb71d1ebf4d04ca3184372bf52431d53ec9911dc56f0d0f",
+            "call_id": "call_41de27dd9c414361af5bf6aa6df8f57c|fc_0598c597e7839619016ad59ecdd61c8191a834d52d5b2f9885"
+          },
+          {
+            "sha256": "31434382caa946e6d78026fefc58c75d22a95e26a12c53002b9e61a5c2226b39",
+            "call_id": "call_eafd1a3979cd4bde9e10f7b9451ef1c6|fc_0598c597e7839619016ad59ed1336081918f2fb9487ced458e"
+          },
+          {
+            "sha256": "3bb6a18e2c7610da6d492e7c82b0fcb998fe6ad7cd9ebe237c6b61681709a326",
+            "call_id": "call_06d5b4702f9c4b67a53d3ea440e1f476|fc_0598c597e7839619016ad59ed4cd3c8191bcf25b0867e035b0"
+          },
+          {
+            "sha256": "542580a41cbc89a0aa5ed941bed2f828fab11bc799eccb525b08d7c183fca1ce",
+            "call_id": "call_158af6bb6da1457d84bdf9cb606a3870|fc_0598c597e7839619016ad59ed9ad2c8191a8ccd25a8ceb2c80"
+          }
+        ],
+        "event_id": "EVT-01M59768G040KGE05KV0GYC1VM",
+        "message_id": "a262f0f3c60ba40da0f8417613b06bfc28728ca99d099556e546da34f790e78e",
+        "publication": {
+          "kind": "FULL",
+          "ems_id": "EMS-01M5977E2X861W0ZZ0B1KDFMDG",
+          "reason": "NO_MATERIAL_CHANGE",
+          "alert_id": null,
+          "event_id": "EVT-01M59768G040KGE05KV0GYC1VM",
+          "certainty": "HIGH",
+          "ems_class": "STRUCTURAL_SHOCK",
+          "freshness": "POOR",
+          "lifecycle": "ANALYZING",
+          "disposition": "SUPPRESSED",
+          "gate_reason": "NO_MATERIAL_CHANGE",
+          "map_version": 2,
+          "analysis_set": [
+            "quant:QNT"
+          ],
+          "decision_ids": [
+            "DEC-01M5978S3KMWS1XHBFDJRQ1280"
+          ],
+          "alert_version": null,
+          "contract_version": 1,
+          "market_truth_ids": [
+            "MTA-01M5978G00MVTH802STWGB6T20"
+          ],
+          "previous_alert_id": "ALR-01M5977GRWB37G77BVB5EPQ4XX",
+          "previous_alert_version": 2,
+          "newest_generated_alert_id": "ALR-01M5977GRWB37G77BVB5EPQ4XX",
+          "newest_generated_alert_version": 2
+        }
+      },
+      "retry_attempt": 0,
+      "native_input_id": "sevt_req_46d7bd72052895fe0f0a646fa16506db5181c2ca7550569b33be2c10176802b3_0"
+    }
+  },
+  "native_completion": true,
+  "actual_session_binding": {
+    "agent_id": "agent_mq5GXfZtPf8t29FrpcX53",
+    "environment_id": "env_dKKaX4PPOkS56zBn9pDSk",
+    "skills": [
+      {
+        "skill_id": "skill_X0N7EFjZdWYOKK21xoQ5N",
+        "type": "custom",
+        "version": "1792384233810000"
+      },
+      {
+        "skill_id": "skill_qoxVLm8qNiekCEyCgsTxp",
+        "type": "custom",
+        "version": "1792384233829000"
+      }
+    ],
+    "model": {
+      "id": "gpt-6.1-sol",
+      "effort": {
+        "type": "medium"
+      }
+    }
+  },
+  "delivery_status": "NOT_RUN",
+  "delivery_reason": "FIRST_REFERENCE_NO_CAPTURED_DELIVERY",
+  "delivery_intents": [
+    {
+      "type": "DELIVER",
+      "job_id": "JOB-01M5977GS4R5TRPYD07091Z6CW",
+      "status": "QUEUED",
+      "payload": {
+        "channel": "telegram:alerts",
+        "version": 1,
+        "alert_id": "ALR-01M5977GRWB37G77BVB5EPQ4XX"
+      },
+      "attempts": 0,
+      "idem_key": "ALR-01M5977GRWB37G77BVB5EPQ4XX:1:telegram:alerts",
+      "priority": 0,
+      "run_after": "2026-09-24T20:15:00Z",
+      "created_at": "2026-09-24T20:15:00.000000Z",
+      "expires_at": "2026-09-25T20:15:00Z",
+      "last_error": null,
+      "finished_at": null,
+      "max_attempts": 5,
+      "run_after_prec": "COLLECTION_ONLY",
+      "created_at_prec": "COLLECTION_ONLY",
+      "expires_at_prec": "COLLECTION_ONLY",
+      "finished_at_prec": null,
+      "run_after_prec_reason": null,
+      "created_at_prec_reason": null,
+      "expires_at_prec_reason": null,
+      "finished_at_prec_reason": "PENDING"
+    },
+    {
+      "type": "DELIVER",
+      "job_id": "JOB-01M5978YM1PABK7QVZY6D5HA9S",
+      "status": "QUEUED",
+      "payload": {
+        "channel": "telegram:alerts",
+        "version": 2,
+        "alert_id": "ALR-01M5977GRWB37G77BVB5EPQ4XX"
+      },
+      "attempts": 0,
+      "idem_key": "ALR-01M5977GRWB37G77BVB5EPQ4XX:2:telegram:alerts",
+      "priority": 0,
+      "run_after": "2026-09-24T20:15:00Z",
+      "created_at": "2026-09-24T20:15:00.000000Z",
+      "expires_at": "2026-09-25T20:15:00Z",
+      "last_error": null,
+      "finished_at": null,
+      "max_attempts": 5,
+      "run_after_prec": "COLLECTION_ONLY",
+      "created_at_prec": "COLLECTION_ONLY",
+      "expires_at_prec": "COLLECTION_ONLY",
+      "finished_at_prec": null,
+      "run_after_prec_reason": null,
+      "created_at_prec_reason": null,
+      "expires_at_prec_reason": null,
+      "finished_at_prec_reason": "PENDING"
+    }
+  ],
+  "calls_count": 0,
+  "archive_readback": {
+    "archived_at": "2026-10-19T04:39:29.676Z",
+    "status": "idle"
+  },
+  "cleanup": {
+    "catalog": [],
+    "gateway_closed": true,
+    "listener_closed": true,
+    "runner_absent": true,
+    "database_connections": 0,
+    "controller_healthy": true,
+    "process_unhandled_rejection": 0
+  },
+  "full_fixture_acceptance": false,
+  "limits": [
+    "Actual source-reference execution, not historical live/performance proof.",
+    "Historical HEAVY repricing unproven: retained partial market input yields LOW/UNKNOWN.",
+    "Delivery intentionally NOT_RUN; no SENT/message_ref/OPEN call.",
+    "RuntimeSupervisor/tank serve and calibration acceptance were not exercised."
+  ],
+  "tool_error_receipts": [
+    {
+      "call_id": "call_58613b80ac174cdea308d31f1e70339b|fc_0598c597e7839619016ad59eaee2448191b788b14a73952ec2",
+      "tool": "set_beneficiaries",
+      "status": "REFUSED",
+      "error": {
+        "type": "ValueError",
+        "reason": "Layer SETTLEMENT_L1_L2 requires NONE/UNKNOWN reason",
+        "category": "VALIDATION"
+      }
+    }
+  ]
+}

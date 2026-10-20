@@ -1,0 +1,492 @@
+;
+; Archive created at 2026-10-20 02:01:34 UTC
+;     dbname: oma
+;     TOC Entries: 482
+;     Compression: gzip
+;     Dump Version: 1.15-0
+;     Format: CUSTOM
+;     Integer: 4 bytes
+;     Offset: 8 bytes
+;     Dumped from database version: 16.15 (Debian 16.15-1.pgdg13+2)
+;     Dumped by pg_dump version: 16.15 (Debian 16.15-1.pgdg12+2)
+;
+;
+; Selected TOC Entries:
+;
+6; 2615 33027 SCHEMA - drizzle oma
+217; 1259 33029 TABLE drizzle __drizzle_migrations oma
+216; 1259 33028 SEQUENCE drizzle __drizzle_migrations_id_seq oma
+4320; 0 0 SEQUENCE OWNED BY drizzle __drizzle_migrations_id_seq oma
+218; 1259 33037 TABLE public account oma
+224; 1259 33084 TABLE public agent_versions oma
+225; 1259 33091 TABLE public agents oma
+245; 1259 33236 TABLE public api_keys oma
+239; 1259 33194 TABLE public connect_runtime_codes oma
+233; 1259 33150 TABLE public credentials oma
+269; 1259 33532 TABLE public dreams oma
+236; 1259 33172 TABLE public environments oma
+242; 1259 33220 TABLE public eval_runs oma
+276; 1259 33625 TABLE public feishu_apps oma
+277; 1259 33634 TABLE public feishu_installations oma
+270; 1259 33543 TABLE public feishu_message_events oma
+278; 1259 33641 TABLE public feishu_publications oma
+279; 1259 33648 TABLE public feishu_setup_links oma
+280; 1259 33655 TABLE public feishu_thread_sessions oma
+281; 1259 33662 TABLE public feishu_webhook_events oma
+237; 1259 33179 TABLE public files oma
+258; 1259 33336 TABLE public github_apps oma
+259; 1259 33345 TABLE public github_installations oma
+260; 1259 33352 TABLE public github_issue_sessions oma
+261; 1259 33359 TABLE public github_publications oma
+262; 1259 33366 TABLE public github_webhook_events oma
+271; 1259 33550 TABLE public group_events oma
+246; 1259 33245 TABLE public kv_entries oma
+250; 1259 33275 TABLE public linear_apps oma
+251; 1259 33284 TABLE public linear_authored_comments oma
+252; 1259 33291 TABLE public linear_dispatch_rules oma
+253; 1259 33301 TABLE public linear_events oma
+254; 1259 33308 TABLE public linear_installations oma
+255; 1259 33315 TABLE public linear_issue_sessions oma
+256; 1259 33322 TABLE public linear_publications oma
+257; 1259 33329 TABLE public linear_setup_links oma
+274; 1259 33611 TABLE public managed_agent_versions oma
+275; 1259 33618 TABLE public managed_agents oma
+292; 1259 33768 TABLE public managed_credentials oma
+298; 1259 33819 TABLE public managed_deployment_runs oma
+299; 1259 33826 TABLE public managed_deployments oma
+302; 1259 33855 TABLE public managed_dreams oma
+300; 1259 33837 TABLE public managed_environment_work oma
+301; 1259 33844 TABLE public managed_environment_work_workers oma
+290; 1259 33752 TABLE public managed_environments oma
+287; 1259 33726 TABLE public managed_files oma
+294; 1259 33784 TABLE public managed_memories oma
+289; 1259 33744 TABLE public managed_memory_stores oma
+295; 1259 33791 TABLE public managed_memory_versions oma
+312; 1259 312982 TABLE public managed_session_claim_locks oma
+285; 1259 33709 TABLE public managed_session_events oma
+304; 1259 33872 TABLE public managed_session_executions oma
+282; 1259 33685 TABLE public managed_session_initial_events oma
+283; 1259 33692 TABLE public managed_session_memory_stores oma
+286; 1259 33718 TABLE public managed_session_resource_secrets oma
+288; 1259 33735 TABLE public managed_session_threads oma
+284; 1259 33699 TABLE public managed_sessions oma
+296; 1259 33802 TABLE public managed_skill_versions oma
+297; 1259 33809 TABLE public managed_skills oma
+303; 1259 33864 TABLE public managed_tunnels oma
+293; 1259 33776 TABLE public managed_user_profiles oma
+291; 1259 33760 TABLE public managed_vaults oma
+309; 1259 33928 TABLE public mcp_access_loss_effects oma
+310; 1259 33935 TABLE public mcp_reauthorization_requests oma
+219; 1259 33044 TABLE public membership oma
+229; 1259 33120 TABLE public memories oma
+230; 1259 33127 TABLE public memory_blob_poller_lease oma
+272; 1259 33560 TABLE public memory_confirmations oma
+247; 1259 33252 TABLE public memory_store_tenant oma
+231; 1259 33135 TABLE public memory_stores oma
+232; 1259 33142 TABLE public memory_versions oma
+235; 1259 33164 TABLE public model_cards oma
+308; 1259 33916 TABLE public queue_messages oma
+313; 1259 312990 TABLE public runtime_resource_fences oma
+314; 1259 312999 TABLE public runtime_resource_orphans oma
+240; 1259 33201 TABLE public runtime_tokens oma
+241; 1259 33210 TABLE public runtimes oma
+220; 1259 33051 TABLE public session oma
+306; 1259 33898 TABLE public session_events oma
+226; 1259 33098 TABLE public session_memory_stores oma
+227; 1259 33106 TABLE public session_resources oma
+307; 1259 33907 TABLE public session_streams oma
+273; 1259 33573 TABLE public session_threads oma
+311; 1259 33942 TABLE public session_wakeups oma
+228; 1259 33113 TABLE public sessions oma
+248; 1259 33259 TABLE public shard_pool oma
+263; 1259 33373 TABLE public slack_apps oma
+264; 1259 33382 TABLE public slack_installations oma
+265; 1259 33389 TABLE public slack_publications oma
+266; 1259 33396 TABLE public slack_setup_links oma
+267; 1259 33403 TABLE public slack_thread_sessions oma
+268; 1259 33410 TABLE public slack_webhook_events oma
+221; 1259 33060 TABLE public tenant oma
+305; 1259 33888 TABLE public tenant_invitation oma
+249; 1259 33268 TABLE public tenant_shard oma
+244; 1259 33228 TABLE public usage_events oma
+243; 1259 33227 SEQUENCE public usage_events_id_seq oma
+4321; 0 0 SEQUENCE OWNED BY public usage_events_id_seq oma
+222; 1259 33067 TABLE public user oma
+234; 1259 33157 TABLE public vaults oma
+223; 1259 33077 TABLE public verification oma
+238; 1259 33187 TABLE public workspace_backups oma
+3653; 2604 33032 DEFAULT drizzle __drizzle_migrations id oma
+3664; 2604 33231 DEFAULT public usage_events id oma
+4215; 0 33029 TABLE DATA drizzle __drizzle_migrations oma
+4216; 0 33037 TABLE DATA public account oma
+4222; 0 33084 TABLE DATA public agent_versions oma
+4223; 0 33091 TABLE DATA public agents oma
+4243; 0 33236 TABLE DATA public api_keys oma
+4237; 0 33194 TABLE DATA public connect_runtime_codes oma
+4231; 0 33150 TABLE DATA public credentials oma
+4267; 0 33532 TABLE DATA public dreams oma
+4234; 0 33172 TABLE DATA public environments oma
+4240; 0 33220 TABLE DATA public eval_runs oma
+4274; 0 33625 TABLE DATA public feishu_apps oma
+4275; 0 33634 TABLE DATA public feishu_installations oma
+4268; 0 33543 TABLE DATA public feishu_message_events oma
+4276; 0 33641 TABLE DATA public feishu_publications oma
+4277; 0 33648 TABLE DATA public feishu_setup_links oma
+4278; 0 33655 TABLE DATA public feishu_thread_sessions oma
+4279; 0 33662 TABLE DATA public feishu_webhook_events oma
+4235; 0 33179 TABLE DATA public files oma
+4256; 0 33336 TABLE DATA public github_apps oma
+4257; 0 33345 TABLE DATA public github_installations oma
+4258; 0 33352 TABLE DATA public github_issue_sessions oma
+4259; 0 33359 TABLE DATA public github_publications oma
+4260; 0 33366 TABLE DATA public github_webhook_events oma
+4269; 0 33550 TABLE DATA public group_events oma
+4244; 0 33245 TABLE DATA public kv_entries oma
+4248; 0 33275 TABLE DATA public linear_apps oma
+4249; 0 33284 TABLE DATA public linear_authored_comments oma
+4250; 0 33291 TABLE DATA public linear_dispatch_rules oma
+4251; 0 33301 TABLE DATA public linear_events oma
+4252; 0 33308 TABLE DATA public linear_installations oma
+4253; 0 33315 TABLE DATA public linear_issue_sessions oma
+4254; 0 33322 TABLE DATA public linear_publications oma
+4255; 0 33329 TABLE DATA public linear_setup_links oma
+4272; 0 33611 TABLE DATA public managed_agent_versions oma
+4273; 0 33618 TABLE DATA public managed_agents oma
+4290; 0 33768 TABLE DATA public managed_credentials oma
+4296; 0 33819 TABLE DATA public managed_deployment_runs oma
+4297; 0 33826 TABLE DATA public managed_deployments oma
+4300; 0 33855 TABLE DATA public managed_dreams oma
+4298; 0 33837 TABLE DATA public managed_environment_work oma
+4299; 0 33844 TABLE DATA public managed_environment_work_workers oma
+4288; 0 33752 TABLE DATA public managed_environments oma
+4285; 0 33726 TABLE DATA public managed_files oma
+4292; 0 33784 TABLE DATA public managed_memories oma
+4287; 0 33744 TABLE DATA public managed_memory_stores oma
+4293; 0 33791 TABLE DATA public managed_memory_versions oma
+4310; 0 312982 TABLE DATA public managed_session_claim_locks oma
+4283; 0 33709 TABLE DATA public managed_session_events oma
+4302; 0 33872 TABLE DATA public managed_session_executions oma
+4280; 0 33685 TABLE DATA public managed_session_initial_events oma
+4281; 0 33692 TABLE DATA public managed_session_memory_stores oma
+4284; 0 33718 TABLE DATA public managed_session_resource_secrets oma
+4286; 0 33735 TABLE DATA public managed_session_threads oma
+4282; 0 33699 TABLE DATA public managed_sessions oma
+4294; 0 33802 TABLE DATA public managed_skill_versions oma
+4295; 0 33809 TABLE DATA public managed_skills oma
+4301; 0 33864 TABLE DATA public managed_tunnels oma
+4291; 0 33776 TABLE DATA public managed_user_profiles oma
+4289; 0 33760 TABLE DATA public managed_vaults oma
+4307; 0 33928 TABLE DATA public mcp_access_loss_effects oma
+4308; 0 33935 TABLE DATA public mcp_reauthorization_requests oma
+4217; 0 33044 TABLE DATA public membership oma
+4227; 0 33120 TABLE DATA public memories oma
+4228; 0 33127 TABLE DATA public memory_blob_poller_lease oma
+4270; 0 33560 TABLE DATA public memory_confirmations oma
+4245; 0 33252 TABLE DATA public memory_store_tenant oma
+4229; 0 33135 TABLE DATA public memory_stores oma
+4230; 0 33142 TABLE DATA public memory_versions oma
+4233; 0 33164 TABLE DATA public model_cards oma
+4306; 0 33916 TABLE DATA public queue_messages oma
+4311; 0 312990 TABLE DATA public runtime_resource_fences oma
+4312; 0 312999 TABLE DATA public runtime_resource_orphans oma
+4238; 0 33201 TABLE DATA public runtime_tokens oma
+4239; 0 33210 TABLE DATA public runtimes oma
+4218; 0 33051 TABLE DATA public session oma
+4304; 0 33898 TABLE DATA public session_events oma
+4224; 0 33098 TABLE DATA public session_memory_stores oma
+4225; 0 33106 TABLE DATA public session_resources oma
+4305; 0 33907 TABLE DATA public session_streams oma
+4271; 0 33573 TABLE DATA public session_threads oma
+4309; 0 33942 TABLE DATA public session_wakeups oma
+4226; 0 33113 TABLE DATA public sessions oma
+4246; 0 33259 TABLE DATA public shard_pool oma
+4261; 0 33373 TABLE DATA public slack_apps oma
+4262; 0 33382 TABLE DATA public slack_installations oma
+4263; 0 33389 TABLE DATA public slack_publications oma
+4264; 0 33396 TABLE DATA public slack_setup_links oma
+4265; 0 33403 TABLE DATA public slack_thread_sessions oma
+4266; 0 33410 TABLE DATA public slack_webhook_events oma
+4219; 0 33060 TABLE DATA public tenant oma
+4303; 0 33888 TABLE DATA public tenant_invitation oma
+4247; 0 33268 TABLE DATA public tenant_shard oma
+4242; 0 33228 TABLE DATA public usage_events oma
+4220; 0 33067 TABLE DATA public user oma
+4232; 0 33157 TABLE DATA public vaults oma
+4221; 0 33077 TABLE DATA public verification oma
+4236; 0 33187 TABLE DATA public workspace_backups oma
+4322; 0 0 SEQUENCE SET drizzle __drizzle_migrations_id_seq oma
+4323; 0 0 SEQUENCE SET public usage_events_id_seq oma
+3690; 2606 33036 CONSTRAINT drizzle __drizzle_migrations __drizzle_migrations_pkey oma
+3692; 2606 33043 CONSTRAINT public account account_pkey oma
+3712; 2606 33090 CONSTRAINT public agent_versions agent_versions_agent_id_version_pk oma
+3714; 2606 33097 CONSTRAINT public agents agents_pkey oma
+3788; 2606 33244 CONSTRAINT public api_keys api_keys_hash_unique oma
+3790; 2606 33242 CONSTRAINT public api_keys api_keys_pkey oma
+3765; 2606 33200 CONSTRAINT public connect_runtime_codes connect_runtime_codes_pkey oma
+3740; 2606 33156 CONSTRAINT public credentials credentials_pkey oma
+3897; 2606 33538 CONSTRAINT public dreams dreams_pkey oma
+3753; 2606 33178 CONSTRAINT public environments environments_pkey oma
+3777; 2606 33226 CONSTRAINT public eval_runs eval_runs_pkey oma
+3924; 2606 33631 CONSTRAINT public feishu_apps feishu_apps_pkey oma
+3926; 2606 33633 CONSTRAINT public feishu_apps feishu_apps_publication_id_unique oma
+3929; 2606 33640 CONSTRAINT public feishu_installations feishu_installations_pkey oma
+3902; 2606 33549 CONSTRAINT public feishu_message_events feishu_message_events_pkey oma
+3934; 2606 33647 CONSTRAINT public feishu_publications feishu_publications_pkey oma
+3940; 2606 33654 CONSTRAINT public feishu_setup_links feishu_setup_links_pkey oma
+3944; 2606 33661 CONSTRAINT public feishu_thread_sessions feishu_thread_sessions_publication_id_scope_key_pk oma
+3948; 2606 33668 CONSTRAINT public feishu_webhook_events feishu_webhook_events_pkey oma
+3756; 2606 33186 CONSTRAINT public files files_pkey oma
+3843; 2606 33342 CONSTRAINT public github_apps github_apps_pkey oma
+3845; 2606 33344 CONSTRAINT public github_apps github_apps_publication_id_unique oma
+3849; 2606 33351 CONSTRAINT public github_installations github_installations_pkey oma
+3854; 2606 33358 CONSTRAINT public github_issue_sessions github_issue_sessions_publication_id_issue_id_pk oma
+3858; 2606 33365 CONSTRAINT public github_publications github_publications_pkey oma
+3865; 2606 33372 CONSTRAINT public github_webhook_events github_webhook_events_pkey oma
+3905; 2606 33557 CONSTRAINT public group_events group_events_pkey oma
+3794; 2606 33251 CONSTRAINT public kv_entries kv_entries_tenant_id_key_pk oma
+3806; 2606 33281 CONSTRAINT public linear_apps linear_apps_pkey oma
+3808; 2606 33283 CONSTRAINT public linear_apps linear_apps_publication_id_unique oma
+3812; 2606 33290 CONSTRAINT public linear_authored_comments linear_authored_comments_pkey oma
+3817; 2606 33300 CONSTRAINT public linear_dispatch_rules linear_dispatch_rules_pkey oma
+3823; 2606 33307 CONSTRAINT public linear_events linear_events_pkey oma
+3828; 2606 33314 CONSTRAINT public linear_installations linear_installations_pkey oma
+3832; 2606 33321 CONSTRAINT public linear_issue_sessions linear_issue_sessions_publication_id_issue_id_pk oma
+3837; 2606 33328 CONSTRAINT public linear_publications linear_publications_pkey oma
+3841; 2606 33335 CONSTRAINT public linear_setup_links linear_setup_links_pkey oma
+3919; 2606 33617 CONSTRAINT public managed_agent_versions managed_agent_versions_agent_id_version_pk oma
+3922; 2606 33624 CONSTRAINT public managed_agents managed_agents_pkey oma
+3986; 2606 33774 CONSTRAINT public managed_credentials managed_credentials_workspace_id_id_pk oma
+4008; 2606 33825 CONSTRAINT public managed_deployment_runs managed_deployment_runs_workspace_id_id_pk oma
+4012; 2606 33832 CONSTRAINT public managed_deployments managed_deployments_workspace_id_id_pk oma
+4024; 2606 33861 CONSTRAINT public managed_dreams managed_dreams_workspace_id_id_pk oma
+4020; 2606 33850 CONSTRAINT public managed_environment_work_workers managed_environment_work_workers_workspace_id_environment_id_wo oma
+4017; 2606 33843 CONSTRAINT public managed_environment_work managed_environment_work_workspace_id_id_pk oma
+3980; 2606 33758 CONSTRAINT public managed_environments managed_environments_workspace_id_id_pk oma
+3971; 2606 33732 CONSTRAINT public managed_files managed_files_workspace_id_id_pk oma
+3993; 2606 33790 CONSTRAINT public managed_memories managed_memories_workspace_id_id_pk oma
+3977; 2606 33750 CONSTRAINT public managed_memory_stores managed_memory_stores_workspace_id_id_pk oma
+3997; 2606 33797 CONSTRAINT public managed_memory_versions managed_memory_versions_workspace_id_id_pk oma
+4058; 2606 312989 CONSTRAINT public managed_session_claim_locks managed_session_claim_locks_pkey oma
+3964; 2606 33715 CONSTRAINT public managed_session_events managed_session_events_workspace_id_session_id_id_pk oma
+4031; 2606 33882 CONSTRAINT public managed_session_executions managed_session_executions_workspace_id_id_pk oma
+3952; 2606 33691 CONSTRAINT public managed_session_initial_events managed_session_initial_events_session_id_sequence_pk oma
+3955; 2606 33698 CONSTRAINT public managed_session_memory_stores managed_session_memory_stores_session_id_memory_store_id_pk oma
+3967; 2606 33724 CONSTRAINT public managed_session_resource_secrets managed_session_resource_secrets_workspace_id_session_id_resour oma
+3974; 2606 33741 CONSTRAINT public managed_session_threads managed_session_threads_workspace_id_session_id_id_pk oma
+3959; 2606 33705 CONSTRAINT public managed_sessions managed_sessions_pkey oma
+4001; 2606 33808 CONSTRAINT public managed_skill_versions managed_skill_versions_workspace_id_skill_id_version_pk oma
+4004; 2606 33815 CONSTRAINT public managed_skills managed_skills_workspace_id_id_pk oma
+4027; 2606 33870 CONSTRAINT public managed_tunnels managed_tunnels_workspace_id_id_pk oma
+3989; 2606 33782 CONSTRAINT public managed_user_profiles managed_user_profiles_workspace_id_id_pk oma
+3983; 2606 33766 CONSTRAINT public managed_vaults managed_vaults_workspace_id_id_pk oma
+4050; 2606 33934 CONSTRAINT public mcp_access_loss_effects mcp_access_loss_effects_pkey oma
+4053; 2606 33941 CONSTRAINT public mcp_reauthorization_requests mcp_reauthorization_requests_pkey oma
+3696; 2606 33050 CONSTRAINT public membership membership_user_id_tenant_id_pk oma
+3729; 2606 33126 CONSTRAINT public memories memories_pkey oma
+3731; 2606 33134 CONSTRAINT public memory_blob_poller_lease memory_blob_poller_lease_pkey oma
+3911; 2606 33570 CONSTRAINT public memory_confirmations memory_confirmations_pkey oma
+3797; 2606 33258 CONSTRAINT public memory_store_tenant memory_store_tenant_pkey oma
+3734; 2606 33141 CONSTRAINT public memory_stores memory_stores_pkey oma
+3738; 2606 33149 CONSTRAINT public memory_versions memory_versions_pkey oma
+3751; 2606 33171 CONSTRAINT public model_cards model_cards_pkey oma
+4048; 2606 33924 CONSTRAINT public queue_messages queue_messages_pkey oma
+4061; 2606 312997 CONSTRAINT public runtime_resource_fences runtime_resource_fences_pkey oma
+4063; 2606 313006 CONSTRAINT public runtime_resource_orphans runtime_resource_orphans_pkey oma
+3769; 2606 33207 CONSTRAINT public runtime_tokens runtime_tokens_pkey oma
+3771; 2606 33209 CONSTRAINT public runtime_tokens runtime_tokens_token_hash_unique oma
+3775; 2606 33219 CONSTRAINT public runtimes runtimes_pkey oma
+4040; 2606 33904 CONSTRAINT public session_events session_events_pkey oma
+3717; 2606 33105 CONSTRAINT public session_memory_stores session_memory_stores_session_id_store_id_pk oma
+3699; 2606 33057 CONSTRAINT public session session_pkey oma
+3720; 2606 33112 CONSTRAINT public session_resources session_resources_pkey oma
+4043; 2606 33914 CONSTRAINT public session_streams session_streams_pkey oma
+3916; 2606 33581 CONSTRAINT public session_threads session_threads_session_id_id_pk oma
+3701; 2606 33059 CONSTRAINT public session session_token_unique oma
+4055; 2606 33948 CONSTRAINT public session_wakeups session_wakeups_pkey oma
+3726; 2606 33119 CONSTRAINT public sessions sessions_pkey oma
+3800; 2606 33267 CONSTRAINT public shard_pool shard_pool_pkey oma
+3870; 2606 33379 CONSTRAINT public slack_apps slack_apps_pkey oma
+3872; 2606 33381 CONSTRAINT public slack_apps slack_apps_publication_id_unique oma
+3877; 2606 33388 CONSTRAINT public slack_installations slack_installations_pkey oma
+3883; 2606 33395 CONSTRAINT public slack_publications slack_publications_pkey oma
+3887; 2606 33402 CONSTRAINT public slack_setup_links slack_setup_links_pkey oma
+3891; 2606 33409 CONSTRAINT public slack_thread_sessions slack_thread_sessions_publication_id_scope_key_pk oma
+3895; 2606 33416 CONSTRAINT public slack_webhook_events slack_webhook_events_pkey oma
+4034; 2606 33894 CONSTRAINT public tenant_invitation tenant_invitation_pkey oma
+4036; 2606 33896 CONSTRAINT public tenant_invitation tenant_invitation_token_hash_unique oma
+3703; 2606 33066 CONSTRAINT public tenant tenant_pkey oma
+3803; 2606 33274 CONSTRAINT public tenant_shard tenant_shard_pkey oma
+3908; 2606 33559 CONSTRAINT public group_events uq_group_events_tenant_event_group oma
+3913; 2606 33572 CONSTRAINT public memory_confirmations uq_memory_confirmations_session_tool oma
+3786; 2606 33235 CONSTRAINT public usage_events usage_events_pkey oma
+3705; 2606 33076 CONSTRAINT public user user_email_unique oma
+3707; 2606 33074 CONSTRAINT public user user_pkey oma
+3746; 2606 33163 CONSTRAINT public vaults vaults_pkey oma
+3710; 2606 33083 CONSTRAINT public verification verification_pkey oma
+3763; 2606 33193 CONSTRAINT public workspace_backups workspace_backups_pkey oma
+3693; 1259 33442 INDEX public idx_account_userId oma
+3715; 1259 33446 INDEX public idx_agents_tenant oma
+3791; 1259 33479 INDEX public idx_api_keys_tenant oma
+3766; 1259 33469 INDEX public idx_connect_runtime_codes_expires oma
+3741; 1259 33457 INDEX public idx_credentials_mcp_url_active oma
+3742; 1259 33458 INDEX public idx_credentials_provider oma
+3743; 1259 33456 INDEX public idx_credentials_vault oma
+3898; 1259 33540 INDEX public idx_dreams_input_store oma
+3899; 1259 33541 INDEX public idx_dreams_output_store oma
+3900; 1259 33539 INDEX public idx_dreams_tenant_created oma
+3754; 1259 33463 INDEX public idx_environments_tenant oma
+3778; 1259 33476 INDEX public idx_eval_runs_status_active oma
+3779; 1259 33474 INDEX public idx_eval_runs_tenant_agent_started oma
+3780; 1259 33475 INDEX public idx_eval_runs_tenant_environment_started oma
+3781; 1259 33473 INDEX public idx_eval_runs_tenant_started oma
+3927; 1259 33671 INDEX public idx_feishu_apps_tenant oma
+3930; 1259 33672 INDEX public idx_feishu_installations_active oma
+3931; 1259 33674 INDEX public idx_feishu_installations_tenant oma
+3932; 1259 33673 INDEX public idx_feishu_installations_user oma
+3903; 1259 33607 INDEX public idx_feishu_message_events_event oma
+3935; 1259 33678 INDEX public idx_feishu_publications_app_id oma
+3936; 1259 33675 INDEX public idx_feishu_publications_installation oma
+3937; 1259 33677 INDEX public idx_feishu_publications_tenant oma
+3938; 1259 33676 INDEX public idx_feishu_publications_user_agent oma
+3941; 1259 33679 INDEX public idx_feishu_setup_links_expires oma
+3942; 1259 33680 INDEX public idx_feishu_setup_links_tenant oma
+3945; 1259 33681 INDEX public idx_feishu_thread_sessions_active oma
+3946; 1259 33682 INDEX public idx_feishu_thread_sessions_tenant oma
+3949; 1259 33683 INDEX public idx_feishu_webhook_events_received oma
+3950; 1259 33684 INDEX public idx_feishu_webhook_events_tenant oma
+3757; 1259 33466 INDEX public idx_files_session oma
+3758; 1259 33464 INDEX public idx_files_tenant_created oma
+3759; 1259 33465 INDEX public idx_files_tenant_session_created oma
+3846; 1259 33504 INDEX public idx_github_apps_app_id oma
+3847; 1259 33505 INDEX public idx_github_apps_tenant oma
+3850; 1259 33506 INDEX public idx_github_installations_active oma
+3851; 1259 33508 INDEX public idx_github_installations_tenant oma
+3852; 1259 33507 INDEX public idx_github_installations_user oma
+3855; 1259 33509 INDEX public idx_github_issue_sessions_active oma
+3856; 1259 33510 INDEX public idx_github_issue_sessions_tenant oma
+3859; 1259 33515 INDEX public idx_github_publications_app_id oma
+3860; 1259 33514 INDEX public idx_github_publications_app_oma_id oma
+3861; 1259 33511 INDEX public idx_github_publications_installation oma
+3862; 1259 33513 INDEX public idx_github_publications_tenant oma
+3863; 1259 33512 INDEX public idx_github_publications_user_agent oma
+3866; 1259 33516 INDEX public idx_github_webhook_events_received oma
+3867; 1259 33517 INDEX public idx_github_webhook_events_tenant oma
+3906; 1259 33608 INDEX public idx_group_events_tenant_group oma
+3792; 1259 33480 INDEX public idx_kv_entries_expires oma
+3804; 1259 33484 INDEX public idx_linear_apps_tenant oma
+3809; 1259 33485 INDEX public idx_linear_authored_comments_session oma
+3810; 1259 33486 INDEX public idx_linear_authored_comments_tenant oma
+3813; 1259 33488 INDEX public idx_linear_dispatch_rules_publication oma
+3814; 1259 33487 INDEX public idx_linear_dispatch_rules_sweep oma
+3815; 1259 33489 INDEX public idx_linear_dispatch_rules_tenant oma
+3818; 1259 33493 INDEX public idx_linear_events_publication oma
+3819; 1259 33490 INDEX public idx_linear_events_received oma
+3820; 1259 33491 INDEX public idx_linear_events_tenant oma
+3821; 1259 33492 INDEX public idx_linear_events_unprocessed oma
+3824; 1259 33494 INDEX public idx_linear_installations_active oma
+3825; 1259 33496 INDEX public idx_linear_installations_tenant oma
+3826; 1259 33495 INDEX public idx_linear_installations_user oma
+3829; 1259 33497 INDEX public idx_linear_issue_sessions_active oma
+3830; 1259 33498 INDEX public idx_linear_issue_sessions_tenant oma
+3833; 1259 33499 INDEX public idx_linear_publications_installation oma
+3834; 1259 33501 INDEX public idx_linear_publications_tenant oma
+3835; 1259 33500 INDEX public idx_linear_publications_user_agent oma
+3838; 1259 33502 INDEX public idx_linear_setup_links_expires oma
+3839; 1259 33503 INDEX public idx_linear_setup_links_tenant oma
+3917; 1259 33669 INDEX public idx_managed_agent_versions_workspace_agent oma
+3920; 1259 33670 INDEX public idx_managed_agents_workspace_created_id oma
+3984; 1259 33775 INDEX public idx_managed_credentials_workspace_vault_created_id oma
+4005; 1259 33833 INDEX public idx_managed_deployment_runs_workspace_created_id oma
+4006; 1259 33834 INDEX public idx_managed_deployment_runs_workspace_deployment_created_id oma
+4009; 1259 33836 INDEX public idx_managed_deployments_workspace_agent_created_id oma
+4010; 1259 33835 INDEX public idx_managed_deployments_workspace_created_id oma
+4021; 1259 33862 INDEX public idx_managed_dreams_workspace_created_id oma
+4022; 1259 33863 INDEX public idx_managed_dreams_workspace_status_created_id oma
+4013; 1259 33852 INDEX public idx_managed_environment_work_created_id oma
+4014; 1259 33851 INDEX public idx_managed_environment_work_queue oma
+4015; 1259 33854 INDEX public idx_managed_environment_work_session oma
+4018; 1259 33853 INDEX public idx_managed_environment_work_workers_activity oma
+3978; 1259 33759 INDEX public idx_managed_environments_workspace_created_id oma
+3968; 1259 33733 INDEX public idx_managed_files_workspace_created_id oma
+3969; 1259 33734 INDEX public idx_managed_files_workspace_scope_created_id oma
+3990; 1259 33799 INDEX public idx_managed_memories_workspace_store_path oma
+3991; 1259 33798 INDEX public idx_managed_memories_workspace_store_updated_id oma
+3975; 1259 33751 INDEX public idx_managed_memory_stores_workspace_created_id oma
+3994; 1259 33801 INDEX public idx_managed_memory_versions_workspace_memory_created_id oma
+3995; 1259 33800 INDEX public idx_managed_memory_versions_workspace_store_created_id oma
+3960; 1259 33716 INDEX public idx_managed_session_events_workspace_session_time_id oma
+3961; 1259 33717 INDEX public idx_managed_session_events_workspace_session_type_time_id oma
+3962; 1259 33743 INDEX public idx_managed_session_events_workspace_thread_time_id oma
+3953; 1259 33706 INDEX public idx_managed_session_memory_stores_workspace_store oma
+3965; 1259 33725 INDEX public idx_managed_session_resource_secrets_workspace_session oma
+3972; 1259 33742 INDEX public idx_managed_session_threads_workspace_session_created_id oma
+3956; 1259 33708 INDEX public idx_managed_sessions_workspace_agent oma
+3957; 1259 33707 INDEX public idx_managed_sessions_workspace_created_id oma
+3998; 1259 33816 INDEX public idx_managed_skill_versions_workspace_id oma
+3999; 1259 33817 INDEX public idx_managed_skill_versions_workspace_skill_created_id oma
+4002; 1259 33818 INDEX public idx_managed_skills_workspace_created_id oma
+4025; 1259 33871 INDEX public idx_managed_tunnels_workspace_created_id oma
+3987; 1259 33783 INDEX public idx_managed_user_profiles_workspace_created_id oma
+3981; 1259 33767 INDEX public idx_managed_vaults_workspace_created_id oma
+3694; 1259 33443 INDEX public idx_membership_user oma
+3727; 1259 33452 INDEX public idx_memories_store_path oma
+3909; 1259 33609 INDEX public idx_memory_confirmations_retry oma
+3795; 1259 33481 INDEX public idx_memory_store_tenant_tenant oma
+3732; 1259 33453 INDEX public idx_memory_stores_tenant oma
+3735; 1259 33455 INDEX public idx_memory_versions_memory oma
+3736; 1259 33454 INDEX public idx_memory_versions_store oma
+3747; 1259 33461 INDEX public idx_model_cards_default oma
+3748; 1259 33460 INDEX public idx_model_cards_model_id oma
+3749; 1259 33462 INDEX public idx_model_cards_tenant oma
+4044; 1259 33927 INDEX public idx_queue_messages_dlq oma
+4045; 1259 33925 INDEX public idx_queue_messages_pending oma
+4046; 1259 33926 INDEX public idx_queue_messages_processing oma
+3767; 1259 33470 INDEX public idx_runtime_tokens_runtime oma
+3772; 1259 33472 INDEX public idx_runtimes_tenant oma
+3773; 1259 33471 INDEX public idx_runtimes_user_machine oma
+4037; 1259 33906 INDEX public idx_session_events_pending oma
+4038; 1259 33905 INDEX public idx_session_events_type oma
+3718; 1259 33447 INDEX public idx_session_resources_session oma
+4041; 1259 33915 INDEX public idx_session_streams_status oma
+3914; 1259 33610 INDEX public idx_session_threads_session oma
+3697; 1259 33444 INDEX public idx_session_userId oma
+3721; 1259 33450 INDEX public idx_sessions_running oma
+3722; 1259 33448 INDEX public idx_sessions_status oma
+3723; 1259 33449 INDEX public idx_sessions_tenant_archived oma
+3724; 1259 33451 INDEX public idx_sessions_terminated oma
+3798; 1259 33482 INDEX public idx_shard_pool_status oma
+3868; 1259 33518 INDEX public idx_slack_apps_tenant oma
+3873; 1259 33519 INDEX public idx_slack_installations_active oma
+3874; 1259 33521 INDEX public idx_slack_installations_tenant oma
+3875; 1259 33520 INDEX public idx_slack_installations_user oma
+3878; 1259 33522 INDEX public idx_slack_publications_installation oma
+3879; 1259 33525 INDEX public idx_slack_publications_slack_app_id oma
+3880; 1259 33524 INDEX public idx_slack_publications_tenant oma
+3881; 1259 33523 INDEX public idx_slack_publications_user_agent oma
+3884; 1259 33526 INDEX public idx_slack_setup_links_expires oma
+3885; 1259 33527 INDEX public idx_slack_setup_links_tenant oma
+3888; 1259 33528 INDEX public idx_slack_thread_sessions_active oma
+3889; 1259 33529 INDEX public idx_slack_thread_sessions_tenant oma
+3892; 1259 33530 INDEX public idx_slack_webhook_events_received oma
+3893; 1259 33531 INDEX public idx_slack_webhook_events_tenant oma
+4032; 1259 33897 INDEX public idx_tenant_invitation_tenant oma
+3801; 1259 33483 INDEX public idx_tenant_shard_binding oma
+3782; 1259 33887 INDEX public idx_usage_events_attribution oma
+3783; 1259 33478 INDEX public idx_usage_events_session oma
+3784; 1259 33477 INDEX public idx_usage_events_unbilled oma
+3744; 1259 33459 INDEX public idx_vaults_tenant oma
+3708; 1259 33445 INDEX public idx_verification_identifier oma
+3760; 1259 33468 INDEX public idx_workspace_backups_expires oma
+3761; 1259 33467 INDEX public idx_workspace_backups_session oma
+4028; 1259 33883 INDEX public managed_session_executions_claim_idx oma
+4029; 1259 33884 INDEX public managed_session_executions_session_idx oma
+4051; 1259 33949 INDEX public mcp_access_loss_effects_session_idx oma
+4059; 1259 312998 INDEX public runtime_resource_fences_expiry_idx oma
+4056; 1259 33950 INDEX public session_wakeups_workspace_session_status_idx oma
+4064; 2606 33417 FK CONSTRAINT public account account_userId_user_id_fk oma
+4066; 2606 33582 FK CONSTRAINT public feishu_message_events feishu_message_events_tenant_id_event_id_group_id_group_events_ oma
+4067; 2606 33587 FK CONSTRAINT public group_events group_events_supervisor_session_id_sessions_id_fk oma
+4068; 2606 33592 FK CONSTRAINT public memory_confirmations memory_confirmations_tenant_id_event_id_group_id_group_events_t oma
+4069; 2606 33602 FK CONSTRAINT public session_threads session_threads_session_id_parent_thread_id_session_threads_ses oma
+4070; 2606 33597 FK CONSTRAINT public session_threads session_threads_session_id_sessions_id_fk oma
+4065; 2606 33422 FK CONSTRAINT public session session_userId_user_id_fk oma

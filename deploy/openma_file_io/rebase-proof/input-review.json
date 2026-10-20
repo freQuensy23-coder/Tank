@@ -1,0 +1,11 @@
+{
+  "raw_asset_sha256": "0c9f5972ae005643985998f8ee68f092a8b7cad9627f176b5ad9245e92e16f1e",
+  "actual_shipping_sha256": "ecbbe30d29a7e2c48ff918681d4816a0af57ecda2ece093bcf023f101763fca9",
+  "actual_source": "/private/tmp/tank-openma-aliases-r15/packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts",
+  "only_difference": "type-only retained-session import extension .ts to .js from lifecycle preparation",
+  "runtime_logic_difference": false,
+  "previous_freeze_retained": "deploy/openma_file_io/history/raw-asset-freeze-2f590b714a7d",
+  "output_only_difference": "same type-only import extension .ts to .js; complete old-patch output compared byte-for-byte after that replacement",
+  "rebased_output_sha256": "ce1a3cfc3db0c8939289be02615d52a419e9fca6fcc29a33e9dfd8a4c4478f14",
+  "file_worker_helper_bytes_unchanged": true
+}

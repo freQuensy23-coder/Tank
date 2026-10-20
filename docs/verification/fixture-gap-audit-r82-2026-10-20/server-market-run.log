@@ -1,0 +1,22 @@
+Traceback (most recent call last):
+  File "/srv/tank/docs/verification/fixture-gap-audit-r82-2026-10-20/run-market-packets.server.py", line 121, in <module>
+    asyncio.run(main())
+  File "/usr/lib/python3.12/asyncio/runners.py", line 194, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/asyncio/base_events.py", line 687, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/srv/tank/docs/verification/fixture-gap-audit-r82-2026-10-20/run-market-packets.server.py", line 72, in main
+    result = await replay_bundle(temporary, repo, settings, runner=runner, output_dir=folder)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/tank/src/tank/replay.py", line 592, in replay_bundle
+    output = await runner(inputs, repo)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/srv/tank/docs/verification/fixture-gap-audit-r82-2026-10-20/run-market-packets.server.py", line 29, in runner
+    token = next(row["record"]["token_id"] for row in inputs.records if row["collection"] == "replay.market_snapshots")
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: 'method' object is not iterable

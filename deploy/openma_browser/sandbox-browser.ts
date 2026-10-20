@@ -17,6 +17,24 @@ function quote(value: string): string {
   return "'" + value.replaceAll("'", "'\\''") + "'";
 }
 
+const REPLY_PREFIX = "__TANK_BROWSER_RPC_V1__ ";
+const MAX_REPLY_CHARS = 32 * 1024 * 1024;
+
+/** SandboxPort.exec combines stdout and stderr. Frame the worker reply so
+ * native runtime diagnostics cannot corrupt otherwise successful RPC output.
+ */
+function readReply(raw: string): string {
+  if (raw.length > MAX_REPLY_CHARS * 2) throw new Error("Sandbox browser transport output exceeds size limit");
+  const lines = raw.split(/\r?\n/);
+  const replies = lines.filter(line => line.startsWith(REPLY_PREFIX));
+  const failed = lines.some(line => !line.startsWith(REPLY_PREFIX) && /^\[(?:exit(?:\s|\])|error:)/.test(line));
+  if (failed) throw new Error("Sandbox browser transport reported a failed command");
+  if (replies.length !== 1) throw new Error("Sandbox browser worker must return exactly one protocol reply");
+  const reply = replies[0]!.slice(REPLY_PREFIX.length);
+  if (reply.length > MAX_REPLY_CHARS) throw new Error("Sandbox browser reply exceeds size limit");
+  return reply;
+}
+
 export function createSandboxBrowserHarness(
   sandbox: Pick<SandboxPort, "exec">,
   sessionId: string,
@@ -34,10 +52,16 @@ export function createSandboxBrowserHarness(
       async function rpc(op: string, args: Record<string, unknown> = {}): Promise<any> {
         const request = Buffer.from(JSON.stringify({ version: 1, op, args })).toString("base64");
         const raw = await sandbox.exec(`${command} --request ${quote(request)}`, 90_000);
+        const reply = readReply(raw);
         let response: { version?: number; ok?: boolean; error?: string; result?: unknown; url?: string };
-        try { response = JSON.parse(raw); }
+        try { response = JSON.parse(reply); }
         catch { throw new Error("Sandbox browser worker returned an invalid response; verify the sandbox image and execution status"); }
-        if (response.version !== 1 || typeof response.ok !== "boolean") throw new Error("Sandbox browser protocol mismatch");
+        if (!response || typeof response !== "object" || Array.isArray(response)
+          || response.version !== 1 || typeof response.ok !== "boolean"
+          || (response.url !== undefined && typeof response.url !== "string")
+          || (response.ok ? !("result" in response) : typeof response.error !== "string")) {
+          throw new Error("Sandbox browser protocol mismatch");
+        }
         if (!response.ok) throw new Error(response.error ?? "Sandbox browser operation failed");
         if (response.url !== undefined) currentUrl = response.url;
         return response.result;

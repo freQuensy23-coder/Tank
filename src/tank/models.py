@@ -1,8 +1,10 @@
 """Named domain schemas and flexible JSON record type."""
 
-from typing import Any, TypeAlias
+from typing import Any
 
-Record: TypeAlias = dict[str, Any]
+from tank.market_schema import MARKET_COLUMNS, MARKET_PARTITIONS
+
+type Record = dict[str, Any]
 TABLE_COLUMNS = {
     "ingest.source_items": {
         "item_id": "text",
@@ -221,7 +223,6 @@ TABLE_COLUMNS = {
         "card_struct": "jsonb",
         "decisions": "text[]",
         "evidence_bundle_id": "char(64)",
-        "linter": "jsonb",
         "supersedes_version": "int",
         "config_version": "text",
         "code_version": "text",
@@ -314,7 +315,6 @@ TABLE_COLUMNS = {
         "metric_key": "text",
         "venue": "text",
         "market_type": "text",
-        "semantic_confidence": "text",
     },
     "reg.exchange_addresses": {"address": "text", "chain": "text", "entity_id": "text"},
     "evt.capture_chains": {"event_id": "text", "token_id": "text", "version": "int", "capture_class": "text"},
@@ -619,7 +619,6 @@ REQUIRED_FIELDS = {
         "card_struct",
         "decisions",
         "evidence_bundle_id",
-        "linter",
         "config_version",
         "code_version",
     ],
@@ -676,3 +675,132 @@ MARKET_TIME_FIELDS = {
 }
 for _table_name in MARKET_TIME_FIELDS:
     TABLE_COLUMNS[_table_name].update(recorded_at="timestamptz", received_ts="timestamptz")
+
+TABLE_COLUMNS["ops.capture_tier_transitions"] = {
+    "transition_id": "text",
+    "token_id": "text",
+    "tier": "text",
+    "effective_at": "timestamptz",
+    "effective_at_prec": "text",
+    "reason": "text",
+    "config_version": "text",
+    "code_version": "text",
+}
+APPEND_ONLY = APPEND_ONLY | {"ops.capture_tier_transitions"}
+
+# Explicit timestamp projection inventory; no origin/precision policy is inferred here.
+TIMESTAMP_PRECISION_FIELDS = {
+    "ingest.source_items": {"published_at": "published_prec", "observed_at": "observed_at_prec"},
+    "evt.events": {
+        "event_time": "event_time_prec",
+        "public_at": "public_at_prec",
+        "known_to_us_at": "known_to_us_at_prec",
+        "verified_at": "verified_at_prec",
+    },
+    "evt.event_observations": {"public_at": "public_at_prec", "observed_at": "observed_at_prec"},
+    "evt.state_changes": {"changed_at": "changed_at_prec"},
+    "evt.ems_assessments": {"cutoff": "cutoff_prec"},
+    "mkt.flow_bars_1m": {
+        "minute_start": "minute_start_prec",
+        "recorded_at": "recorded_at_prec",
+        "received_ts": "received_ts_prec",
+    },
+    "mkt.oi_obs": {"ts": "ts_prec", "received_ts": "received_ts_prec", "recorded_at": "recorded_at_prec"},
+    "mkt.funding_obs": {
+        "funding_time": "funding_time_prec",
+        "as_of": "as_of_prec",
+        "recorded_at": "recorded_at_prec",
+        "received_ts": "received_ts_prec",
+    },
+    "mkt.liq_obs": {"ts": "ts_prec", "recorded_at": "recorded_at_prec", "received_ts": "received_ts_prec"},
+    "mkt.hot_tokens": {"since": "since_prec", "expires_at": "expires_at_prec"},
+    "ana.market_truth": {"cutoff": "cutoff_prec"},
+    "ana.decisions": {"cutoff": "cutoff_prec"},
+    "ana.calls": {"opened_at": "opened_at_prec", "closed_at": "closed_at_prec"},
+    "out.alerts": {"generated_at": "generated_at_prec"},
+    "out.ops_notices": {"created_at": "created_at_prec"},
+    "out.deliveries": {"at": "at_prec"},
+    "ops.jobs": {
+        "run_after": "run_after_prec",
+        "expires_at": "expires_at_prec",
+        "created_at": "created_at_prec",
+        "finished_at": "finished_at_prec",
+    },
+    "ops.llm_usage": {"at": "at_prec"},
+    "ops.agent_sessions": {"opened_at": "opened_at_prec", "last_item_at": "last_item_at_prec"},
+    "ops.tool_calls": {"requested_at": "requested_at_prec", "answered_at": "answered_at_prec"},
+    "evt.beneficiary_maps": {"cutoff": "cutoff_prec"},
+    "mkt.klines_1m": {
+        "open_time": "open_time_prec",
+        "recorded_at": "recorded_at_prec",
+        "received_ts": "received_ts_prec",
+    },
+    "mkt.book_summaries": {
+        "exchange_ts": "exchange_ts_prec",
+        "received_ts": "received_ts_prec",
+        "recorded_at": "recorded_at_prec",
+    },
+    "mkt.tickers_24h": {
+        "ts": "ts_prec",
+        "recorded_at": "recorded_at_prec",
+        "received_ts": "received_ts_prec",
+    },
+    "mkt.unlocks": {"date": "date_prec"},
+    "mkt.supply_obs": {"ts": "ts_prec", "recorded_at": "recorded_at_prec", "received_ts": "received_ts_prec"},
+    "mkt.supply": {"ts": "ts_prec", "recorded_at": "recorded_at_prec", "received_ts": "received_ts_prec"},
+    "ana.outlooks": {"cutoff": "cutoff_prec"},
+    "ana.contradictions": {"detected_at": "detected_at_prec", "resolved_at": "resolved_at_prec"},
+    "ana.watch_conditions": {"expires_at": "expires_at_prec", "fired_at": "fired_at_prec"},
+    "out.evidence_bundles": {"cutoff": "cutoff_prec"},
+    "out.reaction_checkpoints": {"captured_at": "captured_at_prec"},
+    "ops.source_checkpoints": {"updated_at": "updated_at_prec"},
+    "ops.source_escalations": {"expires_at": "expires_at_prec"},
+    "qa.reviews": {"at": "at_prec"},
+    "qa.fixtures": {"cutoff": "cutoff_prec"},
+    "qa.replay_runs": {"at": "at_prec"},
+    "scout.expansion_proposals": {"decided_at": "decided_at_prec"},
+    "mkt.trades": {"ts": "ts_prec", "received_ts": "received_ts_prec", "recorded_at": "recorded_at_prec"},
+    "mkt.capture_gaps": {"start": "start_prec", "end": "end_prec", "observed_at": "observed_at_prec"},
+    "mkt.raw_archives": {"received_ts": "received_ts_prec"},
+    "mkt.capture_state": {"last_ts": "last_ts_prec", "updated_at": "updated_at_prec"},
+    "mkt.backfill_runs": {
+        "anchor": "anchor_prec",
+        "started_at": "started_at_prec",
+        "finished_at": "finished_at_prec",
+    },
+    "ops.routing_reservations": {"created_at": "created_at_prec", "last_item_at": "last_item_at_prec"},
+    "qa.outcomes": {"computed_at": "computed_at_prec"},
+    "ops.scheduler_checkpoints": {"at": "at_prec"},
+    "ops.capture_tier_transitions": {"effective_at": "effective_at_prec"},
+}
+for _table_name, _fields in TIMESTAMP_PRECISION_FIELDS.items():
+    for _precision_field in _fields.values():
+        TABLE_COLUMNS[_table_name].update({_precision_field: "text", _precision_field + "_reason": "text"})
+TABLE_COLUMNS["ingest.source_items"]["published_at_bucket_size_s"] = "numeric"
+
+# §14 ed504e3: current market runtime has typed records only; legacy SQL trades retire via027.
+
+for _table_name in tuple(TABLE_COLUMNS):
+    if _table_name.startswith("mkt."):
+        TABLE_COLUMNS.pop(_table_name)
+TABLE_COLUMNS.update(MARKET_COLUMNS)
+PARTITIONED = MARKET_PARTITIONS
+TIMESTAMP_PRECISION_FIELDS.update(
+    {
+        _table_name: {
+            field: field + "_prec" for field, datatype in columns.items() if datatype == "timestamptz"
+        }
+        for _table_name, columns in MARKET_COLUMNS.items()
+    }
+)
+
+TABLE_COLUMNS["ops.market_migration_exports"] = {
+    "export_id": "text",
+    "manifest_path": "text",
+    "manifest_sha256": "text",
+    "row_count": "bigint",
+    "created_at": "timestamptz",
+    "created_at_prec": "text",
+    "created_at_prec_reason": "text",
+}
+APPEND_ONLY = APPEND_ONLY | {"ops.market_migration_exports"}

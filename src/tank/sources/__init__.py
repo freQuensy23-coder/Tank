@@ -8,15 +8,15 @@ persists probability/model provenance; source ingestion never guesses relevance.
 from __future__ import annotations
 
 import asyncio
-import json
 import re
+from copy import deepcopy
 from pathlib import Path
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlsplit
 
 import httpx
 import zstandard
 
-from tank.util import canonical_json, iso, new_id, parse_time, sha256, utcnow
+from tank.util import iso, new_id, parse_time, sha256, utcnow
 
 from . import parsers
 from .browser import BrowserReader
@@ -32,8 +32,14 @@ class SourceService:
             timeout=20, follow_redirects=True, headers={"User-Agent": settings.user_agent}
         )
         self.owns_http = http is None
-        self.browser = BrowserReader(settings)
-        self.xsensor = XSensor(settings, raw_capture=self.raw)
+        self.xsensor = XSensor(
+            settings,
+            raw_capture=lambda payload: self.raw(payload, source_id="S29"),
+            shared_browser=bool(getattr(settings, "x_enabled", False)),
+        )
+        self.browser = BrowserReader(
+            settings, shared_sensor=self.xsensor if getattr(settings, "x_enabled", False) else None
+        )
         cfg = settings.load_config("sources")
         self.sources = {s["source_id"]: s for s in cfg["sources"]}
         self.source_host_limits = {}
@@ -52,7 +58,6 @@ class SourceService:
             a["handle"].lower().lstrip("@"): a for a in settings.load_config("registry").get("x_accounts", [])
         }
         self.locks = {}
-        self.dtcc_public_keys = {}
         try:
             self.api_limits = settings.load_config("api_limits").get("limits", [])
         except FileNotFoundError:
@@ -62,16 +67,20 @@ class SourceService:
         except FileNotFoundError:
             self.thresholds = {}
         self.escalated_interval_s = self.thresholds.get("escalated_interval_s", 15)
+        from .polling import SourcePoller
 
-    def raw(self, payload):
-        digest = sha256(payload)
-        path = Path(self.settings.data_dir) / "raw" / "sources" / digest[:2] / (digest + ".zst")
-        path.parent.mkdir(parents=True, exist_ok=True)
-        if not path.exists():
-            temporary = path.with_suffix("." + new_id("raw") + ".tmp")
-            temporary.write_bytes(zstandard.ZstdCompressor(level=3).compress(payload))
-            temporary.replace(path)
-        return str(path), digest
+        self.poller = SourcePoller(self)
+
+    def raw(self, payload, *, source_id=None, item_id=None, observed_at=None):
+        from .raw_store import write_raw_item
+
+        if source_id is None:
+            if len(self.sources) != 1:
+                raise ValueError("Raw capture requires an explicit source_id")
+            source_id = next(iter(self.sources))
+        return write_raw_item(
+            self.settings.data_dir, source_id, item_id or new_id("item"), observed_at or iso(), payload
+        )
 
     async def acquire_budget(self, feed):
         host = urlsplit(feed["url"]).hostname or ""
@@ -116,17 +125,19 @@ class SourceService:
         if per_min is not None:
             await shared_request_budgets.acquire(host, per_min, 60)
 
-    async def fetch(self, feed, key):
-        state = await self.repo.get("ops.source_checkpoints", key) or {}
+    async def fetch(self, feed, key, *, on_start=None):
+        state = deepcopy(await self.repo.get("ops.source_checkpoints", key) or {})
         headers = dict(feed.get("headers", {}))
-        if state.get("etag") and not state.get("article_errors"):
+        if state.get("etag") and not state.get("article_errors") and not state.get("entry_errors"):
             headers["If-None-Match"] = state["etag"]
-        if state.get("last_modified") and not state.get("article_errors"):
+        if state.get("last_modified") and not state.get("article_errors") and not state.get("entry_errors"):
             headers["If-Modified-Since"] = state["last_modified"]
         error = None
         for attempt in range(4):
             try:
                 await self.acquire_budget(feed)
+                if on_start is not None:
+                    await on_start()
                 response = await self.http.request(
                     feed.get("method", "GET"),
                     feed["url"],
@@ -136,14 +147,31 @@ class SourceService:
                 if response.status_code == 304:
                     return None, state
                 payload = response.content
-                ref, digest = self.raw(payload)
+                received_at = iso()
+                source_match = re.search(r"(?:^|:)(S\d{2})(?=:|$)", key)
+                source_id = feed.get("source_id") or (source_match.group(1) if source_match else None)
+                ref, digest = self.raw(payload, source_id=source_id, observed_at=received_at)
+                # Persist transport evidence before any parser/status handling.
+                # Logical discovery coverage and HTTP validators remain owned by
+                # the ordered backlog completion path.
+                async with self.poller.lock(self.poller.state_locks, key):
+                    evidence = await self.poller.state(key)
+                    evidence.update(
+                        source_id=source_id or (next(iter(self.sources)) if len(self.sources) == 1 else None),
+                        raw_ref=ref,
+                        raw_sha256=digest,
+                        fetched_at=received_at,
+                        http_status=response.status_code,
+                        response_url=str(response.url),
+                    )
+                    await self.poller.save(key, evidence)
                 response.raise_for_status()
                 state.update(
                     etag=response.headers.get("etag"),
                     last_modified=response.headers.get("last-modified"),
                     raw_ref=ref,
                     raw_sha256=digest,
-                    fetched_at=iso(),
+                    fetched_at=received_at,
                     http_status=response.status_code,
                 )
                 return payload, state
@@ -169,115 +197,11 @@ class SourceService:
                     await asyncio.sleep(delay)
         raise error
 
-    async def resolve_dtcc_bootstrap(self, feed, key):
-        """Resolve the publisher's current component chunk from its own manifest.
-
-        Never fall back to a stale content-hashed URL after a deployment change.
-        """
-        from urllib.parse import urljoin
-
-        page_url = feed["official_index_url"]
-        page, _ = await self.fetch({"url": page_url}, key + ":bootstrap:index")
-        tree = parsers.HTMLParser(page)
-        urls = [urljoin(page_url, n.attributes["src"]) for n in tree.css("script[src]")]
-        urls = [url for url in urls if urlsplit(url).netloc == urlsplit(page_url).netloc]
-        webpack_url = next((url for url in urls if "/webpack-" in url), None)
-        if not webpack_url:
-            raise ValueError("DTCC official webpack manifest missing")
-        manifest, _ = await self.fetch({"url": webpack_url}, key + ":bootstrap:manifest")
-        manifest = manifest.decode()
-        registry = None
-        for index, url in enumerate(urls):
-            if url == webpack_url:
-                continue
-            script, _ = await self.fetch({"url": url}, key + ":bootstrap:registry:" + str(index))
-            candidate = script.decode()
-            match = re.search(r"PressReleaseSearchModuleBlock:.*?Promise\.all\(\[(.*?)\]\)", candidate)
-            if match:
-                registry = match.group(1)
-                break
-        if registry is None:
-            raise ValueError("DTCC official pressroom component manifest changed")
-        ids = re.findall(r"\.e\((\d+)\)", registry)
-        # Current Next.js manifests encode anonymous chunks as id.hash.js.
-        separator = "." if '+"."+({' in manifest else "-"
-        for chunk_id in reversed(ids):
-            match = re.search(r"(?:\b|,)" + chunk_id + r':"([a-f0-9]+)"', manifest)
-            if not match:
-                continue
-            url = urljoin(page_url, "/_next/static/chunks/" + chunk_id + separator + match.group(1) + ".js")
-            script, _ = await self.fetch({"url": url}, key + ":bootstrap:component:" + chunk_id)
-            match = re.search(r'apiKey:"([^"\\]+)"', script.decode())
-            if match:
-                return match.group(1)
-        raise ValueError("DTCC public query configuration missing from current component")
-
-    async def dtcc_payload(self, feed, key, state, *, _refresh=False):
-        """Read DTCC's own pressroom search API, newest-first through checkpoint.
-
-        The publisher exposes its anonymous search-only token in its public JS.
-        It is fetched dynamically and never copied to configuration or reports.
-        """
-        script_url = feed["bootstrap_script_url"]
-        cached = self.dtcc_public_keys.get(script_url)
-        if not cached or (utcnow() - cached[1]).total_seconds() > 3600:
-            if feed.get("bootstrap_discovery"):
-                public_key = await self.resolve_dtcc_bootstrap(feed, key)
-            else:
-                # Explicit fixture/legacy mode only; production config resolves the
-                # currently deployed publisher manifest rather than pinning a hash.
-                response = await self.http.get(script_url, timeout=20)
-                response.raise_for_status()
-                self.raw(response.content)
-                match = re.search(r'apiKey:"([^"\\]+)"', response.text)
-                if not match:
-                    raise ValueError("DTCC public search bootstrap schema changed")
-                public_key = match.group(1)
-            cached = (public_key, utcnow())
-            self.dtcc_public_keys[script_url] = cached
-        rows = []
-        raw_pages = []
-        offset = 0
-        checkpoint = state.get("dtcc_checkpoint")
-        while True:
-            body = dict(feed.get("body", {}), firstResult=offset)
-            try:
-                page, page_state = await self.fetch(
-                    dict(feed, method="POST", body=body, headers={"Authorization": "Bearer " + cached[0]}),
-                    key + ":page:" + str(offset),
-                )
-            except httpx.HTTPStatusError as exc:
-                if exc.response.status_code in {401, 403}:
-                    self.dtcc_public_keys.pop(script_url, None)
-                    if not _refresh:
-                        return await self.dtcc_payload(feed, key, state, _refresh=True)
-                raise
-            if page is None:
-                raise ValueError("Unexpected conditional response from DTCC search")
-            data = json.loads(page)
-            if "results" not in data or "totalCount" not in data:
-                raise ValueError("DTCC search response schema changed")
-            raw_pages.append({"raw_ref": page_state["raw_ref"], "raw_sha256": page_state["raw_sha256"]})
-            page_rows = data["results"]
-            for row in page_rows:
-                if row.get("clickUri") == checkpoint:
-                    page_rows = page_rows[: page_rows.index(row) + 1]
-                    break
-            rows.extend(page_rows)
-            if any(row.get("clickUri") == checkpoint for row in page_rows):
-                break
-            offset += len(page_rows)
-            if offset >= data["totalCount"]:
-                break
-            if not page_rows:
-                raise ValueError("DTCC pagination stalled before totalCount/checkpoint")
-            await asyncio.sleep(0.5)
-        payload = canonical_json({"results": rows, "raw_pages": raw_pages}).encode()
-        ref, digest = self.raw(payload)
-        return payload, dict(state, raw_ref=ref, raw_sha256=digest)
-
     async def ingest(self, source, item, raw_ref, raw_hash):
         sid = source["source_id"]
+        identity = item.get("external_id")
+        if isinstance(identity, bool) or not isinstance(identity, (str, int)) or not str(identity).strip():
+            raise ValueError("Source entry has no valid external identity")
         body = " ".join(
             (item.get("title", "") + " " + item.get("text", "") + " " + (item.get("quoted") or "")).split()
         )
@@ -300,8 +224,43 @@ class SourceService:
                 raise ValueError("Source entry has no normalized content")
             if dedup:
                 old = await self.repo.get("ingest.source_items", dedup["item_id"])
-                old["observation_count"] = old.get("observation_count", 1) + 1
-                old["last_observed_at"] = item.get("observed_at") or iso()
+                from tank.time_precision import collection_clock
+
+                incoming_at = item.get("observed_at") or iso()
+                observation_key = sha256(sid + "|" + str(item.get("feed", sid)) + "|" + external)
+                watermark = old.get("observation_watermarks", {}).get(observation_key)
+                watermark = watermark.get("observed_at") if isinstance(watermark, dict) else watermark
+                # Backlog retries replay an existing acquisition, not a new sighting.
+                new_observation = (
+                    not item.get("observation_id")
+                    or not watermark
+                    or parse_time(incoming_at) > parse_time(watermark)
+                )
+                old["observation_count"] = old.get("observation_count", 1) + int(new_observation)
+                old["last_observed_at"] = max(
+                    old.get("last_observed_at") or old.get("observed_at") or incoming_at,
+                    incoming_at,
+                    key=parse_time,
+                )
+                if item.get("observation_id") and new_observation:
+                    old.setdefault("observation_watermarks", {})[observation_key] = collection_clock(
+                        incoming_at
+                    ).fields("observed_at")
+                if new_observation:
+                    old.setdefault("observation_evidence", []).append(
+                        {
+                            "source_id": sid,
+                            "feed": item.get("feed") or source.get("feed") or sid,
+                            "external_id": external,
+                            "raw_ref": raw_ref,
+                            "raw_sha256": raw_hash,
+                            **collection_clock(incoming_at).fields("observed_at"),
+                        }
+                    )
+                old["last_observed_at_precision"] = "COLLECTION_ONLY"
+                from tank.time_precision import collection_clock
+
+                old.update(collection_clock(old["last_observed_at"]).fields("last_observed_at"))
                 if sid == "S29" and old.get("source_id") == "S29":
                     monitored = (
                         item.get("monitored_author") or item.get("reposted_by") or item.get("author", "")
@@ -311,12 +270,13 @@ class SourceService:
                         "raw_ref": raw_ref,
                         "raw_sha256": raw_hash,
                         "observed_at": iso(),
+                        "observed_at_precision": "COLLECTION_ONLY",
                     }
                     old["monitored_accounts"] = list(
                         dict.fromkeys(old.get("monitored_accounts", []) + [monitored])
                     )
                     if role_now == "ORGANIZATION":
-                        old.update(monitored_author=monitored, author_role=role_now, deferrable=False)
+                        old["deferrable"] = False
                         old["relevance"] = {"decision": "ALWAYS"}
                         if not getattr(self.settings, "capture_only", False):
                             await self.repo.enqueue(
@@ -327,8 +287,19 @@ class SourceService:
                                 max_attempts=2,
                             )
                 await self.repo.put("ingest.source_items", old["item_id"], old)
+                # Content dedup can first encounter a different source identity.
+                # Remember that identity too, so later edits cannot create a
+                # second item for the same source/external-id pair.
+                await self.repo.put(
+                    "ops.source_dedup", sha256(sid + "|" + external), {"item_id": old["item_id"]}
+                )
                 return old
             item_id = new_id("item")
+            observed_at = item.get("observed_at") or iso()
+            raw_payload = zstandard.ZstdDecompressor().decompress(Path(raw_ref).read_bytes())
+            if sha256(raw_payload) != raw_hash:
+                raise ValueError("Raw payload SHA does not match source item evidence")
+            raw_ref, raw_hash = self.raw(raw_payload, source_id=sid, item_id=item_id, observed_at=observed_at)
             account = self.accounts.get(
                 (item.get("monitored_author") or item.get("reposted_by") or item.get("author", ""))
                 .lower()
@@ -336,11 +307,12 @@ class SourceService:
                 {},
             )
             role = account.get("role")
-            filtered = (
-                sid in {"S30", "S31", "S32", "S33", "S34"}
-                or (sid == "S25" and item.get("subtype") == "commits")
-                or (sid == "S29" and role != "ORGANIZATION")
-            )
+            from .organization import resolve_author_organization
+
+            author_organization = resolve_author_organization(source, item, self.accounts)
+            from .policy import is_filtered_source
+
+            filtered = is_filtered_source(sid, item.get("subtype"), role)
             priority = (
                 2
                 if sid in {"S30", "S31", "S32", "S33", "S34"}
@@ -365,23 +337,37 @@ class SourceService:
                 original_author_role=self.accounts.get(item.get("author", "").lower().lstrip("@"), {}).get(
                     "role"
                 ),
-                author_organization=account.get("entity_id"),
+                author_organization=author_organization,
                 deferrable=priority == 2,
                 external_id=external,
                 raw_ref=raw_ref,
                 raw_sha256=raw_hash,
                 content_hash=content_hash,
-                observed_at=item.get("observed_at") or iso(),
+                observed_at=observed_at,
+                observed_at_precision="COLLECTION_ONLY",
                 published_at_precision=item.get("published_at_precision")
-                or ("SECOND" if item.get("published_at") else None),
+                or (None if item.get("published_at") else "COLLECTION_ONLY"),
                 published_prec="BUCKET"
-                if item.get("published_at_precision") == "DAY"
+                if str(item.get("published_at_precision", "")).startswith("BUCKET")
+                or item.get("published_at_precision") == "DAY"
                 else "EXACT"
-                if item.get("published_at")
+                if item.get("published_at_precision") in {"EXACT", "SECOND"}
                 else "COLLECTION_ONLY",
+                published_at_bucket_size_s=86400
+                if item.get("published_at_precision") in {"DAY", "BUCKET(1d)"}
+                else item.get("published_at_bucket_size_s"),
+                published_prec_reason=None
+                if item.get("published_at")
+                and item.get("published_at_precision") in {"EXACT", "SECOND", "DAY", "BUCKET(1d)"}
+                else item.get("published_prec_reason") or "INCOMPLETE",
                 published_at_missing_reason=None
                 if item.get("published_at")
-                else "SOURCE_DID_NOT_PROVIDE_TIME",
+                else item.get("published_at_missing_reason")
+                or item.get("published_prec_reason")
+                or "INCOMPLETE",
+                published_at_reason=None
+                if item.get("published_at")
+                else item.get("published_at_reason") or item.get("published_prec_reason") or "INCOMPLETE",
                 source_class=source.get(
                     "source_class",
                     source.get(
@@ -403,6 +389,15 @@ class SourceService:
                 config_version=self.settings.config_version,
                 code_version=self.settings.code_version,
             )
+            from tank.time_precision import collection_clock
+
+            record.update(collection_clock(record["observed_at"]).fields("observed_at"))
+            if item.get("observation_id"):
+                record["observation_watermarks"] = {
+                    sha256(sid + "|" + str(item.get("feed", sid)) + "|" + external): collection_clock(
+                        record["observed_at"]
+                    ).fields("observed_at")
+                }
             await self.repo.put("ingest.source_items", item_id, record)
             index = {"item_id": item_id}
             await self.repo.put("ops.source_dedup", sha256(sid + "|" + external), index)
@@ -418,290 +413,7 @@ class SourceService:
             return record
 
     async def poll_once(self, source_id, *, due_only=False, escalated=False):
-        source = self.sources[source_id]
-        if source_id == "S29" and not getattr(self.settings, "x_enabled", True):
-            return {
-                "source_id": source_id,
-                "items": 0,
-                "status": "DISABLED",
-                "reason": "X_DISABLED_BY_OPERATOR",
-                "errors": [],
-            }
-        lock = self.locks.setdefault(source_id, asyncio.Lock())
-        async with lock:
-            count = 0
-            failures = []
-            for idx, original in enumerate(source.get("feeds", [])):
-                feed = dict(original, source_limits=source.get("limits", {}))
-                key = f"{source_id}:{idx}"
-                state = await self.repo.get("ops.source_checkpoints", key) or {}
-                last_attempt = state.get("last_attempt_at") or state.get("last_success_at")
-                if (
-                    due_only
-                    and last_attempt
-                    and (utcnow() - parse_time(last_attempt)).total_seconds()
-                    < (
-                        self.escalated_interval_s
-                        if escalated
-                        else feed.get("interval_s", source.get("interval_s", 60))
-                    )
-                ):
-                    continue
-                kind = str(feed.get("kind", feed.get("format", source.get("mode", "rss")))).lower()
-                attempted_at = iso()
-                article_failures = []
-                state["last_attempt_at"] = attempted_at
-                try:
-                    if source_id == "S29":
-                        rows, _ = await self.xsensor.posts(
-                            self.settings.x_list_id or source.get("list_id"),
-                            state.get("status_id"),
-                            known_ids=state.get("recent_status_ids", []),
-                        )
-                        captures = self.xsensor.raw_pages
-                        if not captures:
-                            raise ValueError("X browser captured no raw HTML evidence")
-                        state.update(
-                            raw_ref=captures[0]["raw_ref"],
-                            raw_sha256=captures[0]["raw_sha256"],
-                            scan_status=self.xsensor.scan_status,
-                        )
-                        for item in rows:
-                            item["browser_raw_refs"] = captures
-                    else:
-                        if kind == "dtcc_search":
-                            payload, state = await self.dtcc_payload(feed, key, state)
-                        elif source_id == "S19":
-                            payload = await self.browser.html(feed["url"])
-                            ref, digest = self.raw(payload)
-                            state.update(raw_ref=ref, raw_sha256=digest)
-                        else:
-                            payload, state = await self.fetch(feed, key)
-                        if payload is None:
-                            state.update(
-                                last_attempt_at=attempted_at,
-                                last_success_at=iso(),
-                                status="HEALTHY",
-                                error=None,
-                            )
-                            await self.repo.put("ops.source_checkpoints", key, state)
-                            continue
-                        if source_id == "S14":
-                            snapshot = parsers.instruments(payload, feed)
-                            if str(feed.get("venue", "")).lower() == "bybit":
-                                page_data = json.loads(payload)
-                                cursor = page_data.get("result", {}).get("nextPageCursor")
-                                cursors = set()
-                                while cursor:
-                                    if cursor in cursors:
-                                        raise ValueError("Repeated Bybit instrument cursor")
-                                    cursors.add(cursor)
-                                    parts = urlsplit(feed["url"])
-                                    params = dict(parse_qsl(parts.query))
-                                    params["cursor"] = cursor
-                                    next_feed = dict(
-                                        feed,
-                                        url=urlunsplit(
-                                            (
-                                                parts.scheme,
-                                                parts.netloc,
-                                                parts.path,
-                                                urlencode(params),
-                                                parts.fragment,
-                                            )
-                                        ),
-                                    )
-                                    next_payload, _next_state = await self.fetch(
-                                        next_feed, key + ":cursor:" + sha256(cursor)
-                                    )
-                                    if next_payload is None:
-                                        raise ValueError("Unexpected conditional paginated response")
-                                    snapshot.update(parsers.instruments(next_payload, feed))
-                                    page_data = json.loads(next_payload)
-                                    cursor = page_data.get("result", {}).get("nextPageCursor")
-                            previous = state.get("instruments")
-                            rows = []
-                            if previous is not None:
-                                for symbol in sorted(set(snapshot) | set(previous)):
-                                    if snapshot.get(symbol) != previous.get(symbol):
-                                        current = snapshot.get(symbol)
-                                        old = previous.get(symbol)
-                                        rows.append(
-                                            {
-                                                "external_id": f"{feed.get('venue')}|{feed.get('market_type')}|{symbol}|{sha256(current)}",
-                                                "title": f"{symbol} instrument change",
-                                                "text": canonical_json({"before": old, "after": current}),
-                                                "url": feed["url"],
-                                                "published_at": None,
-                                                "change": "REMOVED"
-                                                if current is None
-                                                else "ADDED"
-                                                if old is None
-                                                else "STATE_UPDATE",
-                                            }
-                                        )
-                            state["instruments"] = snapshot
-                        elif kind in {"rss", "atom", "feed"}:
-                            rows = parsers.feeds(payload, source_id, feed)
-                        elif kind in {"html", "rendered", "rendered_html", "html_diff"} or source_id == "S19":
-                            rows = parsers.article_links(payload, feed)
-                        else:
-                            rows = parsers.json_items(payload, source_id)
-                            if source_id == "S24":
-                                pending = state.get("pending_proposals", [])
-                                if pending:
-                                    query = (
-                                        "query { proposals(first: 1000, where: {id_in: "
-                                        + json.dumps(pending)
-                                        + "}) { id title body state start end created scores scores_total space { id } } }"
-                                    )
-                                    extra, extra_state = await self.fetch(
-                                        dict(feed, body={"query": query}), key + ":pending"
-                                    )
-                                    if extra:
-                                        existing = {r["external_id"] for r in rows}
-                                        for r in parsers.json_items(extra, source_id):
-                                            if r["external_id"] not in existing:
-                                                r["proposal_raw_ref"] = extra_state["raw_ref"]
-                                                r["proposal_raw_sha256"] = extra_state["raw_sha256"]
-                                                rows.append(r)
-                                state["pending_proposals"] = list(
-                                    {r["proposal_id"] for r in rows if r["state"] != "closed"}
-                                )
-                    for item in rows:
-                        item.setdefault("feed", feed["url"])
-                        item.setdefault("observed_at", state.get("fetched_at") or attempted_at)
-                        if source_id == "S02" and not self.filing_matches(item):
-                            continue
-                        if kind in {
-                            "html",
-                            "rendered",
-                            "rendered_html",
-                            "html_diff",
-                            "dtcc_search",
-                        } or source_id in {
-                            "S01",
-                            "S19",
-                        }:
-                            seen = await self.repo.get(
-                                "ops.source_dedup", sha256(source_id + "|" + str(item["external_id"]))
-                            )
-                            if not seen:
-                                if source_id == "S19":
-                                    article = await self.browser.html(item["url"])
-                                    article_ref, article_hash = self.raw(article)
-                                    state_article = {"raw_ref": article_ref, "raw_sha256": article_hash}
-                                else:
-                                    try:
-                                        article, state_article = await self.fetch(
-                                            {"url": item["url"], "source_limits": source.get("limits", {})},
-                                            key + ":" + sha256(item["url"]),
-                                        )
-                                    except httpx.HTTPStatusError as exc:
-                                        if exc.response.status_code != 404:
-                                            raise
-                                        error_ref, error_hash = self.raw(exc.response.content)
-                                        error = {
-                                            "url": item["url"],
-                                            "http_status": 404,
-                                            "raw_ref": error_ref,
-                                            "raw_sha256": error_hash,
-                                            "observed_at": iso(),
-                                            "reason": "PUBLISHER_ARTICLE_NOT_FOUND",
-                                        }
-                                        state.setdefault("article_errors", {})[item["url"]] = error
-                                        article_failures.append(item["url"])
-                                        failures.append("Article HTTP404: " + item["url"])
-                                        # Do not create an item/dedup entry for failed evidence.
-                                        continue
-                                if article is not None:
-                                    state.get("article_errors", {}).pop(item["url"], None)
-                                if article is not None:
-                                    detail = parsers.article(article)
-                                    if not detail["text"].strip():
-                                        state.setdefault("article_errors", {})[item["url"]] = {
-                                            "url": item["url"],
-                                            "http_status": state_article.get("http_status"),
-                                            "raw_ref": state_article["raw_ref"],
-                                            "raw_sha256": state_article["raw_sha256"],
-                                            "observed_at": iso(),
-                                            "reason": "EMPTY_ARTICLE_BODY",
-                                        }
-                                        article_failures.append(item["url"])
-                                        failures.append(
-                                            "Article parse failure (empty visible text): " + item["url"]
-                                        )
-                                        continue
-                                    item.update({k: v for k, v in detail.items() if v})
-                                    item["discovery_raw_ref"] = state["raw_ref"]
-                                    item["discovery_raw_sha256"] = state["raw_sha256"]
-                                    item["article_raw_ref"] = state_article["raw_ref"]
-                                    item["article_raw_sha256"] = state_article["raw_sha256"]
-                        if source_id == "S09" and not await self.repo.get(
-                            "ops.source_dedup", sha256(source_id + "|" + str(item["external_id"]))
-                        ):
-                            detail, dstate = await self.fetch(
-                                {
-                                    "url": "https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode="
-                                    + item["external_id"]
-                                },
-                                key + ":detail:" + item["external_id"],
-                            )
-                            if detail:
-                                obj = json.loads(detail)["data"]
-                                body = obj.get("body", "")
-                                item["text"] = parsers.binance_body(body)
-                                item["detail_raw_ref"] = dstate["raw_ref"]
-                                item["detail_raw_sha256"] = dstate["raw_sha256"]
-                        await self.ingest(
-                            source,
-                            item,
-                            item.get("article_raw_ref")
-                            or item.get("detail_raw_ref")
-                            or item.get("proposal_raw_ref")
-                            or state["raw_ref"],
-                            item.get("article_raw_sha256")
-                            or item.get("detail_raw_sha256")
-                            or item.get("proposal_raw_sha256")
-                            or state["raw_sha256"],
-                        )
-                        count += 1
-                    if kind == "dtcc_search" and rows and not state.get("article_errors"):
-                        state["dtcc_checkpoint"] = rows[0]["external_id"]
-                    if source_id == "S29" and rows:
-                        if self.xsensor.scan_status != "GAP_LIMIT":
-                            state["status_id"] = rows[0]["external_id"]
-                            state["recent_status_ids"] = list(
-                                dict.fromkeys(
-                                    [r["external_id"] for r in rows] + state.get("recent_status_ids", [])
-                                )
-                            )[:500]
-                        else:
-                            failures.append(
-                                "X bounded scan reached its limit; new items retained, historical gap remains"
-                            )
-                    state.update(
-                        last_attempt_at=attempted_at, last_success_at=iso(), status="HEALTHY", error=None
-                    )
-                    if article_failures or state.get("article_errors"):
-                        state.update(status="DEGRADED", error="PUBLISHER_ARTICLE_FAILURES")
-                        if not article_failures:
-                            failures.append("Pending publisher article failures remain unresolved")
-                    if source_id == "S29" and self.xsensor.scan_status == "GAP_LIMIT":
-                        state.update(status="DEGRADED", error="X_HISTORY_GAP_LIMIT")
-                    await self.repo.put("ops.source_checkpoints", key, state)
-                except Exception as exc:  # noqa: BLE001 — isolate one failed feed from all other sources
-                    failures.append(str(exc))
-                    state.update(
-                        last_attempt_at=attempted_at, status="DEGRADED", error=str(exc), last_failure_at=iso()
-                    )
-                    await self.repo.put("ops.source_checkpoints", key, state)
-            return {
-                "source_id": source_id,
-                "items": count,
-                "status": "DEGRADED" if failures else "HEALTHY",
-                "errors": failures,
-            }
+        return await self.poller.poll_once(source_id, due_only=due_only, escalated=escalated)
 
     def filing_matches(self, item):
         value = (item.get("title", "") + " " + item.get("text", "")).lower()
@@ -795,7 +507,7 @@ class SourceService:
                     "status": "DEGRADED"
                     if any(s and s.get("status") == "DEGRADED" for s in states)
                     else "HEALTHY"
-                    if states and all(states)
+                    if states and all(state and state.get("status") == "HEALTHY" for state in states)
                     else "UNVERIFIED",
                 }
             )
@@ -846,26 +558,15 @@ class SourceService:
         return await self.poll_once(source_id, due_only=True, escalated=await self.is_escalated(source_id))
 
     async def run(self, stop):
-        async def loop(source):
-            while not stop.is_set():
-                started = utcnow()
-                await self.control_once(source["source_id"])
-                # A new escalation must be noticed within 15 seconds even for a
-                # source normally read every ten minutes. due_only still prevents
-                # network reads until its normal/escalated feed deadline.
-                remaining = max(0, 15 - (utcnow() - started).total_seconds())
-                try:
-                    await asyncio.wait_for(stop.wait(), timeout=remaining)
-                except TimeoutError:
-                    pass
-
+        tasks = [asyncio.create_task(self.poller.run(stop))]
+        if "S29" in self.sources and getattr(self.settings, "x_enabled", True):
+            tasks.append(asyncio.create_task(self.xsensor.run(stop, lambda: self.control_once("S29"))))
         try:
-            tasks = [loop(source) for sid, source in self.sources.items() if sid != "S29"]
-            if "S29" in self.sources and getattr(self.settings, "x_enabled", True):
-                tasks.append(self.xsensor.run(stop, lambda: self.control_once("S29")))
-            if tasks:
-                await asyncio.gather(*tasks)
-            else:
-                await stop.wait()
+            await asyncio.gather(*tasks)
         finally:
-            await self.close()
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            # Supervisors retry run() on this same service instance. Final
+            # resource ownership belongs to explicit close(), not a failed run.

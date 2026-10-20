@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 import pytest
+from review_typed_fixtures import put_boundary, put_flow
 
 from tank.review import ReviewService, validate_checks
 from tank.storage import MemoryRepository
@@ -26,8 +27,8 @@ async def test_hash_corruption_and_pending():
 async def test_no_borrowed_future_bar_or_partial_boundary():
     repo = MemoryRepository()
     service = ReviewService(repo)
-    await repo.put(
-        "mkt.klines_1m",
+    await put_flow(
+        repo,
         "future",
         {"instrument_id": "i", "open_time": END, "c": 999, "h": 999, "l": 999, "complete": True},
     )
@@ -82,8 +83,8 @@ async def test_outcome_immutable_revision_and_frozen_beta():
         }
     }
     for minute in range(60):
-        await repo.put(
-            "mkt.klines_1m",
+        await put_flow(
+            repo,
             str(minute),
             {
                 "instrument_id": "i",
@@ -95,8 +96,8 @@ async def test_outcome_immutable_revision_and_frozen_beta():
             },
         )
     for minute in range(60):
-        await repo.put(
-            "mkt.klines_1m",
+        await put_flow(
+            repo,
             "btc" + str(minute),
             {
                 "instrument_id": "btc",
@@ -111,8 +112,8 @@ async def test_outcome_immutable_revision_and_frozen_beta():
     assert a["realized_return"] == pytest.approx(0.2)
     assert a["btc_adjusted_return"] == pytest.approx(0.18) and a["direction_correct"] is True
     assert a["mfe"] == pytest.approx(0.3) and a["mae"] == pytest.approx(-0.1)
-    corrected = await repo.get("mkt.klines_1m", "59")
-    await repo.put("mkt.klines_1m", "59", dict(corrected, c=11))
+    corrected = await repo.get("mkt.flow_bars_1m", "59")
+    await put_flow(repo, "59", dict(corrected, c=11))
     c = await service.outcome(alert, decision, truth, now=END)
     assert c["revision"] == 2 and c["realized_return"] == pytest.approx(0.1)
     assert (await repo.get("qa.outcomes", a["outcome_id"]))["realized_return"] == pytest.approx(0.2)
@@ -154,14 +155,14 @@ async def test_postgres_outcome_restart_immutability():
 
 
 @pytest.mark.asyncio
-async def test_subminute_boundaries_require_enumeration_and_exclude_outside_prices():
+async def test_subminute_boundaries_require_typed_segments_and_exclude_outside_prices():
     repo = MemoryRepository()
     service = ReviewService(repo)
     start = parse_time("2026-10-01T00:00:30Z")
     end = start + timedelta(hours=1)
     for minute in range(1, 60):
-        await repo.put(
-            "mkt.klines_1m",
+        await put_flow(
+            repo,
             str(minute),
             {
                 "instrument_id": "i",
@@ -172,29 +173,32 @@ async def test_subminute_boundaries_require_enumeration_and_exclude_outside_pric
                 "complete": True,
             },
         )
-    for minute in (0, 60):
-        stamp = start.replace(second=0) + timedelta(minutes=minute)
-        for second, price in [(10, 999), (40, 13)]:
-            await repo.put(
-                "mkt.trades",
-                f"{minute}-{second}",
-                {
-                    "instrument_id": "i",
-                    "trade_id": f"{minute}-{second}",
-                    "ts": iso(stamp + timedelta(seconds=second)),
-                    "price": price,
-                },
-            )
-        await repo.put(
-            "mkt.flow_bars_1m",
-            str(minute),
-            {"instrument_id": "i", "minute_start": iso(stamp), "complete": True, "n_buy": 1, "n_sell": 1},
-        )
+    await put_boundary(
+        repo,
+        "boundary-start",
+        "i",
+        start.replace(second=0),
+        start,
+        start.replace(second=0) + timedelta(minutes=1),
+        start + timedelta(seconds=10),
+        13,
+    )
+    await put_boundary(
+        repo,
+        "boundary-end",
+        "i",
+        end.replace(second=0),
+        end.replace(second=0),
+        end,
+        end.replace(second=0) + timedelta(seconds=10),
+        999,
+    )
     result = await service.horizon_series("i", start, end, end + timedelta(minutes=1))
     assert result["coverage"]["exact"] is True
     assert result["endpoint"] == 999  # Actual last trade before 01:00:30, not the 01:00:40 trade.
     assert result["coverage"]["complete_minutes"] == 59
-    await repo.delete("mkt.trades", "60-10")
+    row = await repo.get("mkt.flow_bars_1m", "boundary-end")
+    await repo.put("mkt.flow_bars_1m", "boundary-end", dict(row, boundary_segments=[]))
     result = await service.horizon_series("i", start, end, end + timedelta(minutes=1))
     assert result["coverage"]["exact"] is False
 
@@ -278,8 +282,8 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
     hours = __import__("tank.review", fromlist=["HOURS"]).HOURS[decision["outlook"]["best_horizon"]]
     for minute in range(hours * 60):
         stamp = iso(start + timedelta(minutes=minute))
-        await repo.put(
-            "mkt.klines_1m",
+        await put_flow(
+            repo,
             f"t-{minute}",
             {
                 "instrument_id": truth["relative"]["ref_venue"],
@@ -290,8 +294,8 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
                 "complete": True,
             },
         )
-        await repo.put(
-            "mkt.klines_1m",
+        await put_flow(
+            repo,
             f"b-{minute}",
             {"instrument_id": "A:spot:BTC", "open_time": stamp, "c": 100, "complete": True},
         )
@@ -483,8 +487,70 @@ async def test_date_only_latency_and_stale_boundary_keep_precision_unknown():
     latency = result["metrics"]["S1"]["public_to_known"]
     assert latency["seconds"] == 0 and latency["denominator"] == 1 and latency["eligible"] == 5
     assert latency["status"] == "UNVERIFIED"
-    assert latency["precision_counts"] == {"EXACT": 1, "BUCKET_1D": 3, "BUCKET_1H": 0, "UNKNOWN": 1}
+    assert latency["precision_counts"] == {
+        "EXACT": 1,
+        "BUCKET(1d)": 3,
+        "BUCKET(1h)": 0,
+        "COLLECTION_ONLY": 0,
+        "UNKNOWN": 1,
+    }
     assert result["metrics"]["S1"]["known_to_sent"]["status"] == "PASS"
     stale = result["metrics"]["S2"]
     assert stale["value"] == 1 and stale["denominator"] == 3 and stale["eligible"] == 5
     assert stale["status"] == "UNVERIFIED" and stale["precision_counts"]["UNKNOWN"] == 1
+
+
+@pytest.mark.asyncio
+async def test_typed_boundaries_require_adjacent_pieces_and_never_slice_whole_bar():
+    class TypedOnlyRepository(MemoryRepository):
+        def iter_range(self, collection, *args, **kwargs):
+            assert collection not in {"mkt.trades", "mkt.klines_1m"}
+            return super().iter_range(collection, *args, **kwargs)
+
+    repo = TypedOnlyRepository()
+    service = ReviewService(repo)
+    start = parse_time("2026-10-01T00:00:30Z")
+    end = start + timedelta(hours=1)
+    for minute in range(1, 60):
+        await put_flow(
+            repo,
+            str(minute),
+            {
+                "instrument_id": "i",
+                "open_time": iso(start.replace(second=0) + timedelta(minutes=minute)),
+                "c": "11",
+                "h": "12",
+                "l": "9",
+                "complete": True,
+            },
+        )
+    await put_boundary(
+        repo,
+        "start",
+        "i",
+        start.replace(second=0),
+        start,
+        start.replace(second=0) + timedelta(minutes=1),
+        start + timedelta(seconds=5),
+        "13",
+    )
+    end_floor = end.replace(second=0)
+    await put_boundary(repo, "end", "i", end_floor, end_floor, end, end_floor + timedelta(seconds=20), "14")
+    row = await repo.get("mkt.flow_bars_1m", "end")
+    piece = row["boundary_segments"][0]
+    first = dict(
+        piece,
+        end=iso(end_floor + timedelta(seconds=10)),
+        last_trade=dict(piece["last_trade"], ts=iso(end_floor + timedelta(seconds=5))),
+        first_trade=dict(piece["first_trade"], ts=iso(end_floor + timedelta(seconds=5))),
+    )
+    second = dict(piece, start=iso(end_floor + timedelta(seconds=10)))
+    await repo.put("mkt.flow_bars_1m", "end", dict(row, boundary_segments=[first, second]))
+    result = await service.horizon_series("i", start, end, end + timedelta(minutes=1))
+    assert result["coverage"]["exact"] and result["endpoint"] == 14 and result["high"] == 14
+    assert result["coverage"]["boundary_segments"][-1]["pieces"] == 2
+    # A whole minute surrounding the requested boundary is not an exact segment.
+    oversized = dict(piece, start=iso(end_floor), end=iso(end_floor + timedelta(minutes=1)))
+    await repo.put("mkt.flow_bars_1m", "end", dict(row, boundary_segments=[oversized]))
+    result = await service.horizon_series("i", start, end, end + timedelta(minutes=1))
+    assert result["coverage"]["exact"] is False

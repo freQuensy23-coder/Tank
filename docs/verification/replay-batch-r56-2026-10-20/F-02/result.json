@@ -1,0 +1,57 @@
+{
+  "fixture_id": "F-02",
+  "cli_exit_code": 0,
+  "framework_status": "COMPLETED",
+  "elapsed_seconds": 149.6631772518158,
+  "database": "tank_replay_r56_f02_completed_20261020",
+  "collections": {
+    "ingest.source_items": 1,
+    "ops.agent_sessions": 1,
+    "ops.tool_calls": 12,
+    "ops.jobs": 27,
+    "evt.events": 1,
+    "evt.event_observations": 1,
+    "evt.claims": 2,
+    "evt.capture_chains": 1,
+    "evt.state_changes": 1,
+    "evt.ems_assessments": 1,
+    "evt.beneficiary_maps": 1,
+    "evt.beneficiary_edges": 2,
+    "ana.market_truth": 1,
+    "ana.decisions": 1,
+    "ana.calls": 0,
+    "ana.watch_conditions": 5,
+    "out.alerts": 1,
+    "out.deliveries": 1,
+    "out.evidence_bundles": 1
+  },
+  "sessions": [
+    {
+      "session_id": "session_dAMKAYO-6OEWJEKoD8EVi",
+      "archived_at": "2026-10-20T03:01:50.568Z",
+      "public_status": "idle",
+      "native_events": 100,
+      "event_types": {
+        "user.message": 1,
+        "session.status_running": 13,
+        "span.model_request_start": 11,
+        "agent.tool_use": 1,
+        "span.model_request_end": 11,
+        "session.usage": 21,
+        "agent.tool_result": 1,
+        "agent.custom_tool_use": 12,
+        "session.status_idle": 13,
+        "user.custom_tool_result": 12,
+        "agent.thinking": 3,
+        "agent.message": 1
+      },
+      "accepted_input_count": 13,
+      "queue_states": {
+        "COMPLETED": 13
+      }
+    }
+  ],
+  "delivery": "NOT_RUN",
+  "formal_acceptance": "SEPARATE_SEALED_EVALUATION_REQUIRED",
+  "assertions_changed": false
+}

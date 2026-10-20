@@ -1,0 +1,34 @@
+{
+  "schema": "tank.boxlite-replay-dns-source-contract.v1",
+  "native_dns_patch": {
+    "upstream_boxlite_commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+    "dependency": "github.com/containers/gvisor-tap-vsock@v0.8.7",
+    "dependency_sum": "h1:mFMMU5CIXO9sbtsgECc90loUHx15km3AN6Zuhg3X4qM=",
+    "original_bridge_sha256": {
+      "main.go": "14b73c01d2ed7d8ee8d9bd610ffcb8b3f9e6d330c17e3c649cb00e81ab6308c7",
+      "go.mod": "a5d0a73c4da38777c8bc84222933ebe50636758b9996504611b96ff70eecda0e",
+      "go.sum": "84dddcab5d612e04cac72c140477a7eeeb8ec01088f237f1dd0de157d9217c47"
+    },
+    "original_dependency_sha256": {
+      "pkg/types/configuration.go": "24257bff47a0dd21e248869336dd1b55ed1fda77c78f95d5f49634bf950ea2ce",
+      "pkg/virtualnetwork/services.go": "1c6970a236d9ddbe1d341a1ca8eebeef9647d5980e42ef7d9771a5b58c259410",
+      "pkg/services/dns/dns.go": "6b89d79e05aacceecd3e7fcd87270e505ecf1226ad8a6c4885e6afd5632a4e5c",
+      "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "patched_sha256": {
+      "src/deps/libgvproxy-sys/gvproxy-bridge/main.go": "cf63ea0c3404a7a95bc3386e40a2f90005ef316a3a2286114e4c302b202e1514",
+      "src/deps/libgvproxy-sys/gvproxy-bridge/go.mod": "76b83a7d13d485a5dbba8b87e080723d2804f433c726e49dafbabc149cb58747",
+      "src/deps/libgvproxy-sys/gvproxy-bridge/tank_dns_policy.go": "fff7de075555223525b503dfabd6c3cd7244ef0d8a295043adc81d3cf6029268",
+      "src/deps/libgvproxy-sys/gvproxy-bridge/tank_dns_policy_test.go": "f0e6afe1982a21322db5e753870ce7320479e8c5833314d01af306bf5d8bb418",
+      "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/types/configuration.go": "b65257e1a91e98e95bae8838494170ab7dbd8597a30083eea0ce20724795896d",
+      "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/virtualnetwork/services.go": "f86e1240e30f6534f7aa3436e02a20f986d38c058b52999de4041b9d3cfa6ce5",
+      "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/services/dns/dns.go": "f02cb1778c9fd26c14ba2b6b89c171c83a72dfe0afdeb5b99c47658305be90db",
+      "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/services/dns/tank_policy_test.go": "a39db84415c0e2dfe830503f057ec8fbb097a995479726b32cc9a37762bc6d18"
+    },
+    "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+    "sdk_abi_changed": false,
+    "native_qualification": "NOT_RUN"
+  },
+  "tracked_source_diff_sha256": "8b06e3d9597070d5f1d0fa6bb7f44af3a15fcd5913b03d0b7637b46a6e72532f",
+  "provenance_trust": "Locally built operator artifact; file hashes bind evidence to output, not a third-party signed attestation. Native hardware qualification remains separate."
+}

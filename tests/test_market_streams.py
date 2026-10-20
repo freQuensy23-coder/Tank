@@ -7,7 +7,7 @@ import yaml
 
 from tank.market.books import OrderBook
 from tank.market.service import MarketService
-from tank.market.streams import endpoint_key, route_frame, subscription_messages
+from tank.market.streams import endpoint_key, endpoint_keys, route_frame, subscription_messages
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.util import utcnow
@@ -73,7 +73,7 @@ async def test_multiplexed_endpoint_incremental_hot_membership_without_reconnect
         sockets.append((url, socket))
         return socket
 
-    async def prepare(market, instrument):
+    async def prepare(market, instrument, **kwargs):
         iid = instrument["instrument_id"]
         market.books[iid] = OrderBook(instrument)
         market._connected_since[iid] = utcnow()
@@ -118,7 +118,7 @@ async def test_multiplexed_endpoint_incremental_hot_membership_without_reconnect
     await http.aclose()
 
 
-def test_nine_paths_group_into_eight_public_endpoints_and_global_liquidation_is_singleton():
+def test_nine_paths_use_nine_routed_connections_and_global_liquidation_is_singleton():
     instruments = [
         {"venue": v, "market_type": m, "venue_symbol": s}
         for v, m, s in [
@@ -134,6 +134,7 @@ def test_nine_paths_group_into_eight_public_endpoints_and_global_liquidation_is_
         ]
     ]
     assert len({endpoint_key(i) for i in instruments}) == 8
+    assert len({endpoint for i in instruments for endpoint in endpoint_keys(i)}) == 9
     okx = [instruments[3], instruments[4], dict(instruments[4], venue_symbol="ETH-USDT-SWAP")]
     messages = subscription_messages(okx)
     assert len(messages) == 1 and not any(a["channel"] == "liquidation-orders" for a in messages[0]["args"])
@@ -200,9 +201,11 @@ async def test_independent_rest_confirmation_is_background_and_does_not_stall_bo
 
     service._independent_book = independent
     await asyncio.wait_for(service._save_book(instrument), 0.2)
+    await service.flush_market()
     rows = await repo.list("mkt.book_summaries")
     assert len(rows) == 1 and not rows[0]["second_path_confirmed"]
     release.set()
     await asyncio.gather(*service._background)
+    await service.flush_market()
     assert (await repo.list("mkt.book_summaries"))[0]["second_path_confirmed"]
     await http.aclose()

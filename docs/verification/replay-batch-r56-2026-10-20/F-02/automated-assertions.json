@@ -1,0 +1,31 @@
+{
+  "checks": [
+    {
+      "assertion": {
+        "path": [
+          "market_truth",
+          "*",
+          "move_class"
+        ],
+        "not_in": [
+          "SPOT_LED_ACCUMULATION",
+          "ORGANIC_MIXED"
+        ]
+      },
+      "passed": true
+    },
+    {
+      "assertion": {
+        "path": [
+          "decisions",
+          "*",
+          "action"
+        ],
+        "not_equals": "START"
+      },
+      "passed": true
+    }
+  ],
+  "passed": true,
+  "manual_review_still_required": true
+}

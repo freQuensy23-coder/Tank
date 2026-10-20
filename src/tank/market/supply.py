@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 from decimal import Decimal as D
 
+from tank.time_precision import collection_clock, propagate_timestamp
 from tank.util import iso, parse_time, sha256, utcnow
 
 from .normalize import SemanticError, precise
@@ -48,7 +49,7 @@ def unlock_schedule(payload, *, now=None):
             if previous is not None and now <= ts <= end and amount > previous:
                 result.append(
                     {
-                        "date": iso(ts),
+                        **propagate_timestamp(point, "timestamp").fields("date"),
                         "qty": str(amount - previous),
                         "label": bucket["label"],
                         "kind": "POTENTIAL_SUPPLY",
@@ -64,6 +65,12 @@ class SupplyCapture:
         self.market = market
         self.repo = market.repo
         self.settings = market.settings
+        # /lendBorrow exposes stable UUIDs and measurements, but no project or
+        # chain. Resolve those identities from the versioned registry, never a
+        # second runtime feed whose availability could erase lending coverage.
+        catalog = self.settings.load_config("registry").get("lending_pool_catalog", {})
+        self.lending_pool_catalog = catalog
+        self.lending_pool_identities = {row["pool_id"]: row for row in catalog.get("pools", [])}
 
     def instrument(self, token):
         return {"instrument_id": "supply:" + token["token_id"], "token_id": token["token_id"]}
@@ -74,7 +81,14 @@ class SupplyCapture:
                 k: (v.replace(self.settings.etherscan_api_key, "[REDACTED]") if isinstance(v, str) else v)
                 for k, v in fields.items()
             }
-        row = dict(token_id=token["token_id"], ts=iso(), received_ts=iso(), kind=kind, **fields)
+        observed = iso()
+        row = dict(
+            token_id=token["token_id"],
+            **collection_clock(observed).fields("ts"),
+            **collection_clock(observed).fields("received_ts"),
+            kind=kind,
+            **fields,
+        )
         await self.market._put("mkt.supply_obs", token["token_id"] + ":" + kind + ":" + row["ts"], row)
         return row
 
@@ -236,6 +250,7 @@ class SupplyCapture:
                                         "from": row["from"],
                                         "to": row["to"],
                                         "ts": iso(row["timeStamp"]),
+                                        "ts_prec": "EXACT",
                                         "qty_native": str(
                                             D(row["value"]) / (D(10) ** int(row["tokenDecimal"]))
                                         ),
@@ -293,19 +308,39 @@ class SupplyCapture:
         now = utcnow()
         cached = getattr(self.market, "_lend_cache", None)
         if cached is None or (now - cached[0]).total_seconds() >= 1800:
-            pools = await self.request(token, "lending_pools", "https://yields.llama.fi/pools")
             borrow = await self.request(token, "lending_borrow", "https://yields.llama.fi/lendBorrow")
-            self.market._lend_cache = (now, pools["data"], borrow)
-        _, pools, borrow = self.market._lend_cache
-        byid = {p["pool"]: p for p in pools}
-        addresses = {c["address"].lower() for c in token.get("contracts", [])}
+            if not isinstance(borrow, list):
+                raise SemanticError("DefiLlama lendBorrow schema absent")
+            self.market._lend_cache = (now, borrow)
+        _, borrow = self.market._lend_cache
+        contracts = {(c["chain"], c["address"].lower()) for c in token.get("contracts", [])}
+        addresses = {address for _, address in contracts}
         matched = []
+        unmapped = []
         for pool in borrow:
-            metadata = byid.get(pool["pool"], {})
-            project = metadata.get("project", "")
-            if not any(p in project for p in ("aave", "morpho", "euler")):
+            underlying = {a.lower() for a in pool.get("underlyingTokens") or []}
+            if not addresses.intersection(underlying):
                 continue
-            if not addresses.intersection(a.lower() for a in pool.get("underlyingTokens") or []):
+            metadata = self.lending_pool_identities.get(pool["pool"])
+            if metadata is None:
+                unmapped.append(pool["pool"])
+                continue
+            project = metadata.get("project", "")
+            if project not in {
+                "aave",
+                "aave-v2",
+                "aave-v3",
+                "aave-v4",
+                "morpho",
+                "morpho-aave",
+                "morpho-aavev3",
+                "morpho-blue",
+                "euler",
+                "euler-v2",
+            }:
+                continue
+            registered = set(metadata.get("underlying_tokens", []))
+            if not any((metadata["chain"], address) in contracts for address in underlying & registered):
                 continue
             supply = pool.get("totalSupplyUsd")
             debt = pool.get("totalBorrowUsd")
@@ -330,6 +365,14 @@ class SupplyCapture:
             "LENDING",
             available=bool(matched),
             pools=matched,
+            identity_evidence={
+                "match_method": "REGISTERED_POOL_UUID_CHAIN_UNDERLYING_CONTRACT",
+                "unmapped_pool_ids": sorted(unmapped),
+                "pool_identity_source": {
+                    key: self.lending_pool_catalog.get(key)
+                    for key in ("source_url", "captured_at", "source_sha256")
+                },
+            },
             reason=None if matched else "NO_MATCHED_LENDING_POOLS",
         )
 
@@ -358,7 +401,7 @@ class SupplyCapture:
                     continue
                 values.append(
                     {
-                        "ts": iso(row["date"]),
+                        **propagate_timestamp(row, "date").fields("ts"),
                         "supply_usd": str(sum((D(str(v)) for v in circulating.values()), D(0))),
                     }
                 )

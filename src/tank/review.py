@@ -4,6 +4,13 @@ from datetime import timedelta
 from decimal import Decimal, localcontext
 from statistics import median
 
+from tank.time_precision import (
+    chosen_boundary,
+    collection_clock,
+    interval_bounds,
+    offset_schedule,
+    propagate_timestamp,
+)
 from tank.util import iso, parse_time, sha256, utcnow
 
 HOURS = {"H1": 1, "H4": 4, "H12": 12, "H24": 24, "D3": 72, "D7": 168}
@@ -27,24 +34,9 @@ def price_return(endpoint, entry):
 
 def public_bounds(event):
     """Represent source precision without interpreting legacy timestamps as exact."""
-    public = event.get("public_at")
-    precision = event.get("public_at_prec", event.get("public_at_precision"))
-    if isinstance(public, dict):
-        precision = public.get("precision", precision)
-        public = public.get("value")
-    precision = precision or "UNKNOWN"
-    if not public:
-        return None, None, precision
-    point = parse_time(public)
-    if precision == "EXACT":
-        return point, point, precision
-    if precision == "BUCKET_1H":
-        lower = point.replace(minute=0, second=0, microsecond=0)
-        return lower, lower + timedelta(hours=1), precision
-    if precision == "BUCKET_1D":
-        lower = point.replace(hour=0, minute=0, second=0, microsecond=0)
-        return lower, lower + timedelta(days=1), precision
-    return None, None, "UNKNOWN"
+    origin = propagate_timestamp(event, "public_at", missing_reason="LEGACY_PUBLIC_PRECISION_UNAVAILABLE")
+    lower, upper = interval_bounds(origin)
+    return lower, upper, origin.precision or "UNKNOWN"
 
 
 def validate_checks(checks):
@@ -144,105 +136,141 @@ class ReviewService:
         }
 
     async def horizon_series(self, instrument, start, end, now, *, extrema=True):
-        """Exact full minutes plus enumerated raw trades for partial boundaries."""
+        """Read bounded typed flow aggregates; ordinary review never rebuilds raw trades."""
         floor_start = start.replace(second=0, microsecond=0)
         floor_end = end.replace(second=0, microsecond=0)
         ceil_start = floor_start + timedelta(minutes=1) if start != floor_start else start
         bars = await self.rows(
-            "mkt.klines_1m", "open_time", iso(ceil_start), iso(floor_end), {"instrument_id": instrument}
+            "mkt.flow_bars_1m",
+            "minute_start",
+            iso(floor_start),
+            iso(floor_end + timedelta(minutes=1)),
+            {"instrument_id": instrument},
         )
-        fields = ("h", "l", "c") if extrema else ("c",)
-        complete = [
-            b
-            for b in bars
-            if b.get("complete") is True
-            and all(b.get(k) is not None for k in fields)
-            and (not b.get("received_ts") or parse_time(b["received_ts"]) <= now)
-        ]
+        bars = [r for r in bars if not r.get("received_ts") or parse_time(r["received_ts"]) <= now]
         expected = max(0, int((floor_end - ceil_start).total_seconds() / 60))
-        exact = len(complete) == expected and len({b["open_time"] for b in complete}) == expected
+        full = [
+            r
+            for r in bars
+            if ceil_start <= parse_time(r["minute_start"])
+            and parse_time(r["minute_start"]) + timedelta(minutes=1) <= floor_end
+        ]
+        exact = len(full) == expected and len({r["minute_start"] for r in full}) == expected
+        evidence = []
+        last_points = []
+        highs = []
+        lows = []
+        proofs = []
+
+        def take(piece, lo, hi):
+            observed = piece.get("observed_at", piece.get("received_ts"))
+            valid = piece.get("complete") is True and (not observed or parse_time(observed) <= now)
+            count = (piece.get("n_buy") or 0) + (piece.get("n_sell") or 0)
+            last = piece.get("last_trade")
+            first = piece.get("first_trade")
+            empty = piece.get("n_buy") is not None and piece.get("n_sell") is not None and count == 0
+            if not empty:
+                valid = (
+                    valid
+                    and isinstance(last, dict)
+                    and last.get("price") is not None
+                    and last.get("ts") is not None
+                    and lo <= parse_time(last["ts"]) < hi
+                )
+                if first:
+                    valid = valid and first.get("ts") is not None and lo <= parse_time(first["ts"]) < hi
+                high = piece.get("h", piece.get("high"))
+                low = piece.get("l", piece.get("low"))
+                if extrema:
+                    valid = valid and high is not None and low is not None
+                    if high is not None and low is not None:
+                        highs.append(Decimal(str(high)))
+                        lows.append(Decimal(str(low)))
+                if (
+                    isinstance(last, dict)
+                    and last.get("price") is not None
+                    and last.get("ts") is not None
+                    and lo <= parse_time(last["ts"]) < hi
+                ):
+                    last_points.append(last)
+            evidence.append(piece)
+            return bool(valid)
+
+        for bar in full:
+            lo = parse_time(bar["minute_start"])
+            exact = take(bar, lo, lo + timedelta(minutes=1)) and exact
         segments = []
         if start != floor_start:
             segments.append((start, min(ceil_start, end)))
         if end != floor_end and floor_end >= ceil_start:
             segments.append((max(start, floor_end), end))
-        prices = []
-        evidence = list(complete)
-        proofs = []
-        final_trades = []
+        available = [
+            segment
+            for bar in bars
+            for segment in (bar.get("boundary_segments") or [])
+            if segment.get("start") and segment.get("end")
+        ]
         for lo, hi in segments:
-            minute = lo.replace(second=0, microsecond=0)
-            all_trades = await self.rows(
-                "mkt.trades",
-                "ts",
-                iso(minute),
-                iso(minute + timedelta(minutes=1)),
-                {"instrument_id": instrument},
-            )
-            all_trades = [
-                r for r in all_trades if not r.get("received_ts") or parse_time(r["received_ts"]) <= now
-            ]
-            unique = {(r.get("trade_id"), r.get("ts")): r for r in all_trades}
-            flow = await self.rows(
-                "mkt.flow_bars_1m",
-                "minute_start",
-                iso(minute),
-                iso(minute + timedelta(minutes=1)),
-                {"instrument_id": instrument},
-            )
-            proven = any(
-                b.get("complete") is True
-                and b.get("n_buy") is not None
-                and b.get("n_sell") is not None
-                and len(unique) == int(b["n_buy"]) + int(b["n_sell"])
-                for b in flow
-            )
-            if not proven:
-                coverage = await self.repo.list(
-                    "qa.reviews",
-                    filters={"subject": "MARKET_CAPTURE_COVERAGE", "instrument_id": instrument},
-                    limit=100000,
-                )
-                proven = any(
-                    r.get("complete") is True
-                    and parse_time(r["start"]) <= minute
-                    and parse_time(r["end"]) >= minute + timedelta(minutes=1)
-                    and parse_time(r["at"]) <= now
-                    and r.get("minute_trade_counts", {}).get(iso(minute)) == len(unique)
-                    for r in coverage
-                )
-            selected = [r for r in unique.values() if lo <= parse_time(r["ts"]) < hi]
-            selected.sort(key=lambda r: (r["ts"], str(r.get("trade_id"))))
-            usable = all(
-                r.get("trade_id") is not None and r.get("price", r.get("p")) is not None for r in selected
-            )
-            exact = exact and proven and usable
-            prices.extend(
-                Decimal(str(r.get("price", r.get("p"))))
-                for r in selected
-                if r.get("price", r.get("p")) is not None
-            )
-            evidence.extend(selected)
+            cursor = lo
+            selected = []
+            segment_valid = True
+            while cursor < hi:
+                candidates = [
+                    r
+                    for r in available
+                    if parse_time(r["start"]) == cursor
+                    and cursor < parse_time(r["end"]) <= hi
+                    and r.get("complete") is True
+                    and r.get("observed_at") is not None
+                    and parse_time(r["observed_at"]) <= now
+                ]
+                if not candidates:
+                    break
+                piece = max(candidates, key=lambda r: (parse_time(r["end"]), r.get("observed_at") or ""))
+                piece_end = parse_time(piece["end"])
+                segment_valid = take(piece, cursor, piece_end) and segment_valid
+                exact = segment_valid and exact
+                selected.append(piece)
+                cursor = piece_end
+            proven = cursor == hi and segment_valid
+            exact = exact and proven
             proofs.append(
                 {
                     "start": iso(lo),
                     "end": iso(hi),
-                    "complete": proven and usable,
-                    "trade_count": len(selected),
+                    "complete": proven,
+                    "pieces": len(selected),
+                    "source": "TYPED_FLOW_BOUNDARY_SEGMENTS",
+                    "reason": None if proven else "EXACT_BOUNDARY_SEGMENTS_UNAVAILABLE",
                 }
             )
-            if hi == end:
-                final_trades = selected
-        complete.sort(key=lambda b: b["open_time"])
-        endpoint = (
-            Decimal(str(final_trades[-1].get("price", final_trades[-1].get("p"))))
-            if final_trades
-            else Decimal(str(complete[-1]["c"]))
-            if complete
+        references = [
+            point
+            for bar in bars
+            for point in (bar.get("reference_points") or [])
+            if point.get("boundary")
+            and parse_time(point["boundary"]) == end
+            and point.get("complete") is True
+            and point.get("observed_at") is not None
+            and parse_time(point["observed_at"]) <= now
+            and propagate_timestamp(point, "boundary").precision == "EXACT"
+        ]
+        for point in references:
+            last = point.get("last_trade")
+            if (
+                isinstance(last, dict)
+                and last.get("price") is not None
+                and last.get("ts")
+                and parse_time(last["ts"]) < end
+            ):
+                last_points.append(last)
+                evidence.append(point)
+        endpoint_point = (
+            max(last_points, key=lambda r: (parse_time(r["ts"]), str(r.get("trade_id"))))
+            if last_points
             else None
         )
-        highs = [Decimal(str(b["h"])) for b in complete] + prices if extrema else []
-        lows = [Decimal(str(b["l"])) for b in complete] + prices if extrema else []
+        endpoint = Decimal(str(endpoint_point["price"])) if endpoint_point else None
         return {
             "endpoint": endpoint,
             "high": max(highs) if highs else None,
@@ -250,33 +278,43 @@ class ReviewService:
             "evidence_hash": sha256(evidence),
             "coverage": {
                 "expected_minutes": expected,
-                "complete_minutes": len(complete),
+                "complete_minutes": len(full),
                 "exact": bool(exact and endpoint is not None),
                 "partial_boundary": bool(segments),
                 "boundary_segments": proofs,
+                "endpoint_source": "TYPED_LAST_TRADE" if endpoint_point else None,
+                "reason": None if exact and endpoint is not None else "TYPED_FLOW_OR_REFERENCE_INCOMPLETE",
             },
         }
 
     async def outcome(self, alert, decision, truth, *, now=None):
         now = parse_time(now) if now else utcnow()
-        start = parse_time(decision.get("cutoff") or alert["generated_at"])
+        origin = (
+            propagate_timestamp(decision, "cutoff", missing_reason="LEGACY_CUTOFF_PRECISION_UNAVAILABLE")
+            if decision.get("cutoff")
+            else propagate_timestamp(
+                alert, "generated_at", missing_reason="LEGACY_GENERATED_PRECISION_UNAVAILABLE"
+            )
+        )
+        start = parse_time(origin.value)
         horizon = decision.get("outlook", {}).get("best_horizon")
         result = {
             "dec_id": decision.get("dec_id"),
             "token_id": decision.get("token_id"),
             "horizon": horizon,
-            "start": iso(start),
+            **origin.fields("start"),
             "realized_return": None,
             "mfe": None,
             "mae": None,
             "excursion_basis": "RAW_PRICE_RETURN_HIGH_LOW",
             "btc_adjusted_return": None,
             "direction_correct": None,
+            **collection_clock(now).fields("computed_at"),
         }
         if horizon not in HOURS:
             return dict(result, status="UNAVAILABLE", reason="FROZEN_HORIZON_MISSING")
         end = start + timedelta(hours=HOURS[horizon])
-        result["end"] = iso(end)
+        result.update(offset_schedule(origin, timedelta(hours=HOURS[horizon])).fields("end"))
         if now < end:
             fired = await self.rows(
                 "ana.watch_conditions",
@@ -286,7 +324,14 @@ class ReviewService:
                 {"event_id": alert.get("event_id"), "token_id": decision.get("token_id")},
             )
             result["conditions_fired"] = [
-                {"cond_id": r["cond_id"], "fired_at": r["fired_at"]} for r in fired if r.get("fired_at")
+                {
+                    "cond_id": r["cond_id"],
+                    **propagate_timestamp(
+                        r, "fired_at", missing_reason="LEGACY_FIRED_PRECISION_UNAVAILABLE"
+                    ).fields("fired_at"),
+                }
+                for r in fired
+                if r.get("fired_at")
             ]
             return dict(result, status="PENDING", reason="HORIZON_NOT_REACHED")
         relative = truth.get("relative", {})
@@ -323,7 +368,14 @@ class ReviewService:
             {"event_id": alert["event_id"], "token_id": decision.get("token_id")},
         )
         result["conditions_fired"] = [
-            {"cond_id": r["cond_id"], "fired_at": r["fired_at"]} for r in conditions if r.get("fired_at")
+            {
+                "cond_id": r["cond_id"],
+                **propagate_timestamp(
+                    r, "fired_at", missing_reason="LEGACY_FIRED_PRECISION_UNAVAILABLE"
+                ).fields("fired_at"),
+            }
+            for r in conditions
+            if r.get("fired_at")
         ]
         # A horizon-specific pre-call normal range is mandatory. Never borrow EVENT or refit beta.
         window = relative.get("windows", {}).get(
@@ -372,7 +424,7 @@ class ReviewService:
                     frozen_normal_range=nr,
                 )
         if result["status"] == "COMPLETED":
-            digest = sha256(result)
+            digest = sha256({k: v for k, v in result.items() if not k.startswith("computed_at")})
             key = sha256([alert["alert_id"], alert["version"], decision.get("dec_id"), digest])
             async with self.repo.lock(
                 "outcome:" + sha256([alert["alert_id"], alert["version"], decision.get("dec_id")])
@@ -392,7 +444,7 @@ class ReviewService:
                     outcome_id=key,
                     alert_id=alert["alert_id"],
                     version=alert["version"],
-                    computed_at=iso(now),
+                    **collection_clock(now).fields("computed_at"),
                     revision=max([r.get("revision", 0) for r in old], default=0) + 1,
                     input_hash=digest,
                     config_version=alert.get("config_version"),
@@ -439,8 +491,8 @@ class ReviewService:
         causes = []
         reproducible = []
         major_events = {}
-        public_precision = {"EXACT": 0, "BUCKET_1H": 0, "BUCKET_1D": 0, "UNKNOWN": 0}
-        stale_precision = {"EXACT": 0, "BUCKET_1H": 0, "BUCKET_1D": 0, "UNKNOWN": 0}
+        public_precision = {"EXACT": 0, "BUCKET(1h)": 0, "BUCKET(1d)": 0, "COLLECTION_ONLY": 0, "UNKNOWN": 0}
+        stale_precision = {"EXACT": 0, "BUCKET(1h)": 0, "BUCKET(1d)": 0, "COLLECTION_ONLY": 0, "UNKNOWN": 0}
         semantic = {k: [] for k in ("S3", "S4", "S5")}
         for alert in alerts:
             ev = await self.evidence(alert)
@@ -451,7 +503,7 @@ class ReviewService:
             check = checked.get(key, {})
             known = event.get("known_to_us_at")
             lower, upper, precision = public_bounds(event)
-            stale_precision[precision] += 1
+            stale_precision[precision] = stale_precision.get(precision, 0) + 1
             if known and lower is not None:
                 minimum = (parse_time(known) - upper).total_seconds()
                 maximum = (parse_time(known) - lower).total_seconds()
@@ -520,7 +572,7 @@ class ReviewService:
                     sources.append(item.get("source_id"))
             if not sources or any(s in {f"S{i:02d}" for i in range(1, 25)} for s in sources):
                 lower, upper, precision = public_bounds(event)
-                public_precision[precision] += 1
+                public_precision[precision] = public_precision.get(precision, 0) + 1
                 first.append(
                     (parse_time(event["known_to_us_at"]) - lower).total_seconds()
                     if sources and precision == "EXACT" and lower is not None
@@ -560,7 +612,11 @@ class ReviewService:
         rate("S8_major_noise", noise, len(noise), lambda v: v <= 0.2)
         rate("S9", reproducible, len(alerts), lambda v: v == 1)
         return {
-            "period": {"start": iso(parse_time(start)), "end": iso(parse_time(end))},
+            "period": {
+                **chosen_boundary(start, precision="EXACT").fields("start"),
+                **chosen_boundary(end, precision="EXACT").fields("end"),
+            },
+            **collection_clock(now or utcnow()).fields("computed_at"),
             "metrics": metrics,
             "cards": len(alerts),
             "shadow_acceptance": "UNVERIFIED",

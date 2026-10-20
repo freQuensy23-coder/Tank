@@ -4,6 +4,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 import pytest
+from review_typed_fixtures import put_boundary, put_flow
 
 from tank.review import ReviewService, price_return
 from tank.storage import MemoryRepository
@@ -26,8 +27,8 @@ async def test_raw_large_prices_preserve_tiny_return_excursions_and_direction(su
     floor = start.replace(second=0)
     for minute in range(1 if subminute else 0, 60):
         stamp = iso(floor + timedelta(minutes=minute))
-        await repo.put(
-            "mkt.klines_1m",
+        await put_flow(
+            repo,
             f"t-{minute}",
             {
                 "instrument_id": "token",
@@ -38,37 +39,33 @@ async def test_raw_large_prices_preserve_tiny_return_excursions_and_direction(su
                 "complete": True,
             },
         )
-        await repo.put(
-            "mkt.klines_1m",
+        await put_flow(
+            repo,
             f"b-{minute}",
             {"instrument_id": "btc", "open_time": stamp, "c": btc_endpoint, "complete": True},
         )
     if subminute:
         for instrument, price in [("token", endpoint), ("btc", btc_endpoint)]:
-            for minute, second in [(0, 40), (60, 10)]:
-                stamp = floor + timedelta(minutes=minute)
-                key = f"{instrument}-{minute}"
-                await repo.put(
-                    "mkt.trades",
-                    key,
-                    {
-                        "instrument_id": instrument,
-                        "trade_id": key,
-                        "ts": iso(stamp + timedelta(seconds=second)),
-                        "price": price,
-                    },
-                )
-                await repo.put(
-                    "mkt.flow_bars_1m",
-                    key,
-                    {
-                        "instrument_id": instrument,
-                        "minute_start": iso(stamp),
-                        "n_buy": 1,
-                        "n_sell": 0,
-                        "complete": True,
-                    },
-                )
+            await put_boundary(
+                repo,
+                f"{instrument}-start",
+                instrument,
+                floor,
+                start,
+                floor + timedelta(minutes=1),
+                start + timedelta(seconds=10),
+                price,
+            )
+            await put_boundary(
+                repo,
+                f"{instrument}-end",
+                instrument,
+                end.replace(second=0),
+                end.replace(second=0),
+                end,
+                end.replace(second=0) + timedelta(seconds=10),
+                price,
+            )
     truth = {
         "relative": {
             "ref_venue": "token",

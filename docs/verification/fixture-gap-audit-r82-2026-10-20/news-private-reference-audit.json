@@ -1,0 +1,737 @@
+{
+  "scope": "READONLY_PATH_PROJECTION_NO_SOURCE_FIELDS_CHANGED",
+  "authority": {
+    "generic_readiness_gate": "tests/fixture_acceptance.py:326-433",
+    "actual_private_derivative_gate": "src/tank/fixture_reference.py:181-199,885-932,1089-1103"
+  },
+  "missing_paths": [
+    {
+      "path": "data/replay/host-only/originals/1c5d6c763e305e03f98a0166c9c65127317ec8cc2cd5c632d20b899015c3d5f2.zst",
+      "owners": [
+        "F-03:original_raw_ref"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-03",
+          "document": "private_name_map",
+          "json_path": [
+            "original_raw_transformations",
+            0,
+            "original_as_of_evidence",
+            "projection_provenance",
+            "original_raw_ref"
+          ]
+        }
+      ],
+      "classification": "HISTORICAL_PRIVATE_TRANSFORMATION_PROVENANCE_ONLY"
+    },
+    {
+      "path": "data/replay/host-only/originals/8271eafd66010ae810d5d7f3574f70f851f71e56b110b334860ea025ce6682c3.zst",
+      "owners": [
+        "F-10:original_raw_ref"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-10",
+          "document": "private_name_map",
+          "json_path": [
+            "original_raw_transformations",
+            1,
+            "original_as_of_evidence",
+            "projection_provenance",
+            "original_raw_ref"
+          ]
+        }
+      ],
+      "classification": "HISTORICAL_PRIVATE_TRANSFORMATION_PROVENANCE_ONLY"
+    },
+    {
+      "path": "data/replay/host-only/originals/99322c1133113f6eba9e5eef4027a8333bb9e18e1bfb7dac3e486cf40c24493e.zst",
+      "owners": [
+        "F-22:original_raw_ref"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-22",
+          "document": "private_name_map",
+          "json_path": [
+            "original_raw_transformations",
+            0,
+            "original_as_of_evidence",
+            "projection_provenance",
+            "original_raw_ref"
+          ]
+        }
+      ],
+      "classification": "HISTORICAL_PRIVATE_TRANSFORMATION_PROVENANCE_ONLY"
+    },
+    {
+      "path": "data/replay/host-only/originals/c87d91ff6ba911af870dc8d229e5cc94465182c4cc9709994b3a64ba592e89bf.zst",
+      "owners": [
+        "F-05:original_raw_ref"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-05",
+          "document": "private_name_map",
+          "json_path": [
+            "original_raw_transformations",
+            0,
+            "original",
+            "projection_provenance",
+            "original_raw_ref"
+          ]
+        }
+      ],
+      "classification": "HISTORICAL_PRIVATE_TRANSFORMATION_PROVENANCE_ONLY"
+    },
+    {
+      "path": "data/replay/host-only/originals/d6048b36778fdbdf8b893a3445efa5c71e70f7fdf0d646cc39a5e54894024d00.zst",
+      "owners": [
+        "F-10:original_raw_ref"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-10",
+          "document": "private_name_map",
+          "json_path": [
+            "original_raw_transformations",
+            0,
+            "original_as_of_evidence",
+            "projection_provenance",
+            "original_raw_ref"
+          ]
+        }
+      ],
+      "classification": "HISTORICAL_PRIVATE_TRANSFORMATION_PROVENANCE_ONLY"
+    },
+    {
+      "path": "data/replay/inputs/raw/F-03-0d89ab2e13fbd3d8d8eb5a13eeabbe659d07e10f8a430420fdb5cc49100f1940.json.zst",
+      "owners": [
+        "F-03:raw_ref"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-03",
+          "document": "private_name_map",
+          "json_path": [
+            "original_raw_transformations",
+            0,
+            "original_as_of_evidence",
+            "raw_ref"
+          ]
+        }
+      ],
+      "classification": "HISTORICAL_PRIVATE_TRANSFORMATION_PROVENANCE_ONLY"
+    },
+    {
+      "path": "data/replay/inputs/raw/F-05-6b67f1d0450d40b6ea2b6d67d3fe3869db92350ba4ae69cb71c350890865800e.json.zst",
+      "owners": [
+        "F-05:raw_ref"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-05",
+          "document": "private_name_map",
+          "json_path": [
+            "original_raw_transformations",
+            0,
+            "original",
+            "raw_ref"
+          ]
+        }
+      ],
+      "classification": "HISTORICAL_PRIVATE_TRANSFORMATION_PROVENANCE_ONLY"
+    },
+    {
+      "path": "data/replay/inputs/raw/F-10-f9e39a36b3e3b4ef93c73f11202020354ec9e9459cbef61032ca3031846ed058.json.zst",
+      "owners": [
+        "F-10:raw_ref"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-10",
+          "document": "private_name_map",
+          "json_path": [
+            "original_raw_transformations",
+            1,
+            "original_as_of_evidence",
+            "raw_ref"
+          ]
+        }
+      ],
+      "classification": "HISTORICAL_PRIVATE_TRANSFORMATION_PROVENANCE_ONLY"
+    },
+    {
+      "path": "data/replay/inputs/raw/F-10-faf7fa95d8fbb880be61ba3525bdab14f14f131d4a1fce4aa97e10530ea5408d.json.zst",
+      "owners": [
+        "F-10:raw_ref"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-10",
+          "document": "private_name_map",
+          "json_path": [
+            "original_raw_transformations",
+            0,
+            "original_as_of_evidence",
+            "raw_ref"
+          ]
+        }
+      ],
+      "classification": "HISTORICAL_PRIVATE_TRANSFORMATION_PROVENANCE_ONLY"
+    },
+    {
+      "path": "data/replay/inputs/raw/F-22-b698a87a765a3d36042d142fde5a22f6fed4bcc97479f77714fe01bf3f692e13.json.zst",
+      "owners": [
+        "F-22:raw_ref"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-22",
+          "document": "private_name_map",
+          "json_path": [
+            "original_raw_transformations",
+            0,
+            "original_as_of_evidence",
+            "raw_ref"
+          ]
+        }
+      ],
+      "classification": "HISTORICAL_PRIVATE_TRANSFORMATION_PROVENANCE_ONLY"
+    },
+    {
+      "path": "data/replay/inputs/raw/F-23-constructed-news-973feb8ec4e9113f3b85781ee24d2711d3fa0e8e5b87f13c81d6a9c938896a21.txt.zst",
+      "owners": [
+        "F-23:raw_ref"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-23",
+          "document": "private_name_map",
+          "json_path": [
+            "original_raw_transformations",
+            1,
+            "original_as_of_evidence",
+            "raw_ref"
+          ]
+        }
+      ],
+      "classification": "HISTORICAL_PRIVATE_TRANSFORMATION_PROVENANCE_ONLY"
+    },
+    {
+      "path": "data/replay/private/F-01-r39/original-packet.json.zst",
+      "owners": [
+        "F-01:original_packet_path"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-01",
+          "document": "private_name_map",
+          "json_path": [
+            "original_packet_path"
+          ]
+        }
+      ],
+      "classification": "CURRENT_RUNTIME_PRIVATE_PARENT_MISSING"
+    },
+    {
+      "path": "data/replay/private/F-01-r39/original-registry.json",
+      "owners": [
+        "F-01:original_registry_path"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-01",
+          "document": "private_name_map",
+          "json_path": [
+            "original_registry_path"
+          ]
+        }
+      ],
+      "classification": "CURRENT_RUNTIME_PRIVATE_PARENT_MISSING"
+    },
+    {
+      "path": "data/replay/private/F-17-vote-metadata-v6/original-with-vote-metadata.json.zst",
+      "owners": [
+        "F-17:original_packet_path"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-17",
+          "document": "private_name_map",
+          "json_path": [
+            "original_packet_path"
+          ]
+        }
+      ],
+      "classification": "CURRENT_RUNTIME_PRIVATE_PARENT_MISSING"
+    },
+    {
+      "path": "data/replay/private/F-24-r41/original-with-declared-search.json.zst",
+      "owners": [
+        "F-24:original_packet_path"
+      ],
+      "occurrences": [
+        {
+          "fixture_id": "F-24",
+          "document": "private_name_map",
+          "json_path": [
+            "original_packet_path"
+          ]
+        }
+      ],
+      "classification": "CURRENT_RUNTIME_PRIVATE_PARENT_MISSING"
+    }
+  ],
+  "current_contexts": [
+    {
+      "fixture_id": "F-01",
+      "current_source_derivations": [
+        "SNAPSHOT_SIGNED_IPFS_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": true,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/private/F-01-r39/original-packet.json.zst",
+          "exists_in_server_projection": false
+        },
+        "original_registry_path": {
+          "declared": "/data/replay/private/F-01-r39/original-registry.json",
+          "exists_in_server_projection": false
+        }
+      },
+      "private_source_sha256": "47088f59099fc7646f616bbf50a7d289f859fcb76f7039732fdb09bc6a327a27",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-02",
+      "current_source_derivations": [
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "data/replay/acceptance-r36-additional-source-prepared-v3/F-02/host-only/original-current-config.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "1bbec88150915625be4c21df89b55635fe4041a0c63639ddd551cc37ef0a3cf1",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-03",
+      "current_source_derivations": [
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "data/replay/acceptance-r36-additional-source-prepared-v3/F-03/host-only/original-current-config.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "1ce39ad453e88f983c1c2debf91949e9630e7b61bc4f78fc1df8cacbb04b9e05",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-04",
+      "current_source_derivations": [
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "data/replay/acceptance-r36-additional-source-prepared-v3/F-04/host-only/original-current-config.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "b547e31cac00b05ab5538fa138fdd46629a768b51d39bd77cab01e634d32f46b",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-05",
+      "current_source_derivations": [
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/prepared/source-batch-r35b-20261019/F-05.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "3671104e00ea53ab6a56b368dafa7c898b33bcebf43d74ecf1f1194050ba4528",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-06",
+      "current_source_derivations": [
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/prepared/source-batch-r35b-20261019/F-06.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "7d3ad82d6a9b1cadf676a8e568e4dfee3b3051e0c3f9f871bdba2f00f4ac2080",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-07",
+      "current_source_derivations": [
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/prepared/source-batch-r35b-20261019/F-07.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "6d454e68ca259575958204dc10b39cd5fca7f6c90273869828118a0e98a41466",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-08",
+      "current_source_derivations": [
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "data/replay/acceptance-r36-additional-source-prepared-v3/F-08/host-only/original-current-config.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "34d5af0893cbce41f55e28da39a62d9477133c2a1edbc8e3d07bc95f181561dd",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-09",
+      "current_source_derivations": [
+        null
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/prepared/source-batch-r35b-20261019/F-09.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "88c3d716e124c5d696f563c47cc6283aa6b2511274c5daca2f49a424f36a09a7",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-10",
+      "current_source_derivations": [
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1",
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/prepared/source-batch-r35b-20261019/F-10.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "a6aaf0693bdd8cfc3356f24a146672db8621a1b058fa8ce48418f3176e5902cf",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-17",
+      "current_source_derivations": [
+        "SNAPSHOT_SIGNED_IPFS_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": true,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/private/F-17-vote-metadata-v6/original-with-vote-metadata.json.zst",
+          "exists_in_server_projection": false
+        },
+        "original_registry_path": {
+          "declared": "/data/replay/acceptance-r36-prepared/F-17/host-only/original-registry.json",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "d11ea03f27d7d7e0858ddf3a070b6a3f0d71054e4f4800f88165bc60bc70ee9a",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-18",
+      "current_source_derivations": [
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/prepared/source-batch-r35b-20261019/F-18.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "5ef39e77d551a76683c9b4a02a39a1123fb18595859b86a6a3391c9f837e511e",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-19",
+      "current_source_derivations": [
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/prepared/source-batch-r35b-20261019/F-19.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "53723d7fd89870b93faecf602868ef9351b941a0a0e5dfb45a150ef713a3c27b",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-20",
+      "current_source_derivations": [
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/prepared/source-batch-r35b-20261019/F-20.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "c0781a2f3d5e3f0f226cf6b9fc759b32b4c3b0ae682738c558bc5eafba36061f",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-21",
+      "current_source_derivations": [
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/prepared/source-batch-r35b-20261019/F-21.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "7c556cc376737893a152aa5b3718cedf1d57e2f1583076d694ab096c2ee78ccd",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-22",
+      "current_source_derivations": [
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/prepared/source-batch-r35b-20261019/F-22.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "2ec7a084a5a89d1c5a9fafae4dcbbc197d789a3ae9b475875a048ffd29403ebb",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-23",
+      "current_source_derivations": [
+        "SOURCE_ORIGINAL_FIELD_PROJECTION_V1",
+        "DECLARED_UTF8_SOURCE_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": false,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/prepared/source-batch-r35b-20261019/F-23.json.zst",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "85e59930963748da232fd7c021f0c1729adf9e3f7d912d7738a7e96bb8e745be",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-24",
+      "current_source_derivations": [
+        "DECLARED_UTF8_SOURCE_V1",
+        "DECLARED_UTF8_SOURCE_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": true,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/private/F-24-r41/original-with-declared-search.json.zst",
+          "exists_in_server_projection": false
+        },
+        "original_registry_path": {
+          "declared": "/data/replay/acceptance-r36-prepared/F-24/host-only/original-registry.json",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "2839b27e2b3d347932504e455e034ee5fe54e0141cfdd3e6e8ceefcb52c80cb7",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-25",
+      "current_source_derivations": [
+        "DECLARED_UTF8_SOURCE_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": true,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/prepared/source-batch-r35b-20261019/F-25.json.zst",
+          "exists_in_server_projection": true
+        },
+        "original_registry_path": {
+          "declared": "/data/replay/acceptance-r36-prepared/F-25/host-only/original-registry.json",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "2fe351d87e924a87676b0e33ab3c3380c67af8b06ca583eabb3e293023644051",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-26",
+      "current_source_derivations": [
+        "DECLARED_UTF8_SOURCE_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": true,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/prepared/source-batch-r35b-20261019/F-26.json.zst",
+          "exists_in_server_projection": true
+        },
+        "original_registry_path": {
+          "declared": "/data/replay/acceptance-r36-prepared/F-26/host-only/original-registry.json",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "fdcfd61370853ae0d97cc73a254210127e91eb94894e2538c42c30d068528ecc",
+      "sources_currently_missing": []
+    },
+    {
+      "fixture_id": "F-27",
+      "current_source_derivations": [
+        "DECLARED_UTF8_SOURCE_V1"
+      ],
+      "runtime_host_private_proof_required_by_current_validator": true,
+      "private_parent_paths": {
+        "original_packet_path": {
+          "declared": "/data/replay/prepared/source-batch-r35b-20261019/F-27.json.zst",
+          "exists_in_server_projection": true
+        },
+        "original_registry_path": {
+          "declared": "/data/replay/acceptance-r36-prepared/F-27/host-only/original-registry.json",
+          "exists_in_server_projection": true
+        }
+      },
+      "private_source_sha256": "b6ece3128ef14bb8632500831658610e4fb5ab6a37891ee6c869caa724249819",
+      "sources_currently_missing": []
+    }
+  ],
+  "exact_equivalent_packet_search": {
+    "required_canonical_sha256": {
+      "F-01": "47088f59099fc7646f616bbf50a7d289f859fcb76f7039732fdb09bc6a327a27",
+      "F-17": "d11ea03f27d7d7e0858ddf3a070b6a3f0d71054e4f4800f88165bc60bc70ee9a",
+      "F-24": "2839b27e2b3d347932504e455e034ee5fe54e0141cfdd3e6e8ceefcb52c80cb7"
+    },
+    "matched": {
+      "F-01": [],
+      "F-17": [],
+      "F-24": []
+    },
+    "examined": [
+      {
+        "path": "data/replay/inputs/F-24.json",
+        "sha256": "77ffb88998ba5bf81997740407162a989f75073fe2ed606ad6100f409e1ddcca",
+        "canonical_sha256": "327d8947e27664fc871962486574e5c37b2f381d32f42a0501e59b56eaa98f7e",
+        "fixture_id": "F-24"
+      },
+      {
+        "path": "data/replay/inputs/F-17.json",
+        "sha256": "38845f5d6e55315e1e8b9a6a03cb5a177b581dc3ce7811f08879f273eb0c7d1b",
+        "canonical_sha256": "66b1c9bc6c757a98abaa07b29e23469ab816366d7d5b3e16a2db75e59fbb4444",
+        "fixture_id": "F-17"
+      },
+      {
+        "path": "data/replay/inputs/F-01.json",
+        "sha256": "972ee7379936996c7395a09d6603e0981cec31fb63923d42cb2440f7fdd14731",
+        "canonical_sha256": "d3d3b7b9643418bb4d8a472b542e565fe2af6e68a67e3d03b17046d7ff333ffc",
+        "fixture_id": "F-01"
+      },
+      {
+        "path": "data/replay/acceptance-F24-context-r45/F-24/inputs/input.json.zst",
+        "sha256": "29a4db3bdd77f6cd62b86b2a15a63ca09f4f260344431e1a291ec020c8dd6339",
+        "canonical_sha256": "d0b1c4f3c2af1fc1e135a1770a5f2849c5034e05086dd533177ed61c7acc522e",
+        "fixture_id": "F-24"
+      },
+      {
+        "path": "data/replay/acceptance-r36-prepared/F-17-canonical-private-v4/inputs/input.json.zst",
+        "sha256": "4bca94e8f368ca8e08c422cb01bdef32e77b30568a5338c8ad4752d362f655de",
+        "canonical_sha256": "6c88a0d6d6bd1300ff6f0a04624c4fa90185572263623f0cc3db9a7755144571",
+        "fixture_id": "F-17"
+      },
+      {
+        "path": "data/replay/acceptance-r36-prepared/F-24-protocol-v5/inputs/input.json.zst",
+        "sha256": "09c44cc5b2c71cd5fbd77c4686fcc89ceb4be47e794a3b7fe36919680f716e95",
+        "canonical_sha256": "b20a040ead69367f3aba8e97220dc6d0ec239a05c01365cdee91ea90297ab55f",
+        "fixture_id": "F-24"
+      },
+      {
+        "path": "data/replay/acceptance-r37-context-prepared/F-17/inputs/input.json.zst",
+        "sha256": "fcddaec56e7bef12c3cf10a2afa61d10d8c851f78fdabf8bd338b71618a4a71f",
+        "canonical_sha256": "85d25ca4e04bccff21fe32d334e80c35a9a2995b73bca36bf2d3fa2375ba957d",
+        "fixture_id": "F-17"
+      },
+      {
+        "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-24.json",
+        "sha256": "4ce1e973471634c2faf0f65610157bb89159c25a1fab50b19fc6de5e45a0fa92",
+        "canonical_sha256": "16274b5e97fcfe3d61719e35eceba610a83d6d0584c0c9508483bfff2cf77b53",
+        "fixture_id": "F-24"
+      },
+      {
+        "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-17.json",
+        "sha256": "52540f5904e8e36f0161709ce70af87e12bc6a2f5f89784cc9aa280ebb5a7bfb",
+        "canonical_sha256": "39c7711e62ceb5ab768e7b22ecd8bd86bffc91b7a16464d252d4b9122758bc3a",
+        "fixture_id": "F-17"
+      },
+      {
+        "path": "data/replay/prepared/all-source-successor-candidate-v2-20261019/replay/inputs/F-01.json",
+        "sha256": "b18cb7b5f3d0eed253c3454cb5b12df775894bdb46a6ad3203e31fac981c76e9",
+        "canonical_sha256": "2d81f93131d07622a98977760468e65d40ba36a8628076bfda2a19fde9c828c3",
+        "fixture_id": "F-01"
+      },
+      {
+        "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-24.json",
+        "sha256": "77ffb88998ba5bf81997740407162a989f75073fe2ed606ad6100f409e1ddcca",
+        "canonical_sha256": "327d8947e27664fc871962486574e5c37b2f381d32f42a0501e59b56eaa98f7e",
+        "fixture_id": "F-24"
+      },
+      {
+        "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-17.json",
+        "sha256": "38845f5d6e55315e1e8b9a6a03cb5a177b581dc3ce7811f08879f273eb0c7d1b",
+        "canonical_sha256": "66b1c9bc6c757a98abaa07b29e23469ab816366d7d5b3e16a2db75e59fbb4444",
+        "fixture_id": "F-17"
+      },
+      {
+        "path": "data/replay/prepared/reference-r22-candidate-20261019/replay/inputs/F-01.json",
+        "sha256": "972ee7379936996c7395a09d6603e0981cec31fb63923d42cb2440f7fdd14731",
+        "canonical_sha256": "d3d3b7b9643418bb4d8a472b542e565fe2af6e68a67e3d03b17046d7ff333ffc",
+        "fixture_id": "F-01"
+      },
+      {
+        "path": "data/replay/acceptance-F24-claim-context-r42/F-24/inputs/input.json.zst",
+        "sha256": "3cb1e499ac835b7e04b5a0a10d9cb556f550741896edc7608b4bf9a77c55f7bd",
+        "canonical_sha256": "e7842347e0b1c644309d99fd07dd5f47e60b2a0c3738b64de339c2e7fba3158e",
+        "fixture_id": "F-24"
+      },
+      {
+        "path": "data/replay/acceptance-r41-wire-prepared/F-01/inputs/input.json.zst",
+        "sha256": "c9af8490bd415194f2f062dc367c59eac884214dec0ad14e3b8325bc3acdf81d",
+        "canonical_sha256": "b3478f0d3204fd273f1af4893576970b4218474fc1e82b3a7189c5fc5e0b8673",
+        "fixture_id": "F-01"
+      }
+    ],
+    "errors": []
+  },
+  "limits": "Existing transferred replay packets only, no external/native/PG or synthesized parents; an absent older artifact remains absent."
+}

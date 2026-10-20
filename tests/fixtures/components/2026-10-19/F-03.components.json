@@ -1,0 +1,869 @@
+{
+  "schema": "tank.fixture-retained-components.v1",
+  "fixture_id": "F-03",
+  "status": "INCOMPLETE_NOT_RUNNABLE",
+  "not_a_replay_input_packet": true,
+  "synthetic_as_declared": false,
+  "unchanged_assertion_manifest": "tests/fixtures/history/manifest-86cda04f53b7b8032655ed40ce53e78e2d123f9a146131b0afb91201121c334c.json",
+  "assertion_sha256": "f15b019ebb727025050521d1c3a2852f718d7d760c95c2bfc2ca6075ec46d147",
+  "cutoff_spec_unchanged": "24 Sep 2026 16:12",
+  "market_candidates": [
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-06-28.zip",
+      "sha256": "c9c180806a458caf78ce9b41839634bd57c32c898415ff96ec38df1c6857b0dc",
+      "bytes": 10419,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-06-29.zip",
+      "sha256": "b15e3123618fb5174173973ce6967ebd0c7a801f14d47f203782d40664eb7476",
+      "bytes": 10024,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-06-30.zip",
+      "sha256": "571900245cd9c5912b5b4bd3d4a37ad418db4493457e026e5f5d3c475557f492",
+      "bytes": 10065,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-01.zip",
+      "sha256": "7016b94472aba9607e1547dab0f1ebbf7707f906e4af83cea86a720707b952f0",
+      "bytes": 10084,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-02.zip",
+      "sha256": "1e617cd91d0d21a747ecdedbe6c28eeecff714449e7e76a575d8a80e93450c0c",
+      "bytes": 10102,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-03.zip",
+      "sha256": "1fb13c65b02896ab36a8f8ff51cc59047438b61e7a7fb901516a6d1bc64f867c",
+      "bytes": 9949,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-04.zip",
+      "sha256": "e238baaceeea2a10391795ecbbb423a6d6bd60e61ceb5d8c3af5965944287b9d",
+      "bytes": 9939,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-05.zip",
+      "sha256": "557f1a7764eeb611d8cd6e8bc159bfdbda368910a9af3c902106c2215bbd0589",
+      "bytes": 10053,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-06.zip",
+      "sha256": "d874104fe9f53727edeb9b51d0e0dfa74103455e6527fd9c0731035a73d41ffe",
+      "bytes": 10164,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-07.zip",
+      "sha256": "fdf0c3eb38181023f280deeb861aa914515678bd5f2c1d31b55b44e8402f6488",
+      "bytes": 9849,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-08.zip",
+      "sha256": "70a24b4242af16df75d7128f1914ef0bdf1478def1112abea66ec704677b2c70",
+      "bytes": 9777,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-09.zip",
+      "sha256": "0e845c6c99fe842a88c04af3935ac9c33bb417a4db956539e1b6c2430a03fe2d",
+      "bytes": 10057,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-10.zip",
+      "sha256": "18c611002598c827df9c674c1cb863d1e3ff42809673df8b0f886581ed765150",
+      "bytes": 9837,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-11.zip",
+      "sha256": "7dbf850de4c9f177c4ad865dad4459242d147fc241c056c39b1f0d56a2d68145",
+      "bytes": 9814,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-12.zip",
+      "sha256": "cd734f820e3a4d035fabb585d0900c8d09e90d189e638c68db5411c3b84f1bbe",
+      "bytes": 9611,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-13.zip",
+      "sha256": "d6c9cbe732fbf3a058a66c70675b00541131dee98dd24b279ebaf7bd844064bf",
+      "bytes": 9831,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-14.zip",
+      "sha256": "a642820c700fca1e6d5caf608b62d6119df21f3f2ade56171d6f0706ca3f6687",
+      "bytes": 10135,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-15.zip",
+      "sha256": "cecdb06d75d7aa4fcfbbfe152629e092b2ed34aae50ade34cab883212cad753e",
+      "bytes": 10307,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-16.zip",
+      "sha256": "a584d2f4f667d58abd5d94171cdeea4bb4e18b65d7a7c7b006d7fda6df843f66",
+      "bytes": 10158,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-17.zip",
+      "sha256": "e0963c242044d2db26386533966c8b5b5c114ba86a408141bb88341a573e8e9a",
+      "bytes": 10315,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-18.zip",
+      "sha256": "d9b2fa3223dcaf90853c8ce5179c8362f7b3a0b42017ad83c55c049fd6f880e4",
+      "bytes": 9749,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-19.zip",
+      "sha256": "0d1206a413804e67f24b654dd5593095f93c8e3e0de19ecd62e389881892bc1c",
+      "bytes": 9617,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-20.zip",
+      "sha256": "e070b03296d3ddd1333083546cb6b58c758214dac9e7542fd8271292716bd116",
+      "bytes": 9818,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-21.zip",
+      "sha256": "221aa9eb622fb62c366dc4dbdb3ff92f089488d94ba5a879f05f2a2e531c86d2",
+      "bytes": 9884,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-22.zip",
+      "sha256": "59ca1d28098e75872f802be29400770251d58d95f4a7f08fd86addae02fc3cd9",
+      "bytes": 9518,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-23.zip",
+      "sha256": "23b53a9fc97d70f8b9c832eb7473af13f3e11d1617aa76d960218639fc790190",
+      "bytes": 9323,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-24.zip",
+      "sha256": "b3a12816e8623b4ba4b9db571d84543fd6886ba062ac7ad4e4e17f7d3e8dfb91",
+      "bytes": 9708,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-25.zip",
+      "sha256": "82ccf82c8d586c5a288da92fa9b17bc20530ecd0ac706191216ff0e0ec981ddf",
+      "bytes": 9613,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-26.zip",
+      "sha256": "c71046e02fc8b6be70a2e7d3a1a381d0dafc818891d09a800f0126fc6754569c",
+      "bytes": 9590,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-27.zip",
+      "sha256": "f6ff1ebe306c2d9d4c9da0552ed852dc71323cac8fbdb1932344042e26e290ef",
+      "bytes": 10086,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-28.zip",
+      "sha256": "a9162db8ee2d065b8b1700ef8847812cb684061fec7d209aab4e4f08e70c19bf",
+      "bytes": 9882,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-29.zip",
+      "sha256": "a3be9eddeaec2d4bfec98ebd28453209f6ebd6d67c9a433a50e7f649e0b590a5",
+      "bytes": 10069,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-30.zip",
+      "sha256": "044ca8ef6db8c84f487cccf19be62bdd1d34d3bcd99b9b472a920044d5ed9f95",
+      "bytes": 9909,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-07-31.zip",
+      "sha256": "57459f5fc86a193d9257cb897cf29dbd64bfe93b5567332015cc03c9170db035",
+      "bytes": 10031,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-01.zip",
+      "sha256": "ae2033b6340eddf45e1f3a7222565434ecf2a09afa4b1d23641469b7f8ba9148",
+      "bytes": 9577,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-02.zip",
+      "sha256": "2dc06c698946abd3be7f13ae1093831a725a082e81f794450ceffd81906b9053",
+      "bytes": 9573,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-03.zip",
+      "sha256": "96e3de5fab0f30c5e0f15cfbee1114946b0472913997d34e961468a8bfcc741c",
+      "bytes": 9620,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-04.zip",
+      "sha256": "d6b60357d044109dd483e8c436c56360946983b5d8db5b8e4f532d77174d0c78",
+      "bytes": 9909,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-05.zip",
+      "sha256": "8e67fc78c10c8fc03651114f0aec77aa7a8a4bc86f13e0fe676058966897ccab",
+      "bytes": 10015,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-06.zip",
+      "sha256": "e88e1baca711076637c72551d339a6b912aace639028798159ad82cf4737af49",
+      "bytes": 10189,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-07.zip",
+      "sha256": "f5da0f62e15f542767698ec83c1e79cf802a007b292d952a599ce2cb402e7e45",
+      "bytes": 10024,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-08.zip",
+      "sha256": "62a22a98a811b8ea6682e77f1e7cc3e15b43572eb3f1a278cebca8f170e08fd8",
+      "bytes": 9447,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-09.zip",
+      "sha256": "cbc575fb19946304e2add7fc70b37a58ad0d273d5253654286f636414d22f050",
+      "bytes": 9561,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-10.zip",
+      "sha256": "ab783e536412e565e599d0de453cc3075b7422f082aa3babb36f9dc87fa9e74c",
+      "bytes": 9943,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-11.zip",
+      "sha256": "218a18415995f55d94d2c9ccec3db2c35fed63415fa55dc55bfd7c067af8c6e3",
+      "bytes": 10398,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-12.zip",
+      "sha256": "e9bdafaa583523f21b5c0ee3b2b80414e89d1833fc6898ae4f0d304bdd34423a",
+      "bytes": 10326,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-13.zip",
+      "sha256": "4c694cabc1c759301220e3f5bd184182c7ceeb051cb1e77fed121132c5299383",
+      "bytes": 10000,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-14.zip",
+      "sha256": "86314d05c0ba7de4d857633adae5bf34fff4361aefc356293aad784f8bb7c465",
+      "bytes": 10023,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-15.zip",
+      "sha256": "1e01d7448e4f9d91a9f14bcc4d001713f2d6df9593db8af9cb8885ede218d2d6",
+      "bytes": 11187,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-16.zip",
+      "sha256": "6b545109f1aa436f4236e5cc98419500c23fc9d5e8b7aa999002c6ba7ab9e0b6",
+      "bytes": 11231,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-17.zip",
+      "sha256": "6e8278ab260f2fdc06ccd17b8288fdcb10e3fa1bf8da9014c1e9da66cb2bcf0e",
+      "bytes": 11144,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-18.zip",
+      "sha256": "28eb782b6dbf6928d8289e16a33da3736852efbfaa1a69d3acb3fcd140ba7408",
+      "bytes": 10914,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-19.zip",
+      "sha256": "6f72dade3baf21f87bf6a5788fe9c3d7138c49e10c464e6493e7624bc7a793b2",
+      "bytes": 11008,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-20.zip",
+      "sha256": "d41b894e14542a4589ba637b516cdcbedbd02527e18333e2b57206775e707804",
+      "bytes": 10867,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-21.zip",
+      "sha256": "74877b0f70933ca1a42edd12afe5c325f2a1a4becd48b312ecfc2e8d923c5409",
+      "bytes": 10950,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-22.zip",
+      "sha256": "c80bc4fb1302763ab4c8996e2245195da172fe6df6c9ecc119d9ae6c66ba4e49",
+      "bytes": 11219,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-23.zip",
+      "sha256": "9f967837594a88f6f2aca2262c79d7b4f813cb8f164d422ad58413d3eee5b865",
+      "bytes": 10871,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-24.zip",
+      "sha256": "a696f3a254a1982cb189a34630ba4f119f0d694d69fc8827397cf01c8437e71e",
+      "bytes": 10991,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-25.zip",
+      "sha256": "ee15ae4a4c8790608b1a98c02125c92cee62043bfcf626848067f158b62f0831",
+      "bytes": 11158,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-26.zip",
+      "sha256": "48693b35eb978809c6069ee3628f1fb8cfcf22b0a5a9f7037de6f49ec0340db7",
+      "bytes": 10976,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-27.zip",
+      "sha256": "43a2821bf9aae8fa096e7a47b611ab073ed5341f08b6ed1ee38a407cf759ab03",
+      "bytes": 10944,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-28.zip",
+      "sha256": "86b952597aabcd1a213f8c2d3b05985151235b4131c7785b5bed9f66da92dbab",
+      "bytes": 10732,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-29.zip",
+      "sha256": "cc28ccbbdcc53decd336a5689f709495145d9c959290a6b4a07b67eac2268892",
+      "bytes": 10809,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-30.zip",
+      "sha256": "62a7810781b6a315f4e1f890f6e4981a2802ce86a3feb2c1bbfe9ab7c3f55d4b",
+      "bytes": 10615,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-08-31.zip",
+      "sha256": "97fb97ada7b43318d0c4418dd69ff38c72556700684898c8aa921952e223a25b",
+      "bytes": 10801,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-01.zip",
+      "sha256": "0117456a45788269b0ed28c58b8d1c35a4a73c68223cf20cdc05a7e5abc3e714",
+      "bytes": 10704,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-02.zip",
+      "sha256": "bda3a8e49cd0b9946dfd0151f96c7f627285e43dbbaf21c54383ceac1c730a7d",
+      "bytes": 10804,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-03.zip",
+      "sha256": "9ad92302bacf0a2f184e8ba32f3dc42d361e286b8dc9141ad1c26105e1f736f5",
+      "bytes": 10746,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-04.zip",
+      "sha256": "4082f55218a1d28441ebcbce182c3293f5f5693c89fa588972cb4fcd7577fd0c",
+      "bytes": 10668,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-05.zip",
+      "sha256": "2e3fc30ae9a9e38c2c51f31713069e99065133f9f4c2870949cf0c5f858c0b47",
+      "bytes": 10691,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-06.zip",
+      "sha256": "3e9101a405eb65a3af2e6b1814cb0679c0aa74380f33b94392bc2e835e142354",
+      "bytes": 10829,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-07.zip",
+      "sha256": "2a8207f2a55922e4755a1450bc4eec4ed2994903d5fd47362366a6f30797ea0b",
+      "bytes": 10624,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-08.zip",
+      "sha256": "5ff6873675e42724c5509491a240463bc23595be6fba9bea38498888c4303160",
+      "bytes": 10928,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-09.zip",
+      "sha256": "3e45f8d9c7d1f2159952cb19ea3007d6ad574e2db0f66e1daa4f297fc498f18d",
+      "bytes": 10797,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-10.zip",
+      "sha256": "77f56ab18ad2cb985a4260d8d33302d925f8da87baf1f3d3daa5e91354804de5",
+      "bytes": 10731,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-11.zip",
+      "sha256": "bacdf500ca7f5a73eb38d6ea2a57a4a29b1e15049ca7a8650f6f9e5316ff1a82",
+      "bytes": 10748,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-12.zip",
+      "sha256": "5c960442caf5b9d9273505ad99b43171177902574cd0dd52f2100132c9b03042",
+      "bytes": 10625,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-13.zip",
+      "sha256": "81048aaeb8632ab1e9f4cb5ffc59b85632233e9b1373e38e5aa36d2e84936778",
+      "bytes": 10662,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-14.zip",
+      "sha256": "6d8e4613eb3a4c44cb79b523076a6db5e7468e30cc11a23e1bcb22a63f674788",
+      "bytes": 10660,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-15.zip",
+      "sha256": "1726b25400c55e510fc471ccc675d0e8944538c2e7933a706aee947e57839a39",
+      "bytes": 10461,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-16.zip",
+      "sha256": "17c976bde6845e931f6e3599f169c61103e30195429fab7f30c21bf1d31b90f7",
+      "bytes": 10706,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-17.zip",
+      "sha256": "a91eb9cdfad6b914001697052c158bd22956082aa2604666e9b4b2c97d8fa708",
+      "bytes": 10377,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-18.zip",
+      "sha256": "960b6638f8edb2a69f7d9106abfa9d7b8023d801e62c423133e8131f97e7e644",
+      "bytes": 10782,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-19.zip",
+      "sha256": "e52b8f148c2cc683610ddd5875c32897704d5daf5de87bca908c6d0658188c01",
+      "bytes": 11105,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-20.zip",
+      "sha256": "fd09616d7c33db01d7529e3d5ae7b5ec9991bc8e54cd3509e8cd2e28ce43677b",
+      "bytes": 11041,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-21.zip",
+      "sha256": "a87755fe40da05d0d99369fcb97a43d25becd482c87e27d0b640c6a864a5f526",
+      "bytes": 10990,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-22.zip",
+      "sha256": "a83a7a9054e6772dc39b67d407ffb543451179cbc8aa7428fcfe3f6a6739268f",
+      "bytes": 11015,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-23.zip",
+      "sha256": "80681a6ecc6d78561f15a63f5ba9ae9b1dc32f29edc9a64f268bb324f264785f",
+      "bytes": 10924,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-24.zip",
+      "sha256": "3a5f5fba453932057e4f0698c9bde806693da0a597c6e6c442549507b9908f32",
+      "bytes": 10763,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-25.zip",
+      "sha256": "a1c0a299e7e1ed27c1bf56fca4459bd7b0d8c55167366097bcea6bf4740344b1",
+      "bytes": 10623,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-26.zip",
+      "sha256": "b9d73fc99585ee1e060ccc96c96605c89872d45b6788a4498b256f03f04a8350",
+      "bytes": 10594,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/metrics/COWUSDT-2026-09-27.zip",
+      "sha256": "d52a253dcba455006272eb726e19ffd9464d33c71670e85992ce871566b457a7",
+      "bytes": 11103,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/spot_15m_COWUSDT.json",
+      "sha256": "9031294ca2925026f7a6b24d23c8ffa4fcad62f58d9eccff05298fd2e4433104",
+      "bytes": 1478964,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    },
+    {
+      "path": "fixture_check/data/spot_1h_COWUSDT.json",
+      "sha256": "5442946a57b2c7efe006b2a8f15ef19dc019449acb103bd32cee49f53a5fc7cb",
+      "bytes": 520686,
+      "agent_input_eligible": false,
+      "requires_temporal_projection": true,
+      "acquisition_time": "UNKNOWN_UNLESS_RETAINED_ENVELOPE_SUPPLIES_IT",
+      "restriction": "Retained whole-file candidate, may contain future rows; verify authority/checksum/semantic cutoff/full bucket end/assembly receipt before import."
+    }
+  ],
+  "source_candidates": [],
+  "missing": [
+    "Explicit validated fixture-reference clock wrapper and conservative publication-bucket eligibility",
+    "Frozen reference-run code/config/registry snapshots and clearly fixture-authored NEW_ITEM messages",
+    "Case-specific missing source/market facts remain explicit; no fabricated market data",
+    "First-run session/tool/message ledger generated by first execution, not falsely claimed historical"
+  ],
+  "case_specific_gap": "COW hourly/15m prices and archive OI history exist; original Ondo/BlackRock/CoW integration evidence is missing.",
+  "performance_evidence": false,
+  "network_or_native_actions": 0,
+  "reference_execution_note": "First fixture/reference execution may declare fixture NEW_ITEM messages and freeze current registry/config; it does not require nonexistent historical Tank logs. Capture its own first-run ledger for later replay; actual original-service replay remains distinct."
+}

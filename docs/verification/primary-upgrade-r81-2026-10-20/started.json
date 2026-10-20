@@ -1,0 +1,147 @@
+{
+  "at": "2026-10-20T10:59:08.466800+00:00",
+  "container": {
+    "command": [
+      "tank",
+      "serve"
+    ],
+    "entrypoint": [
+      "/usr/bin/tini",
+      "--",
+      "/opt/tank/venv/bin/python",
+      "/app/deploy/tank_entrypoint.py"
+    ],
+    "environment_names": [
+      "GPG_KEY",
+      "LANG",
+      "PATH",
+      "PLAYWRIGHT_BROWSERS_PATH",
+      "PYTHONUNBUFFERED",
+      "PYTHON_SHA256",
+      "PYTHON_VERSION",
+      "TANK_BACKUP_DIR",
+      "TANK_CODEX_AUTH_PATH",
+      "TANK_CODEX_GATEWAY_HOST",
+      "TANK_CODEX_GATEWAY_KEY_FILE",
+      "TANK_CODEX_GATEWAY_PORT",
+      "TANK_CONFIG_DIR",
+      "TANK_DATA_DIR",
+      "TANK_ETHERSCAN_API_KEY_FILE",
+      "TANK_JEV_PROVIDER",
+      "TANK_OPENMA_API_KEY_FILE",
+      "TANK_OPENMA_URL",
+      "TANK_OPENROUTER_API_KEY_FILE",
+      "TANK_TELEGRAM_ALERTS_CHAT",
+      "TANK_TELEGRAM_OPS_CHAT",
+      "TANK_TELEGRAM_TOKEN_FILE",
+      "TANK_USER_AGENT",
+      "TANK_X_ENABLED",
+      "TANK_X_PROFILE_DIR",
+      "TANK_X_STORAGE_STATE_PATH",
+      "UV_PROJECT_ENVIRONMENT"
+    ],
+    "id": "eb7450d6657ca09bbe3aa281b95c92b42db7b8c2e5976de8da65ebb79d27e339",
+    "image": "sha256:94a6ac799d1814dd810471c36b2ba4e869c48928b36dc6216bca39e137112e24",
+    "mounts": [
+      {
+        "Destination": "/config",
+        "Name": null,
+        "RW": false,
+        "Source": "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/config",
+        "Type": "bind"
+      },
+      {
+        "Destination": "/data/replay/evidence",
+        "Name": "tank_sealed-replay-evidence",
+        "RW": true,
+        "Source": "/var/lib/docker/volumes/tank_sealed-replay-evidence/_data",
+        "Type": "volume"
+      },
+      {
+        "Destination": "/backup",
+        "Name": "tank_backup",
+        "RW": true,
+        "Source": "/var/lib/docker/volumes/tank_backup/_data",
+        "Type": "volume"
+      },
+      {
+        "Destination": "/data",
+        "Name": "tank_tank-data",
+        "RW": true,
+        "Source": "/var/lib/docker/volumes/tank_tank-data/_data",
+        "Type": "volume"
+      }
+    ],
+    "name": "tank-tank-1",
+    "networks": {
+      "tank_tank-net": {
+        "ip": "172.30.42.4",
+        "network_id": "6bb3e64ec9960d2bd31b00b3426b1558b3b966c950ef8d6a8778f1c279b4a645"
+      }
+    },
+    "state": {
+      "ExitCode": 0,
+      "FinishedAt": "0001-01-01T00:00:00Z",
+      "OOMKilled": false,
+      "Running": true,
+      "StartedAt": "2026-10-20T10:59:08.425561957Z",
+      "Status": "running"
+    }
+  },
+  "frozen_context9": {
+    "content_sha256": "7e8cea9c76a679ced51d8eb77fdc3a40e07c5325cf69137030a8b79d35ef1177",
+    "files_sha256": {
+      "api_limits.yaml": "1b9f2b198b1115122f30b02515ab305cba3090c54f49fc329b8cc1ca94112f9e",
+      "delivery.yaml": "8c549fc7339d64b7e2df59ca3a2d18fc95fe037a8f5a114dd370af7008a1b3f8",
+      "dependency_map.yaml": "8fd9b2e8fb48e084b760c7b8b817990c495f1be61ee0a785297a68587112baf2",
+      "exchange_addresses.yaml": "134c05840dbed5b66e73d088f74a2799d629a23a8cc9a1a104d5b24ae07f7ddb",
+      "fundamentals_evidence.json": "f76fba71f331e2ccce75232416f51ba84a160c71667783d1c87b2f2da5347fec",
+      "openma.yaml": "8a94abbcb9775d37cfc5a1f239794dac7a4f3105b6cccc344922e004fb6ae781",
+      "registry.yaml": "fc22878d9d3b384c06d63247dc1050dc806c4aea533bc4279ddd73520703ca0e",
+      "semantics.yaml": "bf624bbfd97fbe011cf3ad4687670ce1ca15eeb6bbe6aa1ab9c7ac478c925676",
+      "skills/tank-data/SKILL.md": "589f51bca1f1f1761444325ebc180442288b72f40e3ef8056317931c03b05e6c",
+      "skills/tank-data/references/DATA_GUIDE.md": "8014f4574be6c75dad11911424761249578ba959ab03519d88e82b064c646445",
+      "skills/tank-event-analyst/SKILL.md": "f54682be5244abf3f5f302fa73a986597938bfb21d9a1926ce30013e1ce96c4b",
+      "skills/tank-event-analyst/add_observation.schema.json": "fd03619fee8a5dfc685cbdc2a40087c420ed23485ffac7a8f174330c5c79f716",
+      "skills/tank-event-analyst/fetch_page.schema.json": "4e1ccdfdd9da83a7014db8723e7f54fe507b21c164e97f1874057d37c235d746",
+      "skills/tank-event-analyst/get_decision.schema.json": "53f5de669153a3f92579da213eccb897082e59e39533f123f9ef52d15b554498",
+      "skills/tank-event-analyst/get_event.schema.json": "29c8b58c8b32a4455d1f0edbb1dc9ebd3543b3b15089f031dc71bdcc414370d9",
+      "skills/tank-event-analyst/get_item.schema.json": "21eacff18eb1fecd8ff4df6bdc7a2ecb252241ca9cbe4243be817739ea0c1ba8",
+      "skills/tank-event-analyst/get_market_truth.schema.json": "a9c6a26e0a56e7a7e70de161d0913c1e1f09e7e8a96996ef3f95874c5df6a597",
+      "skills/tank-event-analyst/get_registry.schema.json": "e22495140afe367988ac800558dc8cc613d9868146ed5953e030829930707521",
+      "skills/tank-event-analyst/get_token_facts.schema.json": "768e79b8de0ac947175b0be852488bad297cde6ba91f87f62a75578b1f029611",
+      "skills/tank-event-analyst/list_open_events.schema.json": "b750f1fb211f3c2e6544c2fb6065b2bee75238d049d7ab99f9eddebcf03dbff9",
+      "skills/tank-event-analyst/merge_into.schema.json": "9008527874d47a32cb1a1f777ca99e0194202d7fab694731ca0db4f38928d560",
+      "skills/tank-event-analyst/propose_pattern.schema.json": "0ba3dfb7663fd9fe1e5f9acf6c8b105ece2d00e24c3e443a03bd43a7a785a9d6",
+      "skills/tank-event-analyst/publish_card.schema.json": "c8bbff69eaa1fb3cc189044581f3234dd983e41f7cb52f9e3df1848d7b1ca4c8",
+      "skills/tank-event-analyst/record_event.schema.json": "a376ff0702bb48cd95f97b158b559bef4f37c281e17dea0a24b11ed26cf36ae9",
+      "skills/tank-event-analyst/schedule_milestone.schema.json": "cacea473496e2d8e9379206fa9e6169ee4cd7d30be6bfb5ee8bfcdaca6f40d63",
+      "skills/tank-event-analyst/search_tank_items.schema.json": "4cb651a7d6db425440bfc2cfb9e7b6121ec660f3d4b230d4e6c6c60708406b5c",
+      "skills/tank-event-analyst/set_assessment.schema.json": "ad2ba25fbb1f01a5c9da16f0015b1f12cf6b54a2e28e8fd79ad2489c648d63f5",
+      "skills/tank-event-analyst/set_beneficiaries.schema.json": "8d50343b6d907a25ebf8f2accd4aea1474084e776f9143685ad63b28edb327d4",
+      "skills/tank-event-analyst/tools.json": "ab406e1fe3a26b372230d1f3549975180f50f9b90bf22e872ae8e55f6101ce0e",
+      "skills/tank-event-analyst/web_search.schema.json": "3efd2d88e4a460e6ad09114d6468266fcf8357473b1c5d27b23e6777e42c44db",
+      "skills/tank-scout-reviewer/SKILL.md": "dfb778b5605ae98a05c74af4888d223625d46690111e0aeae2a4f6dcd8c3fbd7",
+      "skills/tank-scout-reviewer/record_review.schema.json": "accb8e4035fc9f3cf08338babf9d23cfbd9d13ca76a7d033917d03b8e14e5aca",
+      "skills/tank-scout-reviewer/tools.json": "1ea37f78723765b3ca3492d2427f15936b0d9cf85164c5ce5f9af08af123c84c",
+      "sources.yaml": "63cc4d95b164f789b73c4cec4f60d80ed7c4f694d4d69ed9fece960fbe590aff",
+      "thresholds.yaml": "7899d1dbc0c1ea62fe13bcaae6d35de879a603eef21ca9ff1b5f63c5e6879516"
+    },
+    "manifest": {
+      "content_sha256": "7e8cea9c76a679ced51d8eb77fdc3a40e07c5325cf69137030a8b79d35ef1177",
+      "git_commit": "75ea469c9a84bf3e614eacdf108fb4e683cb79c0",
+      "git_dirty": true
+    },
+    "openma": {
+      "agent_id": "agent_QnnaD0-HdQkOKTDYIB06v",
+      "environment_id": "env_qIEZeaWZznXZKCDXOqyus",
+      "model_id": "gpt-6.1-sol",
+      "prompt_version": "baseline-2.4-agent-workflow-context-9",
+      "replay_environment_id": "env_zD6DLwHejbpOlaFbzKrFC",
+      "scout_agent_id": "agent_x_sLj6SKqcaBZIB-Tl-P8"
+    }
+  },
+  "no_historical_job_reset": true,
+  "pg_openma_unchanged": true,
+  "status": "PROCESS_STARTED_E2E_PENDING"
+}

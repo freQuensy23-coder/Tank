@@ -1,0 +1,6 @@
+{
+  "pkg/types/configuration.go": "24257bff47a0dd21e248869336dd1b55ed1fda77c78f95d5f49634bf950ea2ce",
+  "pkg/virtualnetwork/services.go": "1c6970a236d9ddbe1d341a1ca8eebeef9647d5980e42ef7d9771a5b58c259410",
+  "pkg/services/dns/dns.go": "6b89d79e05aacceecd3e7fcd87270e505ecf1226ad8a6c4885e6afd5632a4e5c",
+  "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+}

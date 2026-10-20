@@ -1,0 +1,29 @@
+{
+  "scope": "local real subprocess file I/O and synthetic blocked transports; NOT native VM acceptance",
+  "node": "v24.19.0",
+  "python": "3.12.8",
+  "tests_exit_code": 0,
+  "guard": {
+    "repeat_refused": true,
+    "changed_source_refused": true
+  },
+  "stage": {
+    "stage": "guest-streamed-file-io",
+    "status": "OFFLINE_TESTED_NATIVE_NOT_QUALIFIED",
+    "source_sha256": {
+      "packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts": "0c9f5972ae005643985998f8ee68f092a8b7cad9627f176b5ad9245e92e16f1e"
+    },
+    "patched_file_hashes": {
+      "packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts": "aa64877a9e5742bbf8d31674e86ca19bdc71a13d8499dce7db26e9ad1c95245f"
+    },
+    "added_file_hashes": {
+      "packages/control-plane-node/src/lib/tank-retained/guest-file-io.ts": "d149658b6e95b2aae3690a9538f9a52a7123cdab18d77ebf788e36cfcb4360bc",
+      "packages/control-plane-node/src/lib/tank-retained/guest-file-worker.ts": "5381ce39bd0bdc62db18df95aa04e0a5411972b12482d07fc9cf7f3f1605cc28"
+    },
+    "asset_manifest_sha256": "2f590b714a7dbd9e636803550cd0bd82bf62759d43e7e807c703d4cc51eccdc0",
+    "file_operation_budget_seconds": 120,
+    "browser_budgets_unchanged": true,
+    "native_vm_proof": "NOT_RUN"
+  },
+  "asset_manifest_sha256": "2f590b714a7dbd9e636803550cd0bd82bf62759d43e7e807c703d4cc51eccdc0"
+}

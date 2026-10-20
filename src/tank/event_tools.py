@@ -4,14 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import copy
-import re
+import os
+from contextlib import AsyncExitStack
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlparse
 
 import httpx
+import zstandard
 
+from tank.time_precision import (
+    Timestamp,
+    chosen_boundary,
+    collection_clock,
+    offset_schedule,
+    propagate_timestamp,
+)
 from tank.util import canonical_json, iso, new_id, parse_time, sha256, utcnow
 
 STATES = ["RUMOR", "PROPOSED", "APPROVED", "SIGNED", "DEPLOYED", "LIVE", "MONEY_FLOWING"]
@@ -72,10 +81,34 @@ class EventToolService:
         "record_review",
     }
 
-    def __init__(self, repo, settings, market_truth, decision_engine, *, http=None, search=None):
+    def __init__(
+        self, repo, settings, market_truth, decision_engine, *, http=None, search=None, reference_clock=None
+    ):
         self.repo, self.settings, self.truth, self.engine = repo, settings, market_truth, decision_engine
         self.http = http
         self.search_service = search
+        self.scheduler = None
+        if reference_clock is not None:
+            from tank.fixture_reference import TrustedFixtureClock
+
+            if type(reference_clock) is not TrustedFixtureClock or not settings.replay:
+                raise ValueError("Trusted fixture clock requires isolated fixture replay mode")
+        self.reference_clock = reference_clock
+
+    def item_known_at(self, item):
+        return (
+            self.reference_clock.known_at(item)
+            if self.reference_clock is not None
+            else propagate_timestamp(item, "observed_at")
+        )
+
+    def item_reference_fields(self, item):
+        if self.reference_clock is None:
+            return {}
+        return {
+            **self.item_known_at(item).fields("simulated_available_at"),
+            "fixture_reference_provenance": self.reference_clock.provenance(item),
+        }
 
     def provenance(self, ctx):
         return {
@@ -86,8 +119,16 @@ class EventToolService:
                 session_config_version=ctx.get("session_config_version", ctx.get("config_version")),
                 session_code_version=ctx.get("session_code_version", ctx.get("code_version")),
                 model_id=ctx.get("model_id"),
+                model_id_basis=ctx.get("model_id_basis"),
+                model_id_reason=ctx.get("model_id_reason"),
                 prompt_version=ctx.get("prompt_version"),
+                prompt_version_basis=ctx.get("prompt_version_basis"),
+                prompt_version_reason=ctx.get("prompt_version_reason"),
+                prompt_label=ctx.get("prompt_label"),
+                prompt_binding=copy.deepcopy(ctx.get("prompt_binding")),
                 agent_version=ctx.get("agent_version"),
+                agent_version_basis=ctx.get("agent_version_basis"),
+                agent_version_reason=ctx.get("agent_version_reason"),
                 session_id=ctx.get("session_id"),
             ).items()
         }
@@ -102,6 +143,9 @@ class EventToolService:
             stored_session = await self.repo.get("ops.agent_sessions", context["session_id"])
             if stored_session:
                 context["event_id"] = stored_session.get("event_id")
+                trigger = stored_session.get("last_payload") or {}
+                context["trigger_kind"] = trigger.get("kind")
+                context["trigger_item_id"] = trigger.get("item_id")
         scoped = {
             "add_observation",
             "set_assessment",
@@ -183,6 +227,13 @@ class EventToolService:
             validate_schema(arguments, self.settings.read_config_json(schema_relative))
         ctx = dict(context or {})
         event_id = arguments.get("event_id") or ctx.get("event_id")
+        if tool == "get_decision" and not ctx.get("_decision_market_refresh_completed"):
+            ctx["_decision_prepared_condition_ids"] = await self.refresh_fired_condition_truth(arguments, ctx)
+            if ctx.get("_decision_market_refresh_only"):
+                return {
+                    "market_refresh_completed": True,
+                    "prepared_condition_ids": ctx["_decision_prepared_condition_ids"],
+                }
         if tool in {
             "record_event",
             "add_observation",
@@ -193,11 +244,32 @@ class EventToolService:
             "schedule_milestone",
             "get_decision",
         }:
-            async with self.repo.transaction():
+            async with AsyncExitStack() as locks:
+                if tool == "record_event" and ctx.get("session_id"):
+                    await locks.enter_async_context(self.repo.lock("session:" + ctx["session_id"]))
+                await locks.enter_async_context(self.repo.transaction())
                 async with self.repo.lock(
                     "event:" + str(event_id or ctx.get("session_id") or arguments.get("item_id"))
                 ):
-                    return await getattr(self, tool)(arguments, ctx)
+                    # The preflight scope snapshot may predate another accepted
+                    # origin. Revalidate before any claims/event writes after
+                    # acquiring the mutation lock shared by those calls.
+                    if tool == "record_event" and analyst and ctx.get("session_id"):
+                        current_session = await self.repo.get("ops.agent_sessions", ctx["session_id"])
+                        if current_session and current_session.get("event_id"):
+                            return {
+                                "accepted": False,
+                                "reason": "EVENT_ALREADY_BOUND",
+                                "event_id": current_session["event_id"],
+                                "error": "Use add_observation for the session event",
+                            }
+                    result = await getattr(self, tool)(arguments, ctx)
+            # Reaction computation must start only after the assessment mutation
+            # commits and releases its event lock. The scheduler owns both timers
+            # and recoverable PRE tasks, including restart recovery.
+            if tool == "set_assessment" and self.scheduler is not None:
+                await self.scheduler.ensure_reactions(await self.require("evt.events", event_id))
+            return result
         return await getattr(self, tool)(arguments, ctx)
 
     async def rows(self, table, event_id=None, *, filters=None):
@@ -229,19 +301,56 @@ class EventToolService:
         return row
 
     async def get_item(self, a, c):
-        return await self.require("ingest.source_items", a["item_id"])
+        return self.source_item_view(await self.require("ingest.source_items", a["item_id"]))
+
+    def source_item_view(self, item):
+        """Expose the exact clock used by V7 without rewriting capture evidence."""
+        if self.reference_clock is None:
+            return item
+        known = self.item_known_at(item)
+        return {
+            **copy.deepcopy(item),
+            **self.item_reference_fields(item),
+            "freshness_reference": {
+                "value": known.value,
+                "precision": known.precision,
+                "clock_domain": "FIXTURE_SIMULATED_AS_OF",
+                "basis": "V7 measures public_at age at this declared item availability; observed_at remains the actual capture receipt.",
+            },
+            "analysis_cutoff": iso(utcnow()),
+        }
 
     async def search_tank_items(self, a, c):
         days = a.get("days", 90)
         if not isinstance(days, (int, float)) or not 0 < days <= 90:
             raise ValueError("days must be >0 and <=90")
-        cutoff = utcnow() - timedelta(days=days)
+        now = utcnow()
+        cutoff = now - timedelta(days=days)
         sources = a.get("sources", [])
         terms = a["query"].casefold().split()
+        if self.reference_clock is not None:
+            rows = []
+            # The fixture clock has a sealed, finite source inventory. A source
+            # must also be present in the admitted prefix; future packet rows
+            # are never imported or searched ahead of their availability.
+            for item_id in self.reference_clock.item_ids:
+                item = await self.repo.get("ingest.source_items", item_id)
+                if item is None:
+                    continue
+                known = parse_time(self.item_known_at(item).value)
+                if (
+                    cutoff <= known <= now
+                    and (not sources or item["source_id"] in sources)
+                    and all(
+                        t in (item.get("title", "") + " " + item.get("text", "")).casefold() for t in terms
+                    )
+                ):
+                    rows.append((known, item_id, item))
+            return {"items": [self.source_item_view(row[2]) for row in sorted(rows, reverse=True)[:20]]}
         rows = [
             r
             async for r in self.repo.iter_range(
-                "ingest.source_items", "observed_at", start=iso(cutoff), end=iso()
+                "ingest.source_items", "observed_at", start=iso(cutoff), end=iso(now)
             )
         ]
         return {
@@ -288,7 +397,9 @@ class EventToolService:
         }
 
     async def get_registry(self, a, c):
-        q = a.get("entity_or_token", "").casefold()
+        q = a.get("entity_or_token", "").strip().casefold()
+        if q.startswith("@") and len(q) > 1:
+            q = q[1:]
         return {
             name: [
                 r
@@ -358,47 +469,75 @@ class EventToolService:
         if any(value and len(value) >= 8 and value.encode("utf-8") in data for value in configured):
             raise ValueError("Credential-bearing content cannot be stored as evidence")
 
-    async def save_web(
-        self, url, text, title, c, source_class="SECONDARY", raw_bytes=None, media_type="text/plain"
-    ):
-        self.validate_evidence_url(url)
-        original = raw_bytes if raw_bytes is not None else text.encode("utf-8")
-        self.validate_evidence_bytes(original)
+    def persist_web_raw(self, url, original, media_type, context, evidence_kind="FETCHED_PAGE"):
+        from tank.sources.raw_store import write_raw_item
+
+        clock = collection_clock()
         digest = sha256(original)
         iid = (
             "web-"
             + sha256(
                 {
                     "url": url,
-                    "text": text,
                     "raw_sha256": digest,
                     "media_type": media_type,
-                    "session": c.get("session_id"),
+                    "evidence_kind": evidence_kind,
+                    "session": context.get("session_id"),
                 }
             )[:32]
         )
-        raw = Path(self.settings.data_dir) / "raw" / "web" / f"{digest}.txt"
-        raw.parent.mkdir(parents=True, exist_ok=True)
-        raw.write_bytes(original)
+        raw, saved_digest = write_raw_item(self.settings.data_dir, "WEB", iid, clock.value, original)
+        return {
+            "item_id": iid,
+            "raw_ref": raw,
+            "raw_sha256": saved_digest,
+            "clock": clock,
+            "evidence_kind": evidence_kind,
+        }
+
+    async def save_web(
+        self,
+        url,
+        text,
+        title,
+        c,
+        source_class="SECONDARY",
+        raw_bytes=None,
+        media_type="text/plain",
+        raw_capture=None,
+        evidence_kind="FETCHED_PAGE",
+    ):
+        self.validate_evidence_url(url)
+        original = raw_bytes if raw_bytes is not None else text.encode("utf-8")
+        self.validate_evidence_bytes(original)
+        if evidence_kind not in {"FETCHED_PAGE", "SEARCH_RESULT"}:
+            raise ValueError("Unknown web evidence origin")
+        capture = raw_capture or self.persist_web_raw(url, original, media_type, c, evidence_kind)
+        digest = capture["raw_sha256"]
+        iid = capture["item_id"]
+        raw = capture["raw_ref"]
+        if digest != sha256(original) or capture["evidence_kind"] != evidence_kind:
+            raise ValueError("Captured raw evidence hash mismatch")
         row = dict(
             item_id=iid,
             source_id="WEB",
-            feed="web:search" if media_type == "application/json" else "web:page",
+            feed="web:search" if evidence_kind == "SEARCH_RESULT" else "web:page",
             published_prec="COLLECTION_ONLY",
             relevance={"decision": "ALWAYS", "reason": "AGENT_REQUESTED_EVIDENCE"},
             external_id=iid,
             raw_ref=str(raw),
             raw_sha256=digest,
             raw_media_type=media_type,
-            evidence_kind="SEARCH_RESULT" if media_type == "application/json" else "FETCHED_PAGE",
+            evidence_kind=evidence_kind,
             raw_size_bytes=len(original),
             readable_text_sha256=sha256(text),
             content_hash=sha256(normalized(text)),
             url=url,
             title=title,
             text=text,
-            observed_at=iso(),
+            **capture["clock"].fields("observed_at"),
             published_at=None,
+            published_at_precision="COLLECTION_ONLY",
             source_class=source_class,
             extraction_status="PENDING",
             **self.provenance(c),
@@ -431,7 +570,7 @@ class EventToolService:
                     usage={"web_searches": 1},
                     cost_usd="0",
                     billing_basis="FREE",
-                    at=iso(),
+                    **collection_clock().fields("at"),
                     model="duckduckgo",
                     effort="none",
                     input_tokens=0,
@@ -440,7 +579,7 @@ class EventToolService:
                     output_tokens=0,
                     stop_reason="SEARCH_ATTEMPT",
                     query_sha256=sha256(a["query"]),
-                    created_at=iso(),
+                    **collection_clock().fields("created_at"),
                     **{key: value for key, value in self.provenance(c).items() if key not in {"session_id"}},
                 ),
                 immutable=True,
@@ -459,6 +598,7 @@ class EventToolService:
                 c,
                 raw_bytes=canonical_json(result).encode("utf-8"),
                 media_type="application/json",
+                evidence_kind="SEARCH_RESULT",
             )
             items.append(item)
         return {
@@ -472,29 +612,30 @@ class EventToolService:
         self.validate_evidence_url(a["url"])
         if urlparse(a["url"]).scheme != "https":
             raise ValueError("Only HTTPS evidence fetches are allowed")
-        async with (
-            httpx.AsyncClient(timeout=20, follow_redirects=False)
-            if self.http is None
-            else _borrow(self.http) as client
-        ):
-            async with client.stream("GET", a["url"], headers={"User-Agent": self.settings.user_agent}) as r:
-                r.raise_for_status()
-                chunks = []
-                size = 0
-                async for chunk in r.aiter_bytes():
-                    size += len(chunk)
-                    if size > 2 * 1024 * 1024:
-                        raise ValueError("Page exceeds 2 MB")
-                    chunks.append(chunk)
-        from selectolax.parser import HTMLParser
-
+        async with asyncio.timeout(20):
+            async with (
+                httpx.AsyncClient(timeout=20, follow_redirects=False)
+                if self.http is None
+                else _borrow(self.http) as client
+            ):
+                async with client.stream(
+                    "GET", a["url"], headers={"User-Agent": self.settings.user_agent}
+                ) as r:
+                    r.raise_for_status()
+                    chunks = []
+                    size = 0
+                    async for chunk in r.aiter_bytes():
+                        size += len(chunk)
+                        if size > 2 * 1024 * 1024:
+                            raise ValueError("Page exceeds 2 MB")
+                        chunks.append(chunk)
         original = b"".join(chunks)
         self.validate_evidence_bytes(original)
         # Persist the exact response before parsing; extraction failures retain the source bytes.
-        digest = sha256(original)
-        raw_path = Path(self.settings.data_dir) / "raw" / "web" / f"{digest}.txt"
-        raw_path.parent.mkdir(parents=True, exist_ok=True)
-        raw_path.write_bytes(original)
+        media_type = r.headers.get("content-type", "application/octet-stream")
+        capture = self.persist_web_raw(a["url"], original, media_type, c)
+        from selectolax.parser import HTMLParser
+
         html = original.decode("utf-8", errors="replace")
         tree = HTMLParser(html)
         for node in tree.css("script,style,noscript"):
@@ -505,163 +646,34 @@ class EventToolService:
             "Fetched page",
             c,
             raw_bytes=original,
-            media_type=r.headers.get("content-type", "application/octet-stream"),
+            media_type=media_type,
+            raw_capture=capture,
         )
 
     def validate_time(self, x, item):
+        # V4/V7 are analyst obligations; storage normalizes representation only.
+        if self.reference_clock is not None:
+            self.item_known_at(item)  # Retain fixture provenance/seal validation.
         public = x["public_at"]
-        value = public["value"] if isinstance(public, dict) else public
-        age = (parse_time(item["observed_at"]) - parse_time(value)).total_seconds()
-        if age < 0:
-            raise ValueError("V7 public_at is later than observed_at")
-        if freshness(age) != x["freshness"]:
-            raise ValueError("V7 freshness does not match public_at age")
-        quote = public.get("quote") if isinstance(public, dict) else None
-        if quote and normalized(quote) not in normalized(item["text"]):
-            raise ValueError("V7 public_at quote is not verbatim")
-        return iso(value)
-
-    def primary_source(self, item, claim):
-        if item.get("source_class") in {"PRIMARY", "TECHNICAL_EVIDENCE", "MARKET_DATA"}:
-            return True
-        registry = self.settings.load_config("registry")
-        if item.get("source_id") == "WEB":
-            if item.get("evidence_kind") == "SEARCH_RESULT":
-                return False
-            host = (urlparse(item.get("url", "")).hostname or "").lower()
-            subject = str(claim.get("subject", "")).casefold()
-            subject_entity = next(
-                (
-                    e
-                    for e in registry.get("entities", [])
-                    if subject
-                    in [
-                        str(n).casefold()
-                        for n in [
-                            e.get("entity_id", ""),
-                            e.get("name", ""),
-                            *e.get("names", []),
-                            *e.get("aliases", []),
-                        ]
-                    ]
-                ),
-                None,
-            )
-            for source in self.settings.load_config("sources").get("sources", []):
-                # Multi-organization aggregators never inherit trust merely by domain.
-                if source.get("source_id") in {
-                    "S14",
-                    "S23",
-                    "S24",
-                    "S25",
-                    "S29",
-                    "S30",
-                    "S31",
-                    "S32",
-                    "S33",
-                    "S34",
-                }:
-                    continue
-                identity = subject_entity is not None and source["source_id"] in subject_entity.get(
-                    "official_sources", []
-                )
-                source_names = [source.get("name", ""), *source.get("aliases", [])]
-                identity = identity or subject in [str(n).casefold() for n in source_names]
-                domains = {
-                    (urlparse(f.get("official_index_url", f.get("url", ""))).hostname or "").lower()
-                    for f in source.get("feeds", [])
-                }
-                if identity and any(
-                    host == d or (d.startswith("www.") and host == d[4:]) for d in domains if d
-                ):
-                    return True
-            return False
-        handle = str(item.get("author", "")).lstrip("@").casefold()
-        account = next(
-            (
-                a
-                for a in registry.get("x_accounts", [])
-                if str(a.get("handle", "")).lstrip("@").casefold() == handle
-            ),
-            None,
-        )
-        if not account or account.get("role") not in {"ORGANIZATION", "FOUNDER_C_LEVEL"}:
-            return False
-        authorized = {account.get("entity_id")}
-        authorized.update(
-            authority["entity_id"]
-            for authority in account.get("official_authorities", [])
-            if authority.get("entity_id") and authority.get("evidence_refs")
-        )
-        # Authority applies only to explicitly registered organizations and exact aliases.
-        subject = str(claim.get("subject", "")).casefold()
-        for entity in registry.get("entities", []):
-            if entity["entity_id"] not in authorized:
-                continue
-            names = [
-                entity["entity_id"],
-                entity.get("name", ""),
-                *entity.get("names", []),
-                *entity.get("aliases", []),
-            ]
-            if any(name and str(name).casefold() == subject for name in names):
-                return True
-        return False
+        return iso(public["value"] if isinstance(public, dict) else public)
 
     async def validate_claims(self, claims, item, c, certainty, obs_id, eid):
-        evidence_items = [item] + [
-            r
-            for r in (
-                await self.rows(
-                    "ingest.source_items", filters={"session_id": c["session_id"], "source_id": "WEB"}
-                )
-                if c.get("session_id")
-                else []
-            )
-            if r.get("session_id") == c.get("session_id")
-            and r.get("source_id") == "WEB"
-            and c.get("session_id")
-        ]
-        permitted = {row["item_id"] for row in evidence_items}
-        if c.get("session_id"):
-            for call in await self.rows("ops.tool_calls", filters={"session_id": c["session_id"]}):
-                result = call.get("result", {})
-                if (
-                    call.get("tool", call.get("tool_name")) == "get_item"
-                    and isinstance(result, dict)
-                    and result.get("item_id")
-                ):
-                    permitted.add(result["item_id"])
-                if call.get("tool", call.get("tool_name")) == "search_tank_items" and isinstance(
-                    result, dict
-                ):
-                    permitted.update(row["item_id"] for row in result.get("items", []) if row.get("item_id"))
-            known = {row["item_id"] for row in evidence_items}
-            for item_id in sorted(permitted - known):
-                record = await self.require("ingest.source_items", item_id)
-                evidence_items.append(record)
+        """Persist the analyst's assertions; V1/V2/V5/V7 are not host classifiers."""
         accepted = []
-        dropped = []
+        prior_claims = {row["claim_id"]: row for row in await self.rows("evt.claims", eid)}
         for raw in claims:
+            supersedes = raw.get("supersedes_claim_ids", [])
+            if not isinstance(supersedes, list) or any(not isinstance(ref, str) for ref in supersedes):
+                raise ValueError("supersedes_claim_ids must be claim ID strings")
+            if len(supersedes) != len(set(supersedes)):
+                raise ValueError("Duplicate superseded claim ID")
+            if any(ref == raw.get("claim_id") or ref not in prior_claims for ref in supersedes):
+                raise ValueError("Superseded claims must already exist in the same event")
             claim = copy.deepcopy(raw)
-            quote = claim.pop("quote", None)
+            quote = claim.get("quote")
             evidence = claim.get("evidence") or (
                 [{"item_id": item["item_id"], "quote": quote}] if quote else []
             )
-            resolved = []
-            for e in evidence:
-                matches = [
-                    r
-                    for r in evidence_items
-                    if (r["item_id"] == e.get("item_id") or quote)
-                    and e.get("quote")
-                    and normalized(e["quote"]) in normalized(r["text"])
-                ]
-                if matches:
-                    resolved.append({"item_id": matches[0]["item_id"], "quote": e["quote"]})
-            if not evidence or len(resolved) != len(evidence):
-                dropped.append({"claim": raw, "reason": "V1 quote not found in permitted evidence"})
-                continue
             if claim.get("type") not in {
                 "FACT",
                 "STATE",
@@ -672,133 +684,24 @@ class EventToolService:
                 "MILESTONE",
             }:
                 raise ValueError("Invalid claim type")
-            verified = certainty == "HIGH" and all(
-                self.primary_source(next(r for r in evidence_items if r["item_id"] == e["item_id"]), claim)
-                for e in resolved
-            )
-            text = " ".join(e["quote"] for e in resolved).casefold()
-            state = claim.get("state_claim")
-            if state in {"LIVE", "MONEY_FLOWING", "MATERIAL_USAGE", "ECONOMIC_FLOW"}:
-                future = bool(re.search(r"\b(will|tomorrow|scheduled|plans? to|expected to)\b", text))
-                for timestamp in re.findall(
-                    r"\d{4}-\d{2}-\d{2}(?:[tT ][0-9:.]+(?:Z|[+-]\d{2}:?\d{2})?)?", text
-                ):
-                    try:
-                        future = future or parse_time(timestamp) > parse_time(item["observed_at"])
-                    except ValueError:
-                        pass
-                opening_time = re.search(r"\btrading opens(?: at| on)?\s+(\d{1,2}):(\d{2})\s*utc\b", text)
-                if opening_time:
-                    observed = parse_time(item["observed_at"])
-                    effective = observed.replace(
-                        hour=int(opening_time[1]), minute=int(opening_time[2]), second=0, microsecond=0
-                    )
-                    future = future or effective > observed
-                live = not future and any(
-                    term in text
-                    for term in [
-                        "now live",
-                        "available to",
-                        "launched",
-                        "trading opens",
-                        "instrument trades",
-                        "instrument actually trades",
-                    ]
-                )
-                if re.search(
-                    r"\b(not|never|isn.t|aren.t)\s+(?:yet\s+)?(?:now live|live|available|launched|trading)",
-                    text,
-                ):
-                    live = False
-                economic = not future and any(
-                    term in text for term in ["fees accrued", "buyback executed", "economic flow observed"]
-                )
-                usage = not future and any(
-                    term in text for term in ["independent usage", "material usage observed"]
-                )
-                if state == "MONEY_FLOWING" and economic:
-                    pass
-                elif state == "ECONOMIC_FLOW" and economic:
-                    pass
-                elif state == "MATERIAL_USAGE" and usage:
-                    pass
-                elif live:
-                    state = "LIVE"
-                elif "deployed" in text and not future:
-                    state = "DEPLOYED"
-                elif "built" in text and not future:
-                    state = "BUILT" if claim.get("directionality") == "SOURCE_SIDE_SUPPORT" else "DEPLOYED"
-                elif "signed" in text:
-                    state = "SIGNED"
-                elif verified and (
-                    future
-                    or any(
-                        term in text
-                        for term in [
-                            "approved",
-                            "announced",
-                            "will",
-                            "scheduled",
-                            "plans to",
-                            "plan to",
-                            "trading opens",
-                        ]
-                    )
-                ):
-                    state = "APPROVED"
-                elif any(term in text for term in ["proposed", "planned", "announced", "will", "scheduled"]):
-                    state = "PROPOSED"
-                else:
-                    state = "RUMOR"
-            if any(w in text for w in ["compatible", "sdk", "repository", "github"]):
-                claim["directionality"] = "SOURCE_SIDE_SUPPORT"
-                if state in INTEGRATION and INTEGRATION.index(state) > 2:
-                    state = "BUILT"
+            verified = claim.get("verified", False)
+            if not isinstance(verified, bool):
+                raise TypeError("Claim verified must be Boolean")
             claim.update(
                 claim_id=new_id("clm"),
                 obs_id=obs_id,
                 event_id=eid,
-                state_claim=state,
-                evidence=resolved,
+                evidence=copy.deepcopy(evidence),
                 verified=verified,
                 accepted=True,
                 **self.provenance(c),
             )
             await self.repo.put("evt.claims", claim["claim_id"], claim)
             accepted.append(claim)
-        return accepted, dropped
-
-    def event_fact_basis(self, statement, claims, entities, tokens):
-        normalized_statement = normalized(statement).casefold()
-        scope = {str(entity["entity_id"]).casefold() for entity in entities} | {
-            str(token).casefold() for token in tokens
-        }
-        registry = self.settings.load_config("registry")
-        for entity in registry.get("entities", []):
-            if entity["entity_id"].casefold() in scope:
-                scope.update(
-                    str(name).casefold()
-                    for name in [entity.get("name", ""), *entity.get("names", []), *entity.get("aliases", [])]
-                )
-        basis = []
-        for claim in claims:
-            if not claim.get("verified") or claim["type"] not in {"FACT", "STATE", "RELATION", "MECHANISM"}:
-                continue
-            quotes = [normalized(entry["quote"]).casefold() for entry in claim["evidence"]]
-            object_text = normalized(claim.get("object", "")).casefold()
-            same_fact = any(normalized_statement and normalized_statement in quote for quote in quotes)
-            related = (
-                str(claim.get("subject", "")).casefold() in scope
-                and object_text
-                and object_text in normalized_statement
-                and any(object_text in quote for quote in quotes)
-            )
-            if same_fact or related:
-                basis.append(claim["claim_id"])
-        return basis
+        return accepted, []
 
     async def bind_reservation(self, reservation_id, status, event_id=None):
-        async with self.repo.lock("routing"):
+        async with self.repo.lock("reservation:" + reservation_id):
             reservation = await self.require("ops.routing_reservations", reservation_id)
             reservation["status"] = status
             if event_id:
@@ -825,7 +728,7 @@ class EventToolService:
         if required - set(x):
             raise ValueError("Missing extraction fields: " + ",".join(sorted(required - set(x))))
         item = await self.require("ingest.source_items", x["item_id"])
-        public = self.validate_time(x, item)
+        self.validate_time(x, item)
         if x["certainty"] not in {"LOW", "MEDIUM", "HIGH"} or not x["certainty_reason"]:
             raise ValueError("certainty and reason required")
         if not x["is_event"]:
@@ -856,19 +759,14 @@ class EventToolService:
                 {"entity_id": found["entity_id"] if found else "UNRESOLVED:" + e["name"], "role": e["role"]}
             )
         claims, dropped = await self.validate_claims(x["claims"], item, c, x["certainty"], obs, eid)
-        primary_fact_basis = self.event_fact_basis(x["statement"], claims, entities, x["tokens"])
+        primary_fact_basis = [claim["claim_id"] for claim in claims if claim["verified"]]
         certainty = x["certainty"]
         certainty_reason = x["certainty_reason"]
-        if certainty == "HIGH" and not primary_fact_basis:
-            certainty = "MEDIUM"
-            certainty_reason += (
-                "; HIGH not verified: no accepted primary or artifact claim supports the event fact"
-            )
         event_time = copy.deepcopy(x["event_time"])
-        if event_time.get("value") and (
-            not event_time.get("quote") or normalized(event_time["quote"]) not in normalized(item["text"])
-        ):
-            event_time["precision"] = "BUCKET_1D"
+        event_time_stamp = propagate_timestamp({"event_time": event_time}, "event_time")
+        event_time.update(
+            precision=event_time_stamp.precision, precision_reason=event_time_stamp.precision_reason
+        )
         event = dict(
             event_id=eid,
             statement=x["statement"],
@@ -876,10 +774,12 @@ class EventToolService:
             tokens_mentioned=x["tokens"],
             theme_tags=x.get("theme_tags", []),
             event_time=event_time,
-            public_at=public,
-            public_at_precision=x["public_at"].get("precision"),
+            **propagate_timestamp({"public_at": x["public_at"]}, "public_at").fields("public_at"),
+            event_time_prec=event_time_stamp.precision,
+            event_time_prec_reason=event_time_stamp.precision_reason,
             public_at_basis=x["public_at"]["basis"],
-            known_to_us_at=item["observed_at"],
+            **self.item_known_at(item).fields("known_to_us_at"),
+            **self.item_reference_fields(item),
             freshness=x["freshness"],
             event_state="RUMOR",
             state_verified=False,
@@ -887,9 +787,14 @@ class EventToolService:
             certainty_reason=certainty_reason,
             certainty_evidence_claims=primary_fact_basis,
             checked_sources=copy.deepcopy(x["checked_sources"]),
-            timing_confidence="HIGH"
-            if x["public_at"]["precision"] == "EXACT" and item["source_class"] == "PRIMARY"
-            else "MEDIUM",
+            timing_confidence=x.get("timing_confidence")
+            or (
+                "HIGH"
+                if x["public_at"]["precision"] == "EXACT"
+                else "LOW"
+                if x["public_at"]["precision"] in {None, "COLLECTION_ONLY"}
+                else "MEDIUM"
+            ),
             best_source_class=item["source_class"],
             next_milestone=x["next_milestone"],
             lifecycle="DETECTED",
@@ -905,24 +810,33 @@ class EventToolService:
                 event_id=eid,
                 item_id=item["item_id"],
                 link_type="ORIGIN",
-                public_at=public,
+                **propagate_timestamp({"public_at": x["public_at"]}, "public_at").fields("public_at"),
                 freshness=x["freshness"],
                 match_method="AGENT",
-                observed_at=item["observed_at"],
+                **propagate_timestamp(item, "observed_at").fields("observed_at"),
+                **self.item_reference_fields(item),
                 **self.provenance(c),
             ),
         )
         item["extraction_status"] = "DONE"
         await self.repo.put("ingest.source_items", item["item_id"], item)
         if c.get("session_id"):
-            session = await self.repo.get("ops.agent_sessions", c["session_id"])
-            if session:
-                session["event_id"] = eid
-                await self.repo.put("ops.agent_sessions", c["session_id"], session)
+            # Serialize binding with controller status/completion read-modify-write
+            # operations; otherwise an older unbound snapshot can erase it.
+            async with self.repo.lock("session:" + c["session_id"]):
+                session = await self.repo.get("ops.agent_sessions", c["session_id"])
+                if session:
+                    session["event_id"] = eid
+                    await self.repo.put("ops.agent_sessions", c["session_id"], session)
         milestone = x.get("next_milestone")
         if claims and item.get("source_id") == "S24" and item.get("end"):
             await self.schedule_milestone(
-                {"event_id": eid, "milestone": "Snapshot vote ends", "due_at": item["end"], "source": "S24"},
+                {
+                    "event_id": eid,
+                    "milestone": "Snapshot vote ends",
+                    **propagate_timestamp(item, "end").fields("due_at"),
+                    "source": "S24",
+                },
                 c,
             )
         elif milestone and all(milestone.get(key) for key in ["kind", "due_at", "source_id"]):
@@ -938,6 +852,43 @@ class EventToolService:
         if c.get("reservation_id"):
             await self.bind_reservation(c["reservation_id"], "BOUND", eid)
         return {"event_id": eid, "accepted_claims": claims, "dropped_claims": dropped}
+
+    async def approval_rejection_targets(self, event, rejection):
+        dependency = rejection.get("approval_dependency")
+        if dependency is None:
+            return []
+        if dependency.get("scope") not in {"EVENT", "TOKEN"} or not dependency.get("claim_ids"):
+            raise ValueError("Approval rejection requires an explicit evidenced thesis dependency")
+        token_ids = dependency.get("token_ids", [])
+        if dependency["scope"] == "EVENT" and token_ids:
+            raise ValueError("Event-wide dependency must not name token-only targets")
+        if dependency["scope"] == "TOKEN" and not token_ids:
+            raise ValueError("Token dependency requires token targets")
+        registry = self.settings.load_config("registry")
+        tokens = {row["token_id"]: row for row in registry.get("tokens", [])}
+        if any(token not in tokens for token in token_ids):
+            raise ValueError("Approval dependency token is not registered")
+        claims = []
+        for claim_id in dependency["claim_ids"]:
+            claim = await self.require("evt.claims", claim_id)
+            if (
+                claim.get("event_id") != event["event_id"]
+                or not claim.get("accepted")
+                or claim.get("type") != "RELATION"
+                or not claim.get("evidence")
+            ):
+                raise ValueError(
+                    "Thesis dependency must cite accepted causal relation claims from this event"
+                )
+            claims.append(claim)
+        # The analyst declares which thesis depends on the rejected approval;
+        # Tank validates reference ownership, not subject/object wording.
+        evidence = [claim["claim_id"] for claim in claims]
+        return (
+            [(token_id, evidence) for token_id in token_ids]
+            if dependency["scope"] == "TOKEN"
+            else [(None, evidence)]
+        )
 
     async def apply_states(self, event, claims, c):
         old = event["event_state"]
@@ -962,32 +913,45 @@ class EventToolService:
                     from_state=old,
                     to_state=event["event_state"],
                     evidence=[r["claim_id"] for r in claims if r.get("state_claim") == event["event_state"]],
-                    changed_at=iso(),
+                    **collection_clock().fields("changed_at"),
                     **self.provenance(c),
                 ),
                 immutable=True,
             )
-        for r in claims:
-            marker = r.get("state_claim")
-            if marker in {"CANCELLED", "REVERSED", "REJECTED", "PAUSED"}:
-                event["negative_marker"] = marker
+        for claim in claims:
+            marker = claim.get("state_claim")
+            if marker not in {"CANCELLED", "REVERSED", "REJECTED", "PAUSED"}:
+                continue
+            event["negative_marker"] = marker
+            if marker == "REJECTED":
+                for token_id, dependency_claims in await self.approval_rejection_targets(event, claim):
+                    await self.contradiction(
+                        event["event_id"],
+                        "FATAL",
+                        "Approval rejected: " + claim["object"],
+                        [claim["claim_id"], *dependency_claims],
+                        c,
+                        token_id=token_id,
+                    )
+            else:
                 await self.contradiction(
                     event["event_id"],
                     "UNRESOLVED" if marker == "PAUSED" else "FATAL",
                     marker,
-                    [r["claim_id"]],
+                    [claim["claim_id"]],
                     c,
                 )
 
-    async def contradiction(self, eid, kind, description, evidence, c):
+    async def contradiction(self, eid, kind, description, evidence, c, *, token_id=None):
         key = new_id("ctr")
         row = dict(
             contradiction_id=key,
             event_id=eid,
+            token_id=token_id,
             type=kind,
             description=description,
             evidence=evidence,
-            detected_at=iso(),
+            **collection_clock().fields("detected_at"),
             **self.provenance(c),
         )
         await self.repo.put("ana.contradictions", key, row)
@@ -1001,29 +965,19 @@ class EventToolService:
             raise ValueError("Invalid observation link")
         if "public_at" not in a or "freshness" not in a:
             raise ValueError("V7 observation public_at and freshness required")
-        public = self.validate_time(a, item)
+        self.validate_time(a, item)
         obs = new_id("obs")
         certainty = a.get("certainty", event["certainty"])
         claims, dropped = await self.validate_claims(a["claims"], item, c, certainty, obs, event["event_id"])
         verified_claims = [claim for claim in claims if claim["verified"]]
-        confirmation_basis = self.event_fact_basis(
-            event["statement"], claims, event["entities"], event["tokens_mentioned"]
-        )
-        if confirmation_basis and link not in {"CONTRADICTION", "DENIAL"}:
-            event.update(
-                certainty="HIGH",
-                certainty_reason="Primary verification from accepted claims: "
-                + ", ".join(confirmation_basis),
-                verified_at=iso(),
-            )
-            event.setdefault("verification_history", []).append(
-                {
-                    "at": iso(),
-                    "claim_ids": [claim["claim_id"] for claim in verified_claims],
-                    "item_id": item["item_id"],
-                    "certainty": "HIGH",
-                }
-            )
+        if "timing_confidence" in a:
+            event["timing_confidence"] = a["timing_confidence"]
+        if "certainty" in a:
+            if certainty not in {"LOW", "MEDIUM", "HIGH"}:
+                raise ValueError("Invalid certainty")
+            event["certainty"] = certainty
+            if "certainty_reason" in a:
+                event["certainty_reason"] = a["certainty_reason"]
         before = event["event_state"]
         await self.apply_states(event, claims, c)
         contradictions = []
@@ -1046,8 +1000,6 @@ class EventToolService:
                     c,
                 )
             ]
-        elif link == "STATE_UPDATE" and event["event_state"] == before:
-            link = "CORROBORATION"
         milestone = event.get("next_milestone")
         explicit = a.get("milestone_outcome")
         state_confirmation = event["event_state"] != before or link == "DENIAL"
@@ -1071,19 +1023,15 @@ class EventToolService:
             and verified_claims
             and (state_confirmation or explicit)
             and matching_source
-            and parse_time(item["observed_at"]) >= parse_time(milestone["due_at"]) - timedelta(minutes=5)
+            and parse_time(self.item_known_at(item).value)
+            >= parse_time(milestone["due_at"]) - timedelta(minutes=5)
         ):
             quotes = [entry["quote"] for claim in verified_claims for entry in claim["evidence"]]
-            if explicit and (
-                not explicit.get("quote")
-                or not any(normalized(explicit["quote"]) in normalized(quote) for quote in quotes)
-            ):
-                raise ValueError("Milestone outcome requires an accepted primary quote")
             resolution = dict(
                 milestone,
                 resolution_id=new_id("milestone"),
                 status="CONFIRMED",
-                confirmed_at=iso(),
+                **collection_clock().fields("confirmed_at"),
                 outcome=explicit["outcome"]
                 if explicit
                 else "Official denial"
@@ -1102,7 +1050,11 @@ class EventToolService:
                 if escalation["source_id"] == milestone["source_id"] and escalation.get(
                     "trigger", ""
                 ).startswith("MILESTONE:"):
-                    escalation.update(status="CONFIRMED", confirmed_at=iso(), evidence=resolution["evidence"])
+                    escalation.update(
+                        status="CONFIRMED",
+                        **collection_clock().fields("confirmed_at"),
+                        evidence=resolution["evidence"],
+                    )
                     await self.repo.put("ops.source_escalations", escalation["escalation_id"], escalation)
         if claims and link != "CORROBORATION" and event["lifecycle"] != "INVALIDATED":
             event["lifecycle"] = "SCORED"
@@ -1115,13 +1067,16 @@ class EventToolService:
                 event_id=event["event_id"],
                 item_id=item["item_id"],
                 link_type=link,
-                public_at=public,
+                **propagate_timestamp({"public_at": a["public_at"]}, "public_at").fields("public_at"),
                 freshness=a["freshness"],
                 match_method="AGENT",
-                observed_at=item["observed_at"],
+                **propagate_timestamp(item, "observed_at").fields("observed_at"),
+                **self.item_reference_fields(item),
                 **self.provenance(c),
             ),
         )
+        item["extraction_status"] = "DONE"
+        await self.repo.put("ingest.source_items", item["item_id"], item)
         return {
             "event_state": event["event_state"],
             "accepted_claims": claims,
@@ -1138,7 +1093,8 @@ class EventToolService:
         if parse_time(target["known_to_us_at"]) > parse_time(source["known_to_us_at"]):
             raise ValueError("Merge target must be the earlier event")
         async with self.repo.lock("event:" + target["event_id"]):
-            target["known_to_us_at"] = min(target["known_to_us_at"], source["known_to_us_at"], key=parse_time)
+            earlier = min((target, source), key=lambda row: parse_time(row["known_to_us_at"]))
+            target.update(propagate_timestamp(earlier, "known_to_us_at").fields("known_to_us_at"))
             for table, key in [("evt.event_observations", "obs_id"), ("evt.claims", "claim_id")]:
                 for row in await self.rows(table, source["event_id"]):
                     row["event_id"] = target["event_id"]
@@ -1158,6 +1114,38 @@ class EventToolService:
             await self.repo.put("evt.events", source["event_id"], source)
             await self.repo.put("evt.events", target["event_id"], target)
         return target
+
+    async def validate_impact_horizon(self, horizon, event, accepted):
+        # Apply §4.6 to structured analyst facts, without parsing their prose.
+        dated = []
+        for proof in horizon.get("timing_evidence", []):
+            claim = accepted.get(proof["claim_id"], {})
+            if claim.get("type") not in {"TIMESTAMP", "MILESTONE"} or not claim.get("verified"):
+                raise ValueError("Timing evidence requires an accepted verified dated milestone")
+            dated.append(parse_time(proof["due_at"]))
+        if event["event_state"] == "PROPOSED" and horizon.get("impact_start") in {"NOW", "DAYS"}:
+            if horizon["impact_start"] == "DAYS" and any(
+                utcnow() <= due < utcnow() + timedelta(weeks=1) for due in dated
+            ):
+                horizon["ramp_shape"] = "CONDITIONAL"
+                if not horizon.get("dependencies"):
+                    raise ValueError("Proposed dated decision requires an explicit dependency")
+            else:
+                horizon["impact_start"] = "WEEKS"
+                horizon["timing_cap_reason"] = "PROPOSED_WITHOUT_DATED_DECISION_WITHIN_DAYS"
+        if horizon.get("impact_start") == "NOW" and STATES.index(event["event_state"]) < STATES.index("LIVE"):
+            proof = horizon.get("immediate_market_access") or {}
+            claim = accepted.get(proof.get("claim_id"), {})
+            effective = parse_time(proof["effective_at"]) if proof.get("effective_at") else None
+            if (
+                claim.get("type") not in {"STATE", "FACT"}
+                or not claim.get("verified")
+                or effective is None
+                or effective > utcnow()
+            ):
+                raise ValueError("NOW requires LIVE or evidenced immediately effective market access")
+        if horizon.get("ramp_shape") == "CONDITIONAL" and not horizon.get("dependencies"):
+            raise ValueError("Conditional ramp requires dependencies")
 
     async def set_assessment(self, a, c):
         eid = a["event_id"]
@@ -1189,8 +1177,36 @@ class EventToolService:
             "LOW",
         }:
             raise ValueError("Invalid class criterion")
-        evidence_ok = bool(quote) and any(
-            normalized(quote) in normalized(e["quote"]) for r in accepted.values() for e in r["evidence"]
+        criterion_proof = [
+            claim["claim_id"]
+            for claim in accepted.values()
+            if claim.get("verified") is True
+            and quote.strip()
+            and any(
+                " ".join(quote.split()) in " ".join((evidence.get("quote") or "").split())
+                for evidence in claim.get("evidence", [])
+            )
+        ]
+        gates = x.get("structural_gates")
+        if gates is None:
+            gates = (
+                [{"gate": criterion, "satisfied": bool(criterion_proof), "evidence": criterion_proof}]
+                if criterion in {"G1", "G2", "G3", "G4", "G5", "G6"}
+                else []
+            )
+            x["structural_gates"] = gates
+        for gate in gates:
+            if any(ref not in accepted for ref in gate.get("evidence", [])):
+                raise ValueError("Structural gate references unaccepted evidence")
+            if gate.get("satisfied") and not gate.get("evidence"):
+                raise ValueError("Satisfied structural gate requires accepted evidence")
+        # The analyst identifies what the quotation establishes. Tank binds that
+        # quotation to the selected gate's verified evidence, without interpreting it.
+        evidence_ok = any(
+            gate.get("gate") == criterion
+            and gate.get("satisfied") is True
+            and bool(set(gate.get("evidence", [])) & set(criterion_proof))
+            for gate in gates
         )
         if klass == "STRUCTURAL_SHOCK" and (
             event["certainty"] != "HIGH"
@@ -1203,16 +1219,36 @@ class EventToolService:
             caps.append("STRUCTURAL_GATE")
         if klass == "MAJOR" and (
             event["certainty"] == "LOW"
-            or not evidence_ok
+            or not quote.strip()
             or criterion not in {"M1", "M2", "M3", "M4", "M5", "M6", "M7", "G1", "G2", "G3", "G4", "G5", "G6"}
         ):
             klass = "MATERIAL"
             caps.append("MAJOR_EVIDENCE")
-        if criterion == "M1" and not any(
-            v in quote.casefold() for v in ["binance", "coinbase", "okx", "bybit", "kraken", "robinhood"]
-        ):
-            klass = "MATERIAL"
-            caps.append("M1_VENUE")
+        if criterion == "M1":
+            venue = x.get("criterion_venue")
+            if not isinstance(venue, str) or not venue.strip():
+                raise ValueError("M1 requires criterion_venue")
+            name = venue.strip().casefold()
+            identity = next(
+                (
+                    row["entity_id"]
+                    for row in self.settings.load_config("registry").get("entities", [])
+                    if name
+                    in {
+                        str(value).casefold()
+                        for value in [
+                            row["entity_id"],
+                            row.get("name", ""),
+                            *row.get("names", []),
+                            *row.get("aliases", []),
+                        ]
+                    }
+                ),
+                name,
+            )
+            if identity not in {"binance", "coinbase", "okx", "bybit", "kraken", "robinhood"}:
+                klass = "MATERIAL"
+                caps.append("M1_VENUE")
         if (
             event["event_state"] == "PROPOSED"
             and criterion not in {"M4", "M5"}
@@ -1228,11 +1264,10 @@ class EventToolService:
             for edge in await self.rows("evt.beneficiary_edges", eid)
             if current_map and int(edge["map_version"]) == int(current_map["map_version"])
         ]
-        concerned = set(event["tokens_mentioned"]) | {edge.get("token_id") for edge in current_edges}
-        reaction_tokens = set(current_map["analysis_set"]) if current_map else set(event["tokens_mentioned"])
-        if not concerned & universe:
+        concerned = set(event.get("tokens_mentioned", [])) | {edge.get("token_id") for edge in current_edges}
+        if not concerned.intersection(universe) and klass != "LOW":
             klass = "LOW"
-            caps.append("NO_UNIVERSE_TOKEN")
+            caps.append("NO_UNIVERSE_CONCERN")
         if event["certainty"] == "LOW" and klass in {"MAJOR", "STRUCTURAL_SHOCK"}:
             klass = "MATERIAL"
             caps.append("LOW_CERTAINTY")
@@ -1244,9 +1279,9 @@ class EventToolService:
         ]
         if isinstance(dims.get("implementation"), dict):
             dims["implementation"].update(
-                value=IMPLEMENTATION[event["event_state"]] if state_proof else None,
+                value=IMPLEMENTATION[event["event_state"]],
                 evidence=state_proof,
-                reason=None if state_proof else "NO_ACCEPTED_STATE_PROOF",
+                reason=None,
             )
         for name in [
             "economic_directness",
@@ -1266,19 +1301,12 @@ class EventToolService:
                 raise ValueError("Dimension outside 0..10")
             if not d.get("rationale") or any(ref not in accepted for ref in d.get("evidence", [])):
                 raise ValueError("Dimension evidence/rationale invalid")
-            if d.get("value") is not None and not d.get("evidence"):
+            if name != "implementation" and d.get("value") is not None and not d.get("evidence"):
                 raise ValueError("Numeric dimension requires accepted claim evidence: " + name)
             if d.get("value") is None and not d.get("reason"):
                 raise ValueError("Missing score requires reason")
-        if dims["magnitude"].get("value") is not None and not re.search(
-            r"\d", dims["magnitude"]["rationale"]
-        ):
-            dims["magnitude"].update(value=None, reason="NOT_ESTIMABLE")
         horizon = x.get("impact_horizon", {})
-        if horizon.get("impact_start") == "NOW" and STATES.index(event["event_state"]) < STATES.index("LIVE"):
-            raise ValueError("NOW requires LIVE or evidenced immediate market access")
-        if horizon.get("ramp_shape") == "CONDITIONAL" and not horizon.get("dependencies"):
-            raise ValueError("Conditional ramp requires dependencies")
+        await self.validate_impact_horizon(horizon, event, accepted)
         for chain in x.pop("capture_chains", []):
             score = chain.get("capture_score")
             mechanism = chain.get("token_mechanism", {})
@@ -1326,33 +1354,13 @@ class EventToolService:
                 **self.provenance(c),
             )
             await self.repo.put("evt.capture_chains", f"{eid}:{chain['token_id']}:{chain['version']}", chain)
-        if "structural_gates" not in x:
-            proof = (
-                [
-                    claim["claim_id"]
-                    for claim in accepted.values()
-                    if any(normalized(quote) in normalized(entry["quote"]) for entry in claim["evidence"])
-                ]
-                if quote
-                else []
-            )
-            x["structural_gates"] = (
-                [{"gate": criterion, "satisfied": bool(evidence_ok), "evidence": proof}]
-                if criterion in {"G1", "G2", "G3", "G4", "G5", "G6"}
-                else []
-            )
-        for gate in x["structural_gates"]:
-            if any(ref not in accepted for ref in gate.get("evidence", [])):
-                raise ValueError("Structural gate references unaccepted evidence")
-            if gate.get("satisfied") and not gate.get("evidence"):
-                raise ValueError("Satisfied structural gate requires accepted evidence")
         ems = new_id("ems")
         x.update(
             ems_id=ems,
             event_id=eid,
             version=max((int(r["version"]) for r in await self.rows("evt.ems_assessments", eid)), default=0)
             + 1,
-            cutoff=iso(),
+            **collection_clock().fields("cutoff"),
             dims=dims,
             **{"class": klass},
             class_reasons=x.get("class_reasons", []) + caps,
@@ -1369,48 +1377,6 @@ class EventToolService:
         )
         await self.repo.put("evt.events", eid, event)
         if klass in {"MAJOR", "STRUCTURAL_SHOCK"}:
-            anchor = (
-                event["event_time"].get("value")
-                if event["event_time"].get("precision") == "EXACT" and event["state_verified"]
-                else event["public_at"]
-            )
-            for token in sorted(
-                (reaction_tokens & universe)
-                | {
-                    t["token_id"]
-                    for t in self.settings.load_config("registry")["tokens"]
-                    if t.get("symbol") in {"BTC", "ETH"}
-                }
-            ):
-                for label, minutes in [
-                    ("PRE_24H", -1440),
-                    ("PRE_4H", -240),
-                    ("PRE_1H", -60),
-                    ("POST_15M", 15),
-                    ("POST_1H", 60),
-                    ("POST_4H", 240),
-                    ("POST_24H", 1440),
-                    ("POST_72H", 4320),
-                ]:
-                    due = parse_time(anchor) + timedelta(minutes=minutes)
-                    await self.repo.enqueue(
-                        "REACTION_CAPTURE",
-                        {
-                            "event_id": eid,
-                            "token_id": token,
-                            "checkpoint": label,
-                            "anchor": {
-                                "type": "T0"
-                                if event["event_time"].get("precision") == "EXACT" and event["state_verified"]
-                                else "T1",
-                                "ts": anchor,
-                            },
-                            "retro": due < utcnow(),
-                        },
-                        f"{eid}:{token}:{label}",
-                        run_after=iso(max(due, utcnow())),
-                        expires_at=iso(max(due, utcnow()) + timedelta(hours=6)),
-                    )
             entity_ids = {entry["entity_id"] for entry in event["entities"]}
             registry = self.settings.load_config("registry")
             entity_ids.update(
@@ -1425,9 +1391,11 @@ class EventToolService:
             for sid in source_ids:
                 await self.escalate_source(sid, eid, "MAJOR", utcnow(), utcnow() + timedelta(hours=2), c)
             if klass == "STRUCTURAL_SHOCK":
-                deadline = iso(parse_time(event["known_to_us_at"]) + timedelta(minutes=3))
-                x.update(partial_required=True, first_card_deadline=deadline)
-                event["first_card_deadline"] = deadline
+                deadline_stamp = offset_schedule(
+                    propagate_timestamp(event, "known_to_us_at"), timedelta(minutes=3)
+                )
+                x.update(partial_required=True, **deadline_stamp.fields("first_card_deadline"))
+                event.update(deadline_stamp.fields("first_card_deadline"))
                 await self.repo.put("evt.events", eid, event)
         return x
 
@@ -1466,13 +1434,49 @@ class EventToolService:
             score = chain.get("capture_score")
             state = e.get("integration_state", "COMPATIBLE")
             support = [claims[r] for r in e["evidence"]]
-            supported = [r.get("state_claim") for r in support if r.get("state_claim") in INTEGRATION]
-            state = max(supported, key=INTEGRATION.index) if supported else "COMPATIBLE"
-            if (
-                all(r.get("directionality") == "SOURCE_SIDE_SUPPORT" for r in support)
-                and INTEGRATION.index(state) > 2
+            stage_support = []
+            for claim in support:
+                claimed_state = claim.get("state_claim")
+                if claimed_state not in INTEGRATION:
+                    continue
+                supported_state = claimed_state
+                if INTEGRATION.index(supported_state) > INTEGRATION.index("BUILT") and claim.get(
+                    "directionality"
+                ) not in {"COUNTERPARTY_ADOPTION", "BOTH"}:
+                    supported_state = "BUILT"
+                stage_support.append((supported_state, claim["claim_id"]))
+            state = max((stage for stage, _ in stage_support), key=INTEGRATION.index, default="COMPATIBLE")
+            stage_evidence = [claim_id for stage, claim_id in stage_support if stage == state]
+            # TDD §4.7: exposure ratings need their applicable evidence anchor.
+            # PRIMARY uses EventState; other edges use the derived integration
+            # state above, including its source-side support cap (§3.6).
+            exposure = e["exposure_score"]
+            if 6 <= exposure < 8:
+                likely = (
+                    STATES.index(event["event_state"]) >= STATES.index("APPROVED")
+                    if e["role"] == "PRIMARY"
+                    else INTEGRATION.index(state) >= INTEGRATION.index("BUILT")
+                )
+                if not likely:
+                    raise ValueError("Exposure at least 6 requires applicable likely-rail state evidence")
+            if 8 <= exposure < 10:
+                live = (
+                    STATES.index(event["event_state"]) >= STATES.index("LIVE")
+                    if e["role"] == "PRIMARY"
+                    else INTEGRATION.index(state) >= INTEGRATION.index("LIVE")
+                )
+                if not live:
+                    raise ValueError("Exposure at least 8 below 10 requires applicable LIVE evidence")
+            if exposure == 10 and not any(
+                claim.get("directionality") in {"COUNTERPARTY_ADOPTION", "BOTH"} and claim.get("evidence")
+                for claim in support
             ):
-                state = "BUILT"
+                raise ValueError(
+                    "Exposure 10 requires accepted counterparty evidence for the sole-rail basis"
+                )
+            # Exact 10 has its own counterparty/sole-required-rail rubric, not
+            # an invented mandatory LIVE gate. Exclusivity is semantic content
+            # of the accepted evidence/causal_chain, not inferred from keywords.
             e["tradable"] = e.get("token_id") in tokens and any(
                 i["token_id"] == e.get("token_id") for i in registry["instruments"]
             )
@@ -1481,7 +1485,47 @@ class EventToolService:
                 if e["role"] == "PRIMARY"
                 else INTEGRATION.index(state) >= 2
             )
+            negative = e.get("negative_thesis")
+            negative_proof = []
+            if negative is not None:
+                if e["role"] != "LOSER" or e.get("direction") != "NEGATIVE":
+                    raise ValueError("Negative thesis evidence applies only to a negative LOSER edge")
+                if (
+                    not negative.get("mechanism")
+                    or not negative.get("quote")
+                    or not negative.get("claim_ids")
+                ):
+                    raise ValueError(
+                        "Negative thesis requires its causal mechanism and quoted claim evidence"
+                    )
+                for claim_id in negative["claim_ids"]:
+                    if (
+                        claim_id not in e["evidence"]
+                        or claim_id not in claims
+                        or not claims[claim_id].get("accepted")
+                        or claims[claim_id].get("type") != "RELATION"
+                    ):
+                        raise ValueError(
+                            "Negative thesis must cite accepted causal relation evidence for this edge"
+                        )
+                    negative_proof.append(claim_id)
+            link_quality = (
+                score is not None
+                and score >= 4
+                and e["exposure_score"] >= 6
+                and mature
+                and e["edge_certainty"] in {"MEDIUM", "HIGH"}
+                and e["tradable"]
+            )
             e.update(
+                integration_state_evidence=stage_evidence,
+                thesis_link_credible=bool(
+                    e["role"] == "LOSER"
+                    and e.get("direction") == "NEGATIVE"
+                    and negative_proof
+                    and link_quality
+                ),
+                negative_mechanism_evidence=negative_proof,
                 edge_id=new_id("edge"),
                 event_id=eid,
                 map_version=version,
@@ -1560,23 +1604,24 @@ class EventToolService:
         for layer in LAYERS:
             found = [e["edge_id"] for e in edges if e["layer"] == layer]
             credible = [edge for edge in edges if edge["layer"] == layer and edge.get("credible")]
-            if not credible and not notes.get(layer):
-                raise ValueError(f"Layer {layer} requires NONE/UNKNOWN reason")
+            credible_secondary = any(edge["role"] == "SECONDARY" for edge in credible)
+            note = notes.get(layer) or ""
+            if not credible_secondary and not note.strip():
+                raise ValueError(f"Layer {layer} requires NONE/UNKNOWN reason for no credible SECONDARY")
             layers[layer] = {
                 "status": "FOUND" if credible else a.get("layer_statuses", {}).get(layer, "UNKNOWN"),
                 "edges": found,
-                "note": notes.get(layer, "Evidence-backed edges"),
+                "note": note,
             }
         result = dict(
             event_id=eid,
             map_version=version,
-            cutoff=iso(),
+            **collection_clock().fields("cutoff"),
             layers=layers,
             no_credible_secondary_reason=None
             if secondary
             else a.get("no_credible_secondary_reason")
-            or "No SECONDARY edge satisfies the credibility requirements in §4.7. "
-            + "; ".join(layer + ": " + layers[layer]["note"] for layer in LAYERS),
+            or "No SECONDARY edge satisfies the credibility requirements in §4.7.",
             analysis_set=list(dict.fromkeys(e["token_id"] for e in primary + secondary + losers)),
             **self.provenance(c),
         )
@@ -1593,7 +1638,39 @@ class EventToolService:
         shown = set(first_full.get("shown_tokens", []) if first_full else [])
         return active | shown
 
-    async def get_market_truth(self, a, c):
+    async def refresh_fired_condition_truth(self, a, c):
+        """Refresh actual fired-condition inputs before entering mutation locks."""
+        eid = a["event_id"]
+        token = a.get("token", a.get("token_id"))
+        fired = [
+            row
+            for row in await self.rows(
+                "ana.watch_conditions", eid, filters={"token_id": token, "status": "FIRED"}
+            )
+            if not row.get("consumed_by") and row.get("fired_at")
+        ]
+        prepared_ids = [row["cond_id"] for row in fired]
+        if not fired:
+            return prepared_ids
+        latest = await self.latest_record("ana.market_truth", eid, token)
+        cutoff = parse_time(latest["cutoff"]) if latest and latest.get("cutoff") else None
+        from tank.scheduler import Scheduler
+
+        fired = [
+            row
+            for row in fired
+            if (cutoff is None or parse_time(row["fired_at"]) > cutoff)
+            and Scheduler.condition_requirements(row["expr"])
+        ]
+        if not fired:
+            return prepared_ids
+        refresh_key = sha256(sorted((row["cond_id"], row["fired_at"]) for row in fired))
+        await self.get_market_truth(
+            {"event_id": eid, "tokens": [token]}, c, refresh_key="condition:" + refresh_key
+        )
+        return prepared_ids
+
+    async def get_market_truth(self, a, c, *, refresh_key=None):
         eid = a["event_id"]
         event = await self.require("evt.events", eid)
         assessment = await self.require("evt.ems_assessments", event["current_ems_id"])
@@ -1610,6 +1687,11 @@ class EventToolService:
         if not set(a["tokens"]) <= allowed:
             raise ValueError("Tokens outside analysis set")
         cutoff = iso(a["cutoff"]) if a.get("cutoff") else iso(utcnow().replace(second=0, microsecond=0))
+        cutoff_stamp = chosen_boundary(
+            cutoff,
+            precision=a.get("cutoff_prec", "EXACT" if a.get("cutoff") else "BUCKET(1m)"),
+            bucket_size=(a["cutoff_bucket_size_s"], "s") if a.get("cutoff_bucket_size_s") else None,
+        )
         cutoff_minute = iso(parse_time(cutoff).replace(second=0, microsecond=0))
         async with self.repo.transaction():
             jobs = []
@@ -1627,13 +1709,13 @@ class EventToolService:
                         {
                             "event_id": eid,
                             "token_id": token,
-                            "cutoff": cutoff,
+                            **cutoff_stamp.fields("cutoff"),
                             "_depends_on": [escalation["job_id"]],
                         },
-                        f"{eid}:{token}:{cutoff_minute}",
+                        f"{eid}:{token}:{refresh_key or cutoff_minute}",
                         priority=1,
                         max_attempts=2,
-                        expires_at=iso(utcnow() + timedelta(minutes=30)),
+                        expires_at=offset_schedule(collection_clock(), timedelta(minutes=30)),
                     )
                 )
         truths = []
@@ -1678,7 +1760,11 @@ class EventToolService:
                 else "No credible beneficiary has complete repricing and NORMAL liquidity evidence"
             )
             await self.repo.put("evt.beneficiary_maps", f"{eid}:{mapping['map_version']}", mapping)
-        return {"market_truth": truths, "requested_cutoff": cutoff, "cutoff_minute": cutoff_minute}
+        return {
+            "market_truth": truths,
+            **cutoff_stamp.fields("requested_cutoff"),
+            **chosen_boundary(cutoff_minute, precision="BUCKET(1m)").fields("cutoff_minute"),
+        }
 
     async def get_decision(self, a, c):
         eid = a["event_id"]
@@ -1733,7 +1819,7 @@ class EventToolService:
             result = copy.deepcopy(frozen)
             result.update(
                 dec_id=new_id("dec"),
-                cutoff=iso(),
+                **collection_clock().fields("cutoff"),
                 tracking_ended=True,
                 actionable=False,
                 conditions=[],
@@ -1761,7 +1847,12 @@ class EventToolService:
             conditions=[
                 condition
                 for condition in conditions
-                if condition.get("status") == "FIRED" and not condition.get("consumed_by")
+                if condition.get("status") == "FIRED"
+                and not condition.get("consumed_by")
+                and (
+                    c.get("_decision_prepared_condition_ids") is None
+                    or condition["cond_id"] in c["_decision_prepared_condition_ids"]
+                )
             ],
         )
         if management_only:
@@ -1784,7 +1875,8 @@ class EventToolService:
                 for row in event.get("contradictions", [])
                 if not row.get("resolved_at")
             ],
-            cutoff=result.get("cutoff", iso()),
+            **propagate_timestamp(latest_truth, "cutoff").fields("cutoff"),
+            **collection_clock().fields("calculated_at"),
             **self.provenance(c),
         )
         relative = latest_truth.get("relative", {})
@@ -1802,7 +1894,7 @@ class EventToolService:
                 out_id=new_id("out"),
                 event_id=eid,
                 token_id=token,
-                cutoff=result["cutoff"],
+                **propagate_timestamp(result, "cutoff").fields("cutoff"),
                 **self.provenance(c),
             )
             await self.repo.put("ana.outlooks", outlook["out_id"], outlook)
@@ -1813,12 +1905,22 @@ class EventToolService:
     async def reconcile_conditions(self, result, existing, calls, context):
         """Keep one durable watch per expression; firings are consumed exactly once."""
         now = utcnow()
-        expiry = now + timedelta(days=7)
+        expiry_stamp = offset_schedule(collection_clock(now), timedelta(days=7))
         if calls:
-            expiry = min(expiry, max(parse_time(call["opened_at"]) for call in calls) + timedelta(days=7))
+            latest_call = max(calls, key=lambda row: parse_time(row["opened_at"]))
+            call_expiry = offset_schedule(propagate_timestamp(latest_call, "opened_at"), timedelta(days=7))
+            expiry_stamp = min((expiry_stamp, call_expiry), key=lambda stamp: parse_time(stamp.value))
+        expiry = parse_time(expiry_stamp.value)
         for old in existing:
-            if old.get("status") == "FIRED" and not old.get("consumed_by"):
-                old.update(consumed_by=result["dec_id"], consumed_at=iso(now))
+            if (
+                old.get("status") == "FIRED"
+                and not old.get("consumed_by")
+                and (
+                    context.get("_decision_prepared_condition_ids") is None
+                    or old["cond_id"] in context["_decision_prepared_condition_ids"]
+                )
+            ):
+                old.update(consumed_by=result["dec_id"], **collection_clock(now).fields("consumed_at"))
                 await self.repo.put("ana.watch_conditions", old["cond_id"], old)
         reconciled = []
         used = set()
@@ -1833,20 +1935,29 @@ class EventToolService:
             ]
             if matches:
                 condition = max(matches, key=lambda old: parse_time(old.get("created_at", iso(now))))
-                condition.setdefault("created_at", iso(now))
-                condition.setdefault("expires_at", iso(expiry))
+                if "created_at" not in condition:
+                    condition.update(collection_clock(now).fields("created_at"))
+                if "expires_at" not in condition:
+                    condition.update(expiry_stamp.fields("expires_at"))
                 condition["last_shown_by"] = result["dec_id"]
             else:
                 due = proposed.get("expr", {}).get("due_at")
-                deadline = min(expiry, parse_time(due) + timedelta(hours=1)) if due else expiry
+                deadline_stamp = expiry_stamp
+                if due:
+                    milestone_expiry = offset_schedule(
+                        propagate_timestamp(proposed.get("expr", {}), "due_at"), timedelta(hours=1)
+                    )
+                    deadline_stamp = min(
+                        (expiry_stamp, milestone_expiry), key=lambda stamp: parse_time(stamp.value)
+                    )
                 condition = dict(
                     proposed,
                     cond_id=proposed.get("cond_id", new_id("cond")),
                     event_id=result["event_id"],
                     token_id=result["token_id"],
                     created_by=result["dec_id"],
-                    created_at=iso(now),
-                    expires_at=iso(deadline),
+                    **collection_clock(now).fields("created_at"),
+                    **deadline_stamp.fields("expires_at"),
                     **self.provenance(context),
                 )
             used.add(condition["cond_id"])
@@ -1854,7 +1965,11 @@ class EventToolService:
             await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
         for old in existing:
             if old["cond_id"] not in used and old.get("status") == "ARMED":
-                old.update(status="CANCELLED", cancelled_at=iso(now), superseded_by=result["dec_id"])
+                old.update(
+                    status="CANCELLED",
+                    **collection_clock(now).fields("cancelled_at"),
+                    superseded_by=result["dec_id"],
+                )
                 await self.repo.put("ana.watch_conditions", old["cond_id"], old)
         result["conditions"] = reconciled
         result["conditions_shown"] = [condition["cond_id"] for condition in reconciled][:2]
@@ -1865,18 +1980,73 @@ class EventToolService:
             }
 
     async def publish_card(self, a, c):
-        from tank.analysis.cards import alert_gate, compose_card, lint_card
+        from tank.analysis.cards import (
+            alert_gate,
+            compose_card,
+            publication_immediate,
+        )
 
         eid = a["event_id"]
         event = await self.require("evt.events", eid)
         assessment = await self.require("evt.ems_assessments", event["current_ems_id"])
+        publication_state = {
+            "contract_version": 1,
+            "event_id": eid,
+            "kind": a.get("kind"),
+            "ems_id": assessment["ems_id"],
+            "ems_class": assessment["class"],
+            "lifecycle": event["lifecycle"],
+            "freshness": event.get("freshness"),
+            "certainty": event.get("certainty"),
+            "map_version": None,
+            "analysis_set": [],
+            "decision_ids": [],
+            "market_truth_ids": [],
+            "previous_alert_id": None,
+            "previous_alert_version": None,
+        }
+
+        def publication_outcome(result):
+            reason = result.get("reason") or ("GENERATED" if result.get("published") else "UNKNOWN")
+            suppressed = reason in {
+                "TERMINAL_EVENT",
+                "FIRST_CARD_ALREADY_GENERATED",
+                "BELOW_MAJOR",
+                "LOW_CERTAINTY",
+                "STALE",
+                "INVALIDATED",
+                "NO_MATERIAL_CHANGE",
+                "STALE_STATE_CHANGE",
+            }
+            receipt = copy.deepcopy(publication_state)
+            receipt.update(
+                disposition="PUBLISHED"
+                if result.get("published")
+                else "SUPPRESSED"
+                if suppressed
+                else "REFUSED",
+                reason=reason,
+                alert_id=result.get("alert_id"),
+                alert_version=result.get("version"),
+            )
+            return dict(result, publication_receipt=receipt)
+
         if event["lifecycle"] in {"CLOSED", "MERGED"}:
-            return {"published": False, "reason": "TERMINAL_EVENT"}
+            return publication_outcome({"published": False, "reason": "TERMINAL_EVENT"})
         event["thresholds"] = self.settings.load_config("thresholds")
         newest = await self.repo.list_latest("out.alerts", "generated_at", filters={"event_id": eid}, limit=1)
         previous = newest[0] if newest else None
         initial_full = await self.first_alert(eid, "FULL")
         active_maps = await self.rows("evt.beneficiary_maps", eid)
+        if active_maps:
+            active_map = max(active_maps, key=lambda row: int(row["map_version"]))
+            publication_state.update(
+                map_version=active_map["map_version"], analysis_set=list(active_map["analysis_set"])
+            )
+        publication_state.update(
+            newest_generated_alert_id=previous.get("alert_id") if previous else None,
+            newest_generated_alert_version=previous.get("version") if previous else None,
+        )
         active_tokens = (
             set(max(active_maps, key=lambda row: int(row["map_version"]))["analysis_set"])
             if active_maps
@@ -1888,8 +2058,42 @@ class EventToolService:
             decision = await self.latest_record("ana.decisions", eid, token)
             if decision:
                 decisions.append(decision)
+        publication_state.update(
+            decision_ids=[row["dec_id"] for row in decisions],
+            market_truth_ids=sorted(
+                {
+                    row.get("market_truth_id") or row.get("mta_id")
+                    for row in decisions
+                    if row.get("market_truth_id") or row.get("mta_id")
+                }
+            ),
+        )
         event["claims"] = await self.rows("evt.claims", eid)
         event["contradictions"] = await self.rows("ana.contradictions", eid)
+        observations = await self.rows("evt.event_observations", eid)
+        observations_by_id = {row["obs_id"]: row for row in observations}
+        stage_origins = [
+            observations_by_id[claim["obs_id"]].get("freshness")
+            for claim in event["claims"]
+            if claim.get("accepted") is True
+            and claim.get("state_claim") == event.get("event_state")
+            and claim.get("obs_id") in observations_by_id
+        ]
+        if stage_origins and all(grade == "STALE" for grade in stage_origins):
+            # A later timer must not turn an old stage update into new news.
+            # This contextual flag only affects the stage-change publication gate.
+            event["publication_stage_freshness"] = "STALE"
+        if c.get("trigger_kind") in {None, "NEW_ITEM", "ITEM_ADDED"}:
+            trigger_item = c.get("trigger_item_id") or c.get("item_id")
+            candidates = [
+                row for row in observations if not trigger_item or row.get("item_id") == trigger_item
+            ]
+            if candidates:
+                trigger = max(candidates, key=lambda row: row["obs_id"])
+                event["publication_trigger_freshness"] = trigger.get("freshness")
+                publication_state.update(
+                    trigger_item_id=trigger.get("item_id"), trigger_freshness=trigger.get("freshness")
+                )
         last_sent = (
             await self.repo.latest_before(
                 "out.deliveries",
@@ -1908,10 +2112,13 @@ class EventToolService:
         gate_previous = None
         if comparison or previous:
             baseline = comparison or previous
+            publication_state.update(
+                previous_alert_id=baseline["alert_id"], previous_alert_version=baseline["version"]
+            )
             gate_previous = dict(
                 baseline,
                 decisions=[await self.require("ana.decisions", ref) for ref in baseline["decisions"]],
-                published_at=last_sent["at"] if last_sent else None,
+                **propagate_timestamp(last_sent or {}, "at").fields("published_at"),
                 ems_class=baseline["card_struct"]["assessment"]["class"],
                 event_state=baseline["card_struct"]["event"]["event_state"],
                 state_verified=baseline["card_struct"]["event"].get("state_verified"),
@@ -1919,7 +2126,7 @@ class EventToolService:
             )
         kind = a["kind"]
         if kind == "PARTIAL" and previous:
-            return {"published": False, "reason": "FIRST_CARD_ALREADY_GENERATED"}
+            return publication_outcome({"published": False, "reason": "FIRST_CARD_ALREADY_GENERATED"})
         completing_partial = kind == "FULL" and previous and previous["kind"] == "PARTIAL"
         pinned_for_gate = initial_full.get("shown_tokens", []) if initial_full else []
         gate_decisions = (
@@ -1933,25 +2140,27 @@ class EventToolService:
             previous=None if completing_partial else gate_previous,
             decisions=gate_decisions,
         )
-        deferred = not ok and reason == "UPDATE_RATE_LIMIT" and a["kind"] == "UPDATE"
-        if not ok and not deferred:
-            return {"published": False, "reason": reason}
-        immediate = any(
-            row.get("type") == "FATAL" and not row.get("resolved_at") for row in event["contradictions"]
-        ) or any(
-            row.get("action") in {"START", "EXIT"}
-            and not row.get("tracking_ended")
-            and row.get("actionable") is not False
-            for row in gate_decisions
-        )
-        delivery_not_before = (
-            iso(
-                parse_time(last_sent["at"])
-                + timedelta(seconds=event["thresholds"].get("update_rate_limit_s", 900))
+        publication_state["gate_reason"] = reason
+        rate_limited = not ok and reason == "UPDATE_RATE_LIMIT"
+        if not ok and not rate_limited:
+            if event["lifecycle"] == "ANALYZING" and reason in {
+                "STALE",
+                "STALE_STATE_CHANGE",
+                "NO_MATERIAL_CHANGE",
+            }:
+                stored = await self.require("evt.events", eid)
+                stored.update(lifecycle="MONITORING", **collection_clock().fields("monitoring_at"))
+                await self.repo.put("evt.events", eid, stored)
+                publication_state["lifecycle"] = stored["lifecycle"]
+            return publication_outcome({"published": False, "reason": reason})
+        immediate = publication_immediate(event, assessment, previous=gate_previous, decisions=gate_decisions)
+        delivery_stamp = collection_clock()
+        if rate_limited:
+            delivery_stamp = offset_schedule(
+                propagate_timestamp(last_sent, "at"),
+                timedelta(seconds=event["thresholds"].get("update_rate_limit_s", 900)),
             )
-            if deferred and last_sent
-            else iso()
-        )
+        delivery_not_before = delivery_stamp.value
         kind = a["kind"]
         if kind not in {"FULL", "PARTIAL", "UPDATE"}:
             raise ValueError("Invalid alert kind")
@@ -1966,6 +2175,11 @@ class EventToolService:
         map_version = max((int(m["map_version"]) for m in current_maps), default=None)
         beneficiaries = [e for e in beneficiaries if int(e["map_version"]) == map_version]
         event["beneficiary_edges"] = copy.deepcopy(beneficiaries)
+        analysis_tokens = set(event.get("beneficiary_map", {}).get("analysis_set", []))
+        decision_tokens = {row["token_id"] for row in decisions}
+        beneficiaries = [
+            edge for edge in beneficiaries if edge.get("token_id") in analysis_tokens & decision_tokens
+        ]
         maps = await self.rows("evt.beneficiary_maps", eid)
         least = max(maps, key=lambda r: int(r["map_version"])).get("least_repriced_edge") if maps else None
         all_edges = await self.rows("evt.beneficiary_edges", eid)
@@ -2022,12 +2236,14 @@ class EventToolService:
             missing_truth = required - set(truth_by_token)
             missing_decision = required - decision_tokens
             if not current_maps or missing_truth or missing_decision:
-                return {
-                    "published": False,
-                    "reason": "ANALYSIS_INCOMPLETE",
-                    "missing_market_truth": sorted(missing_truth),
-                    "missing_decisions": sorted(missing_decision),
-                }
+                return publication_outcome(
+                    {
+                        "published": False,
+                        "reason": "ANALYSIS_INCOMPLETE",
+                        "missing_market_truth": sorted(missing_truth),
+                        "missing_decisions": sorted(missing_decision),
+                    }
+                )
         ctx = {
             "event": event,
             "assessment": assessment,
@@ -2039,52 +2255,21 @@ class EventToolService:
         why = a.get("why", [])
         if kind != "PARTIAL" and len(why) not in {2, 3}:
             raise ValueError("FULL/UPDATE require 2–3 WHY bullets")
+        evidence_labels = {}
+        for claim in event.get("claims", []):
+            for evidence in claim.get("evidence", []):
+                item_id = evidence.get("item_id")
+                if not item_id or item_id in evidence_labels:
+                    continue
+                item = await self.repo.get("ingest.source_items", item_id)
+                if item:
+                    source_id = item.get("source_id")
+                    source = await self.repo.get("reg.sources", source_id) if source_id else None
+                    evidence_labels[item_id] = (source or {}).get("name") or source_id or "source"
+        event["evidence_labels"] = evidence_labels
         text = compose_card(
             event, assessment, beneficiaries, decisions, truths, kind=kind, verdict=verdict, why=why
         )
-        violations = lint_card(text, ctx)
-        previous_publish = [
-            row
-            for row in (
-                await self.rows("ops.tool_calls", filters={"session_id": c["session_id"]})
-                if c.get("session_id")
-                else []
-            )
-            if row.get("tool", row.get("tool_name")) == "publish_card"
-            and row.get("arguments", row.get("input", {})).get("event_id") == eid
-            and isinstance(row.get("result"), dict)
-        ]
-        last_publish = (
-            max(
-                previous_publish,
-                key=lambda row: parse_time(
-                    row.get("completed_at", row.get("answered_at", row.get("started_at")))
-                ),
-            )
-            if previous_publish
-            else None
-        )
-        rejected = (
-            [last_publish]
-            if last_publish
-            and last_publish["result"].get("reason") == "LINTER"
-            and last_publish.get("arguments", last_publish.get("input", {})).get("kind") == kind
-            else []
-        )
-        removed = []
-        if violations and rejected:
-            bad = {v["sentence"] for v in violations}
-            removed = list(bad)
-            verdict = "" if any(verdict in line for line in bad) else verdict
-            why = [w for w in why if not any(w in line for line in bad)]
-            text = compose_card(
-                event, assessment, beneficiaries, decisions, truths, kind=kind, verdict=verdict, why=why
-            )
-            violations = lint_card(text, ctx)
-        if violations:
-            return {"published": False, "reason": "LINTER", "violations": violations}
-        if removed:
-            ctx["removed_prose"] = removed
         previous_failed = previous and bool(
             await self.repo.list_latest(
                 "out.deliveries",
@@ -2093,6 +2278,7 @@ class EventToolService:
                     "alert_id": previous["alert_id"],
                     "version": previous["version"],
                     "status": "FAILED",
+                    "terminal": True,
                 },
                 limit=1,
             )
@@ -2103,21 +2289,39 @@ class EventToolService:
             and not previous_failed
             and previous["version"] > last_sent["version"]
             and previous["card_text"] == text
+            and previous["card_struct"] == ctx
         ):
-            return {
-                "published": True,
-                "alert_id": previous["alert_id"],
-                "version": previous["version"],
-                "reason": "IDENTICAL_PENDING",
-                "deferred": previous.get("rate_limited", False),
-                "delivery_not_before": previous.get("delivery_not_before"),
-            }
+            return publication_outcome(
+                {
+                    "published": True,
+                    "alert_id": previous["alert_id"],
+                    "version": previous["version"],
+                    "reason": "IDENTICAL_PENDING",
+                    "delivery_not_before": previous.get("delivery_not_before"),
+                }
+            )
+        if rate_limited and previous and last_sent and previous["version"] > last_sent["version"]:
+            # Reserve a due time in the existing durable delivery queue. Each
+            # accepted immutable update remains deliverable without a new item.
+            previous_due = previous.get("delivery_not_before")
+            if previous_due:
+                delivery_stamp = max(
+                    (
+                        delivery_stamp,
+                        offset_schedule(
+                            propagate_timestamp(previous, "delivery_not_before"),
+                            timedelta(seconds=event["thresholds"].get("update_rate_limit_s", 900)),
+                        ),
+                    ),
+                    key=lambda stamp: parse_time(stamp.value),
+                )
+        delivery_not_before = delivery_stamp.value
         cutoff = iso()
         observations = await self.rows("evt.event_observations", eid)
         claims = await self.rows("evt.claims", eid)
         ids = {o["item_id"] for o in observations} | {e["item_id"] for r in claims for e in r["evidence"]}
         bundle = {
-            "cutoff": cutoff,
+            **collection_clock(cutoff).fields("cutoff"),
             "event": event,
             "source_items": [await self.require("ingest.source_items", i) for i in sorted(ids)],
             "observations": observations,
@@ -2148,6 +2352,7 @@ class EventToolService:
             ),
             "code_version": self.settings.code_version,
             "model_ids": [],
+            "producing_session_provenance": self.provenance(c),
             "agent_version": c.get("agent_version"),
             "skill_version": c.get("skill_version"),
             "session_id": c.get("session_id"),
@@ -2228,10 +2433,42 @@ class EventToolService:
             if isinstance(v, list) and v and isinstance(v[0], dict):
                 v.sort(key=canonical_json)
         digest = sha256(bundle)
+        bundle_path = Path(self.settings.data_dir).resolve() / "bundles" / (digest + ".json.zst")
+        bundle_path.parent.mkdir(parents=True, exist_ok=True)
+        encoded = canonical_json(bundle).encode("utf-8")
+        if not bundle_path.exists():
+            temporary = bundle_path.with_name(bundle_path.name + "." + new_id("bundle") + ".tmp")
+            try:
+                with temporary.open("xb") as output:
+                    output.write(zstandard.ZstdCompressor(level=3).compress(encoded))
+                    output.flush()
+                    os.fsync(output.fileno())
+                try:
+                    os.link(temporary, bundle_path)
+                except FileExistsError:
+                    pass
+            finally:
+                temporary.unlink(missing_ok=True)
+        if sha256(zstandard.ZstdDecompressor().decompress(bundle_path.read_bytes())) != digest:
+            raise ValueError("Immutable evidence bundle file hash mismatch")
+        # Establish file and directory-entry durability before any immutable database reference.
+        with bundle_path.open("rb") as published:
+            os.fsync(published.fileno())
+        directory = bundle_path.parent
+        volume_root = Path(self.settings.data_dir).resolve()
+        while True:
+            descriptor = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            if directory == volume_root.parent:
+                break
+            directory = directory.parent
         await self.repo.put(
             "out.evidence_bundles",
             digest,
-            {"bundle_id": "EVB-" + digest, "sha256": digest, "payload": bundle},
+            {"bundle_id": "EVB-" + digest, "sha256": digest, "path": str(bundle_path), "payload": bundle},
             immutable=True,
         )
         aid = previous["alert_id"] if previous else new_id("alert")
@@ -2240,8 +2477,7 @@ class EventToolService:
             alert_id=aid,
             version=version,
             kind=kind,
-            delivery_not_before=delivery_not_before,
-            rate_limited=deferred,
+            **delivery_stamp.fields("delivery_not_before"),
             delivery_immediate=immediate,
             shown_tokens=[edge["token_id"] for edge in beneficiaries],
             expired_call_ids=event.get("call_expired_ids", []) if event.get("call_expired") else [],
@@ -2252,7 +2488,7 @@ class EventToolService:
             and event["lifecycle"] == "INVALIDATED"
             and any(r["type"] == "FATAL" for r in event["contradictions"]),
             event_id=eid,
-            generated_at=cutoff,
+            **collection_clock(cutoff).fields("generated_at"),
             card_text=text,
             card_struct=ctx,
             decisions=[
@@ -2261,12 +2497,6 @@ class EventToolService:
                 if d["token_id"] in {edge["token_id"] for edge in beneficiaries}
             ],
             evidence_bundle_id=digest,
-            linter={
-                "passed": True,
-                "violations": [],
-                "regenerations": len(rejected),
-                "removed_prose": removed,
-            },
             supersedes_version=version - 1 if previous else None,
             **self.provenance(c),
         )
@@ -2282,7 +2512,7 @@ class EventToolService:
                 "channel": "telegram:alerts",
                 "status": "GENERATED",
                 "attempt": 0,
-                "at": cutoff,
+                **collection_clock(cutoff).fields("at"),
             },
             immutable=True,
         )
@@ -2291,17 +2521,21 @@ class EventToolService:
             {"alert_id": aid, "version": version, "channel": "telegram:alerts"},
             f"{aid}:{version}:telegram:alerts",
             priority=0,
-            run_after=delivery_not_before,
+            run_after=delivery_stamp,
+            expires_at=offset_schedule(delivery_stamp, timedelta(days=1)),
             max_attempts=5,
         )
-        return {
-            "published": True,
-            "alert_id": aid,
-            "version": version,
-            "evidence_bundle_id": digest,
-            "deferred": deferred,
-            "delivery_not_before": delivery_not_before,
-        }
+        return publication_outcome(
+            {
+                "published": True,
+                "alert_id": aid,
+                "version": version,
+                "evidence_bundle_id": digest,
+                "delivery_not_before": delivery_not_before,
+                "delivery_status": "QUEUED",
+                "reason": "QUEUED_RATE_LIMIT" if rate_limited else "GENERATED",
+            }
+        )
 
     async def escalate_source(self, source_id, event_id, trigger, starts_at, expires_at, context):
         key = f"{source_id}:{event_id}:{trigger}"
@@ -2311,8 +2545,12 @@ class EventToolService:
             event_id=event_id,
             trigger=trigger,
             status="ACTIVE",
-            starts_at=iso(starts_at),
-            expires_at=iso(expires_at),
+            **(starts_at if isinstance(starts_at, Timestamp) else collection_clock(starts_at)).fields(
+                "starts_at"
+            ),
+            **(expires_at if isinstance(expires_at, Timestamp) else collection_clock(expires_at)).fields(
+                "expires_at"
+            ),
             interval_s=15,
             **self.provenance(context),
         )
@@ -2320,33 +2558,41 @@ class EventToolService:
 
     async def schedule_milestone(self, a, c):
         event = await self.require("evt.events", a["event_id"])
-        due = iso(a["due_at"])
+        due_stamp = propagate_timestamp(a, "due_at", missing_reason="CALLER_DID_NOT_DECLARE_DUE_PRECISION")
+        due = due_stamp.value
         source = a["source"]
         source_id = source.get("source_id") if isinstance(source, dict) else source
         if not await self.repo.get("reg.sources", source_id) and not any(
             source["source_id"] == source_id for source in self.settings.load_config("sources")["sources"]
         ):
             raise ValueError("Milestone source must be registered")
-        event["next_milestone"] = {"kind": a["milestone"], "due_at": due, "source_id": source_id}
+        event["next_milestone"] = {
+            "kind": a["milestone"],
+            **due_stamp.fields("due_at"),
+            "source_id": source_id,
+        }
         await self.repo.put("evt.events", event["event_id"], event)
         job = await self.repo.enqueue(
             "MILESTONE_CHECK",
             {
                 "event_id": event["event_id"],
                 "milestone": a["milestone"],
-                "due_at": due,
+                **due_stamp.fields("due_at"),
                 "source_id": source_id,
             },
             f"{event['event_id']}:{a['milestone']}:{due}",
-            run_after=due,
-            expires_at=iso(max(parse_time(due), utcnow()) + timedelta(hours=2)),
+            run_after=due_stamp,
+            expires_at=offset_schedule(
+                max((due_stamp, collection_clock()), key=lambda stamp: parse_time(stamp.value)),
+                timedelta(hours=2),
+            ),
         )
         await self.escalate_source(
             source_id,
             event["event_id"],
             "MILESTONE:" + a["milestone"] + ":" + due,
-            parse_time(due) - timedelta(minutes=5),
-            parse_time(due) + timedelta(hours=2),
+            offset_schedule(due_stamp, -timedelta(minutes=5)),
+            offset_schedule(due_stamp, timedelta(hours=2)),
             c,
         )
         return {"job_id": job["job_id"]}
@@ -2379,6 +2625,7 @@ class EventToolService:
                 await self.repo.put("scout.expansion_proposals", duplicate, target)
             row["duplicate_of"] = duplicate
         row["adversarial_review"] = {
+            **collection_clock().fields("reviewed_at"),
             "scores": scores,
             "recommendation": a["recommendation"],
             "duplicate_of": duplicate,
@@ -2427,6 +2674,7 @@ class EventToolService:
             evidence=[],
             recommendation="SUBCATEGORY",
             confidence="LOW",
+            **collection_clock().fields("created_at"),
             **self.provenance(c),
         )
         row["occurrences"] += 1

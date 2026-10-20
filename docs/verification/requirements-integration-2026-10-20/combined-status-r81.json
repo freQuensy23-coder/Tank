@@ -1,0 +1,102 @@
+{
+  "recorded_at": "2026-10-20T10:51:09.438544+00:00",
+  "status": "R81_IMAGE_AND_AFFECTED_COMPONENTS_VERIFIED_ACTUAL_E2E_PENDING",
+  "candidate": {
+    "candidate": "r81",
+    "image": "sha256:94a6ac799d1814dd810471c36b2ba4e869c48928b36dc6216bca39e137112e24",
+    "code_version": "91b9a765de200fc0212fc386909f0638cb1b32be32890b52935cea2c967ad308",
+    "source_candidate_sha256": "1baef25ddd24f53c8cf7b14fba1cf4a7d31c45cb9f55397ce077f2a72e2feef9",
+    "configs": {
+      "primary": {
+        "version": "75ea469c9a84bf3e614eacdf108fb4e683cb79c0-dirty.7e8cea9c76a679ced51d8eb77fdc3a40e07c5325cf69137030a8b79d35ef1177",
+        "content_sha256": "7e8cea9c76a679ced51d8eb77fdc3a40e07c5325cf69137030a8b79d35ef1177"
+      },
+      "qa": {
+        "version": "75ea469c9a84bf3e614eacdf108fb4e683cb79c0-dirty.a86fccf44673aef4caec48b1bcbacef6c0c332e4aa8f5f5248185d062bd52262",
+        "content_sha256": "a86fccf44673aef4caec48b1bcbacef6c0c332e4aa8f5f5248185d062bd52262"
+      }
+    },
+    "qualified_openma_image": "sha256:da8d1b4c986fb852d856453a62ad56fa0cd26df17139114b9c5adf9656f00f16",
+    "image_exact_files_and_dependencies_verified": true,
+    "actual_image_full_supply_to_postgres": "PASS all6kinds through actual MarketService batch/flush, mapped+unknown lending, one/lendBorrowrequest",
+    "r80_affected_regression": "301PASS0skip; onlysubsequentproducerchangeisnamedlendingidentitycontainer",
+    "current_scoped_regression": "95PASS across initial94 successes and one sequentialPG rerun;4environment-specificlegacytestskips; earlierparallelsetupOutOfMemorypreserved",
+    "production_deployment": false,
+    "actual_e2e_authorized_here": false
+  },
+  "results_do_not_sum_because_scopes_overlap": true,
+  "independent_runs": [
+    {
+      "candidate": "r79",
+      "kind": "complete_offline_suite_with_real_isolated_postgres_and_synthetic_chromium",
+      "passed": 1965,
+      "failed": 17,
+      "skipped": 37,
+      "seconds": 652.99,
+      "source_changed_only_in_declared_followup_fix_scopes": true,
+      "receipt": "20261020T102211.296924Z/report.json",
+      "failure_classification": "r79-full-regression-classification.json"
+    },
+    {
+      "candidate": "r80",
+      "kind": "affected_provider_pipeline_e2e_publication_runtime_supply_regression",
+      "passed": 301,
+      "failed": 0,
+      "skipped": 0,
+      "seconds": 131.38,
+      "source_unchanged": true,
+      "receipt": "r80-affected-regression.json",
+      "junit": "r80-affected-regression.xml"
+    },
+    {
+      "candidate": "r80",
+      "kind": "actual_image_missing_zero_nonzero_cost_to_real_postgres",
+      "status": "PASS",
+      "receipt": "r80-image-postgres-billing.json",
+      "external_http": "synthetic"
+    },
+    {
+      "candidate": "r81",
+      "kind": "market_supply_regression_plus_sequential_postgres_case",
+      "passed_unique": 95,
+      "failed_after_recheck": 0,
+      "skipped": 4,
+      "skips": "Legacy dedicated-QA-database guards; not counted passed",
+      "initial_setup_error": "Concurrent fresh schema installations in one shared default64 PostgreSQL cluster exhausted its global lock budget; prior logs retained",
+      "correction": "Serialize isolated setup; no PostgreSQL setting or product change",
+      "initial_log": "r81-market-supply-regression.log",
+      "recheck_log": "r81-lending-postgres-sequential.log"
+    },
+    {
+      "candidate": "r81",
+      "kind": "actual_image_all_supply_producers_to_real_market_batch_and_postgres",
+      "status": "PASS",
+      "kinds": 6,
+      "pending_rows": 6,
+      "typed_rows_read_back": 6,
+      "external_http": "synthetic",
+      "receipt": "r81-image-supply-postgres-sequential.json"
+    }
+  ],
+  "preserved_actual_e2e_negative": {
+    "candidate": "r80",
+    "reason": "Market loop rejected undeclared lending top-level field mkt.supply_obs.unmapped_pool_ids",
+    "owner_fix": "r81 moves both diagnostic fields under existing identity_evidence JSONB; no DDL/fallback",
+    "scope": "Current ordinary S33 feed; native sessions and original negative logs retained by workflow owner",
+    "primary_deployed": false
+  },
+  "no_new_actual_integration_claim": true,
+  "known_remaining_evidence": [
+    "Actual r81 ordinary-source to native agent to market and Telegram result; workflow authorized and given exact tuple",
+    "Final-candidate concurrent historical BTC/ETH market-job timing",
+    "All27 historical fixture acceptance on one candidate; 7 formal evidence tests still fail, including full F11–F16 packets",
+    "Primary legacy schema/raw-frame operational retirement and final deployment receipt, coordinated by parent",
+    "Native amd64 KVM runtime, 72-hour source availability and 14-day shadow operation"
+  ],
+  "excluded_actual_scope": "X session untouched; actual list input unresolved in operator config",
+  "qa_cleanup": [
+    "postgres-cleanup.json",
+    "r81-postgres-cleanup.json"
+  ],
+  "final_acceptance": false
+}

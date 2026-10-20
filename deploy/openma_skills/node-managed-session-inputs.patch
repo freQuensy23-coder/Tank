@@ -1,0 +1,63 @@
+--- a/packages/control-plane-node/src/lib/node-managed-session-inputs.ts
++++ b/packages/control-plane-node/src/lib/node-managed-session-inputs.ts
+@@ -1,5 +1,6 @@
+ import { posix } from "node:path";
+ import { unzipSync } from "fflate";
++import { skillArchiveManifest } from "./node-managed-skill-manifest.js";
+ import {
+   supportsSessionOutputMount,
+   type SandboxExecutor,
+@@ -25,17 +26,6 @@
+   "downloadSkillVersion" | "listSkillVersions" | "retrieveSkillVersion"
+ >;
+ 
+-function skillMdBodyFromArchive(archive: Uint8Array): string | undefined {
+-  const files = unzipSync(archive);
+-  for (const [rawPath, content] of Object.entries(files)) {
+-    if (rawPath.endsWith("/")) continue;
+-    const path = safeArchivePath(rawPath);
+-    if (posix.basename(path) !== "SKILL.md") continue;
+-    return new TextDecoder().decode(content);
+-  }
+-  return undefined;
+-}
+-
+ async function resolveConcreteSkillVersion(
+   skillVersions: SkillVersionSource,
+   skillId: string,
+@@ -133,22 +123,24 @@
+     );
+     if (!resolved) continue;
+ 
+-    let body: string | undefined;
+-    if (fetchBodies) {
+-      const downloaded = await skillVersions.downloadSkillVersion({
+-        skillId: skill.skillId,
+-        version: resolved.version,
+-      });
+-      if (downloaded.type === "found") {
+-        body = skillMdBodyFromArchive(downloaded.file.content);
+-      }
++    // Progressive exposure also needs the archive: its manifest may live
++    // beneath a compiler-added directory. Materialization preserves that path.
++    const downloaded = await skillVersions.downloadSkillVersion({
++      skillId: skill.skillId,
++      version: resolved.version,
++    });
++    if (downloaded.type !== "found") {
++      throw new Error(`Managed Skill ${skill.skillId}@${resolved.version} archive was not found`);
+     }
++    const manifest = skillArchiveManifest(unzipSync(downloaded.file.content));
++    const manifestRoot = `${mountRoot}${manifest.directory}`;
++    const body = fetchBodies ? manifest.body : undefined;
+ 
+     mounts.push({
+       skillId: skill.skillId,
+       name: resolved.name,
+-      description: resolved.description || `Custom skill mounted at ${mountRoot}`,
+-      mountRoot,
++      description: resolved.description || `Custom skill mounted at ${manifestRoot}`,
++      mountRoot: manifestRoot,
+       ...(body?.trim() ? { body } : {}),
+       source: "custom",
+     });

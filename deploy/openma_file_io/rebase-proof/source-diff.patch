@@ -1,0 +1,11 @@
+--- raw-lifecycle-asset0c9
++++ actual-shipping-provider-ecbbe
+@@ -3,7 +3,7 @@
+  * No SDK private field or native stopped-handle restart is used. */
+ import { readFile, writeFile } from 'node:fs/promises';
+ import { createHash } from 'node:crypto';
+-import type { Fence, Handle, Provider, RetainedRuntime, Scope } from './retained-session.ts';
++import type { Fence, Handle, Provider, RetainedRuntime, Scope } from './retained-session.js';
+ 
+ type Process = {
+   stdin: WritableStream<Uint8Array>; stdout: ReadableStream<Uint8Array>; stderr: ReadableStream<Uint8Array>;

@@ -1,0 +1,185 @@
+{
+  "record_event_arguments": [
+    {
+      "claims": [
+        {
+          "type": "STATE",
+          "quote": "Yesterday we shipped X",
+          "object": "Unspecified product shipped the previous day",
+          "subject": "X",
+          "verified": true,
+          "predicate": "was shipped",
+          "state_claim": "DEPLOYED",
+          "directionality": "NONE",
+          "evidence_class": "PRIMARY_FACT"
+        },
+        {
+          "type": "TIMESTAMP",
+          "quote": "Yesterday we shipped X and told all the press, sorry for posting late",
+          "object": "2026-10-15, day precision inferred from yesterday in the October 16 post",
+          "subject": "X press disclosure",
+          "verified": true,
+          "predicate": "occurred",
+          "state_claim": null,
+          "directionality": "NONE",
+          "evidence_class": "PRIMARY_FACT"
+        }
+      ],
+      "tokens": [],
+      "item_id": "ITM-01M58JCQVJWGSDF9N5G4DZVBNY",
+      "entities": [
+        {
+          "name": "X",
+          "role": "SUBJECT",
+          "entity_id": null
+        }
+      ],
+      "is_event": true,
+      "certainty": "HIGH",
+      "freshness": "OLD",
+      "public_at": {
+        "basis": "The source explicitly says the shipment and press disclosure were yesterday relative to the October 16 publication bucket. Exact hour is unknown; the later post is not first publicity.",
+        "quote": "Yesterday we shipped X and told all the press",
+        "value": "2026-10-15",
+        "precision": "DAY"
+      },
+      "statement": "In the declared synthetic source, the founder reports shipping an unspecified product X and informing the press the previous day.",
+      "event_time": {
+        "quote": "Yesterday we shipped X and told all the press",
+        "value": "2026-10-15",
+        "precision": "BUCKET_1D"
+      },
+      "next_milestone": null,
+      "checked_sources": [
+        "ITM-01M58JCQVJWGSDF9N5G4DZVBNY",
+        "search_tank_items: shipped X, preceding 3 days",
+        "list_open_events: X"
+      ],
+      "certainty_reason": "Declared synthetic founder speaking about their own shipment; primary-source authority applies within this fixture only, not to a verified real-world organization or token.",
+      "timing_confidence": "MEDIUM"
+    }
+  ],
+  "events": [
+    {
+      "entities": [
+        {
+          "role": "SUBJECT",
+          "entity_id": "UNRESOLVED:X"
+        }
+      ],
+      "event_id": "EVT-01M5AJRF8MFRV1V2BZM1BKAXY0",
+      "model_id": "gpt-6.1-sol",
+      "certainty": "HIGH",
+      "freshness": "OLD",
+      "lifecycle": "TRACKED",
+      "public_at": "2026-10-15T00:00:00Z",
+      "statement": "In the declared synthetic source, the founder reports shipping an unspecified product X and informing the press the previous day.",
+      "event_time": {
+        "quote": "Yesterday we shipped X and told all the press",
+        "value": "2026-10-15",
+        "precision": "BUCKET(1d)",
+        "precision_reason": null
+      },
+      "session_id": "session_L4WktPE7l87W9meVRicnl",
+      "theme_tags": [],
+      "event_state": "DEPLOYED",
+      "code_version": "6a62a53cd3e58079e5f338dddc5afd4c7885b8d46d6df41ddf96a910ee985880",
+      "prompt_label": "baseline-2.3",
+      "agent_version": "1",
+      "config_version": "b1449f64c8986545f50c77c2b43c617436dc3c41-dirty.6571bf7e51ac2b35d1a653169835dc11f392c2e42ed8f2c83a2069974a993745",
+      "current_ems_id": "EMS-01M5AJS17E3FCA8D70AB05YHH6",
+      "known_to_us_at": "2026-10-16T12:01:00Z",
+      "model_id_basis": "RESOLVED_SESSION_AGENT",
+      "next_milestone": null,
+      "prompt_binding": {
+        "snapshot_fields": [
+          "_oma",
+          "mcp_servers",
+          "model",
+          "multiagent",
+          "skills",
+          "system",
+          "tools"
+        ],
+        "resolved_skill_versions": [
+          {
+            "type": "custom",
+            "version": "1792423732857000",
+            "skill_id": "skill_RNYGLNbh5-JCoOrNMoVmV"
+          },
+          {
+            "type": "custom",
+            "version": "1792423732875000",
+            "skill_id": "skill_PHDhpxIFqwiB4t_y9PLtk"
+          }
+        ]
+      },
+      "prompt_version": "33ea3d8b82e2a1145c71a9280741911967cd103ae574a5217bde2a7c001a2615",
+      "public_at_prec": "BUCKET(1d)",
+      "state_verified": true,
+      "checked_sources": [
+        "ITM-01M58JCQVJWGSDF9N5G4DZVBNY",
+        "search_tank_items: shipped X, preceding 3 days",
+        "list_open_events: X"
+      ],
+      "event_time_prec": "BUCKET(1d)",
+      "model_id_reason": null,
+      "public_at_basis": "The source explicitly says the shipment and press disclosure were yesterday relative to the October 16 publication bucket. Exact hour is unknown; the later post is not first publicity.",
+      "certainty_reason": "Declared synthetic founder speaking about their own shipment; primary-source authority applies within this fixture only, not to a verified real-world organization or token.",
+      "tokens_mentioned": [],
+      "best_source_class": "SOCIAL_LEAD",
+      "timing_confidence": "MEDIUM",
+      "agent_version_basis": "RESOLVED_SESSION_AGENT",
+      "known_to_us_at_prec": "EXACT",
+      "agent_version_reason": null,
+      "prompt_version_basis": "RESOLVED_SESSION_AGENT_SNAPSHOT",
+      "session_code_version": "6a62a53cd3e58079e5f338dddc5afd4c7885b8d46d6df41ddf96a910ee985880",
+      "prompt_version_reason": null,
+      "public_at_prec_reason": null,
+      "event_time_prec_reason": null,
+      "session_config_version": "b1449f64c8986545f50c77c2b43c617436dc3c41-dirty.6571bf7e51ac2b35d1a653169835dc11f392c2e42ed8f2c83a2069974a993745",
+      "simulated_available_at": "2026-10-16T12:01:00Z",
+      "certainty_evidence_claims": [
+        "CLM-01M5AJRFBZ6GENJZCQ8SYNRVWB",
+        "CLM-01M5AJRFC129BG90RKH5H3BZNS"
+      ],
+      "known_to_us_at_prec_reason": null,
+      "simulated_available_at_prec": "EXACT",
+      "fixture_reference_provenance": {
+        "fixture_id": "F-25",
+        "source_url": "fixture://F-25/source/1",
+        "clock_domain": "FIXTURE_SIMULATED_AS_OF",
+        "evidence_kind": "DECLARED_SYNTHETIC_SOURCE",
+        "source_raw_sha256": "e432d7a6a5811bfdaebee0c2f99299c63d978056ec5b56530404b448cfed2cae",
+        "source_version_id": "F-25-declared-source-v1",
+        "actual_observed_at": "2026-10-18T22:33:51.730767Z",
+        "source_body_sha256": "e432d7a6a5811bfdaebee0c2f99299c63d978056ec5b56530404b448cfed2cae",
+        "actual_available_at": "2026-10-18T22:33:51.730767Z",
+        "actual_source_clocks": {
+          "acquired_at": {
+            "acquired_at": "2026-10-18T22:33:51.730767Z",
+            "acquired_at_prec": "COLLECTION_ONLY",
+            "acquired_at_prec_reason": null
+          },
+          "observed_at": {
+            "observed_at": "2026-10-18T22:33:51.730767Z",
+            "observed_at_prec": "COLLECTION_ONLY",
+            "observed_at_prec_reason": null
+          }
+        },
+        "actual_observed_at_prec": "COLLECTION_ONLY",
+        "actual_available_at_prec": null,
+        "simulated_known_to_us_at": "2026-10-16T12:01:00Z",
+        "preregistered_input_sha256": "aec6c52ae66f267dba967d2972937d4718723abe75baa2fa62f7859e598ca707",
+        "source_binding_verification": "PREREGISTERED_BUILDER_AND_INDEPENDENT_SOURCE_REVIEW",
+        "simulated_known_to_us_at_prec": "EXACT",
+        "actual_observed_at_prec_reason": null,
+        "actual_available_at_prec_reason": "INCOMPLETE",
+        "historical_live_performance_claim": false,
+        "simulated_known_to_us_at_prec_reason": null
+      },
+      "simulated_available_at_prec_reason": null
+    }
+  ],
+  "alerts": []
+}

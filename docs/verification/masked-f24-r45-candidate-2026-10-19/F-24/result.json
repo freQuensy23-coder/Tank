@@ -1,0 +1,124 @@
+{
+  "fixture_id": "F-24",
+  "code_version": "ddb920f323ba0cb3a2067de9583985920b0dec171304d8662d8e05f230341af8",
+  "config_version": "58daf19e9ed36d477dca6ff543523fd5b7b6cfed-dirty.c86c8ac9f4c79aad25557322fef927b16a4b1dfd8bea08437334d882e794be26",
+  "cli_exit_code": 0,
+  "elapsed_seconds": 155.1638169999933,
+  "framework_status": "COMPLETED",
+  "source_outcomes": [
+    {
+      "item_id": "ITM-01M58JCQVJ0812XBBAZ4BTN4YA",
+      "source_id": "S29",
+      "extraction_status": "DONE"
+    },
+    {
+      "item_id": "ITM-01M59HE4EXKR4V94YJBXBME19R",
+      "source_id": "S13",
+      "extraction_status": "DONE"
+    }
+  ],
+  "turn_outcomes": [
+    {
+      "turn_status": "DONE",
+      "retry_count": 1,
+      "failure": null
+    },
+    {
+      "turn_status": "DONE",
+      "retry_count": 0,
+      "failure": null
+    }
+  ],
+  "cards": [
+    {
+      "kind": "FULL",
+      "version": 1,
+      "alert_id": "ALR-01M5AZP9Y7P5W88EWF5M5Q4SG5",
+      "text": "MAJOR (M1) — @tier10k reports that IssuerSeven will list ProjectK's ASSETK; official confirmation and the effective time remain unverified.\nScores D8 Mn/a (NOT_ESTIMABLE) Pn/a (NOT_SUPPORTED) X4 Fn/a (NOT_SUPPORTED) Sn/a (NOT_SUPPORTED) I6 · Stage: unverified APPROVED · Certainty: MEDIUM · Fresh: FRESH (public 12:00Z, known 12:00Z) · Data LOW\nVERIFIED: n/a (no verified claims) · NOT VERIFIED: IssuerSeven reportedly will list ProjectK ASSETK — Official IssuerSeven confirmation of the listing commitment is required; the replay has no eligible external search response.; ASSETK listing has no specified effective time in the report — An official effective date, trading availability statement, or active IssuerSeven instrument is required.\nWHY IT MATTERS\n• What changed: The reported listing concerns a registered M1 venue and would provide another retail trading channel if implemented.\n• Economic effect: The report does not establish trading availability, incremental buying, or a token-revenue mechanism; economic magnitude is not estimable. (start UNKNOWN · ramp CONDITIONAL · dependencies Official venue confirmation, Effective listing date and trading availability · timing LOW · materiality Unknown; report contains no effective time or measured incremental activity.)\n• Token capture: asset-k UNKNOWN — Reported listing would enable venue customers to trade ASSETK; realized access awaits confirmation and availability. No holder-revenue mechanism established. · holders revenue: n/a (not captured) — Official-source verification is limited by unavailable replay evidence, while incomplete market coverage prevents a reliable reaction assessment.\nWHO: primary project-k · secondary project-k (VENUE_DEX, unverified COMPATIBLE) · secondary robinhood (VENUE_DEX, unverified COMPATIBLE) · secondary n/a (Single listing report provides no accepted causal evidence of a secondary token beneficiary or competitor loss.; VENUE_DEX: UNKNOWN — Reported centralized venue listing supplies no verified secondary DEX beneficiary.; ORACLE_DATA: UNKNOWN — No oracle provider stated.; ISSUER_PRODUCT: UNKNOWN — Primary listing beneficiary is unverified; official venue confirmation is unavailable.; INTEROPERABILITY: UNKNOWN — No bridge or messaging partner stated.; SETTLEMENT_L1_L2: UNKNOWN — No settlement rail named.; CUSTODY_COMPLIANCE: UNKNOWN — No custody partner stated.; LENDING_COLLATERAL: UNKNOWN — No collateral integration stated.; LIQUIDITY_EXECUTION: UNKNOWN — No execution partner named.)\n── asset-k (PRIMARY) ──\nMARKET TRUTH: UNKNOWN — n/a (market facts unavailable); priced: n/a (event repricing unavailable) (EVENT n/a (NOT_AVAILABLE) raw; n/a (NOT_AVAILABLE) net BTC); excluded: bybit — full minute coverage incomplete; kraken — full minute coverage incomplete; okx — full minute coverage incomplete\nOUTLOOK: UNKNOWN · MEDIUM · best 24h (impact start: UNKNOWN) · base UNKNOWN: market evidence incomplete. · upside UNKNOWN until class and data resolve. · failure Thesis invalid if the event is denied.\nWHAT TO DO: WAIT — Thesis D · Trade D\nWHAT CHANGES THE ACTION: ↑ Data confidence becomes HIGH; re-grade. · ↓ Majority-volume spot SELL for two hourly windows.\nCONFIDENCE: LOW — main unknown: Spot venue coverage is incomplete: INCOMPLETE"
+    },
+    {
+      "kind": "UPDATE",
+      "version": 2,
+      "alert_id": "ALR-01M5AZP9Y7P5W88EWF5M5Q4SG5",
+      "text": "MAJOR (M1) — The declared synthetic S13 primary source confirms IssuerSeven's commitment to list ProjectK's ASSETK, without specifying when trading becomes available.\nScores D8 Mn/a (NOT_ESTIMABLE) Pn/a (NOT_SUPPORTED) X4 Fn/a (NOT_SUPPORTED) Sn/a (NOT_SUPPORTED) I6 · Stage: APPROVED · Certainty: HIGH · Fresh: FRESH (public 12:00Z, known 12:00Z) · Data LOW\nVERIFIED: IssuerSeven commits to listing ProjectK ASSETK [ITM-01M59HE4EXKR4V94YJBXBME19R] · NOT VERIFIED: ASSETK listing has no specified effective time in the report — An official effective date, trading availability statement, or active IssuerSeven instrument is required.\nWHY IT MATTERS\n• What changed: Within this synthetic replay, primary confirmation replaces the earlier unverified listing commitment and raises certainty to HIGH; it is not an authenticated real-world publication.\n• Economic effect: The commitment supports APPROVED, not LIVE: the effective date and trading availability remain unverified. (start UNKNOWN · ramp CONDITIONAL · dependencies Official effective listing date, Trading availability · timing LOW · materiality Not estimable; confirmation supplies no effective date or activity measurements.)\n• Token capture: asset-k UNKNOWN — Confirmed future listing commitment in the synthetic replay would enable IssuerSeven customers to trade ASSETK once available; no realized buying or holder revenue established. · holders revenue: n/a (not captured) — Prospective retail access meets M1, but incremental economic magnitude and token capture remain unknown, and market coverage remains incomplete.\nWHO: primary project-k · secondary project-k (VENUE_DEX, unverified COMPATIBLE) · secondary robinhood (VENUE_DEX, unverified COMPATIBLE) · secondary n/a (No source-supported secondary token beneficiary or negative causal thesis.; VENUE_DEX: UNKNOWN — No secondary DEX integration established.; ORACLE_DATA: UNKNOWN — No oracle provider stated.; ISSUER_PRODUCT: UNKNOWN — Confirmed prospective listing; token value capture remains unknown.; INTEROPERABILITY: UNKNOWN — No interoperability partner stated.; SETTLEMENT_L1_L2: UNKNOWN — No settlement rail named.; CUSTODY_COMPLIANCE: UNKNOWN — No custody partner stated.; LENDING_COLLATERAL: UNKNOWN — No collateral integration stated.; LIQUIDITY_EXECUTION: UNKNOWN — No execution partner named.)\n── asset-k (PRIMARY) ──\nMARKET TRUTH: UNKNOWN — n/a (market facts unavailable); priced: n/a (event repricing unavailable) (EVENT n/a (NOT_AVAILABLE) raw; n/a (NOT_AVAILABLE) net BTC); excluded: bybit — full minute coverage incomplete; kraken — full minute coverage incomplete; okx — full minute coverage incomplete\nOUTLOOK: UNKNOWN · MEDIUM · best 24h (impact start: UNKNOWN) · base UNKNOWN: market evidence incomplete. · upside UNKNOWN until class and data resolve. · failure Thesis invalid if the event is denied.\nWHAT TO DO: WAIT — Thesis D · Trade D\nWHAT CHANGES THE ACTION: ↑ Data confidence becomes HIGH; re-grade. · ↓ Majority-volume spot SELL for two hourly windows.\nCONFIDENCE: LOW — main unknown: Spot venue coverage is incomplete: INCOMPLETE"
+    }
+  ],
+  "tool_counts": {
+    "get_registry": 2,
+    "publish_card": 2,
+    "get_event": 1,
+    "set_beneficiaries": 3,
+    "record_event": 1,
+    "get_decision": 2,
+    "search_tank_items": 2,
+    "web_search": 1,
+    "list_open_events": 1,
+    "add_observation": 1,
+    "get_market_truth": 2,
+    "get_item": 2,
+    "set_assessment": 2
+  },
+  "tool_refusals": [
+    {
+      "tool": "web_search",
+      "status": "REFUSED",
+      "result": {
+        "ok": false,
+        "error": {
+          "type": "ReplayEvidenceUnavailable",
+          "reason": "REPLAY_EVIDENCE_UNAVAILABLE: no eligible recorded response for this request. External network is disabled. This is missing replay evidence, not an empty search or a live source failure; do not infer that confirmation is absent.",
+          "category": "VALIDATION"
+        }
+      }
+    },
+    {
+      "tool": "set_beneficiaries",
+      "status": "REFUSED",
+      "result": {
+        "ok": false,
+        "error": {
+          "type": "ValueError",
+          "reason": "Layer ISSUER_PRODUCT requires NONE/UNKNOWN reason",
+          "category": "VALIDATION"
+        }
+      }
+    }
+  ],
+  "native_errors": [
+    {
+      "id": "sevt_MkmvziXfeZ6VnLpp8c8o8",
+      "type": "session.error",
+      "execution_id": "sevt_req_ee9bc6645aa804e5fb35187038cb28f029dfab5655f610a68113401fe8a42764_0",
+      "error": {
+        "type": "unknown_error",
+        "message": "tank-codex API error (502): {\"type\":\"codex_gateway_error\",\"code\":\"codex_upstream_unavailable\",\"message\":\"codex_upstream_unavailable\"}",
+        "retry_status": {
+          "type": "retrying"
+        }
+      },
+      "processed_at": "2026-10-19T21:03:43.922Z"
+    }
+  ],
+  "failed_attempts": [
+    null
+  ],
+  "delivery": "NOT_RUN",
+  "exports_complete": true,
+  "large_inputs_retained_losslessly": [
+    {
+      "path": "qa-r45-candidate-masked-f24-driver/framework-bundles/d0b1c4f3c2af1fc1e135a1770a5f2849c5034e05086dd533177ed61c7acc522e/inputs.json",
+      "bytes": 71413250,
+      "sha256": "07b9e08a2029bba0c7dc59744a8b395df80dbcb4ef9967bcda46f39f3b07d8ea",
+      "retained": "losslessharvestarchive+canonicalbundle+hostpreparedcompressedpacket"
+    }
+  ],
+  "frozen_database": "tank_replay_r45_candidate_masked_f24_completed_20261019",
+  "database_oid": 1451977,
+  "native_cleanup": {
+    "catalog_empty": true,
+    "qa_healthy": true,
+    "no_active_replay_connections": true
+  },
+  "guard_errors": [],
+  "acceptance_scope": "masked_F24_first_outcome;sealed_evaluator_separate;not_normalRuntime_or_SENT"
+}

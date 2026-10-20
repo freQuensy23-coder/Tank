@@ -1,0 +1,12 @@
+[
+  {
+    "asset": "session-executions.ts",
+    "path": "packages/managed-agents-api/src/routes/session-executions.ts",
+    "sha256": "cad3086d5b06d1b335e7f554b36d950e5908e73f47e53e4dc5ba09be7475dbc4"
+  },
+  {
+    "asset": "node-session-execution-status.ts",
+    "path": "packages/control-plane-node/src/lib/node-session-execution-status.ts",
+    "sha256": "952af24c214b778c4b498ba422726e725ec7adaacd8a75fa94134d1b5e761e87"
+  }
+]

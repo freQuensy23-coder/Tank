@@ -1,0 +1,4 @@
+ 9ca3b05ec787acfb4b17bed37db5719fa777834f src/deps/bubblewrap-sys/vendor/bubblewrap (v0.11.0)
+ da631e117dcf8797bfda0f48bdaa05ac0fbcf7af src/deps/e2fsprogs-sys/vendor/e2fsprogs (v1.47.3)
+ e12b9b3780ffa8df9f3e1797b217d13453479167 src/deps/libkrun-sys/vendor/libkrun (v0.2.0-1051-ge12b9b3)
+ e0647fa7a3932c4570fb2c0fd483b9f7a382ebdd src/deps/libkrun-sys/vendor/libkrunfw (v2.0.0-197-ge0647fa)

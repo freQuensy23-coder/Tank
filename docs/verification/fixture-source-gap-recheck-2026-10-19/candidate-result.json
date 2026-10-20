@@ -1,0 +1,47 @@
+{
+  "created_at": "2026-10-19T09:03:57.435368Z",
+  "workspace_code_version": "9c8f84f4fea86e3ea8ed7e3746b120608788abbaf4431ad85e33dcda514077f7",
+  "fixture_reference_module_sha256": "4eda8dc87d94f1fc67ba594fa2c4f2a5d67f7c054b1fa4eb22d22b962062e3a5",
+  "image_pin_status": "REQUIRES_SUCCESSOR_IMAGE_AND_CONFIG_ALIGNMENT_BEFORE_ANY_EXECUTION",
+  "rows": [
+    {
+      "fixture_id": "F-03",
+      "packet": "data/replay/prepared/source-gap-successor-candidate-20261019/replay/inputs/F-03.json",
+      "sha256": "acb722730d45a263f5970c108d1c721ffa748fa4d6d3c8286a920b53560ad4c6",
+      "admission": "PASS_CURRENT_WORKSPACE_CODE_MATCH_ONLY_NOT_VERIFIED_IMAGE",
+      "source_count": 1,
+      "cutoff": "2026-09-24T16:13:00Z",
+      "source_publication_and_actual_receipts_unchanged": true,
+      "full_fixture_passed": false
+    },
+    {
+      "fixture_id": "F-10",
+      "packet": "data/replay/prepared/source-gap-successor-candidate-20261019/replay/inputs/F-10.json",
+      "sha256": "0cd40b2f12e1811679831e9b43ef35d3d9d45b2b66acfbe1bace854f3dd37f9d",
+      "admission": "PASS_CURRENT_WORKSPACE_CODE_MATCH_ONLY_NOT_VERIFIED_IMAGE",
+      "source_count": 2,
+      "cutoff": "2026-09-18T17:13:00Z",
+      "source_publication_and_actual_receipts_unchanged": true,
+      "full_fixture_passed": false
+    },
+    {
+      "fixture_id": "F-01",
+      "packet": "data/replay/prepared/source-gap-successor-candidate-20261019/replay/inputs/F-01.json",
+      "sha256": "b9165aa307a85c5d69bfe4e8441357beb2fb7a698a04a99d02c27991682d505b",
+      "admission": "PASS_CURRENT_WORKSPACE_CODE_MATCH_ONLY_NOT_VERIFIED_IMAGE",
+      "source_count": 1,
+      "cutoff": "2026-09-21T15:03:00Z",
+      "source_publication_and_actual_receipts_unchanged": true,
+      "full_fixture_passed": false,
+      "actual_producer": "tank.analysis.truth.compute_market_truth",
+      "move_class": "UNKNOWN",
+      "snapshot_fields_empty": true,
+      "snapshot_source_capture_claim": false,
+      "scope": "Missing approved retained observations, not historical market case acceptance"
+    }
+  ],
+  "canonical_changed": false,
+  "native_model_database_calls": 0,
+  "public_requests": 4,
+  "boundaries": "Uniform whole named minute end exclusive, original literal and precision retained; no claim exact historical call time"
+}

@@ -1,0 +1,79 @@
+{
+  "fixture_id": "F-09",
+  "code_version": "0d33995010c27568499fb6cd74f7cc37c0ac91a0017721db966dc129fa106552",
+  "config_version": "58daf19e9ed36d477dca6ff543523fd5b7b6cfed-dirty.91d070d93c23b1cc8fd93546ef34c4b2bfe764a83ebde061ed14214a5110229b",
+  "cli_exit_code": 0,
+  "elapsed_seconds": 106.14920408301987,
+  "framework_status": "COMPLETED",
+  "source_outcomes": [
+    {
+      "item_id": "ITM-01M58JAKHW9BGJ63Z6DBKE18NG",
+      "source_id": "S01",
+      "extraction_status": "DONE"
+    }
+  ],
+  "turn_outcomes": [
+    {
+      "turn_status": "DONE",
+      "retry_count": 0,
+      "failure": null
+    }
+  ],
+  "cards": [],
+  "tool_counts": {
+    "list_open_events": 1,
+    "set_assessment": 2,
+    "record_event": 2,
+    "search_tank_items": 1,
+    "get_item": 1
+  },
+  "tool_refusals": [
+    {
+      "tool": "set_assessment",
+      "status": "REFUSED",
+      "result": {
+        "ok": false,
+        "error": {
+          "type": "ValueError",
+          "reason": "Missing score requires reason",
+          "category": "VALIDATION"
+        }
+      }
+    },
+    {
+      "tool": "record_event",
+      "status": "REFUSED",
+      "result": {
+        "ok": false,
+        "error": {
+          "type": "ValueError",
+          "reason": "$.next_milestone: invalid type",
+          "category": "VALIDATION"
+        }
+      }
+    }
+  ],
+  "native_errors": [],
+  "failed_attempts": [
+    null
+  ],
+  "delivery": "NOT_RUN",
+  "exports_complete": true,
+  "large_inputs_retained_losslessly": [
+    {
+      "path": "qa-r38-masked-f09-driver/framework-bundles/dcafb3fafff45084469966f1fc0406a49a947f7cf528eb18eff4d8b3777c723f/inputs.json",
+      "bytes": 32140644,
+      "sha256": "9b613a0893211169ba411c3ec3f47d947bcdbeb45ffca68ff544255e9af9814a",
+      "retained": "losslessharvestarchive+canonicalbundle+hostpreparedcompressedpacket"
+    }
+  ],
+  "frozen_database": "tank_replay_r38_masked_f09_completed_20261019",
+  "database_oid": 1061439,
+  "native_cleanup": {
+    "catalog_empty": true,
+    "qa_healthy": true,
+    "no_active_replay_connections": true
+  },
+  "guard_errors": [],
+  "acceptance_scope": "masked_F09_first_outcome;sealed_evaluator_separate;not_normalRuntime_or_SENT"
+}

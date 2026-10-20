@@ -1,0 +1,78 @@
+{
+  "fixture_id": "F-11",
+  "ready": true,
+  "formula_phase": "COMPLETED",
+  "automated_checks": [
+    {
+      "assertion": {
+        "path": [
+          "market_truth",
+          0,
+          "spot",
+          "W1H",
+          "direction"
+        ],
+        "equals": "SELL"
+      },
+      "passed": false
+    },
+    {
+      "assertion": {
+        "path": [
+          "market_truth",
+          0,
+          "spot",
+          "W4H",
+          "direction"
+        ],
+        "equals": "SELL"
+      },
+      "passed": false
+    },
+    {
+      "assertion": {
+        "path": [
+          "decisions",
+          0,
+          "action"
+        ],
+        "in": [
+          "DONT_CHASE",
+          "WAIT"
+        ]
+      },
+      "passed": true
+    }
+  ],
+  "automated_passed": false,
+  "full_completed_errors": [
+    "assertion failed: {\"equals\":\"SELL\",\"path\":[\"market_truth\",0,\"spot\",\"W1H\",\"direction\"]}",
+    "assertion failed: {\"equals\":\"SELL\",\"path\":[\"market_truth\",0,\"spot\",\"W4H\",\"direction\"]}",
+    "required manual clause failed: 1h and 4h spot direction SELL; capital-weighted breadth on the sell side, Kraken shown as a small (~2.5%) buying venue; 4h native OI +8.18% → REAL_NATIVE with the markup component reported; divergence PERP_LED_MARKUP with ABSORPTION_CANDIDATE unresolved; venues with incomplete data in the window (in the Addendum case: Bybit spot current-day history) listed as excluded with reasons; action ∈ {DONT_CHASE, WAIT}."
+  ],
+  "case": {
+    "fixture_id": "F-11",
+    "case_description": "WLD — Market Truth validation case (Addendum 002-B)",
+    "cutoff_spec": "16 Oct 2026 12:30 UTC",
+    "assertion_spec": "1h and 4h spot direction SELL; capital-weighted breadth on the sell side, Kraken shown as a small (~2.5%) buying venue; 4h native OI +8.18% → REAL_NATIVE with the markup component reported; divergence PERP_LED_MARKUP with ABSORPTION_CANDIDATE unresolved; venues with incomplete data in the window (in the Addendum case: Bybit spot current-day history) listed as excluded with reasons; action ∈ {DONT_CHASE, WAIT}.",
+    "acceptance_input": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/inputs/input.json.zst",
+      "sha256": "ecf32b75a0cdd25e4a6b3b851094397e4b22ad391e9290d711854aec4ad88e7d"
+    },
+    "private_name_map": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/private/map.json",
+      "sha256": "7c19f17b5b6f82f772934b26ec9872e102e953a2e87c14ca17cbeda816f1a711"
+    },
+    "sealed_outcomes": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-packets-f11-baseline-v3/F-11/sealed/outcomes.json",
+      "sha256": "0f9b112ca2a36ab8ad0b1adb2809c2e8449a139d60ddfb406ab5b3e5923f47e0"
+    },
+    "acceptance_run": {
+      "path": "docs/verification/fixture-gap-audit-r82-2026-10-20/server-market-run-f11-baseline-v3/F-11/run.json",
+      "sha256": "ec07671c78c376c227509c3cfa00539524ac03b5e3433c4052e9b06fdb4ab1b0"
+    }
+  },
+  "economic_context": "EMPTY_UNINVENTED",
+  "native_wording_phase": "PLANNED_NOT_RUN",
+  "canonical_adopted": false
+}

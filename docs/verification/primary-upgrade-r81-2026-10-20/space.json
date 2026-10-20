@@ -1,0 +1,14 @@
+{
+  "at": "2026-10-20T10:57:37.440232+00:00",
+  "filesystems": {
+    "/backup": {
+      "free_bytes": 3765575680,
+      "total_bytes": 994662584320
+    },
+    "/data": {
+      "free_bytes": 6599151616,
+      "total_bytes": 83953606656
+    }
+  },
+  "reserve_bytes": 1073741824
+}

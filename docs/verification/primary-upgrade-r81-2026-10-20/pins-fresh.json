@@ -1,0 +1,30 @@
+{
+  "frozen_file_references": {
+    "/data/bundles": {
+      "inspected_files": 0,
+      "matched_files": [],
+      "symlinks": [],
+      "unreadable_files": [],
+      "verified_legacy_sql_audit_files_excluded": 12
+    },
+    "/data/replay": {
+      "inspected_files": 0,
+      "matched_files": [],
+      "symlinks": [],
+      "unreadable_files": [],
+      "verified_legacy_sql_audit_files_excluded": 0
+    }
+  },
+  "pin_checked_at": "2026-10-20T10:57:39.390867+00:00",
+  "raw_frames_reference_document_counts": {
+    "ana.market_truth": 0,
+    "ops.tool_calls": 0,
+    "out.alerts": 0,
+    "out.evidence_bundles": 0,
+    "out.reaction_checkpoints": 0,
+    "qa.fixtures": 0,
+    "qa.replay_runs": 0,
+    "qa.reviews": 0
+  },
+  "raw_frames_source_root": "/data/raw/market_frames"
+}

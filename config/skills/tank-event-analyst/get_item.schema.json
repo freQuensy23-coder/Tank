@@ -11,5 +11,5 @@
   "required": [
     "item_id"
   ],
-  "description": "Reads the item. Returns: Text, quoted text, source, author, times."
+  "description": "Read a collected source item by canonical item_id. Returns stored text, quoted/reposted text, source, author/publisher, URL and timestamps with provenance and missing-data reasons. Use its exact stored quotes as evidence; do not replace unknown publication time with observation time."
 }

@@ -1,0 +1,22 @@
+{
+  "status": "PASS",
+  "base_final3_to_final4_only_changes": [
+    "apps/main-node/Dockerfile.tank",
+    "tank-overlay.json own Dockerfile digest"
+  ],
+  "dockerfile_replacement": "USER root; install -d -o node -g node /app/replay-evidence; USER node",
+  "dockerfile_sha256": "a55f75be7fdca953ea8cd42d0e26c4cfbf80745ba8715a5725915cd44a39d5e4",
+  "buildfinal_to_composite_only_changes": [
+    "packages/control-plane-node/src/modules/node-managed.ts",
+    "tank-overlay.json",
+    "tank-retained-candidate.json"
+  ],
+  "assembly_change_only_embedded_identity": true,
+  "prior_runtime_identity": "7d02fd923164fccbea363d99c4ff6bf837fefa8c51a24c72a7a0722f4c61939e",
+  "runtime_identity": "f492c9c3e1b12fdfcde945745b6c629be85464951f4f23c55a8d1de0f3b39314",
+  "composite_manifest_sha256": "69e26287ee8f0ad9259629446294bfd7ab4a2d167843263e25eb66f614c4502f",
+  "base_stage_manifest_sha256": "9604fb1cb41d59effd45bd65a44cac8b19b276ccc6d366740f1e73e2d1bd247d",
+  "all_final_file_hashes_verified": 43,
+  "worker_runtime_modules_policy_unchanged": true,
+  "native_vm": "NOT_RUN"
+}

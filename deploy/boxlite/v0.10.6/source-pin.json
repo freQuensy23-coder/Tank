@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/boxlite-ai/boxlite.git",
+  "version": "0.10.6",
+  "commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+  "libkrun_commit": "e12b9b3780ffa8df9f3e1797b217d13453479167",
+  "Cargo.lock": "720f5f70fdd48ca15d170d8ba8bf61832378e8615dadfb12a84b55761b571149",
+  "libkrun_Cargo.lock": "353fe6bb081d1cd4b4e24aa4ef323319709543c65b7304e015320a563688d3c2",
+  "gvproxy_go.sum": "84dddcab5d612e04cac72c140477a7eeeb8ec01088f237f1dd0de157d9217c47",
+  "source_tracked_diff": "clean before and after compilation"
+}

@@ -120,6 +120,7 @@ async def test_invalidated_session_finalizes_only_after_sent_terminal_correction
             "event_id": "e",
             "kind": "UPDATE",
             "terminal_correction": True,
+            "delivery_immediate": True,
             "card_text": "Official denial",
             "decisions": [],
         },
@@ -159,6 +160,7 @@ async def test_invalidated_session_waits_for_every_call_to_close():
             "event_id": "e",
             "kind": "UPDATE",
             "terminal_correction": True,
+            "delivery_immediate": True,
             "card_text": "Denial",
             "decisions": [],
         },
@@ -185,6 +187,7 @@ async def test_invalidated_session_waits_for_every_call_to_close():
                 "event_id": "e",
                 "kind": "UPDATE",
                 "terminal_correction": True,
+                "delivery_immediate": True,
                 "card_text": "EXIT denial",
                 "decisions": ["exit"],
             },
@@ -294,11 +297,10 @@ async def test_expiry_notice_never_reopens_frozen_start_and_consumes_only_delive
 
 
 @pytest.mark.asyncio
-async def test_pending_update_survives_restart_waits_sent_clock_and_coalesces_before_exit(monkeypatch):
+async def test_accepted_scheduled_update_survives_restart_and_later_exit(monkeypatch):
     from datetime import timedelta
 
     import tank.delivery as delivery_module
-    from tank.delivery import DeliveryDeferred
     from tank.util import iso, utcnow
 
     base = utcnow()
@@ -365,12 +367,12 @@ async def test_pending_update_survives_restart_waits_sent_clock_and_coalesces_be
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 43}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
-        with pytest.raises(DeliveryDeferred) as exc:
-            await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
-        assert exc.value.run_after == iso(base + timedelta(minutes=15)) and not requests
-        # A new process sees the same durable pending candidate and still cannot send early.
-        with pytest.raises(DeliveryDeferred):
-            await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
+        for _ in range(2):
+            with pytest.raises(DeliveryError) as exc:
+                await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
+            assert exc.value.retry_after == 13 * 60
+        assert not requests
+        assert not await repo.list("out.deliveries", filters={"alert_id": "a", "version": 2})
         clock[0] = base + timedelta(minutes=3)
         await repo.put(
             "ana.decisions", "exit", {"dec_id": "exit", "event_id": "e", "token_id": "T", "action": "EXIT"}
@@ -395,12 +397,13 @@ async def test_pending_update_survives_restart_waits_sent_clock_and_coalesces_be
         clock[0] = base + timedelta(minutes=20)
         await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
         await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
-        assert len(requests) == 1
-    suppressed = await repo.list("out.deliveries", filters={"alert_id": "a", "version": 2})
-    assert len(suppressed) == 1 and suppressed[0]["suppressed"]
+        assert len(requests) == 2
+    ledger = await repo.list("out.deliveries", filters={"alert_id": "a", "version": 2})
+    assert [row["status"] for row in ledger] == ["GENERATED", "SENT"]
     import json
 
-    assert json.loads(requests[0].content)["reply_parameters"] == {"message_id": 42}
+    assert all(json.loads(request.content)["reply_parameters"] == {"message_id": 42} for request in requests)
+    assert (await repo.get("ana.calls", "call"))["status"] == "CLOSED"
 
 
 @pytest.mark.asyncio
@@ -408,11 +411,10 @@ async def test_normal_update_sends_at_fifteen_minutes_and_is_idempotent(monkeypa
     from datetime import timedelta
 
     import tank.delivery as delivery_module
-    from tank.delivery import DeliveryDeferred
     from tank.util import iso, utcnow
 
     base = utcnow()
-    clock = [base + timedelta(minutes=2)]
+    clock = [base + timedelta(minutes=15)]
     monkeypatch.setattr(delivery_module, "utcnow", lambda: clock[0])
     repo = MemoryRepository()
     await repo.put("evt.events", "e", {"event_id": "e"})
@@ -467,9 +469,6 @@ async def test_normal_update_sends_at_fifteen_minutes_and_is_idempotent(monkeypa
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 43}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
-        with pytest.raises(DeliveryDeferred):
-            await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
-        clock[0] = base + timedelta(minutes=15)
         service = DeliveryService(repo, settings, http=http)
         await service.deliver({"alert_id": "a", "version": 2})
         await service.deliver({"alert_id": "a", "version": 2})
@@ -628,3 +627,346 @@ async def test_first_sent_persists_alerted_until_subsequent_scheduler_transition
     await Scheduler(repo, SimpleNamespace(), None, None).lifecycle(utcnow())
     event = await repo.get("evt.events", "e")
     assert event["lifecycle"] == "MONITORING" and event["monitoring_at"] and event["alerted_at"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_ordinary_update_flag_preserves_rate_with_persistent_safety():
+    from datetime import timedelta
+
+    from tank.util import iso, utcnow
+
+    repo = MemoryRepository()
+    await repo.put("evt.events", "e", {"event_id": "e"})
+    await repo.put(
+        "ana.decisions", "exit", {"dec_id": "exit", "event_id": "e", "token_id": "T", "action": "EXIT"}
+    )
+    await repo.put(
+        "out.alerts",
+        "a:1",
+        {"alert_id": "a", "version": 1, "event_id": "e", "card_text": "Denial", "decisions": ["exit"]},
+        immutable=True,
+    )
+    await repo.put(
+        "out.deliveries",
+        "sent",
+        {
+            "alert_id": "a",
+            "version": 1,
+            "channel": "telegram:alerts",
+            "status": "SENT",
+            "message_ref": "42",
+            "attempt": 1,
+            "at": iso(),
+        },
+        immutable=True,
+    )
+    await repo.put(
+        "out.alerts",
+        "a:2",
+        {
+            "alert_id": "a",
+            "version": 2,
+            "event_id": "e",
+            "kind": "UPDATE",
+            "card_text": "Class changed",
+            "decisions": ["exit"],
+            "delivery_immediate": False,
+            "delivery_not_before": iso(utcnow() + timedelta(minutes=15)),
+            "card_struct": {"event": {"contradictions": [{"type": "FATAL"}]}},
+        },
+        immutable=True,
+    )
+    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: pytest.fail("Ordinary update sent early"))
+    ) as http:
+        with pytest.raises(DeliveryError) as exc:
+            await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 2})
+        assert 14 * 60 < exc.value.retry_after <= 15 * 60
+    assert not await repo.list("out.deliveries", filters={"alert_id": "a", "version": 2})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("precision", ["BUCKET(1m)", None])
+async def test_delivery_ledger_and_calls_keep_source_precision_and_actual_clocks(precision):
+    repo = await setup_repo()
+    # A fresh fixture record avoids rewriting an immutable historical alert.
+    alert = {
+        "alert_id": "precision",
+        "version": 1,
+        "event_id": "e",
+        "card_text": "Fixture",
+        "decisions": ["d"],
+        "generated_at": "2026-10-17T10:00:00Z",
+    }
+    if precision:
+        alert["generated_at_prec"] = precision
+    await repo.put("out.alerts", "precision:1", alert, immutable=True)
+    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda r: httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
+        )
+    ) as http:
+        await DeliveryService(repo, settings, http=http).deliver({"alert_id": "precision", "version": 1})
+    ledger = await repo.list("out.deliveries", filters={"alert_id": "precision"})
+    sent = next(row for row in ledger if row["status"] == "SENT")
+    assert sent["generated_at"] == alert["generated_at"]
+    assert sent["generated_at_prec"] == precision
+    if precision is None:
+        assert sent["generated_at_prec_reason"] == "INCOMPLETE"
+    assert all(
+        row["at_prec"] == "COLLECTION_ONLY" and row["attempted_at_prec"] == "COLLECTION_ONLY"
+        for row in ledger
+    )
+    assert sent["sent_at_prec"] == "COLLECTION_ONLY" and sent["sent_at"] == sent["at"]
+    call = (await repo.list("ana.calls"))[0]
+    assert call["opened_at"] == sent["sent_at"] and call["opened_at_prec"] == "COLLECTION_ONLY"
+    assert call["alert_generated_at_prec"] == precision
+    assert call["alert_generated_at"] == alert["generated_at"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("precision", ["BUCKET(1m)", None])
+async def test_delivery_due_guard_preserves_sent_anchor_and_records_no_attempt(precision):
+    from datetime import timedelta
+
+    from tank.util import iso, utcnow
+
+    repo = MemoryRepository()
+    await repo.put(
+        "out.alerts",
+        "p:1",
+        {"alert_id": "p", "version": 1, "event_id": "e", "card_text": "Original", "decisions": []},
+        immutable=True,
+    )
+    stamp = {
+        "alert_id": "p",
+        "version": 1,
+        "channel": "telegram:alerts",
+        "status": "SENT",
+        "message_ref": "42",
+        "attempt": 1,
+        "at": iso(),
+    }
+    if precision:
+        stamp["at_prec"] = precision
+    await repo.put("out.deliveries", "sent", stamp, immutable=True)
+    await repo.put(
+        "out.alerts",
+        "p:2",
+        {
+            "alert_id": "p",
+            "version": 2,
+            "event_id": "e",
+            "kind": "UPDATE",
+            "card_text": "Update",
+            "decisions": [],
+            "delivery_immediate": False,
+            "delivery_not_before": iso(utcnow() + timedelta(minutes=15)),
+        },
+        immutable=True,
+    )
+    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: pytest.fail("Sent early"))) as http:
+        with pytest.raises(DeliveryError) as exc:
+            await DeliveryService(repo, settings, http=http).deliver({"alert_id": "p", "version": 2})
+        assert 14 * 60 < exc.value.retry_after <= 15 * 60
+    assert await repo.get("out.deliveries", "sent") == stamp
+    assert not await repo.list("out.deliveries", filters={"alert_id": "p", "version": 2})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "freshness,event_class,legacy_rate_limited,reason",
+    [
+        ("STALE", "MAJOR", False, "STALE"),
+        ("FRESH", "LOW", False, "BELOW_MAJOR"),
+        ("FRESH", "MATERIAL", False, "BELOW_MAJOR"),
+        ("FRESH", "MAJOR", True, "UPDATE_RATE_LIMIT"),
+    ],
+)
+async def test_accepted_immutable_card_is_not_semantically_recensored_by_delivery(
+    freshness, event_class, legacy_rate_limited, reason
+):
+    repo = MemoryRepository()
+    await repo.put(
+        "out.alerts",
+        "legacy:1",
+        {
+            "alert_id": "legacy",
+            "version": 1,
+            "event_id": "event",
+            "kind": "UPDATE",
+            "card_text": "Historical candidate",
+            "decisions": [],
+            "rate_limited": legacy_rate_limited,
+            "delivery_immediate": False,
+            "card_struct": {"event": {"freshness": freshness}, "assessment": {"class": event_class}},
+        },
+        immutable=True,
+    )
+    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
+        )
+    ) as http:
+        for _ in range(2):
+            await DeliveryService(repo, settings, http=http).deliver({"alert_id": "legacy", "version": 1})
+    ledger = await repo.list("out.deliveries")
+    assert [row["status"] for row in ledger] == ["GENERATED", "SENT"]
+    assert all(not row.get("suppressed") for row in ledger)
+    assert not await repo.list("ops.jobs")
+    assert not await repo.list("ana.calls")
+
+
+@pytest.mark.asyncio
+async def test_historical_suppression_is_preserved_without_censoring_explicit_retry():
+    repo = await setup_repo()
+    suppressed = {
+        "alert_id": "a",
+        "version": 1,
+        "channel": "telegram:alerts",
+        "status": "FAILED",
+        "suppressed": True,
+        "suppression_reason": "STALE",
+        "attempt": 0,
+    }
+    await repo.put("out.deliveries", "old-suppression", suppressed, immutable=True)
+    requests = []
+
+    def send(request):
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
+
+    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+        for _ in range(2):
+            await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 1})
+    assert len(requests) == 1
+    assert await repo.get("out.deliveries", "old-suppression") == suppressed
+    assert len(await repo.list("out.deliveries", filters={"status": "SENT"})) == 1
+    assert len(await repo.list("ana.calls", filters={"status": "OPEN"})) == 1
+    assert not await repo.list("ops.jobs")  # No historical job is reset or requeued.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["memory", "postgres"])
+async def test_queued_updates_keep_actual_sent_spacing_through_late_send_and_restart(monkeypatch, backend):
+    import copy
+    import json
+    import os
+    from datetime import timedelta
+
+    from tank.storage import PostgresRepository
+    from tank.util import iso, new_id, sha256, utcnow
+
+    database_url = os.getenv("TANK_TEST_DATABASE_URL")
+    if backend == "postgres" and not database_url:
+        pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
+    repo = PostgresRepository(database_url) if backend == "postgres" else MemoryRepository()
+    await repo.open()
+    if backend == "postgres":
+        await repo.migrate()
+    base = utcnow() - timedelta(hours=1)
+    clock = [base + timedelta(minutes=25)]
+    monkeypatch.setattr("tank.delivery.utcnow", lambda: clock[0])
+    aid = new_id("alert")
+    event_id = new_id("event")
+    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    requests = []
+
+    def send(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 42 + len(requests)}})
+
+    try:
+        await repo.put(
+            "evt.events",
+            event_id,
+            {
+                "event_id": event_id,
+                "statement": "Synthetic accepted event",
+                "theme_tags": [],
+                "tokens_mentioned": [],
+                "public_at": iso(base),
+                "public_at_prec": "EXACT",
+                "public_at_basis": "Synthetic fixture timestamp",
+                "known_to_us_at": iso(base),
+                "freshness": "FRESH",
+                "event_state": "APPROVED",
+                "state_verified": True,
+                "certainty": "HIGH",
+                "timing_confidence": "HIGH",
+                "best_source_class": "PRIMARY",
+                "lifecycle": "MONITORING",
+            },
+        )
+        digest = sha256({"fixture": aid})
+        await repo.put(
+            "out.evidence_bundles",
+            digest,
+            {"bundle_id": "EVB-" + digest, "sha256": digest, "payload": {"fixture": aid}},
+            immutable=True,
+        )
+        for version, due in [(1, 0), (2, 15), (3, 30)]:
+            await repo.put(
+                "out.alerts",
+                f"{aid}:{version}",
+                {
+                    "alert_id": aid,
+                    "version": version,
+                    "event_id": event_id,
+                    "kind": "FULL" if version == 1 else "UPDATE",
+                    "card_text": f"Accepted immutable version {version}",
+                    "decisions": [],
+                    "card_struct": {"event": {"thresholds": {"update_rate_limit_s": 900}}},
+                    "evidence_bundle_id": digest,
+                    "config_version": "fixture",
+                    "code_version": "fixture",
+                    "delivery_immediate": False,
+                    "generated_at": iso(base + timedelta(minutes=version)),
+                    "delivery_not_before": iso(base + timedelta(minutes=due)),
+                },
+                immutable=True,
+            )
+        await repo.put(
+            "out.deliveries",
+            new_id("delivery"),
+            {
+                "alert_id": aid,
+                "version": 1,
+                "channel": "telegram:alerts",
+                "status": "SENT",
+                "message_ref": "42",
+                "attempt": 1,
+                "at": iso(base),
+                "at_prec": "COLLECTION_ONLY",
+            },
+            immutable=True,
+        )
+        frozen = copy.deepcopy(await repo.get("out.alerts", f"{aid}:3"))
+        async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+            await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 2})
+            assert len(requests) == 1
+            clock[0] = base + timedelta(minutes=30)
+            with pytest.raises(DeliveryError) as deferred:
+                await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 3})
+            assert deferred.value.retry_after == 10 * 60
+            assert len(requests) == 1
+            assert not await repo.list("out.deliveries", filters={"alert_id": aid, "version": 3})
+            if backend == "postgres":
+                await repo.close()
+                repo = PostgresRepository(database_url)
+                await repo.open()
+            clock[0] = base + timedelta(minutes=40)
+            await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 3})
+            await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 3})
+            assert len(requests) == 2
+            assert all(request["reply_parameters"] == {"message_id": 42} for request in requests)
+            sent = await repo.list("out.deliveries", filters={"alert_id": aid, "status": "SENT"})
+            assert [row["version"] for row in sorted(sent, key=lambda row: row["at"])] == [1, 2, 3]
+            assert await repo.get("out.alerts", f"{aid}:3") == frozen
+    finally:
+        await repo.close()

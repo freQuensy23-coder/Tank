@@ -22,5 +22,5 @@
     "subject",
     "evidence"
   ],
-  "description": "Scout proposal (\u00a710). Returns: Proposal id."
+  "description": "Record a candidate reusable pattern for adversarial scout review, with supporting event examples, proposed rule and reason it is not already covered. Returns the proposal ID. This creates review work only; it does not approve a category, change production rules or expand the fixed token universe."
 }
