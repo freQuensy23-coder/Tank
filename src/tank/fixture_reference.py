@@ -585,6 +585,22 @@ def project_original_source(kind, original, selector):
             post = obj["post_stream"]["posts"][0]
             fields = ("cooked", "created_at", "updated_at", "version", "last_edited_at", "username")
             result = {"post_stream": {"posts": [{k: post[k] for k in fields if k in post}]}}
+        elif kind == "DISCOURSE_TOPIC_POST_V1":
+            # One reply selected by post_number; later posts of the topic stay host-only.
+            if (
+                not isinstance(selector, dict)
+                or set(selector) != {"post_number"}
+                or type(selector["post_number"]) is not int
+            ):
+                raise ValueError("Discourse topic post projection requires an explicit integer post_number")
+            matches = [p for p in obj["post_stream"]["posts"] if p.get("post_number") == selector["post_number"]]
+            if len(matches) != 1:
+                raise ValueError("Discourse topic post selection must be unique")
+            fields = ("id", "post_number", "cooked", "created_at", "updated_at", "version", "last_edited_at", "username")
+            result = {
+                "topic_id": obj.get("id"),
+                "post_stream": {"posts": [{k: matches[0][k] for k in fields if k in matches[0]}]},
+            }
         elif kind == "BINANCE_CMS_ORIGINAL_V1" and selector == "/data":
             fields = ("code", "title", "body", "publishDate", "version", "lastUpdateTime")
             result = {"data": {k: obj["data"][k] for k in fields if k in obj["data"]}}
@@ -701,6 +717,25 @@ def verify_derivation(record, proof, raw, *, signed_original=None):
                 ):
                     raise ValueError("Binance original publication clock mismatch")
                 derived = parsers.binance_body(article["body"])
+            elif kind == "DISCOURSE_TOPIC_POST_V1":
+                posts = payload["post_stream"]["posts"]
+                if len(posts) != 1:
+                    raise ValueError("Discourse topic post view must carry exactly one post")
+                post = posts[0]
+                if post.get("post_number") != (descriptor.get("selector") or {}).get("post_number"):
+                    raise ValueError("Discourse topic post number differs from the declared selector")
+                if (
+                    post["version"] != 1
+                    or post["created_at"] != post["updated_at"]
+                    or post.get("last_edited_at") is not None
+                ):
+                    raise ValueError("Discourse topic post version is unproven")
+                if (
+                    parse_time(post["created_at"]) != parse_time(record["published_at"])
+                    or propagate_timestamp(record, "published_at").precision != "EXACT"
+                ):
+                    raise ValueError("Discourse topic post publication clock mismatch")
+                derived = parsers.text(post["cooked"])
             elif kind == "DISCOURSE_FIRST_POST_V1":
                 post = payload["post_stream"]["posts"][0]
                 if (
