@@ -1,0 +1,1079 @@
+{
+  "log": [
+    {
+      "t": "2026-10-20T17:44:48.470380Z",
+      "kind": "start",
+      "backend": "postgres",
+      "hold_s": 900
+    },
+    {
+      "t": "2026-10-20T17:45:01.219334Z",
+      "kind": "record_event",
+      "event_id": "EVT-01M5D6N8WV9WR7J75VS1YWH2WR",
+      "tokens_mentioned": [
+        "world:WLD"
+      ],
+      "entities": [
+        {
+          "role": "ACTOR",
+          "entity_id": "world"
+        }
+      ],
+      "state": "LIVE"
+    },
+    {
+      "t": "2026-10-20T17:45:02.551474Z",
+      "kind": "telegram.sendMessage",
+      "message_id": 1001,
+      "chat": "-100222",
+      "reply_to": null,
+      "first_line": "Tank 24h: alerts=0; hot tokens=0; queue lag=0s; analysis backlog queued=1, running=0; LLM spending=$0"
+    },
+    {
+      "t": "2026-10-20T17:45:03.229132Z",
+      "kind": "set_assessment",
+      "final_class": "MAJOR",
+      "caps": null
+    },
+    {
+      "t": "2026-10-20T17:45:04.455293Z",
+      "kind": "get_decision",
+      "trigger": "NEW_ITEM",
+      "action": "WAIT",
+      "rule": "A1",
+      "tactical": false,
+      "conditions": [
+        {
+          "role": "UPGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Data confidence becomes HIGH; re-grade."
+        },
+        {
+          "role": "DOWNGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Spot SELL with most volume selling for two consecutive hourly windows."
+        },
+        {
+          "role": "INVALIDATION",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Hourly close below the event invalidation level."
+        },
+        {
+          "role": "INVALIDATION",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "A fatal contradiction invalidates the thesis."
+        },
+        {
+          "role": "UPGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Milestone verified; re-score the event."
+        },
+        {
+          "role": "DOWNGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Milestone failed or missed its window; re-score, fatal when thesis-dependent."
+        }
+      ]
+    },
+    {
+      "t": "2026-10-20T17:45:05.231240Z",
+      "kind": "publish_card",
+      "trigger": "NEW_ITEM",
+      "published": true,
+      "reason": "GENERATED",
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 1,
+      "delivery_not_before": "2026-10-20T17:45:04.488064Z"
+    },
+    {
+      "t": "2026-10-20T17:45:05.517121Z",
+      "kind": "telegram.sendMessage",
+      "message_id": 1002,
+      "chat": "-100111",
+      "reply_to": null,
+      "first_line": "<b>MAJOR (M3) \u2014 World launches payments in World App</b>"
+    },
+    {
+      "t": "2026-10-20T17:45:07.232971Z",
+      "kind": "reached",
+      "step": "FULL card sent"
+    },
+    {
+      "t": "2026-10-20T17:45:37.234676Z",
+      "kind": "scenario",
+      "step": "Data Confidence HIGH"
+    },
+    {
+      "t": "2026-10-20T17:46:02.916436Z",
+      "kind": "agent.message",
+      "message": "CONDITION_FIRED",
+      "condition": "Data confidence becomes HIGH; re-grade."
+    },
+    {
+      "t": "2026-10-20T17:46:03.279756Z",
+      "kind": "get_decision",
+      "trigger": "CONDITION_FIRED",
+      "action": "START",
+      "rule": "A5",
+      "tactical": false,
+      "conditions": [
+        {
+          "role": "UPGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Spot BUY with most volume buying for two consecutive hourly windows and native OI not above normal."
+        },
+        {
+          "role": "DOWNGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Spot SELL with most volume selling for two consecutive hourly windows."
+        },
+        {
+          "role": "INVALIDATION",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Hourly close below the event invalidation level."
+        },
+        {
+          "role": "INVALIDATION",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "A fatal contradiction invalidates the thesis."
+        },
+        {
+          "role": "UPGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Milestone verified; re-score the event."
+        },
+        {
+          "role": "DOWNGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Milestone failed or missed its window; re-score, fatal when thesis-dependent."
+        }
+      ]
+    },
+    {
+      "t": "2026-10-20T17:46:04.150253Z",
+      "kind": "publish_card",
+      "trigger": "CONDITION_FIRED",
+      "published": true,
+      "reason": "GENERATED",
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 2,
+      "delivery_not_before": "2026-10-20T17:46:03.331577Z"
+    },
+    {
+      "t": "2026-10-20T17:46:04.206936Z",
+      "kind": "telegram.sendMessage",
+      "message_id": 1003,
+      "chat": "-100111",
+      "reply_to": 1002,
+      "first_line": "<b>MAJOR (M3) \u2014 World launches payments in World App</b>"
+    },
+    {
+      "t": "2026-10-20T17:46:05.251751Z",
+      "kind": "reached",
+      "step": "START update sent"
+    },
+    {
+      "t": "2026-10-20T17:46:05.254495Z",
+      "kind": "calls",
+      "calls": [
+        {
+          "status": "OPEN",
+          "entry_ref_price": "10.4",
+          "invalidation_price": "10"
+        }
+      ]
+    },
+    {
+      "t": "2026-10-20T17:46:05.280285Z",
+      "kind": "agent.message",
+      "message": "ITEM_ADDED",
+      "condition": null
+    },
+    {
+      "t": "2026-10-20T17:46:05.406577Z",
+      "kind": "get_decision",
+      "trigger": "ITEM_ADDED",
+      "action": "HOLD",
+      "rule": "B4",
+      "tactical": false,
+      "conditions": [
+        {
+          "role": "UPGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Spot BUY with most volume buying for two consecutive hourly windows and native OI not above normal."
+        },
+        {
+          "role": "DOWNGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Spot cohort BROAD SELL with most volume selling for two consecutive hourly windows; REDUCE."
+        },
+        {
+          "role": "INVALIDATION",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Hourly close below the event invalidation level."
+        },
+        {
+          "role": "INVALIDATION",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "A fatal contradiction invalidates the thesis."
+        }
+      ]
+    },
+    {
+      "t": "2026-10-20T17:46:05.453850Z",
+      "kind": "publish_card",
+      "trigger": "ITEM_ADDED",
+      "published": false,
+      "reason": "STALE_STATE_CHANGE",
+      "alert_id": null,
+      "version": null,
+      "delivery_not_before": null
+    },
+    {
+      "t": "2026-10-20T17:46:07.266849Z",
+      "kind": "reached",
+      "step": "STALE update handled"
+    },
+    {
+      "t": "2026-10-20T17:50:00.601940Z",
+      "kind": "agent.message",
+      "message": "MILESTONE",
+      "condition": null
+    },
+    {
+      "t": "2026-10-20T17:50:00.941416Z",
+      "kind": "get_decision",
+      "trigger": "MILESTONE",
+      "action": "HOLD",
+      "rule": "B4",
+      "tactical": false,
+      "conditions": [
+        {
+          "role": "UPGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Spot BUY with most volume buying for two consecutive hourly windows and native OI not above normal."
+        },
+        {
+          "role": "DOWNGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Spot cohort BROAD SELL with most volume selling for two consecutive hourly windows; REDUCE."
+        },
+        {
+          "role": "INVALIDATION",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Hourly close below the event invalidation level."
+        },
+        {
+          "role": "INVALIDATION",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "A fatal contradiction invalidates the thesis."
+        }
+      ]
+    },
+    {
+      "t": "2026-10-20T17:50:02.921967Z",
+      "kind": "publish_card",
+      "trigger": "MILESTONE",
+      "published": true,
+      "reason": "QUEUED_RATE_LIMIT",
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 3,
+      "delivery_not_before": "2026-10-20T18:01:04.210700Z"
+    },
+    {
+      "t": "2026-10-20T17:50:03.880677Z",
+      "kind": "reached",
+      "step": "MILESTONE update handled"
+    },
+    {
+      "t": "2026-10-20T17:51:04.014386Z",
+      "kind": "agent.message",
+      "message": "ITEM_ADDED",
+      "condition": null
+    },
+    {
+      "t": "2026-10-20T17:51:04.155888Z",
+      "kind": "get_decision",
+      "trigger": "ITEM_ADDED",
+      "action": "EXIT",
+      "rule": "B1",
+      "tactical": false,
+      "conditions": [
+        {
+          "role": "UPGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Spot BUY with most volume buying for two consecutive hourly windows and native OI not above normal."
+        },
+        {
+          "role": "DOWNGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Spot cohort BROAD SELL with most volume selling for two consecutive hourly windows; REDUCE."
+        },
+        {
+          "role": "INVALIDATION",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Hourly close below the event invalidation level."
+        },
+        {
+          "role": "INVALIDATION",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "A fatal contradiction invalidates the thesis."
+        }
+      ]
+    },
+    {
+      "t": "2026-10-20T17:51:04.891377Z",
+      "kind": "publish_card",
+      "trigger": "ITEM_ADDED",
+      "published": true,
+      "reason": "GENERATED",
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 4,
+      "delivery_not_before": "2026-10-20T17:51:04.199362Z"
+    },
+    {
+      "t": "2026-10-20T17:51:04.954080Z",
+      "kind": "telegram.sendMessage",
+      "message_id": 1004,
+      "chat": "-100111",
+      "reply_to": 1002,
+      "first_line": "<b>MAJOR (M3) \u2014 World launches payments in World App</b>"
+    },
+    {
+      "t": "2026-10-20T17:51:05.930171Z",
+      "kind": "reached",
+      "step": "EXIT update sent"
+    },
+    {
+      "t": "2026-10-20T17:51:05.930275Z",
+      "kind": "scenario",
+      "step": "waiting past the held slot",
+      "until": "2026-10-20T18:07:35.930263Z"
+    },
+    {
+      "t": "2026-10-20T17:52:04.183434Z",
+      "kind": "agent.message",
+      "message": "CONDITION_FIRED",
+      "condition": "A fatal contradiction invalidates the thesis."
+    },
+    {
+      "t": "2026-10-20T17:52:04.265191Z",
+      "kind": "get_decision",
+      "trigger": "CONDITION_FIRED",
+      "action": "WAIT",
+      "rule": "A3",
+      "tactical": false,
+      "conditions": [
+        {
+          "role": "UPGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Data HIGH and class resolves to spot led accumulation or organic mixed."
+        },
+        {
+          "role": "DOWNGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Spot SELL with most volume selling for two consecutive hourly windows."
+        },
+        {
+          "role": "INVALIDATION",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Hourly close below the event invalidation level."
+        },
+        {
+          "role": "INVALIDATION",
+          "status": "ARMED",
+          "rearmed_from": "CND-01M5D6NCMJX1QZ5ZFJAMTXWQ2D",
+          "text": "A fatal contradiction invalidates the thesis."
+        }
+      ]
+    },
+    {
+      "t": "2026-10-20T17:52:05.003090Z",
+      "kind": "publish_card",
+      "trigger": "CONDITION_FIRED",
+      "published": true,
+      "reason": "QUEUED_RATE_LIMIT",
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 5,
+      "delivery_not_before": "2026-10-20T18:06:04.955665Z"
+    },
+    {
+      "t": "2026-10-20T17:53:04.365252Z",
+      "kind": "agent.message",
+      "message": "CONDITION_FIRED",
+      "condition": "Data HIGH and class resolves to spot led accumulation or organic mixed."
+    },
+    {
+      "t": "2026-10-20T17:53:05.033393Z",
+      "kind": "get_decision",
+      "trigger": "CONDITION_FIRED",
+      "action": "WAIT",
+      "rule": "A3",
+      "tactical": false,
+      "conditions": [
+        {
+          "role": "UPGRADE",
+          "status": "ARMED",
+          "rearmed_from": "CND-01M5D726M65RRGH2AC5M6EVR7N",
+          "text": "Data HIGH and class resolves to spot led accumulation or organic mixed."
+        },
+        {
+          "role": "DOWNGRADE",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Spot SELL with most volume selling for two consecutive hourly windows."
+        },
+        {
+          "role": "INVALIDATION",
+          "status": "ARMED",
+          "rearmed_from": null,
+          "text": "Hourly close below the event invalidation level."
+        },
+        {
+          "role": "INVALIDATION",
+          "status": "ARMED",
+          "rearmed_from": "CND-01M5D6NCMJX1QZ5ZFJAMTXWQ2D",
+          "text": "A fatal contradiction invalidates the thesis."
+        }
+      ]
+    },
+    {
+      "t": "2026-10-20T17:53:05.994806Z",
+      "kind": "publish_card",
+      "trigger": "CONDITION_FIRED",
+      "published": true,
+      "reason": "QUEUED_RATE_LIMIT",
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 6,
+      "delivery_not_before": "2026-10-20T18:06:04.955665Z"
+    },
+    {
+      "t": "2026-10-20T18:06:05.057124Z",
+      "kind": "telegram.sendMessage",
+      "message_id": 1005,
+      "chat": "-100111",
+      "reply_to": 1002,
+      "first_line": "<b>MAJOR (M3) \u2014 World launches payments in World App</b>"
+    }
+  ],
+  "telegram": [
+    {
+      "at": "2026-10-20T17:45:02.551457Z",
+      "message_id": 1001,
+      "chat": "-100222",
+      "reply_to": null,
+      "text": "Tank 24h: alerts=0; hot tokens=0; queue lag=0s; analysis backlog queued=1, running=0; LLM spending=$0"
+    },
+    {
+      "at": "2026-10-20T17:45:05.517097Z",
+      "message_id": 1002,
+      "chat": "-100111",
+      "reply_to": null,
+      "text": "<b>MAJOR (M3) \u2014 World launches payments in World App</b>\nScores D n/a (Not estimable) \u00b7 M n/a (Not estimable) \u00b7 P n/a (Not estimable) \u00b7 X n/a (Not estimable) \u00b7 F n/a (Not estimable) \u00b7 S n/a (Not estimable) \u00b7 I8\nStage: LIVE \u00b7 Certainty: HIGH \u00b7 Data LOW\nFresh: FRESH \u00b7 public 17:45Z \u00b7 known n/a (time precision unknown)\n\n<b>VERIFIED:</b> World ships World App payments [S01]\n<b>NOT VERIFIED:</b> none recorded\n\n<b>WHY IT MATTERS</b>\n\u2022 What changed: Payments are live in World App\n\u2022 Economic effect: not estimable\n\u2022 Token capture: World (WLD) DIRECT \u2014 Payments use WLD\n\n<b>WHO:</b> primary World (WLD) \u00b7 secondary none \u2014 No adopted intermediary\n\u2022 Issuer / product: No supported intermediary\n\u2022 Exchanges / DEX: No supported intermediary\n\u2022 Settlement L1 / L2: No supported intermediary\n\u2022 Liquidity / execution: No supported intermediary\n\u2022 Lending / collateral: No supported intermediary\n\u2022 Oracles / data: No supported intermediary\n\u2022 Interoperability: No supported intermediary\n\u2022 Custody / compliance: No supported intermediary\n\n<b>\u2500\u2500 World (WLD) (PRIMARY \u00b7 least-repriced) \u2500\u2500</b>\n\n<b>MARKET TRUTH:</b> SPOT LED ACCUMULATION\nMarket data incomplete.\nPriced: EARLY \u00b7 EVENT 4.00% raw; 3.00% net BTC\n\n<b>OUTLOOK:</b> UNKNOWN \u00b7 MEDIUM \u00b7 best 12h\n\u2022 Base: UNKNOWN: market evidence incomplete.\n\u2022 Upside: UNKNOWN until class and data resolve.\n\u2022 Failure: Thesis invalid if the event is denied.\n\n<b>WHAT TO DO:</b> WAIT \u2014 Thesis A \u00b7 Trade D\n<b>WHAT CHANGES THE ACTION:</b>\n\u2191 Data confidence becomes HIGH; re-grade.\n\u2193 Majority-volume spot SELL for two hourly windows.\n\n<b>CONFIDENCE:</b> LOW \u2014 main unknown: Spot venue coverage is incomplete: scenario"
+    },
+    {
+      "at": "2026-10-20T17:46:04.206921Z",
+      "message_id": 1003,
+      "chat": "-100111",
+      "reply_to": 1002,
+      "text": "<b>MAJOR (M3) \u2014 World launches payments in World App</b>\nScores D n/a (Not estimable) \u00b7 M n/a (Not estimable) \u00b7 P n/a (Not estimable) \u00b7 X n/a (Not estimable) \u00b7 F n/a (Not estimable) \u00b7 S n/a (Not estimable) \u00b7 I8\nStage: LIVE \u00b7 Certainty: HIGH \u00b7 Data HIGH\nFresh: FRESH \u00b7 public 17:45Z \u00b7 known n/a (time precision unknown)\n\n<b>VERIFIED:</b> World ships World App payments [S01]\n<b>NOT VERIFIED:</b> none recorded\n\n<b>WHY IT MATTERS</b>\n\u2022 What changed: condition_fired\n\u2022 Economic effect: not estimable\n\u2022 Token capture: World (WLD) DIRECT \u2014 Payments use WLD\n\n<b>WHO:</b> primary World (WLD) \u00b7 secondary none \u2014 No adopted intermediary\n\u2022 Issuer / product: No supported intermediary\n\u2022 Exchanges / DEX: No supported intermediary\n\u2022 Settlement L1 / L2: No supported intermediary\n\u2022 Liquidity / execution: No supported intermediary\n\u2022 Lending / collateral: No supported intermediary\n\u2022 Oracles / data: No supported intermediary\n\u2022 Interoperability: No supported intermediary\n\u2022 Custody / compliance: No supported intermediary\n\n<b>\u2500\u2500 World (WLD) (PRIMARY \u00b7 least-repriced) \u2500\u2500</b>\n\n<b>MARKET TRUTH:</b> SPOT LED ACCUMULATION\nMarket data incomplete.\nPriced: EARLY \u00b7 EVENT 4.00% raw; 3.00% net BTC\n\n<b>OUTLOOK:</b> BULLISH \u00b7 MEDIUM \u00b7 best 12h\n\u2022 Base: Event move persists while spot supports price.\n\u2022 Upside: Move extends if spot demand strengthens without crowding.\n\u2022 Failure: Thesis fails on denial or loss of the event anchor.\n\n<b>WHAT TO DO:</b> START \u2014 Thesis A \u00b7 Trade A\n<b>WHAT CHANGES THE ACTION:</b>\n\u2191 Majority-volume spot BUY for two hourly windows and native OI not above normal.\n\u2193 Majority-volume spot SELL for two hourly windows.\n\n<b>CONFIDENCE:</b> LOW \u2014 main unknown: none recorded"
+    },
+    {
+      "at": "2026-10-20T17:51:04.954050Z",
+      "message_id": 1004,
+      "chat": "-100111",
+      "reply_to": 1002,
+      "text": "<b>MAJOR (M3) \u2014 World launches payments in World App</b>\nScores D n/a (Not estimable) \u00b7 M n/a (Not estimable) \u00b7 P n/a (Not estimable) \u00b7 X n/a (Not estimable) \u00b7 F n/a (Not estimable) \u00b7 S n/a (Not estimable) \u00b7 I8\nStage: MONEY_FLOWING \u00b7 Certainty: HIGH \u00b7 Data HIGH\nFresh: FRESH \u00b7 public 17:45Z \u00b7 known n/a (time precision unknown)\n\n<b>VERIFIED:</b> World ships World App payments [S01]; World ships World App payments [S01]; World ships World App payments [S01]; World denies World App payments [S01]\n<b>NOT VERIFIED:</b> none recorded\n\n<b>WHY IT MATTERS</b>\n\u2022 What changed: item_added\n\u2022 Economic effect: not estimable\n\u2022 Token capture: World (WLD) DIRECT \u2014 Payments use WLD\n\n<b>WHO:</b> primary World (WLD) \u00b7 secondary none \u2014 No adopted intermediary\n\u2022 Issuer / product: No supported intermediary\n\u2022 Exchanges / DEX: No supported intermediary\n\u2022 Settlement L1 / L2: No supported intermediary\n\u2022 Liquidity / execution: No supported intermediary\n\u2022 Lending / collateral: No supported intermediary\n\u2022 Oracles / data: No supported intermediary\n\u2022 Interoperability: No supported intermediary\n\u2022 Custody / compliance: No supported intermediary\n\n<b>\u2500\u2500 World (WLD) (PRIMARY \u00b7 least-repriced) \u2500\u2500</b>\n\n<b>MARKET TRUTH:</b> SPOT LED ACCUMULATION\nMarket data incomplete.\nPriced: EARLY \u00b7 EVENT 4.00% raw; 3.00% net BTC\n\n<b>OUTLOOK:</b> BULLISH \u00b7 MEDIUM \u00b7 best 12h\n\u2022 Base: Event move persists while spot supports price.\n\u2022 Upside: Move extends if spot demand strengthens without crowding.\n\u2022 Failure: Thesis fails on denial or loss of the event anchor.\n\n<b>WHAT TO DO:</b> EXIT \u2014 Thesis D \u00b7 Trade A\n<b>WHAT CHANGES THE ACTION:</b>\n\u2191 Majority-volume spot BUY for two hourly windows and native OI not above normal.\n\u2193 Spot cohort BROAD SELL with most volume selling for two hourly windows; REDUCE.\n\n<b>CONFIDENCE:</b> LOW \u2014 main unknown: none recorded"
+    },
+    {
+      "at": "2026-10-20T18:06:05.057091Z",
+      "message_id": 1005,
+      "chat": "-100111",
+      "reply_to": 1002,
+      "text": "<b>MAJOR (M3) \u2014 World launches payments in World App</b>\nScores D n/a (Not estimable) \u00b7 M n/a (Not estimable) \u00b7 P n/a (Not estimable) \u00b7 X n/a (Not estimable) \u00b7 F n/a (Not estimable) \u00b7 S n/a (Not estimable) \u00b7 I8\nStage: MONEY_FLOWING \u00b7 Certainty: HIGH \u00b7 Data HIGH\nFresh: FRESH \u00b7 public 17:45Z \u00b7 known n/a (time precision unknown)\n\n<b>VERIFIED:</b> World ships World App payments [S01]; World ships World App payments [S01]; World ships World App payments [S01]; World denies World App payments [S01]\n<b>NOT VERIFIED:</b> none recorded\n\n<b>WHY IT MATTERS</b>\n\u2022 What changed: condition_fired\n\u2022 Economic effect: not estimable\n\u2022 Token capture: World (WLD) DIRECT \u2014 Payments use WLD\n\n<b>WHO:</b> primary World (WLD) \u00b7 secondary none \u2014 No adopted intermediary\n\u2022 Issuer / product: No supported intermediary\n\u2022 Exchanges / DEX: No supported intermediary\n\u2022 Settlement L1 / L2: No supported intermediary\n\u2022 Liquidity / execution: No supported intermediary\n\u2022 Lending / collateral: No supported intermediary\n\u2022 Oracles / data: No supported intermediary\n\u2022 Interoperability: No supported intermediary\n\u2022 Custody / compliance: No supported intermediary\n\n<b>\u2500\u2500 World (WLD) (PRIMARY \u00b7 least-repriced) \u2500\u2500</b>\n\n<b>MARKET TRUTH:</b> SPOT LED ACCUMULATION\nMarket data incomplete.\nPriced: EARLY \u00b7 EVENT 4.00% raw; 3.00% net BTC\n\n<b>OUTLOOK:</b> BULLISH \u00b7 MEDIUM \u00b7 best 12h\n\u2022 Base: Event move persists while spot supports price.\n\u2022 Upside: Move extends if spot demand strengthens without crowding.\n\u2022 Failure: Thesis fails on denial or loss of the event anchor.\n\n<b>WHAT TO DO:</b> WAIT \u2014 Thesis D \u00b7 Trade A\n<b>WHAT CHANGES THE ACTION:</b>\n\u2191 Data HIGH and class resolves to spot led accumulation or organic mixed.\n\u2193 Majority-volume spot SELL for two hourly windows.\n\n<b>CONFIDENCE:</b> LOW \u2014 main unknown: none recorded"
+    }
+  ],
+  "receipts": [
+    {
+      "trigger": "NEW_ITEM",
+      "published": true,
+      "reason": "GENERATED",
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 1,
+      "delivery_not_before": "2026-10-20T17:45:04.488064Z"
+    },
+    {
+      "trigger": "CONDITION_FIRED",
+      "published": true,
+      "reason": "GENERATED",
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 2,
+      "delivery_not_before": "2026-10-20T17:46:03.331577Z"
+    },
+    {
+      "trigger": "ITEM_ADDED",
+      "published": false,
+      "reason": "STALE_STATE_CHANGE",
+      "alert_id": null,
+      "version": null,
+      "delivery_not_before": null
+    },
+    {
+      "trigger": "MILESTONE",
+      "published": true,
+      "reason": "QUEUED_RATE_LIMIT",
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 3,
+      "delivery_not_before": "2026-10-20T18:01:04.210700Z"
+    },
+    {
+      "trigger": "ITEM_ADDED",
+      "published": true,
+      "reason": "GENERATED",
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 4,
+      "delivery_not_before": "2026-10-20T17:51:04.199362Z"
+    },
+    {
+      "trigger": "CONDITION_FIRED",
+      "published": true,
+      "reason": "QUEUED_RATE_LIMIT",
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 5,
+      "delivery_not_before": "2026-10-20T18:06:04.955665Z"
+    },
+    {
+      "trigger": "CONDITION_FIRED",
+      "published": true,
+      "reason": "QUEUED_RATE_LIMIT",
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 6,
+      "delivery_not_before": "2026-10-20T18:06:04.955665Z"
+    }
+  ],
+  "alerts": [
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 1,
+      "kind": "FULL",
+      "delivery_not_before": "2026-10-20T17:45:04.488064Z",
+      "delivery_immediate": false,
+      "supersedes_version": null,
+      "card_text": "MAJOR (M3) \u2014 World launches payments in World App\nScores D n/a (Not estimable) \u00b7 M n/a (Not estimable) \u00b7 P n/a (Not estimable) \u00b7 X n/a (Not estimable) \u00b7 F n/a (Not estimable) \u00b7 S n/a (Not estimable) \u00b7 I8\nStage: LIVE \u00b7 Certainty: HIGH \u00b7 Data LOW\nFresh: FRESH \u00b7 public 17:45Z \u00b7 known n/a (time precision unknown)\n\nVERIFIED: World ships World App payments [S01]\nNOT VERIFIED: none recorded\n\nWHY IT MATTERS\n\u2022 What changed: Payments are live in World App\n\u2022 Economic effect: not estimable\n\u2022 Token capture: World (WLD) DIRECT \u2014 Payments use WLD\n\nWHO: primary World (WLD) \u00b7 secondary none \u2014 No adopted intermediary\n\u2022 Issuer / product: No supported intermediary\n\u2022 Exchanges / DEX: No supported intermediary\n\u2022 Settlement L1 / L2: No supported intermediary\n\u2022 Liquidity / execution: No supported intermediary\n\u2022 Lending / collateral: No supported intermediary\n\u2022 Oracles / data: No supported intermediary\n\u2022 Interoperability: No supported intermediary\n\u2022 Custody / compliance: No supported intermediary\n\n\u2500\u2500 World (WLD) (PRIMARY \u00b7 least-repriced) \u2500\u2500\n\nMARKET TRUTH: SPOT LED ACCUMULATION\nMarket data incomplete.\nPriced: EARLY \u00b7 EVENT 4.00% raw; 3.00% net BTC\n\nOUTLOOK: UNKNOWN \u00b7 MEDIUM \u00b7 best 12h\n\u2022 Base: UNKNOWN: market evidence incomplete.\n\u2022 Upside: UNKNOWN until class and data resolve.\n\u2022 Failure: Thesis invalid if the event is denied.\n\nWHAT TO DO: WAIT \u2014 Thesis A \u00b7 Trade D\nWHAT CHANGES THE ACTION:\n\u2191 Data confidence becomes HIGH; re-grade.\n\u2193 Majority-volume spot SELL for two hourly windows.\n\nCONFIDENCE: LOW \u2014 main unknown: Spot venue coverage is incomplete: scenario"
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 2,
+      "kind": "UPDATE",
+      "delivery_not_before": "2026-10-20T17:46:03.331577Z",
+      "delivery_immediate": true,
+      "supersedes_version": 1,
+      "card_text": "MAJOR (M3) \u2014 World launches payments in World App\nScores D n/a (Not estimable) \u00b7 M n/a (Not estimable) \u00b7 P n/a (Not estimable) \u00b7 X n/a (Not estimable) \u00b7 F n/a (Not estimable) \u00b7 S n/a (Not estimable) \u00b7 I8\nStage: LIVE \u00b7 Certainty: HIGH \u00b7 Data HIGH\nFresh: FRESH \u00b7 public 17:45Z \u00b7 known n/a (time precision unknown)\n\nVERIFIED: World ships World App payments [S01]\nNOT VERIFIED: none recorded\n\nWHY IT MATTERS\n\u2022 What changed: condition_fired\n\u2022 Economic effect: not estimable\n\u2022 Token capture: World (WLD) DIRECT \u2014 Payments use WLD\n\nWHO: primary World (WLD) \u00b7 secondary none \u2014 No adopted intermediary\n\u2022 Issuer / product: No supported intermediary\n\u2022 Exchanges / DEX: No supported intermediary\n\u2022 Settlement L1 / L2: No supported intermediary\n\u2022 Liquidity / execution: No supported intermediary\n\u2022 Lending / collateral: No supported intermediary\n\u2022 Oracles / data: No supported intermediary\n\u2022 Interoperability: No supported intermediary\n\u2022 Custody / compliance: No supported intermediary\n\n\u2500\u2500 World (WLD) (PRIMARY \u00b7 least-repriced) \u2500\u2500\n\nMARKET TRUTH: SPOT LED ACCUMULATION\nMarket data incomplete.\nPriced: EARLY \u00b7 EVENT 4.00% raw; 3.00% net BTC\n\nOUTLOOK: BULLISH \u00b7 MEDIUM \u00b7 best 12h\n\u2022 Base: Event move persists while spot supports price.\n\u2022 Upside: Move extends if spot demand strengthens without crowding.\n\u2022 Failure: Thesis fails on denial or loss of the event anchor.\n\nWHAT TO DO: START \u2014 Thesis A \u00b7 Trade A\nWHAT CHANGES THE ACTION:\n\u2191 Majority-volume spot BUY for two hourly windows and native OI not above normal.\n\u2193 Majority-volume spot SELL for two hourly windows.\n\nCONFIDENCE: LOW \u2014 main unknown: none recorded"
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 3,
+      "kind": "UPDATE",
+      "delivery_not_before": "2026-10-20T18:01:04.210700Z",
+      "delivery_immediate": false,
+      "supersedes_version": 2,
+      "card_text": "MAJOR (M3) \u2014 World launches payments in World App\nScores D n/a (Not estimable) \u00b7 M n/a (Not estimable) \u00b7 P n/a (Not estimable) \u00b7 X n/a (Not estimable) \u00b7 F n/a (Not estimable) \u00b7 S n/a (Not estimable) \u00b7 I8\nStage: MONEY_FLOWING \u00b7 Certainty: HIGH \u00b7 Data HIGH\nFresh: FRESH \u00b7 public 17:45Z \u00b7 known n/a (time precision unknown)\n\nVERIFIED: World ships World App payments [S01]; World ships World App payments [S01]; World ships World App payments [S01]\nNOT VERIFIED: none recorded\n\nWHY IT MATTERS\n\u2022 What changed: milestone\n\u2022 Economic effect: not estimable\n\u2022 Token capture: World (WLD) DIRECT \u2014 Payments use WLD\n\nWHO: primary World (WLD) \u00b7 secondary none \u2014 No adopted intermediary\n\u2022 Issuer / product: No supported intermediary\n\u2022 Exchanges / DEX: No supported intermediary\n\u2022 Settlement L1 / L2: No supported intermediary\n\u2022 Liquidity / execution: No supported intermediary\n\u2022 Lending / collateral: No supported intermediary\n\u2022 Oracles / data: No supported intermediary\n\u2022 Interoperability: No supported intermediary\n\u2022 Custody / compliance: No supported intermediary\n\n\u2500\u2500 World (WLD) (PRIMARY \u00b7 least-repriced) \u2500\u2500\n\nMARKET TRUTH: SPOT LED ACCUMULATION\nMarket data incomplete.\nPriced: EARLY \u00b7 EVENT 4.00% raw; 3.00% net BTC\n\nOUTLOOK: BULLISH \u00b7 MEDIUM \u00b7 best 12h\n\u2022 Base: Event move persists while spot supports price.\n\u2022 Upside: Move extends if spot demand strengthens without crowding.\n\u2022 Failure: Thesis fails on denial or loss of the event anchor.\n\nWHAT TO DO: HOLD \u2014 Thesis A \u00b7 Trade A\nWHAT CHANGES THE ACTION:\n\u2191 Majority-volume spot BUY for two hourly windows and native OI not above normal.\n\u2193 Spot cohort BROAD SELL with most volume selling for two hourly windows; REDUCE.\n\nCONFIDENCE: LOW \u2014 main unknown: none recorded"
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 4,
+      "kind": "UPDATE",
+      "delivery_not_before": "2026-10-20T17:51:04.199362Z",
+      "delivery_immediate": true,
+      "supersedes_version": 3,
+      "card_text": "MAJOR (M3) \u2014 World launches payments in World App\nScores D n/a (Not estimable) \u00b7 M n/a (Not estimable) \u00b7 P n/a (Not estimable) \u00b7 X n/a (Not estimable) \u00b7 F n/a (Not estimable) \u00b7 S n/a (Not estimable) \u00b7 I8\nStage: MONEY_FLOWING \u00b7 Certainty: HIGH \u00b7 Data HIGH\nFresh: FRESH \u00b7 public 17:45Z \u00b7 known n/a (time precision unknown)\n\nVERIFIED: World ships World App payments [S01]; World ships World App payments [S01]; World ships World App payments [S01]; World denies World App payments [S01]\nNOT VERIFIED: none recorded\n\nWHY IT MATTERS\n\u2022 What changed: item_added\n\u2022 Economic effect: not estimable\n\u2022 Token capture: World (WLD) DIRECT \u2014 Payments use WLD\n\nWHO: primary World (WLD) \u00b7 secondary none \u2014 No adopted intermediary\n\u2022 Issuer / product: No supported intermediary\n\u2022 Exchanges / DEX: No supported intermediary\n\u2022 Settlement L1 / L2: No supported intermediary\n\u2022 Liquidity / execution: No supported intermediary\n\u2022 Lending / collateral: No supported intermediary\n\u2022 Oracles / data: No supported intermediary\n\u2022 Interoperability: No supported intermediary\n\u2022 Custody / compliance: No supported intermediary\n\n\u2500\u2500 World (WLD) (PRIMARY \u00b7 least-repriced) \u2500\u2500\n\nMARKET TRUTH: SPOT LED ACCUMULATION\nMarket data incomplete.\nPriced: EARLY \u00b7 EVENT 4.00% raw; 3.00% net BTC\n\nOUTLOOK: BULLISH \u00b7 MEDIUM \u00b7 best 12h\n\u2022 Base: Event move persists while spot supports price.\n\u2022 Upside: Move extends if spot demand strengthens without crowding.\n\u2022 Failure: Thesis fails on denial or loss of the event anchor.\n\nWHAT TO DO: EXIT \u2014 Thesis D \u00b7 Trade A\nWHAT CHANGES THE ACTION:\n\u2191 Majority-volume spot BUY for two hourly windows and native OI not above normal.\n\u2193 Spot cohort BROAD SELL with most volume selling for two hourly windows; REDUCE.\n\nCONFIDENCE: LOW \u2014 main unknown: none recorded"
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 5,
+      "kind": "UPDATE",
+      "delivery_not_before": "2026-10-20T18:06:04.955665Z",
+      "delivery_immediate": false,
+      "supersedes_version": 4,
+      "card_text": "MAJOR (M3) \u2014 World launches payments in World App\nScores D n/a (Not estimable) \u00b7 M n/a (Not estimable) \u00b7 P n/a (Not estimable) \u00b7 X n/a (Not estimable) \u00b7 F n/a (Not estimable) \u00b7 S n/a (Not estimable) \u00b7 I8\nStage: MONEY_FLOWING \u00b7 Certainty: HIGH \u00b7 Data HIGH\nFresh: FRESH \u00b7 public 17:45Z \u00b7 known n/a (time precision unknown)\n\nVERIFIED: World ships World App payments [S01]; World ships World App payments [S01]; World ships World App payments [S01]; World denies World App payments [S01]\nNOT VERIFIED: none recorded\n\nWHY IT MATTERS\n\u2022 What changed: condition_fired\n\u2022 Economic effect: not estimable\n\u2022 Token capture: World (WLD) DIRECT \u2014 Payments use WLD\n\nWHO: primary World (WLD) \u00b7 secondary none \u2014 No adopted intermediary\n\u2022 Issuer / product: No supported intermediary\n\u2022 Exchanges / DEX: No supported intermediary\n\u2022 Settlement L1 / L2: No supported intermediary\n\u2022 Liquidity / execution: No supported intermediary\n\u2022 Lending / collateral: No supported intermediary\n\u2022 Oracles / data: No supported intermediary\n\u2022 Interoperability: No supported intermediary\n\u2022 Custody / compliance: No supported intermediary\n\n\u2500\u2500 World (WLD) (PRIMARY \u00b7 least-repriced) \u2500\u2500\n\nMARKET TRUTH: SPOT LED ACCUMULATION\nMarket data incomplete.\nPriced: EARLY \u00b7 EVENT 4.00% raw; 3.00% net BTC\n\nOUTLOOK: BULLISH \u00b7 MEDIUM \u00b7 best 12h\n\u2022 Base: Event move persists while spot supports price.\n\u2022 Upside: Move extends if spot demand strengthens without crowding.\n\u2022 Failure: Thesis fails on denial or loss of the event anchor.\n\nWHAT TO DO: WAIT \u2014 Thesis D \u00b7 Trade A\nWHAT CHANGES THE ACTION:\n\u2191 Data HIGH and class resolves to spot led accumulation or organic mixed.\n\u2193 Majority-volume spot SELL for two hourly windows.\n\nCONFIDENCE: LOW \u2014 main unknown: none recorded"
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 6,
+      "kind": "UPDATE",
+      "delivery_not_before": "2026-10-20T18:06:04.955665Z",
+      "delivery_immediate": false,
+      "supersedes_version": 5,
+      "card_text": "MAJOR (M3) \u2014 World launches payments in World App\nScores D n/a (Not estimable) \u00b7 M n/a (Not estimable) \u00b7 P n/a (Not estimable) \u00b7 X n/a (Not estimable) \u00b7 F n/a (Not estimable) \u00b7 S n/a (Not estimable) \u00b7 I8\nStage: MONEY_FLOWING \u00b7 Certainty: HIGH \u00b7 Data HIGH\nFresh: FRESH \u00b7 public 17:45Z \u00b7 known n/a (time precision unknown)\n\nVERIFIED: World ships World App payments [S01]; World ships World App payments [S01]; World ships World App payments [S01]; World denies World App payments [S01]\nNOT VERIFIED: none recorded\n\nWHY IT MATTERS\n\u2022 What changed: condition_fired\n\u2022 Economic effect: not estimable\n\u2022 Token capture: World (WLD) DIRECT \u2014 Payments use WLD\n\nWHO: primary World (WLD) \u00b7 secondary none \u2014 No adopted intermediary\n\u2022 Issuer / product: No supported intermediary\n\u2022 Exchanges / DEX: No supported intermediary\n\u2022 Settlement L1 / L2: No supported intermediary\n\u2022 Liquidity / execution: No supported intermediary\n\u2022 Lending / collateral: No supported intermediary\n\u2022 Oracles / data: No supported intermediary\n\u2022 Interoperability: No supported intermediary\n\u2022 Custody / compliance: No supported intermediary\n\n\u2500\u2500 World (WLD) (PRIMARY \u00b7 least-repriced) \u2500\u2500\n\nMARKET TRUTH: SPOT LED ACCUMULATION\nMarket data incomplete.\nPriced: EARLY \u00b7 EVENT 4.00% raw; 3.00% net BTC\n\nOUTLOOK: BULLISH \u00b7 MEDIUM \u00b7 best 12h\n\u2022 Base: Event move persists while spot supports price.\n\u2022 Upside: Move extends if spot demand strengthens without crowding.\n\u2022 Failure: Thesis fails on denial or loss of the event anchor.\n\nWHAT TO DO: WAIT \u2014 Thesis D \u00b7 Trade A\nWHAT CHANGES THE ACTION:\n\u2191 Data HIGH and class resolves to spot led accumulation or organic mixed.\n\u2193 Majority-volume spot SELL for two hourly windows.\n\nCONFIDENCE: LOW \u2014 main unknown: none recorded"
+    }
+  ],
+  "deliveries": [
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 1,
+      "status": "GENERATED",
+      "attempt": 0,
+      "at": "2026-10-20T17:45:04.749410Z",
+      "message_ref": null,
+      "request_reply_to_message_ref": null
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 1,
+      "status": "GENERATED",
+      "attempt": 1,
+      "at": "2026-10-20T17:45:05.504358Z",
+      "message_ref": null,
+      "request_reply_to_message_ref": null
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 1,
+      "status": "SENT",
+      "attempt": 1,
+      "at": "2026-10-20T17:45:05.518970Z",
+      "message_ref": "1002",
+      "request_reply_to_message_ref": null
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 2,
+      "status": "GENERATED",
+      "attempt": 0,
+      "at": "2026-10-20T17:46:03.659923Z",
+      "message_ref": null,
+      "request_reply_to_message_ref": null
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 2,
+      "status": "GENERATED",
+      "attempt": 1,
+      "at": "2026-10-20T17:46:04.202886Z",
+      "message_ref": null,
+      "request_reply_to_message_ref": "1002"
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 2,
+      "status": "SENT",
+      "attempt": 1,
+      "at": "2026-10-20T17:46:04.210700Z",
+      "message_ref": "1003",
+      "request_reply_to_message_ref": "1002"
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 3,
+      "status": "GENERATED",
+      "attempt": 0,
+      "at": "2026-10-20T17:50:01.852131Z",
+      "message_ref": null,
+      "request_reply_to_message_ref": null
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 4,
+      "status": "GENERATED",
+      "attempt": 0,
+      "at": "2026-10-20T17:51:04.485108Z",
+      "message_ref": null,
+      "request_reply_to_message_ref": null
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 4,
+      "status": "GENERATED",
+      "attempt": 1,
+      "at": "2026-10-20T17:51:04.949914Z",
+      "message_ref": null,
+      "request_reply_to_message_ref": "1002"
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 4,
+      "status": "SENT",
+      "attempt": 1,
+      "at": "2026-10-20T17:51:04.955665Z",
+      "message_ref": "1004",
+      "request_reply_to_message_ref": "1002"
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 5,
+      "status": "GENERATED",
+      "attempt": 0,
+      "at": "2026-10-20T17:52:04.594437Z",
+      "message_ref": null,
+      "request_reply_to_message_ref": null
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 6,
+      "status": "GENERATED",
+      "attempt": 0,
+      "at": "2026-10-20T17:53:05.417382Z",
+      "message_ref": null,
+      "request_reply_to_message_ref": null
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 6,
+      "status": "GENERATED",
+      "attempt": 1,
+      "at": "2026-10-20T18:06:05.049597Z",
+      "message_ref": null,
+      "request_reply_to_message_ref": "1002"
+    },
+    {
+      "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "version": 6,
+      "status": "SENT",
+      "attempt": 1,
+      "at": "2026-10-20T18:06:05.062977Z",
+      "message_ref": "1005",
+      "request_reply_to_message_ref": "1002"
+    }
+  ],
+  "deliver_jobs": [
+    {
+      "status": "DONE",
+      "run_after": "2026-10-20T17:45:02.048057Z",
+      "payload": {
+        "channel": "telegram:ops",
+        "notice_id": "heartbeat_2026-10-20"
+      },
+      "attempts": 1
+    },
+    {
+      "status": "DONE",
+      "run_after": "2026-10-20T17:45:04.488064Z",
+      "payload": {
+        "channel": "telegram:alerts",
+        "version": 1,
+        "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2"
+      },
+      "attempts": 1
+    },
+    {
+      "status": "DONE",
+      "run_after": "2026-10-20T17:46:03.331577Z",
+      "payload": {
+        "channel": "telegram:alerts",
+        "version": 2,
+        "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2"
+      },
+      "attempts": 1
+    },
+    {
+      "status": "DONE",
+      "run_after": "2026-10-20T18:01:04.210700Z",
+      "payload": {
+        "channel": "telegram:alerts",
+        "version": 3,
+        "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2"
+      },
+      "attempts": 1
+    },
+    {
+      "status": "DONE",
+      "run_after": "2026-10-20T17:51:04.199362Z",
+      "payload": {
+        "channel": "telegram:alerts",
+        "version": 4,
+        "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2"
+      },
+      "attempts": 1
+    },
+    {
+      "status": "DONE",
+      "run_after": "2026-10-20T18:06:04.955665Z",
+      "payload": {
+        "channel": "telegram:alerts",
+        "version": 5,
+        "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2"
+      },
+      "attempts": 1
+    },
+    {
+      "status": "DONE",
+      "run_after": "2026-10-20T18:06:04.955665Z",
+      "payload": {
+        "channel": "telegram:alerts",
+        "version": 6,
+        "alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2"
+      },
+      "attempts": 1
+    }
+  ],
+  "watch_conditions": [
+    {
+      "cond_id": "CND-01M5D6NCMJ1TXDD5ZSFSP4ZGK4",
+      "role": "DOWNGRADE",
+      "status": "CANCELLED",
+      "rearmed_from": null,
+      "consumed_by": null,
+      "created_at": "2026-10-20T17:45:04.402743Z",
+      "fired_at": null,
+      "human_text": "Milestone failed or missed its window; re-score, fatal when thesis-dependent."
+    },
+    {
+      "cond_id": "CND-01M5D6NCMJ8SF5Q9KEKJGDSC8B",
+      "role": "UPGRADE",
+      "status": "FIRED",
+      "rearmed_from": null,
+      "consumed_by": "DEC-01M5D6Q63FR4187XFP2DC882MB",
+      "created_at": "2026-10-20T17:45:04.402743Z",
+      "fired_at": "2026-10-20T17:46:00Z",
+      "human_text": "Data confidence becomes HIGH; re-grade."
+    },
+    {
+      "cond_id": "CND-01M5D6NCMJPKB2S897452ZKVCE",
+      "role": "INVALIDATION",
+      "status": "ARMED",
+      "rearmed_from": null,
+      "consumed_by": null,
+      "created_at": "2026-10-20T17:45:04.402743Z",
+      "fired_at": null,
+      "human_text": "Hourly close below the event invalidation level."
+    },
+    {
+      "cond_id": "CND-01M5D6NCMJQ67GWFF2WDWA9NF5",
+      "role": "UPGRADE",
+      "status": "CANCELLED",
+      "rearmed_from": null,
+      "consumed_by": null,
+      "created_at": "2026-10-20T17:45:04.402743Z",
+      "fired_at": null,
+      "human_text": "Milestone verified; re-score the event."
+    },
+    {
+      "cond_id": "CND-01M5D6NCMJTVZ7H6FD31686MQK",
+      "role": "DOWNGRADE",
+      "status": "CANCELLED",
+      "rearmed_from": null,
+      "consumed_by": null,
+      "created_at": "2026-10-20T17:45:04.402743Z",
+      "fired_at": null,
+      "human_text": "Spot SELL with most volume selling for two consecutive hourly windows."
+    },
+    {
+      "cond_id": "CND-01M5D6NCMJX1QZ5ZFJAMTXWQ2D",
+      "role": "INVALIDATION",
+      "status": "FIRED",
+      "rearmed_from": null,
+      "consumed_by": "DEC-01M5D726M6TNHN19GYB7YZ9M2T",
+      "created_at": "2026-10-20T17:45:04.402743Z",
+      "fired_at": "2026-10-20T17:52:00Z",
+      "human_text": "A fatal contradiction invalidates the thesis."
+    },
+    {
+      "cond_id": "CND-01M5D6Q63FNC354B66YGGM9KNB",
+      "role": "UPGRADE",
+      "status": "CANCELLED",
+      "rearmed_from": null,
+      "consumed_by": null,
+      "created_at": "2026-10-20T17:46:03.247696Z",
+      "fired_at": null,
+      "human_text": "Spot BUY with most volume buying for two consecutive hourly windows and native OI not above normal."
+    },
+    {
+      "cond_id": "CND-01M5D6Q84QNFD87867CBW5QNDD",
+      "role": "DOWNGRADE",
+      "status": "CANCELLED",
+      "rearmed_from": null,
+      "consumed_by": null,
+      "created_at": "2026-10-20T17:46:05.335192Z",
+      "fired_at": null,
+      "human_text": "Spot cohort BROAD SELL with most volume selling for two consecutive hourly windows; REDUCE."
+    },
+    {
+      "cond_id": "CND-01M5D726M65RRGH2AC5M6EVR7N",
+      "role": "UPGRADE",
+      "status": "FIRED",
+      "rearmed_from": null,
+      "consumed_by": "DEC-01M5D741ZN88GH92YG7QYC6BJ4",
+      "created_at": "2026-10-20T17:52:04.230540Z",
+      "fired_at": "2026-10-20T17:53:00Z",
+      "human_text": "Data HIGH and class resolves to spot led accumulation or organic mixed."
+    },
+    {
+      "cond_id": "CND-01M5D726M6SCM2Z7XSDXFV6C6K",
+      "role": "DOWNGRADE",
+      "status": "ARMED",
+      "rearmed_from": null,
+      "consumed_by": null,
+      "created_at": "2026-10-20T17:52:04.230540Z",
+      "fired_at": null,
+      "human_text": "Spot SELL with most volume selling for two consecutive hourly windows."
+    },
+    {
+      "cond_id": "CND-01M5D726M6Y642YFYDWWDFARW9",
+      "role": "INVALIDATION",
+      "status": "ARMED",
+      "rearmed_from": "CND-01M5D6NCMJX1QZ5ZFJAMTXWQ2D",
+      "consumed_by": null,
+      "created_at": "2026-10-20T17:52:04.230540Z",
+      "fired_at": null,
+      "human_text": "A fatal contradiction invalidates the thesis."
+    },
+    {
+      "cond_id": "CND-01M5D741ZMHKDNNNKFD7GP9WEF",
+      "role": "UPGRADE",
+      "status": "ARMED",
+      "rearmed_from": "CND-01M5D726M65RRGH2AC5M6EVR7N",
+      "consumed_by": null,
+      "created_at": "2026-10-20T17:53:05.013127Z",
+      "fired_at": null,
+      "human_text": "Data HIGH and class resolves to spot led accumulation or organic mixed."
+    }
+  ],
+  "calls": [
+    {
+      "status": "CLOSED",
+      "call_id": "CAL-01M5D6Q71V5JTJ6MV9X33MFCX4",
+      "event_id": "EVT-01M5D6N8WV9WR7J75VS1YWH2WR",
+      "token_id": "world:WLD",
+      "closed_at": "2026-10-20T17:51:04.955665Z",
+      "closed_by": "EXIT",
+      "opened_at": "2026-10-20T17:46:04.210700Z",
+      "closed_at_prec": "COLLECTION_ONLY",
+      "opened_at_prec": "COLLECTION_ONLY",
+      "entry_ref_price": "10.4",
+      "opened_by_alert": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+      "opened_by_version": 2,
+      "alert_generated_at": "2026-10-20T17:46:03.659923Z",
+      "invalidation_price": "10",
+      "closed_at_prec_reason": null,
+      "opened_at_prec_reason": null,
+      "alert_generated_at_prec": "COLLECTION_ONLY",
+      "alert_generated_at_prec_reason": null
+    }
+  ],
+  "event": {
+    "entities": [
+      {
+        "role": "ACTOR",
+        "entity_id": "world"
+      }
+    ],
+    "event_id": "EVT-01M5D6N8WV9WR7J75VS1YWH2WR",
+    "model_id": "scripted-agent-live-cycle",
+    "certainty": "HIGH",
+    "freshness": "FRESH",
+    "lifecycle": "INVALIDATED",
+    "public_at": "2026-10-20T17:45:00.506307Z",
+    "statement": "World launches payments in World App",
+    "alerted_at": "2026-10-20T17:45:05.551111Z",
+    "event_time": {
+      "quote": null,
+      "value": "2026-10-20T17:45:00.506307Z",
+      "precision": "EXACT",
+      "precision_reason": null
+    },
+    "session_id": null,
+    "theme_tags": [],
+    "event_state": "MONEY_FLOWING",
+    "code_version": "ws/tank-events",
+    "prompt_label": null,
+    "agent_version": null,
+    "monitoring_at": "2026-10-20T17:45:32.440685Z",
+    "config_version": "live-cycle",
+    "current_ems_id": "EMS-01M5D6NAACKC5JJSJQDX5ZXAJ4",
+    "known_to_us_at": "2026-10-20T17:45:00.491834Z",
+    "model_id_basis": null,
+    "next_milestone": null,
+    "prompt_binding": null,
+    "prompt_version": "tank-event-analyst baseline-2.5",
+    "public_at_prec": "EXACT",
+    "state_verified": true,
+    "alerted_at_prec": "COLLECTION_ONLY",
+    "checked_sources": [
+      "S01"
+    ],
+    "event_time_prec": "EXACT",
+    "model_id_reason": null,
+    "public_at_basis": "Official post time",
+    "certainty_reason": "Official World announcement",
+    "tokens_mentioned": [
+      "world:WLD"
+    ],
+    "best_source_class": "PRIMARY",
+    "terminal_alert_id": "ALR-01M5D6NDD9ZS84B2SDQ7YVFHX2",
+    "timing_confidence": "HIGH",
+    "milestone_resolved": false,
+    "monitoring_at_prec": "COLLECTION_ONLY",
+    "agent_version_basis": null,
+    "known_to_us_at_prec": null,
+    "agent_version_reason": null,
+    "first_card_latency_s": 5.053495,
+    "prompt_version_basis": null,
+    "session_code_version": null,
+    "session_finalized_at": "2026-10-20T18:06:05.081394Z",
+    "milestone_resolutions": [
+      {
+        "kind": "Regional rollout",
+        "due_at": "2026-10-20T17:50:00.491781Z",
+        "quotes": [
+          "World App payments were live last week"
+        ],
+        "status": "CONFIRMED",
+        "outcome": "MONEY_FLOWING",
+        "evidence": [
+          "CLM-01M5D6Q83DXKVE3YZS94Q4H8BT"
+        ],
+        "source_id": "S01",
+        "due_at_prec": null,
+        "confirmed_at": "2026-10-20T17:46:05.298442Z",
+        "resolution_id": "MILESTONE-01M5D6Q83JQT4MX2J4MQARYDSM",
+        "confirmed_at_prec": "COLLECTION_ONLY",
+        "due_at_prec_reason": "CALLER_DID_NOT_DECLARE_DUE_PRECISION",
+        "confirmed_at_prec_reason": null
+      }
+    ],
+    "prompt_version_reason": null,
+    "public_at_prec_reason": null,
+    "alerted_at_prec_reason": null,
+    "event_time_prec_reason": null,
+    "session_config_version": null,
+    "terminal_alert_version": 6,
+    "first_card_delivered_at": "2026-10-20T17:45:05.545329Z",
+    "milestone_resolution_id": "MILESTONE-01M5D6Q83JQT4MX2J4MQARYDSM",
+    "certainty_evidence_claims": [
+      "CLM-01M5D6N99712P2PEVQKH8P94E3"
+    ],
+    "monitoring_at_prec_reason": null,
+    "session_finalized_at_prec": "COLLECTION_ONLY",
+    "known_to_us_at_prec_reason": "INCOMPLETE",
+    "first_card_delivered_at_prec": "COLLECTION_ONLY",
+    "session_finalized_at_prec_reason": null,
+    "first_card_delivered_at_prec_reason": null
+  }
+}
