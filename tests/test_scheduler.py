@@ -1404,8 +1404,9 @@ async def test_older_completion_callback_preserves_same_name_replacement_until_s
 
 
 @pytest.mark.asyncio
-async def test_rearmed_market_watch_needs_a_window_after_it_was_armed():
-    """W1: a re-armed watch never fires on the evidence that fired its predecessor."""
+async def test_rearmed_market_watch_needs_a_new_window_and_a_clear():
+    """W1: a re-armed watch never fires on the evidence that fired its
+    predecessor, and a lasting level does not re-fire every window."""
     repo = MemoryRepository()
     armed = utcnow().replace(minute=5, second=0, microsecond=0)
     await repo.put("evt.events", "e", {"event_id": "e"})
@@ -1424,11 +1425,22 @@ async def test_rearmed_market_watch_needs_a_window_after_it_was_armed():
             "expr": {"metric": "price.close_vs_level", "window": "W1H", "op": "<", "value": "10"},
         },
     )
-    truth = SimpleNamespace(assess=AsyncMock(return_value={"relative": {"close_1h_price": "9"}}))
+    price = {"relative": {"close_1h_price": "9"}}
+    truth = SimpleNamespace(assess=AsyncMock(side_effect=lambda *a, **k: price))
     scheduler = Scheduler(repo, SimpleNamespace(), None, truth)
+    # The level that fired the predecessor still holds: no window after arming yet.
     await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=10))})
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
+    # A full window later the level still holds: a level never re-fires.
     await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=61))})
+    assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
+    # Price recovers (the watch clears), then closes below again: it fires.
+    price["relative"]["close_1h_price"] = "10.5"
+    await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=62))})
+    cleared = await repo.get("ana.watch_conditions", "c2")
+    assert cleared["status"] == "ARMED" and cleared["cleared_at"]
+    price["relative"]["close_1h_price"] = "9"
+    await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=63))})
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "FIRED"
 
 
@@ -1464,4 +1476,55 @@ async def test_rearmed_instant_watch_fires_again_only_after_it_cleared():
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
     await repo.put("ana.contradictions", "f2", {**fatal, "contradiction_id": "f2"})
     await scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=3))})
+    assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "FIRED"
+
+
+@pytest.mark.asyncio
+async def test_rearmed_persistent_watch_clears_only_on_an_observed_false_window():
+    """W1: an unfinished first window after arming is not a clear, so lasting
+    spot BUY after START does not re-fire the same upgrade every two hours."""
+    repo = MemoryRepository()
+    armed = utcnow().replace(minute=10, second=0, microsecond=0)
+    await repo.put("evt.events", "e", {"event_id": "e"})
+    await repo.put(
+        "ana.watch_conditions",
+        "c2",
+        {
+            "cond_id": "c2",
+            "event_id": "e",
+            "token_id": "t",
+            "role": "UPGRADE",
+            "status": "ARMED",
+            "rearmed_from": "c1",
+            "created_at": iso(armed),
+            "expires_at": iso(armed + timedelta(days=1)),
+            "expr": {
+                "metric": "spot.cohort.direction",
+                "window": "W1H",
+                "op": "==",
+                "value": "BUY",
+                "persist": {"count": 2},
+            },
+        },
+    )
+    from tank.util import parse_time
+
+    sell_hours = set()
+
+    def by_window(event_id, token_id, cutoff):
+        hour = parse_time(cutoff.value).replace(minute=0, second=0, microsecond=0)
+        return {"spot": {"W1H": {"direction": "SELL" if hour in sell_hours else "BUY"}}}
+
+    truth = SimpleNamespace(assess=AsyncMock(side_effect=by_window))
+    scheduler = Scheduler(repo, SimpleNamespace(), None, truth)
+    for minutes in (5, 55, 115, 175):
+        await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=minutes))})
+        row = await repo.get("ana.watch_conditions", "c2")
+        assert row["status"] == "ARMED" and not row.get("cleared_at")
+    sell_hours.add((armed + timedelta(minutes=235)).replace(minute=0))
+    await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=235))})
+    assert (await repo.get("ana.watch_conditions", "c2")).get("cleared_at")
+    await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=295))})
+    assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
+    await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=355))})
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "FIRED"

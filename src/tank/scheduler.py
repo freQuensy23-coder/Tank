@@ -560,6 +560,7 @@ class Scheduler:
                         datetime.fromtimestamp(endpoint, timezone.utc), precision="EXACT"
                     )
                 counters = dict(cond.get("counters", {}))
+                unobserved, leaf_matches = [], []
 
                 async def evaluate(expr, path="root"):
                     if "all" in expr:
@@ -575,14 +576,10 @@ class Scheduler:
                     seconds = window_seconds(expr)
                     window_id = int(parse_time(evaluation_cutoff).timestamp()) // seconds
                     previous = counters.get(path, {})
-                    created = cond.get("created_at")
                     if market_metric and required > 1:
+                        created = cond.get("created_at")
                         if created and parse_time(evaluation_cutoff) <= parse_time(created):
-                            return False
-                    if market_metric and cond.get("rearmed_from") and created:
-                        # A re-armed watch fires only on windows that start after it
-                        # was armed, never on the evidence that fired its predecessor.
-                        if parse_time(evaluation_cutoff) - timedelta(seconds=seconds) < parse_time(created):
+                            unobserved.append(path)
                             return False
                     truth = {}
                     if market_metric:
@@ -602,6 +599,7 @@ class Scheduler:
                         truth = cache[cache_key]
                     value = metric_value(truth, event, metric, expr.get("window", "W1H"))
                     matched = compare(value, expr["op"], expr["value"])
+                    leaf_matches.append(matched)
                     proof = next(
                         (
                             row
@@ -618,22 +616,14 @@ class Scheduler:
                         else None,
                     }
                     if required == 1 or not market_metric:
-                        # An instant predicate of a re-armed watch must clear once
-                        # before it can fire again (edge, not level).
-                        cleared = (
-                            True
-                            if market_metric or not cond.get("rearmed_from")
-                            else bool(previous.get("cleared")) or (value is not None and not matched)
-                        )
                         counters[path] = {
                             "window": window_id,
                             "count": int(matched),
                             "value": value,
-                            "cleared": cleared,
                             **availability,
                             **evaluation_stamp.fields("cutoff"),
                         }
-                        return matched and cleared
+                        return matched
                     # Retain only explicitly evaluated non-overlapping windows.
                     # Re-evaluate retained endpoints through the selective reader:
                     # changed dependency heads can complete/correct a closed hour.
@@ -704,6 +694,16 @@ class Scheduler:
 
                 fired = await evaluate(expr)
                 updated = {**cond, "counters": counters, **cutoff_stamp.fields("last_evaluated_at")}
+                if cond.get("rearmed_from") and not cond.get("cleared_at"):
+                    # A re-armed watch fires on an edge, not a level: it must be
+                    # seen false on available data once before it can fire again,
+                    # so a lasting state never re-fires every window (W1).
+                    # Cleared means the predicate itself is false in the current
+                    # window, not merely that persistence is not yet reached.
+                    available = all(row.get("data_available", True) for row in counters.values())
+                    if available and not unobserved and leaf_matches and not all(leaf_matches):
+                        updated.update(cutoff_stamp.fields("cleared_at"))
+                    fired = False
                 if fired:
                     updated.update(status="FIRED", **cutoff_stamp.fields("fired_at"))
                     async with self.repo.transaction():
