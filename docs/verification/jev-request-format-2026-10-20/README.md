@@ -34,7 +34,7 @@ jev-v1 broke each of these:
 - `state` is `{"item": {...}}` for FILTER and `{"item": {...}, "event": {...}}` for ROUTE. Questions name
   `` `item` `` and `` `event` ``.
 - The item has `source`, plus `author` only when it differs from source, `title`, and `text` (the body without
-  the repeated headline, whitespace collapsed, cut at a sentence near 2000 characters). `quoted` is sent only
+  the repeated headline, whitespace collapsed, cut at a sentence near 12000 characters). `quoted` is sent only
   when present.
 - The event has the agent's `statement`, `entities` as registry display names, `tokens` as symbols, and `stage`
   in lower case.
