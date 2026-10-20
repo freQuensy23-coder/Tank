@@ -1330,6 +1330,16 @@ class MarketService:
             bar["_rest_verified"] = complete
             row = accumulator.record(key, complete=complete)
             row.update(backfill_verified=complete, capture_method="REST_RANGE_EXHAUSTED")
+            if not complete and not row.get("gap_reason"):
+                # Part of the minute lies outside every proof this process holds.
+                row["gap_reason"] = next(
+                    (
+                        p["reason"]
+                        for p in reversed(bar["_coverage"])
+                        if p.get("complete") is not True and p.get("reason")
+                    ),
+                    "STREAM_COVERAGE_UNPROVEN",
+                )
             await self._put("mkt.flow_bars_1m", iid + ":" + iso(minute), row)
             if minute >= utcnow() - timedelta(minutes=3):
                 self.flow.bars[key] = bar
