@@ -1228,6 +1228,11 @@ def test_benchmark_reaction_return_uses_largest_spot_venue_base_klines():
     assert result["reason"] == "NOT_APPLICABLE" and "spot_cvd" in result["not_applicable"]
     empty = benchmark_reaction_values({"token_id": "bitcoin:BTC", "klines": []}, start, end)
     assert empty["r_raw"] is None and empty["r_raw_reason"] == "INCOMPLETE"
+    # Prod 20 Oct: no base klines inside the window; both bounds must not reuse one old close.
+    gap = [k for k in klines if parse_time(k["open_time"]) < start - timedelta(minutes=30)]
+    assert gap
+    stale = benchmark_reaction_values({"token_id": "bitcoin:BTC", "klines": gap}, start, end)
+    assert stale["r_raw"] is None and stale["r_raw_reason"] == "INCOMPLETE"
 
 
 def test_oi_fact_reports_venue_decomposition_when_synchronized_class_unavailable():
