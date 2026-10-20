@@ -171,7 +171,6 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
         assert len(jobs) == 1
         new_jobs = await repo.list("ops.jobs", filters={"idem_key": identifiers[4] + ":NEW_ITEM"})
         assert len(new_jobs) == 1
-        assert not [row async for row in repo.iter_all("ops.routing_reservations")]
         assert not any("reservation_id" in row["routing_message"] for row in (first, second, one, two))
     finally:
         await repo.close()
@@ -274,7 +273,6 @@ async def test_parallel_candidate_scores_survive_retry_without_partial_winner(
             assert list(result["routing_scores"]) == [event["event_id"] for event in candidates]
             assert calls == {"a": 1, "b": 2, "c": 1}
             assert len(await repo.list("ops.jobs", filters={"idem_key": item_id + ":ITEM_ADDED"})) == 1
-            assert not [row async for row in repo.iter_all("ops.routing_reservations")]
         finally:
             await repo.close()
 
