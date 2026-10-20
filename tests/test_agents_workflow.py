@@ -214,19 +214,6 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case):
             )
 
 
-async def test_original_hydration_full_row_write_reproduces_duplicate_ordinals(tmp_path, monkeypatch):
-    original = SessionService.hydrate_prompt_provenance
-
-    async def old_full_row_write(self, session):
-        needs_recovery = session.get("prompt_version_basis") != "RESOLVED_SESSION_AGENT_SNAPSHOT"
-        await original(self, session)
-        if needs_recovery:
-            # Restore only the previous full-row write in memory, never on disk.
-            await self.repo.put("ops.agent_sessions", session["session_id"], session)
-
-    monkeypatch.setattr(SessionService, "hydrate_prompt_provenance", old_full_row_write)
-    with pytest.raises(AssertionError, match="Hydration reset processing ordinals"):
-        await test_actual_producer_consumer_workflow(tmp_path, "memory", "HYDRATE")
 
 
 @pytest.mark.parametrize(

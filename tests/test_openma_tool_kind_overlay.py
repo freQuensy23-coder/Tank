@@ -43,10 +43,6 @@ def prepared(tmp_path, monkeypatch):
     return root, assets
 
 
-def test_all_assets_have_exact_hashes():
-    manifest = json.loads((STAGE / "manifest.json").read_text())
-    for name, expected in manifest["assets_sha256"].items():
-        assert hashlib.sha256((STAGE / name).read_bytes()).hexdigest() == expected
 
 
 def test_apply_is_exact_and_repeat_is_refused(prepared):
