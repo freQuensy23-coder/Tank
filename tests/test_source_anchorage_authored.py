@@ -32,6 +32,11 @@ QUOTES = {
 }
 
 
+def retained_raw(ref):
+    """The sweep recorded absolute paths of the machine it ran on; files live under RAW's directory."""
+    return RAW.parent / ref.split("supplementary-sweep-20261019-run1/", 1)[1]
+
+
 def retained():
     if not RAW.exists():
         pytest.skip("Actual owned supplementary sweep fixtures not available")
@@ -45,7 +50,7 @@ def retained():
         item = records[index]
         assert item["source_id"] == "S28" and item["text"] == "Institution Type"
         with zstandard.ZstdDecompressor().stream_reader(
-            io.BytesIO(Path(item["raw_ref"]).read_bytes())
+            io.BytesIO(retained_raw(item["raw_ref"]).read_bytes())
         ) as stream:
             payload = stream.read()
         assert hashlib.sha256(payload).hexdigest() == item["raw_sha256"]
@@ -118,7 +123,10 @@ async def test_normal_anchorage_poll_uses_actual_retained_bodies_and_source_inge
                 assert (
                     item["observed_at"] != original["observed_at"]
                 )  # New controlled observation, no backdating.
-            assert not await repo.list("ops.jobs")
+            jobs, items = await repo.list("ops.jobs"), await repo.list("ingest.source_items")
+            # Issuer and market-structure items go straight to routing (03 §3.1).
+            assert {j["idem_key"] for j in jobs} == {x["item_id"] for x in items}
+            assert {j["type"] for j in jobs} == {"ROUTE_ITEM"}
             assert len(requested) == 13
         finally:
             await service.close()

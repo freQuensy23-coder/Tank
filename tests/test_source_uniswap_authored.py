@@ -17,6 +17,11 @@ ROOT = Path(__file__).resolve().parents[1]
 RAW = ROOT / "data/calibration/supplementary-sweep-20261019-run1/raw-items.new.jsonl"
 
 
+def retained_raw(ref):
+    """The sweep recorded absolute paths of the machine it ran on; files live under RAW's directory."""
+    return RAW.parent / ref.split("supplementary-sweep-20261019-run1/", 1)[1]
+
+
 def retained():
     if not RAW.exists():
         pytest.skip("Owned actual supplementary capture absent")
@@ -28,7 +33,7 @@ def retained():
         row = json.loads(line)
         if row["source_id"] != "S15":
             continue
-        payload = zstandard.ZstdDecompressor().decompress(Path(row["raw_ref"]).read_bytes())
+        payload = zstandard.ZstdDecompressor().decompress(retained_raw(row["raw_ref"]).read_bytes())
         assert hashlib.sha256(payload).hexdigest() == row["raw_sha256"]
         result.append((index, row, payload))
     assert len(result) == 18
@@ -151,6 +156,9 @@ async def test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches
                 assert item["raw_sha256"] == original["raw_sha256"]
                 assert item["observed_at"] != original["observed_at"]
             assert all("latest-updates" not in url for url in seen)
-            assert not await repo.list("ops.jobs")
+            jobs, items = await repo.list("ops.jobs"), await repo.list("ingest.source_items")
+            # Issuer and market-structure items go straight to routing (03 §3.1).
+            assert {j["idem_key"] for j in jobs} == {x["item_id"] for x in items}
+            assert {j["type"] for j in jobs} == {"ROUTE_ITEM"}
         finally:
             await service.close()
