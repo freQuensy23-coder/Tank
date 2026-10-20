@@ -1,0 +1,80 @@
+{
+  "sealed_at": "2026-10-20T19:31:14.833189Z",
+  "scope": "SYNTHETIC_POLICY_CONTROLS_NOT_HISTORICAL_F16_NEWS_OR_MARKET",
+  "inputs_sha256": "c12b17fa363694805f0494c336318ea571ef53748038bf106034f1db5f80c246",
+  "assertion_spec": "Market context STRESS: the day's \u22123.25% is below BTC's 24h normal range (lower edge \u22123.01% over the 90 days before); Trade Grade one notch lower for non-STRUCTURAL events; a non-STRUCTURAL beneficiary is never BULLISH; no veto of any action.",
+  "expectations": [
+    {
+      "name": "GRADE_A",
+      "grades": [
+        "A",
+        "B"
+      ],
+      "stress_action": "WATCH_TO_START",
+      "non_structural_never_bullish": true
+    },
+    {
+      "name": "GRADE_B",
+      "grades": [
+        "B",
+        "C"
+      ],
+      "stress_action": "WAIT",
+      "non_structural_never_bullish": true
+    },
+    {
+      "name": "GRADE_C",
+      "grades": [
+        "C",
+        "D"
+      ],
+      "stress_action": "DONT_CHASE",
+      "non_structural_never_bullish": true
+    },
+    {
+      "name": "GRADE_D",
+      "grades": [
+        "D",
+        "D"
+      ],
+      "stress_action": "WAIT",
+      "non_structural_never_bullish": true
+    },
+    {
+      "name": "OPEN_CALL_HOLD",
+      "grades": [
+        "A",
+        "B"
+      ],
+      "stress_action": "HOLD",
+      "non_structural_never_bullish": true
+    },
+    {
+      "name": "FATAL_EXIT",
+      "grades": [
+        "A",
+        "B"
+      ],
+      "stress_action": "EXIT",
+      "non_structural_never_bullish": true
+    },
+    {
+      "name": "STRUCTURAL_START",
+      "grades": [
+        "A",
+        "A"
+      ],
+      "stress_action": "START",
+      "non_structural_never_bullish": false
+    },
+    {
+      "name": "STRUCTURAL_ADD",
+      "grades": [
+        "A",
+        "A"
+      ],
+      "stress_action": "ADD",
+      "non_structural_never_bullish": false
+    }
+  ]
+}

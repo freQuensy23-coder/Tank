@@ -1093,11 +1093,36 @@
           "historical_acceptance_claimed": false
         }
       ],
-      "readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
       "missing": [
-        "Full historical spot/crossvenue flow needed for composite PRICE_MARKUP_OI is absent; native OI PRICE_MARKUP subset retained."
+        "Formula path (Reader -> Market Truth -> Decision -> deterministic template card); market cases have no news item per 03 §11.3. Re-run required if Market Truth/decision/card code changes before V0-C sign-off."
       ],
-      "known_conflict": null
+      "known_conflict": null,
+      "acceptance_history": [
+        {
+          "readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+          "missing": [
+            "Full historical spot/crossvenue flow needed for composite PRICE_MARKUP_OI is absent; native OI PRICE_MARKUP subset retained."
+          ],
+          "superseded_reason": "Superseded 2026-10-20 by r90 gen4 full packet (current config, main f84efdb code): machine predicates and tank-acceptance manual review pass check_completed."
+        }
+      ],
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-12/inputs/input.json.zst",
+        "sha256": "954dec3b96113b0e50a4f95e869c83c5ad24780bb1cf500b6786f207300ce471"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-12/private/map.json",
+        "sha256": "afcd9624a1e9f4909526b680c1349c7465a009ab312694a4de930d5d203b3a50"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-12/sealed/outcomes.json",
+        "sha256": "73411bbca5b40646b7f31a15b7e38eb1fcadfa80b5c770446f60a83b50f8301e"
+      },
+      "acceptance_run": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-12/run/run-with-manual.json",
+        "sha256": "02d366492ce0ac24f78def12f4fb496c92ef65ea02552afe69c76cbbd52dfedd"
+      }
     },
     {
       "fixture_id": "F-13",
@@ -1185,11 +1210,36 @@
           "status": "CURRENT_COMPONENT_CHECKS_PASSED_NOT_FULL_NATIVE_ACCEPTANCE"
         }
       ],
-      "readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
       "missing": [
-        "Current production reader, Market Truth and deterministic renderer checks now pass on retained data: missing books, unknown weak response, literal n/a, no absorption or accumulation. Actual analyst/native/publication proof remains absent; component result is not full acceptance."
+        "Formula path (Reader -> Market Truth -> Decision -> deterministic template card); market cases have no news item per 03 §11.3. Re-run required if Market Truth/decision/card code changes before V0-C sign-off."
       ],
-      "known_conflict": null
+      "known_conflict": null,
+      "acceptance_history": [
+        {
+          "readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+          "missing": [
+            "Current production reader, Market Truth and deterministic renderer checks now pass on retained data: missing books, unknown weak response, literal n/a, no absorption or accumulation. Actual analyst/native/publication proof remains absent; component result is not full acceptance."
+          ],
+          "superseded_reason": "Superseded 2026-10-20 by r90 gen4 full packet (current config, main f84efdb code): machine predicates and tank-acceptance manual review pass check_completed."
+        }
+      ],
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-15/inputs/input.json.zst",
+        "sha256": "f00c13f17ed30c70b662dd1173d0d9477d40d3f6c779f245be215901b93a668f"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-15/private/map.json",
+        "sha256": "06f11964a6876f81bba652a11108d10a0f26a2699bdd8eb2be5f9fa44e04e8c5"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-15/sealed/outcomes.json",
+        "sha256": "4d5b6b898233f1f5f45ee42cf0b9e81aade6e0e77a0ca8b89b380ffb90bd9d78"
+      },
+      "acceptance_run": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-15/run/run-with-manual.json",
+        "sha256": "a1c18fbc3e6fb339e2538b7324bf6acc47acfe72ca6c271f15bce0b888743e17"
+      }
     },
     {
       "fixture_id": "F-16",
@@ -1221,12 +1271,37 @@
           "status": "CURRENT_COMPONENT_CHECKS_PASSED_NOT_FULL_NATIVE_ACCEPTANCE"
         }
       ],
-      "readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
       "missing": [
-        "Authentic retained Market Truth computes STRESS. Current actual-data LOW/D-floor and controlled-existing-call REDUCE checks pass; separate existing-synthetic-premise controls verify nonSTRUCTURAL non-BULLISH bias and no automatic action veto. Actual historical A/B/C-to-next-notch, credible economic beneficiary and STRUCTURAL resilience remain unproven without those premises. No fabricated catalyst or full acceptance claim."
+        "Formula path (Reader -> Market Truth -> Decision -> deterministic template card); market cases have no news item per 03 §11.3. Re-run required if Market Truth/decision/card code changes before V0-C sign-off."
       ],
       "known_conflict": null,
-      "expectation_status": "CURRENT_SPEC_ALIGNED"
+      "expectation_status": "CURRENT_SPEC_ALIGNED",
+      "acceptance_history": [
+        {
+          "readiness": "MARKET_COMPONENT_ONLY_NOT_FULL_FIXTURE",
+          "missing": [
+            "Authentic retained Market Truth computes STRESS. Current actual-data LOW/D-floor and controlled-existing-call REDUCE checks pass; separate existing-synthetic-premise controls verify nonSTRUCTURAL non-BULLISH bias and no automatic action veto. Actual historical A/B/C-to-next-notch, credible economic beneficiary and STRUCTURAL resilience remain unproven without those premises. No fabricated catalyst or full acceptance claim."
+          ],
+          "superseded_reason": "Superseded 2026-10-20 by r90 gen4 full packet (current config, main f84efdb code): machine predicates and tank-acceptance manual review pass check_completed."
+        }
+      ],
+      "acceptance_input": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-16/inputs/input.json.zst",
+        "sha256": "24753d4fa8083d766d6e9bb8a92a2d2a80fbcdb087d8ae632e4a631dc66055ce"
+      },
+      "private_name_map": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-16/private/map.json",
+        "sha256": "431ade0c21ae84bd4a3641e18b124675e906c8f31f0da5543b04ad8ea3b03b8e"
+      },
+      "sealed_outcomes": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-16/sealed/outcomes.json",
+        "sha256": "cd4a9306868a15c9a2cdac45c25861b5bd6bf39cdaebc64efeb6f72e658fdd80"
+      },
+      "acceptance_run": {
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-16/run/run-with-manual.json",
+        "sha256": "a87e32cf2ccf7b06a4c5ac6b97d6dbcc6fb3d31f35e538b084164983eb56468a"
+      }
     },
     {
       "fixture_id": "F-17",
