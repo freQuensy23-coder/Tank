@@ -242,3 +242,38 @@ async def _done(status, name):
 async def _waiting(repo, jobs, *names):
     rows = [await repo.get("ops.jobs", jobs[name]) for name in names]
     return all(row["status"] == "QUEUED" and row.get("slot_waiting_since") for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_slow_admission_check_waits_without_spending_an_attempt(monkeypatch):
+    repo = MemoryRepository()
+    job = await repo.enqueue("AGENT_MESSAGE", {"kind": "NEW_ITEM", "item_id": "i"}, "slow", priority=1)
+    expiry = (await repo.get("ops.jobs", job["job_id"]))["expires_at"]
+    monkeypatch.setattr("tank.runtime.ADMISSION_TIMEOUT_S", 0.05)
+    handled = []
+
+    class SlowSessions:
+        async def admit(self, job):
+            await asyncio.sleep(1)
+
+    async def handler(payload):
+        handled.append(payload)
+
+    runtime = object.__new__(Runtime)
+    runtime.repo, runtime.sessions, runtime.active_jobs = repo, SlowSessions(), set()
+    runtime.handlers = {"AGENT_MESSAGE": handler}
+
+    async def no_delivery():
+        return None
+
+    runtime.reconcile_delivery_failures = no_delivery
+    stop = asyncio.Event()
+    worker = asyncio.create_task(runtime.worker(stop))
+    try:
+        await until(lambda: _waiting(repo, {"slow": job["job_id"]}, "slow"))
+    finally:
+        stop.set()
+        await worker
+    row = await repo.get("ops.jobs", job["job_id"])
+    assert row["status"] == "QUEUED" and row["attempts"] == 0 and row["last_error"] is None
+    assert row["expires_at"] == expiry and handled == []
