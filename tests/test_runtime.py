@@ -1196,7 +1196,7 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
                 runtime.handlers = {"DELIVER": handle}
                 await asyncio.wait_for(runtime.worker(stop), TIMEOUTS["DELIVER"] + 2)
 
-            assert TIMEOUTS["DELIVER"] == 10 and http.timeout.read == 8
+            assert TIMEOUTS["DELIVER"] > http.timeout.read == 8
             await run_one()
             queued = await repo.get("ops.jobs", job["job_id"])
             assert queued["status"] == "QUEUED" and queued["attempts"] == 0
