@@ -359,3 +359,28 @@ async def test_chain_liquidity_maps_defillama_chain_names_and_isolates_chain_gap
     assert rows["Ethereum"]["available"]
     assert rows["Polygon"]["available"] is False and "404" in rows["Polygon"]["reason"]
     await market.http.aclose()
+
+
+async def test_restart_resumes_supply_cadences_from_stored_observations(tmp_path):
+    """A restart must not restart the 22-token cycle (03 §5.6 refresh periods)."""
+    calls = []
+
+    def respond(request):
+        calls.append(str(request.url))
+        return httpx.Response(200, json=[])
+
+    token = {"token_id": "test:T", "contracts": [], "fundamentals_status": "NOT_SUPPORTED"}
+    token, first = lending_market(tmp_path, respond, tokens=[token])
+    await SupplyCapture(first).poll(set())
+    await first.flush_market()
+    assert calls == ["https://yields.llama.fi/lendBorrow"]
+    stored = {r["kind"] for r in await first.repo.list("mkt.supply_obs", limit=100)}
+    assert {"UNLOCKS", "EXCHANGE_INVENTORY", "LENDING", "CHAIN_LIQUIDITY", "FUNDAMENTALS"} <= stored
+    restarted = MarketService(first.repo, first.settings, http=first.http)
+    capture = SupplyCapture(restarted)
+    await capture.poll(set())
+    assert calls == ["https://yields.llama.fi/lendBorrow"]
+    assert set(restarted._supply_refresh) == {
+        ("test:T", kind) for kind in ("unlocks", "inventory", "lending", "chain_liquidity", "fundamentals")
+    }
+    await first.http.aclose()
