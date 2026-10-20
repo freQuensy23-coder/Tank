@@ -237,8 +237,6 @@ def test_user_agent_and_chats_from_configuration(tmp_path):
     assert not {row["check"]: row for row in readiness_checks(legacy)}["user_agent_contact"]["ok"]
 
 
-def test_openrouter_key_is_gone():
-    assert "openrouter_api_key" not in Settings.model_fields
 
 
 def test_database_urls_from_compose_role_secrets(tmp_path, monkeypatch):

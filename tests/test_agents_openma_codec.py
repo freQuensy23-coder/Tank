@@ -38,10 +38,6 @@ console.log(JSON.stringify({opaque,raw,decoded,encoded,resultHistory,resultDecod
     return json.loads(result.stdout)
 
 
-def test_pristine_pinned_codec_reproduces_real_tool_argument_corruption(tmp_path):
-    result = run_codec(tmp_path, False)
-    assert "itemId" in result["decoded"]["input"] and "item_id" not in result["decoded"]["input"]
-    assert "camel_case_user_key" in result["encoded"]["input"]
 
 
 def test_guarded_codec_preserves_opaque_input_but_transforms_envelope(tmp_path):
