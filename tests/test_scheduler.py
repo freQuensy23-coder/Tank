@@ -1632,3 +1632,41 @@ async def test_eval_conditions_budget_stops_cleanly_and_rotates(monkeypatch):
     monkeypatch.setattr(scheduler_module, "EVAL_CONDITIONS_BUDGET_S", 60)
     await scheduler.eval_conditions({"cutoff": iso(now)})
     assert order == ["exit", "old-upgrade", "new-upgrade"]
+
+
+@pytest.mark.asyncio
+async def test_late_data_after_a_window_end_does_not_revise_that_window():
+    """03 §8.6: a change whose market data starts after a checkpoint window's
+    end cannot change it; only windows ending at or after it are revised."""
+    repo = MemoryRepository()
+    now = utcnow()
+    anchor = now - timedelta(hours=2)
+    for label, end in (("PRE_1H", anchor), ("POST_1H", anchor + timedelta(hours=1))):
+        await repo.put(
+            "out.reaction_checkpoints",
+            "e:t:" + label,
+            {
+                "event_id": "e",
+                "token_id": "t",
+                "checkpoint": label,
+                "revision": 1,
+                "captured_at": iso(now - timedelta(minutes=30)),
+                "window_end": iso(end),
+                "anchor": {"ts": iso(anchor)},
+            },
+        )
+
+    class Market:
+        async def capture_changes(self, since, end):
+            yield {
+                "change_id": "CAP-LIVE-1",
+                "event_id": "e",
+                "token_id": "t",
+                "anchor": iso(anchor),
+                "observed_at": iso(now),
+                "market_from": iso(anchor + timedelta(minutes=20)),
+            }
+
+    await Scheduler(repo, SimpleNamespace(), Market(), None).detect_late_data(now)
+    jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+    assert [job["payload"]["checkpoint"] for job in jobs] == ["POST_1H"]
