@@ -6,6 +6,7 @@ import pytest
 
 from tank.runtime import Runtime
 from tank.storage import MemoryRepository
+from tank.util import parse_time
 
 
 @pytest.mark.asyncio
@@ -109,8 +110,8 @@ def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tm
 def test_source_check_network_probes_are_explicit(monkeypatch):
     from click.testing import CliRunner
 
-    import tank.cli as cli
     import tank.sources
+    from tank import cli
 
     calls = []
 
@@ -139,8 +140,8 @@ def test_source_check_network_probes_are_explicit(monkeypatch):
 def test_manual_backup_defaults_to_no_retention_and_forwards_force(monkeypatch):
     from click.testing import CliRunner
 
-    import tank.cli as cli
     import tank.scheduler
+    from tank import cli
 
     calls = []
 
@@ -341,8 +342,8 @@ def test_review_cli_forwards_period_paging_and_structured_checks(monkeypatch, tm
 
     from click.testing import CliRunner
 
-    import tank.cli as cli
     import tank.review
+    from tank import cli
 
     calls = []
 
@@ -425,7 +426,7 @@ def test_review_cli_forwards_period_paging_and_structured_checks(monkeypatch, tm
 def test_review_label_records_latest_or_explicit_alert_version(monkeypatch):
     from click.testing import CliRunner
 
-    import tank.cli as cli
+    from tank import cli
 
     repo = MemoryRepository()
 
@@ -1085,7 +1086,6 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
 async def test_contended_delivery_lock_is_scheduling_then_sends_once(
     monkeypatch, backend, lock_kind, transport_database
 ):
-    from datetime import timedelta
 
     import httpx
 
@@ -1224,3 +1224,42 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
             *(task for task in (waiter, holder_task) if task is not None), return_exceptions=True
         )
         await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_market_truth_repairs_windows_within_budget_before_assessing():
+    from datetime import timedelta
+    from types import SimpleNamespace
+
+    from tank import runtime as runtime_module
+
+    calls = []
+    anchor = "2026-10-20T12:00:00Z"
+
+    class Market:
+        async def capture_readiness(self, event_id, token_id, *, anchor):
+            return {"status": "COMPLETE"}
+
+        async def repair_windows(self, token_id, start, end, *, budget_s=None):
+            calls.append(("repair", token_id, start, end, budget_s))
+
+    class Truth:
+        async def assess(self, event_id, token_id, cutoff):
+            calls.append(("assess", token_id))
+            return {"mta_id": "MTA"}
+
+    repo = MemoryRepository()
+    await repo.put("evt.events", "e", {"event_id": "e", "public_at": anchor, "known_to_us_at": anchor})
+    rt = object.__new__(Runtime)
+    rt.repo, rt.market, rt.truth = repo, Market(), Truth()
+    result = await rt.assess({"event_id": "e", "token_id": "T", "cutoff": "2026-10-20T13:00:00Z"})
+    assert result == {"mta_id": "MTA"} and [c[0] for c in calls] == ["repair", "assess"]
+    _, token, start, end, budget = calls[0]
+    assert token == "T" and budget == runtime_module.REPAIR_BUDGET_S
+    assert end == parse_time("2026-10-20T13:00:00Z")
+    assert end - start <= timedelta(hours=25) and start <= parse_time(anchor) - timedelta(hours=24)
+    # A market without repair (older build or fake) assesses unchanged.
+    calls.clear()
+    rt.market = SimpleNamespace(capture_readiness=Market().capture_readiness)
+    await rt.assess({"event_id": "e", "token_id": "T"})
+    assert calls == [("assess", "T")]

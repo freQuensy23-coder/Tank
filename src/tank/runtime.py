@@ -30,6 +30,10 @@ TIMEOUTS = {kind: seconds * TIMEOUT_SCALE for kind, seconds in SPEC_TIMEOUTS.ite
 
 
 ADMISSION_TIMEOUT_S = 10 * TIMEOUT_SCALE
+# On-demand window repair before each Market Truth (lead ruling, 03 §5.1 fill order):
+# bounded so the FULL card stays within 03 §3.9; unrepaired minutes keep their reason.
+REPAIR_BUDGET_S = 45
+REPAIR_LOOKBACK = timedelta(hours=24)
 CAPTURE_WAIT_S = 15  # Included in the RUN_MARKET_TRUTH job time.
 
 
@@ -163,6 +167,12 @@ class Runtime:
             # incomplete and never upgrades a venue's measured coverage.
             await self.market.wait_capture(payload["event_id"], payload["token_id"], timeout_s=CAPTURE_WAIT_S)
         cutoff = propagate_timestamp(payload, "cutoff") if payload.get("cutoff") is not None else None
+        if hasattr(self.market, "repair_windows"):
+            anchor = parse_time(event_anchor(event)["ts"])
+            end = parse_time(cutoff.value) if cutoff is not None and cutoff.value else utcnow()
+            await self.market.repair_windows(
+                payload["token_id"], min(anchor, end) - REPAIR_LOOKBACK, end, budget_s=REPAIR_BUDGET_S
+            )
         return await self.truth.assess(payload["event_id"], payload["token_id"], cutoff)
 
     async def scout_review(self, payload):
