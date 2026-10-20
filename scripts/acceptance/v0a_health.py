@@ -21,6 +21,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import iso, parse, query, seconds, utcnow, write_json  # noqa: E402
 
 LIMIT = 0.01
+# Gap kinds written by the streaming (HOT) path; history/backfill/FX gaps belong to other paths.
+HOT_GAP_PREFIXES = ("STREAM", "RECONNECT", "TRADE_INTEGRITY", "BOOK")
 
 KLINES = """
 SELECT instrument_id, count(DISTINCT open_time) AS minutes
@@ -157,6 +159,8 @@ def market(since, until):
     hot_rows = []
     for (tok, iid, kind), s in sorted(gap_s.items()):
         exposure = hot_s.get(tok)
+        if not exposure or not kind or not kind.startswith(HOT_GAP_PREFIXES):
+            continue  # base-path or history gaps are measured by the BASE poll counts
         hot_rows.append({"token_id": tok, "instrument_id": iid, "kind": kind, "gap_s": s, "hot_s": exposure,
                          "gap_share": s / exposure if exposure else None})
     hot_fail = [r for r in hot_rows if r["gap_share"] is not None and r["gap_share"] >= LIMIT]
