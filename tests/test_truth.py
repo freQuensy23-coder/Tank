@@ -571,6 +571,124 @@ def test_oi_seconds_anchor_uses_actual_synchronized_observation_duration():
     assert result["oi_class"] == "REAL_NATIVE"
 
 
+def test_oi_history_pairs_use_requested_window_on_300s_grid_with_live_end_point():
+    """Live: the end point is a WebSocket/REST sample off the 300 s history grid, so the observed
+    length (14 min 37 s) never equals a history offset; pairs use the requested 15 min window."""
+    end = parse_time("2026-10-16T12:00:00Z")
+    start = end - timedelta(minutes=15)
+    rows = [
+        {"ts": iso(start + timedelta(minutes=i)), "oi_native": 100 + (i // 5) % 3, "oi_usd": 100 + (i // 5) % 3}
+        for i in range(-8 * 1440, 1, 5)
+    ]
+    rows.append({"ts": iso(end - timedelta(seconds=23)), "oi_native": 120, "oi_usd": 132})
+    result = _oi_stats(rows, start, end)
+    assert result["observed_window_duration_s"] == 877
+    assert result["native_normal_range"] is not None
+    assert result["usd_normal_range"] is not None
+    assert result["native_oi_vs_normal"] == "ABOVE"
+    assert result["oi_class"] is not None
+
+
+def test_oi_rows_derive_usd_from_ticker_mark_without_mutating_inputs():
+    """03 §5.4: Bybit singleOpenInterest x markPrice, Binance oi_native x mark; Bybit OI rows carry
+    no mark, the instrument's ticker within the sync tolerance does."""
+    from tank.analysis.truth import _oi_rows
+
+    iid = "bybit:perp_linear:BTCUSDT"
+    oi = [
+        {"instrument_id": iid, "ts": "2026-10-16T12:00:00Z", "oi_native": "10", "oi_usd": None},
+        {"instrument_id": iid, "ts": "2026-10-16T12:05:00Z", "oi_native": "11", "oi_usd": None},
+        {"instrument_id": iid, "ts": "2026-10-16T12:10:00Z", "oi_native": "12", "oi_usd": "999"},
+    ]
+    tickers = [
+        {"instrument_id": iid, "ts": "2026-10-16T11:59:40Z", "mark_price": "2"},
+        {"instrument_id": iid, "ts": "2026-10-16T12:00:30Z", "mark_price": "3"},
+        {"instrument_id": "other", "ts": "2026-10-16T12:05:00Z", "mark_price": "7"},
+    ]
+    snapshot = {"oi": oi, "tickers": tickers}
+    rows = _oi_rows(snapshot, iid)
+    assert rows[0]["oi_usd"] == Decimal("20")
+    assert rows[0]["oi_usd_source"] == "OI_NATIVE_X_TICKER_MARK"
+    assert rows[1]["oi_usd"] is None
+    assert rows[2] is oi[2]
+    assert oi[0]["oi_usd"] is None and "oi_usd_source" not in oi[0]
+
+
+def test_derivatives_oi_classifies_with_usd_from_ticker_mark():
+    from tank.analysis.truth import derivatives_truth
+
+    iid = "bybit:perp_linear:BTCUSDT"
+    end = parse_time("2026-10-16T12:00:00Z")
+    start = end - timedelta(hours=4)
+    times = [end + timedelta(minutes=i) for i in range(-8 * 1440, 1, 5)]
+    oi = [{"instrument_id": iid, "venue": "bybit", "ts": iso(t), "oi_native": 100 if t < end else 108, "oi_usd": None} for t in times]
+    tickers = [{"instrument_id": iid, "venue": "bybit", "ts": iso(t), "mark_price": 10} for t in times]
+    snapshot = {
+        "instruments": [{"instrument_id": iid, "venue": "bybit", "market_type": "perp_linear", "aggregation_class": "native"}],
+        "oi": oi,
+        "tickers": tickers,
+    }
+    stats = derivatives_truth(snapshot, start, end)["per_venue"][0]
+    assert stats["oi_usd_chg_pct"] == pytest.approx(0.08)
+    assert stats["native_normal_range"] == [0, 0]
+    assert stats["decomposition"]["pos_share"] is not None
+    assert stats["oi_class"] == "REAL_NATIVE"
+    assert oi[0]["oi_usd"] is None
+
+
+def test_freshness_counts_only_the_assessed_tokens_fields_not_peer_closes():
+    """§5.10: a BTC assessment never fails freshness on a sector peer's kline (MORPHO on a BTC card)."""
+    from tank.analysis.truth import available_field_freshness
+
+    end = parse_time("2026-10-20T22:51:00Z")
+    snapshot = {
+        "token_id": "bitcoin:BTC",
+        "instruments": [
+            {"instrument_id": "coinbase:spot:BTC-USD", "token_id": "bitcoin:BTC", "market_type": "SPOT"},
+            {"instrument_id": "coinbase:spot:MORPHO-USD", "token_id": "morpho:MORPHO", "market_type": "SPOT"},
+        ],
+        "capture_metadata": {"collections": {"klines": {"cadence_s": 60}}},
+        "klines": [
+            {"instrument_id": "coinbase:spot:BTC-USD", "open_time": "2026-10-20T22:50:00Z", "interval_s": 60, "complete": True, "c": 1},
+            {"instrument_id": "coinbase:spot:MORPHO-USD", "open_time": "2026-10-20T22:30:00Z", "interval_s": 60, "complete": True, "c": 1},
+            {"instrument_id": "coinbase:spot:COW-USD", "token_id": "cow:COW", "open_time": "2026-10-20T20:33:00Z", "interval_s": 60, "complete": True, "c": 1},
+        ],
+    }
+    checks = available_field_freshness(snapshot, end)
+    assert [c["instrument_id"] for c in checks] == ["coinbase:spot:BTC-USD"]
+    assert checks[0]["fresh"] is True
+
+
+def test_liquidation_freshness_comes_from_stream_watermark_not_last_event():
+    """A quiet market has no liquidations; the proven socket watermark keeps the stream fresh.
+    Without a watermark the failure says the connection is unproven, not that events are stale."""
+    from tank.analysis.truth import available_field_freshness
+
+    end = parse_time("2026-10-20T22:51:00Z")
+    iid = "bybit:perp_linear:BTCUSDT"
+    metadata = {
+        "cadence_s": 20,
+        "observed_through": {iid: "2026-10-20T22:50:59Z"},
+        "coverage_status_by_instrument": {iid: "CONNECTED"},
+    }
+    snapshot = {
+        "token_id": "bitcoin:BTC",
+        "capture_metadata": {"collections": {"liquidations": metadata}},
+        "liquidations": [{"instrument_id": iid, "token_id": "bitcoin:BTC", "exchange_ts": "2026-10-20T22:17:36.237Z"}],
+    }
+    (check,) = available_field_freshness(snapshot, end)
+    assert check["fresh"] is True
+    assert check["freshness_basis"] == "STREAM_WATERMARK"
+    assert check["age_s"] == 1
+    metadata.pop("observed_through")
+    metadata["coverage_status_by_instrument"] = {iid: "DISCONNECTED"}
+    (check,) = available_field_freshness(snapshot, end)
+    assert check["fresh"] is False
+    assert check["freshness_basis"] == "LAST_EVENT"
+    assert check["coverage_status"] == "DISCONNECTED"
+    assert check["detail"] == "STREAM_CONNECTION_UNPROVEN"
+
+
 def test_native_only_oi_preserves_native_and_sync_without_inventing_usd():
     from runpy import run_path
 
