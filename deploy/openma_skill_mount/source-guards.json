@@ -1,0 +1,7 @@
+[
+  {
+    "path": "packages/control-plane-node/src/lib/node-managed-agent-codec.ts",
+    "before_sha256": "fb61da56532d4a7394502f4505b62b832f9051d32797550fb9e07c9dd82d7008",
+    "after_sha256": "98c52e43d14b0690732a015c0bd364d162637357defd66a62f3e5655f3f51690"
+  }
+]

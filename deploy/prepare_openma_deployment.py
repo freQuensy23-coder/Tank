@@ -16,6 +16,7 @@ RECEIPT = "tank-deployment-composition.json"
 FINAL_STAGES = ("openma_skill_aliases", "openma_file_io", "openma_replay_network")
 CONTINUATION_STAGE = "openma_continuation"
 TOOL_KIND_STAGE = "openma_tool_kind"
+SKILL_MOUNT_STAGE = "openma_skill_mount"
 NATIVE_QUALIFICATION = "boxlite/v0.10.6/native-qualification.json"
 NATIVE_CHECKS = ("kvm", "state_persistence", "dns", "replay_isolation")
 
@@ -98,7 +99,7 @@ def asset_hashes():
         "openma_execution/" + row["asset"]
         for row in json.loads((BASE / "openma_execution/assets.json").read_text())
     )
-    for stage in (*FINAL_STAGES, CONTINUATION_STAGE, TOOL_KIND_STAGE):
+    for stage in (*FINAL_STAGES, CONTINUATION_STAGE, TOOL_KIND_STAGE, SKILL_MOUNT_STAGE):
         paths.add(stage + "/manifest.json")
         manifest = json.loads((BASE / stage / "manifest.json").read_text())
         for name, expected in manifest["assets_sha256"].items():
@@ -433,6 +434,8 @@ def prepare(source, destination, boxlite_runtime, *, qualification_candidate=Fal
         stages["order"].append(CONTINUATION_STAGE)
         stages[TOOL_KIND_STAGE] = apply_continuation_stage(retained, TOOL_KIND_STAGE)
         stages["order"].append(TOOL_KIND_STAGE)
+        stages[SKILL_MOUNT_STAGE] = apply_continuation_stage(retained, SKILL_MOUNT_STAGE)
+        stages["order"].append(SKILL_MOUNT_STAGE)
         if asset_hashes() != assets:
             raise ValueError("Preparation assets changed during composition")
         finalize(retained, stages, assets)
