@@ -2809,7 +2809,12 @@ def benchmark_reaction_values(snapshot, start, end):
 
     def last_close(bound):
         eligible = [r for r in rows if r["instrument_id"] == venue and close_time(r) <= bound]
-        return max(eligible, key=close_time) if eligible else None
+        latest = max(eligible, key=close_time) if eligible else None
+        # A close more than one bar before the bound is not the price at the bound: a gap in
+        # base-tier history must stay n/a, never a zero return between two copies of one close.
+        if latest is not None and (bound - close_time(latest)).total_seconds() > int(latest.get("interval_s", 60)):
+            return None
+        return latest
 
     first, last = (last_close(start), last_close(end)) if venue else (None, None)
     p0 = decimal((first or {}).get("c", (first or {}).get("close")))
