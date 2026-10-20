@@ -55,7 +55,7 @@ attempt("kernel", lambda: os.uname().release)
 attempt("hypervisor_cpu_flag", lambda: "hypervisor" in open("/proc/cpuinfo").read())
 nameservers = [l.split()[1] for l in open("/etc/resolv.conf") if l.startswith("nameserver")]
 r["nameservers"] = nameservers
-for host in ("example.com", "openrouter.ai", "api.etherscan.io"):
+for host in ("example.com", "openrouter.ai", "api.etherscan.io", "postgres"):
     attempt("dns_getaddrinfo_" + host, lambda h=host: sorted({a[4][0] for a in socket.getaddrinfo(h, 443, proto=socket.IPPROTO_TCP)}))
 attempt("dns_udp_configured", lambda: udp_dns(nameservers[0]))
 attempt("dns_udp_public_1.1.1.1", lambda: udp_dns("1.1.1.1"))
@@ -117,12 +117,12 @@ for (const result of results) {
 }
 for (const result of [results[0], results[2]]) {
   for (const key of ['dns_getaddrinfo_example.com', 'dns_getaddrinfo_openrouter.ai', 'dns_getaddrinfo_api.etherscan.io',
-    'dns_udp_configured', 'dns_udp_public_1.1.1.1', 'tls_direct_ip_1.1.1.1', 'tls_direct_ip_8.8.8.8', 'https_example.com', 'https_openrouter_models']) {
+    'dns_getaddrinfo_postgres', 'dns_udp_configured', 'dns_udp_public_1.1.1.1', 'tls_direct_ip_1.1.1.1', 'tls_direct_ip_8.8.8.8', 'https_example.com', 'https_openrouter_models']) {
     expect(ok(result, key), result.name + ': ' + key + ' succeeds');
   }
 }
 for (const key of ['dns_getaddrinfo_example.com', 'dns_getaddrinfo_openrouter.ai', 'dns_getaddrinfo_api.etherscan.io',
-  'dns_udp_configured', 'dns_udp_public_1.1.1.1', 'tls_direct_ip_1.1.1.1', 'tls_direct_ip_8.8.8.8', 'https_example.com', 'https_openrouter_models']) {
+  'dns_getaddrinfo_postgres', 'dns_udp_configured', 'dns_udp_public_1.1.1.1', 'tls_direct_ip_1.1.1.1', 'tls_direct_ip_8.8.8.8', 'https_example.com', 'https_openrouter_models']) {
   expect(!ok(results[1], key), 'replay: ' + key + ' refused');
 }
 const summary = {
