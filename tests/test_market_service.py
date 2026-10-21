@@ -1957,7 +1957,7 @@ async def test_hot_series_poll_context_on_their_own_schedule(setup):
     service = MarketService(repo, settings)
     service._stop = asyncio.Event()
     service._hot_since = {inst["token_id"]: utcnow()}
-    service.thresholds.update(base_kline_interval_s=0.01, hot_oi_funding_interval_s=0.01)
+    service.thresholds.update(base_kline_interval_s=0.01, hot_poll_interval_s=0.01)
     polls = []
 
     async def poll_once(iid, *, derivatives=True, klines=True, ticker=True):
@@ -2074,4 +2074,27 @@ async def test_startup_repair_includes_the_minute_that_just_ended(setup):
     now = utcnow()
     await service.repair_windows("test:ABC", now - timedelta(minutes=5), now)
     assert max(ended) == (now - timedelta(seconds=5)).replace(second=0, microsecond=0)
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_reference_spot_venue_is_repaired_first_and_never_waits_for_a_slot(setup):
+    from tank.market.service import HOT_POLL_S
+
+    repo, settings, inst = setup
+    settings.replay = False
+    service = MarketService(repo, settings)
+    venues = ("okx", "coinbase", "binance")
+    service.instruments = {v: dict(inst, venue=v, instrument_id=v + ":spot:ABC") for v in venues}
+    service._repair_slots = asyncio.Semaphore(0)  # every shared slot is taken
+    order = []
+
+    async def backfill(instrument, anchor, *, checkpoint=None):
+        order.append(instrument["venue"])
+
+    service.backfill = backfill
+    now = utcnow()
+    await service.repair_windows("test:ABC", now - timedelta(hours=2), now, budget_s=0.5)
+    assert order and set(order) == {"binance"}  # the reference venue ran; the others queue for a slot
+    assert HOT_POLL_S < 60  # HOT context stays inside its 60 s cadence at any minute cutoff
     await service.close()

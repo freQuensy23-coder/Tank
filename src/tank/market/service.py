@@ -55,6 +55,11 @@ REPAIR_CHUNK, REFERENCE_SPAN = timedelta(hours=1), timedelta(hours=24)
 PAGES_PER_FLUSH = 25
 # Requests in flight per venue host (Kraken: 1).
 HOST_IN_FLIGHT = 4
+# Reference spot venues by repair speed (03 §5.7 needs one complete trailing 24 h).
+REFERENCE_VENUES = ("binance", "coinbase", "okx", "kraken", "bybit")
+# HOT tickers, OI and funding are polled this often so that their age at any minute cutoff
+# stays within the 60 s HOT cadence of 03 §5.1 despite poll and loop latency.
+HOT_POLL_S = 45
 # A reused dependency head is recomputed at least this often (retention deletes and other
 # processes are not in the write clock).
 HEAD_REUSE_S = 300
@@ -1738,12 +1743,22 @@ class MarketService:
         spot = [i for i in instruments if norm.venue_key(i).endswith(".spot")]
         perp = [i for i in instruments if i not in spot]
         recent = max(lo, hi - REFERENCE_SPAN)
-        # The trailing 24 h of spot first (the 03 §5.7 reference venue), then derivatives,
-        # then older history.
-        phases = [(spot, recent, hi), (perp, recent, hi), (instruments, lo, recent)]
+        # One fast spot venue's trailing 24 h first, outside the shared repair slots: it is the
+        # 03 §5.7 reference input. Then the other spot venues, derivatives, older history.
+        reference = sorted(
+            spot, key=lambda i: REFERENCE_VENUES.index(i["venue"]) if i["venue"] in REFERENCE_VENUES else 99
+        )[:1]
+        phases = [
+            (reference, recent, hi, True),
+            ([i for i in spot if i not in reference], recent, hi, False),
+            (perp, recent, hi, False),
+            (instruments, lo, recent, False),
+        ]
         results = {}
-        for group, a, b in phases:
-            done = await asyncio.gather(*(self._repair_instrument(inst, a, b, deadline) for inst in group))
+        for group, a, b, reserved in phases:
+            done = await asyncio.gather(
+                *(self._repair_instrument(inst, a, b, deadline, reserved=reserved) for inst in group)
+            )
             for inst, result in zip(group, done, strict=True):
                 total = results.setdefault(
                     inst["instrument_id"], {"incomplete_before": 0, "incomplete_after": 0}
@@ -1773,7 +1788,7 @@ class MarketService:
             minute += timedelta(minutes=1)
         return runs, bars
 
-    async def _repair_instrument(self, instrument, lo, hi, deadline):
+    async def _repair_instrument(self, instrument, lo, hi, deadline, *, reserved=False):
         iid = instrument["instrument_id"]
         if hi <= lo:
             return {"incomplete_before": 0, "incomplete_after": 0}
@@ -1808,6 +1823,9 @@ class MarketService:
                 checkpoint["end_cursor"] = following["first_trade"]["trade_id"]
 
             async def repair(end=end, checkpoint=checkpoint):
+                if reserved:  # the reference venue never queues behind other repairs
+                    await self.backfill(instrument, iso(end), checkpoint=checkpoint)
+                    return
                 async with self._repair_slots:  # repair CPU never takes the whole loop
                     await self.backfill(instrument, iso(end), checkpoint=checkpoint)
 
@@ -2147,7 +2165,12 @@ class MarketService:
                 # Benchmark closes first: two cheap kline reads that market context needs,
                 # which a long trade enumeration (or a restart during it) must not hold back.
                 benchmarks = await self._backfill_benchmark_klines(anchor)
-                await asyncio.gather(*(self.backfill(inst, anchor) for inst in instruments))
+
+                async def capture_window(inst):
+                    async with self._repair_slots:  # shares slots: never starves the reference venue
+                        await self.backfill(inst, anchor)
+
+                await asyncio.gather(*(capture_window(inst) for inst in instruments))
                 # Whatever REST enumeration left unproven, and the post-anchor windows so far.
                 try:
                     await self.repair_windows(
@@ -4507,7 +4530,7 @@ class MarketService:
         """HOT tickers, OI and funding every 60 s (03 §5.1), on their own schedule: the base
         cycle over every series of a venue shares one host and must not stretch it."""
         iid = instrument["instrument_id"]
-        interval = float(self.thresholds.get("hot_oi_funding_interval_s", 60))
+        interval = float(self.thresholds.get("hot_poll_interval_s", HOT_POLL_S))
         while not self._stop.is_set():
             if instrument["token_id"] not in self._hot_since:
                 with suppress(asyncio.TimeoutError):
