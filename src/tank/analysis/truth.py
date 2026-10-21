@@ -776,8 +776,10 @@ def oi_temporally_admissible(row):
 def _oi_rows(snapshot, instrument_id):
     """The instrument's OI rows; a row without oi_usd gets oi_native x mark (03 §5.4 table:
     Binance oi_native x mark, Bybit singleOpenInterest x markPrice) from its own mark or the
-    nearest ticker mark of the instrument within the sync tolerance. Input rows are not
-    modified; the derived list is built once per assessment and shared by all windows."""
+    nearest ticker mark of the instrument within the sync tolerance, marked with
+    oi_usd_source. A derived USD value serves only the window endpoints a decomposition uses;
+    normal-range history uses stored oi_usd only (_stored_usd). Input rows are not modified;
+    the derived list is built once per assessment and shared by all windows."""
     rows = _instrument_rows(snapshot, "oi", instrument_id)
     inputs = _ASSESSMENT_INPUTS.get()
     memo = inputs.setdefault("oi_rows", {}) if inputs is not None else None
@@ -814,6 +816,11 @@ def _oi_rows(snapshot, instrument_id):
     if memo is not None:
         memo[id(rows)] = (rows, out)
     return out
+
+
+def _stored_usd(row):
+    """oi_usd as stored by capture; None for a value derived from a mark at assessment time."""
+    return None if row.get("oi_usd_source") else decimal(row.get("oi_usd"))
 
 
 def _oi_split(rows):
@@ -896,9 +903,9 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
             (dependency, history_identity or tuple(sorted({r.get("instrument_id", "") for r in rows})))
             if dependency is not None
             else history_fingerprint(
-                [(t, r.get("oi_native"), r.get("oi_usd")) for t, r in sorted(bytime.items())]
+                [(t, r.get("oi_native"), _stored_usd(r)) for t, r in sorted(bytime.items())]
                 if venue_history is None
-                else [[(t, r.get("oi_native"), r.get("oi_usd")) for t, r in zip(*v)] for v in venue_history]
+                else [[(t, r.get("oi_native"), _stored_usd(r)) for t, r in zip(*v)] for v in venue_history]
             ),
         )
         if cache is not None
@@ -914,6 +921,7 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
             bytime
             and (max(bytime) - min(bytime)).total_seconds() >= float(parameter("history_min_days", 7)) * 86400
         ):
+            native_ends, usd_ends = [], []
             for t, r in bytime.items():
                 target = t - window
                 i = bisect_left(history_times, target)
@@ -926,11 +934,20 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
                 old = bytime[history_times[min(near)[1]]] if near else None
                 if old:
                     nn, oo = decimal(r.get("oi_native")), decimal(old.get("oi_native"))
-                    uu, ou = decimal(r.get("oi_usd")), decimal(old.get("oi_usd"))
+                    uu, ou = _stored_usd(r), _stored_usd(old)
                     if nn is not None and oo:
                         hn.append(float(nn / oo - 1))
+                        native_ends.append(t)
                     if uu is not None and ou:
                         hu.append(float(uu / ou - 1))
+                        usd_ends.append(t)
+            # §0 per measure: a range needs 7 days of its own pairs (USD pairs exist only where
+            # capture stored oi_usd, e.g. never on Bybit base-tier history).
+            minimum = float(parameter("history_min_days", 7)) * 86400
+            if not usd_ends or (max(usd_ends) - min(usd_ends) + window).total_seconds() < minimum:
+                hu = []
+            if not native_ends or (max(native_ends) - min(native_ends) + window).total_seconds() < minimum:
+                hn = []
         ranges = (normal(hn), normal(hu))
         if cache is not None:
             cache[history_key] = ranges
@@ -1039,7 +1056,7 @@ def _composite_history(venue_history, window):
         gaps = sorted((b - a).total_seconds() for a, b in zip(times, times[1:]) if b > a)
         # Same pairing tolerance as one venue's history: half its cadence, at least the sync tolerance.
         tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0)
-        values = [(decimal(r.get("oi_native")), decimal(r.get("oi_usd"))) for r in rows]
+        values = [(decimal(r.get("oi_native")), _stored_usd(r)) for r in rows]
         series.append((times, values, tolerance))
     history = sorted({t for times, _, _ in series for t in times})
     # §0 "at least 7 days" is the stored history's span, as for one venue's series.
@@ -3214,7 +3231,10 @@ def available_field_freshness(snapshot, end):
                 continue
             key = (r.get("instrument_id"), r.get("metric_key"), r.get("kind", r.get("type")), r.get("chain"))
             groups[key].append(r)
-        for key, rows in groups.items():
+        # Sorted by field, not first-observed order: that order depended on how far back the
+        # snapshot read a collection, and the first failed check is Data Confidence's limiting one.
+        for key in sorted(groups, key=lambda k: tuple("" if v is None else str(v) for v in k)):
+            rows = groups[key]
             row = max(rows, key=_time)
             stamp = _time(row)
             cadence, source = capture_cadence(snapshot, collection, row)
