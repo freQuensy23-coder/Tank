@@ -6,6 +6,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import random
 import weakref
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -693,8 +694,22 @@ class PostgresRepository(QueueMixin):
 
     @asynccontextmanager
     async def lock(self, key):
+        digest = int.from_bytes(hashlib.sha256(str(key).encode()).digest()[:8], "big", signed=True)
+        existing = self._connection.get()
+        if existing is None or existing[1]() is not asyncio.current_task():
+            # Wait without holding a pooled connection: a blocked waiter used to keep one
+            # for the whole wait, so many waiters on one key drained the pool (r109).
+            while True:
+                async with self.transaction():
+                    row = await (
+                        await self._conn().execute("SELECT pg_try_advisory_xact_lock(%s) AS ok", (digest,))
+                    ).fetchone()
+                    if row["ok"]:
+                        yield self
+                        return
+                await asyncio.sleep(random.uniform(0.05, 0.2))
+        # Inside an open transaction the connection cannot be returned; wait on it.
         async with self.transaction():
-            digest = int.from_bytes(hashlib.sha256(str(key).encode()).digest()[:8], "big", signed=True)
             await self._conn().execute("SELECT pg_advisory_xact_lock(%s)", (digest,))
             yield self
 

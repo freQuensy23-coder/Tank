@@ -803,3 +803,32 @@ async def test_capture_tier_transitions_follow_market_retention(repo):
     await repo.prune_market(utcnow() - timedelta(days=90))
     assert await repo.get("ops.capture_tier_transitions", old) is None
     assert await repo.get("ops.capture_tier_transitions", recent)
+
+
+async def test_lock_waiters_do_not_drain_the_pool(repo):
+    if not isinstance(repo, PostgresRepository):
+        pytest.skip("Pool behavior requires PostgreSQL")
+    key = new_id("contended")
+    held, release = asyncio.Event(), asyncio.Event()
+
+    async def holder():
+        async with repo.lock(key):
+            held.set()
+            await release.wait()
+
+    order = []
+
+    async def waiter(n):
+        async with repo.lock(key):
+            order.append(n)
+
+    hold = asyncio.create_task(holder())
+    await held.wait()
+    waiters = [asyncio.create_task(waiter(n)) for n in range(40)]  # more waiters than the pool holds
+    await asyncio.sleep(0.5)
+    # Unrelated work still gets a connection while 40 tasks wait on the key.
+    assert await asyncio.wait_for(repo.get("reg.tokens", "absent"), timeout=5) is None
+    assert not order
+    release.set()
+    await asyncio.wait_for(asyncio.gather(hold, *waiters), timeout=60)
+    assert sorted(order) == list(range(40))
