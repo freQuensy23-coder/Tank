@@ -265,8 +265,10 @@ class HourlyParquet:
             count = 0
             with pq.ParquetWriter(temporary, schema, compression="zstd") as writer:
                 for batch in self._batches(canonical, journals):
+                    # Every stored column is text; a journal or file from another writer
+                    # (e.g. an all-null column) is cast, never rejected.
                     columns = [
-                        batch.column(name)
+                        batch.column(name).cast(pa.string())
                         if name in batch.schema.names
                         else pa.nulls(batch.num_rows, pa.string())
                         for name in schema.names
