@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from datetime import timedelta
@@ -207,6 +208,10 @@ def _unproves(collection, old, new):
         and new.get("complete") is not True
         and (new.get("gap_reason") or UNPROVEN) == UNPROVEN
     )
+
+
+# Rows a batched range read decodes between two turns of the event loop.
+YIELD_ROWS = 1000
 
 
 def _note_writes(self, collection, rows):
@@ -949,7 +954,7 @@ async def sampled_market_history(
 
 
 async def market_range_by_instrument(
-    repo, collection, time_field, instrument_ids, start, end, filters=None, *, batch_size=20000, keep=None
+    repo, collection, time_field, instrument_ids, start, end, filters=None, *, batch_size=5000, keep=None
 ):
     """Rows of several instruments in [start, end), paged on one key for all of them.
 
@@ -958,7 +963,7 @@ async def market_range_by_instrument(
     reads (e.g. 9 collections x the instruments of a token) without changing any output.
     Pages are keyset-paged like iter_range; `keep(instrument_id, rows)` runs after each
     appended row so a caller can shrink older rows while they stream (book levels).
-    20k-row pages bound the raw-plus-record transient of one page (~100 MB at 100k on BTC).
+    5k-row pages bound the transient of one page and the loop time of its fetch.
     """
     from psycopg import sql
 
@@ -1010,11 +1015,15 @@ async def market_range_by_instrument(
         )
         async with repo.transaction():
             rows = await (await repo._conn().execute(query, [*page_args, batch_size])).fetchall()
-        for row in rows:
+        for n, row in enumerate(rows, 1):
             iid = row["instrument_id"]
             out[iid].append(_read_record(collection, row))
             if keep is not None:
                 keep(iid, out[iid])
+            if n % YIELD_ROWS == 0:
+                # A BTC reaction snapshot decodes ~10^6 rows (r109 03:23: streams and flushes
+                # starved for minutes): every YIELD_ROWS rows the loop serves the others.
+                await asyncio.sleep(0)
         if len(rows) < batch_size:
             return out
         last = rows[-1]

@@ -1013,3 +1013,41 @@ async def test_dependency_heads_in_one_round_trip_equal_single_heads(typed_repo)
     batched = await market_dependency_head(typed_repo, *args, **kwargs, orders=orders)
     assert batched == {o: await market_dependency_head(typed_repo, *args, **kwargs, order=o) for o in orders}
     assert batched["availability"]["minute_start"] == "2026-10-18T00:01:00Z"
+
+
+async def test_batched_range_read_gives_the_loop_turns_while_it_decodes(typed_repo):
+    import asyncio
+    from datetime import timedelta
+
+    from tank.market_storage import market_range_by_instrument
+    from tank.util import iso, parse_time
+
+    await typed_repo.migrate()
+    base = parse_time("2026-10-18T00:00:00Z")
+    rows = [flow(iso(base + timedelta(minutes=n))) for n in range(2500)]
+    await typed_repo.put_market_batch("mkt.flow_bars_1m", rows)
+    turns = [0]
+    done = asyncio.Event()
+
+    async def other_task():
+        while not done.is_set():
+            turns[0] += 1
+            await asyncio.sleep(0)
+
+    other = asyncio.create_task(other_task())
+    before = None
+    await asyncio.sleep(0)
+    before = turns[0]
+    out = await market_range_by_instrument(
+        typed_repo,
+        "mkt.flow_bars_1m",
+        "minute_start",
+        ["test:BTC"],
+        base,
+        base + timedelta(days=3),
+        batch_size=5000,
+    )
+    done.set()
+    await other
+    assert len(out["test:BTC"]) == 2500
+    assert turns[0] - before >= 2  # yields every YIELD_ROWS rows, not only between pages
