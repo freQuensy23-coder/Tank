@@ -74,6 +74,8 @@ func (c *ClickHouse) post(ctx context.Context, query string, params map[string]s
 	q.Set("date_time_output_format", "iso")
 	q.Set("output_format_json_quote_64bit_integers", "0")
 	q.Set("output_format_json_quote_decimals", "0")
+	// A repair or a funding backfill spans many daily partitions in one insert.
+	q.Set("max_partitions_per_insert_block", "1000")
 	for k, v := range params {
 		q.Set("param_"+k, v)
 	}
