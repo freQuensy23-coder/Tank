@@ -1074,6 +1074,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
         await repo.close()
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 @pytest.mark.parametrize("backend", ["memory", "postgres"])
 @pytest.mark.parametrize("lock_kind", ["event", "delivery"])

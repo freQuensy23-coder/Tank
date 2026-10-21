@@ -51,6 +51,7 @@ async def no_evidence(service):
     assert not list(Path(service.settings.data_dir).rglob("*.json.zst"))
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("owned", [False, True])
 @pytest.mark.parametrize("kind", ["slow_drip", "delayed_headers"])
 async def test_real_twenty_second_total_deadline(tmp_path, monkeypatch, owned, kind):

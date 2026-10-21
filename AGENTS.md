@@ -14,3 +14,11 @@ Read-only original-agent handoff: `/srv/tank/data/qa/original-agent-handoff-2026
 ## Lead coordination
 
 The rules, workstreams and file ownership of the lead session are in /srv/tank-work/COORDINATION.md. Original-agent followers stay read-only: do not edit /srv/tank or /srv/tank-work.
+
+## Code rules (enforced by CI, `.github/workflows/ci.yml`)
+
+- **No comments.** No `#` comments in Python and no `//` or `/* */` in Go, except `//go:` directives. Name things so the code explains itself. Docstrings only where an API needs them. `scripts/ci/no_comments.py` fails the build.
+- **No legacy.** Python 3.13+ only. No `from __future__ import annotations`, no `typing.Optional/Union/List/Dict/Tuple/Set` (use `X | None`, `list[...]`), no relative imports, no compatibility shims, no dead or commented-out code. Delete what you replace in the same change.
+- **Green before merge.** These must pass: `ruff check`, `ruff format --check`, `mypy`, and for Go `gofmt`, `go vet` and `golangci-lint`. Suppressing a finding in code is not allowed; fix it.
+- **Tests come with every change.** Unit tests are fast and deterministic: no network, no real sleeps or wall-clock waits (inject the clock and timeouts), and no files outside the repo. The whole unit run (`pytest -m "not slow"`) must stay under 3 min on a 4-core runner. A test that needs real time or heavy end-to-end data gets `@pytest.mark.slow`, and that marker is the exception, not the default.
+- **Deploy** only through the `deploy` workflow (image from GHCR built by CI), never by hand from a dirty checkout.

@@ -429,6 +429,7 @@ async def test_registry_available_for_cold_benchmark_and_anchor_is_actual_trade(
     await http.aclose()
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_exhausted_bounded_rest_proves_first_last_and_empty_minutes_despite_live_flush(
     setup, monkeypatch
@@ -2179,6 +2180,7 @@ async def test_hot_ticker_keeps_its_grid_when_a_request_is_stuck(setup):
     await service.close()
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_loop_watchdog_logs_the_stack_that_holds_the_loop(setup, monkeypatch, caplog):
     import time as clock

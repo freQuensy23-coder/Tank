@@ -272,6 +272,7 @@ def test_masking_preserves_original_and_private_map_is_not_pipeline_input(packet
         load_inputs(masked, settings())
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("captured_http_status", [None, 404, 503])
 @pytest.mark.parametrize("transient_case", [None, "scope_refusal", "lost_decision_ack"])
 async def test_fresh_replay_session_reruns_market_and_decision_code(

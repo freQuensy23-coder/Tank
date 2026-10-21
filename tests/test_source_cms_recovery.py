@@ -112,6 +112,7 @@ def test_untrusted_slug_never_becomes_fallback(slug):
     assert not parsers.publisher_cms_entries(html)
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_cms_fallback_is_not_used_for_non404_failure(tmp_path):
     calls = []
