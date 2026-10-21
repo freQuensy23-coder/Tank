@@ -1983,3 +1983,15 @@ async def test_replay_never_repairs_from_live_rest(setup):
     service.backfill = backfill
     assert await service.repair_windows("test:ABC", utcnow() - timedelta(hours=2), utcnow()) == {}
     await service.close()
+
+
+@pytest.mark.asyncio
+async def test_bucketed_oi_cadence_is_bounded_by_its_source(setup):
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+    await service._record_capture_tier(inst["token_id"], "HOT", "TEST")
+    oi = (await service._capture_metadata(inst["token_id"], utcnow()))["collections"]["oi"]
+    assert oi["cadence_s"] == 60.0
+    assert oi["cadence_s_by_metric"]["bybit.linear.open-interest"] == 300.0
+    assert oi["cadence_basis_by_metric"]["bybit.linear.open-interest"] == "SOURCE_BUCKET_300S"
+    await service.close()
