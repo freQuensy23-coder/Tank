@@ -204,7 +204,11 @@ def evaluate(fid, entry, d, run_name="acceptance-run.json"):
     sys.path.insert(0, str(ROOT / "src"))
     import fixture_acceptance as fa
 
-    case = dict(entry)
+    # Spec fields (case_description, cutoff_spec, assertion_spec, …) come from the manifest; the packet
+    # references come from the entry being evaluated.
+    spec = next((x for x in json.load(open(ROOT / "tests/fixtures/manifest.json"))["fixtures"]
+                 if x["fixture_id"] == fid), {})
+    case = {**{k: v for k, v in spec.items() if k not in ("acceptance_run",)}, **entry}
     run_path = d / run_name
     case["acceptance_run"] = {"path": os.path.relpath(run_path, ROOT), "sha256": sha(run_path)}
     errors = fa.check_completed(ROOT, case) if json.load(open(run_path)).get("frozen_output") else ["no frozen output"]
