@@ -2217,3 +2217,70 @@ async def test_loop_watchdog_logs_the_stack_that_holds_the_loop(setup, monkeypat
     stalls = [r.getMessage() for r in caplog.records if "event loop stalled" in r.getMessage()]
     assert stalls and "hogging_the_loop" in stalls[0]
     await service.close()
+
+
+@pytest.mark.asyncio
+async def test_reaction_snapshot_reads_books_and_tickers_only_at_the_window_bounds(setup, monkeypatch):
+    """r110: one BTC reaction capture read ~1M rows (days of 10 s books and tickers). A REACTION
+    snapshot reads books/tickers only around its window bounds and the rest of the window
+    collections from the earlier of the anchor and cutoff - 24 h, never 2 x the window."""
+    import tank.market.service as service_module
+    from tank.util import iso, parse_time
+
+    repo, settings, inst = setup
+    http = httpx.AsyncClient()
+    service = MarketService(repo, settings, http=http)
+    cutoff = parse_time("2026-06-17T12:00:00Z")
+    anchor = cutoff - timedelta(hours=72)
+    for i in range(0, 7 * 24 * 60, 20):
+        ts = iso(cutoff - timedelta(minutes=i))
+        await repo.put(
+            "mkt.book_summaries",
+            f"b{i}",
+            {
+                "instrument_id": inst["instrument_id"],
+                "token_id": inst["token_id"],
+                "exchange_ts": ts,
+                "integrity_ok": True,
+                "mid": "2",
+            },
+        )
+        await repo.put(
+            "mkt.tickers_24h",
+            f"t{i}",
+            {
+                "instrument_id": inst["instrument_id"],
+                "token_id": inst["token_id"],
+                "ts": ts,
+                "mark_price": "2",
+            },
+        )
+    reads = []
+    original = service_module.market_range_by_instrument
+
+    async def spy(repo_, collection, field, ids, start, end, *args, **kwargs):
+        reads.append((collection, parse_time(start), parse_time(end)))
+        return await original(repo_, collection, field, ids, start, end, *args, **kwargs)
+
+    monkeypatch.setattr(service_module, "market_range_by_instrument", spy)
+    snapshot = await service.snapshot(
+        inst["token_id"], iso(cutoff), anchor={"type": "T1", "ts": iso(anchor)}, scope="REACTION"
+    )
+    near = [
+        (anchor - timedelta(minutes=5), anchor + timedelta(minutes=5)),
+        (cutoff - timedelta(minutes=15), cutoff + timedelta(seconds=1)),
+    ]
+
+    def inside(t):
+        return any(low <= t <= high for low, high in near)
+
+    for collection, start, end in reads:
+        if collection in ("mkt.book_summaries", "mkt.tickers_24h"):
+            assert inside(start) and inside(end), (collection, start, end)
+        elif collection != "mkt.funding_obs":
+            assert start >= anchor - timedelta(minutes=1), (collection, start)
+    assert snapshot["books"] and all(inside(parse_time(b["exchange_ts"])) for b in snapshot["books"])
+    assert snapshot["tickers"] and all(inside(parse_time(t["ts"])) for t in snapshot["tickers"])
+    full = await service.snapshot(inst["token_id"], iso(cutoff), anchor={"type": "T1", "ts": iso(anchor)})
+    assert len(full["books"]) > 10 * len(snapshot["books"])
+    await http.aclose()

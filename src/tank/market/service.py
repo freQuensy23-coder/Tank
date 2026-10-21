@@ -30,6 +30,21 @@ from .capture import event_anchor
 from .flow import FlowAccumulator
 from .rate_gate import PriorityGate, binance_request_weight, public_request_constraints
 
+# Reaction snapshots read books and tickers only this close to the window bounds.
+REACTION_BOUND_MARGIN = timedelta(minutes=5)
+REACTION_NEWEST_MARGIN = timedelta(minutes=15)
+
+
+def _merge_ranges(ranges):
+    """Sorted, non-overlapping [start, end) ranges covering the given ones."""
+    out = []
+    for low, high in sorted(r for r in ranges if r[0] < r[1]):
+        if out and low <= out[-1][1]:
+            out[-1] = (out[-1][0], max(out[-1][1], high))
+        else:
+            out.append((low, high))
+    return out
+
 
 def _cut(rows_by_instrument, field, start, end):
     """[start, end) of each instrument's rows, which are ordered by `field`."""
@@ -4214,7 +4229,13 @@ class MarketService:
         of the union range inside snapshot_anchors()."""
         return await self._ranged(collection, field, ids, start, end, books=books)
 
-    async def snapshot(self, token_id, cutoff, anchor=None):
+    async def snapshot(self, token_id, cutoff, anchor=None, *, scope=None):
+        """scope="REACTION": a reaction checkpoint (03 §8, 01 FR-R-01) measures its EVENT
+        window, anchor to cutoff. Flow bars, klines, OI, funding and liquidations are read
+        from the earlier of the anchor and cutoff - 24 h (the reference venue's trailing-24 h
+        coverage, 03 §5.7); books and tickers only around the window bounds (the newest
+        integrity-checked book and the marks next to the OI bounds). The default reads every
+        window collection from 2 x the event window before the cutoff."""
         # Strings passed to this API select an analysis boundary. Timestamp
         # callers preserve the uncertainty of an event-derived schedule.
         requested = cutoff if isinstance(cutoff, Timestamp) else chosen_boundary(cutoff, precision="EXACT")
@@ -4230,6 +4251,22 @@ class MarketService:
             else timedelta(days=1)
         )
         recent_start = max(history_start, cutoff_dt - 2 * duration - timedelta(minutes=1))
+        snapshot_end = cutoff_dt + timedelta(microseconds=1)
+        bounded = {}
+        if scope == "REACTION":
+            anchor_dt = min(parse_time(anchor_value), cutoff_dt) if anchor_value else cutoff_dt
+            recent_start = max(
+                history_start, min(anchor_dt, cutoff_dt - timedelta(days=1)) - timedelta(minutes=1)
+            )
+            bounds = _merge_ranges(
+                [
+                    (anchor_dt - REACTION_BOUND_MARGIN, min(anchor_dt + REACTION_BOUND_MARGIN, snapshot_end)),
+                    (cutoff_dt - REACTION_NEWEST_MARGIN, snapshot_end),
+                ]
+            )
+            bounded = {"books": bounds, "tickers": bounds}
+        elif scope is not None:
+            raise ValueError(f"Unknown snapshot scope: {scope}")
         result = {
             "token_id": token_id,
             **requested.fields("cutoff"),
@@ -4255,12 +4292,19 @@ class MarketService:
             await self.flush_market()
         result["flow_segments"] = []
         result["reference_points"] = []
-        snapshot_end = cutoff_dt + timedelta(microseconds=1)
         for name, (collection, field) in COLLECTIONS.items():
             values = []
             # One query per series family for all of the token's instruments (BTC: 9),
             # split per instrument in the same order as one range read per instrument.
-            if name != "supply":
+            if name in bounded:
+                window_rows = {iid: [] for iid in ids}
+                for low, high in bounded[name]:
+                    part = await self._window_rows(
+                        token_id, collection, field, ids, low, high, books=name == "books"
+                    )
+                    for iid in ids:
+                        window_rows[iid].extend(part[iid])
+            elif name != "supply":
                 window_rows = await self._window_rows(
                     token_id, collection, field, ids, recent_start, snapshot_end, books=name == "books"
                 )
