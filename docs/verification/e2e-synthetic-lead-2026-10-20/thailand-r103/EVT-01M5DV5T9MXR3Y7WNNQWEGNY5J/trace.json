@@ -1,0 +1,231 @@
+{
+  "agent_rules_in_force": [
+    {
+      "model_id": "gpt-6.1-sol",
+      "prompt_version": "27ebfff461bff40d51c86a60ce4857856905a29a31851d5d6056c79f3d35fccf"
+    }
+  ],
+  "chain_complete": true,
+  "classes": [
+    "MAJOR"
+  ],
+  "event_id": "EVT-01M5DV5T9MXR3Y7WNNQWEGNY5J",
+  "evidence_bundles": [
+    {
+      "bundle_id": "EVB-867f0d2c156c9bbdf47e5db45a03b708a4946771a52a6a1725df8120a991d891",
+      "recomputed": "867f0d2c156c9bbdf47e5db45a03b708a4946771a52a6a1725df8120a991d891",
+      "stored_sha": "867f0d2c156c9bbdf47e5db45a03b708a4946771a52a6a1725df8120a991d891",
+      "valid": true
+    }
+  ],
+  "known_to_us_at": "2026-10-20T23:39:36.004866Z",
+  "limits_s": {
+    "item_to_event_s": 90,
+    "known_to_first_card_generated_s": null,
+    "known_to_full_card_generated_s": 480
+  },
+  "operator_or_manual_jobs": [],
+  "operator_steps": [],
+  "recovered_by_operator": false,
+  "stages": {
+    "agent_session": true,
+    "assessment": true,
+    "card": true,
+    "decision": true,
+    "delivery_sent_with_message_ref": true,
+    "evidence_bundle_valid": true,
+    "filter_job_done": true,
+    "market_truth_row": true,
+    "market_truth_tool_done": true,
+    "record_event": true,
+    "route_job_done": true,
+    "source_item_relevant": true
+  },
+  "statement": "The Block reports Thai SEC approval of two retail spot bitcoin ETFs for SET listing, with trading expected November 6; official confirmation is missing.",
+  "timeline": [
+    {
+      "at": "2026-10-20T23:25:00+00:00",
+      "detail": "S34 https://www.theblock.co/news/regulation/2026-10-21-thailand-sec-opens-spot-bitcoin-etfs-to-retail-investors-two-funds-to-list-on-set-421179",
+      "since_known_s": -876.004866,
+      "step": "published"
+    },
+    {
+      "at": "2026-10-20T23:39:36.004866+00:00",
+      "detail": "S34 ITM-01M5DTYHP4C1VW6WAK9C07XKG0 relevance=SEND route=NEW_SESSION",
+      "since_known_s": 0.0,
+      "step": "observed"
+    },
+    {
+      "at": "2026-10-20T23:40:02.311532+00:00",
+      "detail": "JOB-01M5DTYHTCNSDERBT0NRT5J40Q",
+      "since_known_s": 26.306666,
+      "step": "job FILTER_ITEM DONE"
+    },
+    {
+      "at": "2026-10-20T23:41:32.136005+00:00",
+      "detail": "JOB-01M5DTZ6QXV898MXKKQ2JTH4HV",
+      "since_known_s": 116.131139,
+      "step": "job ROUTE_ITEM DONE"
+    },
+    {
+      "at": "2026-10-20T23:42:25.168941+00:00",
+      "detail": "JOB-01M5DV22RKX3XC8YEJTVN7288W",
+      "since_known_s": 169.164075,
+      "step": "job AGENT_MESSAGE DONE"
+    },
+    {
+      "at": "2026-10-20T23:42:36.444364+00:00",
+      "detail": "call_66caf12f74f84efe913c36ef6b289a94|fc_0b411e810015987f016ad7fc62c5008191b22774d3896a0fb9",
+      "since_known_s": 180.439498,
+      "step": "tool list_open_events DONE"
+    },
+    {
+      "at": "2026-10-20T23:42:40.543852+00:00",
+      "detail": "call_4c28bde8251d49c38bdbfdfae8af5165|fc_0b411e810015987f016ad7fc6407608191b5e385f82db2bd31",
+      "since_known_s": 184.538986,
+      "step": "tool search_tank_items DONE"
+    },
+    {
+      "at": "2026-10-20T23:42:49.616387+00:00",
+      "detail": "call_dd0ede49e3cd47708312a61e7e3337d2|fc_0b411e810015987f016ad7fc6407608191bcd64dbc0c9904ab",
+      "since_known_s": 193.611521,
+      "step": "tool fetch_page ERROR"
+    },
+    {
+      "at": "2026-10-20T23:43:36.675429+00:00",
+      "detail": "call_3df4496b46674edca0fcd6eddcb20433|fc_0b411e810015987f016ad7fc7f02848191a1dc74ce547b5ab8",
+      "since_known_s": 240.670563,
+      "step": "tool record_event DONE"
+    },
+    {
+      "at": "2026-10-20T23:44:09.380443+00:00",
+      "detail": "call_4096b7a31894474fb2749ed58a63f526|fc_0b411e810015987f016ad7fcaf37bc8191aa3cfdf28cfef6c8",
+      "since_known_s": 273.375577,
+      "step": "tool get_token_facts DONE"
+    },
+    {
+      "at": "2026-10-20T23:45:00Z",
+      "detail": "bitcoin:BTC move_class=UNKNOWN",
+      "since_known_s": 323.995134,
+      "step": "market_truth"
+    },
+    {
+      "at": "2026-10-20T23:45:00Z",
+      "detail": "bitcoin:BTC action=WAIT thesis=C trade=C",
+      "since_known_s": 323.995134,
+      "step": "decision"
+    },
+    {
+      "at": "2026-10-20T23:45:38.3457+00:00",
+      "detail": "call_66f792efba9b44a3b45b1e6f1fbf57d1|fc_0b411e810015987f016ad7fcccd7c88191b12fc9168cb0b8ce",
+      "since_known_s": 362.340834,
+      "step": "tool set_assessment DONE"
+    },
+    {
+      "at": "2026-10-20T23:45:50.835072+00:00",
+      "detail": "call_bb37a19cc2d94604926d4f4c081fe686|fc_0b411e810015987f016ad7fd25f19081918284a03a61cffde6",
+      "since_known_s": 374.830206,
+      "step": "tool set_beneficiaries DONE"
+    },
+    {
+      "at": "2026-10-20T23:45:55.359822+00:00",
+      "detail": "call_0d340d07c43a47569a5b2703826d9668|fc_0b411e810015987f016ad7fd314ee08191a358a8086aeff0e9",
+      "since_known_s": 379.354956,
+      "step": "tool get_market_truth REFUSED"
+    },
+    {
+      "at": "2026-10-20T23:46:12.923784+00:00",
+      "detail": "JOB-01M5DVA8JBBW2VPJQRYSFRZ49Y",
+      "since_known_s": 396.918918,
+      "step": "job ESCALATE_TOKENS DONE"
+    },
+    {
+      "at": "2026-10-20T23:54:07.992956+00:00",
+      "detail": "JOB-01M5DVA8Z2KXKJH3VE587EGMBT",
+      "since_known_s": 871.98809,
+      "step": "job RUN_MARKET_TRUTH DONE"
+    },
+    {
+      "at": "2026-10-20T23:54:13.488276+00:00",
+      "detail": "call_3f231e631023406f84427a04179728c9|fc_0b411e810015987f016ad7fd356ec081919bd18635962f3b38",
+      "since_known_s": 877.48341,
+      "step": "tool get_market_truth DONE"
+    },
+    {
+      "at": "2026-10-20T23:55:05.295157+00:00",
+      "detail": "call_8d2dedceae5d4acabebd9460ed5ab3ab|fc_0b411e810015987f016ad7ff2a6f808191b9b79801bda9b314",
+      "since_known_s": 929.290291,
+      "step": "tool get_decision REFUSED"
+    },
+    {
+      "at": "2026-10-20T23:55:40.673041+00:00",
+      "detail": "JOB-01M5DVR2GPJWPZ8F2H8ZC40K84",
+      "since_known_s": 964.668175,
+      "step": "job REACTION_CAPTURE DONE"
+    },
+    {
+      "at": "2026-10-20T23:56:04.311369+00:00",
+      "detail": "call_1f69b5026a72464c8bddeca8b71bbd51|fc_0b411e810015987f016ad7ff62ee28819188aba90bfdf6fdbf",
+      "since_known_s": 988.306503,
+      "step": "tool get_decision DONE"
+    },
+    {
+      "at": "2026-10-20T23:56:31.196659Z",
+      "detail": "ALR-01M5DVXXBJGHH8EYRJE5W5PDDD",
+      "since_known_s": 1015.191793,
+      "step": "alert FULL v1"
+    },
+    {
+      "at": "2026-10-20T23:56:31.196659Z",
+      "detail": "message_ref=None attempt=0",
+      "since_known_s": 1015.191793,
+      "step": "delivery GENERATED telegram:alerts"
+    },
+    {
+      "at": "2026-10-20T23:56:56.823458+00:00",
+      "detail": "call_9a46966785094aa6ab25bd5683db9d77|fc_0b411e810015987f016ad7ff976c548191b3f4c0692e2738e9",
+      "since_known_s": 1040.818592,
+      "step": "tool publish_card DONE"
+    },
+    {
+      "at": "2026-10-20T23:57:07.225397Z",
+      "detail": "message_ref=None attempt=1",
+      "since_known_s": 1051.220531,
+      "step": "delivery GENERATED telegram:alerts"
+    },
+    {
+      "at": "2026-10-20T23:57:07.525480Z",
+      "detail": "message_ref=15 attempt=1",
+      "since_known_s": 1051.520614,
+      "step": "delivery SENT telegram:alerts"
+    },
+    {
+      "at": "2026-10-20T23:57:08.745333+00:00",
+      "detail": "JOB-01M5DVY9V864ENDQEQDPNEAF3P",
+      "since_known_s": 1052.740467,
+      "step": "job DELIVER DONE"
+    },
+    {
+      "at": "2026-10-20T23:57:49.112981+00:00",
+      "detail": "JOB-01M5DVQYW3CBPK6593VSPZEDJW",
+      "since_known_s": 1093.108115,
+      "step": "job REACTION_CAPTURE DONE"
+    }
+  ],
+  "timings": {
+    "delivery_after_generation_s": [
+      36.328821
+    ],
+    "item_to_event_s": 240.670563,
+    "known_to_first_card_generated_s": 1015.191793,
+    "known_to_first_card_sent_s": 1051.520614,
+    "known_to_full_card_generated_s": 1015.191793,
+    "known_to_full_card_sent_s": 1051.520614,
+    "public_to_known_s": 876.004866
+  },
+  "within_limits": {
+    "delivery_after_generation_s": false,
+    "item_to_event_s": false,
+    "known_to_full_card_generated_s": false
+  }
+}

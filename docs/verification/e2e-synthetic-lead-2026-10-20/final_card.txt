@@ -1,0 +1,43 @@
+MAJOR (M5) — The Block reports unverified Indonesian Bitcoin ETF approval.
+Scores D8 · M n/a (Forecast purchases lack a comparable covered daily-volume base.) · P8 · X4 · F2 · S n/a (No evidence of prior market expectations.) · I6
+Stage: unverified APPROVED · Certainty: MEDIUM · Data MEDIUM
+Fresh: FRESH · public 00:13Z · known 00:28Z (collection)
+
+VERIFIED: n/a (no verified claims)
+NOT VERIFIED: OJK approved Indonesia's first two spot bitcoin ETFs for IDX listing — OJK approval notice not obtained; official press-release page timed out.; Spot bitcoin ETFs expected_trading_and_custody Trading expected November 10 with direct bitcoin holdings and named custodians — Primary fund documents and IDX trading schedule not obtained.; Retail investors will_gain ETF access through ordinary brokerage accounts — Primary retail eligibility terms not obtained.; ETF issuers expect_spot_purchases About 3,500 BTC for combined seed and first-month creations; expectation, not executed flow — Issuer documents and executed spot purchases not obtained; forecast is not a binding flow.
+
+WHY IT MATTERS
+• What changed: Reported retail brokerage access; primary confirmation missing.
+• Economic effect: Forecast: 3,500 BTC for seed and first-month creations, not executed purchases.
+• Token capture: Bitcoin (BTC) INDIRECT — Reported physically backed ETFs would purchase and hold BTC when funded.
+
+WHO: primary Bitcoin (BTC) · secondary none — No evidenced secondary registry-token economic linkage.
+• Issuer / product: Issuers named, but primary fund documents unavailable; no secondary token link.
+• Exchanges / DEX: IDX named; no DEX or covered exchange allocation disclosed.
+• Settlement L1 / L2: BTC holdings reported; no additional settlement network selected.
+• Liquidity / execution: Local and offshore exchanges unnamed.
+• Lending / collateral: No lending or collateral use disclosed.
+• Oracles / data: No oracle provider disclosed.
+• Interoperability: No bridge or messaging provider disclosed.
+• Custody / compliance: Bank Mandiri and KSEI named; custody terms unconfirmed and no registry-token link.
+
+── Bitcoin (BTC) (PRIMARY) ──
+
+MARKET TRUTH: UNKNOWN
+• EVENT spot flow BUY: CVD 94.26958614, CONCENTRATED; 5 complete venues. [EVENT; NATIVE_TOKEN; 5 complete spot venues, 100.0% estimated volume coverage]
+• EVENT synchronized native OI +0.01%, normal range unavailable; class unavailable (INCOMPLETE); by venue: binance MIXED (native +0.01%, position share 6.4%, price-markup component +15,071,373 USD). [EVENT; DECIMAL_RETURN; 2 covered venues]
+• event: open interest by venue: binance MIXED +0.01% in BTC (position share 6.4% of the OI value change; price-markup component present)
+• event: spot venues net buying: binance 25.6%, kraken 18.5%, okx 9.2%; net selling: none (share of spot volume)
+
+OUTLOOK: BULLISH · MEDIUM · best 7d
+• Base: No classifiable move yet: spot flow BUY and CONCENTRATED in the primary window on complete venues.
+• Upside: Upgrade if spot turns BUY and BROAD with native OI within its normal range (spot-led buying).
+• Failure: Thesis invalid if the event is denied.
+
+Market context: NEUTRAL — BTC 24h +1.96% vs normal -2.80% to +6.54%
+WHAT TO DO: WAIT — Thesis C · Trade C
+WHAT CHANGES THE ACTION:
+↑ Data HIGH and the move class resolves to spot-led buying (aggressor side and price response checked) or organic mixed.
+↓ Majority-volume spot SELL for two hourly windows.
+
+CONFIDENCE: LOW — main unknown: Some inputs are outside their observation cadence
