@@ -21,6 +21,7 @@ from tank.util import iso, parse_time, sha256, utcnow
 
 from . import parsers
 from .browser import BrowserReader
+from .capture_fetch import capture_fetch, is_exchange_url
 from .rate_limits import shared_request_budgets
 from .xsensor import XSensor
 
@@ -144,12 +145,23 @@ class SourceService:
                 await self.acquire_budget(feed)
                 if on_start is not None:
                     await on_start()
-                response = await self.http.request(
-                    feed.get("method", "GET"),
-                    feed["url"],
-                    headers=headers,
-                    json=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
-                )
+                if is_exchange_url(feed["url"]):
+                    # Exchange hosts belong to tank-capture: it fetches, core reads the stored response.
+                    response = await capture_fetch(
+                        self.repo,
+                        feed.get("method", "GET"),
+                        feed["url"],
+                        headers=headers,
+                        body=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
+                        source_id=key.split(":", 1)[0],
+                    )
+                else:
+                    response = await self.http.request(
+                        feed.get("method", "GET"),
+                        feed["url"],
+                        headers=headers,
+                        json=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
+                    )
                 if response.status_code == 304:
                     return None, state
                 payload = response.content
