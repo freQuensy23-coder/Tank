@@ -182,6 +182,9 @@ class Query:
         self.clauses, self.params = [], {}
 
     def param(self, value, kind):
+        if isinstance(value, (list, tuple)):
+            # A list goes in the statement body: thousands of keys overflow the URL.
+            return "(" + (_literal(value)[1:-1] or "NULL") + ")"
         name = f"p{len(self.params)}"
         self.params[name] = (_literal(value), kind)
         return "{" + name + ":" + kind + "}"

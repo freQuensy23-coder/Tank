@@ -54,8 +54,17 @@ def insert_series(collection, password, since=None):
     pg = f"postgresql('postgres:5432', 'tank', '{table}', 'tank', '{password}', '{VIEW_SCHEMA}')"
     # --since: only rows the old writer recorded after the first copy (a handover's tail).
     where = f" WHERE recorded_at >= parseDateTime64BestEffort('{since}', 6, 'UTC')" if since else ""
+    version = "1"
+    if since and collection == "mkt.flow_bars_1m":
+        # A handover tail: the old writer's complete bar replaces the unproven one the new
+        # writer stored for the minute it joined in (later _version wins).
+        version = "toUInt64(toUnixTimestamp64Nano(now64(9)))"
+        where += (
+            " AND complete AND (instrument_id, minute_start) IN (SELECT instrument_id, minute_start "
+            f"FROM {collection} FINAL WHERE NOT complete AND minute_start >= parseDateTime64BestEffort('{since}', 6, 'UTC'))"
+        )
     return (
-        f"INSERT INTO {collection} ({target}) SELECT {source}, 1 FROM {pg}{where} "
+        f"INSERT INTO {collection} ({target}) SELECT {source}, {version} FROM {pg}{where} "
         "SETTINGS max_partitions_per_insert_block = 1000"
     )
 
