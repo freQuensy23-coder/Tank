@@ -984,6 +984,72 @@ async def market_kline_days_recorded_since(repo, since, end):
     return {(row["instrument_id"], row["day"].replace(tzinfo=UTC)) for row in rows}
 
 
+async def put_book_levels(repo, rows):
+    """Order-book levels of summaries, as (instrument_id, exchange_ts, bids, asks)."""
+    if not rows:
+        return
+    if not hasattr(repo, "_conn"):
+        held = repo.__dict__.setdefault("_book_levels", {})
+        for iid, at, bids, asks in rows:
+            held[iid, iso(parse_time(at))] = (jsonable(bids), jsonable(asks))
+        return
+    arrays = await asyncio.to_thread(
+        lambda: (
+            [row[0] for row in rows],
+            [parse_time(row[1]) for row in rows],
+            [json.dumps(jsonable(row[2])) for row in rows],
+            [json.dumps(jsonable(row[3])) for row in rows],
+        )
+    )
+    query = (
+        "INSERT INTO mkt.book_levels (instrument_id, exchange_ts, bids, asks)"
+        " SELECT * FROM unnest(%s::text[], %s::timestamptz[], %s::jsonb[], %s::jsonb[])"
+        " ON CONFLICT (instrument_id, exchange_ts) DO UPDATE SET bids = EXCLUDED.bids, asks = EXCLUDED.asks"
+    )
+    async with repo.transaction():
+        await repo._conn().execute(query, list(arrays))
+
+
+async def book_levels_for(repo, keys):
+    """{(instrument_id, iso exchange_ts): (bids, asks)} for the summaries named by `keys`."""
+    keys = sorted({(iid, iso(parse_time(at))) for iid, at in keys})
+    if not keys:
+        return {}
+    if not hasattr(repo, "_conn"):
+        held = repo.__dict__.get("_book_levels", {})
+        return {key: held[key] for key in keys if key in held}
+    query = (
+        "SELECT l.instrument_id, l.exchange_ts, l.bids::text AS bids, l.asks::text AS asks FROM mkt.book_levels AS l"
+        " JOIN unnest(%s::text[], %s::timestamptz[]) AS k(instrument_id, exchange_ts)"
+        " ON l.instrument_id = k.instrument_id AND l.exchange_ts = k.exchange_ts"
+    )
+    async with repo.transaction():
+        rows = await (
+            await repo._conn().execute(query, [[k[0] for k in keys], [parse_time(k[1]) for k in keys]])
+        ).fetchall()
+    return await asyncio.to_thread(
+        lambda: {
+            (row["instrument_id"], iso(row["exchange_ts"])): (
+                json.loads(row["bids"]),
+                json.loads(row["asks"]),
+            )
+            for row in rows
+        }
+    )
+
+
+async def prune_book_levels(repo, before):
+    """Drop levels of summaries older than `before`: the raw book archive keeps the books."""
+    before = parse_time(before)
+    if not hasattr(repo, "_conn"):
+        held = repo.__dict__.get("_book_levels", {})
+        for key in [key for key in held if parse_time(key[1]) < before]:
+            held.pop(key)
+        return
+    async with repo.transaction():
+        await repo._conn().execute("DELETE FROM mkt.book_levels WHERE exchange_ts < %s", [before])
+
+
 def _identity_key(collection, row):
     """A row key for stores that do not return storage keys (the in-memory test double)."""
     from tank.market_schema import MARKET_IDENTITIES
@@ -1137,6 +1203,10 @@ async def market_range_by_instrument(
                 filters=dict(filters or {}, instrument_id=iid),
                 batch_size=batch_size,
             ):
+                if collection == "mkt.book_summaries" and row.get("bids") is None:
+                    held = repo.__dict__.get("_book_levels", {}).get((iid, iso(parse_time(row[time_field]))))
+                    if held is not None:
+                        row = dict(row, bids=held[0], asks=held[1])
                 out[iid].append(row)
                 if keys_out is not None:
                     keys_out.setdefault(iid, []).append(_identity_key(collection, row))
@@ -1214,11 +1284,14 @@ async def market_range_by_instrument(
         after = (last["instrument_id"], last[time_field], last["storage_key"])
     if level_rows is not None:
         # The newest `level_rows` rows per instrument, and its newest integrity-checked row.
+        # Levels of summaries written since 045 are in mkt.book_levels; older rows carry their own.
         query = sql.SQL(
-            "SELECT storage_key, bids, asks FROM (SELECT storage_key, bids, asks, integrity_ok,"
+            "SELECT ranked.storage_key, coalesce(ranked.bids, l.bids) AS bids, coalesce(ranked.asks, l.asks) AS asks"
+            " FROM (SELECT storage_key, instrument_id, {f} AS at, bids, asks, integrity_ok,"
             " row_number() OVER (PARTITION BY instrument_id ORDER BY {f} DESC, storage_key DESC) AS rn,"
             " row_number() OVER (PARTITION BY instrument_id, integrity_ok IS TRUE ORDER BY {f} DESC,"
             " storage_key DESC) AS ok_rn FROM {t} WHERE {w}) AS ranked"
+            " LEFT JOIN mkt.book_levels AS l ON l.instrument_id = ranked.instrument_id AND l.exchange_ts = ranked.at"
             " WHERE rn <= %s OR (integrity_ok IS TRUE AND ok_rn = 1)"
         ).format(
             f=sql.Identifier(time_field),
@@ -1239,7 +1312,7 @@ async def market_range_by_instrument(
         )
         for iid, records in out.items():
             for record, key in zip(records, keys[iid], strict=True):
-                if key in levels:
+                if key in levels and levels[key]["bids"] is not None:
                     record.update(bids=levels[key]["bids"], asks=levels[key]["asks"])
                 else:
                     for name in LEVELS:

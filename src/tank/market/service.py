@@ -15,12 +15,15 @@ from decimal import Decimal, localcontext
 import httpx
 
 from tank.market_storage import (
+    book_levels_for,
     latest_market_trades,
     market_dependency_head,
     market_kline_days_recorded_since,
     market_range_by_instrument,
     market_rows_recorded_since,
     market_series_day_counts,
+    prune_book_levels,
+    put_book_levels,
     sampled_market_history,
 )
 from tank.time_precision import Timestamp, chosen_boundary, collection_clock, propagate_timestamp
@@ -180,6 +183,9 @@ PUBLIC_MARKET = frozenset(
 
 WIDE_PAGE_ROWS = 500  # rows per fetch for wide rows: one fetchall stays well under a second
 BOOK_LEVEL_ROWS = 30  # newest book rows per instrument that keep their levels in a snapshot
+# Book levels are kept this long in mkt.book_levels: every cutoff a live snapshot, a
+# reaction checkpoint or a catch-up capture reads them at (older books: raw archive).
+BOOK_LEVELS_KEEP = timedelta(hours=2)
 # Window collections a snapshot reads again each minute: the next read of the same window
 # fetches only rows past it and rows recorded since the last read (less WINDOW_MARGIN).
 WINDOW_CACHED = frozenset(
@@ -313,6 +319,8 @@ class MarketService:
         self._rest_verified = {}
         self._kline_day_counts_saved = ({}, 0.0)  # the counts last saved, and when
         self._pending_market = {}
+        self._pending_levels = []  # (instrument_id, exchange_ts, bids, asks) of summaries
+        self._levels_pruned = 0.0
         self._market_cache = {}
         self._market_flush_lock = asyncio.Lock()
         self._market_restore_lock = asyncio.Lock()
@@ -654,6 +662,12 @@ class MarketService:
                     for key, row in values.items():
                         target.setdefault(key, row)
                 raise
+            levels, self._pending_levels = self._pending_levels, []
+            try:
+                await put_book_levels(self.repo, levels)
+            except Exception:
+                self._pending_levels[:0] = levels
+                raise
 
     async def _write_raw(self):
         trades, books = self.trade_archive.take(), self.book_archive.take()
@@ -762,6 +776,12 @@ class MarketService:
                 await self._save_day_counts()
             except Exception as exc:  # noqa: BLE001 - a later pass saves; a restart recounts
                 log.warning("series count save failed: %s", type(exc).__name__)
+            if time.monotonic() - self._levels_pruned >= 60:
+                self._levels_pruned = time.monotonic()
+                try:
+                    await prune_book_levels(self.repo, utcnow() - BOOK_LEVELS_KEEP)
+                except Exception as exc:  # noqa: BLE001 - the next pass prunes
+                    log.warning("book level prune failed: %s", type(exc).__name__)
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), SEAL_PASS_S)
 
@@ -1483,12 +1503,12 @@ class MarketService:
         row = await asyncio.to_thread(frozen.summary)
         if not frozen.integrity_ok and self.books[iid].integrity_ok:
             self.books[iid].integrity_ok, self.books[iid].gap_reason = False, frozen.gap_reason
-        self.book_archive.add(
-            iid,
-            "BOOK_SUMMARY",
-            {k: v for k, v in row.items() if k not in ("bids", "asks")},
-            row["received_ts"],
-        )
+        # The summary row carries no levels (03 §2 BookSummary): they were 10 KB of its
+        # 11 KB. Market Truth's slippage reads them from mkt.book_levels.
+        bids, asks = row.pop("bids", None), row.pop("asks", None)
+        if bids is not None or asks is not None:
+            self._pending_levels.append((iid, row["exchange_ts"], bids or [], asks or []))
+        self.book_archive.add(iid, "BOOK_SUMMARY", dict(row), row["received_ts"])
         pending_snapshot = getattr(self.books[iid], "pending_snapshot", None)
         if pending_snapshot is not None:
             self.book_archive.add(iid, "BOOK_SNAPSHOT", pending_snapshot, pending_snapshot["received_ts"])
@@ -3518,6 +3538,26 @@ class MarketService:
                     cache.pop(next(iter(cache)))
             return series
 
+    async def _with_book_levels(self, rows):
+        """Whole book rows (newest before a cutoff) with their levels: summaries written since
+        045 hold none and take them from mkt.book_levels; a row whose levels were pruned or
+        never captured carries no level fields at all."""
+        missing = [row for row in rows if row and row.get("bids") is None]
+        if not missing:
+            return rows
+        found = await book_levels_for(
+            self.repo, [(row["instrument_id"], row["exchange_ts"]) for row in missing]
+        )
+        out = []
+        for row in rows:
+            if row and row.get("bids") is None:
+                held = found.get((row["instrument_id"], iso(parse_time(row["exchange_ts"]))))
+                row = {k: v for k, v in row.items() if k not in ("bids", "asks")}
+                if held is not None:
+                    row.update(bids=held[0], asks=held[1])
+            out.append(row)
+        return out
+
     async def _klines_recorded_between(self, iid, after, upto, market_end):
         """Open times of the instrument's klines opened by `market_end` and recorded in (after, upto]."""
         found = set()
@@ -3962,12 +4002,14 @@ class MarketService:
                 result["books"].extend(rows)
                 result["books"].extend(await self._condition_book_baseline(iid, anchor, assembled))
                 result["books"].extend(
-                    await self.repo.latest_market_records(
-                        "mkt.book_summaries",
-                        time_field="exchange_ts",
-                        filters={"instrument_id": iid, "integrity_ok": True},
-                        cutoff=end,
-                        assembled_at=assembled,
+                    await self._with_book_levels(
+                        await self.repo.latest_market_records(
+                            "mkt.book_summaries",
+                            time_field="exchange_ts",
+                            filters={"instrument_id": iid, "integrity_ok": True},
+                            cutoff=end,
+                            assembled_at=assembled,
+                        )
                     )
                 )
                 book_heads.append(head)
@@ -4188,14 +4230,16 @@ class MarketService:
                     "mkt.book_summaries", "exchange_ts", upper, filters={"instrument_id": iid}
                 )
                 if point:
-                    result["books"].append(point)
+                    result["books"].extend(await self._with_book_levels([point]))
                 result["books"].extend(
-                    await self.repo.latest_market_records(
-                        "mkt.book_summaries",
-                        time_field="exchange_ts",
-                        filters={"instrument_id": iid, "integrity_ok": True},
-                        cutoff=end,
-                        assembled_at=result["assembled_at"],
+                    await self._with_book_levels(
+                        await self.repo.latest_market_records(
+                            "mkt.book_summaries",
+                            time_field="exchange_ts",
+                            filters={"instrument_id": iid, "integrity_ok": True},
+                            cutoff=end,
+                            assembled_at=result["assembled_at"],
+                        )
                     )
                 )
                 if "depth" in domains and anchor and anchor.get("ts"):
@@ -4641,7 +4685,7 @@ class MarketService:
                             point = (parse_time(row[field]), k, row)
                             if k in index:
                                 old = held[index[k]][2]
-                                if books and "bids" not in row and "bids" in old:
+                                if books and row.get("bids") is None and old.get("bids") is not None:
                                     row = dict(row, bids=old["bids"], asks=old.get("asks"))
                                     point = (point[0], k, row)
                                 held[index[k]] = point
