@@ -255,6 +255,33 @@ class HourlyParquet:
                         yield batch
             except (pa.ArrowInvalid, OSError):
                 continue  # journal created but its schema header never reached disk
+        yield from self._capture_journal(canonical, columns)
+
+    @staticmethod
+    def _capture_journal(canonical, columns=None):
+        """tank-capture's open journal of the hour (`.{hh}.capture.jsonl`, capture/internal/
+        rawstore): prints are readable seconds after capture, before the hour is sealed."""
+        import json
+
+        import pyarrow as pa
+
+        path = canonical.parent / ("." + canonical.stem + ".capture.jsonl")
+        try:
+            lines = path.read_bytes().splitlines()
+        except OSError:
+            return
+        rows = []
+        for line in lines:
+            try:
+                rows.append(json.loads(line))
+            except ValueError:
+                break  # torn tail of an append cut by a crash
+        for start in range(0, len(rows), 10000):
+            chunk = rows[start : start + 10000]
+            names = columns or sorted({k for row in chunk for k in row})
+            yield pa.table(
+                {n: pa.array([row.get(n) for row in chunk], pa.string()) for n in names}
+            ).to_batches()[0]
 
     def seal(self, canonical):
         import pyarrow as pa
