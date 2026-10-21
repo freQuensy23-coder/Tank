@@ -151,31 +151,38 @@ async def main():
                 trade_files.removeprefix("tank-data/raw/trades/") + ".capture.jsonl"
             )
         )
+        skip = int(sys.argv[sys.argv.index("--skip") + 1]) if "--skip" in sys.argv else 0
         for n, path in enumerate(files, 1):
+            if n <= skip:
+                continue
             fmt = "Parquet" if path.suffix == ".parquet" else "JSONEachRow"
             query = (
                 f"INSERT INTO {chm.TRADES} "
                 + TRADE_SELECT.format(source=f"input('{STRUCTURE}')")
                 + f" FORMAT {fmt}"
             )
-            response = await ch.http.post(
-                ch.base,
-                params={
-                    "query": query,
-                    "input_format_parquet_allow_missing_columns": "1",
-                    "input_format_skip_unknown_fields": "1",
-                    "input_format_allow_errors_ratio": "0.001",
-                    "max_partitions_per_insert_block": "1000",
-                },
-                content=path.read_bytes(),
-                headers={"X-ClickHouse-User": ch.user, "X-ClickHouse-Key": ch.password},
-            )
+            for _ in range(6):
+                response = await ch.http.post(
+                    ch.base,
+                    params={
+                        "query": query,
+                        "input_format_parquet_allow_missing_columns": "1",
+                        "input_format_skip_unknown_fields": "1",
+                        "input_format_allow_errors_ratio": "0.001",
+                        "max_partitions_per_insert_block": "1000",
+                    },
+                    content=path.read_bytes(),
+                    headers={"X-ClickHouse-User": ch.user, "X-ClickHouse-Key": ch.password},
+                )
+                if response.status_code == 200 or "MEMORY_LIMIT_EXCEEDED" not in response.text:
+                    break
+                await asyncio.sleep(10)
             if response.status_code != 200:
-                raise SystemExit(f"{path}: {response.text[:300]}")
+                raise SystemExit(f"{n} {path}: {response.text[:300]}")
             if n % 200 == 0:
                 print("trade files", n, "of", len(files), flush=True)
         rows = await ch.rows(
-            f"SELECT count() AS n, min(ts) AS first, max(ts) AS last FROM {chm.TRADES} FINAL"
+            f"SELECT count() AS n, min(ts) AS first, max(ts) AS last FROM {chm.TRADES}"
         )
         print(chm.TRADES, rows[0], flush=True)
         conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(VIEW_SCHEMA)))
