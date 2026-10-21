@@ -40,6 +40,8 @@ REST_ONLY_WINDOW = timedelta(hours=48)
 NO_TRADE_HISTORY = {"hyperliquid": "NO_LISTED_TRADE_BACKFILL"}
 BYBIT_RECENT = timedelta(hours=1)
 BYBIT_LIMIT = "SOURCE_LIMIT: Bybit recent-trade lists only the last 1000 prints"
+# OI metrics that sources publish only as 5-min buckets (02 §4.2, §4.6).
+SOURCE_BUCKETED_OI, SOURCE_BUCKET_S = ("bybit.linear.open-interest", "binance.usdm.openInterestHist"), 300.0
 # Analysis windows around an anchor: PRE24 before it, reaction checkpoints up to 72 h after.
 WINDOW_BEFORE, WINDOW_AFTER = timedelta(hours=24), timedelta(hours=72)
 # Repairs go newest first in backfills of at most REPAIR_CHUNK, each persisted when done;
@@ -2651,6 +2653,13 @@ class MarketService:
                 "oi": {
                     "cadence_s": oi if tier != "UNKNOWN" else None,
                     "reason": "CAPTURE_TIER_HISTORY_UNAVAILABLE" if tier == "UNKNOWN" else None,
+                    # Series a source publishes only in 5-min buckets cannot be faster than
+                    # the bucket (03 §5.4: Bybit singleOpenInterest, never openInterest).
+                    "cadence_s_by_metric": {
+                        metric: max(oi, SOURCE_BUCKET_S) if oi is not None and tier != "UNKNOWN" else None
+                        for metric in SOURCE_BUCKETED_OI
+                    },
+                    "cadence_basis_by_metric": dict.fromkeys(SOURCE_BUCKETED_OI, "SOURCE_BUCKET_300S"),
                 },
                 "funding": {
                     "cadence_s": oi if tier != "UNKNOWN" else None,
