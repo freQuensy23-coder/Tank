@@ -704,6 +704,11 @@ def _market_breadth(truth, token):
             during = " while price rose " + format(Decimal(str(move)) * 100, "+.2f") + "%"
         else:
             during = "; price " + format(Decimal(str(move)) * 100, "+.2f") + "%"
+        # Only a fall beyond the normal range reads as positions closing.
+        verdict = {
+            "BELOW": ": positions closing",
+            "WITHIN": "; within its normal range",
+        }.get(sync.get("native_oi_vs_normal"), "; normal range n/a (not available)")
         lines.append(
             window
             + ": open positions (synchronized native OI) "
@@ -711,7 +716,7 @@ def _market_breadth(truth, token):
             + "% in "
             + _token_label(token)
             + during
-            + ": positions closing"
+            + verdict
         )
     spot = (truth.get("spot") or {}).get(truth.get("primary_window", "W4H")) or {}
     rows = [row for row in spot.get("venues") or [] if isinstance(row, dict) and row.get("complete")]
