@@ -47,6 +47,7 @@ WINDOW_BEFORE, WINDOW_AFTER = timedelta(hours=24), timedelta(hours=72)
 # Repairs go newest first in backfills of at most REPAIR_CHUNK, each persisted when done;
 # the trailing REFERENCE_SPAN of spot (03 §5.7 reference venue) is repaired before anything else.
 REPAIR_CHUNK, REFERENCE_SPAN = timedelta(hours=1), timedelta(hours=24)
+PAGES_PER_FLUSH = 25
 # Rows read only from public exchange endpoints never contain a Tank secret.
 PUBLIC_MARKET = frozenset(
     {
@@ -121,7 +122,7 @@ class MarketService:
         self._active_backfills = {}
         # Earliest unrepaired checkpoint per instrument while its repair is running.
         self._pending_reconnects = {}
-        self._repair_slots = asyncio.Semaphore(2)
+        self._repair_slots = asyncio.Semaphore(3)
         self.flow = FlowAccumulator()
         self.books = {}
         self.streams = {}
@@ -1444,7 +1445,7 @@ class MarketService:
                     else None
                 )
                 exhausted = False
-                for _ in range(10000):
+                for page in range(10000):
                     rows, next_cursor = await adapter.trades(
                         start=lo, end=hi - timedelta(milliseconds=1), cursor=cursor
                     )
@@ -1491,7 +1492,10 @@ class MarketService:
                         ):
                             times.append(ts)
                             await self.ingest_trade(instrument, raw, backfill=True)
-                    await self.flush_market()
+                    # A flush per page waited on the shared fsynced journal write (prod r106:
+                    # ~5k prints/min); the prints of PAGES_PER_FLUSH pages are bounded memory.
+                    if page % PAGES_PER_FLUSH == PAGES_PER_FLUSH - 1:
+                        await self.flush_market()
                     await asyncio.sleep(0)  # one page at a time: streams and polls keep their turns
                     if key.startswith("binance"):
                         if len(rows) < 1000 or parse_time(normalized[-1][0]["ts"]) >= hi:
@@ -1789,6 +1793,16 @@ class MarketService:
                 await asyncio.wait_for(repair(), remaining)
             except TimeoutError:
                 break
+            done, _ = await self._incomplete_runs(iid, start, end)
+            missing = sum((b - a) // timedelta(minutes=1) for a, b in done)
+            log.info(
+                "repair %s %s→%s: %d/%d minutes complete",
+                iid,
+                iso(start),
+                iso(end),
+                (end - start) // timedelta(minutes=1) - missing,
+                (end - start) // timedelta(minutes=1),
+            )
         runs, bars = await self._incomplete_runs(iid, lo, hi)
         reason = NO_TRADE_HISTORY.get(venue) or (
             BYBIT_LIMIT if venue == "bybit" else "REST_REPAIR_INCOMPLETE"
@@ -4557,6 +4571,7 @@ class MarketService:
 
     async def _repair_on_start(self, repairs):
         for token_id, start, end in repairs:
+            log.info("startup repair %s: %s → %s", token_id, iso(start), end)
             try:
                 result = await self.repair_windows(token_id, start, end)
                 log.info("startup repair %s: %s", token_id, result)
