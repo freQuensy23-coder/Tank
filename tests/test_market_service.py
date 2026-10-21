@@ -2481,3 +2481,37 @@ async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewr
     restarted._pending_market = {"mkt.klines_1m": {"k": kline(today - timedelta(days=1), iso())}}
     await restarted.flush_market(raw=False)
     assert (iid, today - timedelta(days=1)) not in restarted._kline_day_counts
+
+
+@pytest.mark.asyncio
+async def test_rest_range_keeps_a_complete_bar_and_its_recorded_at_unless_its_prints_differ(setup):
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+    minute = (utcnow() - timedelta(hours=1)).replace(second=0, microsecond=0)
+    at = int(minute.timestamp() * 1000)
+    span = (minute, minute + timedelta(minutes=1))
+    key = inst["instrument_id"] + ":" + iso(minute)
+    await service.ingest_trade(inst, {"a": 1, "p": "2", "q": "3", "T": at + 1000, "m": False}, backfill=True)
+    await service._persist_rest_flow_ranges(inst, *span, [span])
+    await service.flush_market()
+    rest = await repo.get("mkt.flow_bars_1m", key)
+    assert rest["complete"] is True
+    # As the live stream wrote it: complete, no REST evidence.
+    ws = {k: v for k, v in rest.items() if k not in ("recorded_at", "semantic_fingerprint")}
+    await service._put("mkt.flow_bars_1m", key, dict(ws, capture_method=None, backfill_verified=None))
+    await service.flush_market()
+    first = await repo.get("mkt.flow_bars_1m", key)
+    assert first["capture_method"] is None and first["recorded_at"] != rest["recorded_at"]
+    # A repair walking back over the minute proves the same prints: no rewrite.
+    await service._persist_rest_flow_ranges(inst, *span, [span])
+    await service.flush_market()
+    assert (await repo.get("mkt.flow_bars_1m", key))["recorded_at"] == first["recorded_at"]
+    assert (inst["instrument_id"], iso(minute)) in service._rest_verified
+    # A print the stored bar lacks is a correction and is written.
+    await service.ingest_trade(inst, {"a": 2, "p": "2", "q": "1", "T": at + 2000, "m": True}, backfill=True)
+    await service._persist_rest_flow_ranges(inst, *span, [span])
+    await service.flush_market()
+    corrected = await repo.get("mkt.flow_bars_1m", key)
+    assert corrected["recorded_at"] != first["recorded_at"]
+    assert corrected["n_buy"] + corrected["n_sell"] == 2 and corrected["complete"] is True
+    await service.close()
