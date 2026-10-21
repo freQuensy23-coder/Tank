@@ -91,19 +91,8 @@ class SourceService:
 
     async def acquire_budget(self, feed):
         host = urlsplit(feed["url"]).hostname or ""
-        provider = (
-            "sec.gov"
-            if host == "sec.gov" or host.endswith(".sec.gov")
-            else "binance.spot"
-            if host == "api.binance.com"
-            else "binance.usdm"
-            if host == "fapi.binance.com"
-            else "coinbase"
-            if host.endswith("coinbase.com")
-            else "kraken"
-            if host.endswith("kraken.com")
-            else host
-        )
+        # Exchange hosts are budgeted by tank-capture, which makes those requests.
+        provider = "sec.gov" if host == "sec.gov" or host.endswith(".sec.gov") else host
         weight = feed.get("request_weight", 1)
         for rule in self.api_limits:
             # Exchange hosts are budgeted by tank-capture, which makes the request.
