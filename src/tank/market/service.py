@@ -63,6 +63,30 @@ def _cut(rows_by_instrument, field, start, end):
     return out
 
 
+def _bound_windows(windows):
+    """Drop cached windows unused for WINDOW_TTL_S, then the least recently used ones until
+    at most WINDOW_ROWS rows and WINDOW_ENTRIES keys remain."""
+    now = time.monotonic()
+    for key in list(windows):
+        windows[key] = [lane for lane in windows[key] if now - lane.get("used", now) < WINDOW_TTL_S]
+        if not windows[key]:
+            windows.pop(key)
+    lanes = sorted(
+        ((lane.get("used", now), key, lane) for key, held in windows.items() for lane in held),
+        key=lambda item: item[0],
+    )
+    total = sum(lane.get("size", 0) for _, _, lane in lanes)
+    keys = len(windows)
+    for _, key, lane in lanes:
+        if total <= WINDOW_ROWS and keys <= WINDOW_ENTRIES:
+            break
+        windows[key].remove(lane)
+        total -= lane.get("size", 0)
+        if not windows[key]:
+            windows.pop(key)
+            keys -= 1
+
+
 def _place_levels(points):
     """Book levels on the newest BOOK_LEVEL_ROWS rows and the newest integrity-checked row
     only, as a fresh read places them; other rows are replaced by copies without them."""
@@ -189,6 +213,13 @@ WINDOW_MARGIN = timedelta(seconds=5)
 WINDOW_ENTRIES = 32
 WINDOW_LANES = 4
 WINDOW_KEEP_S = 600
+# The window cache is bounded by age and size: r119 grew ~400 MiB/h with only a count cap.
+# A window unused for WINDOW_TTL_S is dropped; beyond WINDOW_ROWS cached rows in all, the
+# least recently used windows go first.
+WINDOW_TTL_S = 300
+WINDOW_ROWS = 300_000
+# Kline cursors unused this long are dropped (each holds up to 90 days of minutes).
+SERIES_TTL_S = 1800
 COLLECTIONS = {
     "flow_bars": ("mkt.flow_bars_1m", "minute_start"),
     "klines": ("mkt.klines_1m", "open_time"),
@@ -3291,6 +3322,7 @@ class MarketService:
                         iid, assembled_at, previous["assembled_at"], upper_open
                     )
             if not reset and (heads, start, cutoff) == previous["served"]["request"]:
+                previous["used"] = time.monotonic()
                 return dict(previous["series"], coverage_count=coverage_count)
             state_start = start - margin if reset else previous["start"]
             state_upper = upper_open if reset else max(upper_open, previous["upper_open"])
@@ -3513,9 +3545,15 @@ class MarketService:
             }
             # A read at an older clock leaves the cursor and its served chain to the live reads.
             if captured_rows is None and not (behind and not reset):
+                state["used"] = time.monotonic()
+                cache.pop(key, None)
                 cache[key] = state
                 while len(cache) > 256:
                     cache.pop(next(iter(cache)))
+                for stale in [
+                    k for k, held in cache.items() if state["used"] - held.get("used", 0) > SERIES_TTL_S
+                ]:
+                    cache.pop(stale, None)
             return series
 
     async def _klines_recorded_between(self, iid, after, upto, market_end):
@@ -4658,9 +4696,10 @@ class MarketService:
                 if books:
                     for iid, held in rows.items():
                         _place_levels(held)
+            entry["used"] = time.monotonic()
+            entry["size"] = sum(len(held) for held in entry["rows"].values())
             windows[key] = [entry, *lanes][:WINDOW_LANES]
-            while len(windows) > WINDOW_ENTRIES:
-                windows.pop(next(iter(windows)))
+            _bound_windows(windows)
             return {
                 iid: [
                     point[2]
