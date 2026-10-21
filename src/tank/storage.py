@@ -137,6 +137,38 @@ RUNNING_CAPS = {"REACTION_CAPTURE": 1}
 # (FR-R-01; captures expire at checkpoint + 6 h, 03 §3.8).
 EARLIEST_EXPIRY_FIRST = ("REACTION_CAPTURE",)
 CLAIM_SLOW_S, DELIVER_LATE_S = 0.5, 1.0
+# Event analysis goes before reaction captures (lead ruling 2026-10-21, E2E #9: a card has
+# 480 s, a capture has checkpoint + 6 h). A capture is not claimed while any analysis job
+# is running or due, or while an event known in the last FRESH_EVENT_S has no FULL card,
+# unless it would expire within EXPIRY_SAFETY_S.
+YIELDS_TO_ANALYSIS = ("REACTION_CAPTURE",)
+ANALYSIS_TYPES = ("RUN_MARKET_TRUTH", "FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE")
+FRESH_EVENT_S, EXPIRY_SAFETY_S = 600, 1200
+DEFERRAL_LOG_S = 60
+
+
+def _analysis_gate_memory(data, now):
+    """(analysis_busy, fresh_event_without_card) for the memory repository."""
+    busy = any(
+        job["type"] in ANALYSIS_TYPES
+        and (
+            job["status"] == "RUNNING"
+            or (
+                job["status"] == "QUEUED"
+                and parse_time(job["run_after"]) <= now
+                and not (job.get("expires_at") and parse_time(job["expires_at"]) <= now)
+            )
+        )
+        for job in data.get("ops.jobs", {}).values()
+    )
+    carded = {a.get("event_id") for a in data.get("out.alerts", {}).values() if a.get("kind") == "FULL"}
+    fresh = any(
+        e.get("known_to_us_at")
+        and parse_time(e["known_to_us_at"]) > now - timedelta(seconds=FRESH_EVENT_S)
+        and e.get("event_id") not in carded
+        for e in data.get("evt.events", {}).values()
+    )
+    return busy, fresh
 
 
 def _table(collection):
@@ -424,6 +456,15 @@ class MemoryRepository(QueueMixin):
                 for job in candidates
                 if running.get(job["type"], 0) < RUNNING_CAPS.get(job["type"], 10**9)
             ]
+            busy, fresh = _analysis_gate_memory(self._data, now)
+            if busy or fresh:
+                safety = now + timedelta(seconds=EXPIRY_SAFETY_S)
+                candidates = [
+                    job
+                    for job in candidates
+                    if job["type"] not in YIELDS_TO_ANALYSIS
+                    or (job.get("expires_at") and parse_time(job["expires_at"]) <= safety)
+                ]
             if not candidates:
                 return None
 
@@ -1046,24 +1087,65 @@ class PostgresRepository(QueueMixin):
                 UPDATE ops.jobs SET status='FAILED', document=jsonb_set(document,'{status}','"FAILED"')
                 WHERE status='QUEUED' AND attempts >= max_attempts
                 AND coalesce((document->>'recovery_reclaim')::boolean,false)=false RETURNING 1),
+              gate AS (
+                SELECT EXISTS (SELECT 1 FROM ops.jobs b WHERE b.type=ANY(%(analysis)s::text[])
+                    AND (b.status='RUNNING' OR (b.status='QUEUED' AND b.run_after<=now()
+                      AND (b.expires_at IS NULL OR b.expires_at>now())))) AS analysis_busy,
+                  EXISTS (SELECT 1 FROM evt.events e
+                    WHERE e.known_to_us_at > now() - make_interval(secs => %(fresh)s)
+                    AND NOT EXISTS (SELECT 1 FROM out.alerts a WHERE a.event_id=e.event_id AND a.kind='FULL'))
+                    AS fresh_event),
               pick AS (
                 SELECT storage_key FROM ops.jobs j WHERE status='QUEUED' AND run_after<=now()
                 AND (expires_at IS NULL OR expires_at>now())
                 AND (attempts<max_attempts OR document->>'recovery_reclaim'='true')
-                AND NOT EXISTS (SELECT 1 FROM unnest(%s::text[], %s::int[]) AS c(type, cap)
-                  WHERE c.type=j.type AND (NOT c.type=ANY(%s::text[])
+                AND NOT EXISTS (SELECT 1 FROM unnest(%(capped)s::text[], %(caps)s::int[]) AS c(type, cap)
+                  WHERE c.type=j.type AND (NOT c.type=ANY(%(held)s::text[])
                     OR (SELECT count(*) FROM ops.jobs r WHERE r.status='RUNNING' AND r.type=c.type)>=c.cap))
-                ORDER BY priority,CASE WHEN type=ANY(%s::text[]) THEN expires_at END NULLS LAST,
-                  run_after,storage_key FOR UPDATE SKIP LOCKED LIMIT 1)
-              UPDATE ops.jobs SET status='RUNNING',
-              attempts=attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END,
-              document=document||jsonb_build_object('status','RUNNING','recovery_reclaim',false,
-                'attempts',attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END)
-              WHERE storage_key=(SELECT storage_key FROM pick) RETURNING document""",
-                    (list(RUNNING_CAPS), list(RUNNING_CAPS.values()), held, list(EARLIEST_EXPIRY_FIRST)),
+                AND (NOT j.type=ANY(%(yields)s::text[])
+                  OR j.expires_at <= now() + make_interval(secs => %(safety)s)
+                  OR NOT (SELECT analysis_busy OR fresh_event FROM gate))
+                ORDER BY priority,CASE WHEN type=ANY(%(edf)s::text[]) THEN expires_at END NULLS LAST,
+                  run_after,storage_key FOR UPDATE SKIP LOCKED LIMIT 1),
+              claimed AS (
+                UPDATE ops.jobs SET status='RUNNING',
+                attempts=attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END,
+                document=document||jsonb_build_object('status','RUNNING','recovery_reclaim',false,
+                  'attempts',attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END)
+                WHERE storage_key=(SELECT storage_key FROM pick) RETURNING document)
+              SELECT (SELECT document FROM claimed) AS document,
+                (SELECT analysis_busy FROM gate) AS analysis_busy,
+                (SELECT fresh_event FROM gate) AS fresh_event,
+                (SELECT count(*) FROM ops.jobs d WHERE d.type=ANY(%(yields)s::text[]) AND d.status='QUEUED'
+                  AND d.run_after<=now() AND d.expires_at > now() + make_interval(secs => %(safety)s)
+                  AND (SELECT analysis_busy OR fresh_event FROM gate)) AS deferred""",
+                    {
+                        "analysis": list(ANALYSIS_TYPES),
+                        "fresh": FRESH_EVENT_S,
+                        "capped": list(RUNNING_CAPS),
+                        "caps": list(RUNNING_CAPS.values()),
+                        "held": held,
+                        "yields": list(YIELDS_TO_ANALYSIS),
+                        "safety": EXPIRY_SAFETY_S,
+                        "edf": list(EARLIEST_EXPIRY_FIRST),
+                    },
                 )
             ).fetchone()
-            return row["document"] if row else None
+            if row["deferred"]:
+                self._log_deferral(row["deferred"], row["analysis_busy"], row["fresh_event"])
+            return row["document"]
+
+    def _log_deferral(self, count, busy, fresh):
+        """Log deferred captures when the picture changes, and at least once a minute."""
+        reasons = tuple(
+            r for r, on in (("analysis job running or due", busy), ("event without FULL card", fresh)) if on
+        )
+        now = time.monotonic()
+        last = getattr(self, "_last_deferral", None)
+        if last and last[1:] == (count, reasons) and now - last[0] < DEFERRAL_LOG_S:
+            return
+        self._last_deferral = (now, count, reasons)
+        log.info("deferring %d due REACTION_CAPTURE behind event analysis: %s", count, ", ".join(reasons))
 
     async def recover_jobs(self):
         async with self.transaction():
