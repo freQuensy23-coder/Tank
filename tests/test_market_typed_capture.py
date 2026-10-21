@@ -1,6 +1,7 @@
 """§14 producer batching, verified raw recovery, and aggregate-only queries."""
 
 # ruff: noqa: F811
+import os
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -13,6 +14,15 @@ from tank.market import normalize
 from tank.market.archive import TradeArchive
 from tank.market.service import MarketService
 from tank.util import iso, parse_time, utcnow
+
+
+@pytest.fixture
+async def postgres_repo(postgres_template):
+    dsn = os.getenv("TANK_TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TANK_TEST_DATABASE_URL required for isolated PostgreSQL")
+    async with postgres_template.repository(dsn) as repo:
+        yield repo
 
 
 @pytest.mark.integration
@@ -208,19 +218,8 @@ async def test_supervised_run_reuses_http_after_repository_failure(setup, monkey
 @pytest.mark.postgres
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_actual_postgres_batch_producer_restart_and_late_minute(setup):
-    import os
+async def test_actual_postgres_batch_producer_restart_and_late_minute(setup, postgres_repo):
 
-    from psycopg.conninfo import conninfo_to_dict
-
-    from tank.storage import PostgresRepository
-
-    dsn = os.getenv("TANK_TEST_DATABASE_URL")
-    if not dsn:
-        pytest.skip("Dedicated QA PostgreSQL required")
-    destination = conninfo_to_dict(dsn)
-    if destination.get("port") != "55437" or not destination.get("dbname", "").startswith("tank_"):
-        pytest.skip("Only dedicated QA PostgreSQL allowed")
     _, settings, inst = setup
     # Isolate the real natural key from any previous run without deleting evidence.
     from tank.util import new_id
@@ -231,13 +230,8 @@ async def test_actual_postgres_batch_producer_restart_and_late_minute(setup):
     import yaml
 
     (settings.config_dir / "registry.yaml").write_text(yaml.safe_dump(registry))
-    repo = PostgresRepository(dsn)
-    await repo.open()
-    try:
-        await repo.migrate()
-        await test_actual_batched_capture_restart_late_minute_and_no_sql_trades((repo, settings, inst))
-    finally:
-        await repo.close()
+    repo = postgres_repo
+    await test_actual_batched_capture_restart_late_minute_and_no_sql_trades((repo, settings, inst))
 
 
 @pytest.mark.integration

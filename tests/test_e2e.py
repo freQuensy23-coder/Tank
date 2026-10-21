@@ -273,6 +273,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
     """Whole synthetic call graph on PostgreSQL, including validated publication."""
     import importlib
     from datetime import datetime
+    from functools import cache
 
     from tank.analysis.truth import MarketTruthService
     from tank.event_tools import LAYERS
@@ -402,17 +403,18 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 900 + len(sends)}})
         raise AssertionError(str(req.url))
 
+    @cache
+    def canonical_snapshot():
+        from test_truth_start_fixture import synthetic_start_snapshot
+
+        return synthetic_start_snapshot()
+
     class CapturedMarket:
         async def snapshot(self, token_id, cutoff, anchor=None):
             if complete_market:
-                import runpy
-                from pathlib import Path
-
                 from tank.util import parse_time
 
-                synthetic = runpy.run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
-                    "synthetic_start_snapshot"
-                ]()
+                synthetic = canonical_snapshot()
                 delta = parse_time(cutoff) - parse_time(synthetic["cutoff"])
 
                 def shift(value):

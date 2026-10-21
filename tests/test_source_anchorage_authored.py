@@ -40,7 +40,7 @@ def retained_raw(ref):
 @pytest.fixture(scope="session")
 def retained_captures():
     if not RAW.exists():
-        pytest.skip("Actual owned supplementary sweep fixtures not available")
+        pytest.fail("Required supplementary captures missing; run python tests/fixtures/supplementary-sources/stage.py")
     assert (
         hashlib.sha256(RAW.read_bytes()).hexdigest()
         == "9ca7e6b7a606b587eada5b2ad8faa9c861a114afa78ee0e4671d912bb59cffca"

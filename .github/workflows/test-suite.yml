@@ -71,9 +71,13 @@ jobs:
           version: "0.13.3"
           enable-cache: true
       - run: uv sync --python 3.12 --frozen --extra dev
+      - name: Install the locked actual pi-ai gateway test dependency
+        run: npm ci --prefix tests/node-gateway --ignore-scripts --no-audit --no-fund
       - run: uv run --frozen --extra dev python -m playwright install --with-deps chromium
       - name: Stage exact retained capture inputs
         run: uv run --frozen --extra dev python scripts/ci/stage_retained_fixtures.py
+      - name: Stage exact supplementary source captures
+        run: uv run --frozen --extra dev python tests/fixtures/supplementary-sources/stage.py
       - name: Start owned PostgreSQL 16 with verified integration settings
         run: |
           mkdir -p .test-results
@@ -102,13 +106,19 @@ jobs:
         run: uv run --frozen --extra dev python scripts/ci/prepare_postgres.py
         env:
           CI_POSTGRES_DSN: postgresql://postgres:tank-ci-disposable@127.0.0.1:5432/tank_test_ci_admin
+          PYTHONPATH: tests
+      - name: Record the complete integration collection
+        run: uv run --frozen --extra dev pytest -p collect_integration -q --collect-only -m integration --postgres-schema-template "$TANK_CI_SCHEMA_TEMPLATE"
+        env:
+          PYTHONPATH: scripts/ci:tests
+          TANK_BROWSER_TESTS: "1"
       - name: Run all integration cases
-        run: uv run --frozen --extra dev pytest -p parallel_postgres -q -n auto --dist worksteal -m integration --timeout=300 --junitxml=.test-results/integration.xml
+        run: uv run --frozen --extra dev pytest -p parallel_postgres -q -n auto --dist worksteal -m integration --postgres-schema-template "$TANK_CI_SCHEMA_TEMPLATE" --timeout=300 --junitxml=.test-results/integration.xml
         env:
           PYTHONPATH: tests
           TANK_BROWSER_TESTS: "1"
-      - name: Reject failures and unexpected prerequisite skips
-        run: uv run --frozen --extra dev python scripts/ci/check_integration_results.py .test-results/integration.xml
+      - name: Require the complete integration collection with zero skips
+        run: uv run --frozen --extra dev python scripts/ci/check_integration_results.py .test-results/integration.xml --collection .test-results/integration-collection.json
       - name: Collect logs and remove only the owned PostgreSQL container
         if: always()
         run: |

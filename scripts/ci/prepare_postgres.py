@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import psycopg
+from postgres_helpers import prepare_schema_template
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from xdist.plugin import pytest_xdist_auto_num_workers
@@ -39,13 +42,27 @@ def main() -> None:
             for index in range(workers):
                 database = template.replace("{worker}", f"gw{index}")
                 connection.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
+    seed_name = f"tank_test_ci_schema_{uuid4().hex}"
+    schema_template = asyncio.run(prepare_schema_template(make_conninfo(**fields), seed_name))
+    if schema_template != seed_name:
+        raise ValueError("schema preparation returned an unexpected database name")
     with Path(os.environ["GITHUB_ENV"]).open("a") as output:
         for variable, template in routes.items():
             value = make_conninfo(**{**fields, "dbname": template})
             if "\n" in value or "\r" in value:
                 raise ValueError("CI database routes must fit one environment line")
             output.write(f"{variable}={value}\n")
-    print(json.dumps({"postgres_major": 16, "workers": workers, "databases": workers * 3}))
+        output.write(f"TANK_CI_SCHEMA_TEMPLATE={schema_template}\n")
+    print(
+        json.dumps(
+            {
+                "postgres_major": 16,
+                "workers": workers,
+                "worker_databases": workers * 3,
+                "schema_template": schema_template,
+            }
+        )
+    )
 
 
 if __name__ == "__main__":

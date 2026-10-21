@@ -3,7 +3,6 @@
 import asyncio
 import base64
 import json
-import os
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -327,16 +326,11 @@ async def test_supervisor_reload_rebinds_actual_gateway_and_shutdown_closes_port
 @pytest.mark.node
 @pytest.mark.process
 async def test_actual_pinned_pi_library_through_gateway_offline(tmp_path):
-    """Optional dependency probe; install pi-ai1.1.0 externally, never vendored."""
-    package = Path(
-        os.environ.get(
-            "TANK_AUDIT_PI_PACKAGE", "/tmp/tank-gateway-pi-audit/node_modules/@earendil-works/pi-ai"
-        )
-    )
-    if not (package / "package.json").exists() or not shutil.which("node"):
-        pytest.skip(
-            "Set TANK_AUDIT_PI_PACKAGE to installed @earendil-works/pi-ai1.1.0 to run actual-library probe"
-        )
+    """Locked pi-ai1.1.0 transport against the synthetic, loopback-only gateway."""
+    package = Path(__file__).resolve().parent / "node-gateway/node_modules/@earendil-works/pi-ai"
+    assert (package / "package.json").is_file(), "Run npm ci --prefix tests/node-gateway --ignore-scripts"
+    node = shutil.which("node")
+    assert node is not None, "The actual pi transport integration requires Node.js22"
     assert json.loads((package / "package.json").read_text())["version"] == "1.1.0"
     observed = []
 
@@ -411,7 +405,7 @@ console.log(JSON.stringify({status:'PASS',calls,event_types:types}));
         script = tmp_path / "actual-pi-probe.mjs"
         script.write_text(code)
         process = await asyncio.create_subprocess_exec(
-            "node",
+            node,
             str(script),
             str(package),
             base,

@@ -1,6 +1,7 @@
 """Selective producer reads must not flush capture or load unrelated histories."""
 
 # ruff: noqa: F811
+import os
 from datetime import timedelta
 from unittest.mock import AsyncMock
 
@@ -10,6 +11,15 @@ from test_market_service import setup  # noqa: F401
 
 from tank.market.service import MarketService
 from tank.util import iso, utcnow
+
+
+@pytest.fixture
+async def postgres_repo(postgres_template):
+    dsn = os.getenv("TANK_TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TANK_TEST_DATABASE_URL required for isolated PostgreSQL")
+    async with postgres_template.repository(dsn) as repo:
+        yield repo
 
 
 @pytest.mark.asyncio
@@ -165,28 +175,15 @@ async def test_composite_reads_only_dependency_metadata_and_invalidates_old_poin
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.asyncio
-async def test_real_postgres_loader_to_condition_compute_selective_read_footprint(setup):
-    import os
-
-    from psycopg.conninfo import conninfo_to_dict
-
+async def test_real_postgres_loader_to_condition_compute_selective_read_footprint(setup, postgres_repo):
     from tank.analysis.truth import compute_condition_values
     from tank.market import normalize
     from tank.market.flow import FlowAccumulator
-    from tank.storage import PostgresRepository
     from tank.util import new_id
 
-    dsn = os.getenv("TANK_TEST_DATABASE_URL")
-    if not dsn:
-        pytest.skip("Requires explicitly configured disposable QA PostgreSQL")
-    destination = conninfo_to_dict(dsn)
-    if destination.get("port") != "55437" or not destination.get("dbname", "").startswith("tank_"):
-        pytest.skip("Requires dedicated QA55437 tank_ database")
     _, settings, original_inst = setup
     inst = dict(original_inst, instrument_id=new_id("condition-pg"))
-    repo = PostgresRepository(dsn)
-    await repo.open()
-    await repo.migrate()
+    repo = postgres_repo
     end = (utcnow() - timedelta(hours=2)).replace(second=0, microsecond=0)
     start = end - timedelta(minutes=15)
     flow = FlowAccumulator()
@@ -214,21 +211,18 @@ async def test_real_postgres_loader_to_condition_compute_selective_read_footprin
             yield row
 
     repo.iter_range = ranges
-    try:
-        async with httpx.AsyncClient() as http:
-            service = MarketService(repo, settings, http=http)
-            service.instruments = {inst["instrument_id"]: inst}
-            service.snapshot = AsyncMock(side_effect=AssertionError("No full snapshot"))
-            service.flush_market = AsyncMock(side_effect=AssertionError("No capture flush"))
-            requirements = [{"metric": "spot.cohort.direction", "window": "W15M"}]
-            packet = await service.condition_snapshot(inst["token_id"], end, requirements=requirements)
-            result = compute_condition_values(packet, requirements)
-        assert len(packet["flow_bars"]) == 15
-        assert result["spot"]["W15M"]["direction"] == "BUY"
-        assert {c[0] for c in calls} == {"mkt.flow_bars_1m"}
-        assert calls[0][1]["start"] == start
-    finally:
-        await repo.close()
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        service.instruments = {inst["instrument_id"]: inst}
+        service.snapshot = AsyncMock(side_effect=AssertionError("No full snapshot"))
+        service.flush_market = AsyncMock(side_effect=AssertionError("No capture flush"))
+        requirements = [{"metric": "spot.cohort.direction", "window": "W15M"}]
+        packet = await service.condition_snapshot(inst["token_id"], end, requirements=requirements)
+        result = compute_condition_values(packet, requirements)
+    assert len(packet["flow_bars"]) == 15
+    assert result["spot"]["W15M"]["direction"] == "BUY"
+    assert {c[0] for c in calls} == {"mkt.flow_bars_1m"}
+    assert calls[0][1]["start"] == start
 
 
 @pytest.mark.asyncio

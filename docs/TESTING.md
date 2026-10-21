@@ -5,6 +5,7 @@ Run commands in an isolated server-side development checkout with Python 3.12. N
 ## Commands
 
     uv sync --python 3.12 --frozen --extra dev
+    uv run python scripts/ci/stage_retained_fixtures.py
     uv run pytest -q -n auto --dist loadfile
 
 Run normal tests with the available CPUs and memory; do not add artificial CPU or memory quotas or affinity limits. pytest-xdist uses one worker per available CPU. Loadfile keeps each module on one worker, preserving module-scoped baseline reuse. In the same-source audit, all 1,671 units passed under both schedulers; loadfile took 55.395s including startup versus 72.039s for worksteal. Use `-n 0` for a serial diagnostic run.
@@ -28,7 +29,7 @@ Resource markers allow narrower integration runs:
     uv run pytest -q -m 'integration and browser' --timeout=300
     uv run pytest -q -m 'integration and not postgres and not browser and not node and not historical' --timeout=300
 
-The postgres marker requires caller-owned disposable PostgreSQL 16 databases and explicit TANK_TEST_DATABASE_URL, TANK_E2E_DATABASE_URL, or TANK_SOURCE_TEST_DATABASE_URL as used by the selected fixtures. Each database name must start with tank_test. The shared lazy PostgresTemplate helper migrates a template once per worker and opens a fresh cloned database for each non-migration repository context. Migration regressions request a blank database explicitly. Pools close before clone cleanup; the descriptor holds no live pool across event loops. Keep the credential/database safety checks intact.
+The postgres marker requires caller-owned disposable PostgreSQL 16 databases and explicit TANK_TEST_DATABASE_URL, TANK_E2E_DATABASE_URL, or TANK_SOURCE_TEST_DATABASE_URL as used by the selected fixtures. Each database name must start with tank_test. The shared lazy PostgresTemplate helper migrates a template once per worker and opens a fresh cloned database for each non-migration repository context. Migration regressions request a blank database explicitly. Pools close before clone cleanup; the descriptor holds no live pool across event loops. Keep the credential/database safety checks intact. CI additionally prepares one immutable, UUID-named schema seed through prepare_schema_template and passes --postgres-schema-template to collection and execution. The helper verifies the tank_test_ prefix, disabled connections, zero active sessions and the exact SQL/Python fingerprint before cloning. Every case still gets a fresh database; migrated=False remains blank, and tests never drop the caller-owned seed. Without the option, the lazy per-worker migration behavior is unchanged.
 
 For portable parallel integration, the operator first provisions distinct disposable databases for every worker: for example, tank_test_integration_gw0 through tank_test_integration_gwN, and matching E2E/source administration databases if those routes are used. Use the same schema/template helper as the serial tests. No database may contain production data.
 
@@ -39,7 +40,17 @@ For portable parallel integration, the operator first provisions distinct dispos
 
 The opt-in parallel_postgres plugin runs before conftest. The controller preserves the exact templates for worker inheritance; each gwN worker replaces exactly one literal {worker} in dbname only. Every configured route is validated before any environment update. Shared DSNs, non-test database names, nested placeholders and placeholders in host/user/password/options are refused. Missing database variables are allowed for non-PostgreSQL integrations. The plugin never connects, creates or deletes databases, or loads dotenv/credential files. Supply enough precreated worker databases for the requested count. Use the ordinary serial command without this plugin for -n 0; a shared DSN is never a parallel recipe.
 
-The browser marker requires TANK_BROWSER_TESTS=1 and local Chromium. The node marker may require a prepared upstream package tree. The historical marker requires retained capture inputs. The process marker identifies tests launching a local child executable. Missing optional resources can skip integration cases; a skip is not a passing qualification. Actual integration deadline tests intentionally wait about 20 seconds per case.
+Prepare the full integration prerequisites in the clean checkout after installing the frozen Python environment. These commands stage the data at the paths used by the tests and install the actual gateway package and Chromium; no external capture path or pi-ai environment variable is needed. Configure only the guarded disposable PostgreSQL routes described above, then run integration with the explicit browser flag:
+
+    npm ci --prefix tests/node-gateway --ignore-scripts --no-audit --no-fund
+    uv run python -m playwright install --with-deps chromium
+    uv run python scripts/ci/stage_retained_fixtures.py
+    uv run python tests/fixtures/supplementary-sources/stage.py
+    export TANK_BROWSER_TESTS=1
+
+The exact deployment-role SQL cases additionally require Docker and the postgres:16-bookworm image. They create their own labelled, network-isolated container and literal tank database on tmpfs, then remove only their owned container. They do not use the ordinary worker databases; missing prerequisites fail the selected run.
+
+The browser marker requires TANK_BROWSER_TESTS=1 and local Chromium. The node marker may require a prepared upstream package tree. The historical marker requires retained capture inputs. The process marker identifies tests launching a local child executable. The CI integration job stages the exact retained market and supplementary source inputs, installs the locked actual pi-ai gateway package, and provisions its PostgreSQL prerequisites. It records the selected collection and requires every collected case to pass; any skip, failure, missing case or empty report fails CI. Actual integration deadline tests intentionally wait about 20 seconds per case.
 
 ## JavaScript and TypeScript
 
@@ -95,7 +106,7 @@ Retained verification trees also contain historical unittest.TestCase checks and
 1. Keep non-migration PostgreSQL fixtures on the shared lazy template helper. Preserve explicit blank-database migration tests, per-worker administration databases, and owned cleanup; new fixtures should reuse this lifecycle instead of copying schema bootstrap.
 2. Split large mixed test files by event persistence, publication, replay, and repository contracts, preserving the ordinary pytest marks and independent regression oracles.
 3. Extract genuinely repeated small builders into narrow test helpers. Keep case-specific evidence explicit rather than growing a single configurable fixture factory.
-4. Finish a separate mechanical import/formatter pass and normalize remaining redundant async decorators and legacy class style. `.github/workflows/test-suite.yml` now runs three separate jobs: Python units with the JUnit timing budget, Python integration, and Node local units/contracts. The 26 pre-existing prerequisite skips remain UNVERIFIED; the integration checker rejects additional skips.
+4. Finish a separate mechanical import/formatter pass and normalize remaining redundant async decorators and legacy class style. `.github/workflows/test-suite.yml` now runs three separate jobs: Python units with the JUnit timing budget, Python integration, and Node local units/contracts. The integration checker requires the exact collected case set and rejects every skip, failure or error.
 5. Standardize current standalone JavaScript tests on node:test and node:assert/strict; retain Vitest where upstream package composition requires it. Migrate real-timer cancellation cases to injected clocks while preserving their cleanup and failure behavior.
 
 The cleanup establishes commands and conventions. It does not claim every historical test now has identical style, every integration ran, or production acceptance is complete.

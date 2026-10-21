@@ -326,12 +326,20 @@ def _fresh_quote_usd_history(monkeypatch):
     monkeypatch.setattr(normalize, "QUOTE_USD_HISTORY", {})
 
 
+def pytest_addoption(parser):
+    parser.addoption(
+        "--postgres-schema-template",
+        metavar="tank_test_NAME",
+        help="Clone each migrated test database from this externally prepared, sealed schema seed",
+    )
+
+
 @pytest_asyncio.fixture(scope="session", loop_scope="session")
-async def postgres_template():
+async def postgres_template(request):
     """Create databases lazily; memory-only runs never inspect database settings."""
     from postgres_helpers import PostgresTemplate
 
-    owner = PostgresTemplate()
+    owner = PostgresTemplate(schema_template=request.config.getoption("postgres_schema_template"))
     try:
         yield owner
     finally:

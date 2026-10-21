@@ -5,6 +5,7 @@ from datetime import timedelta
 
 import pytest
 import pytest_asyncio
+from deployment_postgres_helpers import deployment_repository
 
 from tank.storage import ImmutableRecordError, MemoryRepository, PostgresRepository
 from tank.util import iso, new_id, parse_time, utcnow
@@ -121,34 +122,20 @@ def complete_fixture_record(collection, record):
 )
 async def repo(request, postgres_template):
     async with AsyncExitStack() as resources:
-        if request.param in {"postgres", "postgres_fresh", "postgres_deployment"}:
+        if request.param == "postgres_deployment":
+            result = await resources.enter_async_context(deployment_repository())
+        elif request.param in {"postgres", "postgres_fresh"}:
             url = os.getenv("TANK_TEST_DATABASE_URL")
             if not url:
                 pytest.skip(
                     "Real PostgreSQL requires TANK_TEST_DATABASE_URL pointing at an isolated test database"
                 )
-            if request.param == "postgres_deployment":
-                from psycopg.conninfo import conninfo_to_dict
-
-                if conninfo_to_dict(url)["dbname"] != "tank":
-                    pytest.skip(
-                        "Exact deployment role SQL intentionally requires database named tank; run this test in isolated tank"
-                    )
-                result = PostgresRepository(url)
-                resources.push_async_callback(result.close)
-                await result.open()
+            fresh = request.param == "postgres_fresh"
+            result = await resources.enter_async_context(
+                postgres_template.repository(url, migrated=not fresh)
+            )
+            if fresh:
                 await result.migrate()
-                async with result.transaction():
-                    await result._conn().execute(
-                        "TRUNCATE ops.jobs, reg.tokens, evt.events, out.alerts CASCADE"
-                    )
-            else:
-                fresh = request.param == "postgres_fresh"
-                result = await resources.enter_async_context(
-                    postgres_template.repository(url, migrated=not fresh)
-                )
-                if fresh:
-                    await result.migrate()
         else:
             result = MemoryRepository()
             resources.push_async_callback(result.close)
@@ -433,21 +420,16 @@ async def test_preservation_before_market_truth_includes_beneficiary_and_benchma
 @pytest.mark.postgres
 @pytest.mark.parametrize("repo", [pytest.param("postgres_deployment", id="postgres")], indirect=True)
 async def test_deployed_agent_role_select_only(repo):
-    if not isinstance(repo, PostgresRepository):
-        pytest.skip("Role provisioning test requires isolated PostgreSQL cluster with database tank")
+    assert isinstance(repo, PostgresRepository)
     from pathlib import Path
 
     import psycopg
 
     async with repo.transaction():
         database = await (await repo._conn().execute("SELECT current_database() AS db")).fetchone()
-        if database["db"] != "tank":
-            pytest.skip(
-                "Exact deployment role SQL intentionally requires database named tank; run this test in isolated tank"
-            )
+        assert database["db"] == "tank"
         db = await (await repo._conn().execute("SELECT 1 FROM pg_database WHERE datname='tank'")).fetchone()
-        if db is None:
-            pytest.skip("Provisioning SQL targets database tank; create it only in an isolated test cluster")
+        assert db is not None
         script = Path(__file__).resolve().parents[1] / "deploy" / "read_only_role.sql"
         await repo._conn().execute(script.read_text(), prepare=False)
         await repo._conn().execute("GRANT USAGE,CREATE ON SCHEMA reg TO tank")
@@ -625,17 +607,13 @@ async def test_sql_typed_completeness_serials_and_independent_partitions(repo):
 @pytest.mark.postgres
 @pytest.mark.parametrize("repo", [pytest.param("postgres_deployment", id="postgres")], indirect=True)
 async def test_agent_new_connection_defaults_read_only(repo):
-    if not isinstance(repo, PostgresRepository):
-        pytest.skip("Actual role login settings require PostgreSQL")
+    assert isinstance(repo, PostgresRepository)
     import psycopg
     from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
     async with repo.transaction():
         database = await (await repo._conn().execute("SELECT current_database() AS db")).fetchone()
-        if database["db"] != "tank":
-            pytest.skip(
-                "Exact deployment role SQL intentionally requires database named tank; run this test in isolated tank"
-            )
+        assert database["db"] == "tank"
         await repo._conn().execute(
             (
                 __import__("pathlib").Path(__file__).resolve().parents[1] / "deploy/read_only_role.sql"

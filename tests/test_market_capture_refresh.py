@@ -3,8 +3,11 @@
 import asyncio
 import copy
 import json
+import os
 import re
+from contextlib import asynccontextmanager
 from datetime import timedelta
+from functools import lru_cache
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -14,7 +17,7 @@ from test_agents_session_audit import settings as session_settings
 from test_event_tools import complete_assessment_fixture, complete_event_fixture
 from test_session_binding_concurrency import fixture_repo
 from test_session_binding_concurrency import seed as seed_typed_session
-from test_truth_start_fixture import synthetic_start_snapshot
+from test_truth_start_fixture import compact_start_snapshot
 
 from tank.agents import SessionService
 from tank.analysis.decisions import DecisionEngine
@@ -28,8 +31,10 @@ from tank.time_precision import chosen_boundary
 from tank.util import iso, parse_time, utcnow
 
 
-def shifted_snapshot(end, *, full_flow_history=True):
-    source = synthetic_start_snapshot()
+@lru_cache(maxsize=2)
+def _canonical_snapshot(full_flow_history):
+    """Private immutable seed; decoded output is owned by one caller only."""
+    source = compact_start_snapshot()
     # Preserve the real seven-day derivative baselines and every current
     # window endpoint, without redundant five-minute history observations.
     end_value = parse_time(source["cutoff"])
@@ -55,14 +60,21 @@ def shifted_snapshot(end, *, full_flow_history=True):
         and parse_time(r["settlement_time"]).minute == 0
         or parse_time(r["settlement_time"]) == end_value
     ]
+    return json.dumps(source).encode()
+
+
+def shifted_snapshot(end, *, full_flow_history=True):
+    source = json.loads(_canonical_snapshot(full_flow_history))
     delta = end - parse_time(source["cutoff"])
 
     def shift(value):
         if isinstance(value, dict):
-            return {key: shift(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [shift(item) for item in value]
-        if isinstance(value, str) and re.match(r"^\d{4}-\d{2}-\d{2}T", value):
+            for key, item in value.items():
+                value[key] = shift(item)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                value[index] = shift(item)
+        elif isinstance(value, str) and re.match(r"^\d{4}-\d{2}-\d{2}T", value):
             return iso(parse_time(value) + delta)
         return value
 
@@ -115,6 +127,19 @@ async def persisted_ids(repo):
     return result
 
 
+@asynccontextmanager
+async def _refresh_repository(backend, postgres_template):
+    if backend == "postgres":
+        url = os.getenv("TANK_TEST_DATABASE_URL")
+        if not url:
+            pytest.skip("Disposable administrator PostgreSQL DSN required")
+        async with postgres_template.repository(url) as repo:
+            yield repo
+    else:
+        async with fixture_repo(backend) as repo:
+            yield repo
+
+
 async def seed_bound_session(repo):
     session, _ = await seed_typed_session(repo)
     session["event_id"] = "e"
@@ -157,15 +182,14 @@ async def seed_domain(repo, settings, end):
         await repo.put(table, key, row)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_ack(
     tmp_path, backend, postgres_template
 ):
-    async with fixture_repo(
-        backend, postgres_template=postgres_template if backend == "postgres" else None
-    ) as repo:
+    async with _refresh_repository(backend, postgres_template) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
         market = ReleasedMarket(shifted_snapshot(end, full_flow_history=True))
@@ -280,9 +304,7 @@ async def test_runtime_waits_for_capture_release_before_numerical_assessment():
 async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
     tmp_path, backend, postgres_template
 ):
-    async with fixture_repo(
-        backend, postgres_template=postgres_template if backend == "postgres" else None
-    ) as repo:
+    async with _refresh_repository(backend, postgres_template) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
         market = ReleasedMarket(shifted_snapshot(end, full_flow_history=False))
@@ -354,9 +376,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
 async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_refresh(
     tmp_path, backend, postgres_template
 ):
-    async with fixture_repo(
-        backend, postgres_template=postgres_template if backend == "postgres" else None
-    ) as repo:
+    async with _refresh_repository(backend, postgres_template) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
         # The race tests durable refresh ownership, including incomplete data;
