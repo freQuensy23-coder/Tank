@@ -128,6 +128,10 @@ class Repository(Protocol):
 # pooled connection through long reads; a backlog of them took 6 of 8 workers and
 # drained the pool (r110, 03:52Z), so one runs at a time and other types never wait.
 RUNNING_CAPS = {"REACTION_CAPTURE": 1}
+# Due jobs of these types are claimed earliest expiry first within their priority: a
+# capture backlog must not let a checkpoint expire behind ones with hours of slack
+# (FR-R-01; captures expire at checkpoint + 6 h, 03 §3.8).
+EARLIEST_EXPIRY_FIRST = ("REACTION_CAPTURE",)
 _CLAIM_LOCK = int.from_bytes(hashlib.sha256(b"tank:job_claim").digest()[:8], "big", signed=True)
 
 
@@ -418,7 +422,18 @@ class MemoryRepository(QueueMixin):
             ]
             if not candidates:
                 return None
-            job = min(candidates, key=lambda r: (r["priority"], r["run_after"], r["job_id"]))
+
+            def order(r):
+                deadline = r.get("expires_at") if r["type"] in EARLIEST_EXPIRY_FIRST else None
+                return (
+                    r["priority"],
+                    deadline is None,
+                    parse_time(deadline) if deadline else now,
+                    r["run_after"],
+                    r["job_id"],
+                )
+
+            job = min(candidates, key=order)
             job["status"] = "RUNNING"
             if not job.pop("recovery_reclaim", False):
                 job["attempts"] += 1
@@ -1005,8 +1020,9 @@ class PostgresRepository(QueueMixin):
                 AND NOT EXISTS (SELECT 1 FROM unnest(%s::text[], %s::int[]) AS c(type, cap)
                   WHERE c.type=j.type
                   AND (SELECT count(*) FROM ops.jobs r WHERE r.status='RUNNING' AND r.type=c.type)>=c.cap)
-                ORDER BY priority,run_after,storage_key FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING document""",
-                    (list(RUNNING_CAPS), list(RUNNING_CAPS.values())),
+                ORDER BY priority,CASE WHEN type=ANY(%s::text[]) THEN expires_at END NULLS LAST,
+                  run_after,storage_key FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING document""",
+                    (list(RUNNING_CAPS), list(RUNNING_CAPS.values()), list(EARLIEST_EXPIRY_FIRST)),
                 )
             ).fetchone()
             return row["document"] if row else None
