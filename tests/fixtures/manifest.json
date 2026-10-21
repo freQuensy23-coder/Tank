@@ -490,24 +490,24 @@
       ],
       "readiness": "EXECUTED_ACCEPTANCE_PASSED",
       "missing": [
-        "Fresh native run at the current config is still required for V0-C (lead ruling 17:20 UTC: packets re-assembled at current config)."
+        "Fresh native tank-replay session on r119 (main 268e155, code 4ca55568); re-run if session/skill/decision/card code changes before V0-C sign-off."
       ],
       "known_conflict": null,
       "acceptance_input": {
-        "path": "data/qa/replay-batch-r56/F-05/inputs/input.json.zst",
-        "sha256": "7252b0b032a7320938d58ff6e3cdcad8aa408ee32be21ffe37fee5b82fc13023"
+        "path": "data/replay/acceptance-r91/F-05/inputs/input.json.zst",
+        "sha256": "b19f1ef62573804e51290388110d773ec87ba8831a3b74e775a28ccda35b4205"
       },
       "private_name_map": {
-        "path": "data/replay/acceptance-r36-prepared/F-05/private/map.json",
-        "sha256": "93e9d77d1fb306dca66dd78a73596141386082c4dcec98aa85f65bdd8866a11d"
+        "path": "data/replay/acceptance-r91/F-05/private/map.json",
+        "sha256": "dbf9a2ba5d6eb9c7beb5eb2f484dbef870239dc317f2d1e48ebad79a5a1e16f8"
       },
       "sealed_outcomes": {
-        "path": "data/qa/replay-batch-r56/F-05/sealed-outcomes.json",
-        "sha256": "ac1bdc13c90753960acfbae1c8d6c645101f28b8f037bfac09d2ef9531d339a6"
+        "path": "data/replay/acceptance-r91/F-05/sealed/outcomes.json",
+        "sha256": "71e3b1c62e36aed2384b701fc4fe39a8e539983af600d374559694939895fd5c"
       },
       "acceptance_run": {
-        "path": "docs/verification/replay-batch-r56-2026-10-20/F-05/acceptance-run.json",
-        "sha256": "fdd8c5c91ff5db01ac7b6d86c9a29860f6a99818a8b8024761aa2432725fe282"
+        "path": "docs/verification/native-fixtures-2026-10-20/F-05/acceptance-run.json",
+        "sha256": "884de780d195f524f5ad49a4293f9de7744542d734f948baf7f9ecb5a87df096"
       },
       "acceptance_history": [
         {
@@ -516,6 +516,29 @@
             "Sealed capture-class assertion failed (UNKNOWN versus NARRATIVE_ONLY); retained without reroll."
           ],
           "superseded_reason": "Stale label: the referenced r56 acceptance_run passes check_ready and check_completed (all 7 sealed assertions; capture UNKNOWN with mechanism evidence, thesis D, WAIT A1). Re-verified 2026-10-20 by tank-acceptance; lead ruling 17:20 UTC."
+        },
+        {
+          "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+          "missing": [
+            "Fresh native run at the current config is still required for V0-C (lead ruling 17:20 UTC: packets re-assembled at current config)."
+          ],
+          "acceptance_input": {
+            "path": "data/qa/replay-batch-r56/F-05/inputs/input.json.zst",
+            "sha256": "7252b0b032a7320938d58ff6e3cdcad8aa408ee32be21ffe37fee5b82fc13023"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-05/private/map.json",
+            "sha256": "93e9d77d1fb306dca66dd78a73596141386082c4dcec98aa85f65bdd8866a11d"
+          },
+          "sealed_outcomes": {
+            "path": "data/qa/replay-batch-r56/F-05/sealed-outcomes.json",
+            "sha256": "ac1bdc13c90753960acfbae1c8d6c645101f28b8f037bfac09d2ef9531d339a6"
+          },
+          "acceptance_run": {
+            "path": "docs/verification/replay-batch-r56-2026-10-20/F-05/acceptance-run.json",
+            "sha256": "fdd8c5c91ff5db01ac7b6d86c9a29860f6a99818a8b8024761aa2432725fe282"
+          },
+          "superseded_reason": "Superseded by the fresh native tank-replay run on r119 (main 268e155, code 4ca55568)."
         }
       ]
     },
