@@ -80,6 +80,8 @@ class HourlyParquet:
         self._sequence = itertools.count()
         # Held only by worker threads (seal publication vs. readers), never by capture.
         self._publish = threading.Lock()
+        # Journal appends and seals of this archive never interleave (worker threads only).
+        self._io = threading.RLock()
 
     def _identity(self, row):
         raise NotImplementedError
@@ -159,8 +161,14 @@ class HourlyParquet:
             os.fsync(state["handle"].fileno())
             state["handle"].close()
 
-    def write(self, buffer, *, now=None):
-        """Worker thread: append and fsync each hour's journal, then seal quiet hours."""
+    def write(self, buffer, *, now=None, seal_limit=None):
+        """Worker thread: append and fsync each hour's journal, then seal at most `seal_limit`
+        quiet hours (all with None, none with 0: the service seals in its own pass so a seal
+        backlog never holds up journal writes)."""
+        with self._io:
+            return self._write(buffer, now=now, seal_limit=seal_limit)
+
+    def _write(self, buffer, *, now, seal_limit):
         import pyarrow as pa
 
         if not self._recovered:
@@ -190,10 +198,15 @@ class HourlyParquet:
             os.fsync(state["handle"].fileno())
             state["touched"] = time.monotonic()
             rows_written += len(rows)
-        sealed = self.seal_due(now)
+        sealed = self.seal_due(now, limit=seal_limit) if seal_limit != 0 else []
         return {"rows": rows_written, "sealed": sealed, "open_journals": len(self._journals)}
 
-    def seal_due(self, now=None):
+    def seal_due(self, now=None, *, limit=None):
+        """Worker thread: seal finished quiet hours, oldest first, at most `limit` of them;
+        each seal holds the archive only for that hour, so writes interleave."""
+        if not self._recovered:
+            with self._io:
+                self._recover()
         now = parse_time(now) if now is not None else utcnow()
         quiet = time.monotonic() - self.grace_s
         due = [
@@ -207,9 +220,10 @@ class HourlyParquet:
             if canonical not in self._journals and self.hour_of(canonical) + timedelta(hours=1) <= now
         ]
         sealed = []
-        for canonical in sorted(set(due)):
+        for canonical in sorted(set(due))[:limit]:
             try:
-                self.seal(canonical)
+                with self._io:
+                    self.seal(canonical)
             except Exception as exc:  # noqa: BLE001 - one bad hour must not stop writes or other seals
                 # Journals stay on disk and the hour is retried on the next write.
                 self._orphans.add(Path(canonical))

@@ -361,3 +361,14 @@ def test_seal_casts_a_foreign_column_type_and_isolates_a_failing_hour(tmp_path, 
     assert str(other) in sealed and str(canonical) not in sealed and journals(canonical)  # kept, retried
     assert str(canonical) in archive.seal_due(HOUR + timedelta(hours=3))
     assert sorted(pq.read_table(canonical).column("trade_id").to_pylist()) == ["1", "7"]
+
+
+def test_journal_writes_never_wait_for_a_seal_backlog(tmp_path):
+    archive = TradeArchive(tmp_path, instruments=[SPOT], grace_s=0)
+    for hour in range(3):
+        archive.append(print_(hour + 1, HOUR + timedelta(hours=hour, seconds=1)))
+    later = HOUR + timedelta(hours=5)
+    assert archive.write(archive.take(), now=later, seal_limit=0)["sealed"] == []
+    first = archive.path(SPOT["instrument_id"], HOUR)
+    assert archive.seal_due(later, limit=1) == [str(first)]  # oldest first, one per pass
+    assert len(archive.seal_due(later, limit=5)) == 2
