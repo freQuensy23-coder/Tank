@@ -757,3 +757,31 @@ def test_low_data_keeps_the_incomplete_evidence_scenarios():
     truth = {"token_id": "T", "move_class": "UNKNOWN", "data_confidence": {"class": "LOW"}, "relative": {}}
     result = DecisionEngine().evaluate({"event_id": "e"}, {"class": "MAJOR"}, {"token_id": "T", "role": "PRIMARY"}, truth)
     assert result["outlook"]["scenarios"]["base"] == "UNKNOWN: market evidence incomplete."
+
+
+@pytest.mark.parametrize("direction,breadth", [("BUY", "BROAD"), ("SELL", "BROAD"), ("NEUTRAL", "NARROW")])
+def test_price_markup_scenarios_follow_the_spot_direction(direction, breadth):
+    """E2E #8 (msg 22): PRICE_MARKUP_FAKE_OI printed the perp-led "spot does not
+    confirm" texts while spot was BUY BROAD on all venues. Its scenarios state
+    the price markup (L2) and never deny spot buying; no numbers (L7)."""
+    truth = {
+        "token_id": "T",
+        "move_class": "PRICE_MARKUP_FAKE_OI",
+        "primary_window": "W4H",
+        "data_confidence": {"class": "HIGH"},
+        "spot": {"W4H": {"direction": direction, "classification": breadth}},
+        "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL"},
+    }
+    scenarios = DecisionEngine().evaluate(
+        {"event_id": "e", "statement": "s"},
+        {"class": "MAJOR"},
+        {"token_id": "T", "role": "PRIMARY", "credible": True, "capture_class": "DIRECT"},
+        truth,
+    )["outlook"]["scenarios"]
+    text = " ".join(scenarios.values())
+    assert "price markup" in scenarios["base"]
+    assert not re.search(r"leverage|new positions? (?:opened|built)|\d", text.lower())
+    if direction == "BUY":
+        assert "spot buying carries the move" in scenarios["base"] and "does not confirm" not in text
+    else:
+        assert "spot does not confirm" in scenarios["base"]

@@ -358,12 +358,28 @@ class DecisionEngine:
                 "upside": "Upgrade if spot turns BUY and BROAD with native OI within its normal range (spot-led buying).",
                 "failure": "Thesis invalid if the event is denied.",
             }
-        elif move in {"PERP_LED_CHASE", "PRICE_MARKUP_FAKE_OI"}:
+        elif move == "PERP_LED_CHASE":
             scenarios = {
                 "base": "Chase risk persists while spot does not confirm.",
                 "upside": "Move gains support if spot turns BUY and funding normalizes.",
                 "failure": "Move unwinds if price loses the event anchor.",
             }
+        elif move == "PRICE_MARKUP_FAKE_OI":
+            # §5.8: the class may hold with spot BUY (no other class eligible).
+            # L2: the OI rise is price markup, never new positions or leverage.
+            scenarios = (
+                {
+                    "base": "USD OI rose on price markup, not new positions; spot buying carries the move.",
+                    "upside": "Move gains support if native OI and spot volume rise with spot BUY.",
+                    "failure": "Move unwinds if price loses the event anchor.",
+                }
+                if direction == "BUY"
+                else {
+                    "base": "USD OI rose on price markup, not new positions; spot does not confirm the move.",
+                    "upside": "Move gains support if spot turns BUY with native OI rising.",
+                    "failure": "Move unwinds if price loses the event anchor.",
+                }
+            )
         elif move == "SHORT_SQUEEZE":
             scenarios = {
                 "base": "Squeeze persists while short covering dominates.",
