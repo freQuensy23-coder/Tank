@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/flow"
@@ -185,19 +186,29 @@ func (s *Service) discovered(iid string) bool {
 func (s *Service) discoverAll(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
+	// In parallel (the venue gates still pace each host): one by one it took ~40 s and
+	// held back the streams a standby process connects before a roll hands over.
+	sem := make(chan struct{}, discoverParallel)
+	var wg sync.WaitGroup
 	for _, iid := range s.opt.Order {
 		inst := s.opt.Instruments[iid]
 		if inst == nil || !inst.Active {
 			continue
 		}
-		if err := s.discover(ctx, inst); err != nil {
-			if ctx.Err() != nil {
-				return
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(inst *venue.Instrument) {
+			defer func() { <-sem; wg.Done() }()
+			if err := s.discover(ctx, inst); err != nil && ctx.Err() == nil {
+				s.gap(inst, "METADATA", err.Error(), nil, nil)
 			}
-			s.gap(inst, "METADATA", err.Error(), nil, nil)
-		}
+		}(inst)
 	}
+	wg.Wait()
 }
+
+// discoverParallel bounds the instruments discovered at once at start.
+const discoverParallel = 16
 
 // fxRate is MarketService._fx_rate: the stablecoin USD sample of an instrument's quote,
 // fetched at most every 300 s.
