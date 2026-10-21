@@ -138,9 +138,25 @@ def fetch_upstream(destination):
     return destination
 
 
-def prepare_variant(destination, reference, upstream, runtime, node_base, variant):
+def pin_node_recipe(text, node_base):
     if not re.fullmatch(r"node:24-bookworm-slim@sha256:[0-9a-f]{64}", node_base):
         raise ValueError("One shared digest-pinned Node24 Bookworm base is required")
+    stages = set()
+    external = 0
+    for match in re.finditer(r"(?m)^FROM (\S+)(?: AS (\S+))?$", text):
+        image, alias = match.groups()
+        if image.lower() not in stages:
+            if image != "node:24-bookworm-slim":
+                raise ValueError("Unexpected external benchmark base: " + image)
+            external += 1
+        if alias:
+            stages.add(alias.lower())
+    if external not in (2, 3):
+        raise ValueError("Generated Node base-image contract changed")
+    return text.replace("FROM node:24-bookworm-slim", "FROM " + node_base)
+
+
+def prepare_variant(destination, reference, upstream, runtime, node_base, variant):
     reference = command(["git", "-C", ROOT, "rev-parse", reference + "^{commit}"])
     export = new_directory(destination / "tank-source")
     raw = subprocess.check_output(["git", "-C", str(ROOT), "archive", reference, "deploy"])
@@ -166,12 +182,10 @@ def prepare_variant(destination, reference, upstream, runtime, node_base, varian
     verified = composer.deployment_verify(context)
     generated = context / "apps/main-node/Dockerfile.tank"
     text = generated.read_text()
-    if text.count("FROM node:24-bookworm-slim") != 2:
-        raise ValueError("Generated base-image contract changed")
     # Canonical generated source/manifests stay intact; only the external
     # benchmark Dockerfile pins tag resolution to the common input digest.
     dockerfile = destination / "Dockerfile.pinned"
-    dockerfile.write_text(text.replace("FROM node:24-bookworm-slim", "FROM " + node_base))
+    dockerfile.write_text(pin_node_recipe(text, node_base))
     return {
         "variant": variant,
         "reference": reference,

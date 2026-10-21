@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import importlib.util
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -15,7 +16,7 @@ BASE = Path(__file__).resolve().parent
 
 
 def prepare_dockerfile(docker):
-    """Render the shared build stages; native assembly remains in guarded prepare()."""
+    """Render shared build stages; native assembly remains in guarded prepare()."""
 
     def edit_docker(old, new, count=1):
         nonlocal docker
@@ -26,30 +27,55 @@ def prepare_dockerfile(docker):
     edit_docker("FROM node:22-slim", "FROM node:24-bookworm-slim", count=2)
     edit_docker("AS runtime\n", "AS runtime\nENV COREPACK_HOME=/opt/corepack\n")
     edit_docker("&& corepack enable", "&& corepack enable && corepack prepare pnpm@11.0.8 --activate")
-    # Fetch from the frozen workspace lock before copying package source. The
-    # upstream COPY packages includes every TypeScript edit, which otherwise
-    # invalidates the download step even when no dependency changed.
-    metadata = "COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .pnpm-approve-builds.json ./"
+    # Use final prepared manifests, including the retained lifecycle SDK patch.
+    # No workspace package at this source pin has install lifecycle scripts.
     edit_docker(
-        metadata,
-        metadata
-        + "\nRUN --mount=type=cache,id=tank-openma-pnpm11,target=/pnpm/store,sharing=locked"
-        + " corepack enable"
-        + " && corepack prepare pnpm@11.0.8 --activate"
-        + " && pnpm fetch --frozen-lockfile --store-dir=/pnpm/store",
+        "COPY packages packages",
+        "COPY --from=package-manifests /manifests/packages packages",
     )
     edit_docker(
         "RUN corepack enable \\\n  && pnpm install --frozen-lockfile",
         "RUN --mount=type=cache,id=tank-openma-pnpm11,target=/pnpm/store,sharing=locked"
-        + " pnpm install --offline --frozen-lockfile --store-dir=/pnpm/store",
+        " corepack enable && corepack prepare pnpm@11.0.8 --activate"
+        " && pnpm install --frozen-lockfile --store-dir=/pnpm/store",
     )
-    # Runtime assets do not participate in the console build. The entrypoint
-    # reads the complete native bundle from /opt/tank-boxlite-runtime below;
-    # copying that bundle under /app as well would duplicate it in the image.
+    edit_docker(
+        "# Now bring in the source code",
+        "FROM dependencies AS deps\n\n# Now bring in the source code",
+    )
+    edit_docker(
+        "COPY apps/main-node apps/main-node",
+        "COPY packages packages\nCOPY apps/main-node apps/main-node",
+    )
+    extract = (
+        'const fs = require("node:fs"); const path = require("node:path");'
+        ' for (const entry of fs.readdirSync("packages", {withFileTypes: true})) {'
+        " if (!entry.isDirectory()) continue;"
+        ' const source = path.join("packages", entry.name, "package.json");'
+        " if (!fs.existsSync(source)) continue;"
+        ' const target = path.join("/manifests", source);'
+        " fs.mkdirSync(path.dirname(target), {recursive: true});"
+        " fs.copyFileSync(source, target); }"
+    )
+    metadata_stage = (
+        "FROM node:24-bookworm-slim AS package-manifests\n"
+        "WORKDIR /source\n"
+        "COPY packages packages\n"
+        "RUN node -e " + shlex.quote(extract) + "\n\n"
+    )
+    edit_docker(
+        "FROM node:24-bookworm-slim AS deps",
+        metadata_stage + "FROM node:24-bookworm-slim AS dependencies",
+    )
+    # Keep dependency files in a stable runtime layer. Source-stage workspace
+    # paths contain the same source and relative node_modules links as before.
     edit_docker(
         "COPY --from=deps /app /app",
-        "COPY --from=deps /app /app\n"
-        + "COPY tank-deploy/openma_entrypoint.mjs /app/tank-deploy/openma_entrypoint.mjs",
+        "COPY --from=dependencies /app /app\n"
+        "COPY --from=deps /app/packages /app/packages\n"
+        "COPY --from=deps /app/apps /app/apps\n"
+        "COPY --from=deps /app/tsconfig.json /app/tsconfig.json\n"
+        "COPY tank-deploy/openma_entrypoint.mjs /app/tank-deploy/openma_entrypoint.mjs",
     )
     return docker
 

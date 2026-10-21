@@ -2,6 +2,9 @@
 
 import hashlib
 import importlib.util
+import json
+import shlex
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -138,19 +141,54 @@ CMD ["pnpm", "start"]
 """
 
 
-def test_dependency_downloads_precede_source_and_runtime_assets():
+def test_dependency_layer_is_independent_of_package_source_and_runtime_assets():
     docker = module("deploy/prepare_openma_source.py").prepare_dockerfile(UPSTREAM_DOCKERFILE)
-    deps, runtime = docker.split("FROM node:24-bookworm-slim AS runtime\n", 1)
-    fetch = deps.index("pnpm fetch --frozen-lockfile --store-dir=/pnpm/store")
-    copy_source = deps.index("COPY packages packages")
-    install = deps.index("pnpm install --offline --frozen-lockfile --store-dir=/pnpm/store")
-    assert fetch < copy_source < install < deps.index("COPY apps/main-node apps/main-node")
-    assert "COPY tank-deploy" not in deps
+    manifests, stages = docker.split("FROM node:24-bookworm-slim AS dependencies\n", 1)
+    dependencies, stages = stages.split("FROM dependencies AS deps\n", 1)
+    source, runtime = stages.split("FROM node:24-bookworm-slim AS runtime\n", 1)
+    assert "COPY packages packages" in manifests
+    assert "COPY --from=package-manifests /manifests/packages packages" in dependencies
+    assert "COPY packages packages" not in dependencies
+    assert dependencies.count("pnpm install --frozen-lockfile --store-dir=/pnpm/store") == 1
+    assert "pnpm fetch" not in docker and "--offline" not in docker
+    assert "COPY packages packages" in source
+    assert "COPY apps/main-node apps/main-node" in source
+    assert "COPY --from=dependencies /app /app" in runtime
+    assert "COPY --from=deps /app /app" not in runtime
+    for path in ("packages", "apps", "tsconfig.json"):
+        assert f"COPY --from=deps /app/{path} /app/{path}" in runtime
+    assert "COPY tank-deploy" not in manifests + dependencies + source
     assert "COPY tank-deploy/openma_entrypoint.mjs /app/tank-deploy/openma_entrypoint.mjs" in runtime
     assert "COPY tank-deploy /app/tank-deploy" not in docker
-    assert docker.count("id=tank-openma-pnpm11,target=/pnpm/store,sharing=locked") == 2
-    assert 'CMD ["pnpm", "start"]' in runtime
-    assert "USER node" in runtime
+    assert docker.count("id=tank-openma-pnpm11,target=/pnpm/store,sharing=locked") == 1
+    assert 'CMD ["pnpm", "start"]' in runtime and "USER node" in runtime
+
+
+def test_actual_manifest_extractor_keeps_source_edits_out_of_dependency_input(tmp_path):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node executable required for actual Docker manifest extractor")
+    docker = module("deploy/prepare_openma_source.py").prepare_dockerfile(UPSTREAM_DOCKERFILE)
+    command = next(line for line in docker.splitlines() if line.startswith("RUN node -e "))
+    code = shlex.split(command.removeprefix("RUN "))[2]
+    destination = tmp_path / "manifests"
+    code = code.replace('"/manifests"', json.dumps(str(destination)))
+    for name in ("first", "second"):
+        package = tmp_path / "packages" / name
+        package.mkdir(parents=True)
+        (package / "package.json").write_text(json.dumps({"name": name, "private": True}))
+        (package / "index.ts").write_text("export const value = 1;\n")
+    subprocess.run([node, "--eval", code], cwd=tmp_path, check=True)
+    before = {str(p.relative_to(destination)): p.read_bytes() for p in destination.rglob("*") if p.is_file()}
+    assert set(before) == {"packages/first/package.json", "packages/second/package.json"}
+    (tmp_path / "packages/first/index.ts").write_text("export const value = 2;\n")
+    subprocess.run([node, "--eval", code], cwd=tmp_path, check=True)
+    after = {str(p.relative_to(destination)): p.read_bytes() for p in destination.rglob("*") if p.is_file()}
+    assert before == after
+    for name in ("first", "second"):
+        assert (destination / "packages" / name / "package.json").read_bytes() == (
+            tmp_path / "packages" / name / "package.json"
+        ).read_bytes()
 
 
 @pytest.mark.parametrize(
@@ -158,7 +196,7 @@ def test_dependency_downloads_precede_source_and_runtime_assets():
     [
         ("FROM node:22-slim", "FROM node:other"),
         ("AS runtime\n", "AS renamed\n"),
-        (".pnpm-approve-builds.json ./", ".pnpm-approve-builds.json /different/"),
+        ("COPY packages packages", "COPY packages /different"),
         ("pnpm install --frozen-lockfile", "pnpm install"),
         ("COPY --from=deps /app /app", "COPY --from=deps /different /app"),
     ],

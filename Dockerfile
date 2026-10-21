@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 FROM postgres:16-bookworm AS pgclient
 FROM ghcr.io/astral-sh/uv:0.9.5 AS uv
-FROM python:3.12-slim-bookworm
+FROM python:3.12-slim-bookworm AS runtime-base
 COPY --from=uv /uv /usr/local/bin/uv
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git libpq5 liblz4-1 libzstd1 libreadline8 libxml2 libssl3 libicu72 zlib1g tini && rm -rf /var/lib/apt/lists/*
 COPY --from=pgclient /usr/lib/postgresql/16/bin/pg_dump /usr/local/bin/pg_dump
@@ -13,13 +13,26 @@ ENV UV_PROJECT_ENVIRONMENT=/opt/tank/venv \
     PATH=/opt/tank/venv/bin:$PATH \
     PLAYWRIGHT_BROWSERS_PATH=/opt/playwright \
     PYTHONUNBUFFERED=1
+
+FROM runtime-base AS dependencies
 COPY pyproject.toml uv.lock ./
-# Keep downloaded wheels/build backends outside image layers and reusable on rebuilds.
 RUN --mount=type=cache,id=tank-uv,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
-RUN /opt/tank/venv/bin/python -m playwright install --with-deps chromium \
+
+# Select the installer from the frozen environment. Its content stays identical
+# when unrelated project metadata/dependencies change; no second version pin.
+FROM scratch AS browser-installer
+COPY --from=dependencies /opt/tank/venv/lib/python3.12/site-packages/playwright /playwright
+
+FROM runtime-base AS runtime
+# The CLI imports only stdlib and its bundled driver. Mount it at its final path
+# so browser GC links remain valid, without baking a second driver/Node copy.
+RUN --mount=type=bind,from=browser-installer,target=/opt/tank/venv/lib/python3.12/site-packages \
+    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/opt/tank/venv/lib/python3.12/site-packages \
+    /usr/local/bin/python -m playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
-# Source edits must not repeat account and writable-directory preparation.
+COPY --from=dependencies /opt/tank/venv /opt/tank/venv
+COPY pyproject.toml uv.lock ./
 RUN useradd --create-home --uid 1000 tank \
     && mkdir -p /data/replay/evidence /browser /codex-auth /backup \
     && chown -R tank:tank /data /browser /codex-auth /backup

@@ -27,7 +27,7 @@ env:
   UV_FROZEN: "1"
   UV_CACHE_DIR: /tmp/tank-uv-comparison-${{ github.run_id }}-${{ github.run_attempt }}
   BEFORE_REF: c9d2ced6cefcfc3e6b26cfccc2b0aa0e634caa81
-  AFTER_REF: fdddf452f21d6e4871b32aa7b3809426730929b1
+  AFTER_REF: fca4e38bee455d22c30dabcd4a758e3fb3261c2e
   BENCHMARK_VARIANT: ${{ inputs.variant || 'before' }}
   BENCHMARK_INPUTS: scripts/ci/docker-benchmark-inputs.json
   TANK_BENCHMARK_CACHE_SCOPE: comparison-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.variant || 'before' }}-${{ github.job }}
@@ -54,7 +54,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: fdddf452f21d6e4871b32aa7b3809426730929b1
+          ref: fca4e38bee455d22c30dabcd4a758e3fb3261c2e
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
@@ -130,7 +130,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: fdddf452f21d6e4871b32aa7b3809426730929b1
+          ref: fca4e38bee455d22c30dabcd4a758e3fb3261c2e
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
@@ -256,7 +256,7 @@ jobs:
           version: "0.9.5"
           python-version: "3.12"
           enable-cache: false
-      - name: Run the same 53 focused deployment and recipe tests
+      - name: Run the same focused deployment and recipe tests
         run: |
           mkdir -p "$RUNNER_TEMP/focused-results"
           uv run --frozen --extra dev pytest -q \
