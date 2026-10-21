@@ -272,7 +272,9 @@ async def _select(ch, collection, q, order, tail="", selected="*"):
     k.where(f"`{day}` >= {k.param(min(days), DT)}")
     k.where(f"`{day}` <= {k.param(max(days), DT)}")
     k.where(f"storage_key IN {k.param([r['storage_key'] for r in keys], 'Array(String)')}")
-    return await ch.rows(f"SELECT {selected} FROM {_table(collection)} WHERE {k.predicate()} ORDER BY {order}", k.params)
+    return await ch.rows(
+        f"SELECT {selected} FROM {_table(collection)} WHERE {k.predicate()} ORDER BY {order}", k.params
+    )
 
 
 async def get(ch, collection, key):
@@ -372,7 +374,11 @@ async def latest_market_records(
         _ids(q, instrument_ids)
     groups = ", ".join(f"`{g}`" for g in group_by)
     rows = await _select(
-        ch, collection, q, f"{groups}, `{time_field}` DESC NULLS LAST, storage_key DESC", f"LIMIT 1 BY {groups}"
+        ch,
+        collection,
+        q,
+        f"{groups}, `{time_field}` DESC NULLS LAST, storage_key DESC",
+        f"LIMIT 1 BY {groups}",
     )
     return await _decode(collection, rows)
 
@@ -547,7 +553,11 @@ async def sampled_market_history(
     groups = ", ".join(["instrument_id", *(f"`{g}`" for g in group_fields)])
     bucket = f"intDiv(toUnixTimestamp(`{time_field}`), {int(bucket_s)})"
     rows = await _select(
-        ch, collection, q, f"{groups}, {bucket}, `{time_field}` DESC, storage_key DESC", f"LIMIT 1 BY {groups}, {bucket}"
+        ch,
+        collection,
+        q,
+        f"{groups}, {bucket}, `{time_field}` DESC, storage_key DESC",
+        f"LIMIT 1 BY {groups}, {bucket}",
     )
     records = await _decode(collection, rows)
     return sorted(records, key=lambda r: r[time_field])
