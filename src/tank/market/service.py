@@ -127,6 +127,7 @@ PUBLIC_MARKET = frozenset(
     }
 )
 
+WIDE_PAGE_ROWS = 500  # rows per fetch for wide rows: one fetchall stays well under a second
 BOOK_LEVEL_ROWS = 30  # newest book rows per instrument that keep their levels in a snapshot
 COLLECTIONS = {
     "flow_bars": ("mkt.flow_bars_1m", "minute_start"),
@@ -4132,6 +4133,8 @@ class MarketService:
         if sliced is not None:
             return sliced
         if books:
+            # Levels only for the newest BOOK_LEVEL_ROWS rows and the newest checked one: in
+            # the query on PostgreSQL, by stripping after decode in memory.
             return await market_range_by_instrument(
                 self.repo,
                 collection,
@@ -4140,10 +4143,15 @@ class MarketService:
                 start,
                 end,
                 filters,
-                batch_size=500,
-                keep=book_level_keeper(),
+                batch_size=WIDE_PAGE_ROWS,
+                keep=None if hasattr(self.repo, "_conn") else book_level_keeper(),
+                level_rows=BOOK_LEVEL_ROWS if hasattr(self.repo, "_conn") else None,
             )
-        return await market_range_by_instrument(self.repo, collection, field, ids, start, end, filters)
+        # Wide rows (ticker field_sources) in small pages: one fetchall decodes a page.
+        page = WIDE_PAGE_ROWS if collection == "mkt.tickers_24h" else 5000
+        return await market_range_by_instrument(
+            self.repo, collection, field, ids, start, end, filters, batch_size=page
+        )
 
     async def snapshot_anchors(self, token_id, cutoff, anchors):
         """Snapshots of one token and cutoff for several anchors (e.g. PRE_24H/4H/1H) with

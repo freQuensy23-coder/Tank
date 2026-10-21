@@ -1051,3 +1051,62 @@ async def test_batched_range_read_gives_the_loop_turns_while_it_decodes(typed_re
     await other
     assert len(out["test:BTC"]) == 2500
     assert turns[0] - before >= 2  # yields every YIELD_ROWS rows, not only between pages
+
+
+async def test_book_pages_never_fetch_levels_outside_the_walked_rows(typed_repo):
+    from datetime import timedelta
+
+    from tank.market_storage import market_range_by_instrument
+    from tank.util import iso, parse_time
+
+    await typed_repo.migrate()
+    base = parse_time("2026-10-18T00:00:00Z")
+    levels = [["2", "1"], ["3", "1"]]
+    rows = [
+        {
+            "instrument_id": "test:BTC",
+            "token_id": "BTC",
+            "exchange_ts": iso(base + timedelta(seconds=10 * n)),
+            "integrity_ok": n == 0,
+            "mid": "2",
+            "bids": levels,
+            "asks": levels,
+            "recorded_at": iso(base + timedelta(seconds=10 * n + 1)),
+            "recorded_at_prec": "COLLECTION_ONLY",
+        }
+        for n in range(5)
+    ]
+    await typed_repo.put_market_batch("mkt.book_summaries", rows)
+    queries = []
+    real_conn = typed_repo._conn
+
+    class Recording:
+        def __init__(self, conn):
+            self.conn = conn
+
+        async def execute(self, query, *args, **kwargs):
+            queries.append(query.as_string(self.conn) if hasattr(query, "as_string") else str(query))
+            return await self.conn.execute(query, *args, **kwargs)
+
+        def __getattr__(self, name):
+            return getattr(self.conn, name)
+
+    typed_repo._conn = lambda: Recording(real_conn())
+    try:
+        out = await market_range_by_instrument(
+            typed_repo,
+            "mkt.book_summaries",
+            "exchange_ts",
+            ["test:BTC"],
+            base,
+            base + timedelta(minutes=5),
+            batch_size=2,
+            level_rows=2,
+        )
+    finally:
+        typed_repo._conn = real_conn
+    got = out["test:BTC"]
+    assert [("bids" in r) for r in got] == [True, False, False, True, True]  # newest 2 + newest checked
+    assert got[0]["bids"] == levels and got[4]["asks"] == levels
+    pages = [q for q in queries if "LIMIT" in q]
+    assert len(pages) == 3 and not any('"bids"' in q for q in pages)  # levels never decoded per page
