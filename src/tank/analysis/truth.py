@@ -12,6 +12,7 @@ import asyncio
 import hashlib
 import json
 import pickle
+import threading
 from array import array
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
@@ -4885,9 +4886,22 @@ def _compute_market_truth(snapshot, *, config=None):
     return jsonable(result)
 
 
+# One full assessment at a time per process. It is 7-11 s of pure Python run in worker
+# threads (asyncio.to_thread); several at once (MT + PRE anchors + reaction captures) left the
+# event loop thread a small share of the GIL and stalled open transactions. A waiting thread
+# holds no GIL, so the loop keeps about half; total compute time is unchanged (no parallelism
+# under the GIL anyway). Short condition evaluations are not serialized.
+_COMPUTE_SLOT = threading.RLock()
+
+
 def compute_market_truth(snapshot, *, config=None, baseline_cache=None):
     """baseline_cache: a dict the caller keeps per token across assessments. Its keys carry
     exact history fingerprints (and config), so a reused entry is the same computation."""
+    with _COMPUTE_SLOT:
+        return _compute_market_truth_slot(snapshot, config=config, baseline_cache=baseline_cache)
+
+
+def _compute_market_truth_slot(snapshot, *, config=None, baseline_cache=None):
     config = config or {}
     if config.get("market_context_rule", "normal_range") != "normal_range":
         raise ValueError("Only the approved §5.7 normal_range market context rule is supported")

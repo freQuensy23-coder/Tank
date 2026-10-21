@@ -2066,7 +2066,6 @@ def test_price_markup_flag_keeps_measured_venue_when_composite_is_unavailable(
     assert derivatives["synchronized"] is None
 
 
-
 def _sync_cohort(end, spans_days, levels, usd_days=None):
     """Synchronized cohort rows on a 5 min grid; venue i starts spans_days[i] before end and
     carries USD for its last usd_days[venue] days (all of them by default)."""
@@ -2129,3 +2128,33 @@ def test_synchronized_oi_history_stays_unavailable_under_seven_days():
     assert result["venues"] == ["binance", "bybit", "okx"]
     assert result["native_normal_range"] is None
     assert result["oi_class"] is None
+
+
+def test_full_assessments_run_one_at_a_time_per_process(monkeypatch):
+    """Concurrent compute_market_truth calls in worker threads never overlap (GIL share of the
+    event loop thread); a waiting call simply runs after the current one."""
+    import threading
+    import time
+
+    import tank.analysis.truth as truth
+
+    active, peak, lock = [0], [0], threading.Lock()
+
+    def fake(snapshot, config=None):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        time.sleep(0.05)
+        with lock:
+            active[0] -= 1
+        return {"token_id": snapshot["token_id"]}
+
+    monkeypatch.setattr(truth, "_compute_market_truth", fake)
+    threads = [
+        threading.Thread(target=truth.compute_market_truth, args=({"token_id": str(i)},)) for i in range(4)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert peak[0] == 1
