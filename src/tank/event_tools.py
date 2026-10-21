@@ -104,6 +104,70 @@ def resolve_tokens(registry, values, context=""):
     return list(dict.fromkeys(resolve_token(registry, value, context) for value in values or []))
 
 
+# A read tool's result goes into the model's context. 6.7 MB of raw supply
+# series ended a BTC session on the context window (r107); results are kept
+# to what the analysis reads and bounded.
+TOOL_RESULT_MAX_BYTES = 40_000
+READ_TOOLS = frozenset(
+    {
+        "get_item",
+        "search_tank_items",
+        "list_open_events",
+        "get_event",
+        "get_registry",
+        "get_token_facts",
+        "web_search",
+        "fetch_page",
+    }
+)
+SERIES_KEEP = 7
+
+
+def compact_series(value):
+    """Long arrays (daily charts since 2011, balances, pools) become their
+    count and newest items; scalars and short structures are kept as stored."""
+    if isinstance(value, dict):
+        return {key: compact_series(item) for key, item in value.items()}
+    if isinstance(value, list):
+        if len(value) > 2 * SERIES_KEEP:
+            return {"count": len(value), "last": [compact_series(item) for item in value[-SERIES_KEEP:]]}
+        return [compact_series(item) for item in value]
+    return value
+
+
+def fit_result(result, max_bytes=TOOL_RESULT_MAX_BYTES):
+    """Bound a read tool's result: first long lists, then long strings, and
+    say so. The stored evidence itself is never shortened."""
+    size = len(canonical_json(result).encode())
+    if size <= max_bytes:
+        return result
+    fitted = compact_series(result)
+    limit = 4000
+    while len(canonical_json(fitted).encode()) > max_bytes and limit >= 250:
+
+        def clip(value, limit=limit):
+            if isinstance(value, dict):
+                return {key: clip(item) for key, item in value.items()}
+            if isinstance(value, list):
+                return [clip(item) for item in value]
+            if isinstance(value, str) and len(value) > limit:
+                return value[:limit] + f" [... {len(value) - limit} more characters stored]"
+            return value
+
+        fitted = clip(fitted)
+        limit //= 2
+    note = {
+        "original_bytes": size,
+        "note": "Result shortened to fit the context: long series show their count and newest items, "
+        "long texts their start. The full records stay stored (get_item / get_event for one record).",
+    }
+    if len(canonical_json(fitted).encode()) > max_bytes:
+        return {"_truncated": note, "keys": sorted(result) if isinstance(result, dict) else None}
+    if isinstance(fitted, dict):
+        return {**fitted, "_truncated": note}
+    return {"items": fitted, "_truncated": note}
+
+
 def known_at(row):
     """When a stored fact became known. A late-receipt historical reconstruction
     (lead rulings F-02, F-04) is known from the end of its schedule_as_of bucket,
@@ -355,8 +419,9 @@ class EventToolService:
             # and recoverable PRE tasks, including restart recovery.
             if tool == "set_assessment" and self.scheduler is not None:
                 await self.scheduler.ensure_reactions(await self.require("evt.events", event_id))
-            return result
-        return await getattr(self, tool)(arguments, ctx)
+            return fit_result(result) if tool in READ_TOOLS else result
+        result = await getattr(self, tool)(arguments, ctx)
+        return fit_result(result) if tool in READ_TOOLS else result
 
     async def rows(self, table, event_id=None, *, filters=None):
         query = dict(filters or {})
@@ -462,9 +527,28 @@ class EventToolService:
             if session.get("event_id"):
                 statuses.setdefault(session["event_id"], set()).add(session.get("status"))
         failed = {eid for eid, seen in statuses.items() if seen == {"FAILED"}}
+        sessions = {}
+        for session in await self.rows("ops.agent_sessions"):
+            if session.get("event_id"):
+                sessions.setdefault(session["event_id"], []).append(
+                    {"session_id": session.get("session_id"), "status": session.get("status")}
+                )
+        fields = (
+            "event_id",
+            "statement",
+            "entities",
+            "tokens_mentioned",
+            "event_state",
+            "state_verified",
+            "lifecycle",
+            "certainty",
+            "freshness",
+            "known_to_us_at",
+            "public_at",
+        )
         return {
             "events": [
-                r
+                {**{k: r.get(k) for k in fields}, "sessions": sessions.get(r["event_id"], [])}
                 for r in await self.rows("evt.events")
                 if r["lifecycle"] not in {"CLOSED", "MERGED", "INVALIDATED"}
                 and r["event_id"] not in failed
@@ -531,12 +615,30 @@ class EventToolService:
                     else "UPCOMING",
                 )
             )
+        # 03 §5.6: the latest known observation of each kind (per chain,
+        # instrument and fee scope), not the raw history.
+        latest = {}
+        for row in await self.rows("mkt.supply_obs", filters={"token_id": token}):
+            if not known(row):
+                continue
+            key = (row.get("kind"), row.get("chain"), row.get("instrument_id"), row.get("fee_scope"))
+            if key not in latest or str(row.get("ts") or "") > str(latest[key].get("ts") or ""):
+                latest[key] = row
+        chains = sorted(
+            await self.rows("evt.capture_chains", filters={"token_id": token}),
+            key=lambda r: (str(r.get("event_id")), int(r.get("version") or 0)),
+        )
+        newest_chain = {}
+        for chain in chains:
+            newest_chain[chain.get("event_id")] = chain
         return {
             "registry": registry,
             "analysis_cutoff": iso(cutoff),
-            "supply_obs": [r for r in await self.rows("mkt.supply_obs", filters={"token_id": token}) if known(r)],
+            "supply_obs": [
+                compact_series(row) for row in sorted(latest.values(), key=lambda r: str(r.get("kind")))
+            ],
             "unlocks": unlocks,
-            "capture_chains": await self.rows("evt.capture_chains", filters={"token_id": token}),
+            "capture_chains": [compact_series(row) for row in list(newest_chain.values())[-5:]],
         }
 
     def validate_evidence_url(self, url):
@@ -1366,9 +1468,9 @@ class EventToolService:
             if current_map and int(edge["map_version"]) == int(current_map["map_version"])
         ]
         registry = self.settings.load_config("registry")
-        concerned = set(resolve_tokens(registry, event.get("tokens_mentioned", []), event.get("statement") or "")) | {
-            edge.get("token_id") for edge in current_edges
-        }
+        concerned = set(
+            resolve_tokens(registry, event.get("tokens_mentioned", []), event.get("statement") or "")
+        ) | {edge.get("token_id") for edge in current_edges}
         if not concerned.intersection(universe) and klass != "LOW":
             klass = "LOW"
             caps.append("NO_UNIVERSE_CONCERN")
@@ -1518,7 +1620,9 @@ class EventToolService:
             e = copy.deepcopy(raw)
             if e.get("token_id") is not None:
                 e["token_id"] = resolve_token(
-                    registry, e["token_id"], " ".join(str(e.get(k) or "") for k in ("entity_name", "entity_id"))
+                    registry,
+                    e["token_id"],
+                    " ".join(str(e.get(k) or "") for k in ("entity_name", "entity_id")),
                 )
             if (
                 isinstance(e.get("exposure_score"), bool)
@@ -1828,7 +1932,9 @@ class EventToolService:
                 )
         truths = []
         for job in jobs:
-            deadline = asyncio.get_running_loop().time() + 90 * 15  # = runtime.TIMEOUTS[RUN_MARKET_TRUTH] (x15 under test, user decision 2026-10-20)
+            deadline = (
+                asyncio.get_running_loop().time() + 90 * 15
+            )  # = runtime.TIMEOUTS[RUN_MARKET_TRUTH] (x15 under test, user decision 2026-10-20)
             while True:
                 current = await self.require("ops.jobs", job["job_id"])
                 if current["status"] == "DONE":
