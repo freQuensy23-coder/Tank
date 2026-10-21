@@ -255,9 +255,33 @@ func schema() *parquet.Schema {
 	return parquet.NewSchema("schema", g)
 }
 
-// Seal merges an hour's journal (and its earlier file) into {hh}.parquet.
+// Seal merges an hour's journal (and its earlier file) into {hh}.parquet. A journal of an
+// already sealed hour (late or repaired prints) usually repeats prints the file has: only
+// the file's trade_id column is read to find that out, and the file is rewritten only
+// when the journal brings a new print.
 func Seal(hourFile string) error {
 	journal := journalOf(hourFile)
+	if _, err := os.Stat(hourFile); err == nil {
+		ids, err := readIDs(hourFile)
+		if err != nil {
+			return err
+		}
+		fresh := false
+		if err := readJournal(journal, func(r Row) error {
+			if p := r["trade_id"]; p == nil || !ids[*p] {
+				fresh = true
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		if !fresh {
+			if err := os.Remove(journal); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+			return syncDir(filepath.Dir(hourFile))
+		}
+	}
 	sch := schema()
 	index := map[string]int{}
 	for i, path := range sch.Columns() {
@@ -334,6 +358,36 @@ func Seal(hourFile string) error {
 		return err
 	}
 	return syncDir(filepath.Dir(hourFile))
+}
+
+// readIDs is the trade_id column of an hour file (the other columns are not decoded).
+func readIDs(path string) (map[string]bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	type idRow struct {
+		TradeID *string `parquet:"trade_id,optional"`
+	}
+	r := parquet.NewGenericReader[idRow](f)
+	defer r.Close()
+	ids := map[string]bool{}
+	buf := make([]idRow, 4096)
+	for {
+		n, err := r.Read(buf)
+		for _, row := range buf[:n] {
+			if row.TradeID != nil {
+				ids[*row.TradeID] = true
+			}
+		}
+		if err == io.EOF {
+			return ids, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
 }
 
 // readParquet streams the rows of an existing hour file (any writer's text columns).

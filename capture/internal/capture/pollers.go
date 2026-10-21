@@ -539,15 +539,13 @@ func (s *Service) oiHistoryPass(ctx context.Context, days int) {
 		if inst == nil || inst.Key() != "bybit.linear" || !inst.Active || ctx.Err() != nil {
 			continue
 		}
-		stored, err := s.store.Range(ctx, "mkt.oi_obs", "ts", start, end, map[string]any{"instrument_id": iid, "metric_key": "bybit.linear.open-interest"})
+		first, found, err := s.store.Earliest(ctx, "mkt.oi_obs", "ts", start, end, map[string]any{"instrument_id": iid, "metric_key": "bybit.linear.open-interest"})
 		if err != nil {
 			continue
 		}
 		upto := end
-		if len(stored) > 0 {
-			if first, err := pytime.Parse(stored[0]["ts"]); err == nil {
-				upto = first.Add(-time.Second)
-			}
+		if found {
+			upto = first.Add(-time.Second)
 		}
 		if !upto.After(start) {
 			continue

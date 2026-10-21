@@ -162,6 +162,9 @@ func (noStore) Range(context.Context, string, string, time.Time, time.Time, map[
 func (noStore) Projection(context.Context, string, []string, string, time.Time, time.Time, []string) ([]map[string]any, error) {
 	return nil, nil
 }
+func (noStore) Earliest(context.Context, string, string, time.Time, time.Time, map[string]any) (time.Time, bool, error) {
+	return time.Time{}, false, nil
+}
 func (noStore) LatestTrades(context.Context, []string, time.Time) (map[string]map[string]any, error) {
 	return nil, nil
 }

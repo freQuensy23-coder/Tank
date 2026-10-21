@@ -24,6 +24,7 @@ type Store interface {
 	Get(ctx context.Context, collection, key string) (map[string]any, error)
 	Range(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) ([]map[string]any, error)
 	Projection(ctx context.Context, collection string, fields []string, field string, start, end time.Time, ids []string) ([]map[string]any, error)
+	Earliest(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) (time.Time, bool, error)
 	LatestTrades(ctx context.Context, ids []string, start time.Time) (map[string]map[string]any, error)
 	LatestRecords(ctx context.Context, collection string, groupBy []string, timeField string, ids []string) ([]map[string]any, error)
 	HotTokens(ctx context.Context) ([]map[string]any, error)

@@ -130,6 +130,14 @@ func (m *memStore) Projection(ctx context.Context, collection string, fields []s
 	return out, nil
 }
 
+func (m *memStore) Earliest(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) (time.Time, bool, error) {
+	rows, _ := m.Range(ctx, collection, field, start, end, filters)
+	if len(rows) == 0 {
+		return time.Time{}, false, nil
+	}
+	return pytime.MustParse(rows[0][field]), true, nil
+}
+
 func (m *memStore) LatestTrades(context.Context, []string, time.Time) (map[string]map[string]any, error) {
 	return map[string]map[string]any{}, nil
 }

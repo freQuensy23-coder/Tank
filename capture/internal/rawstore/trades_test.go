@@ -81,3 +81,30 @@ func TestJournalThenSealMergesAndDeduplicates(t *testing.T) {
 		t.Fatalf("after late print rows = %d, want 4", n)
 	}
 }
+
+func TestResealWithOnlyKnownPrintsKeepsTheFile(t *testing.T) {
+	dir := t.TempDir()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	hour := time.Date(2026, 10, 21, 14, 0, 0, 0, time.UTC)
+	w := New(dir, "c", "f", time.Minute, log)
+	w.Add(print("1", hour.Add(time.Minute)))
+	if err := w.Flush(hour.Add(2 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "raw", "trades", "kraken", "spot", "BTC%2FUSD", "2026-10-21", "14.parquet")
+	before, _ := os.Stat(path)
+	w.Add(print("1", hour.Add(time.Minute))) // a repair repeats a stored print
+	if err := w.Flush(hour.Add(3 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.Stat(path)
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Fatal("file rewritten for a known print")
+	}
+	if _, err := os.Stat(journalOf(path)); !os.IsNotExist(err) {
+		t.Fatal("journal kept")
+	}
+	if ids, err := readIDs(path); err != nil || len(ids) != 1 || !ids["1"] {
+		t.Fatalf("ids = %v %v", ids, err)
+	}
+}

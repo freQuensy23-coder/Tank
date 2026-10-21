@@ -138,6 +138,32 @@ func (s *Store) Range(ctx context.Context, collection, field string, start, end 
 	return out, err
 }
 
+// Earliest is the smallest field value of the rows with start <= field < end matching
+// filters (the zero time and false when there is none): one aggregate, no rows read.
+func (s *Store) Earliest(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) (time.Time, bool, error) {
+	if schema.Kind(collection, field) != "timestamptz" {
+		return time.Time{}, false, fmt.Errorf("%s.%s is not a typed timestamp column", collection, field)
+	}
+	column := quote(field)
+	clauses := []string{column + " IS NOT NULL"}
+	var args []any
+	clauses, args = bound(clauses, args, column, ">=", start)
+	clauses, args = bound(clauses, args, column, "<", end)
+	extra, args, err := exactPredicate(collection, filters, args)
+	if err != nil {
+		return time.Time{}, false, err
+	}
+	clauses = append(clauses, extra...)
+	var first *time.Time
+	if err := s.Pool.QueryRow(ctx, "SELECT min("+column+") FROM "+s.Table(collection)+" WHERE "+strings.Join(clauses, " AND "), args...).Scan(&first); err != nil {
+		return time.Time{}, false, err
+	}
+	if first == nil {
+		return time.Time{}, false, nil
+	}
+	return first.UTC(), true, nil
+}
+
 // Projection is iter_market_projection: the requested columns (aliases and storage_key
 // allowed) of rows with start <= field < end, by (field, storage_key). A nil
 // instrumentIDs is unscoped; an empty one matches nothing.
