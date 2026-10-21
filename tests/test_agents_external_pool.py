@@ -13,9 +13,13 @@ from tank.storage import MemoryRepository
 
 
 @pytest.mark.parametrize("tool", ["web_search", "fetch_page", "get_market_truth"])
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_external_tool_burst_allows_unrelated_worker_progress(backend, tool):
-    async with fixture_repo(backend) as repo:
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_external_tool_burst_allows_unrelated_worker_progress(
+    backend, tool, postgres_template
+):
+    async with fixture_repo(backend, postgres_template) as repo:
         await exercise_external_tool_burst(repo, tool)
 
 

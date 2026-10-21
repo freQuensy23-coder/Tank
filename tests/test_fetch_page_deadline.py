@@ -51,6 +51,7 @@ async def no_evidence(service):
     assert not list(Path(service.settings.data_dir).rglob("*.json.zst"))
 
 
+@pytest.mark.integration(reason="Real default 20-second deadline across HTTP headers or streamed body")
 @pytest.mark.parametrize("owned", [False, True])
 @pytest.mark.parametrize("kind", ["slow_drip", "delayed_headers"])
 async def test_real_twenty_second_total_deadline(tmp_path, monkeypatch, owned, kind):
@@ -159,5 +160,3 @@ def test_existing_session_error_protocol_accepts_wall_timeout():
     assert status == "ERROR"
     assert error["type"] == "TimeoutError"
     assert error["category"] == "TOOL_EXECUTION"
-    assert isinstance(asyncio.CancelledError(), BaseException)
-    assert not isinstance(asyncio.CancelledError(), Exception)

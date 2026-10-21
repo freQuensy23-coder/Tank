@@ -442,93 +442,93 @@ async def test_snapshot_closed_proposal_checked_after_leaving_latest(tmp_path):
     await http.aclose()
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
 @pytest.mark.asyncio
-async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path):
+async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path, postgres_template):
     """Exercise the actual schema, not a permissive in-memory record store."""
     import os
     from pathlib import Path
 
-    from tank.storage import PostgresRepository
     from tank.util import new_id, sha256
 
     database_url = os.getenv("TANK_SOURCE_TEST_DATABASE_URL")
     if not database_url:
         pytest.skip("Requires isolated PostgreSQL source test database")
-    repo = PostgresRepository(database_url)
-    await repo.open()
-    await repo.migrate()
-    http = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS)))
-    try:
-        official = {
-            "source_id": "S01",
-            "name": "SEC",
-            "feeds": [{"kind": "rss", "url": "https://example.org/rss"}],
-        }
-        filtered = {
-            "source_id": "S30",
-            "name": "BBC",
-            "feeds": [{"kind": "rss", "url": "https://example.org/rss"}],
-        }
-        svc = SourceService(repo, settings(tmp_path, [official, filtered]), http=http)
-        for source, expected, job_kind in [
-            (official, "ALWAYS", "ROUTE_ITEM"),
-            (filtered, None, "FILTER_ITEM"),
-        ]:
-            key = new_id("test-source")
-            item_id = new_id("item")
-            raw_ref, digest = svc.raw(
-                key.encode(),
-                source_id=source["source_id"],
-                item_id=item_id,
-                observed_at="2026-10-16T12:00:01Z",
-            )
-            item = {
-                "item_id": item_id,
-                "raw_ref": raw_ref,
-                "raw_sha256": digest,
-                "observed_at": "2026-10-16T12:00:01Z",
-                "external_id": key,
-                "title": key,
-                "text": "Actual source content",
-                "url": "https://example.org/item",
-                "published_at": "2026-10-16T12:00:00Z",
-                "published_at_precision": "EXACT",
+    async with postgres_template.repository(database_url) as repo:
+        http = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS))
+        )
+        try:
+            official = {
+                "source_id": "S01",
+                "name": "SEC",
+                "feeds": [{"kind": "rss", "url": "https://example.org/rss"}],
             }
-            record = await svc.ingest(source, item)
-            assert record["relevance"]["decision"] == expected
-            await svc.ingest(source, item)
-            async with repo.transaction():
-                row = await (
-                    await repo._conn().execute(
-                        "SELECT relevance_decision,published_prec,body,raw_path,raw_sha256 FROM ingest.source_items WHERE item_id=%s",
-                        (record["item_id"],),
-                    )
-                ).fetchone()
-                jobs = await (
-                    await repo._conn().execute(
-                        "SELECT count(*) AS n FROM ops.jobs WHERE payload->>'item_id'=%s AND type=%s",
-                        (record["item_id"], job_kind),
-                    )
-                ).fetchone()
-            assert row["relevance_decision"] == expected
-            assert row["published_prec"] == "EXACT" and row["body"] == item["text"]
-            expected_raw_path = (
-                tmp_path.resolve()
-                / "raw"
-                / "items"
-                / source["source_id"]
-                / record["observed_at"][:10].replace("-", "/")
-                / (record["item_id"] + ".json.zst")
-            )
-            assert Path(row["raw_path"]) == expected_raw_path
-            assert row["raw_path"] == record["raw_ref"] == raw_ref
-            assert zstandard.ZstdDecompressor().decompress(expected_raw_path.read_bytes()) == key.encode()
-            assert row["raw_sha256"] == record["raw_sha256"] == digest == sha256(key.encode())
-            assert jobs["n"] == 1
-            assert (await repo.get("ingest.source_items", record["item_id"]))["observation_count"] == 1
-    finally:
-        await http.aclose()
-        await repo.close()
+            filtered = {
+                "source_id": "S30",
+                "name": "BBC",
+                "feeds": [{"kind": "rss", "url": "https://example.org/rss"}],
+            }
+            svc = SourceService(repo, settings(tmp_path, [official, filtered]), http=http)
+            for source, expected, job_kind in [
+                (official, "ALWAYS", "ROUTE_ITEM"),
+                (filtered, None, "FILTER_ITEM"),
+            ]:
+                key = new_id("test-source")
+                item_id = new_id("item")
+                raw_ref, digest = svc.raw(
+                    key.encode(),
+                    source_id=source["source_id"],
+                    item_id=item_id,
+                    observed_at="2026-10-16T12:00:01Z",
+                )
+                item = {
+                    "item_id": item_id,
+                    "raw_ref": raw_ref,
+                    "raw_sha256": digest,
+                    "observed_at": "2026-10-16T12:00:01Z",
+                    "external_id": key,
+                    "title": key,
+                    "text": "Actual source content",
+                    "url": "https://example.org/item",
+                    "published_at": "2026-10-16T12:00:00Z",
+                    "published_at_precision": "EXACT",
+                }
+                record = await svc.ingest(source, item)
+                assert record["relevance"]["decision"] == expected
+                await svc.ingest(source, item)
+                async with repo.transaction():
+                    row = await (
+                        await repo._conn().execute(
+                            "SELECT relevance_decision,published_prec,body,raw_path,raw_sha256 FROM ingest.source_items WHERE item_id=%s",
+                            (record["item_id"],),
+                        )
+                    ).fetchone()
+                    jobs = await (
+                        await repo._conn().execute(
+                            "SELECT count(*) AS n FROM ops.jobs WHERE payload->>'item_id'=%s AND type=%s",
+                            (record["item_id"], job_kind),
+                        )
+                    ).fetchone()
+                assert row["relevance_decision"] == expected
+                assert row["published_prec"] == "EXACT" and row["body"] == item["text"]
+                expected_raw_path = (
+                    tmp_path.resolve()
+                    / "raw"
+                    / "items"
+                    / source["source_id"]
+                    / record["observed_at"][:10].replace("-", "/")
+                    / (record["item_id"] + ".json.zst")
+                )
+                assert Path(row["raw_path"]) == expected_raw_path
+                assert row["raw_path"] == record["raw_ref"] == raw_ref
+                assert zstandard.ZstdDecompressor().decompress(expected_raw_path.read_bytes()) == key.encode()
+                assert row["raw_sha256"] == record["raw_sha256"] == digest == sha256(key.encode())
+                assert jobs["n"] == 1
+                assert (await repo.get("ingest.source_items", record["item_id"]))["observation_count"] == 1
+        finally:
+            await http.aclose()
 
 
 @pytest.mark.asyncio
@@ -626,6 +626,8 @@ def test_robinhood_canonical_article_metadata_same_origin_only():
     assert rows[0]["url"] == "https://robinhood.com/us/en/newsroom/protocol-release"
 
 
+@pytest.mark.browser
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_x_real_browser_local_dom_full_quote_repost_and_checkpoint(tmp_path):
     """Synthetic X DOM executed in Chromium; no real X request/profile is used."""
@@ -680,6 +682,7 @@ async def test_x_real_browser_local_dom_full_quote_repost_and_checkpoint(tmp_pat
         await reader.close()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_milestone_producer_drives_source_cadence_and_cancellation(tmp_path, monkeypatch):
     from datetime import timedelta
@@ -803,6 +806,7 @@ async def test_run_controls_wake_within_15s_for_600s_source_without_extra_reads(
     await http.aclose()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_major_assessment_producer_activates_15s_source_reads(tmp_path, monkeypatch):
     from datetime import timedelta
@@ -940,6 +944,8 @@ async def test_control_ticks_do_not_overpoll_failed_normal_cadence(tmp_path, mon
     await http.aclose()
 
 
+@pytest.mark.browser
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_x_storage_state_seeds_persistent_profile_once_without_remote_reads(tmp_path):
     import os
@@ -1027,6 +1033,8 @@ async def test_x_storage_state_seeds_persistent_profile_once_without_remote_read
         await reader.close()
 
 
+@pytest.mark.browser
+@pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "state",
@@ -1074,6 +1082,8 @@ async def test_invalid_expired_x_bootstrap_fails_without_secret_leak(tmp_path, s
     assert reader.context is None and reader.driver is None
 
 
+@pytest.mark.browser
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_x_media_empty_quotes_repost_priority_raw_html_and_deleted_checkpoint(tmp_path):
     import os
@@ -1081,6 +1091,8 @@ async def test_x_media_empty_quotes_repost_priority_raw_html_and_deleted_checkpo
     if os.getenv("TANK_BROWSER_TESTS") != "1":
         pytest.skip("Requires TANK_BROWSER_TESTS=1")
     from pathlib import Path
+
+    from selectolax.parser import HTMLParser
 
     from tank.sources.xsensor import XSensor as BrowserReader
 
@@ -1108,7 +1120,7 @@ async def test_x_media_empty_quotes_repost_priority_raw_html_and_deleted_checkpo
     )
     html = """<html><body><article><div data-testid="socialContext"><a href="/official_org">Official reposted</a></div><a href="/media_original/status/100"><time datetime="2026-10-17T12:00:00Z"></time></a><div data-testid="tweetPhoto"><img alt="Protocol diagram" src="/synthetic.png"></div><div role="link"><a href="/quoted_q/status/51">Quoted author</a><div data-testid="tweetText">Shown quote text</div></div></article><article><div data-testid="socialContext"><a href="/other_account">Other reposted</a></div><a href="/original_poster/status/99"><time datetime="2026-10-17T11:00:00Z"></time></a><div data-testid="tweetText">Actual original text</div><a href="/empty_quote/status/50">Quoted media</a></article><article><a href="/old/status/98"><time datetime="2026-10-17T10:00:00Z"></time></a><div data-testid="tweetText">Old known post</div></article></body></html>"""
     quote = '<article><a href="/empty_quote/status/50"><time datetime="2026-10-16T12:00:00Z"></time></a><div data-testid="tweetPhoto"><img alt="Quote diagram"></div></article>'
-    svc.xsensor = BrowserReader(config, raw_capture=svc.raw)
+    svc.xsensor = BrowserReader(config)
     try:
         await svc.xsensor.open()
 
@@ -1144,7 +1156,13 @@ async def test_x_media_empty_quotes_repost_priority_raw_html_and_deleted_checkpo
         assert other["author_role"] == "OTHER" and other["deferrable"]
         assert other["quoted_unavailable"] == [{"status_id": "50", "reason": "MEDIA_ONLY_OR_EMPTY"}]
         raw = zstandard.ZstdDecompressor().decompress(Path(media["raw_ref"]).read_bytes())
-        assert raw.startswith(b"<html>") and b"Protocol diagram" in raw
+        # HLD §3.7/§7.2 and TDD §3.1 bind raw evidence to this item,
+        # not the entire multi-post list document or its serialization prefix.
+        articles = HTMLParser(raw).css("article")
+        assert len(articles) == 1
+        assert articles[0].css_first('a[href="/media_original/status/100"]') is not None
+        assert b"Protocol diagram" in raw
+        assert b"/original_poster/status/99" not in raw and b"Old known post" not in raw
         assert (await repo.get("ops.source_checkpoints", "S29:0"))["status_id"] == "100"
         assert [(args[0], kw["priority"]) for args, kw in repo.jobs] == [
             ("ROUTE_ITEM", 1),
@@ -1243,6 +1261,8 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(tmp_path, m
         await service.close()
 
 
+@pytest.mark.browser
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_public_renderer_is_isolated_from_x_profile_and_secret(tmp_path):
     import os

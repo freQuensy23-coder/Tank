@@ -41,6 +41,7 @@ async def stalled_http_peer():
         await asyncio.gather(*tuple(handlers), return_exceptions=True)
 
 
+@pytest.mark.integration(reason="Actual localhost TCP peer and HTTPX socket read timeout")
 @pytest.mark.parametrize("injected_unbounded_client", [False, True])
 async def test_stalled_rest_read_times_out_without_changing_sse(monkeypatch, injected_unbounded_client):
     async with stalled_http_peer() as (url, accepted):

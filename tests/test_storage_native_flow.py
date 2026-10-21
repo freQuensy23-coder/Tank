@@ -9,21 +9,19 @@ import pytest_asyncio
 
 from tank.market.flow import FlowAccumulator
 from tank.market.normalize import trade
-from tank.storage import PostgresRepository
 from tank.util import iso, new_id, utcnow
+
+pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
 @pytest_asyncio.fixture
-async def native_flow_repo():
+async def native_flow_repo(postgres_template):
     url = os.environ.get("TANK_TEST_DATABASE_URL")
     if not url:
         pytest.skip("Requires an explicitly isolated PostgreSQL test database")
-    repo = await PostgresRepository(url).open()
-    await repo.migrate()
-    try:
+    async with postgres_template.repository(url) as repo:
+        await repo.migrate()
         yield repo
-    finally:
-        await repo.close()
 
 
 def native_bar():

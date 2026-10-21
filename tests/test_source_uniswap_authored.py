@@ -40,6 +40,8 @@ def retained():
     return result
 
 
+@pytest.mark.historical
+@pytest.mark.integration
 def test_all_seventeen_retained_uniswap_articles_preserve_authored_facts_and_clocks():
     count = 0
     canary = "SYNTHETIC_FUTURE_RELATED_CARD_NOT_AN_AUTHORED_CLAIM"
@@ -109,6 +111,8 @@ def test_uniswap_discovery_excludes_navigation_but_preserves_real_article_links(
     ]
 
 
+@pytest.mark.historical
+@pytest.mark.integration
 @pytest.mark.parametrize("malformed_sibling", [False, True])
 async def test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches_index(
     tmp_path, malformed_sibling

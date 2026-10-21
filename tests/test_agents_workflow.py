@@ -14,7 +14,9 @@ from tank.settings import Settings
 from tank.util import iso, utcnow
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
 @pytest.mark.parametrize(
     "case",
     [
@@ -28,8 +30,8 @@ from tank.util import iso, utcnow
         "SHOCK_RESUME",
     ],
 )
-async def test_actual_producer_consumer_workflow(tmp_path, backend, case):
-    async with fixture_repo(backend) as repo:
+async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgres_template):
+    async with fixture_repo(backend, postgres_template) as repo:
         session, args = await seed(repo)
         session["message_log"][0]["body"] = {"type": "user.message", "content": []}
         if case == "HYDRATE":
@@ -212,8 +214,6 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case):
             assert len(await repo.list("out.alerts")) == (
                 2 if case == "SHOCK_RESUME" else 1 if case == "FULL_EMPTY_SET" else 0
             )
-
-
 
 
 @pytest.mark.parametrize(

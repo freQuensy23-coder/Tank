@@ -11,10 +11,12 @@ import re
 import socket
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
+import pytest_asyncio
 
 TEST_DATABASE_VARIABLES = frozenset(
     {"TANK_TEST_DATABASE_URL", "TANK_E2E_DATABASE_URL", "TANK_SOURCE_TEST_DATABASE_URL"}
@@ -255,8 +257,42 @@ if _ORIGINAL_SENDMSG is not None:
     socket.socket.sendmsg = _sendmsg
 
 
+@contextmanager
+def _synthetic_settings_defaults():
+    """Compile dynamic X defaults once; each test still owns its synthetic home."""
+    from pydantic_core import PydanticUndefined
+
+    from tank.settings import Settings
+
+    defaults = {
+        "x_storage_state_path": lambda: _OFFLINE_HOME / "FAKE-absent-x-state.json",
+        "x_profile_dir": lambda: _OFFLINE_HOME / "FAKE-browser-profile",
+    }
+    original = {
+        name: (Settings.model_fields[name].default, Settings.model_fields[name].default_factory)
+        for name in defaults
+    }
+    try:
+        for name, factory in defaults.items():
+            Settings.model_fields[name].default = PydanticUndefined
+            Settings.model_fields[name].default_factory = factory
+        Settings.model_rebuild(force=True)
+        yield
+    finally:
+        for name, (default, factory) in original.items():
+            Settings.model_fields[name].default = default
+            Settings.model_fields[name].default_factory = factory
+        Settings.model_rebuild(force=True)
+
+
+@pytest.fixture(scope="session")
+def _offline_settings_defaults():
+    with _synthetic_settings_defaults():
+        yield
+
+
 @pytest.fixture(autouse=True)
-def offline_credentials(monkeypatch, tmp_path):
+def offline_credentials(monkeypatch, tmp_path, _offline_settings_defaults):
     """Synthetic default locations; explicit constructor/fake env values still win."""
     from pydantic_settings.sources import DotEnvSettingsSource
 
@@ -280,25 +316,6 @@ def offline_credentials(monkeypatch, tmp_path):
             raise RuntimeError("offline Docker SQL probes require an explicit local unix endpoint")
         monkeypatch.setenv("DOCKER_HOST", docker_endpoint)
         monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path / "FAKE-empty-docker-config"))
-    from tank.settings import Settings
-
-    # Defaults, rather than environment overrides, preserve Docker-secret and
-    # explicit fake environment precedence (notably x_session bootstrap).
-    defaults = {
-        "codex_auth_path": tmp_path / "FAKE-absent-codex-auth.json",
-        "x_storage_state_path": tmp_path / "FAKE-absent-x-state.json",
-        "x_profile_dir": tmp_path / "FAKE-browser-profile",
-    }
-    original = {name: Settings.model_fields[name].default for name in defaults}
-    for name, value in defaults.items():
-        Settings.model_fields[name].default = value
-    Settings.model_rebuild(force=True)
-    try:
-        yield
-    finally:
-        for name, value in original.items():
-            Settings.model_fields[name].default = value
-        Settings.model_rebuild(force=True)
 
 
 @pytest.fixture(autouse=True)
@@ -307,3 +324,15 @@ def _fresh_quote_usd_history(monkeypatch):
     from tank.market import normalize
 
     monkeypatch.setattr(normalize, "QUOTE_USD_HISTORY", {})
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def postgres_template():
+    """Create databases lazily; memory-only runs never inspect database settings."""
+    from postgres_helpers import PostgresTemplate
+
+    owner = PostgresTemplate()
+    try:
+        yield owner
+    finally:
+        await owner.close()

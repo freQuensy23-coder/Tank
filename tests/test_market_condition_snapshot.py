@@ -162,6 +162,8 @@ async def test_composite_reads_only_dependency_metadata_and_invalidates_old_poin
     assert "flow_bars" not in third and "oi" not in third
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
 @pytest.mark.asyncio
 async def test_real_postgres_loader_to_condition_compute_selective_read_footprint(setup):
     import os

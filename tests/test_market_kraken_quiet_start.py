@@ -16,6 +16,8 @@ from tank.market.service import MarketService
 from tank.util import parse_time
 
 
+@pytest.mark.historical
+@pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["full", "truncated_prefix", "partial_end", "interior_gap", "ts_disorder"])
 async def test_retained_kraken_forward_range_requires_boundary_and_terminal_proof(setup, mode):

@@ -108,8 +108,11 @@ async def test_outcome_immutable_revision_and_frozen_beta():
         )
     a = await service.outcome(alert, decision, truth, now=END)
     b = await service.outcome(alert, decision, truth, now="2026-10-02T00:00:00Z")
+
     # Outcomes are computed on demand from stored evidence; qa.outcomes is gone (W11).
-    stable = lambda r: {k: v for k, v in r.items() if not k.startswith("computed_at")}
+    def stable(row):
+        return {key: value for key, value in row.items() if not key.startswith("computed_at")}
+
     assert stable(a) == stable(b) and "revision" not in a
     assert a["realized_return"] == pytest.approx(0.2)
     assert a["btc_adjusted_return"] == pytest.approx(0.18) and a["direction_correct"] is True
@@ -169,6 +172,7 @@ async def test_subminute_boundaries_require_typed_segments_and_exclude_outside_p
     assert result["coverage"]["exact"] is False
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_path):
     from test_truth_start_fixture import synthetic_start_snapshot

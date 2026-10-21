@@ -742,6 +742,7 @@ async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_valida
             assert job["delivery_failure_recorded_at_prec"] == "COLLECTION_ONLY"
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_status", ["PARTIAL", "FAILED"])
 async def test_real_capture_first_truth_uses_bounded_incomplete_then_terminal_history(
@@ -873,39 +874,27 @@ async def test_real_capture_first_truth_uses_bounded_incomplete_then_terminal_hi
 
 
 @pytest.fixture
-async def transport_database(backend):
+async def transport_database(backend, postgres_template):
     """Keep durable worker claims independent from every other test's queue."""
     if backend == "memory":
         yield None
         return
     import os
-    import uuid
-
-    from psycopg import AsyncConnection, sql
-    from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
     source = os.getenv("TANK_TEST_DATABASE_URL")
     if not source:
         pytest.skip("Requires isolated PostgreSQL with CREATE DATABASE permission")
-    admin = await AsyncConnection.connect(source, autocommit=True)
-    name = "tank_transport_" + uuid.uuid4().hex
-    created = False
-    try:
-        await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-        created = True
-        parameters = conninfo_to_dict(source)
-        parameters["dbname"] = name
-        yield make_conninfo(**parameters)
-    finally:
-        try:
-            if created:
-                await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
-        finally:
-            await admin.close()
+    async with postgres_template.repository(source) as repository:
+        # Tests deliberately own/reopen their pool against this same child DSN.
+        await repository.close()
+        yield repository.database_url
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
 async def test_delivery_order_wait_requeues_without_spending_network_attempts(
     monkeypatch, backend, transport_database
 ):
@@ -920,8 +909,6 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
     database_url = transport_database
     repo = PostgresRepository(database_url) if backend == "postgres" else MemoryRepository()
     await repo.open()
-    if backend == "postgres":
-        await repo.migrate()
     base = utcnow() - timedelta(hours=1)
     clock = [base + timedelta(minutes=30)]
     for module in ("tank.util", "tank.storage", "tank.delivery", "tank.runtime"):
@@ -1082,8 +1069,11 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
         await repo.close()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
 @pytest.mark.parametrize("lock_kind", ["event", "delivery"])
 async def test_contended_delivery_lock_is_scheduling_then_sends_once(
     monkeypatch, backend, lock_kind, transport_database
@@ -1099,8 +1089,6 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
     database_url = transport_database
     repo = PostgresRepository(database_url) if backend == "postgres" else MemoryRepository()
     await repo.open()
-    if backend == "postgres":
-        await repo.migrate()
     aid, eid = new_id("alert"), new_id("event")
     now = utcnow()
     held, release, acquiring = asyncio.Event(), asyncio.Event(), asyncio.Event()

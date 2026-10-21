@@ -474,6 +474,7 @@ def test_actual_spot_exclusion_cause_reaches_the_card(source_reason):
     assert "bybit — INCOMPLETE" not in card
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "verdict,why",
     [
@@ -600,7 +601,6 @@ def test_header_preserves_agent_supplied_sentence_and_structured_action():
     verdict = "The institution chose this protocol as infrastructure for its planned network."
     card = compose_card(event, assessment, [beneficiary], [decision], [truth], verdict=verdict)
     assert card.splitlines()[0] == "MAJOR (M2) — " + verdict
-    assert verdict in card
     assert "WHAT TO DO: WAIT — Thesis A · Trade B" in card
     assert event["statement"].endswith("planned network.")
 
@@ -843,7 +843,10 @@ def test_falling_native_oi_is_stated_as_positions_closing():
     }
     values[4]["relative"]["windows"]["EVENT"]["r_raw"] = "0.54"
     market = render(values).split("MARKET TRUTH:", 1)[1].split("OUTLOOK:", 1)[0]
-    assert "event: open positions (synchronized native OI) -30.36% in WLD while price rose +54.00%: positions closing" in market
+    assert (
+        "event: open positions (synchronized native OI) -30.36% in WLD while price rose +54.00%: positions closing"
+        in market
+    )
 
 
 @pytest.mark.parametrize(
@@ -879,11 +882,15 @@ def test_btc_priced_line_names_the_benchmark_instead_of_a_missing_net_move():
     assert "Priced: EARLY · EVENT 3.00% raw; n/a (not available) net BTC" in render(values)
 
 
-
 @pytest.mark.parametrize(
     "data,certainty,move,expected",
     [
-        ("HIGH", "MEDIUM", "SPOT_LED_ACCUMULATION", "Event certainty MEDIUM: not confirmed by a HIGH-certainty source"),
+        (
+            "HIGH",
+            "MEDIUM",
+            "SPOT_LED_ACCUMULATION",
+            "Event certainty MEDIUM: not confirmed by a HIGH-certainty source",
+        ),
         ("HIGH", "MEDIUM", "UNKNOWN", "Move class unresolved: no class eligible (UNKNOWN)"),  # msg 19
         ("HIGH", "HIGH", "SPOT_LED_ACCUMULATION", "none recorded"),
     ],
@@ -912,5 +919,6 @@ def test_confidence_names_the_limiting_input(data, certainty, move, expected):
     values[4].update(truth)
     line = next(line for line in render(values).splitlines() if line.startswith("CONFIDENCE:"))
     assert line.endswith("main unknown: " + expected), line
-    assert decision["confidence_limiting"]["input"] == (None if expected == "none recorded" else
-                                                        "certainty" if "certainty" in expected else "class")
+    assert decision["confidence_limiting"]["input"] == (
+        None if expected == "none recorded" else "certainty" if "certainty" in expected else "class"
+    )

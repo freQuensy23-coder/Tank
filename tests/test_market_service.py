@@ -71,6 +71,7 @@ def setup(tmp_path):
     return MemoryRepository(), settings, target
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_trade_dedup_restart_and_precise_bar_reconstruction(setup):
     repo, settings, inst = setup
@@ -174,6 +175,7 @@ async def test_connected_empty_minute_zero_and_disconnected_absence(setup):
     await http.aclose()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_backfill_complete_survives_flush_without_live_connection(setup):
     repo, settings, inst = setup
@@ -323,6 +325,14 @@ async def test_market_transport_and_recursive_metadata_never_persist_api_key(set
     assert secret not in str(await repo.list("mkt.supply_obs"))
     await service._raw(inst, "sensitive_response", {"nested": [{"error": secret}]})
     await service.flush_market()
+    rows = await repo.list("mkt.supply_obs")
+    assert len(rows) == 1
+    assert rows[0]["token_id"] == token["token_id"]
+    assert rows[0]["kind"] == "EXCHANGE_INVENTORY"
+    assert rows[0]["coverage_errors"] == [
+        {"reason": "nested url?apikey=[REDACTED]", "context": {"key": "[REDACTED]"}}
+    ]
+    assert secret not in str(rows)
     assert not (settings.data_dir / "raw/market_frames").exists()
     await http.aclose()
 
@@ -434,6 +444,7 @@ async def test_registry_available_for_cold_benchmark_and_anchor_is_actual_trade(
     await http.aclose()
 
 
+@pytest.mark.integration(reason="Actual 24-hour archive, typed producer and reaction checkpoint round-trip")
 @pytest.mark.asyncio
 async def test_exhausted_bounded_rest_proves_first_last_and_empty_minutes_despite_live_flush(
     setup, monkeypatch
@@ -458,6 +469,11 @@ async def test_exhausted_bounded_rest_proves_first_last_and_empty_minutes_despit
     monkeypatch.setattr(repo, "transaction", fixture_transaction)
     anchor = parse_time("2026-06-17T00:00:00Z")
     begin = anchor - timedelta(hours=24)
+    from tank.market import service as service_module
+
+    # This scenario observes the event at its anchor. Post-event repair belongs
+    # to separate tests; an advancing host date must not add 72 hours of work.
+    monkeypatch.setattr(service_module, "utcnow", lambda: anchor)
 
     class Adapter:
         async def trades(self, *, start=None, end=None, cursor=None):
@@ -552,6 +568,7 @@ async def test_exhausted_bounded_rest_proves_first_last_and_empty_minutes_despit
     await http.aclose()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_fractional_boundary_actual_trades_and_proven_range_never_include_future(setup):
     from tank.util import parse_time
@@ -597,6 +614,7 @@ async def test_fractional_boundary_actual_trades_and_proven_range_never_include_
     await http.aclose()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_snapshot_fractional_current_and_previous_15minute_flow_requires_retained_raw(setup):
     from tank.analysis.truth import spot_truth
@@ -661,6 +679,7 @@ def add_perp_instrument(settings, spot):
     return instrument
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_kraken_pre24_reference_search_expands_quiet_time_and_follows_forward_cursor(setup):
     from tank.util import iso, parse_time
@@ -698,6 +717,7 @@ async def test_kraken_pre24_reference_search_expands_quiet_time_and_follows_forw
         assert len(calls) <= 33
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_wholly_quiet_binance_spot_pre24_uses_documented_end_bound_not_fake_zero_price(setup):
     from tank.util import iso, parse_time
@@ -922,6 +942,7 @@ async def test_liquidation_coverage_uses_processed_socket_watermark_not_last_liq
     await http.aclose()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_backfill_cannot_regress_reconnect_checkpoint(setup):
     repo, settings, inst = setup
@@ -1043,6 +1064,7 @@ async def test_market_and_sources_share_weighted_binance_budget(setup, monkeypat
         binance_request_weight("api.binance.com", "/unverified-new-endpoint", {})
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_disconnect_invalidates_evicted_durable_flow_but_preserves_archive_proof(setup):
     from tank.util import iso
@@ -1184,12 +1206,13 @@ async def test_each_rate_limit_retry_consumes_shared_provider_budget(setup, monk
     repo, settings, _ = setup
     charged = []
     requests = []
+    clock = [0.0]
 
     async def acquire(key, capacity, window_s, *, weight=1, priority=0):
         charged.append(weight)
 
-    async def no_sleep(seconds):
-        return None
+    async def advance_clock(seconds):
+        clock[0] += seconds
 
     def respond(request):
         requests.append(request)
@@ -1200,7 +1223,14 @@ async def test_each_rate_limit_retry_consumes_shared_provider_budget(setup, monk
         )
 
     monkeypatch.setattr(shared_request_budgets, "acquire", acquire)
-    monkeypatch.setattr("tank.market.service.asyncio.sleep", no_sleep)
+    from types import SimpleNamespace
+
+    from tank.market import service as market_service
+
+    monkeypatch.setattr(market_service, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(
+        market_service, "asyncio", SimpleNamespace(**(vars(asyncio) | {"sleep": advance_clock}))
+    )
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         service = MarketService(repo, settings, http=client)
         await service._request(
@@ -1239,7 +1269,15 @@ async def test_hyperliquid_tokens_share_observed_context_and_next_cycle_refreshe
     # Patch only this module's clock adapter; event-loop clock remains real.
     from types import SimpleNamespace
 
-    monkeypatch.setattr("tank.market.service.time", SimpleNamespace(monotonic=lambda: clock[0]))
+    from tank.market import service as market_service
+
+    async def advance_clock(seconds):
+        clock[0] += seconds
+
+    monkeypatch.setattr(market_service, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(
+        market_service, "asyncio", SimpleNamespace(**(vars(asyncio) | {"sleep": advance_clock}))
+    )
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
         service = MarketService(repo, settings, http=client)
         instruments = [
@@ -1371,6 +1409,7 @@ async def test_optional_weight_budget_wait_does_not_block_baseline_http(setup, m
     assert requests == ["/api/v3/klines", "/api/v3/depth"]
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_live_late_normalized_arrivals_coalesce_stably_and_ignore_future_points(setup):
     from tank.util import iso
@@ -1659,6 +1698,7 @@ async def test_bybit_window_beyond_its_1000_prints_is_a_named_source_limit(setup
     await service.close()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_repair_windows_fills_incomplete_minutes_from_the_last_proven_print(setup):
     from tank.util import iso
@@ -1890,9 +1930,15 @@ async def test_instrument_loop_fetches_back_klines_lost_while_down(setup, monkey
 
     service.poll_once = poll_once
     service._backfill_klines = backfill_klines
+    from types import SimpleNamespace
+
+    from tank.market import service as service_module
+
     clock = [1000.0]
     monkeypatch.setattr(
-        "tank.market.service.time.monotonic", lambda: clock.__setitem__(0, clock[0] + 30) or clock[0]
+        service_module,
+        "time",
+        SimpleNamespace(monotonic=lambda: clock.__setitem__(0, clock[0] + 30) or clock[0]),
     )
     await asyncio.wait_for(service._instrument_loop(inst), 5)
     assert audits == [(timedelta(hours=25), False, "KLINES_GAP")]
@@ -2203,6 +2249,9 @@ async def test_hot_ticker_keeps_its_grid_when_a_request_is_stuck(setup):
     await service.close()
 
 
+@pytest.mark.integration(
+    reason="Actual watchdog thread, stack inspection and a real 2.5-second event-loop stall"
+)
 @pytest.mark.asyncio
 async def test_loop_watchdog_logs_the_stack_that_holds_the_loop(setup, monkeypatch, caplog):
     import time as clock
@@ -2333,6 +2382,7 @@ async def test_live_bars_flush_ahead_of_a_large_backfill_batch(setup):
     await http.aclose()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_rest_backfill_normalizes_and_aggregates_prints_off_the_event_loop(setup, monkeypatch):
     import threading
@@ -2493,6 +2543,7 @@ async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewr
     assert (iid, today - timedelta(days=1)) not in restarted._kline_day_counts
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_rest_range_keeps_a_complete_bar_and_its_recorded_at_unless_its_prints_differ(setup):
     repo, settings, inst = setup
@@ -2527,6 +2578,7 @@ async def test_rest_range_keeps_a_complete_bar_and_its_recorded_at_unless_its_pr
     await service.close()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("catches_up", [True, False])
 async def test_reconnect_backfill_asks_rest_again_when_it_trails_the_stream(setup, monkeypatch, catches_up):

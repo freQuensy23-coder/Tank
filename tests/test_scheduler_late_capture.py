@@ -14,6 +14,7 @@ from tank.storage import MemoryRepository
 from tank.util import iso, utcnow
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_backfill_changes_append_reaction_revision_once_and_preserve_original(tmp_path, monkeypatch):
     import tank.scheduler as scheduler_module

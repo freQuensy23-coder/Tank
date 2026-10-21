@@ -40,6 +40,8 @@ def test_runtime_generation_freezes_config_and_preserves_exact_recovery_inputs(t
         old.read_config_bytes("../outside")
 
 
+@pytest.mark.integration
+@pytest.mark.process
 def test_clean_deployment_uses_git_commit_and_dirty_edit_is_identified(tmp_path):
     config = tmp_path / "config"
     config.mkdir()
@@ -235,8 +237,6 @@ def test_user_agent_and_chats_from_configuration(tmp_path):
     assert "x_list_id" not in checks
     legacy = frozen.model_copy(update={"user_agent": "TankV0/1.0 contact=ops@example.org"})
     assert not {row["check"]: row for row in readiness_checks(legacy)}["user_agent_contact"]["ok"]
-
-
 
 
 def test_database_urls_from_compose_role_secrets(tmp_path, monkeypatch):

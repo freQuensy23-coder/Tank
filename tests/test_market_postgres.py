@@ -12,6 +12,8 @@ from tank.settings import Settings
 from tank.storage import PostgresRepository
 from tank.util import iso, new_id, utcnow
 
+pytestmark = [pytest.mark.integration, pytest.mark.postgres]
+
 
 @pytest.mark.asyncio
 async def test_real_postgres_capture_tier_history_survives_demotion_and_restart(tmp_path):

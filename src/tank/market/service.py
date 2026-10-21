@@ -332,6 +332,7 @@ class MarketService:
         self._response_cache = {}
         self._cache_locks = {}
         self._request_locks = {}
+        self._request_pace_locks = {}
         self._poll_due = {}
         self._metadata = set()
         self._book_due = {}
@@ -889,12 +890,17 @@ class MarketService:
             # a newly ready cheap baseline request can still be served first.
             await admit_budget()
             async with lock.enter(priority):
-                # Reserve the next start slot before sleeping: concurrent holders never burst.
-                now = time.monotonic()
-                start = max(now, self._last_request.get(host, 0) + interval)
-                self._last_request[host] = start
-                if start > now:
-                    await asyncio.sleep(start - now)
+                # Space actual admissions: overdue reservations can wake in a burst.
+                # Only admission waits own this per-host lock, never the HTTP request.
+                async with self._request_pace_locks.setdefault(host, asyncio.Lock()):
+                    while True:
+                        now = time.monotonic()
+                        previous = self._last_request.get(host)
+                        delay = 0 if previous is None else previous + interval - now
+                        if delay <= 0:
+                            self._last_request[host] = now
+                            break
+                        await asyncio.sleep(delay)
                 try:
                     response = await self.http.request(method, url, **kwargs)
                 except httpx.HTTPError as exc:

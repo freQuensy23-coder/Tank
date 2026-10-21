@@ -113,8 +113,18 @@ def test_untrusted_slug_never_becomes_fallback(slug):
 
 
 @pytest.mark.asyncio
-async def test_cms_fallback_is_not_used_for_non404_failure(tmp_path):
-    calls = []
+async def test_cms_fallback_is_not_used_for_non404_failure(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    import tank.sources as source_module
+
+    calls, retry_delays = [], []
+
+    async def record_retry(delay):
+        retry_delays.append(delay)
+
+    # Replace only this source module's asyncio reference, not global sleep.
+    monkeypatch.setattr(source_module, "asyncio", SimpleNamespace(sleep=record_retry))
 
     def handle(request):
         calls.append(str(request.url))
@@ -125,9 +135,11 @@ async def test_cms_fallback_is_not_used_for_non404_failure(tmp_path):
         svc = SourceService(Repo(), settings(tmp_path, [source]), http=http)
         row = original()
         row["observed_at"] = "2026-10-19T07:59:02.218121Z"
-        with pytest.raises(httpx.HTTPStatusError):
+        with pytest.raises(httpx.HTTPStatusError) as error:
             await svc.poller._item(source, FEED, "S13:0", {"kind": "html"}, row)
-    assert calls and set(calls) == {OLD}
+        assert error.value.response.status_code == 403
+    assert calls == [OLD] * 4
+    assert retry_delays == [2, 4, 8]
     assert NEW not in calls
 
 

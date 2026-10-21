@@ -41,6 +41,8 @@ def retained():
     return result
 
 
+@pytest.mark.historical
+@pytest.mark.integration
 def test_all_actual_dtcc_pages_use_ordered_authored_blocks_without_rewriting_capture():
     for index, row, payload in retained():
         original = json.dumps(row, sort_keys=True)
@@ -84,6 +86,8 @@ def test_dtcc_missing_empty_nested_authored_nodes_refuse_without_nav_fallback(bo
     assert "Unrelated sidebar" in parsers.article(html, source_id="S27")["text"]
 
 
+@pytest.mark.historical
+@pytest.mark.integration
 async def test_normal_dtcc_poll_uses_actual_retained_release_bodies(tmp_path):
     fixtures = [entry for entry in retained() if entry[0] in {932, 1067}]
     pages = {row["url"]: payload for _, row, payload in fixtures}

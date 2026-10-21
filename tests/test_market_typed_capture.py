@@ -15,6 +15,7 @@ from tank.market.service import MarketService
 from tank.util import iso, parse_time, utcnow
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_actual_batched_capture_restart_late_minute_and_no_sql_trades(setup):
     repo, settings, inst = setup
@@ -64,6 +65,7 @@ async def test_actual_batched_capture_restart_late_minute_and_no_sql_trades(setu
         assert bars[0]["complete"] is False
 
 
+@pytest.mark.integration
 def test_sealed_hour_rebuilds_a_replay_window_from_frozen_file(tmp_path):
     inst = {
         "instrument_id": "binance:spot:ABCUSD",
@@ -130,6 +132,7 @@ async def test_snapshot_does_not_rebuild_raw_windows(setup, monkeypatch):
         assert "trades" not in snapshot and "boundary_trades" not in snapshot
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_supervised_run_reuses_http_after_repository_failure(setup, monkeypatch):
     import asyncio
@@ -202,6 +205,8 @@ async def test_supervised_run_reuses_http_after_repository_failure(setup, monkey
     await server.wait_closed()
 
 
+@pytest.mark.postgres
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_actual_postgres_batch_producer_restart_and_late_minute(setup):
     import os
@@ -235,6 +240,7 @@ async def test_actual_postgres_batch_producer_restart_and_late_minute(setup):
         await repo.close()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_verified_daily_trade_import_uses_parquet_and_multirow_aggregates(setup):
     import hashlib
@@ -306,6 +312,7 @@ async def test_verified_daily_trade_import_uses_parquet_and_multirow_aggregates(
     }
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_proved_quiet_aligned_cutoff_retains_actual_prior_print_without_raw_query(setup, monkeypatch):
     from tank.analysis.truth import flow_reference
@@ -341,6 +348,7 @@ async def test_proved_quiet_aligned_cutoff_retains_actual_prior_print_without_ra
         assert parse_time(point["ts"]) == start + timedelta(seconds=10)
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_id_gap_invalidates_prior_and_intervening_minutes_and_nested_proofs(setup):
     repo, settings, inst = setup
@@ -381,6 +389,7 @@ async def test_id_gap_invalidates_prior_and_intervening_minutes_and_nested_proof
         assert not service.flow.covered(start, start + timedelta(minutes=1), coverage)
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_windowed_trade_import_covers_only_the_minutes_it_touches(setup):
     import hashlib

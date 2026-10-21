@@ -78,7 +78,6 @@ async def test_archive_checksum_rejected_and_durable_hour_retry(tmp_path):
 
     from tank.market.archive import fetch_archive
     from tank.storage import MemoryRepository
-    from tank.util import parse_time
 
     payload, _ = zipped("1767225600000000,1,1,1,1,1,1767225659999999,1,1,1,1\n")
     downloads = []
@@ -135,13 +134,12 @@ def metrics_csv(indices):
 def test_metrics_permuted_full_day_canonicalizes_only_memory_and_records_provenance():
     csv_text = metrics_csv([(i * 37) % 288 for i in range(288)])
     payload, checksum = zipped(csv_text)
-    original = bytes(payload)
     result = verify_binance_zip(payload, checksum, filename="test.zip", kind="metrics")
     assert result["complete"] and result["gaps"] == result["duplicates"] == []
     assert result["order_changed"] and result["normalization"]["rows_preserved"] == 288
     assert result["normalization"]["original_csv_sha256"] == hashlib.sha256(csv_text.encode()).hexdigest()
     assert result["rows"][0][0] == "2026-01-01 00:00:00" and result["rows"][-1][0] == "2026-01-01 23:55:00"
-    assert payload == original and hashlib.sha256(payload).hexdigest() == checksum.split()[0]
+    assert hashlib.sha256(payload).hexdigest() == checksum.split()[0]
 
 
 def test_metrics_missing_bucket_remains_incomplete_after_stable_sort():

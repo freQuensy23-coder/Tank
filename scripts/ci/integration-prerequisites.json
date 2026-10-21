@@ -1,0 +1,135 @@
+{
+  "source": "Complete isolated PostgreSQL16/tmpfs/Chromium/Node24 integration run, 2026-10-21: 363 PASS, 26 prerequisite SKIP. These remain unverified and are not counted as passes.",
+  "allowed_skips": [
+    {
+      "classname": "tests.test_gateway_audit",
+      "name": "test_actual_pinned_pi_library_through_gateway_offline",
+      "message": "Set TANK_AUDIT_PI_PACKAGE to installed @earendil-works/pi-ai1.1.0 to run actual-library probe"
+    },
+    {
+      "classname": "tests.test_storage",
+      "name": "test_deployed_agent_role_select_only[postgres]",
+      "message": "Exact deployment role SQL intentionally requires database named tank; run this test in isolated tank"
+    },
+    {
+      "classname": "tests.test_source_anchorage_authored",
+      "name": "test_actual_anchorage_payload_has_authored_body_not_form_label[181]",
+      "message": "Actual owned supplementary sweep fixtures not available"
+    },
+    {
+      "classname": "tests.test_source_anchorage_authored",
+      "name": "test_actual_anchorage_payload_has_authored_body_not_form_label[182]",
+      "message": "Actual owned supplementary sweep fixtures not available"
+    },
+    {
+      "classname": "tests.test_source_anchorage_authored",
+      "name": "test_actual_anchorage_payload_has_authored_body_not_form_label[183]",
+      "message": "Actual owned supplementary sweep fixtures not available"
+    },
+    {
+      "classname": "tests.test_source_anchorage_authored",
+      "name": "test_actual_anchorage_payload_has_authored_body_not_form_label[184]",
+      "message": "Actual owned supplementary sweep fixtures not available"
+    },
+    {
+      "classname": "tests.test_source_anchorage_authored",
+      "name": "test_actual_anchorage_payload_has_authored_body_not_form_label[185]",
+      "message": "Actual owned supplementary sweep fixtures not available"
+    },
+    {
+      "classname": "tests.test_source_anchorage_authored",
+      "name": "test_actual_anchorage_payload_has_authored_body_not_form_label[186]",
+      "message": "Actual owned supplementary sweep fixtures not available"
+    },
+    {
+      "classname": "tests.test_source_anchorage_authored",
+      "name": "test_actual_anchorage_payload_has_authored_body_not_form_label[187]",
+      "message": "Actual owned supplementary sweep fixtures not available"
+    },
+    {
+      "classname": "tests.test_source_anchorage_authored",
+      "name": "test_actual_anchorage_payload_has_authored_body_not_form_label[188]",
+      "message": "Actual owned supplementary sweep fixtures not available"
+    },
+    {
+      "classname": "tests.test_source_anchorage_authored",
+      "name": "test_actual_anchorage_payload_has_authored_body_not_form_label[189]",
+      "message": "Actual owned supplementary sweep fixtures not available"
+    },
+    {
+      "classname": "tests.test_source_anchorage_authored",
+      "name": "test_actual_anchorage_payload_has_authored_body_not_form_label[190]",
+      "message": "Actual owned supplementary sweep fixtures not available"
+    },
+    {
+      "classname": "tests.test_source_anchorage_authored",
+      "name": "test_actual_anchorage_payload_has_authored_body_not_form_label[191]",
+      "message": "Actual owned supplementary sweep fixtures not available"
+    },
+    {
+      "classname": "tests.test_source_anchorage_authored",
+      "name": "test_actual_anchorage_payload_has_authored_body_not_form_label[192]",
+      "message": "Actual owned supplementary sweep fixtures not available"
+    },
+    {
+      "classname": "tests.test_source_anchorage_authored",
+      "name": "test_normal_anchorage_poll_uses_actual_retained_bodies_and_source_ingest",
+      "message": "Actual owned supplementary sweep fixtures not available"
+    },
+    {
+      "classname": "tests.test_source_dtcc_authored",
+      "name": "test_all_actual_dtcc_pages_use_ordered_authored_blocks_without_rewriting_capture",
+      "message": "Owned actual supplementary capture absent"
+    },
+    {
+      "classname": "tests.test_source_dtcc_authored",
+      "name": "test_normal_dtcc_poll_uses_actual_retained_release_bodies",
+      "message": "Owned actual supplementary capture absent"
+    },
+    {
+      "classname": "tests.test_storage",
+      "name": "test_agent_new_connection_defaults_read_only[postgres]",
+      "message": "Exact deployment role SQL intentionally requires database named tank; run this test in isolated tank"
+    },
+    {
+      "classname": "tests.test_source_uniswap_authored",
+      "name": "test_all_seventeen_retained_uniswap_articles_preserve_authored_facts_and_clocks",
+      "message": "Owned actual supplementary capture absent"
+    },
+    {
+      "classname": "tests.test_source_uniswap_authored",
+      "name": "test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches_index[False]",
+      "message": "Owned actual supplementary capture absent"
+    },
+    {
+      "classname": "tests.test_source_uniswap_authored",
+      "name": "test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches_index[True]",
+      "message": "Owned actual supplementary capture absent"
+    },
+    {
+      "classname": "tests.test_market_condition_snapshot",
+      "name": "test_real_postgres_loader_to_condition_compute_selective_read_footprint",
+      "message": "Requires dedicated QA55437 tank_ database"
+    },
+    {
+      "classname": "tests.test_market_postgres",
+      "name": "test_real_postgres_capture_tier_history_survives_demotion_and_restart",
+      "message": "Only dedicated isolated QA database is allowed"
+    },
+    {
+      "classname": "tests.test_market_postgres",
+      "name": "test_real_postgres_market_precision_funding_and_missing_usd_contract",
+      "message": "This regression only writes dedicated QA55437/tank_market_live_write_test"
+    },
+    {
+      "classname": "tests.test_market_postgres",
+      "name": "test_real_postgres_cached_ticker_and_funding_point_identity_survives_restart",
+      "message": "Only dedicated QA database is permitted"
+    },
+    {
+      "classname": "tests.test_market_typed_capture",
+      "name": "test_actual_postgres_batch_producer_restart_and_late_minute",
+      "message": "Only dedicated QA PostgreSQL allowed"
+    }
+  ]
+}

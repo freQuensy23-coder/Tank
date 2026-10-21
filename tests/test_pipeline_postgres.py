@@ -7,44 +7,18 @@ from types import SimpleNamespace
 import pytest
 
 from tank.agents.pipeline import Pipeline
-from tank.storage import PostgresRepository
 from tank.util import iso, new_id
+
+pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
 @pytest.fixture
-async def isolated_routing_repo():
-    """Own the database, including legacy tables, independently of suite history."""
-    import uuid
-
-    import psycopg
-    from psycopg import sql
-    from psycopg.conninfo import conninfo_to_dict, make_conninfo
-
-    dsn = os.getenv("TANK_TEST_DATABASE_URL")
-    if not dsn:
+async def isolated_routing_repo(postgres_template):
+    url = os.getenv("TANK_TEST_DATABASE_URL")
+    if not url:
         pytest.skip("Requires an explicitly configured PostgreSQL test connection")
-    admin = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
-    name = "tank_route_qa_" + uuid.uuid4().hex[:16]
-    repo = None
-    created = False
-    try:
-        await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-        created = True
-        params = conninfo_to_dict(dsn)
-        params["dbname"] = name
-        repo = await PostgresRepository(make_conninfo(**params)).open()
-        # Await migration before yielding: no tests share a schema or migrate it
-        # concurrently, and the suite's existing legacy rows remain untouched.
-        await repo.migrate()
+    async with postgres_template.repository(url) as repo:
         yield repo
-    finally:
-        if repo is not None:
-            await repo.close()
-        try:
-            if created:
-                await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
-        finally:
-            await admin.close()
 
 
 @pytest.mark.asyncio

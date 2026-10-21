@@ -1,0 +1,101 @@
+# Tests
+
+Run commands in an isolated server-side development checkout with Python 3.12. Never use production credentials, production databases, or a personal browser profile.
+
+## Commands
+
+    uv sync --python 3.12 --frozen --extra dev
+    uv run pytest -q -n auto --dist loadfile
+
+Run normal tests with the available CPUs and memory; do not add artificial CPU or memory quotas or affinity limits. pytest-xdist uses one worker per available CPU. Loadfile keeps each module on one worker, preserving module-scoped baseline reuse. In the same-source audit, all 1,671 units passed under both schedulers; loadfile took 55.395s including startup versus 72.039s for worksteal. Use `-n 0` for a serial diagnostic run.
+
+The default Python selection includes tests without the integration marker. It has a standard pytest-timeout limit of 10 seconds per case, including setup and teardown. To check the p90 budget from standard pytest JUnit output, run:
+
+    uv run pytest -q -n auto --dist loadfile --junitxml=.test-results/unit.xml
+    uv run python scripts/check-unit-timings.py .test-results/unit.xml
+
+Every unit case must take less than 10 seconds; p90 must be less than 1 second. The JUnit checker refuses empty, skipped, or failed runs. Suite wall time and individual case durations are different measurements.
+
+Integration tests have a separate command and an explicit longer deadline:
+
+    uv run pytest -q -n 0 -m integration --timeout=300
+
+The explicit -m expression overrides the default unit selection. Normal pytest decorators and pytest.param marks determine selection; no external classification manifest is needed. PostgreSQL parameters carry their own marks, so the memory variant remains available to unit tests.
+
+Resource markers allow narrower integration runs:
+
+    uv run pytest -q -m 'integration and postgres' --timeout=300
+    uv run pytest -q -m 'integration and browser' --timeout=300
+    uv run pytest -q -m 'integration and not postgres and not browser and not node and not historical' --timeout=300
+
+The postgres marker requires caller-owned disposable PostgreSQL 16 databases and explicit TANK_TEST_DATABASE_URL, TANK_E2E_DATABASE_URL, or TANK_SOURCE_TEST_DATABASE_URL as used by the selected fixtures. Each database name must start with tank_test. The shared lazy PostgresTemplate helper migrates a template once per worker and opens a fresh cloned database for each non-migration repository context. Migration regressions request a blank database explicitly. Pools close before clone cleanup; the descriptor holds no live pool across event loops. Keep the credential/database safety checks intact.
+
+For portable parallel integration, the operator first provisions distinct disposable databases for every worker: for example, tank_test_integration_gw0 through tank_test_integration_gwN, and matching E2E/source administration databases if those routes are used. Use the same schema/template helper as the serial tests. No database may contain production data.
+
+    export TANK_TEST_DATABASE_URL='dbname=tank_test_integration_{worker} host=/path/to/isolated-pg/socket user=postgres'
+    export TANK_E2E_DATABASE_URL='dbname=tank_test_e2e_{worker} host=/path/to/isolated-pg/socket user=postgres'
+    export TANK_SOURCE_TEST_DATABASE_URL='dbname=tank_test_source_{worker} host=/path/to/isolated-pg/socket user=postgres'
+    PYTHONPATH=tests uv run pytest -p parallel_postgres -n auto --dist worksteal -m integration --timeout=300
+
+The opt-in parallel_postgres plugin runs before conftest. The controller preserves the exact templates for worker inheritance; each gwN worker replaces exactly one literal {worker} in dbname only. Every configured route is validated before any environment update. Shared DSNs, non-test database names, nested placeholders and placeholders in host/user/password/options are refused. Missing database variables are allowed for non-PostgreSQL integrations. The plugin never connects, creates or deletes databases, or loads dotenv/credential files. Supply enough precreated worker databases for the requested count. Use the ordinary serial command without this plugin for -n 0; a shared DSN is never a parallel recipe.
+
+The browser marker requires TANK_BROWSER_TESTS=1 and local Chromium. The node marker may require a prepared upstream package tree. The historical marker requires retained capture inputs. The process marker identifies tests launching a local child executable. Missing optional resources can skip integration cases; a skip is not a passing qualification. Actual integration deadline tests intentionally wait about 20 seconds per case.
+
+## JavaScript and TypeScript
+
+The standalone local lanes require Node 24 or later:
+
+    node scripts/test-node.mjs local-unit
+    node scripts/test-node.mjs local-contract
+
+The runner stages generated fixtures in an owned temporary directory. The contract lane is separate from the local unit lane. On Node 24.22.0, the local unit lane passed all 43 cases in 1.134s (p90 0.012735s, maximum 0.131806s); the local contract lane passed all 21 cases in 0.566s. Historical frozen test assets are evidence, not duplicate current unit runs.
+
+Prepared upstream TypeScript suites use Vitest 4.1.4 and Node 24.22.0. All eight prepared suites passed 71 cases with zero skips: serial wall time 22.459s, case p90 0.567288s, maximum 2.064464s. The run preserved all 75 original source hashes and used 1 CPU, 1.5 GiB, no swap, and an isolated network namespace. These package contracts do not qualify a VM.
+
+Reproduction requires an isolated pinned OpenMA workcopy with the actual frozen dependencies and public package exports. Set OPENMA_ROOT to that tree, TARGET_TEST to one staged test path from node-lane-upstream-test-assets.json, AUDIT_CONFIG to the matching workspace-specific Vitest configuration, and REPORT to an owned output path. The verified invocation pattern is:
+
+    cd "$OPENMA_ROOT"
+    node "$OPENMA_ROOT/node_modules/vitest/vitest.mjs" run "$TARGET_TEST" --config "$AUDIT_CONFIG" --configLoader runner --reporter json --outputFile "$REPORT"
+
+Run staged targets serially. The audit configuration uses absolute paths for its private workspace, so prepare a matching configuration for the new workcopy. The existing macOS Docker manifest is not a portable Linux staging command. Exact timings and frozen-source checks are retained in node-lane-upstream-final-timings.json and node-lane-upstream-final-results.json.
+
+## Go assets
+
+The Go lane uses the standard testing package. All five top-level tests and ten table subtests passed offline with Go 1.25.14 and pinned gvisor-tap-vsock 0.8.7; every individual test took less than one second. The two package commands took 75.81s and 42.18s including initial compilation, separate from individual test timing. The reproducible receipt is evidence/go-lane-review.json. Running again requires an isolated prepared bridge, its pinned dependency tree, that Go toolchain, and a complete offline module cache.
+
+In the prepared bridge:
+
+    GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS='-mod=mod' go test -count=1 -timeout=20s -v -run '^TestTankReplay' ./...
+
+In its prepared tank-vendor/gvisor-tap-vsock dependency:
+
+    GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS='-mod=mod' go test -count=1 -timeout=20s -v -run '^TestTankReplay' ./pkg/services/dns
+
+Run this lane with no external network and the normal available CPU and memory. The earlier cold-build measurements used a 1-CPU, 1-GiB audit allocation; that historical allocation is not the normal run command. The raw recipe directory is not a Go module. Handler tests using fake DNS response writers are units; they do not prove actual UDP/TCP exchange or native VM behavior. Keep immutable raw assets intact; the existing staging step applies gofmt.
+
+## Common style
+
+- Use pytest functions, ordinary fixtures, tmp_path, monkeypatch, direct assert, and pytest.raises. Async tests use the configured auto mode; new tests need no redundant asyncio decorator.
+- Arrange a small explicit input, run the actual Tank behavior, and assert independently specified observable output or state. Prefer a focused regression name to a title claiming full production acceptance.
+- Use httpx.MockTransport at an external HTTP boundary. Keep the domain function under test real. A real MemoryRepository is useful for a narrow service contract; composed workflows, actual databases, listeners, subprocesses, and browsers belong to integration selection.
+- Use fixed timestamps or an injected clock. Coordinate concurrency with Events or explicit barriers. Short failure deadlines bound a test; arbitrary real sleeps should not simulate a clock.
+- Keep test data minimal while crossing the actual boundary being protected. Preserve large-cardinality or retained-capture regressions as explicit integration cases rather than weakening their oracle.
+- Assert outgoing request data, persisted effects, refusal behavior, and cleanup where relevant. A mock call count alone is inadequate unless the call itself is the external side-effect contract.
+- Delete assertions about locally constructed values, copied constants, or a configured mock returning its configured result. Keep real settings precedence, validation, security, and compatibility contracts; they test project behavior.
+
+Ruff owns Python formatting and imports:
+
+    uv run ruff check --select E4,E7,E9,F,I src tests deploy scripts/check-unit-timings.py
+    uv run ruff format --check tests scripts/check-unit-timings.py
+
+Retained verification trees also contain historical unittest.TestCase checks and before/after test copies. They are immutable QA evidence outside the active default suite; do not relabel them as fresh runs or rewrite those artifacts for style consistency.
+
+## Remaining standardization plan
+
+1. Keep non-migration PostgreSQL fixtures on the shared lazy template helper. Preserve explicit blank-database migration tests, per-worker administration databases, and owned cleanup; new fixtures should reuse this lifecycle instead of copying schema bootstrap.
+2. Split large mixed test files by event persistence, publication, replay, and repository contracts, preserving the ordinary pytest marks and independent regression oracles.
+3. Extract genuinely repeated small builders into narrow test helpers. Keep case-specific evidence explicit rather than growing a single configurable fixture factory.
+4. Finish a separate mechanical import/formatter pass and normalize remaining redundant async decorators and legacy class style. `.github/workflows/test-suite.yml` now runs three separate jobs: Python units with the JUnit timing budget, Python integration, and Node local units/contracts. The 26 pre-existing prerequisite skips remain UNVERIFIED; the integration checker rejects additional skips.
+5. Standardize current standalone JavaScript tests on node:test and node:assert/strict; retain Vitest where upstream package composition requires it. Migrate real-timer cancellation cases to injected clocks while preserving their cleanup and failure behavior.
+
+The cleanup establishes commands and conventions. It does not claim every historical test now has identical style, every integration ran, or production acceptance is complete.
