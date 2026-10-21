@@ -3,6 +3,7 @@
 import asyncio
 import json
 import signal
+import sys
 from pathlib import Path
 
 import click
@@ -11,6 +12,13 @@ from tank.logging import configure_logging
 from tank.settings import Settings, configured_values, resolve_versions
 from tank.time_precision import collection_clock
 from tank.util import iso, jsonable, new_id
+
+
+# The service is one process (02 §12), so Market Truth's worker threads and the event loop share
+# one GIL. The loop gives the GIL up on every socket read and waits up to the switch interval to
+# get it back; at CPython's 5 ms default, hundreds of stream reads a second fell behind a
+# computation and capture stalled for 10-58 s (r110, 21 Oct 04:04). 0.5 ms bounds that wait.
+GIL_SWITCH_INTERVAL_S = 0.0005
 
 
 def output(value):
@@ -54,6 +62,7 @@ def main():
 @main.command()
 def serve():
     """Run one durable service process until SIGINT/SIGTERM."""
+    sys.setswitchinterval(GIL_SWITCH_INTERVAL_S)
 
     async def launch(repo, settings):
         from tank.runtime import RuntimeSupervisor
