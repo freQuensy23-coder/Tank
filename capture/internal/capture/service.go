@@ -101,6 +101,7 @@ func New(opt Options, store Store, writer Writer, venues Venues, dial Dialer, cl
 	}
 	s.seal.Late = s.lateMinute
 	s.pipe = pipeline.New(s.points, s.fx, clock, func(inst *venue.Instrument, t *normalize.Trade) {
+		s.raw(t)
 		s.seal.Trade(inst, t, s.mainConn(inst.ID))
 	}, s.confirm)
 	s.pipe.BookSaveS = opt.Threshold("book_save_interval_s", pipeline.BookSaveS)
@@ -165,6 +166,7 @@ func (s *Service) Run(ctx context.Context) error {
 	s.spawn(func(ctx context.Context) { s.startupRepairs(ctx, hot, started) })
 	s.loop(ctx, time.Second, s.tick)
 	s.loop(ctx, streamStateEvery, func(context.Context) { s.publishStreams() })
+	s.loop(ctx, rawFlushEvery, func(context.Context) { s.flushRaw() })
 	s.spawn(s.hotLoop)
 	for _, iid := range s.opt.Order {
 		inst := s.opt.Instruments[iid]
@@ -194,7 +196,25 @@ func (s *Service) Run(ctx context.Context) error {
 	s.seal.Tick(s.clock.Now())
 	s.publishStreamsStopped()
 	s.flush(final)
+	s.flushRaw()
 	return nil
+}
+
+// raw keeps a print for the hourly trade files.
+func (s *Service) raw(t *normalize.Trade) {
+	if s.opt.Raw != nil {
+		s.opt.Raw.Add(t)
+	}
+}
+
+// flushRaw writes the buffered prints to their hour journals and seals finished hours.
+func (s *Service) flushRaw() {
+	if s.opt.Raw == nil {
+		return
+	}
+	if err := s.opt.Raw.Flush(s.clock.Now()); err != nil {
+		s.log.Warn("raw trade flush failed", "error", err.Error())
+	}
 }
 
 // spawn runs f until the service stops.

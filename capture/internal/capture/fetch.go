@@ -30,8 +30,9 @@ type Fetcher interface {
 	Fetch(ctx context.Context, method, rawURL string, params, headers map[string]string, body any, priority int) (*rest.Fetched, error)
 }
 
-// fetchPriority puts source fetches behind live capture at the host gates.
-const fetchPriority = 1
+// fetchPriority admits a source fetch with live capture, ahead of backfill paging: it is one
+// request per poll, and behind a serial host's (Kraken) backfill it missed its 25 s budget.
+const fetchPriority = 0
 
 // runFetch is an HTTP_FETCH request: request {method, url, params?, headers?, body?,
 // source_id}. The result carries the response as UTF-8 text, or base64 when it is not.

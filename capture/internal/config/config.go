@@ -25,6 +25,7 @@ type Settings struct {
 	DatabaseURL   string
 	ConfigDir     string
 	HealthAddr    string
+	DataDir       string // raw trade files go under DataDir/raw/trades (tank's data volume)
 	UserAgent     string
 	ConfigVersion string
 	CodeVersion   string
@@ -82,6 +83,7 @@ func LoadSettings() (Settings, error) {
 	s := Settings{
 		ConfigDir:  env("TANK_CONFIG_DIR", "/config"),
 		HealthAddr: env("TANK_CAPTURE_HEALTH_ADDR", ":8791"),
+		DataDir:    env("TANK_DATA_DIR", "/data"),
 		UserAgent:  DefaultUserAgent,
 	}
 	url, err := databaseURL()

@@ -24,6 +24,7 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/budget"
 	"github.com/freQuensy23-coder/Tank/capture/internal/capture"
 	"github.com/freQuensy23-coder/Tank/capture/internal/config"
+	"github.com/freQuensy23-coder/Tank/capture/internal/rawstore"
 	"github.com/freQuensy23-coder/Tank/capture/internal/rest"
 	"github.com/freQuensy23-coder/Tank/capture/internal/store"
 )
@@ -107,6 +108,7 @@ func run(log *slog.Logger) error {
 		Instruments: cfg.Instruments, Order: cfg.Order, Tokens: cfg.Tokens, Thresholds: cfg.Thresholds,
 		ConfigVersion: cfg.ConfigVersion, CodeVersion: cfg.CodeVersion, Writer: config.Writer,
 		CanWrite: lock.Held, Fetcher: client, Log: log,
+		Raw: rawstore.New(cfg.DataDir, cfg.CodeVersion, cfg.ConfigVersion, rawstore.Grace, log),
 	}, st, writer, capture.RESTVenues(client), dial(cfg.UserAgent), clock)
 	health.set(svc, lock)
 	runCtx, cancel := context.WithCancel(ctx)

@@ -70,6 +70,7 @@ func (r *restFlow) add(t *normalize.Trade) {
 		return
 	}
 	r.seen[t.TradeID] = true
+	r.s.raw(t)
 	t.SourcePayload = nil // a rebuilt bar needs the print, not its frame
 	m := pytime.MinuteFloor(t.TS).Unix()
 	if r.built[m] != nil {

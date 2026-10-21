@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/freQuensy23-coder/Tank/capture/internal/normalize"
 	"github.com/freQuensy23-coder/Tank/capture/internal/points"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pydec"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
@@ -111,8 +112,19 @@ type Options struct {
 	CanWrite func() bool
 	// Fetcher serves HTTP_FETCH capture requests (nil: they fail).
 	Fetcher Fetcher
-	Log     *slog.Logger
+	// Raw stores every print in the hourly trade files (nil: none are stored).
+	Raw RawTrades
+	Log *slog.Logger
 }
+
+// RawTrades is the hourly raw trade store (internal/rawstore).
+type RawTrades interface {
+	Add(t *normalize.Trade)
+	Flush(now time.Time) error
+}
+
+// rawFlushEvery is how often buffered prints reach their hour journal.
+const rawFlushEvery = 5 * time.Second
 
 // Threshold is thresholds.get(name, default) as a float.
 func (o *Options) Threshold(name string, def float64) float64 {

@@ -76,6 +76,8 @@ services:
       source: ${TANK_CONFIG_PATH:-./config}
       target: /config
       read_only: true
+    # Hourly raw trade files (HLD §7.2), next to the rest of tank's data.
+    - tank-data:/data
     depends_on:
       postgres:
         condition: service_healthy
