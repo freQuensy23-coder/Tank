@@ -1186,3 +1186,42 @@ async def test_a_5k_row_snapshot_read_keeps_the_loop_heartbeat_under_100_ms(type
     assert len(flows["test:BTC"]) == 5000 and len(books["test:BTC"]) == 5000
     assert sum("bids" in r for r in books["test:BTC"]) == 30
     assert worst[0] < 0.1, f"loop held {worst[0]:.3f} s"
+
+
+async def test_kline_days_recorded_since_match_memory_on_postgres(typed_repo):
+    from tank.market_storage import market_kline_days_recorded_since
+    from tank.storage import MemoryRepository
+    from tank.util import parse_time
+
+    await typed_repo.migrate()
+
+    def candle(iid, opened, recorded_at):
+        return {
+            "instrument_id": iid,
+            "token_id": "BTC",
+            "open_time": opened,
+            "open_time_prec": "BUCKET(60s)",
+            "interval_s": 60,
+            "o": "1",
+            "h": "2",
+            "l": "1",
+            "c": "1",
+            "volume_native": "3",
+            "complete": True,
+            "recorded_at": recorded_at,
+            "recorded_at_prec": "COLLECTION_ONLY",
+        }
+
+    rows = [
+        candle("A", "2026-10-16T23:59:00Z", "2026-10-18T00:10:00Z"),
+        candle("A", "2026-10-17T00:00:00Z", "2026-10-18T00:01:00Z"),
+        candle("B", "2026-10-17T12:00:00Z", "2026-10-18T00:20:00Z"),
+        candle("B", "2026-10-18T00:00:00Z", "2026-10-18T00:20:00Z"),
+    ]
+    memory = MemoryRepository()
+    for repo in (typed_repo, memory):
+        await repo.put_market_batch("mkt.klines_1m", rows, keys=[str(i) for i in range(len(rows))])
+    args = ("2026-10-18T00:05:00Z", "2026-10-18T00:00:00Z")
+    found = await market_kline_days_recorded_since(typed_repo, *args)
+    assert found == await market_kline_days_recorded_since(memory, *args)
+    assert found == {("A", parse_time("2026-10-16T00:00:00Z")), ("B", parse_time("2026-10-17T00:00:00Z"))}

@@ -17,6 +17,7 @@ import httpx
 from tank.market_storage import (
     latest_market_trades,
     market_dependency_head,
+    market_kline_days_recorded_since,
     market_range_by_instrument,
     market_series_day_counts,
     sampled_market_history,
@@ -136,6 +137,10 @@ LOOP_STALL_S = 10
 # A reused dependency head is recomputed at least this often (retention deletes and other
 # processes are not in the write clock).
 HEAD_REUSE_S = 300
+# Past-day kline counts survive a restart in the data dir; a saved count is dropped when a
+# kline of its day was recorded after the save, less this margin for queued writes.
+DAY_COUNTS_SAVE_S = 60
+DAY_COUNTS_MARGIN = timedelta(minutes=30)
 SERIES_MARGIN = timedelta(hours=2)  # history a shared kline cursor holds before its window
 SERIES_TRIM = timedelta(days=1)  # a cursor sheds history once its windows moved this far past it
 SERIES_APPLY_ROWS = 20000  # kline rows a rebuild applies per worker-thread call
@@ -245,6 +250,7 @@ class MarketService:
         self._klines_polled = {}
         # (instrument, UTC day) -> complete 1m closes, for whole past days (snapshot coverage).
         self._kline_day_counts = {}
+        self._kline_day_counts_saved = ({}, 0.0)  # the counts last saved, and when
         self._pending_market = {}
         self._market_cache = {}
         self._market_flush_lock = asyncio.Lock()
@@ -540,7 +546,13 @@ class MarketService:
                     keys = list(values)[:FLUSH_ROWS]
                     await self.repo.put_market_batch(collection, [values[key] for key in keys], keys=keys)
                     for key in keys:
-                        del values[key]
+                        row = values.pop(key)
+                        if collection == "mkt.klines_1m" and row.get("open_time"):
+                            # A count read between the queueing and this write saw the old row.
+                            day = parse_time(row["open_time"]).replace(
+                                hour=0, minute=0, second=0, microsecond=0
+                            )
+                            self._kline_day_counts.pop((row.get("instrument_id"), day), None)
                     if not values:
                         queue.pop(0)
                     if queue and queue[0][0] not in LIVE_FIRST:
@@ -658,6 +670,10 @@ class MarketService:
                 self._raw_stats["sealed"] += len(sealed)
             except Exception as exc:  # noqa: BLE001 - the next pass retries; journals stay on disk
                 log.warning("seal pass failed: %s", type(exc).__name__)
+            try:
+                await self._save_day_counts()
+            except Exception as exc:  # noqa: BLE001 - a later pass saves; a restart recounts
+                log.warning("series count save failed: %s", type(exc).__name__)
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), SEAL_PASS_S)
 
@@ -667,6 +683,8 @@ class MarketService:
             await self.flush_market(raw=True)
             await asyncio.to_thread(self.trade_archive.close)
             await asyncio.to_thread(self.book_archive.close)
+            with suppress(Exception):
+                await self._save_day_counts(force=True)
         finally:
             if self._owns_http:
                 await self.http.aclose()
@@ -4232,9 +4250,67 @@ class MarketService:
             for iid in instrument_ids
         }
 
+    def _day_counts_path(self):
+        from pathlib import Path
+
+        return Path(self.settings.data_dir) / "market" / "kline_day_counts.json"
+
+    async def _load_day_counts(self):
+        """Past-day counts an earlier process saved, less every day a kline was recorded
+        into since (r113: a cold 90-day count was half of an MT snapshot)."""
+        path = self._day_counts_path()
+
+        def read():
+            try:
+                return json.loads(path.read_text())
+            except (OSError, ValueError):
+                return None
+
+        saved = await asyncio.to_thread(read)
+        if not isinstance(saved, dict) or saved.get("version") != 1:
+            return 0
+        today = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+        changed = await market_kline_days_recorded_since(
+            self.repo, parse_time(saved["saved_at"]) - DAY_COUNTS_MARGIN, today
+        )
+        loaded = 0
+        # No await from the query to here: a write landing after it evicts what is set now.
+        for iid, day, count in saved["counts"]:
+            key = (iid, parse_time(day))
+            if key[1] < today and key not in changed and key not in self._kline_day_counts:
+                self._kline_day_counts[key] = int(count)
+                loaded += 1
+        return loaded
+
+    async def _save_day_counts(self, *, force=False):
+        counts, at = self._kline_day_counts_saved
+        if counts == self._kline_day_counts or not force and time.monotonic() - at < DAY_COUNTS_SAVE_S:
+            return
+        counts = dict(self._kline_day_counts)
+        payload = {
+            "version": 1,
+            "saved_at": iso(),
+            "counts": [[iid, iso(day), count] for (iid, day), count in counts.items()],
+        }
+        path = self._day_counts_path()
+
+        def write():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            temp = path.with_suffix(".tmp")
+            temp.write_text(json.dumps(payload))
+            temp.replace(path)
+
+        await asyncio.to_thread(write)
+        self._kline_day_counts_saved = (counts, time.monotonic())
+
     async def _warm_series_counts(self):
         """Count past days of every spot series once, a few instruments at a time, so the
-        first Market Truth snapshot after a start does not pay for 90 days at once."""
+        first Market Truth snapshot after a start does not pay for 90 days at once. Counts
+        a previous process saved are reused first."""
+        try:
+            log.info("series counts restored: %d past days", await self._load_day_counts())
+        except Exception as exc:  # noqa: BLE001 - the warm-up below counts what is missing
+            log.warning("series count restore failed: %s", type(exc).__name__)
         spot = [iid for iid, inst in self.instruments.items() if norm.venue_key(inst).endswith(".spot")]
         end = utcnow()
         for offset in range(0, len(spot), 4):

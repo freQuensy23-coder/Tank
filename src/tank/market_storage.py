@@ -955,6 +955,29 @@ async def market_series_day_counts(repo, instrument_ids, start, end, assembled_a
     return counts
 
 
+async def market_kline_days_recorded_since(repo, since, end):
+    """(instrument, UTC day) of every 1m kline in [.., end) recorded at or after `since`."""
+    since, end = parse_time(since), parse_time(end)
+    days = set()
+    if not hasattr(repo, "_conn"):
+        async for row in repo.iter_late_arrivals(
+            "mkt.klines_1m", "recorded_at", "open_time", since=since, market_end=end
+        ):
+            opened = parse_time(row["open_time"])
+            if opened < end:
+                days.add((row["instrument_id"], opened.replace(hour=0, minute=0, second=0, microsecond=0)))
+        return days
+    query = (
+        "SELECT DISTINCT instrument_id, date_trunc('day', open_time AT TIME ZONE 'UTC') AS day "
+        "FROM mkt.klines_1m WHERE recorded_at>=%s AND open_time<%s"
+    )
+    async with repo.transaction():
+        rows = await (await repo._conn().execute(query, [since, end])).fetchall()
+    from datetime import UTC
+
+    return {(row["instrument_id"], row["day"].replace(tzinfo=UTC)) for row in rows}
+
+
 async def sampled_market_history(
     repo, collection, time_field, group_fields, instrument_ids, start, end, bucket_s
 ):

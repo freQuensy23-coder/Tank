@@ -2428,3 +2428,56 @@ async def test_market_truth_snapshot_reads_one_day_of_books_and_tickers_at_windo
         for t in snapshot["tickers"]
     )
     await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewritten(setup, monkeypatch):
+    from tank.market import service as service_module
+
+    repo, settings, inst = setup
+    iid = inst["instrument_id"]
+    today = utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    earlier = iso(utcnow() - timedelta(hours=2))
+
+    def kline(opened, recorded_at):
+        return {
+            "instrument_id": iid,
+            "token_id": inst["token_id"],
+            "open_time": iso(opened),
+            "open_time_prec": "BUCKET(60s)",
+            "interval_s": 60,
+            "complete": True,
+            "c": "10",
+            "volume_native": "1",
+            "recorded_at": recorded_at,
+        }
+
+    opens = [today - timedelta(days=day) + timedelta(minutes=m) for day in (3, 2, 1) for m in range(5)]
+    await repo.put_market_batch(
+        "mkt.klines_1m", [kline(at, earlier) for at in opens], keys=[iid + ":" + iso(at) for at in opens]
+    )
+    counted = []
+    original = service_module.market_series_day_counts
+
+    async def counting(repo, ids, start, end, assembled_at=None):
+        counted.append((start, end))
+        return await original(repo, ids, start, end, assembled_at)
+
+    monkeypatch.setattr(service_module, "market_series_day_counts", counting)
+    start = today - timedelta(days=3)
+    first = MarketService(repo, settings)
+    assert (await first._series_counts([iid], start, utcnow(), iso()))[iid] == 15
+    assert counted == [(start, today)]
+    await first._save_day_counts(force=True)
+    # After the save an audit rewrites a bar of two days ago.
+    rewritten = today - timedelta(days=2) + timedelta(minutes=10)
+    await repo.put_market_batch("mkt.klines_1m", [kline(rewritten, iso())], keys=[iid + ":" + iso(rewritten)])
+    restarted = MarketService(repo, settings)
+    assert await restarted._load_day_counts() == 2
+    counted.clear()
+    assert (await restarted._series_counts([iid], start, utcnow(), iso()))[iid] == 16
+    assert counted == [(today - timedelta(days=2), today - timedelta(days=1))]
+    # A kline write that lands evicts its day again.
+    restarted._pending_market = {"mkt.klines_1m": {"k": kline(today - timedelta(days=1), iso())}}
+    await restarted.flush_market(raw=False)
+    assert (iid, today - timedelta(days=1)) not in restarted._kline_day_counts
