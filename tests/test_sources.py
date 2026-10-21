@@ -1227,7 +1227,7 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(tmp_path, m
 
     calls = []
 
-    async def acquire(key, capacity, window_s, *, weight=1):
+    async def acquire(key, capacity, window_s, *, weight=1, host=None):
         calls.append((key, capacity, window_s, weight))
 
     monkeypatch.setattr(module.shared_request_budgets, "acquire", acquire)
@@ -1339,7 +1339,7 @@ async def test_binance_source_discovery_charges_verified_shared_market_weights(t
 
     acquired = []
 
-    async def acquire(key, capacity, window_s, *, weight=1):
+    async def acquire(key, capacity, window_s, *, weight=1, host=None):
         acquired.append((key, capacity, window_s, weight))
 
     monkeypatch.setattr(module.shared_request_budgets, "acquire", acquire)

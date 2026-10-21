@@ -1,0 +1,1245 @@
+{
+ "names": [
+  {
+   "capacity": 1,
+   "key": "kraken",
+   "name": "kraken|1.0|1.0",
+   "window_s": 1
+  },
+  {
+   "capacity": 3000,
+   "key": "binance.spot",
+   "name": "binance.spot|60.0|3000.0",
+   "window_s": 60
+  },
+  {
+   "capacity": 10,
+   "key": "okx:/x:IP",
+   "name": "okx:/x:IP|2.0|10.0",
+   "window_s": 2
+  },
+  {
+   "capacity": 600,
+   "key": "hyperliquid",
+   "name": "hyperliquid|60.0|600.0",
+   "window_s": 60
+  },
+  {
+   "capacity": 2.5,
+   "key": "x",
+   "name": "x|0.5|2.5",
+   "window_s": 0.5
+  },
+  {
+   "capacity": 250,
+   "key": "x",
+   "name": "x|300.0|250.0",
+   "window_s": 300
+  },
+  {
+   "capacity": 1e-05,
+   "key": "x",
+   "name": "x|1e+16|1e-05",
+   "window_s": 1e+16
+  }
+ ],
+ "plans": [
+  {
+   "buckets": [
+    {
+     "capacity": 1,
+     "key": "kraken",
+     "name": "kraken|1.0|1.0",
+     "weight": 1,
+     "window_s": 1
+    }
+   ],
+   "host": "api.kraken.com",
+   "params": {
+    "pair": "XBTUSD"
+   },
+   "path": "/0/public/Trades",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 1,
+     "key": "kraken",
+     "name": "kraken|1.0|1.0",
+     "weight": 1,
+     "window_s": 1
+    }
+   ],
+   "host": "api.kraken.com",
+   "params": {
+    "interval": "1",
+    "pair": "XBTUSD"
+   },
+   "path": "/0/public/OHLC",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 5,
+     "key": "coinbase",
+     "name": "coinbase|1.0|5.0",
+     "weight": 1,
+     "window_s": 1
+    }
+   ],
+   "host": "api.exchange.coinbase.com",
+   "params": {
+    "limit": "1000"
+   },
+   "path": "/products/BTC-USD/trades",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 5,
+     "key": "coinbase",
+     "name": "coinbase|1.0|5.0",
+     "weight": 1,
+     "window_s": 1
+    }
+   ],
+   "host": "api.exchange.coinbase.com",
+   "params": {},
+   "path": "/products/USDT-USD/stats",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 3000,
+     "key": "binance.spot",
+     "name": "binance.spot|60.0|3000.0",
+     "weight": 2,
+     "window_s": 60
+    }
+   ],
+   "host": "api.binance.com",
+   "params": {
+    "interval": "1m",
+    "limit": "3",
+    "symbol": "BTCUSDT"
+   },
+   "path": "/api/v3/klines",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 3000,
+     "key": "binance.spot",
+     "name": "binance.spot|60.0|3000.0",
+     "weight": 4,
+     "window_s": 60
+    }
+   ],
+   "host": "api.binance.com",
+   "params": {
+    "limit": "1000",
+    "symbol": "BTCUSDT"
+   },
+   "path": "/api/v3/aggTrades",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 3000,
+     "key": "binance.spot",
+     "name": "binance.spot|60.0|3000.0",
+     "weight": 50,
+     "window_s": 60
+    }
+   ],
+   "host": "api.binance.com",
+   "params": {
+    "limit": "1000",
+    "symbol": "BTCUSDT"
+   },
+   "path": "/api/v3/depth",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 3000,
+     "key": "binance.spot",
+     "name": "binance.spot|60.0|3000.0",
+     "weight": 5,
+     "window_s": 60
+    }
+   ],
+   "host": "api.binance.com",
+   "params": {
+    "limit": "5",
+    "symbol": "BTCUSDT"
+   },
+   "path": "/api/v3/depth",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 3000,
+     "key": "binance.spot",
+     "name": "binance.spot|60.0|3000.0",
+     "weight": 2,
+     "window_s": 60
+    }
+   ],
+   "host": "api.binance.com",
+   "params": {
+    "symbol": "BTCUSDT"
+   },
+   "path": "/api/v3/ticker/24hr",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 1200,
+     "key": "binance.usdm",
+     "name": "binance.usdm|60.0|1200.0",
+     "weight": 1,
+     "window_s": 60
+    }
+   ],
+   "host": "fapi.binance.com",
+   "params": {
+    "symbol": "BTCUSDT"
+   },
+   "path": "/fapi/v1/openInterest",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 500,
+     "key": "binance.usdm.statistics",
+     "name": "binance.usdm.statistics|300.0|500.0",
+     "weight": 1,
+     "window_s": 300
+    }
+   ],
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "2",
+    "period": "5m",
+    "symbol": "BTCUSDT"
+   },
+   "path": "/futures/data/openInterestHist",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 1200,
+     "key": "binance.usdm",
+     "name": "binance.usdm|60.0|1200.0",
+     "weight": 1,
+     "window_s": 60
+    }
+   ],
+   "host": "fapi.binance.com",
+   "params": {
+    "symbol": "BTCUSDT"
+   },
+   "path": "/fapi/v1/premiumIndex",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 250,
+     "key": "binance.usdm.funding",
+     "name": "binance.usdm.funding|300.0|250.0",
+     "weight": 1,
+     "window_s": 300
+    }
+   ],
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "1000",
+    "symbol": "BTCUSDT"
+   },
+   "path": "/fapi/v1/fundingRate",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 250,
+     "key": "binance.usdm.funding",
+     "name": "binance.usdm.funding|300.0|250.0",
+     "weight": 1,
+     "window_s": 300
+    }
+   ],
+   "host": "fapi.binance.com",
+   "params": {},
+   "path": "/fapi/v1/fundingInfo",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 1200,
+     "key": "binance.usdm",
+     "name": "binance.usdm|60.0|1200.0",
+     "weight": 20,
+     "window_s": 60
+    }
+   ],
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "1000",
+    "symbol": "BTCUSDT"
+   },
+   "path": "/fapi/v1/aggTrades",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 1200,
+     "key": "binance.usdm",
+     "name": "binance.usdm|60.0|1200.0",
+     "weight": 20,
+     "window_s": 60
+    }
+   ],
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "1000",
+    "symbol": "BTCUSDT"
+   },
+   "path": "/fapi/v1/depth",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 1200,
+     "key": "binance.usdm",
+     "name": "binance.usdm|60.0|1200.0",
+     "weight": 5,
+     "window_s": 60
+    }
+   ],
+   "host": "fapi.binance.com",
+   "params": {
+    "interval": "1m",
+    "limit": "1000",
+    "symbol": "BTCUSDT"
+   },
+   "path": "/fapi/v1/klines",
+   "payload": {}
+  },
+  {
+   "error": "Unconfigured Binance request weight: /fapi/v1/unknown",
+   "host": "fapi.binance.com",
+   "params": {},
+   "path": "/fapi/v1/unknown",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 300,
+     "key": "bybit",
+     "name": "bybit|5.0|300.0",
+     "weight": 1,
+     "window_s": 5
+    }
+   ],
+   "host": "api.bybit.com",
+   "params": {
+    "category": "linear",
+    "symbol": "BTCUSDT"
+   },
+   "path": "/v5/market/kline",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 300,
+     "key": "bybit",
+     "name": "bybit|5.0|300.0",
+     "weight": 1,
+     "window_s": 5
+    }
+   ],
+   "host": "api.bybit.com",
+   "params": {
+    "category": "spot",
+    "limit": "1000",
+    "symbol": "BTCUSDT"
+   },
+   "path": "/v5/market/recent-trade",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 20,
+     "key": "okx:/api/v5/market/books:IP",
+     "name": "okx:/api/v5/market/books:IP|2.0|20.0",
+     "weight": 1,
+     "window_s": 2
+    }
+   ],
+   "host": "www.okx.com",
+   "params": {},
+   "path": "/api/v5/market/books",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 50,
+     "key": "okx:/api/v5/market/trades:IP",
+     "name": "okx:/api/v5/market/trades:IP|2.0|50.0",
+     "weight": 1,
+     "window_s": 2
+    }
+   ],
+   "host": "www.okx.com",
+   "params": {
+    "instId": "BTC-USDT",
+    "limit": "1"
+   },
+   "path": "/api/v5/market/trades",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 10,
+     "key": "okx:/api/v5/market/history-trades:IP",
+     "name": "okx:/api/v5/market/history-trades:IP|2.0|10.0",
+     "weight": 1,
+     "window_s": 2
+    }
+   ],
+   "host": "www.okx.com",
+   "params": {
+    "instId": "BTC-USDT",
+    "limit": "100"
+   },
+   "path": "/api/v5/market/history-trades",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 20,
+     "key": "okx:/api/v5/market/candles:IP",
+     "name": "okx:/api/v5/market/candles:IP|2.0|20.0",
+     "weight": 1,
+     "window_s": 2
+    }
+   ],
+   "host": "www.okx.com",
+   "params": {
+    "instId": "BTC-USDT"
+   },
+   "path": "/api/v5/market/candles",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 10,
+     "key": "okx:/api/v5/market/history-candles:IP",
+     "name": "okx:/api/v5/market/history-candles:IP|2.0|10.0",
+     "weight": 1,
+     "window_s": 2
+    }
+   ],
+   "host": "www.okx.com",
+   "params": {
+    "instId": "BTC-USDT"
+   },
+   "path": "/api/v5/market/history-candles",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 10,
+     "key": "okx:/api/v5/public/open-interest:BTC-USDT-SWAP",
+     "name": "okx:/api/v5/public/open-interest:BTC-USDT-SWAP|2.0|10.0",
+     "weight": 1,
+     "window_s": 2
+    }
+   ],
+   "host": "www.okx.com",
+   "params": {
+    "instId": "BTC-USDT-SWAP",
+    "instType": "SWAP"
+   },
+   "path": "/api/v5/public/open-interest",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 10,
+     "key": "okx:/api/v5/public/open-interest:ALL",
+     "name": "okx:/api/v5/public/open-interest:ALL|2.0|10.0",
+     "weight": 1,
+     "window_s": 2
+    }
+   ],
+   "host": "www.okx.com",
+   "params": {
+    "instType": "SWAP"
+   },
+   "path": "/api/v5/public/open-interest",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 5,
+     "key": "okx:/api/v5/public/funding-rate:BTC-USDT-SWAP",
+     "name": "okx:/api/v5/public/funding-rate:BTC-USDT-SWAP|2.0|5.0",
+     "weight": 1,
+     "window_s": 2
+    }
+   ],
+   "host": "www.okx.com",
+   "params": {
+    "instId": "BTC-USDT-SWAP"
+   },
+   "path": "/api/v5/public/funding-rate",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 5,
+     "key": "okx:/api/v5/public/funding-rate-history:BTC-USDT-SWAP",
+     "name": "okx:/api/v5/public/funding-rate-history:BTC-USDT-SWAP|2.0|5.0",
+     "weight": 1,
+     "window_s": 2
+    }
+   ],
+   "host": "www.okx.com",
+   "params": {
+    "instId": "BTC-USDT-SWAP",
+    "limit": "100"
+   },
+   "path": "/api/v5/public/funding-rate-history",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 10,
+     "key": "okx:/api/v5/public/instruments:SWAP",
+     "name": "okx:/api/v5/public/instruments:SWAP|2.0|10.0",
+     "weight": 1,
+     "window_s": 2
+    }
+   ],
+   "host": "www.okx.com",
+   "params": {
+    "instId": "BTC-USDT-SWAP",
+    "instType": "SWAP"
+   },
+   "path": "/api/v5/public/instruments",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 10,
+     "key": "okx:/api/v5/public/instruments:ALL",
+     "name": "okx:/api/v5/public/instruments:ALL|2.0|10.0",
+     "weight": 1,
+     "window_s": 2
+    }
+   ],
+   "host": "www.okx.com",
+   "params": {},
+   "path": "/api/v5/public/instruments",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 10,
+     "key": "okx:/api/v5/market/ticker:IP",
+     "name": "okx:/api/v5/market/ticker:IP|2.0|10.0",
+     "weight": 1,
+     "window_s": 2
+    }
+   ],
+   "host": "www.okx.com",
+   "params": {
+    "instId": "BTC-USDT"
+   },
+   "path": "/api/v5/market/ticker",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 10,
+     "key": "okx:/api/v5/market/tickers:IP",
+     "name": "okx:/api/v5/market/tickers:IP|2.0|10.0",
+     "weight": 1,
+     "window_s": 2
+    }
+   ],
+   "host": "www.okx.com",
+   "params": {
+    "instType": "SPOT"
+   },
+   "path": "/api/v5/market/tickers",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 10,
+     "key": "okx:/api/v5/market/ticker:IP",
+     "name": "okx:/api/v5/market/ticker:IP|2.0|10.0",
+     "weight": 1,
+     "window_s": 2
+    }
+   ],
+   "host": "openapi.okx.com",
+   "params": {
+    "instId": "BTC-USDT"
+   },
+   "path": "/api/v5/market/ticker",
+   "payload": {}
+  },
+  {
+   "error": "Unconfigured OKX request limit: /api/v5/public/mark-price",
+   "host": "www.okx.com",
+   "params": {
+    "instId": "BTC-USDT-SWAP"
+   },
+   "path": "/api/v5/public/mark-price",
+   "payload": {}
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 600,
+     "key": "hyperliquid",
+     "name": "hyperliquid|60.0|600.0",
+     "weight": 20,
+     "window_s": 60
+    }
+   ],
+   "host": "api.hyperliquid.xyz",
+   "params": {},
+   "path": "/info",
+   "payload": {
+    "type": "meta"
+   }
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 600,
+     "key": "hyperliquid",
+     "name": "hyperliquid|60.0|600.0",
+     "weight": 20,
+     "window_s": 60
+    }
+   ],
+   "host": "api.hyperliquid.xyz",
+   "params": {},
+   "path": "/info",
+   "payload": {
+    "type": "metaAndAssetCtxs"
+   }
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 600,
+     "key": "hyperliquid",
+     "name": "hyperliquid|60.0|600.0",
+     "weight": 45,
+     "window_s": 60
+    }
+   ],
+   "host": "api.hyperliquid.xyz",
+   "params": {},
+   "path": "/info",
+   "payload": {
+    "coin": "BTC",
+    "startTime": 1791972000000,
+    "type": "fundingHistory"
+   }
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 600,
+     "key": "hyperliquid",
+     "name": "hyperliquid|60.0|600.0",
+     "weight": 21,
+     "window_s": 60
+    }
+   ],
+   "host": "api.hyperliquid.xyz",
+   "params": {},
+   "path": "/info",
+   "payload": {
+    "req": {
+     "coin": "BTC",
+     "endTime": 1792578180000,
+     "interval": "1m",
+     "startTime": 1792578000000
+    },
+    "type": "candleSnapshot"
+   }
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 600,
+     "key": "hyperliquid",
+     "name": "hyperliquid|60.0|600.0",
+     "weight": 45,
+     "window_s": 60
+    }
+   ],
+   "host": "api.hyperliquid.xyz",
+   "params": {},
+   "path": "/info",
+   "payload": {
+    "req": {
+     "coin": "BTC",
+     "endTime": 1792664400000,
+     "interval": "1m",
+     "startTime": 1792578000000
+    },
+    "type": "candleSnapshot"
+   }
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 600,
+     "key": "hyperliquid",
+     "name": "hyperliquid|60.0|600.0",
+     "weight": 104,
+     "window_s": 60
+    }
+   ],
+   "host": "api.hyperliquid.xyz",
+   "params": {},
+   "path": "/info",
+   "payload": {
+    "req": {
+     "coin": "BTC",
+     "endTime": 1793442000000,
+     "interval": "1m",
+     "startTime": 1792578000000
+    },
+    "type": "candleSnapshot"
+   }
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 600,
+     "key": "hyperliquid",
+     "name": "hyperliquid|60.0|600.0",
+     "weight": 21,
+     "window_s": 60
+    }
+   ],
+   "host": "api.hyperliquid.xyz",
+   "params": {},
+   "path": "/info",
+   "payload": {
+    "req": {
+     "coin": "BTC",
+     "endTime": 1792577999999,
+     "interval": "1m",
+     "startTime": 1792578000000
+    },
+    "type": "candleSnapshot"
+   }
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 600,
+     "key": "hyperliquid",
+     "name": "hyperliquid|60.0|600.0",
+     "weight": 20,
+     "window_s": 60
+    }
+   ],
+   "host": "api.hyperliquid.xyz",
+   "params": {},
+   "path": "/info",
+   "payload": {
+    "req": {
+     "coin": "BTC",
+     "endTime": 1792577879999,
+     "interval": "1m",
+     "startTime": 1792578000000
+    },
+    "type": "candleSnapshot"
+   }
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 600,
+     "key": "hyperliquid",
+     "name": "hyperliquid|60.0|600.0",
+     "weight": 104,
+     "window_s": 60
+    }
+   ],
+   "host": "api.hyperliquid.xyz",
+   "params": {},
+   "path": "/info",
+   "payload": {
+    "req": {
+     "coin": "BTC",
+     "endTime": 1792578180000,
+     "interval": "5m",
+     "startTime": 1792578000000
+    },
+    "type": "candleSnapshot"
+   }
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 600,
+     "key": "hyperliquid",
+     "name": "hyperliquid|60.0|600.0",
+     "weight": 104,
+     "window_s": 60
+    }
+   ],
+   "host": "api.hyperliquid.xyz",
+   "params": {},
+   "path": "/info",
+   "payload": {
+    "req": {
+     "coin": "BTC",
+     "interval": "1m"
+    },
+    "type": "candleSnapshot"
+   }
+  },
+  {
+   "buckets": [
+    {
+     "capacity": 600,
+     "key": "hyperliquid",
+     "name": "hyperliquid|60.0|600.0",
+     "weight": 104,
+     "window_s": 60
+    }
+   ],
+   "host": "api.hyperliquid.xyz",
+   "params": {},
+   "path": "/info",
+   "payload": {
+    "type": "candleSnapshot"
+   }
+  },
+  {
+   "error": "Unconfigured Hyperliquid request weight: l2Book",
+   "host": "api.hyperliquid.xyz",
+   "params": {},
+   "path": "/info",
+   "payload": {
+    "coin": "BTC",
+    "type": "l2Book"
+   }
+  },
+  {
+   "error": "Unconfigured Hyperliquid request weight: None",
+   "host": "api.hyperliquid.xyz",
+   "params": {},
+   "path": "/info",
+   "payload": {}
+  },
+  {
+   "buckets": [],
+   "host": "data-api.binance.vision",
+   "params": {},
+   "path": "/api/v3/klines",
+   "payload": {}
+  }
+ ],
+ "weights": [
+  {
+   "host": "api.binance.com",
+   "params": {},
+   "path": "/api/v3/exchangeInfo",
+   "weight": 20
+  },
+  {
+   "host": "api.binance.com",
+   "params": {
+    "limit": "1000"
+   },
+   "path": "/api/v3/aggTrades",
+   "weight": 4
+  },
+  {
+   "host": "api.binance.com",
+   "params": {
+    "limit": "1"
+   },
+   "path": "/api/v3/aggTrades",
+   "weight": 4
+  },
+  {
+   "host": "api.binance.com",
+   "params": {
+    "limit": "3"
+   },
+   "path": "/api/v3/klines",
+   "weight": 2
+  },
+  {
+   "host": "api.binance.com",
+   "params": {},
+   "path": "/api/v3/depth",
+   "weight": 5
+  },
+  {
+   "host": "api.binance.com",
+   "params": {
+    "limit": "5"
+   },
+   "path": "/api/v3/depth",
+   "weight": 5
+  },
+  {
+   "host": "api.binance.com",
+   "params": {
+    "limit": "100"
+   },
+   "path": "/api/v3/depth",
+   "weight": 5
+  },
+  {
+   "host": "api.binance.com",
+   "params": {
+    "limit": "101"
+   },
+   "path": "/api/v3/depth",
+   "weight": 25
+  },
+  {
+   "host": "api.binance.com",
+   "params": {
+    "limit": "500"
+   },
+   "path": "/api/v3/depth",
+   "weight": 25
+  },
+  {
+   "host": "api.binance.com",
+   "params": {
+    "limit": "501"
+   },
+   "path": "/api/v3/depth",
+   "weight": 50
+  },
+  {
+   "host": "api.binance.com",
+   "params": {
+    "limit": "1000"
+   },
+   "path": "/api/v3/depth",
+   "weight": 50
+  },
+  {
+   "host": "api.binance.com",
+   "params": {
+    "limit": "1001"
+   },
+   "path": "/api/v3/depth",
+   "weight": 250
+  },
+  {
+   "host": "api.binance.com",
+   "params": {
+    "limit": "5000"
+   },
+   "path": "/api/v3/depth",
+   "weight": 250
+  },
+  {
+   "host": "api.binance.com",
+   "params": {
+    "symbol": "BTCUSDT"
+   },
+   "path": "/api/v3/ticker/24hr",
+   "weight": 2
+  },
+  {
+   "host": "api.binance.com",
+   "params": {},
+   "path": "/api/v3/ticker/24hr",
+   "weight": 80
+  },
+  {
+   "host": "api.binance.com",
+   "params": {
+    "symbol": ""
+   },
+   "path": "/api/v3/ticker/24hr",
+   "weight": 80
+  },
+  {
+   "error": "Unconfigured Binance request weight: /api/v3/trades",
+   "host": "api.binance.com",
+   "params": {},
+   "path": "/api/v3/trades"
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {},
+   "path": "/fapi/v1/exchangeInfo",
+   "weight": 1
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "1000"
+   },
+   "path": "/fapi/v1/aggTrades",
+   "weight": 20
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "symbol": "BTCUSDT"
+   },
+   "path": "/fapi/v1/openInterest",
+   "weight": 1
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "2"
+   },
+   "path": "/futures/data/openInterestHist",
+   "weight": 0
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "1000"
+   },
+   "path": "/fapi/v1/fundingRate",
+   "weight": 0
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {},
+   "path": "/fapi/v1/fundingInfo",
+   "weight": 0
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {},
+   "path": "/fapi/v1/klines",
+   "weight": 5
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "3"
+   },
+   "path": "/fapi/v1/klines",
+   "weight": 1
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "99"
+   },
+   "path": "/fapi/v1/klines",
+   "weight": 1
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "100"
+   },
+   "path": "/fapi/v1/klines",
+   "weight": 2
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "499"
+   },
+   "path": "/fapi/v1/klines",
+   "weight": 2
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "500"
+   },
+   "path": "/fapi/v1/klines",
+   "weight": 5
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "1000"
+   },
+   "path": "/fapi/v1/klines",
+   "weight": 5
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "1001"
+   },
+   "path": "/fapi/v1/klines",
+   "weight": 10
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "1500"
+   },
+   "path": "/fapi/v1/klines",
+   "weight": 10
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {},
+   "path": "/fapi/v1/depth",
+   "weight": 5
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "5"
+   },
+   "path": "/fapi/v1/depth",
+   "weight": 2
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "50"
+   },
+   "path": "/fapi/v1/depth",
+   "weight": 2
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "51"
+   },
+   "path": "/fapi/v1/depth",
+   "weight": 5
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "100"
+   },
+   "path": "/fapi/v1/depth",
+   "weight": 5
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "101"
+   },
+   "path": "/fapi/v1/depth",
+   "weight": 10
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "500"
+   },
+   "path": "/fapi/v1/depth",
+   "weight": 10
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "501"
+   },
+   "path": "/fapi/v1/depth",
+   "weight": 20
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "limit": "1000"
+   },
+   "path": "/fapi/v1/depth",
+   "weight": 20
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "symbol": "BTCUSDT"
+   },
+   "path": "/fapi/v1/ticker/24hr",
+   "weight": 1
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {},
+   "path": "/fapi/v1/ticker/24hr",
+   "weight": 40
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {
+    "symbol": "BTCUSDT"
+   },
+   "path": "/fapi/v1/premiumIndex",
+   "weight": 1
+  },
+  {
+   "host": "fapi.binance.com",
+   "params": {},
+   "path": "/fapi/v1/premiumIndex",
+   "weight": 10
+  },
+  {
+   "error": "Unconfigured Binance request weight: /fapi/v1/trades",
+   "host": "fapi.binance.com",
+   "params": {},
+   "path": "/fapi/v1/trades"
+  },
+  {
+   "error": "Unconfigured Binance request weight: /0/public/Trades",
+   "host": "api.kraken.com",
+   "params": {},
+   "path": "/0/public/Trades"
+  }
+ ]
+}

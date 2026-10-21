@@ -11,6 +11,7 @@ from contextlib import suppress
 from copy import deepcopy
 from datetime import timedelta
 from decimal import Decimal, localcontext
+from types import SimpleNamespace
 
 import httpx
 
@@ -141,6 +142,29 @@ HANDOFF_RETRY_S = 15
 HANDOFF_RETRIES = 2
 # Requests in flight per venue host (Kraken: 1).
 HOST_IN_FLIGHT = 4
+# With TANK_EXTERNAL_CAPTURE tank-capture (capture/README.md) is the only client of these.
+EXCHANGE_HOSTS = frozenset(
+    {
+        "api.binance.com",
+        "fapi.binance.com",
+        "data.binance.vision",
+        "api.exchange.coinbase.com",
+        "api.kraken.com",
+        "www.okx.com",
+        "openapi.okx.com",
+        "api.bybit.com",
+        "api.hyperliquid.xyz",
+    }
+)
+EXTERNAL_REST_DISABLED = "exchange REST disabled: tank-capture owns market capture"
+# The session advisory lock of the one market writer: this process or a live tank-capture.
+WRITER_LOCK = "tank:capture:writer"
+WRITER_LOCK_RETRY_S, WRITER_LOCK_CHECK_S = 5, 30
+# tank-capture rewrites its stream state every few seconds; an older row is a stopped writer.
+STREAM_STATE_STALE_S = 30
+# A repair request without a budget is bounded by this; its result may land just after.
+CAPTURE_REQUEST_DEFAULT_S, CAPTURE_REQUEST_GRACE_S = 30, 2
+CAPTURE_REQUEST_TERMINAL = ("COMPLETE", "PARTIAL", "FAILED", "EXPIRED")
 # Reference spot venues by repair speed (03 §5.7 needs one complete trailing 24 h).
 REFERENCE_VENUES = ("binance", "coinbase", "okx", "kraken", "bybit")
 # HOT OI/funding and 24h REST tickers run on their own wall-clock grids, so at any minute
@@ -352,10 +376,16 @@ class MarketService:
         self._flushed_bars = {}
         self._last_flow_flush = 0
         self._last_hot_expiry_refresh = 0
+        self._writer_checked = 0.0
         try:
             self.thresholds = settings.load_config("thresholds")
         except FileNotFoundError:
             self.thresholds = {}
+
+    @property
+    def _external(self):
+        """tank-capture writes the market tables; this process escalates and reads."""
+        return bool(getattr(self.settings, "external_capture", False))
 
     def _redact(self, value):
         secrets = [
@@ -421,7 +451,7 @@ class MarketService:
             )
             row.setdefault("recorded_at", iso())
             row.update(collection_clock(row["recorded_at"]).fields("recorded_at"))
-            if collection in ("mkt.hot_tokens", "mkt.backfill_runs"):
+            if collection in ("mkt.hot_tokens", "mkt.backfill_runs", "mkt.capture_requests"):
                 changed = await self.repo.put_market_batch(collection, [row], keys=[str(key)])
                 return changed[0] if changed else row
             # Repeated points of these series are dropped before PostgreSQL; the
@@ -826,8 +856,12 @@ class MarketService:
         return body
 
     async def _request_once(self, method, url, **kwargs):
+        from tank.sources.rate_limits import shared_request_budgets
+
         priority = kwargs.pop("_priority", 0)
         host = httpx.URL(url).host
+        if self._external and host in EXCHANGE_HOSTS:
+            raise RuntimeError(EXTERNAL_REST_DISABLED)
         interval = (
             1
             if host == "api.kraken.com"
@@ -844,8 +878,6 @@ class MarketService:
         )
 
         async def admit_budget():
-            from tank.sources.rate_limits import shared_request_budgets
-
             provider = (
                 "kraken"
                 if host == "api.kraken.com"
@@ -855,7 +887,7 @@ class MarketService:
             )
             if provider:
                 await shared_request_budgets.acquire(
-                    provider, 1 if provider == "kraken" else 5, 1, priority=priority
+                    provider, 1 if provider == "kraken" else 5, 1, priority=priority, host=host
                 )
             if host in ("api.binance.com", "fapi.binance.com"):
                 path = httpx.URL(url).path
@@ -867,21 +899,24 @@ class MarketService:
                         60,
                         weight=weight,
                         priority=priority,
+                        host=host,
                     )
                 if host == "fapi.binance.com" and path in (
                     "/fapi/v1/fundingRate",
                     "/fapi/v1/fundingInfo",
                 ):
-                    await shared_request_budgets.acquire("binance.usdm.funding", 250, 300, priority=priority)
+                    await shared_request_budgets.acquire(
+                        "binance.usdm.funding", 250, 300, priority=priority, host=host
+                    )
                 if host == "fapi.binance.com" and path == "/futures/data/openInterestHist":
                     await shared_request_budgets.acquire(
-                        "binance.usdm.statistics", 500, 300, priority=priority
+                        "binance.usdm.statistics", 500, 300, priority=priority, host=host
                     )
             for budget_key, capacity, window, charge in public_request_constraints(
                 host, httpx.URL(url).path, kwargs.get("params", {}), kwargs.get("json", {})
             ):
                 await shared_request_budgets.acquire(
-                    budget_key, capacity, window, weight=charge, priority=priority
+                    budget_key, capacity, window, weight=charge, priority=priority, host=host
                 )
 
         for attempt in range(4):
@@ -905,6 +940,16 @@ class MarketService:
                     self._last_request[host] = max(
                         self._last_request[host], time.monotonic() + min(max(delay, 1), 60)
                     )
+                    # Every process sharing the request ledger waits too; a ban (418) grows
+                    # with each request, so none asks again before it ends.
+                    banned = response.status_code == 418
+                    await shared_request_budgets.block(
+                        host,
+                        utcnow() + timedelta(seconds=max(delay, 1) if banned else min(max(delay, 1), 60)),
+                        f"HTTP {response.status_code}",
+                    )
+                    if banned and shared_request_budgets.ledger is not None:
+                        raise RuntimeError(f"{host}: HTTP 418 banned for {delay:.0f}s")
                     continue
                 if response.is_error:
                     # The venue's error code/message is the gap evidence (bodies carry no credentials).
@@ -914,6 +959,9 @@ class MarketService:
                 weight = response.headers.get("X-MBX-USED-WEIGHT-1M")
                 if weight and int(weight) >= (2400 if host == "fapi.binance.com" else 6000):
                     self._last_request[host] = max(self._last_request[host], time.monotonic() + 60)
+                    await shared_request_budgets.block(
+                        host, utcnow() + timedelta(seconds=60), "X-MBX-USED-WEIGHT-1M " + weight
+                    )
                 # JSON floats must never enter native quantity or monetary arithmetic.
                 return json.loads(response.content, parse_float=Decimal)
         raise RuntimeError(f"{host}: rate limited after bounded retries")
@@ -2115,6 +2163,8 @@ class MarketService:
         Returns {instrument_id: {"incomplete_before", "incomplete_after"}}."""
         if getattr(self.settings, "replay", False):
             return {}  # a replay reads frozen evidence; it never fetches live market data
+        if self._external:
+            return await self._request_repair(token_id, start, end, budget_s)
         deadline = time.monotonic() + budget_s if budget_s else None
         lo = parse_time(start).replace(second=0, microsecond=0)
         # The last finished minute is in (the restart minute of a startup repair); the
@@ -2149,6 +2199,48 @@ class MarketService:
                 for name in total:
                     total[name] += result[name]
         return results
+
+    async def _request_repair(self, token_id, start, end, budget_s):
+        """repair_windows run by tank-capture: a mkt.capture_requests row it claims and
+        finishes within the budget. Its result, or {} when none arrived in time."""
+        requested = utcnow()
+        budget = float(budget_s) if budget_s else CAPTURE_REQUEST_DEFAULT_S
+        lo, hi = parse_time(start).replace(second=0, microsecond=0), parse_time(end)
+        request_id = "CR-" + sha256(
+            {"token_id": token_id, "start": iso(lo), "end": iso(hi), "requested_at": iso(requested)}
+        )
+        pending = Timestamp(None, None, "PENDING")
+        await self._put(
+            "mkt.capture_requests",
+            request_id,
+            {
+                "request_id": request_id,
+                "kind": "REPAIR_WINDOWS",
+                "token_id": token_id,
+                **chosen_boundary(lo, precision="EXACT").fields("start"),
+                **chosen_boundary(hi, precision="EXACT").fields("end"),
+                "budget_s": budget,
+                **collection_clock(requested).fields("requested_at"),
+                **collection_clock(requested + timedelta(seconds=budget)).fields("deadline"),
+                **pending.fields("started_at"),
+                **pending.fields("finished_at"),
+                "status": "PENDING",
+                "reason": None,
+                "result": None,
+            },
+        )
+        until = time.monotonic() + budget + CAPTURE_REQUEST_GRACE_S
+        while True:
+            row = await self.repo.get("mkt.capture_requests", request_id) or {}
+            if row.get("status") in CAPTURE_REQUEST_TERMINAL or time.monotonic() >= until:
+                break
+            await asyncio.sleep(0.25)
+        if row.get("status") in ("COMPLETE", "PARTIAL"):
+            return (row.get("result") or {}).get("instruments") or {}
+        log.warning(
+            "window repair %s for %s: %s", request_id, token_id, row.get("reason") or row.get("status")
+        )
+        return {}
 
     async def _incomplete_runs(self, iid, lo, hi):
         """Contiguous [start, end) runs of minutes without a complete persisted bar, and the
@@ -2509,7 +2601,9 @@ class MarketService:
             return
         backfill_id = "BF-" + sha256({"event_id": event_id, "token_id": token_id, "anchor": iso(anchor)})
         old = await self.repo.get("mkt.backfill_runs", backfill_id)
-        if old and old.get("status") in ("COMPLETE", "PARTIAL"):
+        # An external capture resumes the obligations it holds; a failed one is asked again.
+        settled = ("COMPLETE", "PARTIAL", "PENDING", "RUNNING") if self._external else ("COMPLETE", "PARTIAL")
+        if old and old.get("status") in settled:
             self._backfills.add(marker)
             return
         row = {
@@ -2529,6 +2623,8 @@ class MarketService:
         row.update(norm.timestamp_fields("anchor", anchor, precision))
         await self._put("mkt.backfill_runs", backfill_id, row)
         self._backfills.add(marker)
+        if self._external:
+            return  # tank-capture runs PENDING obligations and records their outcome
 
         async def capture():
             try:
@@ -2865,6 +2961,8 @@ class MarketService:
         for r in rows:
             if r["token_id"] not in self._hot_since or r["since"] < self._hot_since[r["token_id"]]:
                 self._hot_since[r["token_id"]] = r["since"]
+        if self._external:
+            return  # tank-capture subscribes the hot set it reads from mkt.hot_tokens
         desired = {}
         for iid, inst in self.instruments.items():
             if inst["token_id"] in hot:
@@ -3027,6 +3125,7 @@ class MarketService:
         states = {}
         push = {}
         end = parse_time(cutoff)
+        stream = await self._stream_state(token_id)
         for iid, instrument in self.instruments.items():
             if instrument["token_id"] != token_id or norm.venue_key(instrument).endswith(".spot"):
                 continue
@@ -3034,9 +3133,9 @@ class MarketService:
             if key == "hyperliquid.perp":
                 states[iid] = "NOT_SUPPORTED"
                 continue
-            states[iid] = "CONNECTED" if iid in self._connected_since else "DISCONNECTED"
-            observed = self._stream_watermarks.get(iid)
-            since = self._connected_since.get(iid)
+            states[iid] = "CONNECTED" if iid in stream.connected else "DISCONNECTED"
+            observed = stream.watermarks.get(iid)
+            since = stream.connected.get(iid)
             if (
                 observed
                 and states[iid] == "CONNECTED"
@@ -3060,7 +3159,7 @@ class MarketService:
                     # End of the last successful poll at or before the cutoff, per instrument.
                     "observed_through": {
                         iid: max(at for at in polls if parse_time(at) <= end)
-                        for iid, polls in self._klines_polled.items()
+                        for iid, polls in stream.polls.items()
                         if self.instruments.get(iid, {}).get("token_id") == token_id
                         and any(parse_time(at) <= end for at in polls)
                     },
@@ -3097,6 +3196,40 @@ class MarketService:
                 },
             },
         }
+
+    async def _stream_state(self, token_id=None):
+        """Connection, exchange-time watermark, klines polls and last print by instrument:
+        this process's sockets and polls, or the mkt.capture_streams rows tank-capture
+        rewrites every few seconds (a stale one is a stopped capture: not connected)."""
+        if not self._external:
+            return SimpleNamespace(
+                connected=self._connected_since,
+                watermarks=self._stream_watermarks,
+                polls=self._klines_polled,
+                last_trade={iid: state.get("last_ts") for iid, state in self._capture_checkpoints.items()},
+            )
+        state = SimpleNamespace(connected={}, watermarks={}, polls={}, last_trade={})
+        fresh = utcnow() - timedelta(seconds=STREAM_STATE_STALE_S)
+        filters = {"token_id": token_id} if token_id is not None else None
+        for row in await self.repo.list("mkt.capture_streams", filters=filters, limit=10000):
+            iid = row["instrument_id"]
+            if iid not in self.instruments:
+                continue
+            if row.get("stream") == "WS":
+                if row.get("last_trade_ts"):
+                    state.last_trade[iid] = row["last_trade_ts"]
+                if (
+                    row.get("state") == "CONNECTED"
+                    and row.get("connected_since")
+                    and row.get("updated_at")
+                    and parse_time(row["updated_at"]) >= fresh
+                ):
+                    state.connected[iid] = parse_time(row["connected_since"])
+                    if row.get("watermark_ts"):
+                        state.watermarks[iid] = {"ts": row["watermark_ts"]}
+            elif row.get("stream") == "KLINES_POLL" and row.get("recent_polls"):
+                state.polls[iid] = list(row["recent_polls"])
+        return state
 
     async def _condition_history(self, collection, field, instrument_id, cutoff, assembled_at):
         """Reuse immutable history, incorporating newly eligible and late corrected points."""
@@ -5265,9 +5398,9 @@ class MarketService:
 
     async def coverage(self):
         hot = {r["token_id"] for r in await self.repo.list("mkt.hot_tokens", limit=10000)}
+        stream = await self._stream_state()
         result = []
         for iid, inst in self.instruments.items():
-            state = self._capture_checkpoints.get(iid)
             gaps = await self.repo.list("mkt.capture_gaps", filters={"instrument_id": iid}, limit=10000)
             result.append(
                 {
@@ -5276,8 +5409,8 @@ class MarketService:
                     "venue": inst["venue"],
                     "market_type": inst["market_type"],
                     "tier": "HOT" if inst["token_id"] in hot else "BASE",
-                    "stream_connected": iid in self._connected_since,
-                    "last_trade_ts": state.get("last_ts") if state else None,
+                    "stream_connected": iid in stream.connected,
+                    "last_trade_ts": stream.last_trade.get(iid),
                     "metadata_status": inst.get("metadata_status", "UNVERIFIED"),
                     "gap_count": len(gaps),
                     "latest_gap": gaps[-1] if gaps else None,
@@ -5506,20 +5639,117 @@ class MarketService:
             except Exception as exc:  # noqa: BLE001 - one token's repair failure leaves explicit gaps
                 log.warning("startup repair %s failed: %s", token_id, type(exc).__name__)
 
-    async def run(self, stop):
-        self._stop = stop
-        if self.settings.replay:
+    async def _record_started_tiers(self):
+        async with self.repo.lock("market-hot-set"), self.repo.transaction():
+            active_tokens = {row["token_id"] for row in await self.repo.list("mkt.hot_tokens", limit=10000)}
+            for token_id in self.tokens:
+                await self._record_capture_tier(
+                    token_id, "HOT" if token_id in active_tokens else "BASE", "CAPTURE_POLICY_STARTED"
+                )
+
+    async def _schedule_hot_backfills(self):
+        for hot in await self.repo.list("mkt.hot_tokens", limit=10000):
+            event = await self.repo.get("evt.events", hot["event_id"]) or {}
+            await self._schedule_event_backfill(
+                hot["event_id"], hot["token_id"], event_anchor(event)["ts"] if event else hot["since"]
+            )
+
+    async def _writer_lock(self, stop):
+        """The session advisory lock a live tank-capture takes too (capture/README.md), held
+        on a dedicated connection outside the pool for the whole capture. Returns that
+        connection, True when the repository has no other writer, or None when stopped."""
+        from psycopg import AsyncConnection
+
+        from tank.storage import PostgresRepository
+
+        if not isinstance(self.repo, PostgresRepository):
+            return True
+        digest = int.from_bytes(hashlib.sha256(WRITER_LOCK.encode()).digest()[:8], "big", signed=True)
+        connection = await AsyncConnection.connect(self.repo.database_url, autocommit=True)
+        warned = None
+        try:
+            while not stop.is_set():
+                row = await (
+                    await connection.execute("SELECT pg_try_advisory_lock(%s)", (digest,))
+                ).fetchone()
+                if row[0]:
+                    self._writer_checked = time.monotonic()
+                    return connection
+                if warned is None or time.monotonic() - warned >= 60:
+                    log.warning("market capture waits: another writer (tank-capture) holds %s", WRITER_LOCK)
+                    warned = time.monotonic()
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(stop.wait(), WRITER_LOCK_RETRY_S)
+        except BaseException:
+            await connection.close()
+            raise
+        await connection.close()
+        return None
+
+    async def _check_writer_lock(self, writer):
+        if writer is True or time.monotonic() - self._writer_checked < WRITER_LOCK_CHECK_S:
             return
+        self._writer_checked = time.monotonic()
+        try:
+            await writer.execute("SELECT 1")
+        except Exception as exc:
+            # The server released the lock with the session: stop writing; run() starts over.
+            raise RuntimeError("market capture writer lock lost") from exc
+
+    @staticmethod
+    async def _release_writer_lock(writer):
+        if writer is not True:
+            await writer.close()  # ends the session and with it the advisory lock
+
+    async def _run_external(self, stop):
+        """tank-capture holds the streams, pollers, backfills and exchange REST; this process
+        keeps the hot set's tiers, expiry and capture obligations, supply capture and reads."""
+        self._stop = stop
         workers = []
         try:
-            async with self.repo.lock("market-hot-set"), self.repo.transaction():
-                active_tokens = {
-                    row["token_id"] for row in await self.repo.list("mkt.hot_tokens", limit=10000)
-                }
-                for token_id in self.tokens:
-                    await self._record_capture_tier(
-                        token_id, "HOT" if token_id in active_tokens else "BASE", "CAPTURE_POLICY_STARTED"
-                    )
+            await self._record_started_tiers()
+            await self._sync_streams()
+            await self._schedule_hot_backfills()
+            workers = [
+                asyncio.create_task(self._warm_series_counts()),
+                asyncio.create_task(self._supply_loop()),
+            ]
+            checked = utcnow()
+            while not stop.is_set():
+                await self.flush_market(raw=False)
+                await self._sync_streams()
+                if (utcnow() - checked).total_seconds() >= DAY_COUNTS_SAVE_S:
+                    checked = await self._evict_recorded_days(checked)
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(stop.wait(), RAW_FLUSH_S)
+        finally:
+            for task in workers:
+                task.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+
+    async def _evict_recorded_days(self, since):
+        """Past-day kline counts of days tank-capture wrote into since `since` (the writes
+        of this process evict their own in flush_market); the counts are saved after."""
+        now = utcnow()
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        for key in await market_kline_days_recorded_since(self.repo, since - DAY_COUNTS_MARGIN, today):
+            self._kline_day_counts.pop(key, None)
+        await self._save_day_counts()
+        return now
+
+    async def run(self, stop):
+        if self.settings.replay:
+            self._stop = stop
+            return
+        if self._external:
+            return await self._run_external(stop)
+        writer = await self._writer_lock(stop)
+        if writer is None:
+            return
+        self._stop = stop
+        workers = []
+        try:
+            await self._record_started_tiers()
             await self._ensure_market_restore()
             await self._sync_streams()
             started = iso()
@@ -5539,11 +5769,7 @@ class MarketService:
                 task = asyncio.create_task(self._repair_on_start(repairs))
                 self._background.add(task)
                 task.add_done_callback(self._background.discard)
-            for hot in await self.repo.list("mkt.hot_tokens", limit=10000):
-                event = await self.repo.get("evt.events", hot["event_id"]) or {}
-                await self._schedule_event_backfill(
-                    hot["event_id"], hot["token_id"], event_anchor(event)["ts"] if event else hot["since"]
-                )
+            await self._schedule_hot_backfills()
             workers = [asyncio.create_task(self._instrument_loop(inst)) for inst in self.instruments.values()]
             workers += [
                 asyncio.create_task(self._hot_context_loop(inst)) for inst in self.instruments.values()
@@ -5561,6 +5787,7 @@ class MarketService:
                 )
             )
             while not stop.is_set():
+                await self._check_writer_lock(writer)
                 await self._flush_flow()
                 await self.flush_market()
                 await self._sync_streams()
@@ -5578,3 +5805,11 @@ class MarketService:
             self._stream_controls.clear()
             self._connected_since.clear()
             self._stream_watermarks.clear()
+            try:
+                # The last bars go out while the lock is held: the next writer starts after them.
+                await self._flush_flow()
+                await self.flush_market(raw=True)
+            except Exception as exc:  # noqa: BLE001 - close() retries what is still queued
+                log.warning("market flush before the writer lock release failed: %s", type(exc).__name__)
+            finally:
+                await self._release_writer_lock(writer)

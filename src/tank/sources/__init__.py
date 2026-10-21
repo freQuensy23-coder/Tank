@@ -113,10 +113,10 @@ class SourceService:
             if rule.get("provider") != provider:
                 continue
             if rule.get("tank_max_requests_per_s") is not None:
-                await shared_request_budgets.acquire(provider, rule["tank_max_requests_per_s"], 1)
+                await shared_request_budgets.acquire(provider, rule["tank_max_requests_per_s"], 1, host=host)
             if rule.get("tank_max_weight_per_min") is not None:
                 await shared_request_budgets.acquire(
-                    provider, rule["tank_max_weight_per_min"], 60, weight=weight
+                    provider, rule["tank_max_weight_per_min"], 60, weight=weight, host=host
                 )
         capacities = [
             value
@@ -129,7 +129,7 @@ class SourceService:
         ]
         per_min = min(capacities) if capacities else None
         if per_min is not None:
-            await shared_request_budgets.acquire(host, per_min, 60)
+            await shared_request_budgets.acquire(host, per_min, 60, host=host)
 
     async def fetch(self, feed, key, *, on_start=None):
         state = deepcopy(await self.repo.get("ops.source_checkpoints", key) or {})
