@@ -1806,3 +1806,31 @@ async def test_pre_windows_share_one_market_read(monkeypatch):
     assert seen == sorted(seen) and len(set(seen)) == 3
     rows = await repo.list("out.reaction_checkpoints")
     assert sorted(row["checkpoint"] for row in rows) == ["PRE_1H", "PRE_24H", "PRE_4H"]
+
+
+@pytest.mark.asyncio
+async def test_latest_revision_is_read_as_metadata_not_the_whole_row():
+    """r110: the newest revision was decoded whole (up to 2 MB of Market Truth)
+    for every capture; the plan reads its fields as metadata only."""
+    repo = MemoryRepository()
+    row = {
+        "event_id": "e",
+        "token_id": "t",
+        "checkpoint": "PRE_1H",
+        "revision": 2,
+        "anchor": {"ts": iso(utcnow())},
+        "retro": True,
+        "reason": "Late capture completed: x",
+        "data_fingerprint": "fp",
+        "market_truth": {"blob": "x" * 100_000},
+    }
+    await repo.put("out.reaction_checkpoints", "e:t:PRE_1H:1", dict(row, revision=1))
+    await repo.put("out.reaction_checkpoints", "e:t:PRE_1H:2", row)
+    scheduler = Scheduler(repo, SimpleNamespace(), None, None)
+
+    async def no_full_get(collection, key):
+        raise AssertionError("full row read: " + key)
+
+    repo.get = no_full_get
+    latest = await scheduler._latest_reaction_revision(row)
+    assert latest["revision"] == 2 and latest["data_fingerprint"] == "fp" and "market_truth" not in latest
