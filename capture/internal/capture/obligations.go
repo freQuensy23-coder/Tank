@@ -675,9 +675,10 @@ func (s *Service) startupRepairs(ctx context.Context, hot []map[string]any, star
 	}
 }
 
-// unrepaired are the runs of minutes in [lo, hi) without a complete bar that no repair
-// has tried yet (no row, or a row without gap_reason): what the previous process left,
-// whatever the cause. A minute a repair already gave a reason for is not paged again.
+// unrepaired are the runs of minutes in [lo, hi) without a complete bar that a repair can
+// still fill: no row, no gap_reason, or a reason that is not a source limit (a repair that
+// failed on a full disk or a dropped request is tried again). A minute the venue cannot
+// serve (no trade history, beyond the Bybit list) is not paged again.
 func (s *Service) unrepaired(ctx context.Context, iid string, lo, hi time.Time) []span {
 	if !hi.After(lo) {
 		return nil
@@ -690,7 +691,7 @@ func (s *Service) unrepaired(ctx context.Context, iid string, lo, hi time.Time) 
 	var out []span
 	for _, r := range runs {
 		for m := r.start; m.Before(r.end); m = m.Add(time.Minute) {
-			if b := bars[m.Unix()]; b != nil && b["gap_reason"] != nil {
+			if b := bars[m.Unix()]; b != nil && sourceLimit(text(b["gap_reason"])) {
 				continue
 			}
 			if n := len(out); n > 0 && out[n-1].end.Equal(m) {
@@ -701,6 +702,19 @@ func (s *Service) unrepaired(ctx context.Context, iid string, lo, hi time.Time) 
 		}
 	}
 	return out
+}
+
+// sourceLimit is a gap reason no later repair can change.
+func sourceLimit(reason string) bool {
+	if reason == BybitLimit {
+		return true
+	}
+	for _, r := range NoTradeHistory {
+		if reason == r {
+			return true
+		}
+	}
+	return false
 }
 
 // repairUnrepaired repairs every unrepaired run of every instrument of token in [lo, hi),
@@ -722,7 +736,7 @@ func (s *Service) repairUnrepaired(ctx context.Context, token string, lo, hi tim
 
 // sweepEvery and sweepSpan: the sweeper repairs what live repair left in the last hour
 // (a dropped stream, a failed repair), a little behind the sealer.
-const sweepEvery, sweepSpan, sweepLag = 5 * time.Minute, time.Hour, 2 * time.Minute
+const sweepEvery, sweepSpan, sweepLag = 2 * time.Minute, time.Hour, 2 * time.Minute
 
 func (s *Service) sweep(ctx context.Context) {
 	if !s.leading() {

@@ -212,6 +212,7 @@ func (s *Service) Run(ctx context.Context) error {
 		// no process saw.
 		s.flush(ctx)
 		s.startupRepairs(ctx, hot, maxTime(started, s.clock.Now()))
+		s.sweep(ctx)
 	})
 	s.loop(ctx, time.Second, s.tick)
 	s.loop(ctx, streamStateEvery, func(context.Context) { s.publishStreams() })

@@ -25,10 +25,10 @@ func TestUnrepairedSkipsOnlyTriedMinutes(t *testing.T) {
 		switch {
 		case m >= 20 && m < 25: // an earlier restart's hole: no rows
 			continue
-		case m == 40: // tried already, REST could not serve it
+		case m == 40: // the venue cannot serve it
+			row["complete"], row["gap_reason"] = false, BybitLimit
+		case m == 41: // a repair failed (disk full): tried again
 			row["complete"], row["gap_reason"] = false, "REST_REPAIR_INCOMPLETE"
-		case m == 41: // incomplete, never tried
-			row["complete"] = false
 		case m >= 57: // this restart's downtime
 			continue
 		}
