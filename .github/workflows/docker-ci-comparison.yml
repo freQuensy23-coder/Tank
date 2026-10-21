@@ -14,11 +14,21 @@ permissions:
 jobs:
   images:
     name: Ordinary build and smoke (${{ matrix.kind }})
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        kind: [tank, openma, capture, sandbox]
+        include:
+          - kind: tank
+            runner: ubuntu-24.04
+          - kind: openma
+            runner: ubuntu-24.04
+          - kind: capture
+            runner: ubuntu-24.04
+          - kind: sandbox
+            runner: ubuntu-24.04
+          - kind: openma-arm64
+            runner: ubuntu-24.04-arm
     env:
       PRODUCT_REF: ${{ inputs.product_ref }}
       KIND: ${{ matrix.kind }}
@@ -66,6 +76,7 @@ jobs:
           root=Path(os.environ["GITHUB_WORKSPACE"])
           expected=os.environ["PRODUCT_REF"]
           kind=os.environ["KIND"]
+          expected_arch="arm64" if kind=="openma-arm64" else "amd64"
           out=Path(os.environ["QA_EVIDENCE_DIR"])
           out.mkdir(parents=True,exist_ok=True)
           def command(args):
@@ -93,8 +104,9 @@ jobs:
            build=["docker","build","--progress","plain","-f","deploy/sandbox.Dockerfile","-t","tank-analysis:python3.12-local","."]
            image="tank-analysis:python3.12-local"
           else:
-           build=compose+["build",kind]
-           image={"tank":"tank-v0:persistent-no-x","openma":"tank-openma:local"}[kind]
+           build_kind="openma" if kind=="openma-arm64" else kind
+           build=compose+["build",build_kind]
+           image={"tank":"tank-v0:persistent-no-x","openma":"tank-openma:local"}[build_kind]
           (out/"compose-resolved.json").write_text(command(compose+["--profile","capture","config","--format","json"])+"\n")
           initial_cache=command(["docker","buildx","du"])
           def inspect():
@@ -114,6 +126,7 @@ jobs:
            text=path.read_text()
            return {"seconds":elapsed,"image":inspect(),"cached_vertices":len(re.findall(r"(?m)^#\d+ CACHED$",text))}
           result={"kind":kind,"product_ref":expected,"workflow_ref":os.environ["GITHUB_SHA"],"command":build,"cold_definition":"First build on a fresh hosted runner; no restored build cache.","initial_buildx_du":initial_cache,"cold":build_once("cold")}
+          assert result["cold"]["image"]["architecture"]==expected_arch
           result["warm"]=build_once("warm")
           assert result["cold"]["image"]["id"]==result["warm"]["image"]["id"]
           assert result["warm"]["cached_vertices"]>0
@@ -130,21 +143,23 @@ jobs:
           elif kind=="capture":smoke.capture(image,expected)
           elif kind=="sandbox":smoke.sandbox(image)
           else:
-           native_source=json.loads((root/"vendor/openma/tank-native/SOURCE.json").read_text())
+           inventory="SOURCE.arm64.json" if expected_arch=="arm64" else "SOURCE.json"
+           native_source=json.loads((root/"vendor/openma/tank-native"/inventory).read_text())
            archive=root/"vendor/openma/tank-native"/native_source["archive"]["path"]
            assert hashlib.sha256(archive.read_bytes()).hexdigest()==native_source["archive"]["sha256"]
            runtime=Path(os.environ["RUNNER_TEMP"])/"vendor-native-reference"
            runtime.mkdir()
            with tarfile.open(archive) as tar:tar.extractall(runtime,filter="data")
            native=module("vendor_frozen_openma_smoke",Path(os.environ["RUNNER_TEMP"])/"vendor-qa/openma-build-benchmark.py")
-           result["openma_smoke"]=native.smoke_full_image(image,runtime)
+           result["openma_smoke"]=native.smoke_full_image(image,runtime,expected_arch=expected_arch)
            files=native_source["runtime_files"]
            paths=["/opt/tank-boxlite-runtime/"+r["path"] for r in files]
            hashes=command(["docker","run","--rm","--network","none","--entrypoint","sha256sum",image,*paths])
            actual={line.split("  ",1)[1]:line.split("  ",1)[0] for line in hashes.splitlines()}
            modes=command(["docker","run","--rm","--network","none","--entrypoint","stat",image,"-c","%a %s %n",*paths])
            attributes={line.split(" ",2)[2]:line.split(" ",2)[:2] for line in modes.splitlines()}
-           assert len(actual)==len(files)==18
+           expected_files=10 if expected_arch=="arm64" else 18
+           assert len(actual)==len(files)==expected_files
            for r,path in zip(files,paths):
             assert actual[path]==r["sha256"],r["path"]
             mode,size=attributes[path]
@@ -153,59 +168,70 @@ jobs:
            outputs=command(["docker","run","--rm","--network","none","--entrypoint","sha256sum",image,*licenses])
            observed={line.split("  ",1)[1]:line.split("  ",1)[0] for line in outputs.splitlines()}
            for record,path in zip(native_source["licenses"],licenses):assert observed[path]==record["sha256"]
-           result["native18"]={"status":"PASS","files":18,"bytes_hashes_modes_exact":True,"native_qualification":"NOT_RUN","licenses":len(licenses)}
-           vitest=["apps/main-node/test/tank-execution-status-faults.test.ts","apps/main-node/test/tank-session-executions-route.test.ts","apps/main-node/test/tank-stable-skill-paths.test.ts","apps/main-node/test/tank-existing-inputs-fixture-adapted.test.ts","packages/sandbox-adapter-litebox/test/tank-private-ip-network.test.ts"]
-           def appcheck(label,args,marker=False):
-            output=command(args)
-            print(output,flush=True)
-            (out/(label+".log")).write_text(output+"\n")
-            if marker:assert json.loads(output.splitlines()[-1])["status"]=="PASS",label
-            return {"status":"PASS","output_log":label+".log"}
-           def vitestcheck(label,package,targets):
-            args=["docker","run","--rm","--network","none","--tmpfs","/app/node_modules/.vite:rw,nosuid,nodev,uid=1000,gid=1000,mode=700","--entrypoint","pnpm",image,"--dir",package,"exec","vitest","run","--config","vitest.config.ts","--configLoader","runner","--no-cache","--reporter=json",*targets]
-            record=appcheck(label,args)
-            output=(out/(label+".log")).read_text()
-            reports=[]
-            for match in re.finditer(r"\{",output):
-             try:value=json.JSONDecoder().raw_decode(output,match.start())[0]
-             except ValueError:continue
-             if isinstance(value,dict) and isinstance(value.get("testResults"),list) and "numTotalTests" in value:reports.append(value)
-            assert len(reports)==1,label
-            report=reports[0]
-            assert report["success"] and report["numTotalTests"]>0 and report.get("numFailedTests",0)==0 and report.get("numPendingTests",0)==0,label
-            actual={Path(test["name"]).name for test in report["testResults"]}
-            assert actual=={Path(target).name for target in targets},(label,actual)
-            assert all(test["status"]=="passed" for test in report["testResults"]),label
-            record.update(files=sorted(actual),tests=report["numTotalTests"],skipped=report.get("numPendingTests",0))
-            return record
-           result["vitest"]=[
-            vitestcheck("vitest-main-node","/app/apps/main-node",["test/"+Path(path).name for path in vitest[:4]]),
-            vitestcheck("vitest-litebox","/app/packages/sandbox-adapter-litebox",["test/"+Path(vitest[4]).name])]
-           python=Path(command(["uv","python","find","--managed-python","3.12"])).resolve()
-           prefix=python.parent.parent
-           envs=["-e","TANK_AUDIT_OPENMA_ROOT=/app","-e","TANK_FILE_IO_TEST_PYTHON=/opt/qa-python/bin/"+python.name,"-e","TANK_SDK_CHECK_ROOT=/app"]
-           mounts=["--mount","type=bind,src="+str(root/"tests/openma")+",dst=/tests/openma,readonly","--mount","type=bind,src="+str(prefix)+",dst=/opt/qa-python,readonly"]
-           base=["docker","run","--rm","--network","none",*mounts,*envs,"--workdir","/app/apps/main-node","--entrypoint","env",image,"-u","NODE_PATH","node","/app/apps/main-node/node_modules/tsx/dist/cli.mjs"]
-           nodefiles=sorted(str(p.relative_to(root)) for folder in ("file-io","lifecycle","replay") for p in (root/"tests/openma"/folder).glob("*.test.mjs"))
-           assert len(nodefiles)==7
-           result["node_suites"]=appcheck("node-suites",base+["--test","--test-reporter=tap",*("/"+p for p in nodefiles)])
-           tap=(out/"node-suites.log").read_text()
-           counts={name:int(re.search(r"(?m)^# "+name+r" (\d+)$",tap).group(1)) for name in ("tests","pass","fail","skipped")}
-           assert counts=={"tests":73,"pass":73,"fail":0,"skipped":0},counts
-           result["node_suites"]["counts"]=counts
-           cases=[
-            ("history",["/tests/openma/execution/test-history.mjs","/app"]),
-            ("status",["/tests/openma/execution/test-status.mjs","/app"]),
-            ("output-lifetime",["/tests/openma/execution/output-lifetime-child.mjs","controls"]),
-            ("pinned-runner",["/tests/openma/lifecycle/pinned-runner.integration.mjs"]),
-            ("pinned-provider",["/tests/openma/lifecycle/pinned-provider.integration.mjs"]),
-            ("sdk-context",["/tests/openma/lifecycle/sdk-context-initialization.check.mjs"])]
-           kvm=Path("/dev/kvm").stat()
-           assert stat.S_ISCHR(kvm.st_mode),"/dev/kvm must be a character device"
-           result["sdk_host"]={"device":"/dev/kvm","character_device":True,"mode":oct(stat.S_IMODE(kvm.st_mode)),"gid":kvm.st_gid,"image_default_user":"node","scope":"context initialization; native qualification NOT_RUN"}
-           sdkbase=base.copy()
-           sdkbase[sdkbase.index("--entrypoint"):sdkbase.index("--entrypoint")]=["--device","/dev/kvm:/dev/kvm","--group-add",str(kvm.st_gid)]
-           result["existing_app_integrations"]={label:appcheck(label,(sdkbase if label=="sdk-context" else base)+args,marker=True) for label,args in cases}
+           result["native"+str(expected_files)]={"status":"PASS","files":expected_files,"bytes_hashes_modes_exact":True,"native_qualification":"NOT_RUN","licenses":len(licenses)}
+           admission_code="import assert from 'node:assert/strict';\nimport fs from 'node:fs';\nimport {createRequire} from 'node:module';\nimport {verifyNativeQualification} from '/app/tank-deploy/openma_entrypoint.mjs';\nconst arch=verifyNativeQualification(fs.readFileSync('/opt/tank-boxlite-runtime/boxlite-shim'),fs.readFileSync('/opt/tank-boxlite-runtime/provenance.json'),JSON.parse(fs.readFileSync('/app/tank-native-qualification.json','utf8')));\nassert.equal(arch,process.env.TANK_QA_EXPECT_ARCH);\nconst require=createRequire('/app/packages/node-database-sqlite/package.json');\nconst Database=require('better-sqlite3');\nconst db=new Database(':memory:');\nassert.equal(db.prepare('select 42 as answer').get().answer,42);\ndb.close();\nconst sdk=await import('/app/packages/sandbox-adapter-litebox/node_modules/@boxlite-ai/boxlite/dist/index.js');\nassert.equal(typeof sdk.JsBoxlite.withDefaultConfig,'function');\nconsole.log(JSON.stringify({status:'PASS',architecture:arch,sqliteNative:true,sdkImported:true,nativeVmCreated:false}));\n"
+           admission_output=command(["docker","run","--rm","--network","none","-e","TANK_QA_EXPECT_ARCH="+expected_arch,"--entrypoint","node",image,"--input-type=module","--eval",admission_code])
+           admission=json.loads(admission_output.splitlines()[-1])
+           assert admission["status"]=="PASS" and admission["architecture"]==expected_arch
+           (out/"native-admission.log").write_text(admission_output+chr(10))
+           result["native_admission"]=admission
+           startup=subprocess.run(["docker","run","--rm","--network","none","--entrypoint","node",image,"/app/tank-deploy/openma_entrypoint.mjs"],text=True,capture_output=True)
+           (out/"startup-without-secrets.log").write_text(startup.stdout+startup.stderr)
+           assert startup.returncode!=0 and "/run/secrets/oma_db_password" in startup.stderr,(startup.returncode,startup.stdout,startup.stderr)
+           result["startup_order"]={"native_admission":"PASS","first_missing_secret":"/run/secrets/oma_db_password","real_secrets_mounted":False,"service_or_native_vm_started":False}
+           if kind=="openma":
+            vitest=["apps/main-node/test/tank-execution-status-faults.test.ts","apps/main-node/test/tank-session-executions-route.test.ts","apps/main-node/test/tank-stable-skill-paths.test.ts","apps/main-node/test/tank-existing-inputs-fixture-adapted.test.ts","packages/sandbox-adapter-litebox/test/tank-private-ip-network.test.ts"]
+            def appcheck(label,args,marker=False):
+             output=command(args)
+             print(output,flush=True)
+             (out/(label+".log")).write_text(output+"\n")
+             if marker:assert json.loads(output.splitlines()[-1])["status"]=="PASS",label
+             return {"status":"PASS","output_log":label+".log"}
+            def vitestcheck(label,package,targets):
+             args=["docker","run","--rm","--network","none","--tmpfs","/app/node_modules/.vite:rw,nosuid,nodev,uid=1000,gid=1000,mode=700","--entrypoint","pnpm",image,"--dir",package,"exec","vitest","run","--config","vitest.config.ts","--configLoader","runner","--no-cache","--reporter=json",*targets]
+             record=appcheck(label,args)
+             output=(out/(label+".log")).read_text()
+             reports=[]
+             for match in re.finditer(r"\{",output):
+              try:value=json.JSONDecoder().raw_decode(output,match.start())[0]
+              except ValueError:continue
+              if isinstance(value,dict) and isinstance(value.get("testResults"),list) and "numTotalTests" in value:reports.append(value)
+             assert len(reports)==1,label
+             report=reports[0]
+             assert report["success"] and report["numTotalTests"]>0 and report.get("numFailedTests",0)==0 and report.get("numPendingTests",0)==0,label
+             actual={Path(test["name"]).name for test in report["testResults"]}
+             assert actual=={Path(target).name for target in targets},(label,actual)
+             assert all(test["status"]=="passed" for test in report["testResults"]),label
+             record.update(files=sorted(actual),tests=report["numTotalTests"],skipped=report.get("numPendingTests",0))
+             return record
+            result["vitest"]=[
+             vitestcheck("vitest-main-node","/app/apps/main-node",["test/"+Path(path).name for path in vitest[:4]]),
+             vitestcheck("vitest-litebox","/app/packages/sandbox-adapter-litebox",["test/"+Path(vitest[4]).name])]
+            python=Path(command(["uv","python","find","--managed-python","3.12"])).resolve()
+            prefix=python.parent.parent
+            envs=["-e","TANK_AUDIT_OPENMA_ROOT=/app","-e","TANK_FILE_IO_TEST_PYTHON=/opt/qa-python/bin/"+python.name,"-e","TANK_SDK_CHECK_ROOT=/app"]
+            mounts=["--mount","type=bind,src="+str(root/"tests/openma")+",dst=/tests/openma,readonly","--mount","type=bind,src="+str(prefix)+",dst=/opt/qa-python,readonly"]
+            base=["docker","run","--rm","--network","none",*mounts,*envs,"--workdir","/app/apps/main-node","--entrypoint","env",image,"-u","NODE_PATH","node","/app/apps/main-node/node_modules/tsx/dist/cli.mjs"]
+            nodefiles=sorted(str(p.relative_to(root)) for folder in ("file-io","lifecycle","replay") for p in (root/"tests/openma"/folder).glob("*.test.mjs"))
+            assert len(nodefiles)==7
+            result["node_suites"]=appcheck("node-suites",base+["--test","--test-reporter=tap",*("/"+p for p in nodefiles)])
+            tap=(out/"node-suites.log").read_text()
+            counts={name:int(re.search(r"(?m)^# "+name+r" (\d+)$",tap).group(1)) for name in ("tests","pass","fail","skipped")}
+            assert counts=={"tests":73,"pass":73,"fail":0,"skipped":0},counts
+            result["node_suites"]["counts"]=counts
+            cases=[
+             ("history",["/tests/openma/execution/test-history.mjs","/app"]),
+             ("status",["/tests/openma/execution/test-status.mjs","/app"]),
+             ("output-lifetime",["/tests/openma/execution/output-lifetime-child.mjs","controls"]),
+             ("pinned-runner",["/tests/openma/lifecycle/pinned-runner.integration.mjs"]),
+             ("pinned-provider",["/tests/openma/lifecycle/pinned-provider.integration.mjs"]),
+             ("sdk-context",["/tests/openma/lifecycle/sdk-context-initialization.check.mjs"])]
+            kvm=Path("/dev/kvm").stat()
+            assert stat.S_ISCHR(kvm.st_mode),"/dev/kvm must be a character device"
+            result["sdk_host"]={"device":"/dev/kvm","character_device":True,"mode":oct(stat.S_IMODE(kvm.st_mode)),"gid":kvm.st_gid,"image_default_user":"node","scope":"context initialization; native qualification NOT_RUN"}
+            sdkbase=base.copy()
+            sdkbase[sdkbase.index("--entrypoint"):sdkbase.index("--entrypoint")]=["--device","/dev/kvm:/dev/kvm","--group-add",str(kvm.st_gid)]
+            result["existing_app_integrations"]={label:appcheck(label,(sdkbase if label=="sdk-context" else base)+args,marker=True) for label,args in cases}
           result["smoke_seconds"]=time.monotonic()-started
           result["status"]="PASS"
           (out/"result.json").write_text(json.dumps(result,indent=2)+"\n")
@@ -221,7 +247,7 @@ jobs:
           if-no-files-found: error
 
   behavior:
-    name: Existing Python application tests
+    name: Existing application tests
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -238,10 +264,15 @@ jobs:
           enable-cache: false
       - name: Run the preserved application behavior tests
         run: |
+          node --test deploy/openma-entrypoint.test.cjs > "$RUNNER_TEMP/vendor-entrypoint.log"
+          cat "$RUNNER_TEMP/vendor-entrypoint.log"
           uv sync --frozen --extra dev
           uv run --frozen --extra dev pytest -q tests/test_deploy.py tests/test_openma_browser_worker.py tests/test_skill_alias_claims.py --junitxml="$RUNNER_TEMP/vendor-python.xml"
           python3 - <<'PY'
-          import os,xml.etree.ElementTree as ET
+          import os,re,xml.etree.ElementTree as ET
+          with open(os.environ["RUNNER_TEMP"]+"/vendor-entrypoint.log") as entrypoint_log:tap=entrypoint_log.read()
+          counts={name:int(re.search(r"(?m)^# "+name+r" (\d+)$",tap).group(1)) for name in ("tests","pass","fail","skipped")}
+          assert counts=={"tests":3,"pass":3,"fail":0,"skipped":0},counts
           root=ET.parse(os.environ["RUNNER_TEMP"]+"/vendor-python.xml").getroot()
           suites=[root] if root.tag=="testsuite" else list(root.iter("testsuite"))
           assert sum(int(s.get("tests",0)) for s in suites)==24
@@ -251,5 +282,7 @@ jobs:
         if: always()
         with:
           name: vendor-static-python-behavior
-          path: ${{ runner.temp }}/vendor-python.xml
+          path: |
+            ${{ runner.temp }}/vendor-python.xml
+            ${{ runner.temp }}/vendor-entrypoint.log
           if-no-files-found: error

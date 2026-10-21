@@ -204,7 +204,9 @@ def prepare_variant(destination, reference, upstream, runtime, node_base, varian
     }
 
 
-def smoke_full_image(image, expected_runtime):
+def smoke_full_image(image, expected_runtime, expected_arch="amd64"):
+    if expected_arch not in ("amd64", "arm64"):
+        raise ValueError("Unsupported expected native architecture")
     code = r"""
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
@@ -218,7 +220,7 @@ for (const line of fs.readFileSync(native+"/SHA256SUMS","utf8").trim().split("\n
 assert.equal(Number(process.versions.node.split(".")[0]),24);
 (async()=> {
   const {verifyNativePlatform}=await import("/app/tank-deploy/openma_entrypoint.mjs");
-  assert.equal(verifyNativePlatform(fs.readFileSync(native+"/boxlite-shim"),JSON.parse(fs.readFileSync(native+"/provenance.json","utf8"))),"amd64");
+  assert.equal(verifyNativePlatform(fs.readFileSync(native+"/boxlite-shim"),JSON.parse(fs.readFileSync(native+"/provenance.json","utf8"))),process.env.TANK_QA_EXPECT_ARCH);
   console.log("tank-openma-native-files-ready");
 })().catch(e=>{console.error(e);process.exitCode=1});
 """
@@ -229,6 +231,8 @@ assert.equal(Number(process.versions.node.split(".")[0]),24);
             "--rm",
             "--network",
             "none",
+            "-e",
+            "TANK_QA_EXPECT_ARCH="+expected_arch,
             "--workdir",
             "/app",
             "--entrypoint",
@@ -299,7 +303,7 @@ assert.equal(Number(process.versions.node.split(".")[0]),24);
         raise RuntimeError("Full image offline TypeScript execution failed")
     return {
         "native_checksums": "PASS",
-        "native_platform": "amd64",
+        "native_platform": expected_arch,
         "node_major": 24,
         "pnpm": version,
         "tsx": 42,
