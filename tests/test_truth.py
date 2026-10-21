@@ -446,6 +446,53 @@ def test_nonminute_event_anchor_uses_true_asof_bounds_and_reports_precision():
     assert result["anchor"]["ts"] == iso(start)
 
 
+def test_btc_benchmark_is_judged_by_its_raw_return_against_its_own_raw_history():
+    """P0 (MTA-01M5E69YTSW72QGR0HAVWZNS9J): for BTC itself beta = 1 makes r_btc_adj identically 0,
+    so its history range was [0, 0] and 1e-16 noise read as beyond normal and HEAVY."""
+    from runpy import run_path
+
+    from tank.analysis.truth import decisive_facts, relative_truth
+
+    snapshot = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
+        "synthetic_start_snapshot"
+    ]()
+    end = parse_time(snapshot["cutoff"])
+    start = end - timedelta(minutes=16)
+    plain = relative_truth(snapshot, start, end)["windows"]["EVENT"]
+    assert plain["relative_measure"] == "R_BTC_ADJ" and plain["r_btc_adj_reason"] is None
+    snapshot["tokens"] = [*snapshot.get("tokens", []), {"token_id": snapshot["token_id"], "symbol": "BTC"}]
+    result = relative_truth(snapshot, start, end)
+    for name, window in result["windows"].items():
+        assert window["r_btc_adj"] is None, name
+        assert window["r_btc_adj_reason"] == "NOT_APPLICABLE_BENCHMARK"
+        assert window["relative_measure"] == "R_RAW"
+        assert window["relative_return"] == window["r_raw"]
+    window = result["windows"]["W15M"]
+    assert window["r_raw"] is not None
+    lo, hi = window["normal_range"]
+    assert hi - lo > 1e-9
+    assert window["beyond_normal"] == (window["r_raw"] < lo or window["r_raw"] > hi)
+    facts = decisive_facts(
+        {"coverage": {"n_complete": 0}, "composite_max": {"cvd": None, "venues": []}, "venues": [],
+         "classification": "INSUFFICIENT_DATA"},
+        {"synchronized": None, "per_venue": []}, {}, result, {}, "UNKNOWN", "W15M", start, end,
+    )
+    fact = next(f for f in facts if f["metric"] == "relative.r_raw")
+    assert fact["text"].startswith("W15M price move (benchmark, raw)")
+
+
+def test_degenerate_float_history_range_is_unavailable():
+    from tank.analysis.truth import float_normal, range_reason, repricing
+
+    noise = [1.4e-16, -2.2e-17, 0.0, 0.0, 3.1e-17] * 40
+    assert float_normal(noise) is None
+    assert range_reason(noise) == "DEGENERATE_HISTORY"
+    assert range_reason([]) == "INCOMPLETE"
+    assert range_reason([-0.01, 0.0, 0.02]) is None
+    # A +0.03% move against identical history is never HEAVY or SUBSTANTIAL.
+    assert repricing(0.000272, noise, noise) is None
+
+
 @pytest.mark.parametrize("confirmation", ["VALID", "FLAG_ONLY", "FUTURE", "NO_REST_GAP"])
 def test_fragmentation_needs_actual_cutoff_safe_independent_rest_gap(confirmation):
     from tank.analysis.truth import enrich_evidence
