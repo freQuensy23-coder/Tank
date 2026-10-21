@@ -99,6 +99,8 @@ log = logging.getLogger(__name__)
 # Raw journals are appended and fsynced at most this often (seconds); typed rows of
 # the same prints follow in the same flush.
 RAW_FLUSH_S = 5
+LIVE_FIRST = ("mkt.flow_bars_1m", "mkt.tickers_24h")  # flushed ahead of other typed rows
+FLUSH_ROWS = 500  # typed rows per write; a live flush can run between two of them
 # Streamed mark/index/funding/OI context is stored at the hot tier's summary cadence
 # (03 §5.1: book summaries every 10 s); the newest value is kept in memory between.
 CONTEXT_S = 10
@@ -134,6 +136,9 @@ LOOP_STALL_S = 10
 # A reused dependency head is recomputed at least this often (retention deletes and other
 # processes are not in the write clock).
 HEAD_REUSE_S = 300
+SERIES_MARGIN = timedelta(hours=2)  # history a shared kline cursor holds before its window
+SERIES_TRIM = timedelta(days=1)  # a cursor sheds history once its windows moved this far past it
+SERIES_APPLY_ROWS = 20000  # kline rows a rebuild applies per worker-thread call
 # Rows read only from public exchange endpoints never contain a Tank secret.
 PUBLIC_MARKET = frozenset(
     {
@@ -525,24 +530,30 @@ class MarketService:
         async with self._market_flush_lock:
             if raw or (raw is None and time.monotonic() - self._raw_written >= RAW_FLUSH_S):
                 await self._write_raw()
+            # Live bars and tickers go first, and ones queued while a large batch (a
+            # startup kline backfill) is being written jump ahead of its next chunk.
             pending, self._pending_market = self._pending_market, {}
-            for collection, values in pending.items():
-                try:
-                    await self.repo.put_market_batch(collection, list(values.values()), keys=list(values))
-                except Exception:
-                    retry = self._pending_market.setdefault(collection, {})
+            queue = sorted(pending.items(), key=lambda item: item[0] not in LIVE_FIRST)
+            try:
+                while queue:
+                    collection, values = queue[0]
+                    keys = list(values)[:FLUSH_ROWS]
+                    await self.repo.put_market_batch(collection, [values[key] for key in keys], keys=keys)
+                    for key in keys:
+                        del values[key]
+                    if not values:
+                        queue.pop(0)
+                    if queue and queue[0][0] not in LIVE_FIRST:
+                        live = [c for c in LIVE_FIRST if c in self._pending_market]
+                        queue[:0] = [(c, self._pending_market.pop(c)) for c in live]
+                    await asyncio.sleep(0)
+            except Exception:
+                # Rows queued since the take are newer and win over the retried ones.
+                for collection, values in queue:
+                    target = self._pending_market.setdefault(collection, {})
                     for key, row in values.items():
-                        retry.setdefault(key, row)
-                    remaining = False
-                    for pending_collection, pending_values in pending.items():
-                        if pending_collection == collection:
-                            remaining = True
-                            continue
-                        if remaining:
-                            target = self._pending_market.setdefault(pending_collection, {})
-                            for pending_key, pending_row in pending_values.items():
-                                target.setdefault(pending_key, pending_row)
-                    raise
+                        target.setdefault(key, row)
+                raise
 
     async def _write_raw(self):
         trades, books = self.trade_archive.take(), self.book_archive.take()
@@ -1261,8 +1272,9 @@ class MarketService:
             }
         await self.save_ticker_observation(instrument, row)
 
-    async def ingest_trade(self, instrument, raw, *, backfill=False):
-        row = norm.trade(instrument, raw, source="REST" if backfill else "WS")
+    async def ingest_trade(self, instrument, raw, *, backfill=False, row=None):
+        """`row` is `raw` already normalized with the same source (a backfill page)."""
+        row = row if row is not None else norm.trade(instrument, raw, source="REST" if backfill else "WS")
         iid = instrument["instrument_id"]
         await self._ensure_market_restore()
         minute = iso(parse_time(row["ts"]).replace(second=0, microsecond=0))
@@ -1494,13 +1506,13 @@ class MarketService:
         previous = self.flow.references.get((iid, iso(start)), {}).get("last_trade")
         minute = parse_time(start).replace(second=0, microsecond=0)
         hours = {}  # the one archived hour this audit is reading
-        while minute < parse_time(end):
-            audit = {
-                "rows": await self._archived_minute(iid, minute, hours=hours),
-                "coverage": self.trade_archive.coverage_for(iid, minute),
-            }
+        consecutive = norm.venue_key(instrument).split(".")[0] in ("binance", "coinbase", "kraken")
+
+        def audit(minute, rows, coverage, boundaries, previous):
+            """One minute's bar from its archived prints, built in a worker thread: it reads
+            only its own copies, and the loop applies the trade-ID gaps it reports."""
             accumulator = FlowAccumulator()
-            accumulator.boundaries = self.flow.boundaries
+            accumulator.boundaries = boundaries
             accumulator.references = self.flow.references
             accumulator.last[iid] = previous if previous else {}
             if not previous:
@@ -1508,12 +1520,12 @@ class MarketService:
             key = (iid, iso(minute))
             accumulator.empty_minute(instrument, minute)
             gap = None
-            consecutive = norm.venue_key(instrument).split(".")[0] in ("binance", "coinbase", "kraken")
+            gaps = []
             if consecutive:
                 # Check continuity in ID order: the archive's (ts, str id) order misplaces ids
                 # across a digit boundary, or when WS and REST prints differ in ts precision.
-                audit["rows"].sort(key=lambda r: int(r["trade_id"]))
-            for point in audit["rows"]:
+                rows.sort(key=lambda r: int(r["trade_id"]))
+            for point in rows:
                 if (
                     previous
                     and consecutive
@@ -1521,18 +1533,18 @@ class MarketService:
                     and int(point["trade_id"]) != int(previous["trade_id"]) + 1
                 ):
                     gap = "REST_TRADE_ID_GAP"
-                    await self.mark_capture_gap(
-                        instrument, previous["ts"], point["ts"], gap, preserve_verified=False
-                    )
+                    gaps.append((previous["ts"], point["ts"]))
                 accumulator.add(point, continuity=False, emit_record=False)
                 previous = point
             bar = accumulator.bars[key]
-            bar["_coverage"] = audit["coverage"]
+            bar["_coverage"] = coverage
             bar["gap_reason"] = gap
+            span = None
             if gap:
-                lo, hi = max(parse_time(start), minute), min(parse_time(end), minute + timedelta(minutes=1))
-                bar["_coverage"].append({"start": iso(lo), "end": iso(hi), "complete": False, "reason": gap})
-                self.trade_archive.coverage(iid, lo, hi, complete=False, reason=gap)
+                span = max(parse_time(start), minute), min(parse_time(end), minute + timedelta(minutes=1))
+                bar["_coverage"].append(
+                    {"start": iso(span[0]), "end": iso(span[1]), "complete": False, "reason": gap}
+                )
             complete = (
                 accumulator.covered(minute, minute + timedelta(minutes=1), bar["_coverage"]) and gap is None
             )
@@ -1549,6 +1561,23 @@ class MarketService:
                     ),
                     "STREAM_COVERAGE_UNPROVEN",
                 )
+            return key, bar, row, gaps, span, previous
+
+        while minute < parse_time(end):
+            rows = await self._archived_minute(iid, minute, hours=hours)
+            coverage = self.trade_archive.coverage_for(iid, minute)
+            boundaries = {
+                key: set(points)
+                for key in ((iid, iso(minute)),)
+                if (points := self.flow.boundaries.get(key)) is not None
+            }
+            key, bar, row, gaps, span, previous = await asyncio.to_thread(
+                audit, minute, rows, coverage, boundaries, previous
+            )
+            for lo, hi in gaps:
+                await self.mark_capture_gap(instrument, lo, hi, "REST_TRADE_ID_GAP", preserve_verified=False)
+            if span:
+                self.trade_archive.coverage(iid, *span, complete=False, reason="REST_TRADE_ID_GAP")
             await self._put("mkt.flow_bars_1m", iid + ":" + iso(minute), row)
             if minute >= utcnow() - timedelta(minutes=3):
                 self.flow.bars[key] = bar
@@ -1662,11 +1691,13 @@ class MarketService:
                             "response": rows,
                         },
                     )
-                    normalized = []
-                    for raw in rows:
-                        t = norm.trade(instrument, raw)
-                        normalized.append((t, raw))
-                    normalized.sort(key=lambda x: parse_time(x[0]["ts"]))
+                    # A page is normalized once, in a worker thread (r113: twice, on the loop).
+                    normalized = await asyncio.to_thread(
+                        lambda rows=rows: sorted(
+                            ((norm.trade(instrument, raw, source="REST"), raw) for raw in rows),
+                            key=lambda x: parse_time(x[0]["ts"]),
+                        )
+                    )
                     for t, raw in normalized:
                         ts = parse_time(t["ts"])
                         if ts < start and (
@@ -1688,7 +1719,7 @@ class MarketService:
                             and (not key.startswith("binance") or lo <= ts < hi)
                         ):
                             times.append(ts)
-                            await self.ingest_trade(instrument, raw, backfill=True)
+                            await self.ingest_trade(instrument, raw, backfill=True, row=dict(t))
                     # A flush per page waited on the shared fsynced journal write (prod r106:
                     # ~5k prints/min); the prints of PAGES_PER_FLUSH pages are bounded memory.
                     if page % PAGES_PER_FLUSH == PAGES_PER_FLUSH - 1:
@@ -3055,18 +3086,30 @@ class MarketService:
         # cursor and repeatedly reload the same history. Live conditions retain
         # their incremental cursor; fixed snapshots have their own bounded keys.
         key = (iid, kind, rolling) if rolling else (iid, kind, start, cutoff) if fixed_window else (iid, kind)
+        # A shared cursor holds SERIES_MARGIN of history before the window it was read
+        # for, and keeps every bar it has read up to its latest cutoff: a reaction
+        # checkpoint a few minutes behind the live snapshots is served from the same
+        # cursor instead of rebuilding 90 days of minutes (r113 E2E #5).
+        margin = SERIES_MARGIN if rolling or not fixed_window else timedelta(0)
         async with locks.setdefault(key, asyncio.Lock()):
             previous = cache.get(key)
-            reset = previous is None or start < previous["start"] or cutoff < previous["cutoff"]
-            if previous and previous.get("unknown_availability") or not any(heads):
-                reset = True
-            if not reset and heads == previous["heads"]:
-                result = dict(previous["series"], coverage_count=coverage_count)
-                return result
-            times = array("q") if reset else array("q", previous["opens"])
+            reset = (
+                previous is None
+                or start < previous["start"]
+                or previous["unknown_availability"]
+                or not any(heads)
+                or assembled_at is not None
+                and previous["assembled_at"] is not None
+                and parse_time(assembled_at) < parse_time(previous["assembled_at"])
+            )
+            if not reset and (heads, start, cutoff) == previous["served"]["request"]:
+                return dict(previous["series"], coverage_count=coverage_count)
+            state_start = start - margin if reset else previous["start"]
+            state_upper = upper_open if reset else max(upper_open, previous["upper_open"])
+            times = array("q") if reset else previous["opens"][:]
             values = (array("d") if kind == "price" else []) if reset else previous["values"][:]
-            complete = bytearray() if reset else bytearray(previous["complete"])
-            precise = bytearray() if reset else bytearray(previous["precise"])
+            complete = bytearray() if reset else previous["complete"][:]
+            precise = bytearray() if reset else previous["precise"][:]
             epoch = datetime(1970, 1, 1, tzinfo=UTC)
 
             def microseconds(value):
@@ -3075,14 +3118,12 @@ class MarketService:
 
             unknown_availability = False
             changed = []
-            append_only = not reset
-            old_last = previous["opens"][-1] if previous and previous["opens"] else None
 
             def apply(row):
-                nonlocal unknown_availability, append_only
+                nonlocal unknown_availability
                 unknown_availability |= row.get("recorded_at") is None
                 opened = parse_time(row["open_time"])
-                if not start <= opened <= upper_open or row.get("interval_s") != 60:
+                if not state_start <= opened <= state_upper or row.get("interval_s") != 60:
                     return
                 value = row.get("c" if kind == "price" else "volume_native")
                 if kind == "price":
@@ -3103,14 +3144,11 @@ class MarketService:
                     )
                     if same_value and complete[index] == valid and precise[index] == known:
                         return
-                    append_only = False
                     changed.append(
                         (stamp, value if kind == "volume" or isfinite(value) else None, valid, known)
                     )
                     values[index], complete[index], precise[index] = value, valid, known
                 else:
-                    if old_last is not None and stamp <= old_last:
-                        append_only = False
                     changed.append(
                         (stamp, value if kind == "volume" or isfinite(value) else None, valid, known)
                     )
@@ -3125,67 +3163,123 @@ class MarketService:
                     if row.get("recorded_at") is None or parse_time(row["recorded_at"]) <= availability:
                         apply(row)
             elif reset:
-                applied = 0
+                # Decoded pages are applied in a worker thread: the loop only awaits SQL.
+                page = []
                 async for row in self.repo.iter_market_projection(
                     "mkt.klines_1m",
                     fields,
                     "open_time",
-                    start=start,
+                    start=state_start,
                     end=upper_open + timedelta(microseconds=1),
                     instrument_ids=[iid],
                     assembled_at=assembled_at,
                     # One page: every keyset page re-sorts the rest of the range.
                     batch_size=200000,
                 ):
-                    apply(row)
-                    applied += 1
-                    if applied % 2000 == 0:
-                        await asyncio.sleep(0)  # 90 days of minutes: other tasks keep their turns
+                    page.append(row)
+                    if len(page) == SERIES_APPLY_ROWS:
+                        rows, page = page, []
+                        await asyncio.to_thread(lambda rows=rows: [apply(row) for row in rows])
+                await asyncio.to_thread(lambda: [apply(row) for row in page])
             else:
-                if cutoff > previous["cutoff"]:
-                    async for row in self.repo.iter_market_projection(
-                        "mkt.klines_1m",
-                        fields,
-                        "open_time",
-                        start=previous["cutoff"] - timedelta(minutes=1) + timedelta(microseconds=1),
-                        end=upper_open + timedelta(microseconds=1),
-                        instrument_ids=[iid],
-                        assembled_at=assembled_at,
-                        batch_size=200000,
-                    ):
-                        apply(row)
+                if upper_open > previous["upper_open"]:
+                    rows = [
+                        row
+                        async for row in self.repo.iter_market_projection(
+                            "mkt.klines_1m",
+                            fields,
+                            "open_time",
+                            start=previous["upper_open"] + timedelta(microseconds=1),
+                            end=upper_open + timedelta(microseconds=1),
+                            instrument_ids=[iid],
+                            assembled_at=assembled_at,
+                            batch_size=200000,
+                        )
+                    ]
+                    await asyncio.to_thread(lambda: [apply(row) for row in rows])
                 async for row in self.repo.iter_late_arrivals(
                     "mkt.klines_1m",
                     "recorded_at",
                     "open_time",
                     since=previous["assembled_at"],
                     end=assembled_at,
-                    market_end=upper_open,
+                    market_end=state_upper,
                     filters={"instrument_id": iid},
                 ):
                     apply(row)
-            first = bisect_left(times, microseconds(start))
-            if first:
-                append_only = False
-            previous_fingerprint = (
-                previous["series"]["dependency_fingerprint"] if previous and not reset else None
-            )
-            fingerprint = (
-                sha256([previous_fingerprint, changed, first])
-                if reset or changed or first
-                else previous_fingerprint
-            )
-            times, values = times[first:], values[first:]
-            complete, precise = complete[first:], precise[first:]
-            if kind == "price":
-                output_times = array("q", (stamp + 60000000 for i, stamp in enumerate(times) if complete[i]))
-                output_values = array("d", (value for i, value in enumerate(values) if complete[i]))
-            else:
-                output_times, output_values = times, values
+            if margin and start - margin > state_start + SERIES_TRIM:
+                # The window moved a day past the cursor: drop what no later window reads.
+                drop = bisect_left(times, microseconds(start - margin))
+                state_start = start - margin
+                times, values = times[drop:], values[drop:]
+                complete, precise = complete[drop:], precise[drop:]
+
+            def state_digest():
+                if reset:
+                    # The whole content of a freshly read cursor, hashed without
+                    # per-point JSON (canonical JSON of 90 days of minutes took
+                    # ~4% of the loop on r113).
+                    digest = hashlib.sha256(repr((kind, iid, state_start, state_upper)).encode())
+                    digest.update(times.tobytes())
+                    digest.update(values.tobytes() if kind == "price" else json.dumps(values).encode())
+                    digest.update(bytes(complete))
+                    digest.update(bytes(precise))
+                    return digest.hexdigest()
+                if changed:
+                    return sha256([previous["fingerprint"], changed])
+                return previous["fingerprint"]
+
+            state_fingerprint = await asyncio.to_thread(state_digest)
+            served = None if reset else previous["served"]
+
+            def window():
+                """The served window [start, upper_open] of the cursor. It extends the last
+                served one when it has the same start, ends no earlier and nothing that
+                one had served changed since."""
+                low = bisect_left(times, microseconds(start))
+                high = bisect_left(times, microseconds(upper_open) + 1)
+                opens, points = times[low:high], values[low:high]
+                valid, known = complete[low:high], precise[low:high]
+                append_only, changed_from = False, None
+                if served:
+                    served_low, served_high = (
+                        microseconds(served["start"]),
+                        microseconds(served["upper_open"]),
+                    )
+                    after = bisect_left(opens, served_high + 1)
+                    append_only = (
+                        served["start"] == start
+                        and upper_open >= served["upper_open"]
+                        and after < len(opens)
+                        and not any(served_low <= point[0] <= served_high for point in changed)
+                    )
+                    changed_from = opens[after] if append_only else None
+                if not append_only:
+                    changed_from = min(
+                        (point[0] for point in changed if opens and point[0] >= opens[0]), default=None
+                    )
+                if kind == "price":
+                    output_times = array("q", (stamp + 60000000 for i, stamp in enumerate(opens) if valid[i]))
+                    output_values = array("d", (value for i, value in enumerate(points) if valid[i]))
+                    valid = bytearray([1]) * len(output_times)
+                else:
+                    output_times, output_values = opens, points
+                exact = bool(known) and all(known)
+                return output_times, output_values, valid, exact, append_only, changed_from
+
+            (
+                output_times,
+                output_values,
+                output_complete,
+                exact,
+                append_only,
+                changed_from,
+            ) = await asyncio.to_thread(window)
+            fingerprint = sha256([state_fingerprint, iso(start), iso(upper_open)])
             series = {
                 "times_us": output_times,
                 "values": output_values,
-                "complete": bytearray([1]) * len(output_times) if kind == "price" else complete,
+                "complete": output_complete,
                 "instrument_id": iid,
                 "token_id": instrument["token_id"],
                 "venue": instrument["venue"],
@@ -3195,23 +3289,29 @@ class MarketService:
                 "source_market_type": instrument["market_type"],
                 "interval_s": 60,
                 "time_basis": "CLOSE_TIME" if kind == "price" else "OPEN_TIME",
-                "precision": "BUCKET(60s)" if precise and all(precise) else None,
-                "precision_reason": None if precise and all(precise) else "INCOMPLETE",
+                "precision": "BUCKET(60s)" if exact else None,
+                "precision_reason": None if exact else "INCOMPLETE",
                 "coverage_count": coverage_count,
                 "dependency_fingerprint": fingerprint,
-                "previous_dependency_fingerprint": previous_fingerprint,
-                "append_only": bool(append_only and changed),
-                "changed_from_us": min((point[0] for point in changed), default=None),
+                "previous_dependency_fingerprint": served["fingerprint"] if served else None,
+                "append_only": append_only,
+                "changed_from_us": changed_from,
             }
             state = {
-                "start": start,
-                "cutoff": cutoff,
+                "start": state_start,
+                "upper_open": state_upper,
                 "assembled_at": assembled_at,
-                "heads": heads,
                 "opens": times,
                 "values": values,
                 "complete": complete,
                 "precise": precise,
+                "fingerprint": state_fingerprint,
+                "served": {
+                    "request": (heads, start, cutoff),
+                    "start": start,
+                    "upper_open": upper_open,
+                    "fingerprint": fingerprint,
+                },
                 "series": series,
                 "unknown_availability": unknown_availability,
             }
