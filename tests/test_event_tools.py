@@ -4799,7 +4799,7 @@ async def test_token_facts_show_unlocks_before_the_cutoff_and_nothing_after(serv
 
 def test_schema_refusal_names_allowed_cutoff_precisions():
     """A precision outside the declared schema is refused at the schema with the
-    allowed forms, not deep in the tool (live 19:07Z: cutoff_prec "MINUTE")."""
+    allowed forms, not deep in the tool (an undeclared value such as "FORTNIGHT")."""
     import json
     from pathlib import Path
 
@@ -4810,7 +4810,7 @@ def test_schema_refusal_names_allowed_cutoff_precisions():
     validate_schema(dict(args, cutoff_prec="BUCKET(1m)"), schema)
     validate_schema(dict(args, cutoff_prec="EXACT"), schema)
     with pytest.raises(ValueError) as refused:
-        validate_schema(dict(args, cutoff_prec="MINUTE"), schema)
+        validate_schema(dict(args, cutoff_prec="FORTNIGHT"), schema)
     assert "$.cutoff_prec" in str(refused.value) and "EXACT" in str(refused.value) and "BUCKET" in str(refused.value)
 
 
@@ -4963,3 +4963,83 @@ async def test_token_facts_give_the_covered_daily_volume(service):
     reasons = {e["instrument_id"]: e["reason"] for e in volume["excluded"]}
     assert reasons["kraken:spot:XBT/USD"] == "TICKER_STALE" and reasons["bybit:spot:BTCUSDT"] == "NO_STORED_24H_TICKER"
     assert volume["market_cap"] is None and volume["market_cap_reason"].startswith("NOT_STORED")
+
+
+async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_then(service, monkeypatch):
+    """E2E #5 (r113): generated_at was stamped before the 8 s evidence bundle,
+    so delivery looked late. generated_at is now when the immutable version is
+    written (after the bundle is durable) and the DELIVER job runs from then."""
+    import tank.analysis.cards as cards
+    import tank.event_tools as event_tools
+    from tank.util import parse_time
+
+    monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
+    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card")
+    written = {}
+    original = event_tools.write_evidence_bundle
+
+    def timed(bundle, data_dir):
+        result = original(bundle, data_dir)
+        written["at"] = utcnow()
+        return result
+
+    monkeypatch.setattr(event_tools, "write_evidence_bundle", timed)
+    x = await seed(service)
+    eid = (await service.dispatch("record_event", x, {}))["event_id"]
+    event = await service.repo.get("evt.events", eid)
+    event["current_ems_id"] = "ems"
+    await service.repo.put("evt.events", eid, event)
+    await service.repo.put(
+        "evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": eid, "class": "STRUCTURAL_SHOCK"}
+    )
+    result = await service.dispatch(
+        "publish_card",
+        {"event_id": eid, "kind": "PARTIAL", "verdict": "v", "why": []},
+        {"event_id": eid, "call_id": "c", "role": "system"},
+    )
+    alert = await service.repo.get("out.alerts", f"{result['alert_id']}:1")
+    assert parse_time(alert["generated_at"]) >= written["at"]
+    job = (await service.repo.list("ops.jobs", filters={"type": "DELIVER"}))[0]
+    assert parse_time(job["run_after"]) == parse_time(alert["generated_at"])
+    assert alert["delivery_not_before"] == alert["generated_at"]
+
+
+async def test_named_cutoff_precisions_are_accepted_as_buckets(service):
+    """Live (22:51, 23:45, 05:05): cutoff_prec "MINUTE" was refused each time;
+    named units now validate and normalize to their bucket, recorded in the result."""
+    import asyncio
+    import json
+    from pathlib import Path
+
+    schema = json.loads(
+        (Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/get_market_truth.schema.json").read_text()
+    )
+    for name in ("SECOND", "MINUTE", "HOUR"):
+        validate_schema({"event_id": "e", "tokens": ["T"], "cutoff": "2026-10-21T05:05:00Z", "cutoff_prec": name}, schema)
+    eid = "named-prec"
+    await service.repo.put("evt.events", eid, {"event_id": eid, "current_ems_id": "ems", "tokens_mentioned": ["T"]})
+    await service.repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": eid, "class": "MAJOR"})
+    await service.repo.put("evt.beneficiary_maps", f"{eid}:1", {"event_id": eid, "map_version": 1, "analysis_set": ["T"]})
+    task = asyncio.create_task(
+        service.dispatch(
+            "get_market_truth",
+            {"event_id": eid, "tokens": ["T"], "cutoff": "2026-10-21T05:05:00Z", "cutoff_prec": "MINUTE"},
+            {},
+        )
+    )
+    try:
+        while not task.done():
+            job = await service.repo.claim_job()
+            if job:
+                if job["type"] == "RUN_MARKET_TRUTH":
+                    assert job["payload"]["cutoff_prec"] == "BUCKET(1m)"
+                    stored = await service.repo.get("ops.jobs", job["job_id"])
+                    stored["result"] = {"token_id": "T", "mta_id": "m"}
+                    await service.repo.put("ops.jobs", job["job_id"], stored)
+                await service.repo.finish_job(job["job_id"])
+            await asyncio.sleep(0.01)
+        result = await task
+    finally:
+        if not task.done():
+            task.cancel()
+    assert result["cutoff_prec_normalized"] == {"from": "MINUTE", "to": "BUCKET(1m)"}

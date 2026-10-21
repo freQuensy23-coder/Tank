@@ -28,6 +28,50 @@ def count_read(state, name, *, ok, n=1):
     counters["ok" if ok else "failed"] += n
 
 
+def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
+    """S14 diff rows against the previous snapshot and the snapshot digest (CPU-bound, runs in a thread)."""
+    if previous is not None and str(feed.get("venue", "")).lower() == "coinbase":
+        # Pre-v2 snapshots did not observe these flags. Establish their
+        # baseline now; missing historical fields are not false statuses.
+        previous = deepcopy(previous)
+        for symbol, old in previous.items():
+            if symbol in snapshot and "status_flags" not in old:
+                old["status_flags"] = snapshot[symbol].get("status_flags", {})
+    rows = []
+    if previous is not None:
+        for symbol in sorted(set(snapshot) | set(previous)):
+            if snapshot.get(symbol) != previous.get(symbol):
+                current, old = snapshot.get(symbol), previous.get(symbol)
+                rows.append(
+                    {
+                        "external_id": f"{feed.get('venue')}|{feed.get('market_type')}|{symbol}|{sha256(current)}",
+                        "title": f"{symbol} instrument change",
+                        "text": json.dumps({"before": old, "after": current}, sort_keys=True),
+                        "url": feed["url"],
+                        "published_at": None,
+                        # A removal is proven by the absence from every page.
+                        **(
+                            {
+                                "observed_at": pages[found_on[symbol]][1],
+                                "_payload": pages[found_on[symbol]][0],
+                            }
+                            if symbol in found_on
+                            else {
+                                "observed_at": completed_at,
+                                "_payload": b"\n".join(p for p, _ in pages),
+                            }
+                        ),
+                        "change": "REMOVED"
+                        if current is None
+                        else "ADDED"
+                        if old is None
+                        else "STATE_UPDATE",
+                    }
+                )
+    digest = sha256(snapshot)
+    return rows, digest
+
+
 class SourcePoller:
     def __init__(self, service):
         self.service = service
@@ -240,52 +284,23 @@ class SourcePoller:
                     found_on.update(dict.fromkeys(page_snapshot, len(pages)))
                     pages.append((page, page_state.get("fetched_at") or self.stamp()))
                     cursor = json.loads(page).get("result", {}).get("nextPageCursor")
-            # Diff against the newest snapshot, including one still pending.
-            previous = state.get("instruments")
-            for batch in state.get("pending_batches", []):
-                if "instruments" in batch["coverage"]:
-                    previous = batch["coverage"]["instruments"]
-            if previous is not None and str(feed.get("venue", "")).lower() == "coinbase":
-                # Pre-v2 snapshots did not observe these flags. Establish their
-                # baseline now; missing historical fields are not false statuses.
-                previous = deepcopy(previous)
-                for symbol, old in previous.items():
-                    if symbol in snapshot and "status_flags" not in old:
-                        old["status_flags"] = snapshot[symbol].get("status_flags", {})
+            # Diff against the newest snapshot. It lives in its own document, written
+            # only when it changes, so the feed checkpoint stays small.
+            snapshot_key = key + ":instruments"
+            stored = await self.state(snapshot_key)
+            previous = stored.get("instruments")
+            if previous is None:
+                # Checkpoints written before the split kept the snapshot inline.
+                previous = state.get("instruments")
+                for batch in state.get("pending_batches", []):
+                    if "instruments" in batch["coverage"]:
+                        previous = batch["coverage"]["instruments"]
             state["instrument_snapshot_schema_version"] = 2
-            completed_at = self.stamp()
-            rows = []
-            if previous is not None:
-                for symbol in sorted(set(snapshot) | set(previous)):
-                    if snapshot.get(symbol) != previous.get(symbol):
-                        current, old = snapshot.get(symbol), previous.get(symbol)
-                        rows.append(
-                            {
-                                "external_id": f"{feed.get('venue')}|{feed.get('market_type')}|{symbol}|{sha256(current)}",
-                                "title": f"{symbol} instrument change",
-                                "text": json.dumps({"before": old, "after": current}, sort_keys=True),
-                                "url": feed["url"],
-                                "published_at": None,
-                                # A removal is proven by the absence from every page.
-                                **(
-                                    {
-                                        "observed_at": pages[found_on[symbol]][1],
-                                        "_payload": pages[found_on[symbol]][0],
-                                    }
-                                    if symbol in found_on
-                                    else {
-                                        "observed_at": completed_at,
-                                        "_payload": b"\n".join(p for p, _ in pages),
-                                    }
-                                ),
-                                "change": "REMOVED"
-                                if current is None
-                                else "ADDED"
-                                if old is None
-                                else "STATE_UPDATE",
-                            }
-                        )
-            state["instruments"] = snapshot
+            rows, digest = await asyncio.to_thread(
+                instrument_changes, snapshot, previous, feed, pages, found_on, self.stamp()
+            )
+            if stored.get("sha256") != digest:
+                await self.save(snapshot_key, {"sha256": digest, "instruments": snapshot})
         elif kind in {"rss", "atom", "feed"}:
             rows = await asyncio.to_thread(parsers.feeds, payload, sid, feed)
             state["entry_errors"] = [
@@ -505,7 +520,6 @@ class SourcePoller:
                         coverage = {
                             field: acquired[field]
                             for field in (
-                                "instruments",
                                 "instrument_snapshot_schema_version",
                                 "pending_proposals",
                                 "discovery_checkpoint",
@@ -555,6 +569,7 @@ class SourcePoller:
                         if field in acquired:
                             current[field] = acquired[field]
                     current.pop("acquisition_error", None)
+                    current.pop("instruments", None)
                     if not any(batch["rows"] for batch in current.get("pending_batches", [])):
                         current["article_errors"] = {}
                     count_read(current, "reads", ok=True)
@@ -796,6 +811,7 @@ class SourcePoller:
                 while current.get("pending_batches") and not current["pending_batches"][0]["rows"]:
                     batch = current["pending_batches"].pop(0)
                     current.update(batch["coverage"])
+                    current.pop("instruments", None)
                 current["article_errors"] = article_errors
                 if duplicates:
                     current["duplicate_ids"] = (current.get("duplicate_ids", []) + duplicates)[-1000:]

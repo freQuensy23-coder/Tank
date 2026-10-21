@@ -15,7 +15,11 @@ from tank.util import iso, utcnow
 
 
 @pytest.mark.asyncio
-async def test_backfill_changes_append_reaction_revision_once_and_preserve_original(tmp_path):
+async def test_backfill_changes_append_reaction_revision_once_and_preserve_original(tmp_path, monkeypatch):
+    import tank.scheduler as scheduler_module
+
+    # The end-to-end revision path, not the late-revision deferral (tested in test_scheduler).
+    monkeypatch.setattr(scheduler_module, "LATE_REVISION_DEFER_S", 0)
     anchor = utcnow().replace(second=0, microsecond=0) - timedelta(hours=2)
     inst = {
         "instrument_id": "binance:spot:TUSD",

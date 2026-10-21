@@ -2359,3 +2359,72 @@ async def test_rest_backfill_normalizes_and_aggregates_prints_off_the_event_loop
     assert calls == {"trade": {False}, "add": {False}}
     bar = await repo.get("mkt.flow_bars_1m", inst["instrument_id"] + ":" + iso(minute))
     assert bar["n_buy"] + bar["n_sell"] == 3 and bar["capture_method"] == "REST_RANGE_EXHAUSTED"
+
+
+async def test_market_truth_snapshot_reads_one_day_of_books_and_tickers_at_window_bounds(setup, monkeypatch):
+    """E2E #5: the default snapshot read two days of books and tickers. Market Truth needs books
+    over the last 24 h and the hour before the anchor, and tickers only around the window
+    bounds (latest at or before each bound, marks next to the OI points)."""
+    import tank.market.service as service_module
+    from tank.util import iso, parse_time
+
+    repo, settings, inst = setup
+    http = httpx.AsyncClient()
+    service = MarketService(repo, settings, http=http)
+    cutoff = parse_time("2026-06-17T12:00:00Z")
+    anchor = cutoff - timedelta(minutes=30)
+    for i in range(0, 3 * 24 * 60, 10):
+        ts = iso(cutoff - timedelta(minutes=i))
+        await repo.put(
+            "mkt.book_summaries",
+            f"b{i}",
+            {
+                "instrument_id": inst["instrument_id"],
+                "token_id": inst["token_id"],
+                "exchange_ts": ts,
+                "integrity_ok": True,
+            },
+        )
+        await repo.put(
+            "mkt.tickers_24h",
+            f"t{i}",
+            {
+                "instrument_id": inst["instrument_id"],
+                "token_id": inst["token_id"],
+                "ts": ts,
+                "mark_price": "2",
+            },
+        )
+    reads = []
+    original = service_module.market_range_by_instrument
+
+    async def spy(repo_, collection, field, ids, start, end, *args, **kwargs):
+        reads.append((collection, parse_time(start), parse_time(end)))
+        return await original(repo_, collection, field, ids, start, end, *args, **kwargs)
+
+    monkeypatch.setattr(service_module, "market_range_by_instrument", spy)
+    snapshot = await service.snapshot(inst["token_id"], iso(cutoff), anchor={"type": "T1", "ts": iso(anchor)})
+    edges = [cutoff - timedelta(seconds=s) for s in (0, 900, 3600, 14400, 86400)] + [anchor]
+    book_reads = [(a, z) for c, a, z in reads if c == "mkt.book_summaries"]
+    assert book_reads and min(a for a, _ in book_reads) >= cutoff - timedelta(days=1, seconds=11)
+
+    def near_edge(t):
+        return any(
+            edge - timedelta(minutes=15) <= t <= edge + timedelta(minutes=2, seconds=1) for edge in edges
+        )
+
+    # Adjacent bound windows merge into one read; both ends of every read sit at a bound.
+    ticker_reads = [(a, z) for c, a, z in reads if c == "mkt.tickers_24h"]
+    assert ticker_reads and all(near_edge(a) and near_edge(z) for a, z in ticker_reads)
+    assert sum((z - a).total_seconds() for a, z in ticker_reads) < 6 * 17 * 60
+    assert all(
+        cutoff - timedelta(days=1, seconds=11) <= parse_time(b["exchange_ts"]) for b in snapshot["books"]
+    )
+    assert all(
+        any(
+            edge - timedelta(minutes=15) <= parse_time(t["ts"]) <= edge + timedelta(minutes=2)
+            for edge in edges
+        )
+        for t in snapshot["tickers"]
+    )
+    await http.aclose()

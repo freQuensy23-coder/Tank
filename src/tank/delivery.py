@@ -12,6 +12,9 @@ from tank.time_precision import collection_clock, offset_schedule, propagate_tim
 from tank.util import new_id, parse_time, utcnow
 
 
+DELIVERY_LOCK_WAIT_S = 6
+
+
 class DeliveryError(RuntimeError):
     def __init__(self, message, retry_after=1):
         super().__init__(message)
@@ -118,8 +121,11 @@ class DeliveryService:
     async def _enter_delivery_lock(self, stack, key):
         try:
             # Bound acquisition only. A competing event mutation or network send
-            # is scheduling contention, not an attempted Telegram delivery.
-            async with asyncio.timeout(1):
+            # is scheduling contention, not an attempted Telegram delivery. Under a
+            # loaded pool the acquisition itself takes seconds (r113: 1 s deferral
+            # loops added ~12 s), so wait up to DELIVERY_LOCK_WAIT_S inside the
+            # 10 s job (03 §3.8) before deferring.
+            async with asyncio.timeout(DELIVERY_LOCK_WAIT_S):
                 await stack.enter_async_context(self.repo.lock(key))
         except TimeoutError:
             raise DeliveryDeferred(

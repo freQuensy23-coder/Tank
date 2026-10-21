@@ -808,6 +808,75 @@ def test_liquidation_freshness_comes_from_stream_watermark_not_last_event():
     assert check["detail"] == "STREAM_CONNECTION_UNPROVEN"
 
 
+def test_derived_oi_usd_serves_window_endpoints_only_and_usd_range_needs_seven_days_of_usd_pairs():
+    """Lead ruling 2026-10-21 (03 §0, §5.4): a ticker-mark USD value is derived only for the
+    window endpoints; history uses stored oi_usd, so Bybit (no stored USD) has no USD normal
+    range, and stored USD covering < 7 days gives none either. Native is unaffected."""
+    from tank.analysis.truth import derivatives_truth
+
+    end = parse_time("2026-10-16T12:00:00Z")
+    start = end - timedelta(hours=4)
+    times = [end + timedelta(minutes=i) for i in range(-8 * 1440, 1, 5)]
+
+    def venue(name, stored_usd_days):
+        iid = f"{name}:perp_linear:BTCUSDT"
+        oi = [
+            {
+                "instrument_id": iid,
+                "venue": name,
+                "ts": iso(t),
+                "oi_native": 100 + (i % 3) if t < end else 108,
+                "oi_usd": (100 + (i % 3)) * 10 if stored_usd_days and t >= end - timedelta(days=stored_usd_days) else None,
+            }
+            for i, t in enumerate(times)
+        ]
+        tickers = [{"instrument_id": iid, "venue": name, "ts": iso(t), "mark_price": 10} for t in times]
+        instrument = {"instrument_id": iid, "venue": name, "market_type": "perp_linear", "aggregation_class": "native"}
+        return instrument, oi, tickers
+
+    for days in (None, 3):
+        instrument, oi, tickers = venue("bybit", days)
+        stats = derivatives_truth({"instruments": [instrument], "oi": oi, "tickers": tickers}, start, end)["per_venue"][0]
+        assert stats["native_normal_range"] is not None
+        assert stats["usd_normal_range"] is None, days
+        assert stats["oi_usd_chg_pct"] == pytest.approx(0.08 if days is None else stats["oi_usd_chg_pct"])
+        assert stats["decomposition"]["pos_share"] is not None
+    instrument, oi, tickers = venue("bybit", 8)
+    stats = derivatives_truth({"instruments": [instrument], "oi": oi, "tickers": tickers}, start, end)["per_venue"][0]
+    assert stats["usd_normal_range"] is not None
+
+
+def test_synchronized_composite_keeps_native_range_and_endpoint_usd_with_endpoint_only_derivation():
+    from tank.analysis.truth import derivatives_truth
+
+    end = parse_time("2026-10-16T12:00:00Z")
+    start = end - timedelta(hours=4)
+    times = [end + timedelta(minutes=i) for i in range(-8 * 1440, 1, 5)]
+    snapshot = {"instruments": [], "oi": [], "tickers": [], "semantics": []}
+    for name, stored in (("binance", True), ("bybit", False)):
+        iid = f"{name}:perp_linear:BTCUSDT"
+        snapshot["instruments"].append(
+            {"instrument_id": iid, "venue": name, "market_type": "perp_linear", "aggregation_class": "native"}
+        )
+        snapshot["semantics"].append(
+            {"metric_key": f"{name}.oi", "instrument_id": iid, "metric_family": "oi", "sidedness": "SINGLE_SIDED",
+             "aggregation_class": "oi_native_single_sided"}
+        )
+        for i, t in enumerate(times):
+            native = (100 + (i % 3)) if t < end else 108
+            snapshot["oi"].append(
+                {"instrument_id": iid, "venue": name, "metric_key": f"{name}.oi", "ts": iso(t),
+                 "oi_native": native, "oi_usd": native * 10 if stored else None}
+            )
+            snapshot["tickers"].append({"instrument_id": iid, "venue": name, "ts": iso(t), "mark_price": 10})
+    sync = derivatives_truth(snapshot, start, end)["synchronized"]
+    assert sync["venues"] == ["binance", "bybit"]
+    assert sync["native_normal_range"] is not None
+    assert sync["oi_usd_chg_pct"] == pytest.approx(0.08)
+    # The composite USD history sums the venues with stored USD at both bounds (binance here).
+    assert sync["usd_normal_range"] is not None
+
+
 def test_native_only_oi_preserves_native_and_sync_without_inventing_usd():
     from runpy import run_path
 

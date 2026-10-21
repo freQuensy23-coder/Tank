@@ -34,6 +34,10 @@ from .rate_gate import PriorityGate, binance_request_weight, public_request_cons
 # Reaction snapshots read books and tickers only this close to the window bounds.
 REACTION_BOUND_MARGIN = timedelta(minutes=5)
 REACTION_NEWEST_MARGIN = timedelta(minutes=15)
+# Market Truth snapshots read tickers this far before each window bound (the latest ticker at
+# or before it) and after it (marks within the sync tolerance of the OI points at the bound).
+TICKER_ASOF_MARGIN = timedelta(minutes=15)
+TICKER_MARK_MARGIN = timedelta(minutes=2)
 
 
 def _merge_ranges(ranges):
@@ -4363,8 +4367,10 @@ class MarketService:
         window, anchor to cutoff. Flow bars, klines, OI, funding and liquidations are read
         from the earlier of the anchor and cutoff - 24 h (the reference venue's trailing-24 h
         coverage, 03 §5.7); books and tickers only around the window bounds (the newest
-        integrity-checked book and the marks next to the OI bounds). The default reads every
-        window collection from 2 x the event window before the cutoff."""
+        integrity-checked book and the marks next to the OI bounds). The default reads flow
+        bars, klines, OI, funding and liquidations from 2 x the event window before the cutoff
+        (previous-window comparisons), books over the last 24 h and the hour before the anchor,
+        and tickers only around the window bounds (see the scope branches below)."""
         # Strings passed to this API select an analysis boundary. Timestamp
         # callers preserve the uncertainty of an event-derived schedule.
         requested = cutoff if isinstance(cutoff, Timestamp) else chosen_boundary(cutoff, precision="EXACT")
@@ -4394,7 +4400,34 @@ class MarketService:
                 ]
             )
             bounded = {"books": bounds, "tickers": bounds}
-        elif scope is not None:
+        elif scope is None:
+            # Market Truth reads books over the last 24 h (W24H liquidity: hit-side depth,
+            # bursts and replenishment around every flow bar) and the hour before the anchor
+            # (pre-event depth); the latest ticker at or before each window bound and previous-
+            # window bound (spot coverage estimate) and the marks next to the OI points at the
+            # window bounds (03 §5.4 USD endpoints). Nothing else of two days of books/tickers.
+            from tank.analysis.truth import WINDOWS
+
+            lower = cutoff_dt - timedelta(days=1)
+            if anchor_value:
+                lower = min(lower, parse_time(anchor_value) - timedelta(hours=1))
+            book_interval = timedelta(seconds=float(self.thresholds.get("book_interval_s", 10)))
+            edges = {cutoff_dt, *(cutoff_dt - timedelta(seconds=s) for s in WINDOWS.values())}
+            if anchor_value:
+                edges.add(parse_time(anchor_value))
+            bounded = {
+                "books": [(max(recent_start, lower - book_interval), snapshot_end)],
+                "tickers": _merge_ranges(
+                    [
+                        (
+                            max(recent_start, edge - TICKER_ASOF_MARGIN),
+                            min(edge + TICKER_MARK_MARGIN, snapshot_end),
+                        )
+                        for edge in edges
+                    ]
+                ),
+            }
+        else:
             raise ValueError(f"Unknown snapshot scope: {scope}")
         result = {
             "token_id": token_id,

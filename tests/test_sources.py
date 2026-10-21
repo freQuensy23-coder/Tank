@@ -1182,8 +1182,6 @@ def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path):
     assert row["published_at_precision"] == "BUCKET(1d)"
 
 
-
-
 @pytest.mark.asyncio
 async def test_s09_seen_articles_do_not_refetch_detail(tmp_path):
     calls = []
@@ -1679,8 +1677,12 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path):
         svc.ingest = fail
         assert (await svc.poll_once("S14"))["status"] == "DEGRADED"
         checkpoint = repo.rows["ops.source_checkpoints", "S14:0"]
-        assert checkpoint["instruments"]["ABCUSDT"]["status"] == "Trading"
-        assert "etag" not in checkpoint
+        # The change is not lost: it stays queued until it is stored.
+        pending = [row for batch in checkpoint["pending_batches"] for row in batch["rows"]]
+        assert [row["change"] for row in pending] == ["STATE_UPDATE"] and "Settling" in pending[0]["text"]
+        assert "etag" not in checkpoint and "instruments" not in checkpoint
+        snapshot = repo.rows["ops.source_checkpoints", "S14:0:instruments"]
+        assert snapshot["instruments"]["ABCUSDT"]["status"] == "Settling"
         svc.ingest = original
         assert (await svc.poll_once("S14"))["items"] == 1
         assert "if-none-match" not in requests[-1].headers
@@ -2890,9 +2892,47 @@ async def test_poll_clears_stale_article_errors(tmp_path):
             "pending_batches": [],
         },
     )
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda r: httpx.Response(304))
-    ) as http:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(304))) as http:
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         await svc.poller.acquire(source, 0)
         assert (await repo.get("ops.source_checkpoints", "S30:0"))["article_errors"] == {}
+
+
+@pytest.mark.asyncio
+async def test_instrument_snapshot_written_only_when_it_changes(tmp_path):
+    status = ["TRADING"]
+
+    def handle(request):
+        rows = [{"symbol": "ABCUSDT", "baseAsset": "ABC", "quoteAsset": "USDT", "status": status[0]}]
+        return httpx.Response(200, json={"symbols": rows})
+
+    class Counting(Repo):
+        def __init__(self):
+            super().__init__()
+            self.snapshot_writes = 0
+
+        async def put(self, c, k, v):
+            self.snapshot_writes += k.endswith(":instruments")
+            return await super().put(c, k, v)
+
+    repo = Counting()
+    source = {
+        "source_id": "S14",
+        "feeds": [
+            {
+                "kind": "instruments",
+                "url": "https://api.binance.com/api/v3/exchangeInfo",
+                "venue": "binance",
+                "market_type": "SPOT",
+            }
+        ],
+    }
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        svc = SourceService(repo, settings(tmp_path, [source]), http=http)
+        for _ in range(3):
+            await svc.poll_once("S14")
+        assert repo.snapshot_writes == 1
+        assert "instruments" not in repo.rows["ops.source_checkpoints", "S14:0"]
+        status[0] = "BREAK"
+        assert (await svc.poll_once("S14"))["items"] == 1
+        assert repo.snapshot_writes == 2

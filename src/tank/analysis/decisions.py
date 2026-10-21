@@ -311,9 +311,31 @@ class DecisionEngine:
             if m.get("alternatives") or divergence.get("unresolved")
             else _enum(m.get("class_confidence"), "HIGH")
         )
-        confidence = min(
-            [data, certainty, class_conf], key=lambda x: {"LOW": 0, "MEDIUM": 1, "HIGH": 2}.get(x, 0)
+        rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
+        confidence = min([data, certainty, class_conf], key=lambda x: rank.get(x, 0))
+        # §6.5: the input at the minimum, first in order data -> certainty -> class.
+        limiting_input = (
+            None
+            if confidence == "HIGH"
+            else next(
+                name
+                for name, value in (("data", data), ("certainty", certainty), ("class", class_conf))
+                if rank.get(value, 0) == rank.get(confidence, 0)
+            )
         )
+        alternatives = list(divergence.get("unresolved") or []) + list(m.get("alternatives") or [])
+        confidence_limiting = {
+            "input": limiting_input,
+            "text": None
+            if limiting_input in {None, "data"}  # data: the card names Data Confidence's own limit (§5.10)
+            else f"Event certainty {certainty}: not confirmed by a HIGH-certainty source"
+            if limiting_input == "certainty"
+            else "Move class unresolved: no class eligible (UNKNOWN)"
+            if move == "UNKNOWN"
+            else "Move class has unresolved alternatives: " + ", ".join(str(a) for a in alternatives)
+            if alternatives
+            else f"Move class confidence {class_conf}",
+        }
         if data == "LOW":
             scenarios = {
                 "base": "UNKNOWN: market evidence incomplete.",
@@ -413,6 +435,7 @@ class DecisionEngine:
             "action_rule": rule,
             "tactical": tactical,
             "investigate": move in {"UNKNOWN", "REAL_MARKET_FRAGMENTATION"},
+            "confidence_limiting": confidence_limiting,
             "conditions": watches,
             "outlook": {
                 "direction": bias,
@@ -423,6 +446,7 @@ class DecisionEngine:
                 "horizon_reason": reason,
                 "confidence": confidence,
                 "caps": {"data": data, "event": certainty, "market_truth": class_conf},
+                "confidence_limiting": confidence_limiting,
                 "tactical": outlook_tactical,
                 "scenarios": scenarios,
                 "scenario_reasons": scenario_reasons,

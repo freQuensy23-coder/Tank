@@ -863,3 +863,31 @@ async def test_concurrent_claims_respect_the_capture_cap(repo):
         await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
     claimed = [job for job in await asyncio.gather(*(repo.claim_job() for _ in range(8))) if job]
     assert sorted(job["type"] for job in claimed) == ["DELIVER"] * 3 + ["REACTION_CAPTURE"]
+
+
+async def test_due_captures_are_claimed_earliest_expiry_first(repo):
+    if isinstance(repo, PostgresRepository):
+        async with repo.transaction():
+            await repo._conn().execute("DELETE FROM ops.jobs WHERE status IN ('QUEUED','RUNNING')")
+    now = utcnow()
+    # Enqueued first and due earlier, but with hours of slack.
+    slack = await repo.enqueue(
+        "REACTION_CAPTURE",
+        {},
+        new_id("idem"),
+        priority=2,
+        run_after=iso(now - timedelta(minutes=30)),
+        expires_at=iso(now + timedelta(hours=5)),
+    )
+    urgent = await repo.enqueue(
+        "REACTION_CAPTURE",
+        {},
+        new_id("idem"),
+        priority=2,
+        run_after=iso(now - timedelta(minutes=5)),
+        expires_at=iso(now + timedelta(minutes=20)),
+    )
+    first = await repo.claim_job()
+    assert first["job_id"] == urgent["job_id"]
+    await repo.finish_job(first["job_id"])
+    assert (await repo.claim_job())["job_id"] == slack["job_id"]
