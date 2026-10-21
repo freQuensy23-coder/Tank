@@ -5,7 +5,8 @@
   "additionalProperties": false,
   "properties": {
     "token": {
-      "type": "string"
+      "type": "string",
+      "description": "Registry token_id, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
     }
   },
   "required": [
