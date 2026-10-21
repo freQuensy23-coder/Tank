@@ -384,3 +384,45 @@ async def test_restart_resumes_supply_cadences_from_stored_observations(tmp_path
         ("test:T", kind) for kind in ("unlocks", "inventory", "lending", "chain_liquidity", "fundamentals")
     }
     await first.http.aclose()
+
+
+def test_supply_kind_is_refreshed_before_its_age_reaches_the_cadence():
+    """E2E #9: FUNDAMENTALS observed 22126 s old against its 21600 s cadence, because a kind was
+    refreshed only once its age reached the cadence and a pass takes minutes. Refresh at
+    0.9 x cadence, or two poll cycles (longest pass + loop sleep) before it, whichever is earlier."""
+    from tank.market.supply import refresh_due
+
+    cycle = 120 + 60  # a 2-minute pass plus the loop sleep
+    assert refresh_due(19440, 21600, cycle) and not refresh_due(19439, 21600, cycle)  # 0.9 x 6 h
+    assert refresh_due(540, 900, cycle) and not refresh_due(539, 900, cycle)  # 900 - 2 x 180 s
+    assert refresh_due(1440, 1800, cycle) and not refresh_due(1439, 1800, cycle)  # LENDING
+    # A pass longer than half the cadence refreshes every pass, never later than the cadence.
+    assert refresh_due(0, 900, 600)
+
+
+async def test_poll_refreshes_a_kind_before_its_cadence_elapses(tmp_path):
+    from datetime import timedelta
+
+    from tank.util import utcnow
+
+    calls = []
+
+    def respond(request):
+        calls.append(str(request.url))
+        return httpx.Response(200, json=[])
+
+    token = {"token_id": "test:T", "contracts": [], "fundamentals_status": "NOT_SUPPORTED"}
+    token, market = lending_market(tmp_path, respond, tokens=[token])
+    capture = SupplyCapture(market)
+    await capture.poll(set())
+    assert calls == ["https://yields.llama.fi/lendBorrow"]
+    now = utcnow()
+    market._supply_longest_pass_s = 120.0
+    # LENDING (1800 s) at 1700 s: past 0.9 x cadence, refreshed now rather than after 1800 s.
+    stale = market._supply_refresh["test:T", "lending"] = now - timedelta(seconds=1700)
+    # FUNDAMENTALS (21600 s) at 19000 s: not yet due (0.9 x 6 h = 19440 s).
+    before = market._supply_refresh["test:T", "fundamentals"] = now - timedelta(seconds=19000)
+    await capture.poll(set())
+    assert market._supply_refresh["test:T", "lending"] > stale  # refreshed this pass
+    assert market._supply_refresh["test:T", "fundamentals"] == before
+    await market.http.aclose()
