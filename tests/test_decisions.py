@@ -723,3 +723,37 @@ def test_tactical_only_for_positive_action_on_weak_capture(move, expect):
     assert result["thesis_grade"] == "C"
     assert result["tactical"] is (result["action"] in POSITIVE_ACTIONS)
     assert result["tactical"] is expect, result["action"]
+
+
+@pytest.mark.parametrize("data", ["MEDIUM", "HIGH"])
+def test_unknown_move_with_usable_data_names_the_observed_flow(data):
+    """03 §5.8/§6.4: an UNKNOWN move with usable data is not "evidence
+    incomplete"; the scenarios name the observed flow and the upgrade path
+    (live: Telegram msg 15, ALR-01M5DVXXBJGHH8EYRJE5W5PDDD)."""
+    truth = {
+        "token_id": "T",
+        "move_class": "UNKNOWN",
+        "primary_window": "W4H",
+        "data_confidence": {"class": data},
+        "spot": {"W4H": {"direction": "NEUTRAL", "classification": "BROAD", "coverage": {"n_complete": 5}}},
+        "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL"},
+    }
+    result = DecisionEngine().evaluate(
+        {"event_id": "e", "statement": "s"},
+        {"class": "MAJOR"},
+        {"token_id": "T", "role": "PRIMARY", "credible": True, "capture_class": "DIRECT"},
+        truth,
+    )
+    scenarios = result["outlook"]["scenarios"]
+    assert scenarios["base"] == "No classifiable move yet: spot flow NEUTRAL and BROAD in the primary window on complete venues."
+    assert "incomplete" not in scenarios["base"] + scenarios["upside"]
+    assert "BUY and BROAD" in scenarios["upside"] and "accumulation" not in scenarios["upside"].lower()
+    text = " ".join(scenarios.values()).lower()
+    assert not any(word in text for word in ("chance", "probability", "odds", "%", "$"))
+    assert not re.search(r"\d", text)
+
+
+def test_low_data_keeps_the_incomplete_evidence_scenarios():
+    truth = {"token_id": "T", "move_class": "UNKNOWN", "data_confidence": {"class": "LOW"}, "relative": {}}
+    result = DecisionEngine().evaluate({"event_id": "e"}, {"class": "MAJOR"}, {"token_id": "T", "role": "PRIMARY"}, truth)
+    assert result["outlook"]["scenarios"]["base"] == "UNKNOWN: market evidence incomplete."
