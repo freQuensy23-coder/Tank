@@ -7,7 +7,7 @@ No host Python, Node or Go installation is needed.
 Use the deployment host architecture throughout. This server is x86-64:
 
 ```sh
-task_arch=amd64                 # arm64 on an ARM64 KVM host
+task_arch=amd64
 ```
 
 These commands use the builder's normal resources, without CPU quotas or memory

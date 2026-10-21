@@ -19,14 +19,10 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,id=tank-uv,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
-# Select the installer from the frozen environment. Its content stays identical
-# when unrelated project metadata/dependencies change; no second version pin.
 FROM scratch AS browser-installer
 COPY --from=dependencies /opt/tank/venv/lib/python3.12/site-packages/playwright /playwright
 
 FROM runtime-base AS runtime
-# The CLI imports only stdlib and its bundled driver. Mount it at its final path
-# so browser GC links remain valid, without baking a second driver/Node copy.
 RUN --mount=type=bind,from=browser-installer,target=/opt/tank/venv/lib/python3.12/site-packages \
     PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/opt/tank/venv/lib/python3.12/site-packages \
     /usr/local/bin/python -m playwright install --with-deps chromium \

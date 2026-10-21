@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Make an auditable pinned OpenMA source overlay; no live service/model calls."""
 
 import argparse
 import hashlib
@@ -16,7 +15,6 @@ BASE = Path(__file__).resolve().parent
 
 
 def prepare_dockerfile(docker):
-    """Render shared build stages; native assembly remains in guarded prepare()."""
 
     def edit_docker(old, new, count=1):
         nonlocal docker
@@ -27,16 +25,10 @@ def prepare_dockerfile(docker):
     edit_docker("FROM node:22-slim", "FROM node:24-bookworm-slim", count=2)
     edit_docker("AS runtime\n", "AS runtime\nENV COREPACK_HOME=/opt/corepack\n")
     edit_docker("&& corepack enable", "&& corepack enable && corepack prepare pnpm@11.0.8 --activate")
-    # Use final prepared manifests, including the retained lifecycle SDK patch.
-    # No workspace package at this source pin has install lifecycle scripts.
     edit_docker(
         "COPY packages packages",
         "COPY --from=package-manifests /manifests/packages packages",
     )
-    # Keep the store on the build-stage filesystem: pnpm can preserve shared
-    # package hardlinks. The installed dependency layer is cached independently
-    # of source. Remove the unused store in this same layer; /app hardlinks
-    # retain their data without shipping store files in dependency-stage images.
     edit_docker(
         "RUN corepack enable \\\n  && pnpm install --frozen-lockfile",
         "RUN corepack enable && corepack prepare pnpm@11.0.8 --activate"
@@ -70,8 +62,6 @@ def prepare_dockerfile(docker):
         "FROM node:24-bookworm-slim AS deps",
         metadata_stage + "FROM node:24-bookworm-slim AS dependencies",
     )
-    # Keep dependency files in a stable runtime layer. Source-stage workspace
-    # paths contain the same source and relative node_modules links as before.
     edit_docker(
         "COPY --from=deps /app /app",
         "COPY --from=dependencies /app /app\n"
@@ -130,7 +120,6 @@ def prepare(source, destination, boxlite_runtime=None):
         workspace.write_text(workspace.read_text() + sdk_patch["workspace_append"])
         shutil.copyfile(sdk_base / sdk_patch["lockfile_asset"], destination / "pnpm-lock.yaml")
 
-    # Advertise the exact unique SKILL.md directory retained in its compiled ZIP.
     subprocess.run(
         [sys.executable, str(BASE / "openma_skills/prepare_overlay.py"), str(destination)],
         check=True,
@@ -362,9 +351,7 @@ def prepare(source, destination, boxlite_runtime=None):
     )
     docker += f"\nCOPY --chown=node:node tank-deploy/boxlite-runtime /opt/tank-boxlite-runtime\nRUN chmod 755 {executables}\nENV BOXLITE_RUNTIME_DIR=/opt/tank-boxlite-runtime LD_LIBRARY_PATH=/opt/tank-boxlite-runtime\n"
     docker += "COPY --chown=node:node tank-overlay.json /app/tank-overlay.json\n"
-    # OpenMA starts before Tank; initialize the shared named-volume root as UID1000.
     docker += "USER root\nRUN install -d -o node -g node /app/replay-evidence\nUSER node\n"
-    # The chosen same-version SDK has a checked-in frozen dependency lock.
     (destination / "apps/main-node/Dockerfile.tank").write_text(docker)
     (destination / "tank-overlay.json").write_text(
         json.dumps(
@@ -428,7 +415,6 @@ def prepare(source, destination, boxlite_runtime=None):
 
 
 def prepare_deployment(source, destination, boxlite_runtime):
-    """Canonical operator entrypoint; prepare() above is the guarded base stage."""
     spec = importlib.util.spec_from_file_location(
         "tank_complete_openma_preparation", BASE / "prepare_openma_deployment.py"
     )

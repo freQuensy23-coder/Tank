@@ -1,5 +1,3 @@
-# This recipe needs only its two browser implementation assets. Docker uses this
-# file instead of the root ignore file for -f deploy/sandbox.Dockerfile.
 **
 !deploy/sandbox.Dockerfile
 !deploy/sandbox.Dockerfile.dockerignore
