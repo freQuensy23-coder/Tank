@@ -122,6 +122,11 @@ func (g *Gate) Admit(ctx context.Context, host, path string, params map[string]s
 	if err != nil {
 		return err
 	}
+	return g.AdmitBuckets(ctx, host, buckets, priority)
+}
+
+// AdmitBuckets waits for the host's ban to end and acquires buckets in order.
+func (g *Gate) AdmitBuckets(ctx context.Context, host string, buckets []Bucket, priority int) error {
 	g.mu.Lock()
 	until, banned := g.banned[host]
 	g.mu.Unlock()

@@ -260,3 +260,33 @@ func Constraints(host, path string, params map[string]string, payload map[string
 	}
 	return append(out, public...), nil
 }
+
+// FetchConstraints are the buckets of a raw HTTP_FETCH capture request: the venue
+// budgets of Constraints where the endpoint is configured, otherwise a conservative
+// bucket per host so an unlisted path never runs unbudgeted.
+func FetchConstraints(host, path string, params map[string]string, payload map[string]any) []Bucket {
+	if buckets, err := Constraints(host, path, params, payload); err == nil && len(buckets) > 0 {
+		return buckets
+	}
+	switch host {
+	case "api.binance.com":
+		return []Bucket{{"binance.spot", 3000, 60, 20}}
+	case "fapi.binance.com":
+		return []Bucket{{"binance.usdm", 1200, 60, 20}}
+	case "www.binance.com":
+		return []Bucket{{"binance.www", 60, 60, 1}}
+	case "data.binance.vision":
+		return []Bucket{{"binance.vision", 10, 1, 1}}
+	case "www.okx.com", "openapi.okx.com":
+		return []Bucket{{"okx:" + path + ":IP", 5, 2, 1}}
+	case "api.hyperliquid.xyz":
+		return []Bucket{{"hyperliquid", 600, 60, 20}}
+	case "api.bybit.com":
+		return []Bucket{{"bybit", 300, 5, 1}}
+	case "api.kraken.com":
+		return []Bucket{{"kraken", 1, 1, 1}}
+	case "api.exchange.coinbase.com":
+		return []Bucket{{"coinbase", 5, 1, 1}}
+	}
+	return []Bucket{{"fetch:" + host, 1, 1, 1}}
+}

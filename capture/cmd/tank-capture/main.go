@@ -106,7 +106,7 @@ func run(log *slog.Logger) error {
 	svc := capture.New(capture.Options{
 		Instruments: cfg.Instruments, Order: cfg.Order, Tokens: cfg.Tokens, Thresholds: cfg.Thresholds,
 		ConfigVersion: cfg.ConfigVersion, CodeVersion: cfg.CodeVersion, Writer: config.Writer,
-		CanWrite: lock.Held, Log: log,
+		CanWrite: lock.Held, Fetcher: client, Log: log,
 	}, st, writer, capture.RESTVenues(client), dial(cfg.UserAgent), clock)
 	health.set(svc, lock)
 	runCtx, cancel := context.WithCancel(ctx)

@@ -169,7 +169,7 @@ func (s *Service) tokenInstruments(token string) []*venue.Instrument {
 	return out
 }
 
-// requests runs the window repairs core asks for (mkt.capture_requests).
+// requests runs what core asks for (mkt.capture_requests): REPAIR_WINDOWS and HTTP_FETCH.
 func (s *Service) requests(ctx context.Context) {
 	for ctx.Err() == nil {
 		row, err := s.store.ClaimRequest(ctx, s.opt.Writer, s.clock.Now())
@@ -195,12 +195,6 @@ func (s *Service) runRequest(ctx context.Context, row map[string]any) {
 			s.log.Warn("capture request not finished", "request_id", row["request_id"], "error", err)
 		}
 	}
-	start, err1 := pytime.Parse(row["start"])
-	end, err2 := pytime.Parse(row["end"])
-	if err1 != nil || err2 != nil || text(row["kind"]) != "REPAIR_WINDOWS" {
-		finish("FAILED", "UNSUPPORTED_CAPTURE_REQUEST", nil)
-		return
-	}
 	budget := time.Duration(0)
 	if deadline, err := pytime.Parse(row["deadline"]); err == nil {
 		budget = deadline.Sub(s.clock.Now())
@@ -208,6 +202,22 @@ func (s *Service) runRequest(ctx context.Context, row map[string]any) {
 			finish("EXPIRED", "REQUEST_DEADLINE_PASSED", nil)
 			return
 		}
+	}
+	if seconds, err := pyval.Decimal(row["budget_s"]); err == nil && seconds.Float64() > 0 {
+		limit := time.Duration(seconds.Float64() * float64(time.Second))
+		if budget <= 0 || limit < budget {
+			budget = limit
+		}
+	}
+	if text(row["kind"]) == "HTTP_FETCH" {
+		s.runFetch(ctx, row, budget, finish)
+		return
+	}
+	start, err1 := pytime.Parse(row["start"])
+	end, err2 := pytime.Parse(row["end"])
+	if err1 != nil || err2 != nil || text(row["kind"]) != "REPAIR_WINDOWS" {
+		finish("FAILED", "UNSUPPORTED_CAPTURE_REQUEST", nil)
+		return
 	}
 	results := s.repairWindows(ctx, text(row["token_id"]), start, end, budget)
 	out := map[string]any{}

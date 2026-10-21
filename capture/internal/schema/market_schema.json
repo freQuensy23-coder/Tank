@@ -491,6 +491,10 @@
     "text"
    ],
    [
+    "request",
+    "jsonb"
+   ],
+   [
     "result",
     "jsonb"
    ],

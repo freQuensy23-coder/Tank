@@ -329,3 +329,126 @@ func sortedKeys(m map[string]any) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// FetchLimit caps a raw fetch's response body (HTTP_FETCH capture requests).
+const FetchLimit = 32 << 20
+
+// ErrTooLarge is a raw fetch whose body exceeds FetchLimit.
+var ErrTooLarge = errors.New("RESPONSE_TOO_LARGE")
+
+// Fetched is one raw HTTP response.
+type Fetched struct {
+	Status      int
+	ContentType string
+	Body        []byte
+}
+
+// Fetch is one raw budgeted request for a capture request: the venue budget
+// (budget.FetchConstraints), the host slot and spacing, 429 retried after Retry-After and
+// 418 never, like Do; the body is returned whatever its status, at most FetchLimit bytes.
+func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, headers map[string]string, body any, priority int) (*Fetched, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	host := u.Hostname()
+	var payload map[string]any
+	if m, ok := body.(map[string]any); ok {
+		payload = m
+	}
+	for attempt := 0; attempt < Attempts; attempt++ {
+		if err := c.Gate.AdmitBuckets(ctx, host, budget.FetchConstraints(host, u.Path, params, payload), priority); err != nil {
+			return nil, err
+		}
+		release, err := c.Gate.Enter(ctx, host, priority)
+		if err != nil {
+			return nil, err
+		}
+		got, err := c.raw(ctx, method, u, params, headers, body)
+		if err != nil {
+			release()
+			c.count(host, false)
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			if errors.Is(err, ErrTooLarge) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("%s: %s", host, errorName(err))
+		}
+		retry, err := c.Gate.Observe(ctx, host, got.Status, got.header)
+		release()
+		if err != nil {
+			c.count(host, false)
+			return nil, err
+		}
+		if retry {
+			continue
+		}
+		c.count(host, got.Status < 400)
+		return &got.Fetched, nil
+	}
+	return nil, fmt.Errorf("%s: rate limited after bounded retries", host)
+}
+
+type rawResponse struct {
+	Fetched
+	header http.Header
+}
+
+func (c *Client) raw(ctx context.Context, method string, u *url.URL, params, headers map[string]string, body any) (*rawResponse, error) {
+	target := *u
+	if len(params) > 0 {
+		query := target.Query()
+		for k, v := range params {
+			query.Set(k, v)
+		}
+		target.RawQuery = query.Encode()
+	}
+	var payload io.Reader
+	if body != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return nil, err
+		}
+		payload = bytes.NewReader(data)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, target.String(), payload)
+	if err != nil {
+		return nil, err
+	}
+	if c.UserAgent != "" {
+		req.Header.Set("User-Agent", c.UserAgent)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, FetchLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > FetchLimit {
+		return nil, ErrTooLarge
+	}
+	return &rawResponse{Fetched{resp.StatusCode, resp.Header.Get("Content-Type"), data}, resp.Header}, nil
+}
+
+func (c *Client) count(host string, ok bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	counts := c.reads[host]
+	if ok {
+		counts[0]++
+	} else {
+		counts[1]++
+	}
+	c.reads[host] = counts
+}
