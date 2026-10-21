@@ -1664,6 +1664,7 @@ async def test_repair_windows_fills_incomplete_minutes_from_the_last_proven_prin
     from tank.util import iso
 
     repo, settings, inst = setup
+    settings.replay = False  # repairs fetch live REST
     service = MarketService(repo, settings)
     iid = inst["instrument_id"]
     m0 = utcnow().replace(second=0, microsecond=0) - timedelta(minutes=10)
@@ -1728,6 +1729,7 @@ async def test_unrepairable_minutes_keep_a_reason(setup, venue, budget, reason):
     from tank.util import iso
 
     repo, settings, inst = setup
+    settings.replay = False  # repairs fetch live REST
     service = MarketService(repo, settings)
     iid = inst["instrument_id"]
     service.instruments[iid] = dict(inst, venue=venue)
@@ -1894,4 +1896,90 @@ async def test_instrument_loop_fetches_back_klines_lost_while_down(setup, monkey
     )
     await asyncio.wait_for(service._instrument_loop(inst), 5)
     assert audits == [(timedelta(hours=25), False, "KLINES_GAP")]
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_repair_goes_spot_first_newest_first_in_persisted_hours(setup):
+    from tank.util import iso
+
+    repo, settings, inst = setup
+    settings.replay = False  # repairs fetch live REST
+    service = MarketService(repo, settings)
+    spot = dict(inst, venue="coinbase", instrument_id="coinbase:spot:ABC-USD")
+    perp = dict(inst, venue="binance", market_type="PERP_LINEAR", instrument_id="binance:perp_linear:ABCUSDT")
+    service.instruments = {spot["instrument_id"]: spot, perp["instrument_id"]: perp}
+    hi = utcnow().replace(second=0, microsecond=0) - timedelta(minutes=1)
+    lo = hi - timedelta(hours=26)
+    calls = []
+
+    async def backfill(instrument, anchor, *, checkpoint=None):
+        calls.append(
+            (
+                instrument["venue"],
+                parse_time(checkpoint["last_ts"]),
+                parse_time(anchor),
+                checkpoint.get("end_cursor"),
+            )
+        )
+        # The first minute of the repaired hour now holds its first print.
+        minute = parse_time(checkpoint["last_ts"])
+        await repo.put(
+            "mkt.flow_bars_1m",
+            instrument["instrument_id"] + ":" + iso(minute),
+            {
+                "instrument_id": instrument["instrument_id"],
+                "minute_start": iso(minute),
+                "complete": False,
+                "first_trade": {"trade_id": "T" + iso(minute)},
+            },
+        )
+
+    service.backfill = backfill
+    await service.repair_windows("test:ABC", lo, hi)
+    recent = [c for c in calls if c[1] >= hi - timedelta(hours=24)]
+    assert [c[0] for c in recent[:24]] == ["coinbase"] * 24 and [c[0] for c in recent[24:48]] == [
+        "binance"
+    ] * 24
+    assert all(c[2] - c[1] <= timedelta(hours=1) for c in calls)
+    coinbase = [c for c in calls if c[0] == "coinbase"]
+    assert [c[2] for c in coinbase] == sorted((c[2] for c in coinbase), reverse=True)  # newest first
+    assert coinbase[0][3] is None and coinbase[1][3] == "T" + iso(
+        coinbase[0][1]
+    )  # continue below the newer hour
+    assert calls[-1][1] == lo  # older history last
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_hot_series_poll_context_on_their_own_schedule(setup):
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+    service._stop = asyncio.Event()
+    service._hot_since = {inst["token_id"]: utcnow()}
+    service.thresholds.update(base_kline_interval_s=0.01, hot_oi_funding_interval_s=0.01)
+    polls = []
+
+    async def poll_once(iid, *, derivatives=True, klines=True, ticker=True):
+        polls.append((klines, ticker, derivatives))
+        if len(polls) >= 4:
+            service._stop.set()
+
+    service.poll_once = poll_once
+    await asyncio.wait_for(asyncio.gather(service._instrument_loop(inst), service._hot_context_loop(inst)), 5)
+    assert (True, False, False) in polls  # base: klines only while hot
+    assert (False, True, True) in polls  # hot context: ticker and derivatives
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_replay_never_repairs_from_live_rest(setup):
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+
+    async def backfill(*args, **kwargs):
+        raise AssertionError("replay must not fetch live market data")
+
+    service.backfill = backfill
+    assert await service.repair_windows("test:ABC", utcnow() - timedelta(hours=2), utcnow()) == {}
     await service.close()

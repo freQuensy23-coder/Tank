@@ -42,6 +42,9 @@ BYBIT_RECENT = timedelta(hours=1)
 BYBIT_LIMIT = "SOURCE_LIMIT: Bybit recent-trade lists only the last 1000 prints"
 # Analysis windows around an anchor: PRE24 before it, reaction checkpoints up to 72 h after.
 WINDOW_BEFORE, WINDOW_AFTER = timedelta(hours=24), timedelta(hours=72)
+# Repairs go newest first in backfills of at most REPAIR_CHUNK, each persisted when done;
+# the trailing REFERENCE_SPAN of spot (03 §5.7 reference venue) is repaired before anything else.
+REPAIR_CHUNK, REFERENCE_SPAN = timedelta(hours=1), timedelta(hours=24)
 # Rows read only from public exchange endpoints never contain a Tank secret.
 PUBLIC_MARKET = frozenset(
     {
@@ -116,6 +119,7 @@ class MarketService:
         self._active_backfills = {}
         # Earliest unrepaired checkpoint per instrument while its repair is running.
         self._pending_reconnects = {}
+        self._repair_slots = asyncio.Semaphore(2)
         self.flow = FlowAccumulator()
         self.books = {}
         self.streams = {}
@@ -630,7 +634,7 @@ class MarketService:
         await self._put("reg.instruments", iid, instrument)
         self._metadata.add(iid)
 
-    async def poll_once(self, instrument_id, *, derivatives=True):
+    async def poll_once(self, instrument_id, *, derivatives=True, klines=True, ticker=True):
         await self._ensure_market_restore()
         instrument = self.instruments[instrument_id]
         adapter = self.adapter(instrument)
@@ -647,6 +651,8 @@ class MarketService:
         # push the 60 s HOT derivatives cadence behind klines and tickers (03 §5.1).
         for kind in ("derivatives", "klines", "ticker"):
             if kind == "derivatives" and (not derivatives or norm.venue_key(instrument).endswith(".spot")):
+                continue
+            if (kind == "klines" and not klines) or (kind == "ticker" and not ticker):
                 continue
             try:
                 if kind == "klines":
@@ -1431,6 +1437,8 @@ class MarketService:
                     and checkpoint.get("last_trade_id")
                     and key.startswith("binance")
                     and slice_index == 0
+                    else checkpoint.get("end_cursor")
+                    if checkpoint and not key.startswith("binance")
                     else None
                 )
                 exhausted = False
@@ -1482,6 +1490,7 @@ class MarketService:
                             times.append(ts)
                             await self.ingest_trade(instrument, raw, backfill=True)
                     await self.flush_market()
+                    await asyncio.sleep(0)  # one page at a time: streams and polls keep their turns
                     if key.startswith("binance"):
                         if len(rows) < 1000 or parse_time(normalized[-1][0]["ts"]) >= hi:
                             exhausted = True
@@ -1690,16 +1699,30 @@ class MarketService:
         instruments over REST from the last proven print (03 §5.1 fill order, §5.2 step 2),
         within budget_s. Minutes REST cannot reach stay incomplete with their reason.
         Returns {instrument_id: {"incomplete_before", "incomplete_after"}}."""
+        if getattr(self.settings, "replay", False):
+            return {}  # a replay reads frozen evidence; it never fetches live market data
         deadline = time.monotonic() + budget_s if budget_s else None
         lo = parse_time(start).replace(second=0, microsecond=0)
         hi = min(parse_time(end), utcnow() - timedelta(minutes=1)).replace(second=0, microsecond=0)
         instruments = [
             i for i in self.instruments.values() if i["token_id"] == token_id and i.get("active", True)
         ]
-        results = await asyncio.gather(
-            *(self._repair_instrument(inst, lo, hi, deadline) for inst in instruments)
-        )
-        return {inst["instrument_id"]: result for inst, result in zip(instruments, results, strict=True)}
+        spot = [i for i in instruments if norm.venue_key(i).endswith(".spot")]
+        perp = [i for i in instruments if i not in spot]
+        recent = max(lo, hi - REFERENCE_SPAN)
+        # The trailing 24 h of spot first (the 03 §5.7 reference venue), then derivatives,
+        # then older history.
+        phases = [(spot, recent, hi), (perp, recent, hi), (instruments, lo, recent)]
+        results = {}
+        for group, a, b in phases:
+            done = await asyncio.gather(*(self._repair_instrument(inst, a, b, deadline) for inst in group))
+            for inst, result in zip(group, done, strict=True):
+                total = results.setdefault(
+                    inst["instrument_id"], {"incomplete_before": 0, "incomplete_after": 0}
+                )
+                for name in total:
+                    total[name] += result[name]
+        return results
 
     async def _incomplete_runs(self, iid, lo, hi):
         """Contiguous [start, end) runs of minutes without a complete persisted bar, and the
@@ -1729,8 +1752,14 @@ class MarketService:
         runs, bars = await self._incomplete_runs(iid, lo, hi)
         before = sum((b - a) // timedelta(minutes=1) for a, b in runs)
         venue = instrument["venue"]
-        # Newest first: the event and primary windows matter before older history.
-        for start, end in reversed(runs):
+        # Newest first, at most an hour per backfill: the event and primary windows come
+        # before older history, and every finished hour is persisted (a restart keeps it).
+        chunks = [
+            (max(start, end - REPAIR_CHUNK * (n + 1)), end - REPAIR_CHUNK * n)
+            for start, end in reversed(runs)
+            for n in range(-(-(end - start) // REPAIR_CHUNK))
+        ]
+        for start, end in chunks:
             if venue in NO_TRADE_HISTORY or (venue == "bybit" and end < utcnow() - BYBIT_RECENT):
                 continue
             remaining = None if deadline is None else deadline - time.monotonic()
@@ -1744,8 +1773,18 @@ class MarketService:
                 )
             elif venue == "kraken":
                 checkpoint.update(await self._kraken_predecessor(instrument, start))
+            # Paging venues continue below the first print of the newer minute (just repaired)
+            # instead of walking back from now for every chunk.
+            following = await self.repo.get("mkt.flow_bars_1m", iid + ":" + iso(end)) or {}
+            if venue in ("coinbase", "okx") and (following.get("first_trade") or {}).get("trade_id"):
+                checkpoint["end_cursor"] = following["first_trade"]["trade_id"]
+
+            async def repair(end=end, checkpoint=checkpoint):
+                async with self._repair_slots:  # repair CPU never takes the whole loop
+                    await self.backfill(instrument, iso(end), checkpoint=checkpoint)
+
             try:
-                await asyncio.wait_for(self.backfill(instrument, iso(end), checkpoint=checkpoint), remaining)
+                await asyncio.wait_for(repair(), remaining)
             except TimeoutError:
                 break
         runs, bars = await self._incomplete_runs(iid, lo, hi)
@@ -4354,16 +4393,13 @@ class MarketService:
         iid = instrument["instrument_id"]
         deriv_due = 0
         audit_due = time.monotonic() + 60  # after the first poll of every series
-        previous_hot = False
         while not self._stop.is_set():
             started = time.monotonic()
             hot = instrument["token_id"] in self._hot_since  # hot set, refreshed by _sync_streams
-            if hot and not previous_hot:
-                deriv_due = min(deriv_due, started)
-            previous_hot = hot
-            do_deriv = started >= deriv_due
+            # HOT tickers and derivatives run on their own 60 s schedule (_hot_context_loop).
+            do_deriv = started >= deriv_due and not hot
             try:
-                await self.poll_once(iid, derivatives=do_deriv)
+                await self.poll_once(iid, derivatives=do_deriv, ticker=not hot)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
@@ -4382,12 +4418,7 @@ class MarketService:
                 except Exception as exc:  # noqa: BLE001 - the next audit retries; the gap stays visible
                     await self._gap(instrument, "KLINES_GAP", exc)
             if do_deriv:
-                deriv_due = time.monotonic() + float(
-                    self.thresholds.get(
-                        "hot_oi_funding_interval_s" if hot else "base_oi_funding_interval_s",
-                        60 if hot else 300,
-                    )
-                )
+                deriv_due = time.monotonic() + float(self.thresholds.get("base_oi_funding_interval_s", 300))
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(
                     self._stop.wait(),
@@ -4397,6 +4428,26 @@ class MarketService:
                         - (time.monotonic() - started),
                     ),
                 )
+
+    async def _hot_context_loop(self, instrument):
+        """HOT tickers, OI and funding every 60 s (03 §5.1), on their own schedule: the base
+        cycle over every series of a venue shares one host and must not stretch it."""
+        iid = instrument["instrument_id"]
+        interval = float(self.thresholds.get("hot_oi_funding_interval_s", 60))
+        while not self._stop.is_set():
+            if instrument["token_id"] not in self._hot_since:
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self._stop.wait(), 5)
+                continue
+            started = time.monotonic()
+            try:
+                await self.poll_once(iid, klines=False)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
+                await self._gap(instrument, "POLL", exc)
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), max(1, interval - (time.monotonic() - started)))
 
     async def bootstrap_history(self, *, days=90):
         """Daily: import missing verified archive days, newest first; failures remain visible
@@ -4542,6 +4593,9 @@ class MarketService:
                     hot["event_id"], hot["token_id"], event_anchor(event)["ts"] if event else hot["since"]
                 )
             workers = [asyncio.create_task(self._instrument_loop(inst)) for inst in self.instruments.values()]
+            workers += [
+                asyncio.create_task(self._hot_context_loop(inst)) for inst in self.instruments.values()
+            ]
             workers.append(asyncio.create_task(self._warm_series_counts()))
             workers.append(asyncio.create_task(self._supply_loop()))
             workers.append(
