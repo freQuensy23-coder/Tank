@@ -399,7 +399,22 @@ def _available(row, snapshot):
 
 
 def flow_segments(snapshot):
-    """Bounded aggregate pieces extracted from typed minute bars, never individual prints."""
+    """Bounded aggregate pieces extracted from typed minute bars, never individual prints.
+    Built once per assessment per snapshot (callers only read it)."""
+    inputs = _ASSESSMENT_INPUTS.get()
+    sources = (snapshot.get("flow_segments", []), snapshot.get("flow_bars", []))
+    if inputs is not None:
+        memo = inputs.setdefault("flow_segments", {})
+        hit = memo.get(tuple(map(id, sources)))
+        if hit is not None and hit[0] is sources[0] and hit[1] is sources[1]:
+            return hit[2]
+    pieces = _flow_segments(snapshot)
+    if inputs is not None:
+        memo[tuple(map(id, sources))] = (*sources, pieces)
+    return pieces
+
+
+def _flow_segments(snapshot):
     result = {}
     for row in snapshot.get("flow_segments", []):
         result[(row["instrument_id"], row["start"], row["end"])] = row
@@ -1995,8 +2010,18 @@ def liquidity_truth(snapshot, start, end, spot, relative):
     depth = depth_at_band
 
     pre_anchor = snapshot.get("_event_anchor", start)
+    book_interval = timedelta(seconds=float(parameter("book_interval_s", 10)))
+    refill = timedelta(seconds=float(parameter("refill_window_s", 60)))
+    resilience = timedelta(minutes=float(parameter("resilience_window_min", 15)))
+    venue_flow = defaultdict(list)
+    for f in flow:
+        venue_flow[_venue(f)].append(f)
     for venue, rs in groups.items():
         rs.sort(key=_time)
+        times = [_time(x) for x in rs]
+        flows = venue_flow.get(venue, [])
+        by_time = sorted(flows, key=_time)
+        flow_times = [_time(x) for x in by_time]
         b = rs[-1]
         bid, ask = depth(b, "bid"), depth(b, "ask")
         exact_context(bid, ask)
@@ -2005,7 +2030,7 @@ def liquidity_truth(snapshot, start, end, spot, relative):
             if value is not None:
                 side_now[side].append(value)
         pre = (
-            [x for x in rs if pre_anchor - timedelta(hours=1) <= _time(x) < pre_anchor]
+            rs[bisect_left(times, pre_anchor - timedelta(hours=1)) : bisect_left(times, pre_anchor)]
             if pre_anchor is not None
             else []
         )
@@ -2054,18 +2079,12 @@ def liquidity_truth(snapshot, start, end, spot, relative):
                 },
             )
         )
-        for f in flow:
-            if _venue(f) != venue:
-                continue
+        for f in flows:
             t = _time(f)
-            before = [
-                x
-                for x in rs
-                if t - timedelta(seconds=float(parameter("book_interval_s", 10))) <= _time(x) < t
-            ]
-            if not before:
+            k = bisect_left(times, t) - 1  # the last book before t, within one book interval
+            if k < 0 or times[k] < t - book_interval:
                 continue
-            baseline = before[-1]
+            baseline = rs[k]
             bd = depth(baseline, "bid")
             sell, buy = decimal(f.get("sell_notional")), decimal(f.get("buy_notional"))
             if sell is None or buy is None:
@@ -2075,34 +2094,24 @@ def liquidity_truth(snapshot, start, end, spot, relative):
                 continue
             after = [
                 x
-                for x in rs
-                if t < _time(x) <= min(t + timedelta(seconds=float(parameter("refill_window_s", 60))), end)
-                and depth(x, "bid") is not None
-                and depth(x, "bid") >= bd
+                for x in rs[bisect_right(times, t) : bisect_right(times, min(t + refill, end))]
+                if depth(x, "bid") is not None and depth(x, "bid") >= bd
             ]
             recovered = bool(after)
             future = [
                 decimal(x["low"])
-                for x in flow
-                if _venue(x) == venue
-                and t < _time(x) <= t + timedelta(minutes=float(parameter("resilience_window_min", 15)))
-                and x.get("low") is not None
+                for x in by_time[bisect_right(flow_times, t) : bisect_right(flow_times, t + resilience)]
+                if x.get("low") is not None
             ]
             low = decimal(f.get("low"))
             resilient = (
-                (min(future) >= low)
-                if future
-                and low is not None
-                and t + timedelta(minutes=float(parameter("resilience_window_min", 15))) <= end
-                else None
+                (min(future) >= low) if future and low is not None and t + resilience <= end else None
             )
             burst_results.append(
                 dict(
                     venue=venue,
                     ts=iso(t),
-                    replenished=recovered
-                    if t + timedelta(seconds=float(parameter("refill_window_s", 60))) <= end
-                    else None,
+                    replenished=recovered if t + refill <= end else None,
                     recovery_s=(_time(after[0]) - t).total_seconds() if after else None,
                     resilient=resilient,
                 )
@@ -2429,6 +2438,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         grouped[_venue(book)].append(book)
     for rows in grouped.values():
         rows.sort(key=_time)
+    grouped_times = {venue: [_time(r) for r in rows] for venue, rows in grouped.items()}
     frag_start = end - timedelta(minutes=15)
     cadence = float(parameter("book_interval_s", 10))
     pairs = []
@@ -2452,16 +2462,15 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
     for index, a in enumerate(sorted(grouped)):
         for b in sorted(grouped)[index + 1 :]:
             ar, br = grouped[a], grouped[b]
-            times = sorted({frag_start, end} | {_time(r) for r in ar + br if frag_start <= _time(r) < end})
+            at, bt = grouped_times[a], grouped_times[b]
+            times = sorted({frag_start, end} | {t for t in at + bt if frag_start <= t < end})
             gaps = []
             second = False
             for t in times:
                 states = []
-                for rows in (ar, br):
-                    before = [r for r in rows if _time(r) <= t]
-                    states.append(
-                        before[-1] if before and (t - _time(before[-1])).total_seconds() <= cadence else None
-                    )
+                for rows, stamps in ((ar, at), (br, bt)):
+                    k = bisect_right(stamps, t) - 1  # the book state as of t
+                    states.append(rows[k] if k >= 0 and (t - stamps[k]).total_seconds() <= cadence else None)
                 if None in states:
                     gaps = []
                     break
@@ -3596,6 +3605,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
         oi = [r for r in _instrument_rows(snapshot, "oi", iid) if _time(r) <= end]
         historical = []
         initial = []
+        tolerance = float(parameter("oi_sync_tolerance_s", 60))
         for row in oi:
             mark, index = decimal(row.get("mark_price")), decimal(row.get("index_price"))
             if mark is None or not index:
@@ -3603,7 +3613,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
             basis = (mark / index - 1) * 10000
             if _time(row) < start:
                 historical.append((_time(row), basis))
-            if abs((_time(row) - start).total_seconds()) <= float(parameter("oi_sync_tolerance_s", 60)):
+            if abs((_time(row) - start).total_seconds()) <= tolerance:
                 initial.append((_time(row), basis))
         br = (
             normal([v for _, v in historical])
@@ -3702,45 +3712,38 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
     builds = []
     recovered = False
     testable = False
+    book_interval = timedelta(seconds=float(parameter("book_interval_s", 10)))
+    refill = timedelta(seconds=float(parameter("refill_window_s", 60)))
+    window_flows = defaultdict(list)
+    for flow in snapshot.get("flow_bars", []):
+        if _market(flow) == "SPOT" and start <= _time(flow) < end and flow.get("complete") is True:
+            window_flows[_venue(flow)].append(flow)
+
+    def ask(b):
+        return decimal((b.get("depth", {}).get("ask", {}).get("p1") or {}).get("usd"))
+
     for venue, rows in books.items():
         rows.sort(key=_time)
-
-        def ask(b):
-            return decimal((b.get("depth", {}).get("ask", {}).get("p1") or {}).get("usd"))
-
-        before = [
-            r
-            for r in rows
-            if start - timedelta(seconds=float(parameter("book_interval_s", 10))) <= _time(r) <= start
-        ]
-        after = [r for r in rows if _time(r) <= end]
-        if before and after and ask(before[-1]) is not None and ask(after[-1]) is not None:
-            builds.append(ask(after[-1]) > ask(before[-1]))
-        for flow in snapshot.get("flow_bars", []):
-            if (
-                _venue(flow) != venue
-                or _market(flow) != "SPOT"
-                or not start <= _time(flow) < end
-                or flow.get("complete") is not True
-            ):
-                continue
+        times = [_time(r) for r in rows]
+        i = bisect_right(times, start) - 1  # the last book at or before start, within one interval
+        j = bisect_right(times, end) - 1  # the last book at or before end
+        before = rows[i] if i >= 0 and times[i] >= start - book_interval else None
+        after = rows[j] if j >= 0 else None
+        if before is not None and after is not None and ask(before) is not None and ask(after) is not None:
+            builds.append(ask(after) > ask(before))
+        for flow in window_flows.get(venue, []):
             buy, sell = decimal(flow.get("buy_notional")), decimal(flow.get("sell_notional"))
             t = _time(flow)
-            pre = [
-                r
-                for r in rows
-                if t - timedelta(seconds=float(parameter("book_interval_s", 10))) <= _time(r) < t
-            ]
-            if buy is None or sell is None or not pre or ask(pre[-1]) is None or buy - sell < ask(pre[-1]):
+            k = bisect_left(times, t) - 1  # the last book before t, within one interval
+            pre = rows[k] if k >= 0 and times[k] >= t - book_interval else None
+            if buy is None or sell is None or pre is None or ask(pre) is None or buy - sell < ask(pre):
                 continue
-            if t + timedelta(seconds=float(parameter("refill_window_s", 60))) > end:
+            if t + refill > end:
                 continue
             testable = True
             recovered = recovered or any(
-                t < _time(r) <= t + timedelta(seconds=float(parameter("refill_window_s", 60)))
-                and ask(r) is not None
-                and ask(r) >= ask(pre[-1])
-                for r in rows
+                ask(r) is not None and ask(r) >= ask(pre)
+                for r in rows[bisect_right(times, t) : bisect_right(times, t + refill)]
             )
     if builds:
         features["ask_depth_building"] = any(builds)
