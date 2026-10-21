@@ -184,11 +184,13 @@ async def seed_domain(repo, settings, end):
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_ack(
-    tmp_path, backend, postgres_template
+    tmp_path, backend, postgres_template, monkeypatch
 ):
     async with _refresh_repository(backend, postgres_template) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
+        logical_now = [end]
+        monkeypatch.setattr("tank.event_tools.utcnow", lambda: logical_now[0])
         market = ReleasedMarket(shifted_snapshot(end, full_flow_history=True))
         truth = MarketTruthService(repo, settings, market)
         tools = EventToolService(repo, settings, truth, DecisionEngine())
@@ -253,12 +255,14 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
                 decision = ledger["result"]
                 assert decision["mta_id"] != first["mta_id"]
                 fresh = await repo.get("ana.market_truth", decision["mta_id"])
+                assert fresh["cutoff"] == iso(end)
                 assert fresh["data_confidence"]["class"] == "HIGH"
                 assert decision["action"] == "START"
                 assert (await repo.get("ana.watch_conditions", watch["cond_id"]))["consumed_by"] == decision[
                     "dec_id"
                 ]
                 before = await persisted_ids(repo)
+                logical_now[0] += timedelta(minutes=1)
                 await sessions.process_event("s", event, 7)
                 assert sent[0] == sent[1]
                 assert (await repo.get("ops.tool_calls", "s:decision"))["returned_at"]
