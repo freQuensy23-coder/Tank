@@ -9,10 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/pydec"
+	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
 )
 
 // ErrSemantic matches every normalize.SemanticError (errors.Is).
@@ -87,6 +89,18 @@ func Str(v any) string {
 		return strconv.Itoa(x)
 	case int64:
 		return strconv.FormatInt(x, 10)
+	case float64:
+		// A YAML float (configuration values): repr(float).
+		switch {
+		case math.IsNaN(x):
+			return "nan"
+		case math.IsInf(x, 1):
+			return "inf"
+		case math.IsInf(x, -1):
+			return "-inf"
+		}
+		s, _ := pyjson.FloatRepr(x)
+		return s
 	}
 	return fmt.Sprint(v)
 }
@@ -146,6 +160,12 @@ func Int(v any) (int64, error) {
 	case string:
 		s := strings.TrimSpace(strings.ReplaceAll(x, "_", ""))
 		return strconv.ParseInt(s, 10, 64)
+	case float64:
+		// int(float) truncates toward zero; infinities and NaN cannot convert.
+		if math.IsNaN(x) || math.IsInf(x, 0) || math.Abs(x) >= 9.223372036854775807e18 {
+			return 0, fmt.Errorf("cannot convert float %v to integer", x)
+		}
+		return int64(x), nil
 	}
 	return 0, fmt.Errorf("invalid literal for int(): %v", v)
 }
@@ -204,6 +224,8 @@ func Truthy(v any) bool {
 	case int:
 		return x != 0
 	case int64:
+		return x != 0
+	case float64:
 		return x != 0
 	case pydec.Dec:
 		return !x.IsZero()

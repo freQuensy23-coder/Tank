@@ -160,6 +160,11 @@ class Settings(BaseSettings):
     workers: int = 8
     replay: bool = False
     capture_only: bool = False
+    # tank-capture (capture/README.md) owns streams, pollers, backfills and exchange REST;
+    # this process writes escalations and obligations and reads the typed market tables.
+    external_capture: bool = False
+    # REST budgets in PostgreSQL (ops.request_budget_ledger), shared with tank-capture.
+    request_ledger: bool = False
     backup_dir: Path | None = None
     logs_dir: Path | None = None
     backup_hour_utc: int = 2

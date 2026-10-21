@@ -1042,6 +1042,8 @@ async def fetch_archive(
     a [start, end) window limits the import to the whole minutes it touches."""
     import httpx
 
+    if getattr(settings, "external_capture", False):
+        raise RuntimeError("exchange REST disabled: tank-capture owns market capture")
     if market is not None:
         await market.flush_market()
     own = http is None

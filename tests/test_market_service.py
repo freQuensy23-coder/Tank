@@ -1019,7 +1019,7 @@ async def test_market_and_sources_share_weighted_binance_budget(setup, monkeypat
     repo, settings, _ = setup
     calls = []
 
-    async def acquire(key, capacity, window_s, *, weight=1, priority=0):
+    async def acquire(key, capacity, window_s, *, weight=1, priority=0, host=None):
         calls.append((key, capacity, window_s, weight))
 
     monkeypatch.setattr(shared_request_budgets, "acquire", acquire)
@@ -1185,7 +1185,7 @@ async def test_each_rate_limit_retry_consumes_shared_provider_budget(setup, monk
     charged = []
     requests = []
 
-    async def acquire(key, capacity, window_s, *, weight=1, priority=0):
+    async def acquire(key, capacity, window_s, *, weight=1, priority=0, host=None):
         charged.append(weight)
 
     async def no_sleep(seconds):
@@ -1219,7 +1219,7 @@ async def test_hyperliquid_tokens_share_observed_context_and_next_cycle_refreshe
     charged = []
     clock = [0.0]
 
-    async def acquire(key, capacity, window_s, *, weight=1, priority=0):
+    async def acquire(key, capacity, window_s, *, weight=1, priority=0, host=None):
         charged.append(weight)
 
     def respond(request):
@@ -1344,7 +1344,7 @@ async def test_optional_weight_budget_wait_does_not_block_baseline_http(setup, m
     release = asyncio.Event()
     requests = []
 
-    async def acquire(key, capacity, window_s, *, weight=1, priority=0):
+    async def acquire(key, capacity, window_s, *, weight=1, priority=0, host=None):
         if weight == 50:
             waiting.set()
             await release.wait()

@@ -56,6 +56,51 @@ services:
     logging: *id001
     networks:
     - tank-net
+  tank-capture:
+    image: tank-capture:local
+    build:
+      context: ./capture
+      dockerfile: Dockerfile
+      args:
+        GIT_SHA: ${TANK_CAPTURE_GIT_SHA:-dev}
+    profiles:
+    - capture
+    restart: unless-stopped
+    init: true
+    environment:
+      TANK_CONFIG_DIR: /config
+      TANK_CAPTURE_MODE: ${TANK_CAPTURE_MODE:-shadow}
+      TANK_CAPTURE_HEALTH_ADDR: ':8791'
+      GOMEMLIMIT: 640MiB
+    secrets:
+    - tank_db_password
+    volumes:
+    - type: bind
+      source: ${TANK_CONFIG_PATH:-./config}
+      target: /config
+      read_only: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - /tank-capture
+      - healthcheck
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 768M
+        reservations:
+          memory: 256M
+    logging: *id001
+    networks:
+    - tank-net
   openma:
     image: tank-openma:85d5361f535c7221de975838dc48444e468cc02e-tank5-startup
     build:

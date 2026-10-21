@@ -358,6 +358,8 @@ class Runtime:
         await self.repo.maintain_partitions(include_history=False)
 
     async def run(self, stop=None):
+        from tank.sources.rate_limits import shared_request_budgets
+
         stop = stop or asyncio.Event()
         self.validate()
         await self.bootstrap()
@@ -368,6 +370,8 @@ class Runtime:
         except Exception:
             await self.close()
             raise
+        # REST budgets shared with tank-capture through PostgreSQL (capture/README.md).
+        self.request_ledger = shared_request_budgets.configure(self.repo, self.settings)
         intake_stop, market_stop, sessions_stop, workers_stop = [asyncio.Event() for _ in range(4)]
         producers = [
             asyncio.create_task(self.supervise(name, service, intake_stop), name=name)
@@ -473,6 +477,9 @@ class Runtime:
                     await service.close()
                 except Exception:
                     log.exception("Resource close failed")
+        from tank.sources.rate_limits import shared_request_budgets
+
+        await shared_request_budgets.release(getattr(self, "request_ledger", None))
 
 
 class RuntimeSupervisor:

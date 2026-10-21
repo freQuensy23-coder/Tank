@@ -33,7 +33,7 @@ async def test_ip_header_includes_competing_sandbox_half_but_service_keeps_own_b
     repo, settings, _ = setup
     charges = []
 
-    async def acquire(key, capacity, window, *, weight=1, priority=0):
+    async def acquire(key, capacity, window, *, weight=1, priority=0, host=None):
         charges.append((key, capacity, window, weight))
 
     monkeypatch.setattr(shared_request_budgets, "acquire", acquire)

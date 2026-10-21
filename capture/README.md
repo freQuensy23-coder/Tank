@@ -43,6 +43,21 @@ Core keeps its in-process capture while `TANK_EXTERNAL_CAPTURE` is unset or fals
 default). With `TANK_EXTERNAL_CAPTURE=true` core starts no stream, poller, backfill or
 exchange REST request; it writes escalations and obligations and reads everything else.
 
+## Deployment
+
+Build the image with the commit it is built from, which becomes the `code_version` of
+every row it writes, using the same `--env-file` and overlays as the other services:
+
+```
+TANK_CAPTURE_GIT_SHA=$(git rev-parse HEAD) docker compose --profile capture build tank-capture
+```
+
+The image is a static binary on distroless, running as UID/GID 1000 like Tank: the shared
+`tank_db_password` secret is group 1000 readable (docs/OPERATIONS.md, Linux secret-file
+ownership). It publishes no port; the Compose healthcheck runs `/tank-capture healthcheck`,
+which calls `/healthz` inside the container. The container is limited to 1 CPU and 768 MiB
+(256 MiB reserved) with `GOMEMLIMIT=640MiB`, so the Go collector tightens before the limit.
+
 ## Single writer
 
 The live writer holds the session advisory lock `tank:capture:writer` (the key
