@@ -3063,6 +3063,7 @@ class MarketService:
                     if row.get("recorded_at") is None or parse_time(row["recorded_at"]) <= availability:
                         apply(row)
             elif reset:
+                applied = 0
                 async for row in self.repo.iter_market_projection(
                     "mkt.klines_1m",
                     fields,
@@ -3075,6 +3076,9 @@ class MarketService:
                     batch_size=200000,
                 ):
                     apply(row)
+                    applied += 1
+                    if applied % 2000 == 0:
+                        await asyncio.sleep(0)  # 90 days of minutes: other tasks keep their turns
             else:
                 if cutoff > previous["cutoff"]:
                     async for row in self.repo.iter_market_projection(
