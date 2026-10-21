@@ -131,6 +131,7 @@ class ClickHouse:
             "output_format_json_quote_64bit_integers": "0",
             "output_format_json_quote_decimals": "0",
             "do_not_merge_across_partitions_select_final": "1",
+            "max_query_size": str(256 << 20),
         }
         for name, (value, _) in (params or {}).items():
             request["param_" + name] = value
