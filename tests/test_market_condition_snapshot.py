@@ -501,3 +501,113 @@ async def test_projected_flow_restores_declared_aliases_without_inventing_missin
         )
     assert rows[0]["buy_notional"] == rows[0]["buy_usd"] == "123.4567890123456789"
     assert rows[0]["sell_notional"] is None and rows[0]["high"] == "12"
+
+
+@pytest.mark.asyncio
+async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereading_history(setup):
+    repo, settings, inst = setup
+    start = (utcnow() - timedelta(hours=3)).replace(second=0, microsecond=0)
+
+    def row(number, close, complete=True):
+        return {
+            "instrument_id": inst["instrument_id"],
+            "token_id": inst["token_id"],
+            "open_time": iso(start + timedelta(minutes=number)),
+            "open_time_prec": "BUCKET(60s)",
+            "interval_s": 60,
+            "complete": complete,
+            "c": close,
+            "volume_native": close,
+            "recorded_at": iso(),
+        }
+
+    await repo.put_market_batch(
+        "mkt.klines_1m", [row(n, str(10 + n), n != 7) for n in range(30)], keys=[f"k{n}" for n in range(30)]
+    )
+    reads = []
+    original = repo.iter_market_projection
+
+    async def projection(collection, fields, field, **kwargs):
+        reads.append(kwargs["start"])
+        async for record in original(collection, fields, field, **kwargs):
+            yield record
+
+    async def fresh(window_start, cutoff, kind):
+        async with httpx.AsyncClient() as http:
+            alone = MarketService(repo, settings, http=http)
+            return await alone._condition_kline_series(
+                inst, window_start, cutoff, iso(), kind=kind, coverage_count=1, fixed_window=True
+            )
+
+    def same(a, b):
+        keys = ("times_us", "values", "complete", "precision", "precision_reason")
+        return all(
+            list(a[k]) == list(b[k]) if k in ("times_us", "values", "complete") else a[k] == b[k]
+            for k in keys
+        )
+
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        repo.iter_market_projection = projection
+        for kind in ("price", "volume"):
+            reads.clear()
+            live = await service._condition_kline_series(
+                inst,
+                start + timedelta(minutes=5),
+                start + timedelta(minutes=25),
+                iso(),
+                kind=kind,
+                coverage_count=1,
+                fixed_window=True,
+                rolling="LIVE_SNAPSHOT",
+            )
+            # A reaction checkpoint ten minutes behind, with a window starting earlier.
+            behind = await service._condition_kline_series(
+                inst,
+                start + timedelta(minutes=2),
+                start + timedelta(minutes=15),
+                iso(),
+                kind=kind,
+                coverage_count=1,
+                fixed_window=True,
+                rolling="LIVE_SNAPSHOT",
+            )
+            assert len(reads) == 1 and behind["append_only"] is False
+            assert behind["dependency_fingerprint"] != live["dependency_fingerprint"]
+            repo.iter_market_projection = original
+            assert same(
+                behind, await fresh(start + timedelta(minutes=2), start + timedelta(minutes=15), kind)
+            )
+            repo.iter_market_projection = projection
+            await repo.put_market_batch("mkt.klines_1m", [row(3, "99")], keys=["k3"])
+            corrected = await service._condition_kline_series(
+                inst,
+                start + timedelta(minutes=2),
+                start + timedelta(minutes=15),
+                iso(),
+                kind=kind,
+                coverage_count=1,
+                fixed_window=True,
+                rolling="LIVE_SNAPSHOT",
+            )
+            later = await service._condition_kline_series(
+                inst,
+                start + timedelta(minutes=2),
+                start + timedelta(minutes=28),
+                iso(),
+                kind=kind,
+                coverage_count=1,
+                fixed_window=True,
+                rolling="LIVE_SNAPSHOT",
+            )
+            assert len(reads) == 2 and reads[1] > start + timedelta(minutes=20)  # only the new minutes
+            assert later["append_only"] is True
+            assert later["previous_dependency_fingerprint"] == corrected["dependency_fingerprint"]
+            repo.iter_market_projection = original
+            assert same(live, await fresh(start + timedelta(minutes=5), start + timedelta(minutes=25), kind))
+            assert same(
+                corrected, await fresh(start + timedelta(minutes=2), start + timedelta(minutes=15), kind)
+            )
+            assert same(later, await fresh(start + timedelta(minutes=2), start + timedelta(minutes=28), kind))
+            repo.iter_market_projection = projection
+            await repo.put_market_batch("mkt.klines_1m", [row(3, "13")], keys=["k3"])

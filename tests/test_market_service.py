@@ -10,7 +10,7 @@ from tank.market.service import MarketService
 from tank.market.streams import connection
 from tank.settings import Settings
 from tank.storage import MemoryRepository
-from tank.util import parse_time, utcnow
+from tank.util import iso, parse_time, utcnow
 
 
 def test_market_redaction_covers_nested_keys_and_values_and_current_credentials():
@@ -2284,3 +2284,78 @@ async def test_reaction_snapshot_reads_books_and_tickers_only_at_the_window_boun
     full = await service.snapshot(inst["token_id"], iso(cutoff), anchor={"type": "T1", "ts": iso(anchor)})
     assert len(full["books"]) > 10 * len(snapshot["books"])
     await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_live_bars_flush_ahead_of_a_large_backfill_batch(setup):
+    from tank.market import service as service_module
+
+    repo, settings, _inst = setup
+    http = httpx.AsyncClient()
+    service = MarketService(repo, settings, http=http)
+    service._pending_market = {
+        "mkt.klines_1m": {f"k{i}": {"i": i} for i in range(service_module.FLUSH_ROWS * 2 + 1)},
+        "mkt.tickers_24h": {"t0": {"t": 0}},
+    }
+    writes = []
+
+    async def put(collection, records, keys=None):
+        writes.append((collection, len(records)))
+        if len(writes) == 2:  # a live bar closes while the first kline chunk is written
+            service._pending_market.setdefault("mkt.flow_bars_1m", {})["f0"] = {"f": 0}
+        if collection == "mkt.klines_1m" and len(writes) == 5:
+            raise RuntimeError("pool timeout")
+        return records
+
+    service.repo = type("Repo", (), {"put_market_batch": staticmethod(put)})()
+    with pytest.raises(RuntimeError):
+        await service.flush_market(raw=False)
+    rows = service_module.FLUSH_ROWS
+    assert writes == [
+        ("mkt.tickers_24h", 1),
+        ("mkt.klines_1m", rows),
+        ("mkt.flow_bars_1m", 1),
+        ("mkt.klines_1m", rows),
+        ("mkt.klines_1m", 1),
+    ]
+    assert list(service._pending_market) == ["mkt.klines_1m"]
+    assert list(service._pending_market["mkt.klines_1m"]) == [f"k{rows * 2}"]
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_rest_backfill_normalizes_and_aggregates_prints_off_the_event_loop(setup, monkeypatch):
+    import threading
+
+    from tank.market import flow as flow_module
+    from tank.market import service as service_module
+
+    repo, settings, inst = setup
+    loop_thread = threading.get_ident()
+    calls = {"trade": set(), "add": set()}
+    trade, add = service_module.norm.trade, flow_module.FlowAccumulator.add
+
+    def traced_trade(*args, **kwargs):
+        calls["trade"].add(threading.get_ident() == loop_thread)
+        return trade(*args, **kwargs)
+
+    def traced_add(self, *args, **kwargs):
+        calls["add"].add(threading.get_ident() == loop_thread)
+        return add(self, *args, **kwargs)
+
+    monkeypatch.setattr(service_module.norm, "trade", traced_trade)
+    monkeypatch.setattr(flow_module.FlowAccumulator, "add", traced_add)
+    minute = (utcnow() - timedelta(minutes=30)).replace(second=0, microsecond=0)
+    at = int(minute.timestamp() * 1000)
+    prints = [{"a": 101 + i, "p": "2", "q": "1", "T": at + 1000 * i, "m": i % 2 == 0} for i in range(3)]
+
+    def handler(request):
+        return httpx.Response(200, json=prints if request.url.path.endswith("aggTrades") else [])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = MarketService(repo, settings, http=http)
+        checkpoint = {"last_trade_id": "100", "last_ts": iso(minute - timedelta(seconds=1))}
+        await service.backfill(inst, iso(minute + timedelta(minutes=1)), checkpoint=checkpoint)
+    assert calls == {"trade": {False}, "add": {False}}
+    bar = await repo.get("mkt.flow_bars_1m", inst["instrument_id"] + ":" + iso(minute))
+    assert bar["n_buy"] + bar["n_sell"] == 3 and bar["capture_method"] == "REST_RANGE_EXHAUSTED"
