@@ -160,7 +160,11 @@ services:
     networks:
     - tank-net
   postgres:
-    image: postgres:16
+    # PostgreSQL 16 + TimescaleDB (deploy/postgres.Dockerfile): mkt.* series are hypertables.
+    image: tank-postgres:local
+    build:
+      context: ./deploy
+      dockerfile: postgres.Dockerfile
     shm_size: 512m
     restart: unless-stopped
     environment:
@@ -189,6 +193,10 @@ services:
     - effective_cache_size=1GB
     - -c
     - max_parallel_workers_per_gather=0
+    - -c
+    - shared_preload_libraries=timescaledb
+    - -c
+    - timescaledb.telemetry_level=off
     secrets:
     - postgres_password
     - tank_db_password

@@ -1212,7 +1212,24 @@ async def _maintain_partitions(self, *, extra_days=None, include_history=True):
     from psycopg import sql
 
     created = 0
+    # TimescaleDB hypertables make their own daily chunks (deploy/timescale_migrate.py).
+    async with self.transaction():
+        hyper = await (
+            await self._conn().execute(
+                "SELECT to_regclass('timescaledb_information.hypertables') IS NOT NULL AS installed"
+            )
+        ).fetchone()
+        hypertables = set()
+        if hyper["installed"]:
+            rows = await (
+                await self._conn().execute(
+                    "SELECT hypertable_schema || '.' || hypertable_name AS name FROM timescaledb_information.hypertables"
+                )
+            ).fetchall()
+            hypertables = {row["name"] for row in rows}
     for collection, ts in PARTITIONED.items():
+        if collection in hypertables:
+            continue
         schema, name = collection.split(".")
         historical = sql.Identifier(schema, name + "_historical")
         days = {(utcnow() + timedelta(days=offset)).date() for offset in range(15)}
@@ -1382,9 +1399,13 @@ async def _prune_market(self, before, *, book_before=None):
                     digits = name.rsplit("_", 1)[-1].lstrip("p")
                     if not (len(digits) == 8 and digits.isdigit()):
                         continue
-                    day_end = parse_time(f"{digits[:4]}-{digits[4:6]}-{digits[6:]}T00:00:00Z") + timedelta(days=1)
+                    day_end = parse_time(f"{digits[:4]}-{digits[4:6]}-{digits[6:]}T00:00:00Z") + timedelta(
+                        days=1
+                    )
                     if day_end <= book_cutoff:
-                        await self._conn().execute(sql.SQL("DROP TABLE {}").format(sql.Identifier("mkt", name)))
+                        await self._conn().execute(
+                            sql.SQL("DROP TABLE {}").format(sql.Identifier("mkt", name))
+                        )
                         dropped += 1
                 counts["mkt.book_summaries_partitions_dropped"] = dropped
         else:
