@@ -4,6 +4,7 @@ name: Docker CI comparison
 # runs before; workflow_dispatch selects the second after run.
 on:
   pull_request:
+    types: [opened]
     paths:
       - .github/workflows/docker-ci-comparison.yml
   workflow_dispatch:

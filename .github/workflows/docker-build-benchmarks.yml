@@ -3,10 +3,18 @@ name: Docker build benchmarks
 # Per-image paired experiments are separate from whole-CI wall-time comparisons.
 on:
   pull_request:
+    types: [opened]
     paths:
       - .github/workflows/docker-build-benchmarks.yml
       - scripts/ci/**
   workflow_dispatch:
+    inputs:
+      kind:
+        description: Image pair to measure
+        type: choice
+        required: true
+        default: all
+        options: [all, tank, capture, sandbox, openma]
 
 permissions:
   contents: read
@@ -27,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kind: [tank, capture, sandbox, openma]
+        kind: ${{ fromJSON(inputs.kind && inputs.kind != 'all' && format('["{0}"]', inputs.kind) || '["tank","capture","sandbox","openma"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

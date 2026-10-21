@@ -299,6 +299,29 @@ def write_json(path, value):
     path.write_text(json.dumps(value, indent=2) + "\n")
 
 
+def force_install_rebuild(text):
+    """Change only the install RUN, preserving comments and unrelated commands."""
+    lines = text.splitlines(keepends=True)
+    blocks = []
+    matches = 0
+    index = 0
+    while index < len(lines):
+        block = lines[index]
+        index += 1
+        if block.startswith("RUN "):
+            while block.rstrip().endswith("\\") and index < len(lines):
+                block += lines[index]
+                index += 1
+            occurrences = block.count("pnpm install ")
+            matches += occurrences
+            if occurrences:
+                block = block.replace("pnpm install ", ": tank-benchmark-same-versions && pnpm install ", 1)
+        blocks.append(block)
+    if matches != 1:
+        raise ValueError("Install RUN benchmark context drift")
+    return "".join(blocks)
+
+
 def benchmark_variant(engine, output, reference, upstream, runtime, node_base, variant, inputs, *, paired):
     output.mkdir(parents=True)
     prepared = prepare_variant(output, reference, upstream, runtime, node_base, variant)
@@ -348,11 +371,7 @@ def benchmark_variant(engine, output, reference, upstream, runtime, node_base, v
             elif scenario == "dependency-text-edit-same-versions":
                 marker.unlink()
                 text = dockerfile.read_text()
-                if text.count("pnpm install ") != 1:
-                    raise ValueError("Install benchmark context drift")
-                dockerfile.write_text(
-                    text.replace("pnpm install ", ": tank-benchmark-same-versions && pnpm install ", 1)
-                )
+                dockerfile.write_text(force_install_rebuild(text))
                 result["dependency_edit"] = {
                     "kind": "harmless shell no-op in the real install RUN",
                     "frozen_dependency_versions_unchanged": True,
@@ -375,6 +394,8 @@ def main():
     parser.add_argument("--official-archive", type=Path, required=True)
     parser.add_argument("--shim-archive", type=Path, required=True)
     args = parser.parse_args()
+    if not os.environ.get("GITHUB_ACTIONS"):
+        raise RuntimeError("Hosted runner required; production-host Docker benchmark builds are forbidden")
     inputs = json.loads(args.inputs_file.read_text())
     if inputs["before"] != args.before_ref or inputs["after"] != args.after_ref:
         raise ValueError("Shared benchmark refs differ")
