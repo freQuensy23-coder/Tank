@@ -50,7 +50,9 @@ def replacements(packet, target):
     seen = {key.casefold() for key in result}
     entity = next((e for e in packet["registry"]["entities"] if e["entity_id"] == entity_id), {})
     aliases = [token.get("name"), *entity.get("names", []), *entity.get("aliases", [])]
-    aliases += [r.get("handle") for r in packet["registry"].get("x_accounts", []) if r.get("entity_id") == entity_id]
+    aliases += [
+        r.get("handle") for r in packet["registry"].get("x_accounts", []) if r.get("entity_id") == entity_id
+    ]
     for number, name in enumerate(aliases):
         if name and name.casefold() not in seen and name not in {"BTC", "ETH"}:
             result[name] = "IdentityAlias" + str(number)
@@ -69,7 +71,10 @@ def assertions(number):
             {"path": decision + ["action"], "in": ["DONT_CHASE", "WAIT"]},
         ]
     if number == 12:
-        return [equality(oi + ["oi_class"], "PRICE_MARKUP"), equality(["observations", "price_markup_oi_flag"], True)]
+        return [
+            equality(oi + ["oi_class"], "PRICE_MARKUP"),
+            equality(["observations", "price_markup_oi_flag"], True),
+        ]
     if number == 13:
         return [
             equality(oi + ["oi_class"], "REAL_NATIVE"),
@@ -97,7 +102,11 @@ def main():
     OUT.mkdir(exist_ok=False)
     manifest = json.loads((ROOT / "tests/fixtures/manifest.json").read_text())
     cases = {c["fixture_id"]: c for c in manifest["fixtures"]}
-    code = json.loads((ROOT / "docs/verification/requirements-integration-2026-10-20/candidate-r82-runtime-tuple.json").read_text())["code_version"]
+    code = json.loads(
+        (
+            ROOT / "docs/verification/requirements-integration-2026-10-20/candidate-r82-runtime-tuple.json"
+        ).read_text()
+    )["code_version"]
     prepared = []
     for number in range(11, 17):
         fid = f"F-{number:02}"
@@ -119,9 +128,16 @@ def main():
             packet["records"][0]["record"] = json.loads(snapshot_path.read_text())
             packet["assembled_at"] = successor["assembled_at"]
             packet["records"][0]["available_at"] = successor["assembled_at"]
-            retained_sources = [reference(source_manifest), reference(source_path), reference(successor_manifest), reference(snapshot_path)]
+            retained_sources = [
+                reference(source_manifest),
+                reference(source_path),
+                reference(successor_manifest),
+                reference(snapshot_path),
+            ]
         else:
-            source_manifest = ROOT / "data/replay/candidates/pure-market-retained-20261019" / fid / "manifest.json"
+            source_manifest = (
+                ROOT / "data/replay/candidates/pure-market-retained-20261019" / fid / "manifest.json"
+            )
             original = json.loads(source_manifest.read_text())
             source_path = ROOT / original["input_path"]
             assert sha(source_path) == original["sha256"]
@@ -170,14 +186,23 @@ def main():
             "no_news_event_catalyst_or_assessment_seeded": True,
             "original_cutoff_preserved": masked["cutoff"] == source["cutoff"],
             "original_observations_and_times_preserved_before_identity_mask": True,
-            "benchmark_symbol_exception": "BTC remains the benchmark symbol to preserve production market-context semantics" if number == 16 else None,
+            "benchmark_symbol_exception": "BTC remains the benchmark symbol to preserve production market-context semantics"
+            if number == 16
+            else None,
             "financial_performance_claim": False,
             "native_wording_phase": "PLANNED_NOT_RUN",
         }
         (folder / "prepared.json").write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
         prepared.append(record)
-        print(fid, "READY" if not errors else errors, flush=True)
-    (OUT / "index.json").write_text(json.dumps({"scope": "TEST_ONLY_MARKET_VALIDATION_NOT_CANONICAL_ADOPTION", "prepared": prepared}, ensure_ascii=False, indent=2) + "\n")
+        print(fid, errors if errors else "READY", flush=True)
+    (OUT / "index.json").write_text(
+        json.dumps(
+            {"scope": "TEST_ONLY_MARKET_VALIDATION_NOT_CANONICAL_ADOPTION", "prepared": prepared},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ import stat
 import sys
 from pathlib import Path
 
-LIMIT = 512 * 1024 * 1024  # Match the pinned BoxLite transfer cap.
+LIMIT = 512 * 1024 * 1024
 CHUNK = 64 * 1024
 
 
@@ -53,8 +53,6 @@ def main():
             size = int(sys.argv[3])
             if not 0 <= size <= LIMIT:
                 raise OSError(errno.EFBIG, "file_too_large")
-            # Preserve ordinary kernel open/write permissions and partial-write
-            # failure semantics of the prior non-atomic copyIn/writeFile path.
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             with os.fdopen(
                 os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o666), "wb", buffering=0

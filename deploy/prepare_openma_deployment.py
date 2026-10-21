@@ -107,7 +107,6 @@ def asset_hashes():
             if digest(BASE / relative) != expected:
                 raise ValueError("Frozen stage asset hash mismatch: " + relative)
             paths.add(relative)
-    # The base preparer consumes browser/prefix assets as well as the stages above.
     paths.update(
         str(path.relative_to(BASE)) for path in (BASE / "openma_browser").iterdir() if path.is_file()
     )
@@ -424,8 +423,6 @@ def prepare(source, destination, boxlite_runtime, *, qualification_candidate=Fal
                 "native_identity_rebase_sha256": digest(BASE / "openma_execution/replay-dns-rebase.json"),
             },
         }
-        # Native provenance changes exactly one embedded identity. The explicit
-        # reviewed companion retains guards on both entire before/after sources.
         load_module("openma_execution/apply.py").apply(retained, replay_dns=True)
         for name in FINAL_STAGES:
             stages[name] = apply_final_stage(retained, name)
@@ -440,8 +437,6 @@ def prepare(source, destination, boxlite_runtime, *, qualification_candidate=Fal
             raise ValueError("Preparation assets changed during composition")
         finalize(retained, stages, assets)
         receipt = verify(retained)
-        # Reserve the final name atomically; do not replace an existing empty
-        # directory that appeared after the preflight check.
         publish_new_directory(retained, destination)
     return receipt
 

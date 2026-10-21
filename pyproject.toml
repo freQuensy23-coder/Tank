@@ -39,10 +39,15 @@ testpaths = ["tests"]
 [tool.ruff]
 target-version = "py313"
 line-length = 110
+extend-exclude = ["docs", "audit", "fixture_check", "diagrams"]
+
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "SIM", "TID", "PIE", "RUF100", "ERA"]
-ignore = ["E501"]
+ignore = ["E501", "B023"]
+
+[tool.ruff.lint.per-file-ignores]
+"scripts/**" = ["SIM115", "E402", "B904"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
@@ -62,3 +67,11 @@ files = ["src"]
 ignore_missing_imports = true
 warn_unused_ignores = true
 warn_redundant_casts = true
+
+[[tool.mypy.overrides]]
+module = ["tank.storage"]
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
+module = ["tank.search"]
+disable_error_code = ["assignment", "override"]

@@ -67,7 +67,7 @@ def test_actual_anchorage_payload_has_authored_body_not_form_label(index):
     assert "Institution Type" not in parsed["text"]
     assert parsed["title"] == item["title"]
     assert parsed["published_at"] == item["published_at"]
-    assert item["text"] == "Institution Type"  # Original capture remains unchanged.
+    assert item["text"] == "Institution Type"
 
 
 @pytest.mark.parametrize(
@@ -82,7 +82,6 @@ def test_missing_empty_or_ambiguous_authored_node_refuses_nav_fallback(authored)
     html = "<h1>Release</h1><article>Institution Type</article><main>Navigation</main>" + authored
     with pytest.raises(ValueError, match="one nonempty authored body"):
         parsers.article(html, source_id="S28")
-    # Other source contracts keep their existing generic article fallback.
     assert parsers.article(html, source_id="S27")["text"] == "Institution Type"
 
 
@@ -120,11 +119,8 @@ async def test_normal_anchorage_poll_uses_actual_retained_bodies_and_source_inge
                 assert quote in item["text"] and "Institution Type" not in item["text"]
                 assert item["raw_sha256"] == hashlib.sha256(payload).hexdigest()
                 assert item["published_at"] == original["published_at"]
-                assert (
-                    item["observed_at"] != original["observed_at"]
-                )  # New controlled observation, no backdating.
+                assert item["observed_at"] != original["observed_at"]
             jobs, items = await repo.list("ops.jobs"), await repo.list("ingest.source_items")
-            # Issuer and market-structure items go straight to routing (03 §3.1).
             assert {j["idem_key"] for j in jobs} == {x["item_id"] for x in items}
             assert {j["type"] for j in jobs} == {"ROUTE_ITEM"}
             assert len(requested) == 13

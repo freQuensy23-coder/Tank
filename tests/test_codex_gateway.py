@@ -71,7 +71,7 @@ async def test_internal_key_required_before_auth_or_provider(gateway_factory):
         pytest.fail("unauthorized request reached provider")
 
     async with gateway_factory(forbidden) as (_, client, path):
-        path.unlink()  # Unauthorized requests must not even try to read OAuth.
+        path.unlink()
         for supplied in (None, "wrong", "Bearer FAKE-interna", "Bearer FAKE-internal-long"):
             response = await client.post(
                 "/v1/responses", json=body(), headers={"Authorization": supplied or ""}

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import os
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -44,7 +44,7 @@ LAYERS = [
     "INTEROPERABILITY",
     "CUSTODY_COMPLIANCE",
 ]
-IMPLEMENTATION = dict(zip(STATES, [0, 4, 6, 6, 7, 8, 10]))
+IMPLEMENTATION = dict(zip(STATES, [0, 4, 6, 6, 7, 8, 10], strict=False))
 
 
 def normalized(s):
@@ -609,19 +609,17 @@ class EventToolService:
             async with (
                 httpx.AsyncClient(timeout=20, follow_redirects=False)
                 if self.http is None
-                else _borrow(self.http) as client
+                else _borrow(self.http) as client,
+                client.stream("GET", a["url"], headers={"User-Agent": self.settings.user_agent}) as r,
             ):
-                async with client.stream(
-                    "GET", a["url"], headers={"User-Agent": self.settings.user_agent}
-                ) as r:
-                    r.raise_for_status()
-                    chunks = []
-                    size = 0
-                    async for chunk in r.aiter_bytes():
-                        size += len(chunk)
-                        if size > 2 * 1024 * 1024:
-                            raise ValueError("Page exceeds 2 MB")
-                        chunks.append(chunk)
+                r.raise_for_status()
+                chunks = []
+                size = 0
+                async for chunk in r.aiter_bytes():
+                    size += len(chunk)
+                    if size > 2 * 1024 * 1024:
+                        raise ValueError("Page exceeds 2 MB")
+                    chunks.append(chunk)
         original = b"".join(chunks)
         self.validate_evidence_bytes(original)
         # Persist the exact response before parsing; extraction failures retain the source bytes.
@@ -2378,7 +2376,7 @@ class EventToolService:
             set([r["call_id"] for r in calls if r.get("call_id")] + bundle["tool_call_ids"])
         )
         # Canonical ordering makes the exact frozen payload independently hashable.
-        for k, v in bundle.items():
+        for _k, v in bundle.items():
             if isinstance(v, list) and v and isinstance(v[0], dict):
                 v.sort(key=canonical_json)
         digest = sha256(bundle)
@@ -2392,10 +2390,8 @@ class EventToolService:
                     output.write(zstandard.ZstdCompressor(level=3).compress(encoded))
                     output.flush()
                     os.fsync(output.fileno())
-                try:
+                with suppress(FileExistsError):
                     os.link(temporary, bundle_path)
-                except FileExistsError:
-                    pass
             finally:
                 temporary.unlink(missing_ok=True)
         if sha256(zstandard.ZstdDecompressor().decompress(bundle_path.read_bytes())) != digest:

@@ -1,17 +1,15 @@
 """Hourly raw Parquet of HLD §7.2: layout, journal durability, sealing, and a lock-free capture path."""
 
-# ruff: noqa: F811
 import asyncio
-from decimal import Decimal
 import json
 import time
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import httpx
 import pyarrow.parquet as pq
 import pytest
-from test_market_service import setup  # noqa: F401
 
 from tank.market import normalize
 from tank.market.archive import BookArchive, TradeArchive
@@ -75,13 +73,12 @@ def test_journal_survives_crash_and_seal_merges_restart_without_duplicates(tmp_p
     first.write(first.take(), now=HOUR + timedelta(minutes=10))
     canonical = first.path(SPOT["instrument_id"], HOUR)
     assert not canonical.exists() and len(journals(canonical)) == 1
-    # Crash: the first process never closes its journal. The next one restarts in the hour.
     second = TradeArchive(tmp_path, instruments=[SPOT], grace_s=0)
     assert [r["trade_id"] for r in second.read_hour(canonical)] == ["1", "2"]
     for tid in (2, 3):
         second.append(print_(tid, HOUR + timedelta(seconds=tid)))
     result = second.write(second.take(), now=HOUR + timedelta(minutes=30))
-    assert result["sealed"] == [] and len(journals(canonical)) == 2  # the hour is not over yet
+    assert result["sealed"] == [] and len(journals(canonical)) == 2
     result = second.write({}, now=HOUR + timedelta(hours=1, seconds=1))
     assert result["sealed"] == [str(canonical)]
     assert not journals(canonical)
@@ -93,11 +90,10 @@ def test_sealing_waits_for_quiet_journal_and_orphans_of_past_hours_are_sealed(tm
     archive = TradeArchive(tmp_path, instruments=[SPOT], grace_s=3600)
     archive.append(print_(1, HOUR))
     after = HOUR + timedelta(hours=2)
-    assert archive.write(archive.take(), now=after)["sealed"] == []  # written just now: not quiet
+    assert archive.write(archive.take(), now=after)["sealed"] == []
     canonical = archive.path(SPOT["instrument_id"], HOUR)
     archive._journals[canonical]["touched"] = time.monotonic() - 3601
     assert archive.write({}, now=after)["sealed"] == [str(canonical)]
-    # A journal left by a previous process for a finished hour is sealed on the first write.
     late = TradeArchive(tmp_path, instruments=[SPOT], grace_s=3600)
     late.append(print_(9, HOUR + timedelta(hours=1)))
     late.write(late.take(), now=after)
@@ -114,7 +110,7 @@ def test_torn_journal_tail_keeps_every_complete_batch(tmp_path):
     canonical = archive.path(SPOT["instrument_id"], HOUR)
     (journal,) = journals(canonical)
     size = journal.stat().st_size
-    with journal.open("r+b") as handle:  # a crash cut the last batch short
+    with journal.open("r+b") as handle:
         handle.truncate(size - 40)
     restarted = TradeArchive(tmp_path, instruments=[SPOT], grace_s=0)
     assert [r["trade_id"] for r in restarted.read_hour(canonical)] == ["1"]
@@ -128,8 +124,8 @@ def test_late_rows_for_a_sealed_hour_are_merged_into_a_new_file(tmp_path):
     archive.write(archive.take(), now=HOUR + timedelta(hours=2))
     canonical = archive.path(SPOT["instrument_id"], HOUR)
     assert pq.read_table(canonical).num_rows == 1
-    archive.append(print_(2, HOUR + timedelta(minutes=59)))  # REST backfill of an old hour
-    archive.append(dict(print_(1, HOUR), capture_source="REST"))  # already sealed: dropped on merge
+    archive.append(print_(2, HOUR + timedelta(minutes=59)))
+    archive.append(dict(print_(1, HOUR), capture_source="REST"))
     archive.write(archive.take(), now=HOUR + timedelta(hours=2))
     assert sorted(pq.read_table(canonical).column("trade_id").to_pylist()) == ["1", "2"]
     assert not journals(canonical)
@@ -167,7 +163,7 @@ async def test_capture_never_waits_for_the_archive_writer(setup, monkeypatch):
         for number in range(1, 501):
             raw = {"a": number, "p": "2", "q": "1", "T": now + number, "m": False}
             assert await asyncio.wait_for(service.ingest_trade(inst, raw), 0.5)
-        assert time.monotonic() - started < 2 and not flush.done()  # writer still busy, capture went on
+        assert time.monotonic() - started < 2 and not flush.done()
         release.set()
         await flush
         await service.flush_market(raw=True)
@@ -190,7 +186,7 @@ async def test_failed_raw_write_keeps_rows_and_typed_rows_wait_for_raw(setup, mo
         )
         with pytest.raises(OSError):
             await service.flush_market(raw=True)
-        assert not await repo.list("mkt.flow_bars_1m")  # no derived bar without its print on disk
+        assert not await repo.list("mkt.flow_bars_1m")
         assert service.trade_archive.pending() == 1
         monkeypatch.setattr(service.trade_archive, "write", original)
         await service.flush_market(raw=True)
@@ -219,7 +215,7 @@ async def test_restart_dedups_old_hour_prints_and_rebuilds_late_minute(setup):
         await restarted.flush_market(raw=True)
         (bar,) = await repo.list("mkt.flow_bars_1m", filters={"instrument_id": inst["instrument_id"]})
         assert bar["buy_qty"] == "30" and bar["sell_qty"] == "1" and bar["n_buy"] == 10
-        assert bar["complete"] is False  # the restart broke stream continuity in that minute
+        assert bar["complete"] is False
 
 
 def test_file_retention_by_path_keeps_event_days_and_recent_hours(tmp_path):
@@ -265,7 +261,7 @@ async def test_repeated_rest_histories_are_processed_once_and_stream_context_onc
         assert fresh == newer[-1:] and predecessor == parse_time(rows[-1]["fundingTime"])
         assert service._fresh("i", "settled", newer, lambda r: r["fundingTime"])[1] == []
         assert service.context_due("i", "mark") and not service.context_due("i", "mark")
-        assert service.context_due("i", "funding")  # each context kind has its own cadence
+        assert service.context_due("i", "funding")
 
 
 def test_checksum_books_verify_once_per_second_or_when_a_summary_is_due(monkeypatch):
@@ -277,11 +273,11 @@ def test_checksum_books_verify_once_per_second_or_when_a_summary_is_due(monkeypa
     book.snapshot([["1", "1"]], [["2", "1"]], sequence=0, ts=iso(HOUR), checksum=1)
     assert calls == [1] and book.verified
     book.update([["1", "2"]], [], sequence=1, ts=iso(HOUR), checksum=2)
-    assert calls == [1, 2] and book.verified  # first update after the snapshot interval
+    assert calls == [1, 2] and book.verified
     book.update([["1", "3"]], [], sequence=2, ts=iso(HOUR), checksum=3)
-    assert calls == [1, 2] and not book.verified  # within 1 s: not summarized from this state
+    assert calls == [1, 2] and not book.verified
     book.update([["1", "4"]], [], sequence=3, ts=iso(HOUR), checksum=4, verify=True)
-    assert calls == [1, 2, 4] and book.verified  # a due summary forces verification
+    assert calls == [1, 2, 4] and book.verified
 
 
 def test_book_price_index_stays_in_step_with_levels_and_kraken_depth():
@@ -299,7 +295,7 @@ def test_book_price_index_stays_in_step_with_levels_and_kraken_depth():
         side = [[price, rng.choice(["0", "2"])]]
         book.update(side if n % 2 else [], [] if n % 2 else side, sequence=n + 1, ts=iso(HOUR))
         assert book._prices["bid"] == sorted(book.bids) and book._prices["ask"] == sorted(book.asks)
-        assert len(book.bids) <= 1000 and len(book.asks) <= 1000  # Kraken depth is trimmed
+        assert len(book.bids) <= 1000 and len(book.asks) <= 1000
     summary = book.summary()
     assert summary["best_bid"] == str(max(book.bids)) and summary["best_ask"] == str(min(book.asks))
     edge = Decimal(summary["mid"]) * Decimal(".98")
@@ -319,12 +315,10 @@ def test_corrupt_journal_batch_is_a_torn_tail_and_never_blocks_the_seal(tmp_path
     (journal,) = journals(canonical)
     with journal.open("rb") as handle:
         schema = pa.ipc.open_stream(handle).schema
-    # A process killed mid-write left a batch whose offsets point outside its data
-    # (prod 2026-10-21 01:11: "Offset invariant failure"); IPC readers parse it anyway.
     columns = [pa.array(["a" * 12345 if i == 0 else "x"], pa.string()) for i in range(len(schema))]
     message = pa.RecordBatch.from_arrays(columns, schema=schema).serialize().to_pybytes()
     offsets = np.array([0, 12345], dtype=np.int32).tobytes()
-    at = message.rindex(offsets)  # the first column's offsets buffer, in the message body
+    at = message.rindex(offsets)
     message = message[:at] + np.array([12345, -3], dtype=np.int32).tobytes() + message[at + len(offsets) :]
     with journal.open("ab") as handle:
         handle.write(message)
@@ -342,12 +336,11 @@ def test_seal_casts_a_foreign_column_type_and_isolates_a_failing_hour(tmp_path, 
     archive.append(print_(1, HOUR + timedelta(seconds=1)))
     archive.write(archive.take(), now=HOUR)
     canonical = archive.path(SPOT["instrument_id"], HOUR)
-    # An existing hour file written by another writer: one column typed int64, one all-null.
     rows = pa.table({"trade_id": pa.array([7], pa.int64()), "ts": pa.array([None], pa.null())})
     pq.write_table(rows, canonical)
     other = archive.path(SPOT["instrument_id"], HOUR + timedelta(hours=1))
     archive.append(print_(2, HOUR + timedelta(hours=1, seconds=1)))
-    archive.write(archive.take(), now=HOUR)  # neither hour has finished yet
+    archive.write(archive.take(), now=HOUR)
     real_seal = archive.seal
 
     def seal(path):
@@ -358,7 +351,7 @@ def test_seal_casts_a_foreign_column_type_and_isolates_a_failing_hour(tmp_path, 
 
     monkeypatch.setattr(archive, "seal", seal)
     sealed = archive.seal_due(HOUR + timedelta(hours=3))
-    assert str(other) in sealed and str(canonical) not in sealed and journals(canonical)  # kept, retried
+    assert str(other) in sealed and str(canonical) not in sealed and journals(canonical)
     assert str(canonical) in archive.seal_due(HOUR + timedelta(hours=3))
     assert sorted(pq.read_table(canonical).column("trade_id").to_pylist()) == ["1", "7"]
 
@@ -370,5 +363,5 @@ def test_journal_writes_never_wait_for_a_seal_backlog(tmp_path):
     later = HOUR + timedelta(hours=5)
     assert archive.write(archive.take(), now=later, seal_limit=0)["sealed"] == []
     first = archive.path(SPOT["instrument_id"], HOUR)
-    assert archive.seal_due(later, limit=1) == [str(first)]  # oldest first, one per pass
+    assert archive.seal_due(later, limit=1) == [str(first)]
     assert len(archive.seal_due(later, limit=5)) == 2

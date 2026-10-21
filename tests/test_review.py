@@ -108,8 +108,10 @@ async def test_outcome_immutable_revision_and_frozen_beta():
         )
     a = await service.outcome(alert, decision, truth, now=END)
     b = await service.outcome(alert, decision, truth, now="2026-10-02T00:00:00Z")
-    # Outcomes are computed on demand from stored evidence; qa.outcomes is gone (W11).
-    stable = lambda r: {k: v for k, v in r.items() if not k.startswith("computed_at")}
+
+    def stable(r):
+        return {k: v for k, v in r.items() if not k.startswith("computed_at")}
+
     assert stable(a) == stable(b) and "revision" not in a
     assert a["realized_return"] == pytest.approx(0.2)
     assert a["btc_adjusted_return"] == pytest.approx(0.18) and a["direction_correct"] is True
@@ -161,7 +163,7 @@ async def test_subminute_boundaries_require_typed_segments_and_exclude_outside_p
     )
     result = await service.horizon_series("i", start, end, end + timedelta(minutes=1))
     assert result["coverage"]["exact"] is True
-    assert result["endpoint"] == 999  # Actual last trade before 01:00:30, not the 01:00:40 trade.
+    assert result["endpoint"] == 999
     assert result["coverage"]["complete_minutes"] == 59
     row = await repo.get("mkt.flow_bars_1m", "boundary-end")
     await repo.put("mkt.flow_bars_1m", "boundary-end", dict(row, boundary_segments=[]))
@@ -290,9 +292,7 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
     )
     assert report["metrics"]["S3"]["status"] == "PASS"
     assert report["metrics"]["S3"]["denominator"] == 1
-    assert (
-        report["metrics"]["S9"]["status"] == "PASS"
-    )  # The spec requires a ledger record, including pending delivery.
+    assert report["metrics"]["S9"]["status"] == "PASS"
     import httpx
 
     from tank.delivery import DeliveryService
@@ -399,9 +399,9 @@ async def test_metrics_version_labels_shown_tokens_and_uncarded_event_audit():
     assert report["metrics"]["S8_major_noise"]["value"] == 0.5
     assert report["metrics"]["S8_major_noise"]["denominator"] == 2
     assert report["metrics"]["S6"]["value"] == 1
-    assert report["metrics"]["S6"]["denominator"] == 2  # One shown token per version.
+    assert report["metrics"]["S6"]["denominator"] == 2
     assert report["metrics"]["S7"]["status"] == "PASS" and report["metrics"]["S7"]["denominator"] == 1
-    assert report["metrics"]["S9"]["status"] == "PASS"  # A pending ledger is still a delivery record.
+    assert report["metrics"]["S9"]["status"] == "PASS"
 
 
 @pytest.mark.asyncio
@@ -514,7 +514,6 @@ async def test_typed_boundaries_require_adjacent_pieces_and_never_slice_whole_ba
     result = await service.horizon_series("i", start, end, end + timedelta(minutes=1))
     assert result["coverage"]["exact"] and result["endpoint"] == 14 and result["high"] == 14
     assert result["coverage"]["boundary_segments"][-1]["pieces"] == 2
-    # A whole minute surrounding the requested boundary is not an exact segment.
     oversized = dict(piece, start=iso(end_floor), end=iso(end_floor + timedelta(minutes=1)))
     await repo.put("mkt.flow_bars_1m", "end", dict(row, boundary_segments=[oversized]))
     result = await service.horizon_series("i", start, end, end + timedelta(minutes=1))

@@ -1,11 +1,9 @@
 """Trade bytes are represented in normalized Parquet, never frame journals."""
 
-# ruff: noqa: F811
 import json
 
 import httpx
 import pytest
-from test_market_service import setup  # noqa: F401
 
 from tank.market import normalize
 from tank.market.service import MarketService

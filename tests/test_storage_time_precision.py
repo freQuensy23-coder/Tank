@@ -1,7 +1,5 @@
 """Precision integration tests use only owned disposable databases; never migrate shared QA."""
 
-from __future__ import annotations
-
 import os
 from datetime import timedelta
 

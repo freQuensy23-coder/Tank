@@ -1,6 +1,5 @@
 """Actual Binance routed-public depth contract and independent stream ownership."""
 
-# ruff: noqa: F811
 import asyncio
 import json
 import time
@@ -8,7 +7,6 @@ from datetime import timedelta
 
 import httpx
 import pytest
-from test_market_service import setup  # noqa: F401
 
 from tank.market.service import MarketService
 from tank.market.streams import (
@@ -93,7 +91,6 @@ async def test_depth_initialization_owns_book_only_and_regular_reconnect_preserv
         assert calls == ["/fapi/v1/depth"] and service.books[iid].sequence == 100
         assert iid not in service._connected_since and not service._background
         book = service.books[iid]
-        # First connection of a hot token: backfill covers its anchor up to the socket.
         service._hot_since[instrument["token_id"]] = iso(utcnow() - timedelta(minutes=5))
         await prepare_member(service, instrument)
         assert service.books[iid] is book and calls == ["/fapi/v1/depth"]

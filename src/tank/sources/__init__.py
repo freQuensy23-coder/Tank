@@ -5,9 +5,8 @@ The classifier replaces the unknown decision with canonical SEND/SKIP and
 persists probability/model provenance; source ingestion never guesses relevance.
 """
 
-from __future__ import annotations
-
 import asyncio
+import contextlib
 import re
 import ssl
 from copy import deepcopy
@@ -17,12 +16,11 @@ from urllib.parse import parse_qsl, urlsplit
 import certifi
 import httpx
 
+from tank.sources import parsers
+from tank.sources.browser import BrowserReader
+from tank.sources.rate_limits import shared_request_budgets
+from tank.sources.xsensor import XSensor
 from tank.util import iso, parse_time, sha256, utcnow
-
-from . import parsers
-from .browser import BrowserReader
-from .rate_limits import shared_request_budgets
-from .xsensor import XSensor
 
 
 def tls_context():
@@ -78,13 +76,13 @@ class SourceService:
         except FileNotFoundError:
             self.thresholds = {}
         self.escalated_interval_s = self.thresholds.get("escalated_interval_s", 15)
-        from .polling import SourcePoller
+        from tank.sources.polling import SourcePoller
 
         self.poller = SourcePoller(self)
 
     def raw(self, payload, *, source_id, item_id, observed_at):
         """Store the raw payload of one captured item (02 §7.2); nothing else is stored raw."""
-        from .raw_store import write_raw_item
+        from tank.sources.raw_store import write_raw_item
 
         return write_raw_item(self.settings.data_dir, source_id, item_id, observed_at, payload)
 
@@ -155,7 +153,6 @@ class SourceService:
                 payload = response.content
                 received_at = iso()
                 digest = sha256(payload)
-                # Transport evidence only; raw files are written for captured items.
                 if re.fullmatch(r"S\d{2}:\d+", key):
                     async with self.poller.lock(self.poller.state_locks, key):
                         evidence = await self.poller.state(key)
@@ -188,13 +185,11 @@ class SourceService:
                             try:
                                 delay = max(delay, float(retry))
                             except ValueError:
-                                try:
+                                with contextlib.suppress(ValueError, TypeError):
                                     delay = max(
                                         delay,
                                         (parse_time(parsers.published(retry)) - utcnow()).total_seconds(),
                                     )
-                                except (ValueError, TypeError):
-                                    pass
                     await asyncio.sleep(delay)
         raise error
 
@@ -229,7 +224,6 @@ class SourceService:
         body = " ".join(
             (item.get("title", "") + " " + item.get("text", "") + " " + (item.get("quoted") or "")).split()
         )
-        # Empty/media-only posts are durable evidence, not invented textual claims.
         content_hash = (
             sha256(body)
             if body
@@ -248,9 +242,7 @@ class SourceService:
                 raise ValueError("Source entry has no normalized content")
             if existing:
                 if existing["item_id"] == item_id:
-                    # Replay of an ingest that already committed.
                     return existing
-                # Exact duplicate: no new item, one more observation per new feed (03 §3.1).
                 Path(item["raw_ref"]).unlink(missing_ok=True)
                 if feed in existing.get("observed_feeds", [existing.get("feed")]):
                     return existing
@@ -264,10 +256,10 @@ class SourceService:
                 {},
             )
             role = account.get("role")
-            from .organization import resolve_author_organization
+            from tank.sources.organization import resolve_author_organization
 
             author_organization = resolve_author_organization(source, item, self.accounts)
-            from .policy import is_filtered_source
+            from tank.sources.policy import is_filtered_source
 
             filtered = is_filtered_source(sid, item.get("subtype"), role)
             priority = (
@@ -423,7 +415,7 @@ class SourceService:
 
     async def check(self, *, probe=False, include_browser=False, check_accounts=False):
         if probe:
-            from .probe import probe_feeds
+            from tank.sources.probe import probe_feeds
 
             results = await probe_feeds(self, include_browser=include_browser)
         else:
@@ -519,5 +511,3 @@ class SourceService:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            # Supervisors retry run() on this same service instance. Final
-            # resource ownership belongs to explicit close(), not a failed run.

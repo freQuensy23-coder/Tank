@@ -502,7 +502,7 @@ async def fetch_archive(
     if instrument is None:
         raise ValueError("archive instrument not present in registry")
     try:
-        for attempt in range(1):
+        for _attempt in range(1):
             response = await client.get(url)
             response.raise_for_status()
             checksum = await client.get(url + ".CHECKSUM")
@@ -624,7 +624,7 @@ async def fetch_archive(
                 collection = "mkt.klines_1m"
                 key = instrument["instrument_id"] + ":" + record["open_time"]
             elif kind == "metrics":
-                source = dict(zip(header, raw))
+                source = dict(zip(header, raw, strict=False))
                 record = oi(
                     instrument,
                     {
@@ -636,7 +636,7 @@ async def fetch_archive(
                 collection = "mkt.oi_obs"
                 key = instrument["instrument_id"] + ":" + record["metric_key"] + ":" + record["ts"]
             elif kind == "aggTrades":
-                source = dict(zip(("a", "p", "q", "f", "l", "T", "m"), raw[:7]))
+                source = dict(zip(("a", "p", "q", "f", "l", "T", "m"), raw[:7], strict=False))
                 source["m"] = str(source["m"]).lower() == "true"
                 record = trade(instrument, source, source="ARCHIVE")
                 collection = None
@@ -644,9 +644,11 @@ async def fetch_archive(
                 # Archive quantities remain quote/native; historic FX must be provided separately.
             elif kind == "fundingRate":
                 source = (
-                    dict(zip(header, raw))
+                    dict(zip(header, raw, strict=False))
                     if header
-                    else dict(zip(("calc_time", "funding_interval_hours", "last_funding_rate"), raw))
+                    else dict(
+                        zip(("calc_time", "funding_interval_hours", "last_funding_rate"), raw, strict=False)
+                    )
                 )
                 record = funding(
                     instrument,

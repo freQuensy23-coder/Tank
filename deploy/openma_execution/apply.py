@@ -26,9 +26,6 @@ def apply(root, *, replay_dns=False):
         identity = manifest["retained_lifecycle"]["runtime_identity"]
         if not re.fullmatch(r"[a-f0-9]{64}", identity):
             raise ValueError("Execution requires the actual prepared runtime identity")
-        # New architecture builds have new binary/provenance identities. Verify
-        # their pinned runtime contract, then vary only this one identity literal.
-        # Every other byte remains guarded by the reviewed original template.
         verify_runtime(root)
         matches = [row for row in replacements if row["path"] == rebase["target"]]
         if len(matches) != 1:

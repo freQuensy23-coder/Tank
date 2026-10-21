@@ -8,8 +8,6 @@ Production configuration is never changed: the command writes a report and a
 proposed thresholds patch, which is recorded in config by a D6 checkpoint.
 """
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import json
@@ -112,7 +110,6 @@ def filter_cutoff(rows):
 
 
 def routing_metrics(rows, cutoff):
-    # The online decision: highest score at or above the cutoff, first candidate on ties.
     tp = fp = fn = 0
     errors = []
     for row in rows:
@@ -299,7 +296,6 @@ async def acquire(input_path, output_dir, *, settings=None, http=None):
         return [event["event_id"] for event in found]
 
     try:
-        # Candidate sets come from the labeled history strictly before each item.
         sessions = {}
         for row in rows:
             row["candidate_ids"] = await candidates(row, sessions) if row["routed"] else []
@@ -315,13 +311,14 @@ async def acquire(input_path, output_dir, *, settings=None, http=None):
                     for event_id in row["candidate_ids"]
                 )
             )
-            row["candidates"] = [{"event_id": e, "score": s} for e, s in zip(row["candidate_ids"], scores)]
+            row["candidates"] = [
+                {"event_id": e, "score": s} for e, s in zip(row["candidate_ids"], scores, strict=False)
+            ]
 
         tasks = [asyncio.create_task(score_row(row)) for row in rows]
         try:
             await asyncio.gather(*tasks)
         except BaseException:
-            # Stop paying for the rest; completed scores stay in the usage cache for the rerun.
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)

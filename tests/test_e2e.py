@@ -195,7 +195,6 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
         routed_origin = await pipeline.route_item({"item_id": item["item_id"]})
         toolservice = EventToolService(repo, settings, None, DecisionEngine(settings), http=http)
         session = SessionService(repo, settings, toolservice.dispatch, http=http)
-        # Drive SSE explicitly; automatic reconnect loops are tested in session tests.
         session.start_stream = lambda sid: None
         await session.send_message(routed_origin["routing_message"])
         await session.stream("s1")
@@ -205,7 +204,6 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
         before = len(event_posts)
         await resumed.stream("s1")
         assert len(event_posts) == before
-        # Independently exercise code-owned decision and immutable delivery contract.
         event = {"event_id": "e", "event_state": "APPROVED", "state_verified": True, "freshness": "FRESH"}
         assessment = {
             "class": "MAJOR",
@@ -439,7 +437,6 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 synthetic = shift(synthetic)
                 synthetic.update(cutoff=cutoff, anchor=anchor)
                 return synthetic
-            # Synthetic missing-data packet: production truth must return UNKNOWN.
             return {
                 "token_id": token_id,
                 "cutoff": cutoff,
@@ -696,7 +693,6 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
             assert bundle["payload"]["source_items"][0]["raw_sha256"] == sha
             await session.close()
             await repo.close()
-            # Restart process storage and delivery against persisted immutable artifacts.
             repo = PostgresRepository(settings.database_url)
             await repo.open()
             delivery = DeliveryService(repo, settings, http=http)
@@ -724,8 +720,6 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 calls = await repo.list("ana.calls", filters={"event_id": eid})
                 assert len(calls) == 1 and calls[0]["status"] == "OPEN"
                 denying = True
-                # This later source observation occurs after the initial turn;
-                # advance the simulated clock so range queries see that turn.
                 clock += __import__("datetime").timedelta(seconds=1)
                 feed_guid = sid + "-denial"
                 text = (
@@ -790,7 +784,6 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 assert len(sends) == 2 and sends[-1]["reply_parameters"]["message_id"] == 901
                 calls = await repo.list("ana.calls", filters={"event_id": eid})
                 assert len(calls) == 1 and calls[0]["status"] == "CLOSED"
-                # Same durable SSE event and same delivery after restart have no side effects.
                 before = len(posted)
                 await session.stream(sid)
                 await delivery.deliver({"alert_id": correction["alert_id"], "version": correction["version"]})
@@ -1274,7 +1267,6 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
             assert runtime.gateway.bound_port is not None and runtime.gateway.bound_port > 0
             assert runtime.gateway.settings.codex_auth_path == settings.codex_auth_path
             assert settings.codex_auth_path.name == "FAKE-codex-auth.json"
-            # Wait for the transaction containing the delivery ledger to commit.
             async with asyncio.timeout(3):
                 while not await repo.list("out.deliveries", filters={"status": "SENT"}):
                     await asyncio.sleep(0.01)

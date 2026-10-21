@@ -46,8 +46,6 @@ def test_sources_have_concrete_endpoints():
     assert len(next(x for x in s if x["source_id"] == "S25")["feeds"]) == 12
 
 
-
-
 def test_wallet_artifacts_and_skills():
     for row in load("exchange_addresses")["wallet_lists"]:
         assert row["status"] == "VERIFIED"
@@ -162,11 +160,3 @@ def test_fundamentals_provider_identity_and_metric_evidence():
         == "world-chain"
     )
     assert checks["bitcoin:BTC"]["checks"]["dailyHoldersRevenue"]["status"] == "NOT_SUPPORTED"
-
-
-
-
-
-
-
-

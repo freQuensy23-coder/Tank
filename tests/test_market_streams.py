@@ -127,8 +127,6 @@ async def test_multiplexed_endpoint_incremental_hot_membership_without_reconnect
 
 @pytest.mark.asyncio
 async def test_queued_frames_drain_without_an_event_loop_turn_each(tmp_path, monkeypatch):
-    # Production shares the loop with callbacks that hold it for seconds. One loop
-    # turn per frame let websockets' queue fill, pause reading and time out the pong.
     from tank.market import streams
 
     service, repo, http, _, sockets = binance_spot_service(tmp_path, monkeypatch)
@@ -150,7 +148,7 @@ async def test_queued_frames_drain_without_an_event_loop_turn_each(tmp_path, mon
     async def hog():
         while True:
             turns[0] += 1
-            time.sleep(0.01)  # noqa: ASYNC251 - a callback holding the loop is the scenario
+            time.sleep(0.01)
             await asyncio.sleep(0)
 
     hogging = asyncio.create_task(hog())
@@ -185,7 +183,7 @@ def test_nine_paths_use_nine_routed_connections_and_global_liquidation_is_single
     okx = [instruments[3], instruments[4], dict(instruments[4], venue_symbol="ETH-USDT-SWAP")]
     messages = subscription_messages(okx)
     assert len(messages) == 1 and not any(a["channel"] == "liquidation-orders" for a in messages[0]["args"])
-    assert len(messages[0]["args"]) == 14  # 2spot +5perp per product;global liq handled once by group
+    assert len(messages[0]["args"]) == 14
 
 
 def test_multimarket_frames_route_by_exact_instrument_identity():
@@ -204,7 +202,6 @@ def test_multimarket_frames_route_by_exact_instrument_identity():
     assert (
         len(routed) == 1 and routed[0][0]["market_type"] == "PERP_LINEAR" and len(routed[0][1]["data"]) == 1
     )
-    # A topic sharing only the token prefix must not leak to another product.
     bybit = [
         {"venue": "bybit", "market_type": "SPOT", "venue_symbol": "BTCUSDT"},
         {"venue": "bybit", "market_type": "SPOT", "venue_symbol": "BTCUSDC"},

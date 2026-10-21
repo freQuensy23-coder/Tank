@@ -691,7 +691,6 @@ async def test_explicit_ordinary_update_flag_preserves_rate_with_persistent_safe
 @pytest.mark.parametrize("precision", ["BUCKET(1m)", None])
 async def test_delivery_ledger_and_calls_keep_source_precision_and_actual_clocks(precision):
     repo = await setup_repo()
-    # A fresh fixture record avoids rewriting an immutable historical alert.
     alert = {
         "alert_id": "precision",
         "version": 1,
@@ -849,7 +848,7 @@ async def test_historical_suppression_is_preserved_without_censoring_explicit_re
     assert await repo.get("out.deliveries", "old-suppression") == suppressed
     assert len(await repo.list("out.deliveries", filters={"status": "SENT"})) == 1
     assert len(await repo.list("ana.calls", filters={"status": "OPEN"})) == 1
-    assert not await repo.list("ops.jobs")  # No historical job is reset or requeued.
+    assert not await repo.list("ops.jobs")
 
 
 @pytest.mark.asyncio
@@ -952,7 +951,6 @@ async def test_newer_held_update_supersedes_older_and_keeps_spacing_through_rest
         )
         frozen = copy.deepcopy(await repo.get("out.alerts", f"{aid}:3"))
         async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
-            # Version 2 is due, but version 3 already exists: it is dropped.
             await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 2})
             assert requests == []
             assert not await repo.list("out.deliveries", filters={"alert_id": aid, "version": 2})

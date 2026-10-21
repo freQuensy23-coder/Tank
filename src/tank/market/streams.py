@@ -1,23 +1,18 @@
 """Public WebSocket subscriptions; all received frames are archived before parsing."""
 
 import asyncio
+import contextlib
 import json
 import time
+from datetime import timedelta
 from decimal import Decimal
 
-from datetime import timedelta
-
+from tank.market.books import OrderBook
+from tank.market.normalize import SemanticError, liquidation, oi, venue_key
 from tank.util import iso, parse_time, sha256, utcnow
 
-from .books import OrderBook
-from .normalize import SemanticError, liquidation, oi, venue_key
-
 STREAM_PING_INTERVAL_S = 20
-# The client closes with 1011 when a pong is late; the loop on prod stalls for seconds.
 STREAM_PING_TIMEOUT_S = 60
-# Frames read from the socket but not yet processed. The reader keeps draining the socket
-# (so keepalive pongs are always read); a backlog this deep is an overload and resets the
-# connection with a recorded gap rather than letting websockets stop reading.
 STREAM_BACKLOG_FRAMES = 20000
 
 
@@ -32,7 +27,7 @@ async def drain_socket(socket, inbox):
                 )
     except asyncio.CancelledError:
         raise
-    except Exception as exc:  # noqa: BLE001 - handed to the consumer, which runs the gap path
+    except Exception as exc:
         inbox.put_nowait(exc)
 
 
@@ -102,12 +97,9 @@ async def process_frame(self, instrument, raw):
             await self.ingest_trade(instrument, data)
         elif event == "depthUpdate":
             bridging = self._book_initial_bridge.get(iid, True)
-            # Drop events the snapshot already contains: spot u <= lastUpdateId; the
-            # USDⓈ-M bridge event itself has u == lastUpdateId, so only u < lastUpdateId.
             if int(data["u"]) < int(book.sequence) + (1 if not bridging or key.endswith("spot") else 0):
                 return
             if bridging:
-                # Futures initial bridge includes lastUpdateId (spot lastUpdateId+1).
                 target = int(book.sequence) + (1 if key.endswith("spot") else 0)
                 if not int(data["U"]) <= target <= int(data["u"]):
                     raise SemanticError("initial Binance snapshot bridge missing")
@@ -152,7 +144,7 @@ async def process_frame(self, instrument, raw):
             await self._save_book(instrument)
         elif event == "l2update":
             if book.sequence is None:
-                return  # updates before this subscription's snapshot belong to no book yet
+                return
             bids = [r[1:] for r in raw["changes"] if r[0] == "buy"]
             asks = [r[1:] for r in raw["changes"] if r[0] == "sell"]
             book.update(bids, asks, sequence=int(book.sequence) + 1, ts=raw["time"])
@@ -280,7 +272,7 @@ async def process_frame(self, instrument, raw):
                         checksum=item.get("checksum"),
                     )
                 elif book.sequence is None:
-                    continue  # updates before this subscription's snapshot belong to no book yet
+                    continue
                 else:
                     book.update(
                         item.get("bids", []),
@@ -290,7 +282,6 @@ async def process_frame(self, instrument, raw):
                         checksum=item.get("checksum"),
                         verify=self.summary_due(iid),
                     )
-                # Kraken depth is maintained at subscribed depth before checksum.
                 await self._save_book(instrument)
     else:
         channel = raw.get("channel")
@@ -339,7 +330,7 @@ def record_stream_watermark(self, instrument, raw):
     data = raw.get("data", raw)
     stamps = []
     if key == "binance.usdm" and data.get("e") == "depthUpdate":
-        return  # Independent public depth cannot prove regular trade/liq continuity.
+        return
     if key.startswith("binance"):
         stamp = data.get("E")
         if stamp is not None:
@@ -359,7 +350,6 @@ def record_stream_watermark(self, instrument, raw):
         if raw.get("time"):
             stamps.append(raw["time"])
     elif key.startswith("kraken"):
-        # One ISO format per feed: the latest string is the latest time (parse it once).
         if isinstance(data, list):
             latest = max(
                 (r["timestamp"] for r in data if isinstance(r, dict) and r.get("timestamp")), default=None
@@ -423,7 +413,6 @@ def subscription_messages(instruments, *, subscribe=True, endpoint=None):
                 item["method"] = action
             elif "type" in item:
                 item["type"] = action
-            # OKX liquidation-orders is global and subscribed once per connection.
             if venue.startswith("okx"):
                 item["args"] = [a for a in item["args"] if a["channel"] != "liquidation-orders"]
             messages.append(item)
@@ -431,7 +420,6 @@ def subscription_messages(instruments, *, subscribe=True, endpoint=None):
         args = list(
             {json.dumps(arg, sort_keys=True): arg for item in messages for arg in item["args"]}.values()
         )
-        # Bybit spot accepts at most 10 topics per subscribe request ("args size >10").
         size = 10 if venue.startswith("bybit") else len(args) or 1
         return [{"op": action, "args": args[i : i + size]} for i in range(0, len(args), size)]
     if venue.startswith("coinbase"):
@@ -480,7 +468,7 @@ def route_indexed(index, venue, raw):
         for row in data:
             symbol = row.get("instId", default)
             if arg.get("channel") == "index-tickers":
-                symbol = (symbol or "") + "-SWAP"  # an index feeds its perpetual
+                symbol = (symbol or "") + "-SWAP"
             groups.setdefault(symbol, []).append(row)
     else:
         field = "symbol" if venue == "kraken" else "coin"
@@ -525,25 +513,20 @@ async def prepare_member(self, instrument, *, depth_only=False):
             ts_prec="EXACT" if snap.get("E") is not None else "COLLECTION_ONLY",
         )
     if depth_only:
-        return  # Depth never owns the trade cursor, backfill or flow continuity.
+        return
     self._connected_since[iid] = utcnow()
     await self._ensure_market_restore()
     previous = self._capture_checkpoints.get(iid)
     if previous:
-        # 03 §5.2: after a reconnect, backfill over REST from the last seen print.
         await self._gap(
             instrument, "RECONNECT", "REST reconciliation pending", start=previous["last_ts"], end=iso()
         )
     else:
-        # First connection: the escalation backfills the pre-event windows up to the
-        # anchor (03 §5.1); this one covers the anchor up to the socket.
         since = self._hot_since.get(instrument["token_id"])
         if since is None or parse_time(since) >= utcnow():
             return
         previous = {"last_ts": iso(max(parse_time(since), utcnow() - timedelta(hours=24)))}
     if self._active_backfills.get(iid):
-        # One REST repair per instrument at a time; keep the earliest unrepaired print.
-        # service.backfill starts it when the running one ends.
         pending = self._pending_reconnects
         if iid not in pending or parse_time(previous["last_ts"]) < parse_time(pending[iid]["last_ts"]):
             pending[iid] = previous
@@ -582,8 +565,6 @@ async def stream_group_loop(self, endpoint):
                 sent_at = [0.0]
 
                 async def send(message):
-                    # Binance closes a connection that receives more than 5 messages
-                    # a second; keep control messages at most 4 per second.
                     if venue == "binance":
                         wait = sent_at[0] + 0.25 - time.monotonic()
                         if wait > 0:
@@ -684,11 +665,8 @@ async def stream_group_loop(self, endpoint):
                                 task.result()
                                 for queued in pending.pop(iid, []):
                                     await process_frame(self, self.instruments[iid], queued)
-                            except Exception as exc:  # noqa: BLE001 - isolate one instrument's metadata/book failure
+                            except Exception as exc:
                                 await reset_member(iid, exc)
-                    # Poll membership changes and stop instead of awaiting them beside the
-                    # inbox: a get task plus asyncio.wait costs a full event-loop turn per frame,
-                    # so a busy loop drained fewer frames than arrived (1011 on prod r101).
                     if self._stop.is_set():
                         break
                     try:
@@ -698,7 +676,6 @@ async def stream_group_loop(self, endpoint):
                     else:
                         await membership(desired)
                     try:
-                        # get() returns without yielding while frames are queued.
                         async with asyncio.timeout(0.1):
                             frame = await inbox.get()
                     except TimeoutError:
@@ -728,14 +705,11 @@ async def stream_group_loop(self, endpoint):
                         else:
                             try:
                                 await process_frame(self, instrument, payload)
-                            except Exception as exc:  # noqa: BLE001 - bad product book must not disconnect unrelated products
+                            except Exception as exc:
                                 await reset_member(iid, exc)
-                    # The market supervisor batches flow once per second.
-                    # A frame only ingests its updates; rebuilding every bar
-                    # here multiplies work by the WebSocket message rate.
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 - one connection failure preserves per-member gaps and reconnects
+        except Exception as exc:
             for iid in active:
                 if depth_only:
                     if iid in self.books:
@@ -761,10 +735,8 @@ async def stream_group_loop(self, endpoint):
                 for iid in active:
                     self._connected_since.pop(iid, None)
         if self._stop is not None:
-            try:
+            with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), timeout=retry)
-            except TimeoutError:
-                pass
         retry = min(retry * 2, 60)
 
 
@@ -871,8 +843,6 @@ async def save_mark(
         "quote_asset": instrument.get("quote_asset"),
     }
     saved = await self.save_ticker_observation(instrument, row)
-    # A same-time durable point may predate this process restart and retain a
-    # newer component than the incoming partial payload.
     context.update(mark_price=saved["mark_price"], mark_ts=saved["mark_as_of"])
     if saved.get("field_sources", {}).get("mark_price"):
         context["mark_provenance"] = saved["field_sources"]["mark_price"]

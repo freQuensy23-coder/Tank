@@ -1,7 +1,5 @@
 """Guarded retirement retains every legacy row before removing obsolete SQL."""
 
-# ruff: noqa: F811
-
 import asyncio
 import io
 import json
@@ -10,7 +8,6 @@ from pathlib import Path
 
 import pytest
 import zstandard
-from test_storage_typed_market import typed_repo  # noqa: F401
 
 from tank.storage import PostgresRepository
 
@@ -19,8 +16,6 @@ def bundle_rows(path):
     with Path(path).open("rb") as source, zstandard.ZstdDecompressor().stream_reader(source) as stream:
         payload = json.load(io.TextIOWrapper(stream))
     return [json.loads(row, parse_float=Decimal) for row in payload["rows"]]
-
-
 
 
 async def seed_legacy(repo):
@@ -55,10 +50,6 @@ async def seed_legacy(repo):
     return budget, legacy
 
 
-
-
-
-
 async def test_migration_lock_serializes_concurrent_runners_and_releases_after_cancellation(typed_repo):
     repo = typed_repo
     other = await PostgresRepository(repo.database_url).open()
@@ -80,7 +71,6 @@ async def test_migration_lock_serializes_concurrent_runners_and_releases_after_c
         with pytest.raises(asyncio.CancelledError):
             await task
         await asyncio.wait_for(waiting, timeout=300)
-        # The same pooled connection can reacquire without a leaked session lock.
         await asyncio.wait_for(repo.migrate(), timeout=10)
     finally:
         release.set()
@@ -105,7 +95,3 @@ async def test_cancelled_waiting_migration_does_not_keep_session_lock(typed_repo
         await asyncio.wait_for(other.migrate(), timeout=300)
     finally:
         await other.close()
-
-
-
-

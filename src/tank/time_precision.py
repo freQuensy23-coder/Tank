@@ -4,8 +4,6 @@ No constructor infers source precision from ISO formatting, decimal places or lo
 Producers choose the correct constructor; repositories must not assign source precision.
 """
 
-from __future__ import annotations
-
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -15,7 +13,6 @@ from typing import Any
 
 from tank.util import iso, parse_time
 
-# Existing SQL names are retained; other fields use the regular <field>_prec spelling.
 CANONICAL_PRECISION_FIELDS = {"published_at": "published_prec"}
 _BUCKET = re.compile(r"^BUCKET\(([^()]+)\)$")
 _SIZE = re.compile(r"^([0-9]+(?:\.[0-9]+)?)(us|ms|s|m|h|d|w)$")
@@ -72,14 +69,16 @@ def normalize_precision(precision: str | None, *, bucket_size: Any = None) -> st
         raise ValueError(f"Unsupported timestamp precision: {precision}")
     if embedded is not None and supplied is not None and _duration(embedded) != _duration(supplied):
         raise ValueError("Conflicting bucket duration declarations")
-    return "BUCKET(" + (embedded or supplied) + ")"
+    return "BUCKET(" + str(embedded or supplied) + ")"
 
 
 def _equivalent(left: str | None, right: str | None) -> bool:
     if left == right:
         return True
-    if left and right and _BUCKET.fullmatch(left) and _BUCKET.fullmatch(right):
-        return _duration(_BUCKET.fullmatch(left)[1]) == _duration(_BUCKET.fullmatch(right)[1])
+    left_match = _BUCKET.fullmatch(left) if left else None
+    right_match = _BUCKET.fullmatch(right) if right else None
+    if left_match and right_match:
+        return _duration(left_match[1]) == _duration(right_match[1])
     return False
 
 
@@ -109,14 +108,19 @@ class Timestamp:
     def fields(self, field: str, *, precision_field: str | None = None) -> dict[str, Any]:
         """Emit the original field plus its canonical precision and explicit unknown reason."""
         sibling = precision_field or CANONICAL_PRECISION_FIELDS.get(field, field + "_prec")
-        result = {field: self.value, sibling: self.precision, sibling + "_reason": self.precision_reason}
+        result: dict[str, Any] = {
+            field: self.value,
+            sibling: self.precision,
+            sibling + "_reason": self.precision_reason,
+        }
         if self.bucket_anchor is not None:
             result[field + "_bucket_anchor"] = self.bucket_anchor
         if field == "published_at" and sibling == "published_prec":
             result["published_at_precision"] = self.precision
             result["published_at_bucket_size_s"] = None
-            if self.precision and _BUCKET.fullmatch(self.precision):
-                seconds = _duration(_BUCKET.fullmatch(self.precision)[1])
+            bucket = _BUCKET.fullmatch(self.precision) if self.precision else None
+            if bucket:
+                seconds = _duration(bucket[1])
                 result["published_prec"] = "BUCKET"
                 result["published_at_bucket_size_s"] = (
                     int(seconds) if seconds == seconds.to_integral_value() else str(seconds)
@@ -157,10 +161,9 @@ def propagate_timestamp(
     Unknown legacy precision remains None with a reason; it never becomes EXACT.
     """
     if bucket_size is None and record.get(field + "_bucket_size_s") is not None:
-        # The unit is explicitly declared by the producer's field name, never guessed.
         bucket_size = (record[field + "_bucket_size_s"], "s")
     raw = record.get(field)
-    declarations = []
+    declarations: list[str | None] = []
     anchors = []
     reason = None
     if isinstance(raw, Mapping):
@@ -192,8 +195,6 @@ def propagate_timestamp(
         and _BUCKET.fullmatch(precision)
         and (field + "_bucket_anchor" in record or isinstance(raw, Mapping) and "bucket_anchor" in raw)
     ):
-        # A nullable typed source field explicitly records an unknown edge.
-        # Absence keeps the older start-labelled timestamp contract unchanged.
         bucket_anchor = "UNSPECIFIED"
     if value is None:
         reason = reason or record.get(field + "_reason") or missing_reason
@@ -237,5 +238,5 @@ def interval_bounds(timestamp: Timestamp):
     if timestamp.bucket_anchor == "UNSPECIFIED":
         return None, None
     if timestamp.bucket_anchor == "END":
-        return point - bucket_duration(timestamp.precision), point
-    return point, point + bucket_duration(timestamp.precision)
+        return point - bucket_duration(str(timestamp.precision)), point
+    return point, point + bucket_duration(str(timestamp.precision))

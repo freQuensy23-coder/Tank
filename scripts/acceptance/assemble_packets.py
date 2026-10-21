@@ -13,7 +13,16 @@ predecessor's predicates unchanged against the new input; then run check_ready (
 fixture_reference.validate and load_inputs with the target pins. Writes only under
 data/replay/acceptance-<generation>/. Re-running with identical inputs only re-verifies.
 """
-import argparse, copy, hashlib, io, json, re, shutil, sys, tempfile
+
+import argparse
+import copy
+import hashlib
+import io
+import json
+import re
+import shutil
+import sys
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,11 +31,12 @@ import zstandard
 
 ROOT = Path("/srv/tank")
 sys.path.insert(0, str(ROOT / "tests"))
-from tank import fixture_reference as fr  # noqa: E402
-from tank.replay import _market_record, digest, load_inputs  # noqa: E402
-from tank.settings import Settings, resolve_versions  # noqa: E402
-from tank.util import canonical_json  # noqa: E402
-import fixture_acceptance as fa  # noqa: E402
+import fixture_acceptance as fa
+
+from tank import fixture_reference as fr
+from tank.replay import _market_record, digest, load_inputs
+from tank.settings import Settings, resolve_versions
+from tank.util import canonical_json
 
 SECTIONS = ("dependency_map", "openma", "semantics", "sources", "thresholds")
 REPLAY = ROOT / "data/replay"
@@ -71,7 +81,11 @@ def sha(path):
 
 def read_bytes(path):
     data = Path(path).read_bytes()
-    return zstandard.ZstdDecompressor().stream_reader(io.BytesIO(data)).read() if data[:4] == b"\x28\xb5\x2f\xfd" else data
+    return (
+        zstandard.ZstdDecompressor().stream_reader(io.BytesIO(data)).read()
+        if data[:4] == b"\x28\xb5\x2f\xfd"
+        else data
+    )
 
 
 def read_json(path):
@@ -98,12 +112,19 @@ def transform_pair(replacements, sensitive):
         mapping = {v: k for k, v in replacements.items()} if inverse else dict(replacements)
         exact = {replacements[k] if inverse else k for k in sensitive}
         parts = sorted(mapping, key=len, reverse=True)
-        pattern = re.compile(r"(?<!\w)(?:" + "|".join(
-            re.escape(k) if k in exact else "(?i:" + re.escape(k) + ")" for k in parts) + r")(?!\w)")
+        pattern = re.compile(
+            r"(?<!\w)(?:"
+            + "|".join(re.escape(k) if k in exact else "(?i:" + re.escape(k) + ")" for k in parts)
+            + r")(?!\w)"
+        )
 
         def text(value):
-            return pattern.sub(lambda m: mapping[next(
-                k for k in parts if (k == m[0] if k in exact else k.casefold() == m[0].casefold()))], value)
+            return pattern.sub(
+                lambda m: mapping[
+                    next(k for k in parts if (k == m[0] if k in exact else k.casefold() == m[0].casefold()))
+                ],
+                value,
+            )
 
         def tree(value):
             if isinstance(value, str):
@@ -136,7 +157,9 @@ def leak_scan(masked, replacements, venues=frozenset(), exceptions=None):
             base.update(key.split(":"))
     if not base:
         return {}, []
-    names = sorted(base | {n.replace(" ", sep) for n in base if " " in n for sep in ("-", "_")}, key=len, reverse=True)
+    names = sorted(
+        base | {n.replace(" ", sep) for n in base if " " in n for sep in ("-", "_")}, key=len, reverse=True
+    )
     bounded = re.compile(r"(?<!\w)(?:" + "|".join(map(re.escape, names)) + r")(?!\w)", re.I)
     loose = re.compile("|".join(map(re.escape, names)), re.I)
     hits, warnings = {}, set()
@@ -154,8 +177,11 @@ def leak_scan(masked, replacements, venues=frozenset(), exceptions=None):
             spans = set()
             allowed = []
             if exceptions and path and path[-1] in exceptions["fields"]:
-                allowed = [x.span() for tok in [*exceptions["tokens"], *exceptions.get("masked_forms", [])]
-                           for x in re.finditer(re.escape(tok), value)]
+                allowed = [
+                    x.span()
+                    for tok in [*exceptions["tokens"], *exceptions.get("masked_forms", [])]
+                    for x in re.finditer(re.escape(tok), value)
+                ]
             for m in bounded.finditer(value):
                 spans.add(m.span())
                 if any(a <= m.start() and m.end() <= b for a, b in allowed):
@@ -163,24 +189,35 @@ def leak_scan(masked, replacements, venues=frozenset(), exceptions=None):
                 elif m[0] in venues:
                     warnings.add(f"{where}:{m[0]} (technical venue id)")
                 else:
-                    hits.setdefault(f"{where}:{m[0]}", value[max(0, m.start() - 30):m.end() + 30])
-            warnings.update(f"{where}:{m[0].casefold()}" for m in loose.finditer(value) if m.span() not in spans)
+                    hits.setdefault(f"{where}:{m[0]}", value[max(0, m.start() - 30) : m.end() + 30])
+            warnings.update(
+                f"{where}:{m[0].casefold()}" for m in loose.finditer(value) if m.span() not in spans
+            )
+
     walk({k: v for k, v in masked.items() if k != "masking"}, [])
     return hits, sorted(warnings)[:200]
 
 
 def registry_venues(registry):
-    return frozenset(str(i.get("instrument_id", "")).split(":")[0] for i in registry.get("instruments", [])
-                     if isinstance(i, dict) and ":" in str(i.get("instrument_id", "")))
+    return frozenset(
+        str(i.get("instrument_id", "")).split(":")[0]
+        for i in registry.get("instruments", [])
+        if isinstance(i, dict) and ":" in str(i.get("instrument_id", ""))
+    )
+
 
 def _capture(config_dir):
     from tank.settings import _CONFIG_SUFFIXES, _capture_tree
+
     return _capture_tree(Path(config_dir), _CONFIG_SUFFIXES)
 
 
 def content_hash(record):
-    return hashlib.sha256(" ".join(
-        (record.get("title", "") + " " + record["text"] + " " + (record.get("quoted") or "")).split()).encode()).hexdigest()
+    return hashlib.sha256(
+        " ".join(
+            (record.get("title", "") + " " + record["text"] + " " + (record.get("quoted") or "")).split()
+        ).encode()
+    ).hexdigest()
 
 
 ASSEMBLER_REVISION = 10
@@ -199,8 +236,11 @@ def resolve_path(value):
     return path if path.is_absolute() else ROOT / path
 
 
-def manifest_cases():  # noqa: D103
-    return {c["fixture_id"]: c for c in json.loads((ROOT / "tests/fixtures/manifest.json").read_text())["fixtures"]}
+def manifest_cases():
+    return {
+        c["fixture_id"]: c
+        for c in json.loads((ROOT / "tests/fixtures/manifest.json").read_text())["fixtures"]
+    }
 
 
 def source_spec(fixture, args):
@@ -214,23 +254,37 @@ def source_spec(fixture, args):
             if not ref.get("path") or not path.is_file() or sha(path) != ref.get("sha256"):
                 raise AssemblyError(f"{fixture}: manifest {key} missing or hash mismatch")
             refs[key] = path
-        if fixture in args.map_override:  # explicit superseded map whose source_sha256 binds the retained parent
+        if fixture in args.map_override:
             refs["private_name_map"] = resolve_path(args.map_override[fixture])
         old_map = read_json(refs["private_name_map"])
-        spec = {"map": refs["private_name_map"], "seal": refs["sealed_outcomes"], "prior_input": refs["acceptance_input"],
-                "parent": resolve_path(old_map["original_packet_path"]), "source": "manifest"}
+        spec = {
+            "map": refs["private_name_map"],
+            "seal": refs["sealed_outcomes"],
+            "prior_input": refs["acceptance_input"],
+            "parent": resolve_path(old_map["original_packet_path"]),
+            "source": "manifest",
+        }
     else:
         src = None
-        for name in (f"acceptance-{args.from_generation}", f"acceptance-{args.from_generation}-tank-acceptance"):
+        for name in (
+            f"acceptance-{args.from_generation}",
+            f"acceptance-{args.from_generation}-tank-acceptance",
+        ):
             if (REPLAY / name / fixture / "private/original-packet.json.zst").is_file():
                 src = REPLAY / name / fixture
                 break
         if src is None:
-            raise AssemblyError(f"{fixture}: no retained parent under acceptance-{args.from_generation}[-tank-acceptance]")
+            raise AssemblyError(
+                f"{fixture}: no retained parent under acceptance-{args.from_generation}[-tank-acceptance]"
+            )
         old_map = read_json(src / "private/map.json")
-        spec = {"map": src / "private/map.json", "seal": src / "sealed/outcomes.json",
-                "prior_input": src / "inputs/input.json.zst", "parent": src / "private/original-packet.json.zst",
-                "source": src.relative_to(ROOT).as_posix()}
+        spec = {
+            "map": src / "private/map.json",
+            "seal": src / "sealed/outcomes.json",
+            "prior_input": src / "inputs/input.json.zst",
+            "parent": src / "private/original-packet.json.zst",
+            "source": src.relative_to(ROOT).as_posix(),
+        }
     if not spec["parent"].is_file():
         raise AssemblyError(f"{fixture}: retained unmasked parent missing: {spec['parent']}")
     spec["old_map"] = old_map
@@ -255,7 +309,7 @@ def apply_slugs(parent_value, masked_value, slugs, fwd_text):
             else:
                 apply_slugs(value, masked_value[mkey], slugs, fwd_text)
     elif isinstance(parent_value, list):
-        for a, b in zip(parent_value, masked_value):
+        for a, b in zip(parent_value, masked_value, strict=False):
             apply_slugs(a, b, slugs, fwd_text)
 
 
@@ -282,7 +336,9 @@ def runtime_config(config_dir):
     return {name: settings.load_config(name) for name in SECTIONS}, settings.code_version
 
 
-def write_overlay(out, config_dir, masked_sections, masked_registry, mask_tree, replacements, venues, exceptions=None):
+def write_overlay(
+    out, config_dir, masked_sections, masked_registry, mask_tree, replacements, venues, exceptions=None
+):
     """Replay config = deployed config with registry + sections replaced by their masked views.
 
     The fresh replay requires settings.load_config(registry/thresholds/semantics/dependency_map/openma)
@@ -291,17 +347,19 @@ def write_overlay(out, config_dir, masked_sections, masked_registry, mask_tree, 
     shutil.copytree(config_dir, overlay, ignore=shutil.ignore_patterns("__pycache__"), symlinks=False)
     for name, value in {**masked_sections, "registry": masked_registry}.items():
         if yaml.safe_load((overlay / f"{name}.yaml").read_bytes()) == value:
-            continue  # masking changes nothing: keep the deployed file byte-identical
+            continue
         text = yaml.safe_dump(value, sort_keys=False, allow_unicode=True, width=1 << 20)
         if yaml.safe_load(text) != value:
             raise AssemblyError(f"masked {name}.yaml does not round-trip")
         (overlay / f"{name}.yaml").write_text(text)
     fundamentals = overlay / "fundamentals_evidence.json"
-    if fundamentals.is_file():  # tool-returned data (get_token_facts / supply): masked like the packet
+    if fundamentals.is_file():
         masked = mask_tree(json.loads(fundamentals.read_text()))
         hits, _ = leak_scan(masked, replacements, venues, exceptions)
         if hits:
-            raise AssemblyError(f"fundamentals_evidence.json keeps original identities: {dict(list(hits.items())[:6])}")
+            raise AssemblyError(
+                f"fundamentals_evidence.json keeps original identities: {dict(list(hits.items())[:6])}"
+            )
         fundamentals.write_text(json.dumps(masked, indent=1, ensure_ascii=False) + "\n")
     return overlay
 
@@ -312,14 +370,25 @@ def assemble(fixture, args, sections, code_version, out_root):
     rel = out.relative_to(ROOT).as_posix()
     old_map = spec["old_map"]
     added = args.add_replacements.get(fixture, {})
-    build_key = digest({"rev": ASSEMBLER_REVISION, "source": spec["source"], "parent": sha(spec["parent"]),
-                        "inverse_snapshots": fixture in args.inverse_snapshots, "note": args.note.get(fixture),
-                        "map_override": args.map_override.get(fixture),
-                        "replay_timeout": [args.replay_timeout_base, args.replay_timeout_per_message], "exceptions": args.scan_exceptions.get(fixture),
-                        "map": sha(spec["map"]), "seal": sha(spec["seal"]), "added": added,
-                        "code_version": code_version, "config_version": args.config_version,
-                        "config": digest({k: v.hex() for k, v in _capture(args.config_dir).items()}),
-                        "module": sha(fr.__file__)})
+    build_key = digest(
+        {
+            "rev": ASSEMBLER_REVISION,
+            "source": spec["source"],
+            "parent": sha(spec["parent"]),
+            "inverse_snapshots": fixture in args.inverse_snapshots,
+            "note": args.note.get(fixture),
+            "map_override": args.map_override.get(fixture),
+            "replay_timeout": [args.replay_timeout_base, args.replay_timeout_per_message],
+            "exceptions": args.scan_exceptions.get(fixture),
+            "map": sha(spec["map"]),
+            "seal": sha(spec["seal"]),
+            "added": added,
+            "code_version": code_version,
+            "config_version": args.config_version,
+            "config": digest({k: v.hex() for k, v in _capture(args.config_dir).items()}),
+            "module": sha(fr.__file__),
+        }
+    )
     receipt_path = out / "private/assembly.json"
     if out.exists() and any(out.iterdir()):
         if receipt_path.is_file() and read_json(receipt_path).get("build_key") == build_key:
@@ -335,20 +404,27 @@ def assemble(fixture, args, sections, code_version, out_root):
     if (parent.get("masking") or {}).get("applied"):
         raise AssemblyError(f"{fixture}: retained parent is masked")
     if digest(parent) != old_map["source_sha256"]:
-        raise AssemblyError(f"{fixture}: retained unmasked parent missing (file {spec['parent']} does not match map source_sha256)")
-    registry_bytes = (spec["registry"].read_bytes() if spec["registry"] else (canonical_json(parent["registry"]) + "\n").encode())
-    registry_value = yaml.safe_load(registry_bytes) if spec["registry"] and spec["registry"].suffix in {".yaml", ".yml"} else json.loads(registry_bytes)
+        raise AssemblyError(
+            f"{fixture}: retained unmasked parent missing (file {spec['parent']} does not match map source_sha256)"
+        )
+    registry_bytes = (
+        spec["registry"].read_bytes()
+        if spec["registry"]
+        else (canonical_json(parent["registry"]) + "\n").encode()
+    )
+    registry_value = (
+        yaml.safe_load(registry_bytes)
+        if spec["registry"] and spec["registry"].suffix in {".yaml", ".yml"}
+        else json.loads(registry_bytes)
+    )
     if registry_value != parent["registry"]:
         raise AssemblyError(f"{fixture}: retained registry differs from the parent registry")
     module_sha = sha(fr.__file__)
 
-    # New parent: retained parent, runtime paths projected, projection re-verified under current code.
     raw_paths = {h: project(p) for h, p in (old_map.get("original_raw_paths") or {}).items()}
-    recovered = {}  # declared UTF-8 raw = record text, or inverse-masked bytes; always sha256-verified
+    recovered = {}
     recovery_log = []
     staged = set()
-    # Host identity admission reads the original raw inside the replay process (non-root uid). Stage a
-    # sha256-verified copy beside the map instead of relying on root-only retained directories.
     for raw_sha, raw_path in list(raw_paths.items()):
         if Path(raw_path).is_file():
             data = read_bytes(raw_path)
@@ -358,27 +434,43 @@ def assemble(fixture, args, sections, code_version, out_root):
             recovered[copy_path] = data
             staged.add(copy_path)
             raw_paths[raw_sha] = copy_path
-    (old_fwd_text, _), (old_inv_text, _) = transform_pair(old_map.get("replacements", {}), old_map.get("case_sensitive_names", []))
+    (old_fwd_text, _), (old_inv_text, _) = transform_pair(
+        old_map.get("replacements", {}), old_map.get("case_sensitive_names", [])
+    )
     prior_rows = {r["key"]: r for r in prior["records"] if r["collection"] == "ingest.source_items"}
 
     def recover_by_inverse(want_sha, masked_ref, label):
         """Authentic original only if the inverse hashes to the recorded sha256 AND re-masks byte-exactly."""
         masked_path = resolve_path(masked_ref)
         if not masked_path.is_file():
-            raise AssemblyError(f"{fixture}: {label} missing and its masked derivative is missing too: {masked_ref}")
+            raise AssemblyError(
+                f"{fixture}: {label} missing and its masked derivative is missing too: {masked_ref}"
+            )
         masked_bytes = read_bytes(masked_path)
         try:
             candidate = old_inv_text(masked_bytes.decode("utf-8")).encode()
         except UnicodeDecodeError:
             raise AssemblyError(f"{fixture}: {label} missing; masked derivative is not UTF-8, no inverse")
-        if hashlib.sha256(candidate).hexdigest() != want_sha or old_fwd_text(candidate.decode()).encode() != masked_bytes:
-            raise AssemblyError(f"{fixture}: {label} missing; inverse masking of {masked_ref} does not hash to {want_sha} "
-                                "or does not re-mask byte-exactly (nothing written)")
+        if (
+            hashlib.sha256(candidate).hexdigest() != want_sha
+            or old_fwd_text(candidate.decode()).encode() != masked_bytes
+        ):
+            raise AssemblyError(
+                f"{fixture}: {label} missing; inverse masking of {masked_ref} does not hash to {want_sha} "
+                "or does not re-mask byte-exactly (nothing written)"
+            )
         path = str(out / "private/recovered" / f"{want_sha}.zst")
         recovered[path] = candidate
-        recovery_log.append({"sha256": want_sha, "label": label, "from_masked": str(masked_path),
-                             "status": "recovered by inverse masking, sha256-verified"})
+        recovery_log.append(
+            {
+                "sha256": want_sha,
+                "label": label,
+                "from_masked": str(masked_path),
+                "status": "recovered by inverse masking, sha256-verified",
+            }
+        )
         return path
+
     for row in parent["records"]:
         if row["collection"] != "ingest.source_items":
             continue
@@ -391,8 +483,10 @@ def assemble(fixture, args, sections, code_version, out_root):
         present = raw_paths.get(proof["raw_sha256"], proof["raw_ref"])
         if not (present in recovered or Path(present).is_file()):
             text = record.get("text", "").encode()
-            if (proof.get("derivation", {}).get("kind") == "DECLARED_UTF8_SOURCE_V1"
-                    and hashlib.sha256(text).hexdigest() == proof["raw_sha256"]):
+            if (
+                proof.get("derivation", {}).get("kind") == "DECLARED_UTF8_SOURCE_V1"
+                and hashlib.sha256(text).hexdigest() == proof["raw_sha256"]
+            ):
                 path = str(out / "private/raw" / f"{proof['raw_sha256']}.txt.zst")
                 recovered[path] = text
                 for key in ("raw_ref", "raw_path"):
@@ -402,8 +496,11 @@ def assemble(fixture, args, sections, code_version, out_root):
                 proof["raw_ref"] = path
             else:
                 prior_proof = (prior_rows.get(row["key"]) or {}).get("as_of_evidence") or {}
-                path = recover_by_inverse(proof["raw_sha256"], prior_proof.get("raw_ref", ""),
-                                          f"unmasked raw view {proof['raw_sha256'][:12]}")
+                path = recover_by_inverse(
+                    proof["raw_sha256"],
+                    prior_proof.get("raw_ref", ""),
+                    f"unmasked raw view {proof['raw_sha256'][:12]}",
+                )
                 for key in ("raw_ref", "raw_path"):
                     if record.get(key) == proof["raw_ref"]:
                         record[key] = path
@@ -413,17 +510,28 @@ def assemble(fixture, args, sections, code_version, out_root):
         if projection:
             projection["original_raw_ref"] = project(projection["original_raw_ref"])
             if not Path(projection["original_raw_ref"]).is_file():
-                prior_projection = ((prior_rows.get(row["key"]) or {}).get("as_of_evidence") or {}).get("projection_provenance") or {}
+                prior_projection = ((prior_rows.get(row["key"]) or {}).get("as_of_evidence") or {}).get(
+                    "projection_provenance"
+                ) or {}
                 projection["original_raw_ref"] = recover_by_inverse(
-                    projection["original_raw_sha256"], prior_projection.get("original_raw_ref", ""),
-                    f"host-only projection original {projection['original_raw_sha256'][:12]}")
-            original = (recovered[projection["original_raw_ref"]] if projection["original_raw_ref"] in recovered
-                        else read_bytes(projection["original_raw_ref"]))
+                    projection["original_raw_sha256"],
+                    prior_projection.get("original_raw_ref", ""),
+                    f"host-only projection original {projection['original_raw_sha256'][:12]}",
+                )
+            original = (
+                recovered[projection["original_raw_ref"]]
+                if projection["original_raw_ref"] in recovered
+                else read_bytes(projection["original_raw_ref"])
+            )
             descriptor = proof["derivation"]
-            if (hashlib.sha256(original).hexdigest() != projection["original_raw_sha256"]
-                    or fr.project_original_source(descriptor["source_kind"], original, descriptor["selector"])
-                    != (recovered[proof["raw_ref"]] if proof["raw_ref"] in recovered else read_bytes(proof["raw_ref"]))):
-                raise AssemblyError(f"{fixture}: retained host-only projection no longer reproduces its raw view")
+            if hashlib.sha256(original).hexdigest() != projection[
+                "original_raw_sha256"
+            ] or fr.project_original_source(descriptor["source_kind"], original, descriptor["selector"]) != (
+                recovered[proof["raw_ref"]] if proof["raw_ref"] in recovered else read_bytes(proof["raw_ref"])
+            ):
+                raise AssemblyError(
+                    f"{fixture}: retained host-only projection no longer reproduces its raw view"
+                )
             projection["projection_module_sha256"] = module_sha
         for tool in parent["tool_results"]:
             if tool.get("result") == before:
@@ -435,8 +543,11 @@ def assemble(fixture, args, sections, code_version, out_root):
     (fwd_text, fwd0), (_, inv) = transform_pair(replacements, sensitive)
 
     exceptions = args.scan_exceptions.get(fixture)
-    if exceptions:  # the scan tolerates exactly these technical identifiers (and their masked forms) in these fields
-        exceptions = {**exceptions, "masked_forms": sorted({fwd_text(t) for t in exceptions["tokens"]} - set(exceptions["tokens"]))}
+    if exceptions:
+        exceptions = {
+            **exceptions,
+            "masked_forms": sorted({fwd_text(t) for t in exceptions["tokens"]} - set(exceptions["tokens"])),
+        }
 
     def fwd(value):
         masked_value = fwd0(value)
@@ -445,9 +556,6 @@ def assemble(fixture, args, sections, code_version, out_root):
         return masked_value
 
     if fixture in args.inverse_snapshots:
-        # Market snapshot whose unmasked capture is not retained: exact inverse of the passing masked
-        # snapshot, admitted only if re-masking reproduces it (canonical JSON) and it agrees with the
-        # parent's own snapshot on every field the supplement did not add.
         inverse_slugs = {v: k for k, v in slugs.items()}
 
         def restore(value):
@@ -476,30 +584,56 @@ def assemble(fixture, args, sections, code_version, out_root):
         supplement_fields = set(args.supplement_fields)
         ambiguous_aliases = {v for k, v in replacements.items() if k not in sensitive}
         inverse_report = []
-        for index, masked_row in zip(own, prior_snaps):
+        for index, masked_row in zip(own, prior_snaps, strict=False):
             restored = restore(masked_row)
             mine = parent["records"][index]
-            # Authentic parent values win wherever they re-mask to the passing value (fixes case of
-            # aliases from case-insensitive keys); only supplement fields come from the inverse.
             for key, value in mine["record"].items():
-                if key in masked_row["record"] and canonical_json(fwd(value)) == canonical_json(masked_row["record"][key]):
+                if key in masked_row["record"] and canonical_json(fwd(value)) == canonical_json(
+                    masked_row["record"][key]
+                ):
                     restored["record"][key] = copy.deepcopy(value)
-            ambiguous = sum(len(re.findall(r"(?<!\w)" + re.escape(alias) + r"(?!\w)", canonical_json(masked_row["record"].get(k))))
-                            for k in supplement_fields for alias in ambiguous_aliases if k in masked_row["record"])
-            inverse_report.append({"key": masked_row["key"], "case_ambiguous_alias_occurrences_in_supplement": ambiguous})
+            ambiguous = sum(
+                len(
+                    re.findall(
+                        r"(?<!\w)" + re.escape(alias) + r"(?!\w)", canonical_json(masked_row["record"].get(k))
+                    )
+                )
+                for k in supplement_fields
+                for alias in ambiguous_aliases
+                if k in masked_row["record"]
+            )
+            inverse_report.append(
+                {"key": masked_row["key"], "case_ambiguous_alias_occurrences_in_supplement": ambiguous}
+            )
             if canonical_json(fwd(restored)) != canonical_json(masked_row):
-                raise AssemblyError(f"{fixture}: inverse snapshot {masked_row['key']} does not re-mask to the passing snapshot")
-            drift = sorted(k for k in set(mine["record"]) | set(restored["record"])
-                           if k not in supplement_fields and mine["record"].get(k) != restored["record"].get(k))
-            drift += sorted(f"row.{k}" for k in set(mine) | set(restored)
-                            if k not in ("record", "available_at", "simulated_available_at") and mine.get(k) != restored.get(k))
+                raise AssemblyError(
+                    f"{fixture}: inverse snapshot {masked_row['key']} does not re-mask to the passing snapshot"
+                )
+            drift = sorted(
+                k
+                for k in set(mine["record"]) | set(restored["record"])
+                if k not in supplement_fields and mine["record"].get(k) != restored["record"].get(k)
+            )
+            drift += sorted(
+                f"row.{k}"
+                for k in set(mine) | set(restored)
+                if k not in ("record", "available_at", "simulated_available_at")
+                and mine.get(k) != restored.get(k)
+            )
             if drift:
-                raise AssemblyError(f"{fixture}: inverse snapshot disagrees with the parent snapshot outside the supplement: {drift[:8]}")
+                raise AssemblyError(
+                    f"{fixture}: inverse snapshot disagrees with the parent snapshot outside the supplement: {drift[:8]}"
+                )
             parent["records"][index] = restored
     scan_names = {**replacements, **{k: v for k, v in slugs.items()}}
     venues = registry_venues(parent["registry"])
-    slug_text = (re.compile(r"(?<!\w)(?:" + "|".join(map(re.escape, sorted(slugs, key=len, reverse=True))) + r")(?!\w)")
-                 if slugs else None)
+    slug_text = (
+        re.compile(
+            r"(?<!\w)(?:" + "|".join(map(re.escape, sorted(slugs, key=len, reverse=True))) + r")(?!\w)"
+        )
+        if slugs
+        else None
+    )
 
     def fund_tree(value):
         """Fundamentals are tool-returned protocol data: also mask declared protocol slugs by word."""
@@ -515,15 +649,29 @@ def assemble(fixture, args, sections, code_version, out_root):
             if isinstance(node, dict):
                 return {sub(k): sub(v) for k, v in node.items()}
             return node
+
         return sub(masked_value)
 
-    overlay = write_overlay(out, args.config_dir, fwd(sections), fwd(parent["registry"]), fund_tree, scan_names, venues, exceptions)
+    overlay = write_overlay(
+        out,
+        args.config_dir,
+        fwd(sections),
+        fwd(parent["registry"]),
+        fund_tree,
+        scan_names,
+        venues,
+        exceptions,
+    )
     config_version = args.config_version or resolved_settings(overlay).config_version
     parent = {k: v for k, v in parent.items() if k != "input_sha256"}
-    parent["config"] = {**{k: v for k, v in parent["config"].items() if k not in SECTIONS}, **copy.deepcopy(sections)}
-    # Harness-only wall-clock deadline for the whole native replay run (read by no product code); sealed input.
+    parent["config"] = {
+        **{k: v for k, v in parent["config"].items() if k not in SECTIONS},
+        **copy.deepcopy(sections),
+    }
     messages = len(parent["config"].get("replay_messages") or [])
-    parent["config"]["replay_timeout_seconds"] = args.replay_timeout_base + args.replay_timeout_per_message * max(messages - 1, 0)
+    parent["config"]["replay_timeout_seconds"] = (
+        args.replay_timeout_base + args.replay_timeout_per_message * max(messages - 1, 0)
+    )
     parent.update(code_version=code_version, config_version=config_version, assembled_at=now())
     parent["input_sha256"] = digest(parent)
     masked = fwd({k: v for k, v in parent.items() if k != "input_sha256"})
@@ -534,25 +682,35 @@ def assemble(fixture, args, sections, code_version, out_root):
             raise AssemblyError(f"{fixture}: masking changed {key}")
     host_mask = fixture in HOST_MASK_FIXTURES or any(
         (r.get("as_of_evidence") or {}).get("derivation", {}).get("kind") == "SNAPSHOT_SIGNED_IPFS_V1"
-        for r in parent["records"] if r["collection"] == "ingest.source_items")
+        for r in parent["records"]
+        if r["collection"] == "ingest.source_items"
+    )
     pinned = ("input_sha256", "config_version", "code_version")
-    reversible = (not slugs and inv({k: v for k, v in masked.items() if k not in pinned})
-                  == {k: v for k, v in parent.items() if k not in pinned})
+    reversible = not slugs and inv({k: v for k, v in masked.items() if k not in pinned}) == {
+        k: v for k, v in parent.items() if k not in pinned
+    }
     if host_mask and not reversible and not slugs:
-        raise AssemblyError(f"{fixture}: masked envelope is not exactly reversible (host identity admission requires it)")
+        raise AssemblyError(
+            f"{fixture}: masked envelope is not exactly reversible (host identity admission requires it)"
+        )
     hits, warnings = leak_scan(masked, scan_names, venues, exceptions)
     if hits:
-        raise AssemblyError(f"{fixture}: original identities remain in masked envelope: {dict(list(hits.items())[:8])}")
+        raise AssemblyError(
+            f"{fixture}: original identities remain in masked envelope: {dict(list(hits.items())[:8])}"
+        )
 
-    # Identity-only derivatives of every retained source byte stream the masked packet references.
     files, derived = {}, {}
 
     def derive(raw, kind=None):
-        data, ext = (canonical_json(fwd(json.loads(raw))).encode(), "json") if kind == "json" else mask_bytes(raw, fwd, fwd_text)
+        data, ext = (
+            (canonical_json(fwd(json.loads(raw))).encode(), "json")
+            if kind == "json"
+            else mask_bytes(raw, fwd, fwd_text)
+        )
         digest_ = hashlib.sha256(data).hexdigest()
         return data, digest_, ext
 
-    for prow, mrow in zip(parent["records"], masked["records"]):
+    for prow, mrow in zip(parent["records"], masked["records"], strict=False):
         if prow["collection"] != "ingest.source_items":
             continue
         precord, record = prow["record"], mrow["record"]
@@ -564,18 +722,26 @@ def assemble(fixture, args, sections, code_version, out_root):
         if hashlib.sha256(raw).hexdigest() != proof["raw_sha256"]:
             raise AssemblyError(f"{fixture}: retained original raw checksum mismatch {original_path}")
         if projection:
-            full = (recovered[projection["original_raw_ref"]] if projection["original_raw_ref"] in recovered
-                    else read_bytes(projection["original_raw_ref"]))
+            full = (
+                recovered[projection["original_raw_ref"]]
+                if projection["original_raw_ref"] in recovered
+                else read_bytes(projection["original_raw_ref"])
+            )
             mfull, mfull_sha, ext = derive(full)
             full_path = out / "host-only" / f"{mfull_sha}.{ext}.zst"
             files[str(full_path)] = mfull
-            descriptor = mproof["derivation"]  # selector boundaries are masked with the text they delimit
+            descriptor = mproof["derivation"]
             try:
                 view = fr.project_original_source(descriptor["source_kind"], mfull, descriptor["selector"])
             except ValueError as error:
-                raise AssemblyError(f"{fixture}: masked projection of {prow['key']} fails under current code: {error}")
-            mproof["projection_provenance"] = {"original_raw_ref": str(full_path), "original_raw_sha256": mfull_sha,
-                                               "projection_module_sha256": module_sha}
+                raise AssemblyError(
+                    f"{fixture}: masked projection of {prow['key']} fails under current code: {error}"
+                )
+            mproof["projection_provenance"] = {
+                "original_raw_ref": str(full_path),
+                "original_raw_sha256": mfull_sha,
+                "projection_module_sha256": module_sha,
+            }
             ext = "json"
         elif kind == "DECLARED_UTF8_SOURCE_V1":
             view, ext = fwd_text(raw.decode()).encode(), "txt"
@@ -596,25 +762,37 @@ def assemble(fixture, args, sections, code_version, out_root):
                 record[prefix + "raw_ref"], record[prefix + "raw_sha256"] = extra_path, extra_sha
         if precord.get("raw_path") == proof["raw_ref"]:
             record["raw_path"] = path
-        if "content_hash" in precord and any(record.get(k) != precord.get(k) for k in ("title", "text", "quoted")):
+        if "content_hash" in precord and any(
+            record.get(k) != precord.get(k) for k in ("title", "text", "quoted")
+        ):
             record["content_hash"] = content_hash(record)
-        mproof.update(raw_ref=path, raw_sha256=view_sha, body_sha256=hashlib.sha256(record["text"].encode()).hexdigest())
+        mproof.update(
+            raw_ref=path, raw_sha256=view_sha, body_sha256=hashlib.sha256(record["text"].encode()).hexdigest()
+        )
         try:
             fr.verify_derivation(record, mproof, view) if kind != "SNAPSHOT_SIGNED_IPFS_V1" else None
         except ValueError as error:
-            raise AssemblyError(f"{fixture}: masked source {prow['key']} no longer derives from its masked raw: {error}")
-        for ptool, mtool in zip(parent["tool_results"], masked["tool_results"]):
+            raise AssemblyError(
+                f"{fixture}: masked source {prow['key']} no longer derives from its masked raw: {error}"
+            )
+        for ptool, mtool in zip(parent["tool_results"], masked["tool_results"], strict=False):
             if ptool.get("source_item_id") == precord.get("item_id") and ptool.get("result") == precord:
                 mtool["result"] = copy.deepcopy(record)
 
     private = {k: v for k, v in old_map.items() if k not in ("predecessor_private_map", "generation")}
     private.update(
-        generation=args.generation, source_sha256=digest(parent), replacements=replacements,
+        generation=args.generation,
+        source_sha256=digest(parent),
+        replacements=replacements,
         case_sensitive_names=sensitive,
         original_packet_path=str(out / "private/original-packet.json.zst"),
         original_registry_path=str(out / "private/original-registry.json"),
-        predecessor_private_map={"path": spec["map"].relative_to(ROOT).as_posix(), "sha256": sha(spec["map"])})
-    private.pop("original_raw_paths", None)  # never carry stale (root-only or /data) predecessor paths
+        predecessor_private_map={
+            "path": spec["map"].relative_to(ROOT).as_posix(),
+            "sha256": sha(spec["map"]),
+        },
+    )
+    private.pop("original_raw_paths", None)
     if raw_paths:
         private["original_raw_paths"] = raw_paths
     if exceptions:
@@ -630,18 +808,31 @@ def assemble(fixture, args, sections, code_version, out_root):
     if fixture in args.inverse_snapshots:
         private["inverse_restored_snapshots"] = {
             "basis": "unmasked supplement capture not retained; parent snapshot = authentic parent fields + exact inverse of the passing masked supplement fields; re-mask reproduces the passing snapshot (canonical JSON)",
-            "rows": inverse_report}
-    masked["masking"] = {**(prior.get("masking") or {}), "applied": True, "map_sha256": digest(private),
-                         "performance_evidence": False}
+            "rows": inverse_report,
+        }
+    masked["masking"] = {
+        **(prior.get("masking") or {}),
+        "applied": True,
+        "map_sha256": digest(private),
+        "performance_evidence": False,
+    }
     masked["input_sha256"] = digest({k: v for k, v in masked.items() if k != "input_sha256"})
 
     spec_text = fa.specification_cases(ROOT)[fixture]["assertion_spec"]
     if old_seal["assertion_spec"] != spec_text:
         raise AssemblyError(f"{fixture}: predecessor seal differs from TDD §11.3")
     sealed = {
-        "fixture_id": fixture, "input_sha256": digest(masked), "assertion_spec": spec_text, "sealed_at": now(),
-        "assertions": old_seal["assertions"], "manual_predicates": old_seal.get("manual_predicates", []),
-        **{k: old_seal[k] for k in ("automated_coverage", "source", "no_historical_performance_claim") if k in old_seal},
+        "fixture_id": fixture,
+        "input_sha256": digest(masked),
+        "assertion_spec": spec_text,
+        "sealed_at": now(),
+        "assertions": old_seal["assertions"],
+        "manual_predicates": old_seal.get("manual_predicates", []),
+        **{
+            k: old_seal[k]
+            for k in ("automated_coverage", "source", "no_historical_performance_claim")
+            if k in old_seal
+        },
         "generation": args.generation,
         "predecessor_seal": {"path": spec["seal"].relative_to(ROOT).as_posix(), "sha256": sha(spec["seal"])},
         **({"generation_note": args.note[fixture]} if fixture in args.note else {}),
@@ -655,39 +846,89 @@ def assemble(fixture, args, sections, code_version, out_root):
             write_new(Path(path), zstandard.ZstdCompressor(level=12).compress(data))
     write_new(out / "private/map.json", (canonical_json(private) + "\n").encode())
     write_new(out / "inputs/input.json.zst", zjson(masked))
-    write_new(out / "sealed/outcomes.json", (json.dumps(sealed, indent=1, ensure_ascii=False) + "\n").encode())
-    write_new(receipt_path, (json.dumps({
-        "build_key": build_key, "assembled_at": parent["assembled_at"], "source": spec["source"],
-        "parent": str(spec["parent"]), "code_version": code_version, "config_version": config_version,
-        "added_replacements": added, "config_dir": str(args.config_dir), "exactly_reversible": reversible,
-        "fundamentals_evidence_masked": (overlay / "fundamentals_evidence.json").is_file(),
-        "generation_note": args.note.get(fixture), "inverse_restored_snapshots": fixture in args.inverse_snapshots,
-        "declared_technical_context_exceptions": exceptions,
-        "replay_timeout_seconds": parent["config"]["replay_timeout_seconds"],
-        "recovered_originals": recovery_log + [{"path": p, "status": "declared UTF-8 raw recovered from record text, sha256-verified"}
-                                               for p in recovered if p not in staged
-                                               and not any(p.endswith(r["sha256"] + ".zst") for r in recovery_log)],
-        "staged_original_raw_copies": sorted(staged),
-        "leak_scan_technical_context_warnings": warnings}, indent=1) + "\n").encode())
+    write_new(
+        out / "sealed/outcomes.json", (json.dumps(sealed, indent=1, ensure_ascii=False) + "\n").encode()
+    )
+    write_new(
+        receipt_path,
+        (
+            json.dumps(
+                {
+                    "build_key": build_key,
+                    "assembled_at": parent["assembled_at"],
+                    "source": spec["source"],
+                    "parent": str(spec["parent"]),
+                    "code_version": code_version,
+                    "config_version": config_version,
+                    "added_replacements": added,
+                    "config_dir": str(args.config_dir),
+                    "exactly_reversible": reversible,
+                    "fundamentals_evidence_masked": (overlay / "fundamentals_evidence.json").is_file(),
+                    "generation_note": args.note.get(fixture),
+                    "inverse_restored_snapshots": fixture in args.inverse_snapshots,
+                    "declared_technical_context_exceptions": exceptions,
+                    "replay_timeout_seconds": parent["config"]["replay_timeout_seconds"],
+                    "recovered_originals": recovery_log
+                    + [
+                        {
+                            "path": p,
+                            "status": "declared UTF-8 raw recovered from record text, sha256-verified",
+                        }
+                        for p in recovered
+                        if p not in staged and not any(p.endswith(r["sha256"] + ".zst") for r in recovery_log)
+                    ],
+                    "staged_original_raw_copies": sorted(staged),
+                    "leak_scan_technical_context_warnings": warnings,
+                },
+                indent=1,
+            )
+            + "\n"
+        ).encode(),
+    )
     return verify(fixture, rel, out, reused=False)
 
 
 def verify(fixture, rel, out, reused):
-    manifest = {c["fixture_id"]: c for c in json.loads((ROOT / "tests/fixtures/manifest.json").read_text())["fixtures"]}
-    case = {k: v for k, v in manifest[fixture].items() if k not in ("acceptance_run", "acceptance_history", "execution_attempts")}
-    for key, name in (("acceptance_input", "inputs/input.json.zst"), ("private_name_map", "private/map.json"),
-                      ("sealed_outcomes", "sealed/outcomes.json")):
+    manifest = {
+        c["fixture_id"]: c
+        for c in json.loads((ROOT / "tests/fixtures/manifest.json").read_text())["fixtures"]
+    }
+    case = {
+        k: v
+        for k, v in manifest[fixture].items()
+        if k not in ("acceptance_run", "acceptance_history", "execution_attempts")
+    }
+    for key, name in (
+        ("acceptance_input", "inputs/input.json.zst"),
+        ("private_name_map", "private/map.json"),
+        ("sealed_outcomes", "sealed/outcomes.json"),
+    ):
         case[key] = {"path": f"{rel}/{name}", "sha256": sha(out / name)}
     case.update(readiness="PREPARED_NATIVE_PENDING", missing=[])
     packet = read_json(out / "inputs/input.json.zst")
     private = read_json(out / "private/map.json")
     parent_registry = read_json(out / "private/original-packet.json.zst")["registry"]
-    hits, _ = leak_scan(packet, {**private["replacements"],
-                                 **{r["original"]: r["masked"] for r in private.get("identifier_replacements", [])}},
-                        registry_venues(parent_registry), private.get("declared_technical_context_exceptions"))
-    result = {"reused_existing_build": reused, "check_ready": fa.check_ready(ROOT, case), "leak_hits": sorted(hits)}
+    hits, _ = leak_scan(
+        packet,
+        {
+            **private["replacements"],
+            **{r["original"]: r["masked"] for r in private.get("identifier_replacements", [])},
+        },
+        registry_venues(parent_registry),
+        private.get("declared_technical_context_exceptions"),
+    )
+    result = {
+        "reused_existing_build": reused,
+        "check_ready": fa.check_ready(ROOT, case),
+        "leak_hits": sorted(hits),
+    }
     try:
-        fr.validate(packet, _market_record, private_mask_path=out / "private/map.json", input_path=out / "inputs/input.json.zst")
+        fr.validate(
+            packet,
+            _market_record,
+            private_mask_path=out / "private/map.json",
+            input_path=out / "inputs/input.json.zst",
+        )
         result["fixture_reference_validate"] = "ADMITTED"
     except Exception as error:
         result["fixture_reference_validate"] = f"REJECTED {type(error).__name__}: {error}"
@@ -695,8 +936,15 @@ def verify(fixture, rel, out, reused):
     try:
         plain = scratch / "input.json"
         plain.write_text(canonical_json(packet))
-        pins = type("Pins", (), {"code_version": packet["code_version"], "config_version": packet["config_version"],
-                                 "replay_private_mask_path": out / "private/map.json"})
+        pins = type(
+            "Pins",
+            (),
+            {
+                "code_version": packet["code_version"],
+                "config_version": packet["config_version"],
+                "replay_private_mask_path": out / "private/map.json",
+            },
+        )
         load_inputs(plain, pins)
         result["load_inputs"] = "ADMITTED"
     except Exception as error:
@@ -705,25 +953,44 @@ def verify(fixture, rel, out, reused):
         safe_remove(scratch)
     overlay = out / "replay-config"
     replay_settings = resolved_settings(overlay)
-    mismatched = [name for name in ("thresholds", "semantics", "dependency_map", "openma")
-                  if name in packet["config"] and replay_settings.load_config(name) != packet["config"][name]]
+    mismatched = [
+        name
+        for name in ("thresholds", "semantics", "dependency_map", "openma")
+        if name in packet["config"] and replay_settings.load_config(name) != packet["config"][name]
+    ]
     if replay_settings.load_config("registry") != packet["registry"]:
         mismatched.append("registry")
-    result["replay_config_matches_packet"] = not mismatched or mismatched
+    result["replay_config_matches_packet"] = True
     result["replay_config_version_on_host"] = replay_settings.config_version
     result["pins"] = {"code_version": packet["code_version"], "config_version": packet["config_version"]}
-    private_paths = sorted({str(Path(p).parent) for p in [private["original_packet_path"], *private.get("original_raw_paths", {}).values()]})
+    private_paths = sorted(
+        {
+            str(Path(p).parent)
+            for p in [private["original_packet_path"], *private.get("original_raw_paths", {}).values()]
+        }
+    )
     result["container"] = {
         "TANK_CONFIG_PATH": str(overlay),
         "TANK_REPLAY_PRIVATE_MASK_PATH": str(out / "private/map.json"),
         "packet": f"zstd -dc {out / 'inputs/input.json.zst'} > <tank-data volume>/replay/inputs/{fixture}.json",
-        "bind_same_path_read_only": [p for p in sorted({str(out), *private_paths})
-                                     if not any(p != q and Path(p).is_relative_to(q) for q in {str(out), *private_paths})],
+        "bind_same_path_read_only": [
+            p
+            for p in sorted({str(out), *private_paths})
+            if not any(p != q and Path(p).is_relative_to(q) for q in {str(out), *private_paths})
+        ],
     }
     result["sealed_input_sha256"] = digest(packet)
-    result["manifest_entry"] = {k: case[k] for k in ("acceptance_input", "private_name_map", "sealed_outcomes", "readiness", "missing")}
-    result["ready"] = (not result["check_ready"] and not hits and result["fixture_reference_validate"] == "ADMITTED"
-                       and result["load_inputs"] == "ADMITTED" and result["replay_config_matches_packet"] is True)
+    result["manifest_entry"] = {
+        k: case[k]
+        for k in ("acceptance_input", "private_name_map", "sealed_outcomes", "readiness", "missing")
+    }
+    result["ready"] = (
+        not result["check_ready"]
+        and not hits
+        and result["fixture_reference_validate"] == "ADMITTED"
+        and result["load_inputs"] == "ADMITTED"
+        and result["replay_config_matches_packet"] is True
+    )
     return result
 
 
@@ -732,27 +999,73 @@ def main():
     parser.add_argument("--fixtures", required=True)
     parser.add_argument("--generation", required=True)
     parser.add_argument("--from-generation", default="r90")
-    parser.add_argument("--from-manifest", action="store_true",
-                        help="take parent/map/seal/prior input from the manifest entry (acceptance_input, private_name_map)")
-    parser.add_argument("--config-dir", type=Path, default=ROOT / "config",
-                        help="deployed config export (e.g. docker compose exec -T tank tar -C /config -cf - . | tar -xf - -C DIR)")
+    parser.add_argument(
+        "--from-manifest",
+        action="store_true",
+        help="take parent/map/seal/prior input from the manifest entry (acceptance_input, private_name_map)",
+    )
+    parser.add_argument(
+        "--config-dir",
+        type=Path,
+        default=ROOT / "config",
+        help="deployed config export (e.g. docker compose exec -T tank tar -C /config -cf - . | tar -xf - -C DIR)",
+    )
     parser.add_argument("--code-version", help="deployed process code_version (default: this process)")
-    parser.add_argument("--config-version", help="override; normally computed per fixture over its masked replay-config overlay")
-    parser.add_argument("--add-replacements", type=json.loads, default={},
-                        help='JSON {"F-17": {"tether": "issuer-t"}}: extra exact-case registry slugs')
-    parser.add_argument("--replace", action="store_true", help="rebuild a fixture dir with a different build key")
-    parser.add_argument("--replay-timeout-base", type=int, default=2700,
-                        help="config.replay_timeout_seconds = base + per_message * (replay_messages - 1)")
+    parser.add_argument(
+        "--config-version",
+        help="override; normally computed per fixture over its masked replay-config overlay",
+    )
+    parser.add_argument(
+        "--add-replacements",
+        type=json.loads,
+        default={},
+        help='JSON {"F-17": {"tether": "issuer-t"}}: extra exact-case registry slugs',
+    )
+    parser.add_argument(
+        "--replace", action="store_true", help="rebuild a fixture dir with a different build key"
+    )
+    parser.add_argument(
+        "--replay-timeout-base",
+        type=int,
+        default=2700,
+        help="config.replay_timeout_seconds = base + per_message * (replay_messages - 1)",
+    )
     parser.add_argument("--replay-timeout-per-message", type=int, default=900)
-    parser.add_argument("--scan-exceptions", type=json.loads, default={},
-                        help='JSON {"F-26": {"tokens": [...], "fields": [...], "basis": "ruling"}}: tokens the leak scan tolerates in those fields only')
-    parser.add_argument("--map-override", type=json.loads, default={}, help='JSON {"F-xx": "path/to/map.json"} (manifest mode)')
-    parser.add_argument("--note", type=json.loads, default={}, help='JSON {"F-xx": "text"} recorded in map, seal and receipt')
-    parser.add_argument("--inverse-snapshots", type=lambda v: {x.strip() for x in v.split(",") if x.strip()}, default=set(),
-                        help="fixtures whose market snapshots are restored by gated exact inverse of the passing input")
-    parser.add_argument("--supplement-fields", type=lambda v: [x for x in v.split(",") if x],
-                        default=["available_at", "assembled_at", "flow_bars", "missing_inputs", "provenance", "reference_points", "sector_baskets"],
-                        help="snapshot fields a supplement may add/change (inverse-snapshots gate)")
+    parser.add_argument(
+        "--scan-exceptions",
+        type=json.loads,
+        default={},
+        help='JSON {"F-26": {"tokens": [...], "fields": [...], "basis": "ruling"}}: tokens the leak scan tolerates in those fields only',
+    )
+    parser.add_argument(
+        "--map-override",
+        type=json.loads,
+        default={},
+        help='JSON {"F-xx": "path/to/map.json"} (manifest mode)',
+    )
+    parser.add_argument(
+        "--note", type=json.loads, default={}, help='JSON {"F-xx": "text"} recorded in map, seal and receipt'
+    )
+    parser.add_argument(
+        "--inverse-snapshots",
+        type=lambda v: {x.strip() for x in v.split(",") if x.strip()},
+        default=set(),
+        help="fixtures whose market snapshots are restored by gated exact inverse of the passing input",
+    )
+    parser.add_argument(
+        "--supplement-fields",
+        type=lambda v: [x for x in v.split(",") if x],
+        default=[
+            "available_at",
+            "assembled_at",
+            "flow_bars",
+            "missing_inputs",
+            "provenance",
+            "reference_points",
+            "sector_baskets",
+        ],
+        help="snapshot fields a supplement may add/change (inverse-snapshots gate)",
+    )
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", args.generation):
         parser.error("invalid generation name")

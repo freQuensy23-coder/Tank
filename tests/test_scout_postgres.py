@@ -62,7 +62,7 @@ async def snapshot(dsn):
             schema, table = name.split(".")
             row = await (
                 await conn.execute(
-                    f'SELECT count(*), md5(coalesce(string_agg(t::text, \'|\' ORDER BY t::text), \'\')) '
+                    f"SELECT count(*), md5(coalesce(string_agg(t::text, '|' ORDER BY t::text), '')) "
                     f'FROM "{schema}"."{table}" t'
                 )
             ).fetchone()
@@ -214,7 +214,6 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
         assert eid == recorded["event_id"]
         claim = recorded["accepted_claims"][0]["claim_id"]
 
-        # The analyst proposes a pattern through the real session tool path.
         await sessions.tool(
             analyst,
             {
@@ -232,7 +231,6 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
         assert [(job["priority"], job["payload"]) for job in jobs] == [(4, {"prp_id": prp_id})]
         assert max(job["priority"] for job in await repository.list("ops.jobs")) == 4
 
-        # The SCOUT_REVIEW job opens one scout session per proposal.
         openma.posted.clear()
         scout = await sessions.scout_review(jobs[0]["payload"])
         assert scout["proposal_id"] == prp_id
@@ -265,7 +263,12 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
         for number, (name, arguments) in enumerate(attempts):
             await sessions.process_event(
                 scout["session_id"],
-                {"id": f"scout_call_{number}", "type": "agent.custom_tool_use", "name": name, "input": arguments},
+                {
+                    "id": f"scout_call_{number}",
+                    "type": "agent.custom_tool_use",
+                    "name": name,
+                    "input": arguments,
+                },
             )
         after = await snapshot(dsn)
 
@@ -287,7 +290,6 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
     assert "scout.expansion_proposals" in changed
     for name in OPERATOR_FACING:
         assert before[name] == after[name]
-    # Its own logs only: no other session's rows changed.
     assert (await repository.get("ops.agent_sessions", "ses_analyst"))["session_id"] == "ses_analyst"
     assert all(
         row["session_id"] == scout["session_id"]

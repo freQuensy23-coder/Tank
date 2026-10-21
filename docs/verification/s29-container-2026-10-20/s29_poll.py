@@ -44,14 +44,20 @@ async def main(out):
     files = list((work / "data" / "raw" / "items").rglob("*.json.zst"))
     report = {
         "list_id": list_id,
-        "polls": [{k: first[k] for k in ("items", "status", "errors")}, {k: second[k] for k in ("items", "status", "errors")}],
-        "checkpoint": {k: state.get(k) for k in ("status", "scan_status", "status_id", "reads", "detail_reads", "error")},
+        "polls": [
+            {k: first[k] for k in ("items", "status", "errors")},
+            {k: second[k] for k in ("items", "status", "errors")},
+        ],
+        "checkpoint": {
+            k: state.get(k) for k in ("status", "scan_status", "status_id", "reads", "detail_reads", "error")
+        },
         "items": len(items),
         "raw_files": len(files),
         "monitored_accounts_seen": len(monitored),
         "monitored_outside_list": sorted(set(monitored) - handles),
         "sample": [
-            {k: i.get(k) for k in ("external_id", "author", "monitored_accounts", "published_at", "url")} for i in items[:5]
+            {k: i.get(k) for k in ("external_id", "author", "monitored_accounts", "published_at", "url")}
+            for i in items[:5]
         ],
     }
     Path(out).write_text(json.dumps(report, indent=1) + "\n")

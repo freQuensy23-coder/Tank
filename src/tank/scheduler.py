@@ -1,8 +1,9 @@
 """Durable timer creation, watch evaluation and reaction checkpoints."""
 
 import asyncio
+import contextlib
 import logging
-from datetime import timedelta
+from datetime import UTC, timedelta
 from decimal import Decimal, localcontext
 
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
@@ -20,26 +21,12 @@ CHECKPOINTS = {
     "POST_72H": 259200,
 }
 BENCHMARK_TOKENS = frozenset({"bitcoin:BTC", "ethereum:ETH"})
-# Reaction measurements run full Market Truth and serialize on the market flush;
-# more at once only hold the 8 workers that items, sessions and EVAL_CONDITIONS
-# need (03 §3.8). A job finding no free slot is re-queued without an attempt.
 REACTION_MEASUREMENT_SLOTS = 2
-# EVAL_CONDITIONS has 20 s (03 §3.8). Under a loaded database a batch stops
-# starting new conditions after this budget and completes; the next minute
-# continues with those evaluated longest ago, so no condition starves.
 EVAL_CONDITIONS_BUDGET_S = 15
-# One condition's market reads may use at most this much of it, so a single
-# slow condition cannot spend the whole batch.
 EVAL_CONDITION_BUDGET_S = 8
 REACTION_RETRY_S = 30
-# A running capture waits while Market Truth runs for an event (lead ruling 2026-10-21:
-# event analysis before captures). It stops yielding once its checkpoint is within
-# CAPTURE_EXPIRY_SAFETY_S of the capture expiry (checkpoint + 6 h, 03 §3.8).
 CAPTURE_YIELD_POLL_S, CAPTURE_YIELD_MAX_S = 2, 300
 CAPTURE_EXPIRY_S, CAPTURE_EXPIRY_SAFETY_S = 6 * 3600, 1200
-# A late-data revision (03 §8.6) waits this long before it measures, so the late completions
-# that follow a restart's repairs fold into one queued revision per checkpoint (it measures all
-# data present when it runs) instead of re-queuing every checkpoint per repair.
 LATE_REVISION_DEFER_S = 1800
 
 
@@ -60,7 +47,6 @@ def compare(actual, op, target):
     if actual is None:
         return False
     if isinstance(actual, dict) and actual.get("kind") == "EXACT_STRICT_MAJORITY":
-        # Truth preserves the exact > 1/2 result before ratio-to-float display conversion.
         if op == ">" and Decimal(str(target)) == Decimal("0.5"):
             return actual["strict_majority"] is True
         actual = actual.get("value")
@@ -89,10 +75,9 @@ class Scheduler:
 
     def threshold(self, name, fixture_default):
         if not hasattr(self.settings, "load_config"):
-            return fixture_default  # Explicit lightweight injected test settings only.
+            return fixture_default
         thresholds = self.settings.load_config("thresholds")
         if name not in thresholds:
-            # Incomplete injected test configuration; production validates required keys.
             from tank.settings import Settings
 
             if isinstance(self.settings, Settings):
@@ -119,8 +104,6 @@ class Scheduler:
         self.background[name] = task
 
         def completed(finished):
-            # Dynamic event/token work must not retain completed task frames.
-            # An older callback must never remove its same-name replacement.
             if self.background.get(name) is finished:
                 self.background.pop(name)
 
@@ -141,10 +124,8 @@ class Scheduler:
                     await self.tick()
                 except Exception:
                     log.exception("Scheduler tick failed")
-                try:
+                with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=30)
-                except TimeoutError:
-                    pass
         finally:
             await self.close()
 
@@ -294,8 +275,6 @@ class Scheduler:
             if missing_pre and self.market is not None:
 
                 async def capture_pre(payloads=missing_pre):
-                    # A background task, not a worker: it waits for a slot. Each PRE window
-                    # reads only its own checkpoint window (snapshot scope REACTION).
                     for payload in payloads:
                         await self.reaction_capture(payload, wait_for_slot=True)
 
@@ -510,12 +489,8 @@ class Scheduler:
 
             if isinstance(self.truth, MarketTruthService):
                 raise RuntimeError("Selective condition evaluator is required")
-            # Explicit injected test doubles retain their small fixture API.
             return await self.truth.assess(event_id, token_id, cutoff)
         truth = await evaluator(event_id, token_id, cutoff, requirements=requirements)
-        # TDD §3.8 reserves RUN_MARKET_TRUTH for get_market_truth. Minute
-        # checks remain transient; unavailable metrics cannot create snapshots
-        # or trigger a condition from stale/guessed values.
         return truth
 
     async def eval_conditions(self, payload):
@@ -531,10 +506,6 @@ class Scheduler:
             requirement_sets.setdefault(key, set()).update(
                 (item["metric"], item["window"]) for item in self.condition_requirements(condition["expr"])
             )
-        # Invalidation (EXIT) first, then the least recently evaluated.
-        # Conditions without market reads (fatal contradiction, milestone) are
-        # cheap and go first; market ones rotate from the least recently
-        # touched (evaluated or attempted), invalidations first on ties.
         conditions.sort(
             key=lambda c: (
                 bool(self.condition_requirements(c["expr"])),
@@ -549,8 +520,6 @@ class Scheduler:
         outcomes = {"evaluated": [], "fired": [], "deferred": []}
 
         async def bounded_truth(key, requirements):
-            # One market read may exceed the whole job (r107: 60-80 head queries
-            # per evaluation); it gets only this condition's remaining budget.
             remaining = limit["until"] - loop.time()
             if remaining <= 0:
                 raise _EvalBudgetSpent
@@ -560,11 +529,10 @@ class Scheduler:
                 )
             except TimeoutError:
                 raise _EvalBudgetSpent from None
+
         event_cache = {}
         for position, cond in enumerate(conditions):
             if loop.time() - started > EVAL_CONDITIONS_BUDGET_S:
-                # Not reached this minute: their older touch time puts them
-                # first in the next batch.
                 outcomes["deferred"] += [
                     {"cond_id": c["cond_id"], "reason": "BATCH_BUDGET"} for c in conditions[position:]
                 ]
@@ -594,7 +562,6 @@ class Scheduler:
                 if "milestone" in expr:
                     continue
                 if cond["event_id"] not in event_cache:
-                    # One read per event per batch, not per condition.
                     event_cache[cond["event_id"]] = (
                         await self.repo.get("evt.events", cond["event_id"]),
                         [
@@ -630,16 +597,14 @@ class Scheduler:
                     return []
 
                 periods = persistence_windows(expr)
-                # Market persistence uses actual non-overlapping, completed window endpoints.
-                # Instant event predicates never inherit this clock or its memoization.
                 market_cutoff_stamp = cutoff_stamp
                 if periods:
-                    from datetime import datetime, timezone
+                    from datetime import datetime
 
                     seconds = max(periods)
                     endpoint = int(parse_time(cutoff).timestamp()) // seconds * seconds
                     market_cutoff_stamp = chosen_boundary(
-                        datetime.fromtimestamp(endpoint, timezone.utc), precision="EXACT"
+                        datetime.fromtimestamp(endpoint, UTC), precision="EXACT"
                     )
                 counters = dict(cond.get("counters", {}))
                 unobserved, leaf_matches = [], []
@@ -673,7 +638,10 @@ class Scheduler:
                             }
                             cache[cache_key] = await bounded_truth(
                                 cache_key,
-                                [{"metric": metric, "window": window} for metric, window in sorted(requirements)],
+                                [
+                                    {"metric": metric, "window": window}
+                                    for metric, window in sorted(requirements)
+                                ],
                             )
                         truth = cache[cache_key]
                     value = metric_value(truth, event, metric, expr.get("window", "W1H"))
@@ -703,10 +671,6 @@ class Scheduler:
                             **evaluation_stamp.fields("cutoff"),
                         }
                         return matched
-                    # Retain only explicitly evaluated non-overlapping windows.
-                    # Re-evaluate retained endpoints through the selective reader:
-                    # changed dependency heads can complete/correct a closed hour.
-                    # Replacing a window never increments that same hour twice.
                     history = {row["window"]: dict(row) for row in previous.get("history", [])}
                     if not history and previous.get("window") is not None:
                         history[previous["window"]] = dict(previous)
@@ -733,11 +697,12 @@ class Scheduler:
                             try:
                                 cache[old_key] = await bounded_truth(
                                     old_key,
-                                    [{"metric": name, "window": window} for name, window in sorted(requirements)],
+                                    [
+                                        {"metric": name, "window": window}
+                                        for name, window in sorted(requirements)
+                                    ],
                                 )
                             except _EvalBudgetSpent:
-                                # Re-checking a closed window for late corrections
-                                # waits for a later minute; its stored result stays.
                                 continue
                         old_truth = cache[old_key]
                         old_value = metric_value(old_truth, event, metric, expr.get("window", "W1H"))
@@ -776,8 +741,6 @@ class Scheduler:
                 try:
                     fired = await evaluate(expr)
                 except _EvalBudgetSpent:
-                    # Record the attempt and its reason; the next minute starts
-                    # with others, and this batch moves on.
                     await self.repo.put(
                         "ana.watch_conditions",
                         cond["cond_id"],
@@ -797,11 +760,6 @@ class Scheduler:
                 updated = {**cond, "counters": counters, **cutoff_stamp.fields("last_evaluated_at")}
                 updated.pop("last_attempt_outcome", None)
                 if cond.get("rearmed_from") and not cond.get("cleared_at"):
-                    # A re-armed watch fires on an edge, not a level: it must be
-                    # seen false on available data once before it can fire again,
-                    # so a lasting state never re-fires every window (W1).
-                    # Cleared means the predicate itself is false in the current
-                    # window, not merely that persistence is not yet reached.
                     available = all(row.get("data_available", True) for row in counters.values())
                     if available and not unobserved and leaf_matches and not all(leaf_matches):
                         updated.update(cutoff_stamp.fields("cleared_at"))
@@ -820,7 +778,6 @@ class Scheduler:
                 else:
                     await self.repo.put("ana.watch_conditions", cond["cond_id"], updated)
                 outcomes["fired" if fired else "evaluated"].append(cond["cond_id"])
-        # The job ends DONE with what happened to each condition (03 §3.8).
         return outcomes
 
     async def milestone_check(self, payload):
@@ -834,7 +791,6 @@ class Scheduler:
             and (not payload.get("due_at") or row.get("due_at") == payload["due_at"])
         ]
         resolution = matches[-1] if matches else None
-        # Timer expiry is not evidence of an outcome; only accepted primary quotes resolve it.
         await self.message(
             "MILESTONE",
             payload["event_id"],
@@ -871,8 +827,6 @@ class Scheduler:
 
     async def reaction_capture(self, payload, *, wait_for_slot=False):
         if payload.get("automatic_revision"):
-            # 03 §8.6: a later queued revision of the same checkpoint measures all
-            # the data this one would; running both only repeats the capture.
             async for job in self.repo.iter_all(
                 "ops.jobs", filters={"type": "REACTION_CAPTURE", "status": "QUEUED"}
             ):
@@ -890,8 +844,6 @@ class Scheduler:
                 plan = await self._reaction_plan(payload)
                 if plan["complete"]:
                     return plan["result"]
-            # Capturing market buffers and computing history must not keep a
-            # database transaction (and its market row locks) open for minutes.
             if self._reaction_slots.locked() and not wait_for_slot:
                 from tank.delivery import DeliveryDeferred
 
@@ -905,14 +857,12 @@ class Scheduler:
                 if current["complete"]:
                     return current["result"]
                 if current["key"] != plan["key"] or current["payload"] != plan["payload"]:
-                    continue  # Another revision committed; measure its frozen anchor again.
+                    continue
                 return await self._commit_reaction(current, measured)
 
     async def detect_late_data(self, now):
         marker = await self.repo.get("ops.scheduler_checkpoints", "reaction-capture-changes")
         since = marker["at"] if marker else None
-        # One queued late revision per checkpoint is enough: it measures with
-        # all data present when it runs (03 §8.6), so later changes coalesce.
         queued = {
             (job["payload"].get("event_id"), job["payload"].get("token_id"), job["payload"].get("checkpoint"))
             async for job in self.repo.iter_all(
@@ -945,8 +895,6 @@ class Scheduler:
                     and row.get("window_end")
                     and parse_time(row["window_end"]) < parse_time(change["market_from"])
                 ):
-                    # Late data that starts after a window's end cannot change
-                    # that window's values (03 §8.6): no revision.
                     continue
                 target = (change["event_id"], change["token_id"], label)
                 if target in queued:
@@ -970,7 +918,9 @@ class Scheduler:
                     "reaction-late:" + key,
                     priority=2,
                     max_attempts=5,
-                    run_after=offset_schedule(collection_clock(now), timedelta(seconds=LATE_REVISION_DEFER_S)),
+                    run_after=offset_schedule(
+                        collection_clock(now), timedelta(seconds=LATE_REVISION_DEFER_S)
+                    ),
                     expires_at=offset_schedule(collection_clock(now), timedelta(hours=6)),
                 )
         await self.repo.put(
@@ -1011,15 +961,12 @@ class Scheduler:
         newest = max(rows, key=lambda row: int(row.get("revision") or 1))
         newest["revision"] = int(newest.get("revision") or 1)
         if newest.get("data_fingerprint") and newest.get("anchor"):
-            # r110: decoding a whole row (up to 2 MB of Market Truth) on the
-            # event loop for each capture stalled market capture; the plan and
-            # the commit read only these fields.
             return newest
         key = f"{payload['event_id']}:{payload['token_id']}:{payload['checkpoint']}:{newest['revision']}"
-        row = await self.repo.get("out.reaction_checkpoints", key)  # a legacy row without data_fingerprint
+        row = await self.repo.get("out.reaction_checkpoints", key)
         if row is not None:
             return row
-        latest = None  # A row stored under another key: fall back to the full scan.
+        latest = None
         async for previous in self.repo.iter_all("out.reaction_checkpoints", filters=filters):
             if latest is None or previous.get("revision", 1) > latest.get("revision", 1):
                 latest = previous
@@ -1100,11 +1047,7 @@ class Scheduler:
         if await self._benchmark_only(payload):
             return await self._measure_benchmark(payload, captured_stamp, start, end, start_stamp, end_stamp)
         await self._yield_to_market_truth(payload, end)
-        # The capture time is when the market is read, after any yield, so late
-        # data already in this read is not taken for a later change (03 §8.6).
         captured_stamp = collection_clock()
-        # Only the checkpoint's own windows are read (FR-R-01 values, 03 §8): days of
-        # 10 s books and tickers per capture exhausted the pool on r110.
         snapshot = await self.market.snapshot(
             payload["token_id"],
             end_stamp,
@@ -1141,7 +1084,6 @@ class Scheduler:
             "spot_method": "TRADES" if spot.get("venues") else "NONE",
             "spot_coverage": spot.get("coverage"),
             "oi_native_chg_pct": sync.get("oi_native_chg_pct"),
-            # 01 FR-R-01: open interest in token units at each checkpoint.
             "oi_native_start": sync.get("oi_native_start"),
             "oi_native_end": sync.get("oi_native_end"),
             "oi_venues": sync.get("venues"),
@@ -1382,7 +1324,6 @@ class Scheduler:
                     seen.add(event["event_id"])
                     yield event
             if since is None:
-                # One uncapped metadata bootstrap; never load historical MTA payloads.
                 stream = self.repo.iter_all("evt.events")
             else:
                 stream = self.repo.iter_range("evt.events", "known_to_us_at", start=since, end=end)
@@ -1658,8 +1599,6 @@ class Scheduler:
         data_root = Path(self.settings.data_dir).resolve()
         if target.resolve().is_relative_to(data_root):
             raise ValueError("Backup destination must be outside live data directory")
-        # HLD §§5,8: nightly pg_dump plus evidence bundles, not the live
-        # market cache, raw source history, configuration tree or service logs.
         roots = {"bundles": data_root / "bundles"}
         protected = protected_evidence_paths(self.settings)
         import threading
@@ -1674,7 +1613,7 @@ class Scheduler:
             }
             for label, root in roots.items():
                 if not root.exists():
-                    continue  # No evidence bundles have been published yet.
+                    continue
                 if root.is_symlink() or not root.is_dir():
                     raise ValueError(f"Required backup input is not a directory: {label}")
                 destination = staging / label
@@ -1794,8 +1733,6 @@ class Scheduler:
             now, states=("TRACKED", "COOLDOWN", "MONITORING", "ALERTED"), include_recent_terminal=False
         ):
             event_id = candidate["event_id"]
-            # The candidate scan is only discovery. Re-read state and all
-            # transition predicates under the same lock used by event tools.
             async with self.repo.lock("event:" + event_id), self.repo.transaction():
                 event = await self.repo.get("evt.events", event_id)
                 if event and event.get("lifecycle") in {"TRACKED", "COOLDOWN", "MONITORING", "ALERTED"}:
@@ -1822,20 +1759,17 @@ class Scheduler:
                 {**event, "lifecycle": "MONITORING", **collection_clock(now).fields("monitoring_at")},
             )
         elif (
-            state == "TRACKED"
-            and (
-                not event.get("next_milestone")
-                or event["next_milestone"].get("status") in {"CONFIRMED", "VERIFIED", "FAILED", "MISSED"}
+            (
+                state == "TRACKED"
+                and (
+                    not event.get("next_milestone")
+                    or event["next_milestone"].get("status") in {"CONFIRMED", "VERIFIED", "FAILED", "MISSED"}
+                )
+                and now - parse_time(last) >= timedelta(days=self.threshold("event_close_days", 7))
             )
-            and now - parse_time(last) >= timedelta(days=self.threshold("event_close_days", 7))
-        ):
-            await self.repo.put(
-                "evt.events",
-                event_id,
-                {**event, "lifecycle": "CLOSED", **collection_clock(now).fields("closed_at")},
-            )
-        elif state == "COOLDOWN" and now - parse_time(event.get("cooldown_at", last)) >= timedelta(
-            days=self.threshold("event_close_days", 7)
+            or state == "COOLDOWN"
+            and now - parse_time(event.get("cooldown_at", last))
+            >= timedelta(days=self.threshold("event_close_days", 7))
         ):
             await self.repo.put(
                 "evt.events",

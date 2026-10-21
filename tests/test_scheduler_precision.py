@@ -162,8 +162,6 @@ async def test_provenance_only_addition_does_not_create_late_data_revision(monke
             "anchor": {"type": "T1", "ts": STAMP},
         }
     )
-    # Simulate the unchanged legacy row lacking provenance siblings; retain its
-    # measurement fingerprint rather than synthesizing a historical timestamp.
     legacy = {key: value for key, value in original.items() if not key.endswith(("_prec", "_prec_reason"))}
     repo = MemoryRepository()
     scheduler.repo = repo

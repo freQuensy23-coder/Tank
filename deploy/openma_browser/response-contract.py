@@ -43,7 +43,7 @@ def exercise(delays, chunks):
                     except BrokenPipeError:
                         observed["client_closed"] = True
                         break
-        except Exception as error:  # noqa: BLE001 - propagate fixture thread failures to the caller.
+        except Exception as error:
             failures.append(error)
 
     thread = threading.Thread(target=serve)

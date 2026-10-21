@@ -1225,8 +1225,12 @@ Connect only through the injected read-only `TANK_DB_URL`; never print that URL.
 import os
 import psycopg
 import pandas as pd
+
 with psycopg.connect(os.environ["TANK_DB_URL"]) as connection:
-    recent = pd.read_sql_query("SELECT item_id,source_id,observed_at FROM ingest.source_items ORDER BY observed_at DESC LIMIT 20", connection)
+    recent = pd.read_sql_query(
+        "SELECT item_id,source_id,observed_at FROM ingest.source_items ORDER BY observed_at DESC LIMIT 20",
+        connection,
+    )
 ```
 
 The current deployment explicitly routes Jev through OpenRouter: `POST https://openrouter.ai/api/v1/systemone`, `Authorization: Bearer` with `OPENROUTER_API_KEY`, and pinned request model `typesafe/jev-1.13`. `TANK_JEV_PROVIDER=openrouter` selects this route; the production adapter uses plain `httpx` with the unchanged typed state/questions body. The current primary design specifies this System One endpoint. An earlier chat/completions specification was corrected after its typed-body HTTP400 failure; that is historical evidence, not an outstanding endpoint deviation. No chat wrapping is used. This does not route the analyst through OpenRouter: analyst/scout models continue through the Codex subscription gateway. Calibration must use Pipeline's exact versioned filter/routing questions and state, not a paraphrase. A read-only research call can use HTTP directly without printing the key:
@@ -1234,13 +1238,24 @@ The current deployment explicitly routes Jev through OpenRouter: `POST https://o
 ```python
 import os
 import httpx
+
 payload = {
     "model": "typesafe/jev-1.13",
     "state": {"text": "the source text being assessed"},
-    "questions": {"relevant": {"type": "noul", "instructions": "Is this text about crypto?", "criteria": {"true": "About crypto", "false": "Not about crypto"}}}
+    "questions": {
+        "relevant": {
+            "type": "noul",
+            "instructions": "Is this text about crypto?",
+            "criteria": {"true": "About crypto", "false": "Not about crypto"},
+        }
+    },
 }
 with httpx.Client(timeout=20, trust_env=False) as client:
-    response = client.post("https://openrouter.ai/api/v1/systemone", headers={"Authorization": "Bearer " + os.environ["OPENROUTER_API_KEY"]}, json=payload)
+    response = client.post(
+        "https://openrouter.ai/api/v1/systemone",
+        headers={"Authorization": "Bearer " + os.environ["OPENROUTER_API_KEY"]},
+        json=payload,
+    )
     response.raise_for_status()
     result = response.json()
     if result.get("model") != "typesafe/jev-1.13-20260917":

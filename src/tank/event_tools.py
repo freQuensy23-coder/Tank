@@ -1,11 +1,9 @@
 """Validated domain tools exposed to OpenMA. External material is evidence, never instructions."""
 
-from __future__ import annotations
-
 import asyncio
 import copy
 import os
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -45,7 +43,7 @@ LAYERS = [
     "INTEROPERABILITY",
     "CUSTODY_COMPLIANCE",
 ]
-IMPLEMENTATION = dict(zip(STATES, [0, 4, 6, 6, 7, 8, 10]))
+IMPLEMENTATION = dict(zip(STATES, [0, 4, 6, 6, 7, 8, 10], strict=False))
 
 
 def _word(term, text):
@@ -63,17 +61,15 @@ def resolve_entity(registry, name, entity_id=None, context=""):
     name = str(name or "").strip()
     for row in rows:
         qualified = {str(rule["alias"]).casefold() for rule in row.get("qualified_aliases") or []}
-        # An entity the agent named by its registry name or alias resolves; a
-        # generic word with a qualifier rule ("Lighter", "Plasma") needs it.
         known = [row.get("name") or "", *row.get("names", []), *row.get("aliases", [])]
         if name and any(
             name.casefold() == str(v).casefold() and str(v).casefold() not in qualified for v in known
         ):
             return row["entity_id"]
         for rule in row.get("qualified_aliases") or []:
-            if name.casefold() == str(rule["alias"]).casefold() or _word(rule["alias"], name):
-                if any(_word(q, name + " " + context) for q in rule.get("requires_any", [])):
-                    return row["entity_id"]
+            matched = name.casefold() == str(rule["alias"]).casefold() or _word(rule["alias"], name)
+            if matched and any(_word(q, name + " " + context) for q in rule.get("requires_any", [])):
+                return row["entity_id"]
     return "UNRESOLVED:" + name
 
 
@@ -104,9 +100,6 @@ def resolve_tokens(registry, values, context=""):
     return list(dict.fromkeys(resolve_token(registry, value, context) for value in values or []))
 
 
-# A read tool's result goes into the model's context. 6.7 MB of raw supply
-# series ended a BTC session on the context window (r107); results are kept
-# to what the analysis reads and bounded.
 TOOL_RESULT_MAX_BYTES = 40_000
 READ_TOOLS = frozenset(
     {
@@ -182,9 +175,16 @@ def summarize_unlocks(rows, cutoff):
     for row in rows:
         label = labels.setdefault(
             str(row.get("label") or "unlabelled"),
-            {"label": str(row.get("label") or "unlabelled"), "kind": row.get("kind"), "count": 0,
-             "past_14d": {"count": 0, "qty": Decimal(0)}, "upcoming_14d": {"count": 0, "qty": Decimal(0)},
-             "nearest_past": None, "nearest_upcoming": None, "qty_missing": 0},
+            {
+                "label": str(row.get("label") or "unlabelled"),
+                "kind": row.get("kind"),
+                "count": 0,
+                "past_14d": {"count": 0, "qty": Decimal(0)},
+                "upcoming_14d": {"count": 0, "qty": Decimal(0)},
+                "nearest_past": None,
+                "nearest_upcoming": None,
+                "qty_missing": 0,
+            },
         )
         label["count"] += 1
         if not row.get("date"):
@@ -223,7 +223,11 @@ def dedupe_request_log(calls, truth_hashes):
     out = []
     for call in calls:
         result = call.get("result")
-        if call.get("tool") == "get_market_truth" and isinstance(result, dict) and isinstance(result.get("market_truth"), list):
+        if (
+            call.get("tool") == "get_market_truth"
+            and isinstance(result, dict)
+            and isinstance(result.get("market_truth"), list)
+        ):
             entries = []
             for entry in result["market_truth"]:
                 digest = sha256(entry)
@@ -240,7 +244,7 @@ def dedupe_request_log(calls, truth_hashes):
 def write_evidence_bundle(bundle, data_dir):
     """Freeze the bundle file durably; runs in a thread (pure CPU and blocking
     file I/O: canonical JSON, zstd, fsync), never on the event loop."""
-    for k, v in bundle.items():
+    for _k, v in bundle.items():
         if isinstance(v, list) and v and isinstance(v[0], dict):
             v.sort(key=canonical_json)
     digest = sha256(bundle)
@@ -254,15 +258,12 @@ def write_evidence_bundle(bundle, data_dir):
                 output.write(zstandard.ZstdCompressor(level=3).compress(encoded))
                 output.flush()
                 os.fsync(output.fileno())
-            try:
+            with suppress(FileExistsError):
                 os.link(temporary, bundle_path)
-            except FileExistsError:
-                pass
         finally:
             temporary.unlink(missing_ok=True)
     if sha256(zstandard.ZstdDecompressor().decompress(bundle_path.read_bytes())) != digest:
         raise ValueError("Immutable evidence bundle file hash mismatch")
-    # Establish file and directory-entry durability before any immutable database reference.
     with bundle_path.open("rb") as published:
         os.fsync(published.fileno())
     directory = bundle_path.parent
@@ -512,9 +513,6 @@ class EventToolService:
                 async with self.repo.lock(
                     "event:" + str(event_id or ctx.get("session_id") or arguments.get("item_id"))
                 ):
-                    # The preflight scope snapshot may predate another accepted
-                    # origin. Revalidate before any claims/event writes after
-                    # acquiring the mutation lock shared by those calls.
                     if tool == "record_event" and analyst and ctx.get("session_id"):
                         current_session = await self.repo.get("ops.agent_sessions", ctx["session_id"])
                         if current_session and current_session.get("event_id"):
@@ -525,9 +523,6 @@ class EventToolService:
                                 "error": "Use add_observation for the session event",
                             }
                     result = await getattr(self, tool)(arguments, ctx)
-            # Reaction computation must start only after the assessment mutation
-            # commits and releases its event lock. The scheduler owns both timers
-            # and recoverable PRE tasks, including restart recovery.
             if tool == "set_assessment" and self.scheduler is not None:
                 await self.scheduler.ensure_reactions(await self.require("evt.events", event_id))
             return fit_result(result) if tool in READ_TOOLS else result
@@ -592,9 +587,6 @@ class EventToolService:
         terms = a["query"].casefold().split()
         if self.reference_clock is not None:
             rows = []
-            # The fixture clock has a sealed, finite source inventory. A source
-            # must also be present in the admitted prefix; future packet rows
-            # are never imported or searched ahead of their availability.
             for item_id in self.reference_clock.item_ids:
                 item = await self.repo.get("ingest.source_items", item_id)
                 if item is None:
@@ -631,8 +623,6 @@ class EventToolService:
 
     async def list_open_events(self, a, c):
         q = a.get("entity_or_token", "").casefold()
-        # An event whose session failed is not open (03 §3.2 Failures): its
-        # analysis has stopped, so later news must not be merged into it.
         statuses = {}
         for session in await self.rows("ops.agent_sessions"):
             if session.get("event_id"):
@@ -715,7 +705,10 @@ class EventToolService:
         for instrument in instruments:
             iid = instrument["instrument_id"]
             row = await self.repo.latest_before(
-                "mkt.tickers_24h", "ts", iso(cutoff + timedelta(microseconds=1)), filters={"instrument_id": iid}
+                "mkt.tickers_24h",
+                "ts",
+                iso(cutoff + timedelta(microseconds=1)),
+                filters={"instrument_id": iid},
             )
             if row is None:
                 excluded.append({"instrument_id": iid, "reason": "NO_STORED_24H_TICKER"})
@@ -731,19 +724,26 @@ class EventToolService:
             usd = None if row.get("volume_usd") is None else Decimal(str(row["volume_usd"]))
             total_native += native
             if usd is None:
-                usd_missing.append({"instrument_id": iid, "reason": row.get("usd_reason") or "USD_UNAVAILABLE"})
+                usd_missing.append(
+                    {"instrument_id": iid, "reason": row.get("usd_reason") or "USD_UNAVAILABLE"}
+                )
             else:
                 total_usd += usd
             venues.append(
-                {"instrument_id": iid, "venue": instrument.get("venue"), "volume_native": str(native),
-                 "volume_usd": None if usd is None else str(usd), "usd_reason": None if usd is not None
-                 else row.get("usd_reason") or "USD_UNAVAILABLE", "ticker_ts": row["ts"], "age_s": round(age, 1)}
+                {
+                    "instrument_id": iid,
+                    "venue": instrument.get("venue"),
+                    "volume_native": str(native),
+                    "volume_usd": None if usd is None else str(usd),
+                    "usd_reason": None if usd is not None else row.get("usd_reason") or "USD_UNAVAILABLE",
+                    "ticker_ts": row["ts"],
+                    "age_s": round(age, 1),
+                }
             )
         return {
             "window": "trailing 24 h at the venue's latest 24 h ticker up to the analysis cutoff",
             "analysis_cutoff": iso(cutoff),
             "total_native": str(total_native) if venues else None,
-            # USD only over venues that report it; the others are listed.
             "total_usd": str(total_usd) if venues and len(usd_missing) < len(venues) else None,
             "total_usd_excludes": usd_missing,
             "unit_native": token.rpartition(":")[2],
@@ -783,14 +783,13 @@ class EventToolService:
                 )
             )
         unlock_summary = summarize_unlocks(unlocks, cutoff)
-        # The rows nearest the cutoff on each side, never the newest N: a daily
-        # vesting schedule would otherwise hide the tranches that matter (F-04).
         dated = [row for row in unlocks if row.get("date")]
         dated.sort(key=lambda row: abs((parse_time(row["date"]) - cutoff).total_seconds()))
         nearest = sorted(dated[:UNLOCK_ROWS_SHOWN], key=lambda row: str(row["date"]))
-        unlocks = nearest + [row for row in unlocks if not row.get("date")][: max(0, UNLOCK_ROWS_SHOWN - len(nearest))]
-        # 03 §5.6: the latest known observation of each kind (per chain,
-        # instrument and fee scope), not the raw history.
+        unlocks = (
+            nearest
+            + [row for row in unlocks if not row.get("date")][: max(0, UNLOCK_ROWS_SHOWN - len(nearest))]
+        )
         latest = {}
         for row in await self.rows("mkt.supply_obs", filters={"token_id": token}):
             if not known(row):
@@ -1007,27 +1006,24 @@ class EventToolService:
         self.validate_evidence_url(a["url"])
         if urlparse(a["url"]).scheme != "https":
             raise ValueError("Only HTTPS evidence fetches are allowed")
-        limit = min(20, float(a.get("timeout_s") or 20))  # 03 §3.2: at most 20 s
+        limit = min(20, float(a.get("timeout_s") or 20))
         async with asyncio.timeout(limit):
             async with (
                 httpx.AsyncClient(timeout=limit, follow_redirects=False)
                 if self.http is None
-                else _borrow(self.http) as client
+                else _borrow(self.http) as client,
+                client.stream("GET", a["url"], headers={"User-Agent": self.settings.user_agent}) as r,
             ):
-                async with client.stream(
-                    "GET", a["url"], headers={"User-Agent": self.settings.user_agent}
-                ) as r:
-                    r.raise_for_status()
-                    chunks = []
-                    size = 0
-                    async for chunk in r.aiter_bytes():
-                        size += len(chunk)
-                        if size > 2 * 1024 * 1024:
-                            raise ValueError("Page exceeds 2 MB")
-                        chunks.append(chunk)
+                r.raise_for_status()
+                chunks = []
+                size = 0
+                async for chunk in r.aiter_bytes():
+                    size += len(chunk)
+                    if size > 2 * 1024 * 1024:
+                        raise ValueError("Page exceeds 2 MB")
+                    chunks.append(chunk)
         original = b"".join(chunks)
         self.validate_evidence_bytes(original)
-        # Persist the exact response before parsing; extraction failures retain the source bytes.
         media_type = r.headers.get("content-type", "application/octet-stream")
         capture = self.persist_web_raw(a["url"], original, media_type, c)
         from selectolax.parser import HTMLParser
@@ -1047,9 +1043,8 @@ class EventToolService:
         )
 
     def validate_time(self, x, item):
-        # V4/V7 are analyst obligations; storage normalizes representation only.
         if self.reference_clock is not None:
-            self.item_known_at(item)  # Retain fixture provenance/seal validation.
+            self.item_known_at(item)
         public = x["public_at"]
         return iso(public["value"] if isinstance(public, dict) else public)
 
@@ -1127,7 +1122,6 @@ class EventToolService:
         obs = new_id("obs")
         entities = []
         registry = self.settings.load_config("registry")
-        # Qualifiers ("Lighter" needs "LIT") may appear anywhere in the extraction.
         context = " ".join(
             [x["statement"], *[str(t) for t in x["tokens"]], *[str(e.get("name")) for e in x["entities"]]]
         )
@@ -1202,8 +1196,6 @@ class EventToolService:
         item["extraction_status"] = "DONE"
         await self.repo.put("ingest.source_items", item["item_id"], item)
         if c.get("session_id"):
-            # Serialize binding with controller status/completion read-modify-write
-            # operations; otherwise an older unbound snapshot can erase it.
             async with self.repo.lock("session:" + c["session_id"]):
                 session = await self.repo.get("ops.agent_sessions", c["session_id"])
                 if session:
@@ -1260,8 +1252,6 @@ class EventToolService:
                     "Thesis dependency must cite accepted causal relation claims from this event"
                 )
             claims.append(claim)
-        # The analyst declares which thesis depends on the rejected approval;
-        # Tank validates reference ownership, not subject/object wording.
         evidence = [claim["claim_id"] for claim in claims]
         return (
             [(token_id, evidence) for token_id in token_ids]
@@ -1495,7 +1485,6 @@ class EventToolService:
         return target
 
     async def validate_impact_horizon(self, horizon, event, accepted):
-        # Apply §4.6 to structured analyst facts, without parsing their prose.
         dated = []
         for proof in horizon.get("timing_evidence", []):
             claim = accepted.get(proof["claim_id"], {})
@@ -1579,8 +1568,6 @@ class EventToolService:
                 raise ValueError("Structural gate references unaccepted evidence")
             if gate.get("satisfied") and not gate.get("evidence"):
                 raise ValueError("Satisfied structural gate requires accepted evidence")
-        # The analyst identifies what the quotation establishes. Tank binds that
-        # quotation to the selected gate's verified evidence, without interpreting it.
         evidence_ok = any(
             gate.get("gate") == criterion
             and gate.get("satisfied") is True
@@ -1835,9 +1822,6 @@ class EventToolService:
                 stage_support.append((supported_state, claim["claim_id"]))
             state = max((stage for stage, _ in stage_support), key=INTEGRATION.index, default="COMPATIBLE")
             stage_evidence = [claim_id for stage, claim_id in stage_support if stage == state]
-            # TDD §4.7: exposure ratings need their applicable evidence anchor.
-            # PRIMARY uses EventState; other edges use the derived integration
-            # state above, including its source-side support cap (§3.6).
             exposure = e["exposure_score"]
             if 6 <= exposure < 8:
                 likely = (
@@ -1862,9 +1846,6 @@ class EventToolService:
                 raise ValueError(
                     "Exposure 10 requires accepted counterparty evidence for the sole-rail basis"
                 )
-            # Exact 10 has its own counterparty/sole-required-rail rubric, not
-            # an invented mandatory LIVE gate. Exclusivity is semantic content
-            # of the accepted evidence/causal_chain, not inferred from keywords.
             e["tradable"] = e.get("token_id") in tokens and any(
                 i["token_id"] == e.get("token_id") for i in registry["instruments"]
             )
@@ -1945,7 +1926,6 @@ class EventToolService:
             key=lambda e: e["exposure_score"],
             reverse=True,
         )[:2]
-        # Registry dependencies are compatibility candidates, never proof of adoption.
         context_entities = {e["entity_id"] for e in event["entities"]}
         dependency = self.settings.load_config("dependency_map")
         for dep in dependency.get("edges", []):
@@ -2059,8 +2039,6 @@ class EventToolService:
         return prepared_ids
 
     async def get_market_truth(self, a, c, *, refresh_key=None):
-        # Named units are accepted as their bucket (live: "MINUTE" was refused
-        # three times, each costing a retry); stored semantics are unchanged.
         named = {"SECOND": "BUCKET(1s)", "MINUTE": "BUCKET(1m)", "HOUR": "BUCKET(1h)"}
         normalized_prec = None
         if a.get("cutoff_prec") in named:
@@ -2115,9 +2093,7 @@ class EventToolService:
                 )
         truths = []
         for job in jobs:
-            deadline = (
-                asyncio.get_running_loop().time() + 90 * 15
-            )  # = runtime.TIMEOUTS[RUN_MARKET_TRUTH] (x15 under test, user decision 2026-10-20)
+            deadline = asyncio.get_running_loop().time() + 90 * 15
             while True:
                 current = await self.require("ops.jobs", job["job_id"])
                 if current["status"] == "DONE":
@@ -2142,8 +2118,6 @@ class EventToolService:
             ]
             ranks = {"NEGATIVE": 0, "UNPRICED": 1, "EARLY": 2, "SUBSTANTIAL": 3, "HEAVY": 4}
             candidates = []
-            # §4.7 step 9 ranks every credible beneficiary, so a call that refreshes
-            # one token uses the latest stored truth of the others (W6).
             latest = {truth["token_id"]: truth for truth in truths}
             for edge in edges:
                 token = edge.get("token_id")
@@ -2338,8 +2312,6 @@ class EventToolService:
         used = set()
         for proposed in result.get("conditions", []):
             signature = canonical_json({"role": proposed["role"], "expr": proposed["expr"]})
-            # Only an ARMED watch can still fire (§6.6). A fired watch is spent:
-            # the same expression is armed afresh and needs new evidence (W1).
             matches = [
                 old
                 for old in existing
@@ -2503,8 +2475,6 @@ class EventToolService:
             and claim.get("obs_id") in observations_by_id
         ]
         if stage_origins and all(grade == "STALE" for grade in stage_origins):
-            # A later timer must not turn an old stage update into new news.
-            # This contextual flag only affects the stage-change publication gate.
             event["publication_stage_freshness"] = "STALE"
         if c.get("trigger_kind") in {None, "NEW_ITEM", "ITEM_ADDED"}:
             trigger_item = c.get("trigger_item_id") or c.get("item_id")
@@ -2591,8 +2561,6 @@ class EventToolService:
             raise ValueError("UPDATE requires a published original")
         if kind == "PARTIAL" and assessment["class"] != "STRUCTURAL_SHOCK":
             raise ValueError("PARTIAL requires STRUCTURAL_SHOCK")
-        # Each collection is read once per call (r113-r114: about 60 sequential
-        # round trips under a loaded pool made publish_card take 16-22 s).
         fetched_edges = await self.rows("evt.beneficiary_edges", eid)
         beneficiaries = list(fetched_edges)
         current_maps = active_maps
@@ -2670,8 +2638,6 @@ class EventToolService:
                         "missing_decisions": sorted(missing_decision),
                     }
                 )
-        # Market Truth rows reach ~1.8 MB each; the card keeps references to the
-        # immutable ana.market_truth rows (the bundle freezes them in full).
         truth_hashes = await asyncio.to_thread(lambda: [sha256(truth) for truth in truths])
         ctx = {
             "event": event,
@@ -2701,8 +2667,6 @@ class EventToolService:
                     source = await self.repo.get("reg.sources", source_id) if source_id else None
                     evidence_labels[item_id] = (source or {}).get("name") or source_id or "source"
         event["evidence_labels"] = evidence_labels
-        # Hard rule 16: the card names universe tokens by project and ticker.
-        # A captured config snapshot from before `project` falls back to `name`.
         event["token_labels"] = {
             row["token_id"]: str(row.get("project") or row.get("name") or row["token_id"])
             + " ("
@@ -2743,13 +2707,8 @@ class EventToolService:
                     "delivery_not_before": previous.get("delivery_not_before"),
                 }
             )
-        # A held update waits only for the 15-minute slot after the last sent
-        # card (§7.4). A newer version supersedes any older held one, which
-        # delivery then drops, so versions are never queued one slot apart (W2).
         delivery_not_before = delivery_stamp.value
         cutoff = iso()
-        # Read earlier in this call; nothing above writes them. Copies, because
-        # the bundle's lists are sorted in place when it is frozen.
         claims = list(event["claims"])
         observations = list(observations)
         ids = {o["item_id"] for o in observations} | {e["item_id"] for r in claims for e in r["evidence"]}
@@ -2798,8 +2757,6 @@ class EventToolService:
         if c.get("session_id"):
             for row in await self.rows("ops.tool_calls", filters={"session_id": c["session_id"]}):
                 calls_by_key[(row.get("session_id"), row.get("call_id"))] = row
-        # Event calls of other sessions only; tool results are large (Market
-        # Truth inside), so this session's are not fetched a second time.
         async for meta in self.repo.iter_metadata(
             "ops.tool_calls", ["session_id", "call_id"], filters={"event_id": eid}
         ):
@@ -2871,7 +2828,6 @@ class EventToolService:
         bundle["tool_call_ids"] = sorted(
             set([r["call_id"] for r in calls if r.get("call_id")] + bundle["tool_call_ids"])
         )
-        # Canonical ordering makes the exact frozen payload independently hashable.
         digest, bundle_path = await asyncio.to_thread(write_evidence_bundle, bundle, self.settings.data_dir)
         await self.repo.put(
             "out.evidence_bundles",
@@ -2881,8 +2837,6 @@ class EventToolService:
         )
         aid = previous["alert_id"] if previous else new_id("alert")
         version = previous["version"] + 1 if previous else 1
-        # "Generated" is when this immutable version is written, after its
-        # evidence is durable; an unheld card is deliverable from then on.
         generated = collection_clock()
         if not rate_limited:
             delivery_stamp = generated

@@ -8,8 +8,6 @@ import (
 )
 
 func TestTankReplayForwardedQuestionsRefused(t *testing.T) {
-    // These call the real answer path with forwarding disabled. The test
-    // container has no network; no resolver stub or mock DNS answer is used.
     for _, queryType := range []uint16{dns.TypeA,dns.TypeAAAA,dns.TypeCNAME,dns.TypeMX,dns.TypeNS,dns.TypeSRV,dns.TypeTXT,dns.TypeANY,dns.TypeAXFR,dns.TypeNULL,0,65535} {
         for _, name := range []string{"example.com.","exfil.attacker.invalid.","host.boxlite.internal.attacker.invalid.","\000.attacker.invalid."} {
             for _, class := range []uint16{dns.ClassINET,dns.ClassCHAOS,dns.ClassANY} {
@@ -41,7 +39,6 @@ func TestTankReplayConstructorDefaultsAndOpCodes(t *testing.T) {
     }
 }
 
-// Exercise the real UDP and TCP response path too, without opening a listener.
 type tankResponseWriter struct { result *dns.Msg }
 func (w *tankResponseWriter) LocalAddr() net.Addr { return &net.UDPAddr{} }
 func (w *tankResponseWriter) RemoteAddr() net.Addr { return &net.UDPAddr{} }

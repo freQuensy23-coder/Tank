@@ -8,6 +8,7 @@ evidence bundle directory. It never sends, retries or edits anything.
 Usage:
   python3 e2e_trace.py --since 2026-10-21T00:00:00Z [--event-id EVT-...] --out /srv/tank/docs/verification/e2e-source-telegram-2026-10-21
 """
+
 import argparse
 import hashlib
 import json
@@ -15,7 +16,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import iso, query, seconds, utcnow, write_json  # noqa: E402
+from common import iso, query, seconds, utcnow, write_json
 
 CANDIDATES = """
 SELECT e.event_id, e.known_to_us_at, min(d.at) AS first_sent_at
@@ -67,7 +68,6 @@ SELECT call_id, session_id, tool, status, requested_at, answered_at,
  WHERE session_id IN (SELECT session_id FROM ops.agent_sessions WHERE event_id = :'eid')
  ORDER BY requested_at
 """
-# out.evidence_bundles.bundle_id is "EVB-<sha>"; alerts reference the bare sha (also the storage key).
 BUNDLES = """SELECT storage_key, bundle_id, document->'payload' AS payload, document->>'sha256' AS sha FROM out.evidence_bundles
  WHERE storage_key IN (SELECT evidence_bundle_id FROM out.alerts WHERE event_id = :'eid')
     OR bundle_id IN (SELECT 'EVB-' || evidence_bundle_id FROM out.alerts WHERE event_id = :'eid')"""
@@ -76,10 +76,14 @@ BUNDLES = """SELECT storage_key, bundle_id, document->'payload' AS payload, docu
 def canonical_sha(value):
     try:
         sys.path.insert(0, "/srv/tank/src")
-        from tank.util import sha256  # same canonical JSON as the producer
+        from tank.util import sha256
+
         return sha256(value)
-    except Exception:  # noqa: BLE001 -- fall back to a plain canonical form, flagged below
-        return "UNAVAILABLE:" + hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    except Exception:
+        return (
+            "UNAVAILABLE:"
+            + hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        )
 
 
 def trace(event_id):
@@ -102,38 +106,66 @@ def trace(event_id):
 
     for it in rows["items"]:
         at(it["published_at"], "published", f"{it['source_id']} {it['url']}")
-        at(it["observed_at"], "observed", f"{it['source_id']} {it['item_id']} relevance={it['relevance_decision']} route={it['route_decision']}")
+        at(
+            it["observed_at"],
+            "observed",
+            f"{it['source_id']} {it['item_id']} relevance={it['relevance_decision']} route={it['route_decision']}",
+        )
     for j in rows["jobs"]:
         at(j["finished_at"], f"job {j['type']} {j['status']}", j["job_id"])
     for c in rows["tool_calls"]:
         at(c["answered_at"] or c["requested_at"], f"tool {c['tool']} {c['status']}", c["call_id"])
     for m in rows["market_truth"]:
-        at(m.get("computed_at") or m.get("cutoff"), "market_truth", f"{m.get('token_id')} move_class={m.get('move_class')}")
+        at(
+            m.get("computed_at") or m.get("cutoff"),
+            "market_truth",
+            f"{m.get('token_id')} move_class={m.get('move_class')}",
+        )
     for d in rows["decisions"]:
-        at(d.get("cutoff"), "decision", f"{d.get('token_id')} action={d.get('action')} thesis={d.get('thesis_grade')} trade={d.get('trade_grade')}")
+        at(
+            d.get("cutoff"),
+            "decision",
+            f"{d.get('token_id')} action={d.get('action')} thesis={d.get('thesis_grade')} trade={d.get('trade_grade')}",
+        )
     for a in rows["alerts"]:
         at(a["generated_at"], f"alert {a['kind']} v{a['version']}", a["alert_id"])
     for d in rows["deliveries"]:
-        at(d["at"], f"delivery {d['status']} {d['channel']}", f"message_ref={d.get('message_ref')} attempt={d.get('attempt')}")
+        at(
+            d["at"],
+            f"delivery {d['status']} {d['channel']}",
+            f"message_ref={d.get('message_ref')} attempt={d.get('attempt')}",
+        )
     timeline.sort(key=lambda r: r["at"])
     for r in timeline:
         r["since_known_s"] = seconds(r["at"], known)
 
-    record_event = next((c for c in rows["tool_calls"] if c["tool"] == "record_event" and c["status"] == "DONE"), None)
+    record_event = next(
+        (c for c in rows["tool_calls"] if c["tool"] == "record_event" and c["status"] == "DONE"), None
+    )
     first_alert = rows["alerts"][0] if rows["alerts"] else None
     full = next((a for a in rows["alerts"] if a["kind"] == "FULL"), None)
     sent = [d for d in rows["deliveries"] if d["status"] == "SENT" and d["channel"] == "telegram:alerts"]
 
     def sent_for(alert):
-        hits = [d["at"] for d in sent if alert and d["alert_id"] == alert["alert_id"] and d["version"] == alert["version"]]
+        hits = [
+            d["at"]
+            for d in sent
+            if alert and d["alert_id"] == alert["alert_id"] and d["version"] == alert["version"]
+        ]
         return min(hits) if hits else None
 
     bundle_checks = []
     for b in bundles:
         digest = canonical_sha(b["payload"]) if b["payload"] is not None else None
         referenced = {a.get("evidence_bundle_id") for a in rows["alerts"]}
-        bundle_checks.append({"bundle_id": b["bundle_id"], "stored_sha": b["sha"], "recomputed": digest,
-                              "valid": digest == b["sha"] and b["sha"] in referenced})
+        bundle_checks.append(
+            {
+                "bundle_id": b["bundle_id"],
+                "stored_sha": b["sha"],
+                "recomputed": digest,
+                "valid": digest == b["sha"] and b["sha"] in referenced,
+            }
+        )
 
     stages = {
         "source_item_relevant": bool(opening and opening["relevance_decision"] in ("ALWAYS", "SEND")),
@@ -143,7 +175,9 @@ def trace(event_id):
         "agent_session": bool(rows["sessions"]),
         "record_event": record_event is not None,
         "assessment": bool(rows["assessments"]),
-        "market_truth_tool_done": any(c["tool"] == "get_market_truth" and c["status"] == "DONE" for c in rows["tool_calls"]),
+        "market_truth_tool_done": any(
+            c["tool"] == "get_market_truth" and c["status"] == "DONE" for c in rows["tool_calls"]
+        ),
         "market_truth_row": bool(rows["market_truth"]),
         "decision": bool(rows["decisions"]),
         "card": first_alert is not None,
@@ -151,7 +185,9 @@ def trace(event_id):
         "evidence_bundle_valid": bool(bundle_checks) and all(b["valid"] for b in bundle_checks),
     }
     timings = {
-        "item_to_event_s": seconds(record_event and record_event["answered_at"], opening and opening["observed_at"]),
+        "item_to_event_s": seconds(
+            record_event and record_event["answered_at"], opening and opening["observed_at"]
+        ),
         "known_to_first_card_generated_s": seconds(first_alert and first_alert["generated_at"], known),
         "known_to_first_card_sent_s": seconds(sent_for(first_alert), known),
         "known_to_full_card_generated_s": seconds(full and full["generated_at"], known),
@@ -165,14 +201,19 @@ def trace(event_id):
         "known_to_full_card_generated_s": 480 if classes & {"MAJOR", "STRUCTURAL_SHOCK"} else None,
     }
     within = {k: (timings[k] is not None and timings[k] <= v) for k, v in limits.items() if v is not None}
-    within["delivery_after_generation_s"] = all(v is not None and v <= 10 for v in timings["delivery_after_generation_s"]) \
-        if timings["delivery_after_generation_s"] else False
-    # An operator step is an agent message an operator injected (kind RECOVERY / note "Operator …"), or a job
-    # payload that names an operator. Automatic reasons (e.g. late REACTION_CAPTURE) are not manual steps.
+    within["delivery_after_generation_s"] = (
+        all(v is not None and v <= 10 for v in timings["delivery_after_generation_s"])
+        if timings["delivery_after_generation_s"]
+        else False
+    )
+
     def operator_job(j):
         p = j.get("payload") or {}
-        return bool(p.get("operator")) or (j["type"] == "AGENT_MESSAGE" and (
-            p.get("kind") == "RECOVERY" or str(p.get("note", "")).lower().startswith("operator")))
+        return bool(p.get("operator")) or (
+            j["type"] == "AGENT_MESSAGE"
+            and (p.get("kind") == "RECOVERY" or str(p.get("note", "")).lower().startswith("operator"))
+        )
+
     manual = [j for j in rows["jobs"] if operator_job(j)]
     agent_rules = sorted({(a.get("model_id"), a.get("prompt_version")) for a in rows["alerts"]}, key=str)
     return {
@@ -187,8 +228,16 @@ def trace(event_id):
         "within_limits": within,
         "operator_or_manual_jobs": [j["job_id"] for j in manual],
         "recovered_by_operator": bool(manual),
-        "operator_steps": [{"job_id": j["job_id"], "type": j["type"], "kind": (j.get("payload") or {}).get("kind"),
-                            "created_at": j["created_at"], "note": str((j.get("payload") or {}).get("note", ""))[:300]} for j in manual],
+        "operator_steps": [
+            {
+                "job_id": j["job_id"],
+                "type": j["type"],
+                "kind": (j.get("payload") or {}).get("kind"),
+                "created_at": j["created_at"],
+                "note": str((j.get("payload") or {}).get("note", ""))[:300],
+            }
+            for j in manual
+        ],
         "agent_rules_in_force": [{"model_id": m, "prompt_version": pv} for m, pv in agent_rules],
         "evidence_bundles": bundle_checks,
         "timeline": timeline,
@@ -197,16 +246,34 @@ def trace(event_id):
 
 
 def render(t):
-    out = [f"# E2E trace {t['event_id']}", "", f"Statement: {t['statement']}", f"Classes: {', '.join(t['classes'])}",
-           f"known_to_us_at: {t['known_to_us_at']}", "", "## Chain", ""]
+    out = [
+        f"# E2E trace {t['event_id']}",
+        "",
+        f"Statement: {t['statement']}",
+        f"Classes: {', '.join(t['classes'])}",
+        f"known_to_us_at: {t['known_to_us_at']}",
+        "",
+        "## Chain",
+        "",
+    ]
     out += [f"- {'OK ' if ok else 'MISSING'} {k}" for k, ok in t["stages"].items()]
     out += ["", "## Timings (s)", ""]
-    out += [f"- {k}: {v}" + (f" (limit {t['limits_s'][k]})" if t["limits_s"].get(k) else "") for k, v in t["timings"].items()]
-    out += ["", f"Within limits: {json.dumps(t['within_limits'])}",
-            f"Operator/manual steps in chain: {t['operator_or_manual_jobs'] or 'none'}"
-            + (" — RECOVERED BY OPERATOR (not a no-manual-step V0-G pass)" if t["recovered_by_operator"] else ""),
-            f"Agent rules in force (model, prompt version): {t['agent_rules_in_force']}", "", "## Timeline", "",
-            "| at | +s from known | step | detail |", "|---|---:|---|---|"]
+    out += [
+        f"- {k}: {v}" + (f" (limit {t['limits_s'][k]})" if t["limits_s"].get(k) else "")
+        for k, v in t["timings"].items()
+    ]
+    out += [
+        "",
+        f"Within limits: {json.dumps(t['within_limits'])}",
+        f"Operator/manual steps in chain: {t['operator_or_manual_jobs'] or 'none'}"
+        + (" — RECOVERED BY OPERATOR (not a no-manual-step V0-G pass)" if t["recovered_by_operator"] else ""),
+        f"Agent rules in force (model, prompt version): {t['agent_rules_in_force']}",
+        "",
+        "## Timeline",
+        "",
+        "| at | +s from known | step | detail |",
+        "|---|---:|---|---|",
+    ]
     out += [f"| {r['at']} | {r['since_known_s']:.1f} | {r['step']} | {r['detail']} |" for r in t["timeline"]]
     return "\n".join(out) + "\n"
 
@@ -221,7 +288,7 @@ if __name__ == "__main__":
     if not ids:
         print(json.dumps({"status": "NO_EVENT_WITH_SENT_CARD_SINCE", "since": a.since}))
         sys.exit(2)
-    if not a.event_id:  # watcher mode: trace every new candidate once
+    if not a.event_id:
         ids = [i for i in ids if not os.path.exists(os.path.join(a.out, i, "trace.json"))] or []
         if not ids:
             print(json.dumps({"status": "NO_NEW_EVENT_WITH_SENT_CARD", "since": a.since}))
@@ -237,8 +304,18 @@ if __name__ == "__main__":
                     fh.write(json.dumps(r, sort_keys=True, default=str) + "\n")
         with open(os.path.join(d, "trace.md"), "w") as fh:
             fh.write(render(t))
-        write_json(os.path.join(d, "receipt.json"), {"written_at": iso(utcnow()), "files": {
-            f: hashlib.sha256(open(os.path.join(d, f), "rb").read()).hexdigest() for f in sorted(os.listdir(d))}})
+        write_json(
+            os.path.join(d, "receipt.json"),
+            {
+                "written_at": iso(utcnow()),
+                "files": {
+                    f: hashlib.sha256(open(os.path.join(d, f), "rb").read()).hexdigest()
+                    for f in sorted(os.listdir(d))
+                },
+            },
+        )
         print(render(t)[:2000])
-        passed = passed or (t["chain_complete"] and all(t["within_limits"].values()) and not t["recovered_by_operator"])
+        passed = passed or (
+            t["chain_complete"] and all(t["within_limits"].values()) and not t["recovered_by_operator"]
+        )
     sys.exit(0 if passed else 1)

@@ -153,7 +153,6 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(service, 
             "verdict": "Material partnership",
             "why": ["Defined access", "Relevant actor"],
         },
-        # Serialization-only system call, not an invented agent tool receipt.
         {"event_id": eid, "call_id": "c", "role": "system"},
     )
     assert result["published"]
@@ -349,8 +348,6 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service):
     assert same["counters"] == armed["counters"]
     same.update(status="FIRED", fired_at=iso())
     await service.repo.put("ana.watch_conditions", same["cond_id"], same)
-    # This unit exercises consumption with already refreshed market truth; the
-    # actual asynchronous refresh/worker boundary is covered separately.
     await service.repo.put(
         "ana.market_truth",
         "condition-truth-fresh",
@@ -362,8 +359,6 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service):
     assert consumed["consumed_by"] == fired["dec_id"]
     again = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
     assert again["action"] == "HOLD"
-    # W1 (03 §6.6, §7.2): the spent watch is not reused or shown again; the same
-    # expression is re-armed afresh, so a later upgrade can still produce ADD.
     rearmed = next(c for c in again["conditions"] if c["role"] == "UPGRADE")
     assert rearmed["cond_id"] != same["cond_id"] and rearmed["status"] == "ARMED"
     assert rearmed["rearmed_from"] == same["cond_id"] and "counters" not in rearmed
@@ -687,7 +682,6 @@ async def test_real_session_tool_refuses_cross_event_mutation(service):
     assert stored["returned_at"]
     assert replies
     assert not await service.repo.list("ops.source_escalations")
-    # Other-event reads are allowed through the same real session wrapper.
     await sessions.tool(session, {"id": "scope-read", "name": "get_event", "input": {"event_id": "B"}})
     assert (await service.repo.get("ops.tool_calls", "scope-session:scope-read"))["result"][
         "event"
@@ -1198,7 +1192,6 @@ async def test_material_update_is_queued_once_and_delivered_after_window(service
         later = now + timedelta(minutes=16)
         for module in ("tank.analysis.cards", "tank.event_tools", "tank.delivery"):
             monkeypatch.setattr(module + ".utcnow", lambda: later)
-        # No new item or second publication call is needed at the due time.
         await delivery.deliver({"alert_id": published["alert_id"], "version": 2})
 
     assert len(sent) == 2
@@ -2003,8 +1996,6 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(service
         )
         x["claims"][0].update(quote=quote, state_claim="APPROVED")
         context = {
-            # Typed domain producer/serialization coverage; no native session
-            # or per-message workflow is claimed by this direct-dispatch unit.
             "model_id": "fixture-model",
             "prompt_version": "fixture-prompt",
             "role": "system",
@@ -2410,7 +2401,6 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(servi
             assert not repeat["published"], repeat
         assert len(sent) == 2
         assert len(await service.repo.list("out.alerts", filters={"event_id": eid})) == 2
-        # Persisted FATAL/EXIT cannot make an unrelated class change immediate.
         event = await service.repo.get("evt.events", eid)
         await service.repo.put("evt.events", eid, {**event, "freshness": "FRESH", "lifecycle": "MONITORING"})
         await service.repo.put(
@@ -2605,7 +2595,6 @@ async def test_produced_loser_has_supported_negative_grade_without_long_action(
     await service.repo.put("ana.market_truth", truth["mta_id"], truth)
     decision = await service.dispatch("get_decision", {"event_id": eid, "token": "world:WLD"}, {})
     assert decision["thesis_grade"] == expected_grade
-    # The actual empty market snapshot remains UNKNOWN; a supported negative thesis does not fabricate market direction.
     assert decision["outlook"]["direction"] == "UNKNOWN"
     assert decision["action"] not in {"START", "ADD"}
 
@@ -2826,7 +2815,6 @@ async def test_magnitude_agent_judgment_is_preserved_with_or_without_ratio_metad
     out = await service.dispatch("set_assessment", {"event_id": eid, "assessment": assessment}, {})
     stored = await service.repo.get("evt.ems_assessments", out["ems_id"])
     assert stored["dims"]["magnitude"]["value"] == 10
-    # Actual quoted NUMBER claims supply a denominator of the prescribed kind and unit.
     for key, quote in [
         ("numerator", "World token flow is 10 USD."),
         ("denominator", "World token market cap is 100 USD."),
@@ -2861,7 +2849,7 @@ async def test_magnitude_agent_judgment_is_preserved_with_or_without_ratio_metad
     }
     out = await service.dispatch("set_assessment", {"event_id": eid, "assessment": assessment}, {})
     stored = await service.repo.get("evt.ems_assessments", out["ems_id"])
-    assert stored["dims"]["magnitude"]["value"] == 10  # Agent owns the rubric judgment.
+    assert stored["dims"]["magnitude"]["value"] == 10
     marketing = "World marketing budget is 100 USD."
     await service.repo.put(
         "evt.claims",
@@ -3363,7 +3351,6 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             )
             native = SessionService(repo, service.settings, dispatch, http=http)
             session = await native.resolve({"kind": "NEW_ITEM", "item_id": item["item_id"]})
-            # This is the real incomplete POST snapshot, not a hand-seeded prompt version.
             assert session["prompt_version"] is None and session["prompt_label"] == config["prompt_version"]
             args = extraction()
             args.update(
@@ -3606,7 +3593,9 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             await resumed.process_event(sid, failed_call)
             session = await service.repo.get("ops.agent_sessions", sid)
             event = await service.repo.get("evt.events", eid)
-            assert session["status"] == "FAILED" and session["terminal_failure"]["event_type"] == "session.error"
+            assert (
+                session["status"] == "FAILED" and session["terminal_failure"]["event_type"] == "session.error"
+            )
             assert event["lifecycle"] != "FAILED" and "failure_reason" not in event
             messages = [p["events"][0] for p in native_posts if p["events"][0].get("type") == "user.message"]
             assert len(messages) == 2 and messages[0] == messages[1]
@@ -3668,9 +3657,6 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             )
 
             async def settle_owned_missing_input_jobs():
-                # This declared fixture has no retained market observations.
-                # Complete only this tool's durable rendezvous with the real
-                # empty-input formula (UNKNOWN), never a fabricated tool result.
                 deadline = asyncio.get_running_loop().time() + 5
                 while asyncio.get_running_loop().time() < deadline:
                     jobs = [
@@ -3876,7 +3862,6 @@ async def test_trusted_reference_clock_changes_logical_age_only(service, tmp_pat
     assert (await reference.dispatch("search_tank_items", {"query": "Product"}, {}))["items"][0][
         "item_id"
     ] == "i"
-    # Even a sealed source is invisible until the prefix importer admits it.
     unimported = EventToolService(MemoryRepository(), options, None, None, reference_clock=clock)
     assert not (await unimported.dispatch("search_tank_items", {"query": "Product"}, {}))["items"]
     monkeypatch.setattr("tank.event_tools.utcnow", lambda: parse_time("2022-09-22T01:00:00Z"))
@@ -3991,7 +3976,6 @@ async def test_primary_event_fact_certainty_allows_neutral_paraphrase(service, p
 
 
 async def test_primary_selection_paraphrase_preserves_fact_certainty(service):
-    # Actual retained primary selection wording; no class or token-capture expectation.
     quote = (
         "The Clearing House announced the selection of Quant, a leading provider of programmable money "
         "infrastructure, to power its On-Chain Money Initiative, a new interoperable payments network "
@@ -4244,7 +4228,6 @@ async def test_immediate_access_uses_agent_structured_fact_and_effective_time(se
             claim_id=report_claim["claim_id"], quote=report_quote
         )
     if case == "missing_quote":
-        # The declared schema requires a non-empty quote (minLength 1).
         with pytest.raises(ValueError, match="immediate_market_access.quote: shorter than 1"):
             await service.dispatch("set_assessment", dict(event_id=eid, assessment=assessment), {})
     elif case not in {"wrong_claim", "future_date"}:
@@ -4387,8 +4370,6 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
         await service.repo.open()
         await service.repo.migrate()
     repo = service.repo
-    # PostgreSQL's queue uses its actual clock. The simulated due boundary is
-    # just before that clock so the due worker can claim without changing jobs.
     base = utcnow() - timedelta(minutes=15, seconds=3)
     clock = [base]
     for module in ("tank.util", "tank.event_tools", "tank.analysis.cards", "tank.delivery", "tank.storage"):
@@ -4482,7 +4463,6 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
                 repo = PostgresRepository(database_url)
                 await repo.open()
                 service.repo = repo
-            # Recreate services after restart. No new source item/tool invocation.
             clock[0] = base + timedelta(minutes=15)
             job = await repo.claim_job()
             assert job["job_id"] == update_jobs[0]["job_id"]
@@ -4640,7 +4620,6 @@ async def test_each_layer_needs_agent_reason_when_primary_does_not_supply_a_seco
     }
     args = {"event_id": eid, "edges": edges, "layer_reasons": notes}
     if role != "SECONDARY":
-        # A real primary benefit does not explain the absence of intermediaries.
         with pytest.raises(ValueError, match="ISSUER_PRODUCT.*SECONDARY"):
             await service.dispatch("set_beneficiaries", args, {})
         notes["ISSUER_PRODUCT"] = "   "
@@ -4760,7 +4739,9 @@ async def test_list_open_events_skips_events_whose_session_failed(service):
             "evt.events", eid, {"event_id": eid, "lifecycle": "ANALYZING", "statement": "World news"}
         )
         await service.repo.put(
-            "ops.agent_sessions", "session-" + eid, {"session_id": "session-" + eid, "event_id": eid, "status": status}
+            "ops.agent_sessions",
+            "session-" + eid,
+            {"session_id": "session-" + eid, "event_id": eid, "status": status},
         )
     listed = await service.dispatch("list_open_events", {"entity_or_token": "world"}, {})
     assert [row["event_id"] for row in listed["events"]] == ["live-event"]
@@ -4773,16 +4754,20 @@ async def test_token_facts_show_unlocks_before_the_cutoff_and_nothing_after(serv
     rows = {
         "past": {"date": iso(now - timedelta(days=3)), "observed_at": iso(now - timedelta(days=10))},
         "next": {"date": iso(now + timedelta(days=5)), "observed_at": iso(now - timedelta(days=1))},
-        "future-capture": {"date": iso(now + timedelta(days=6)), "observed_at": iso(now + timedelta(hours=1))},
+        "future-capture": {
+            "date": iso(now + timedelta(days=6)),
+            "observed_at": iso(now + timedelta(hours=1)),
+        },
     }
     for label, row in rows.items():
         await service.repo.put(
             "mkt.unlocks", "layerzero:ZRO:" + label, {"token_id": "layerzero:ZRO", "label": label, **row}
         )
     facts = await service.dispatch("get_token_facts", {"token": "layerzero:ZRO"}, {})
-    assert [(u["label"], u["relative_to_cutoff"]) for u in facts["unlocks"]] == [("past", "PAST"), ("next", "UPCOMING")]
-    # A late-receipt reconstruction is known from the end of its schedule_as_of
-    # bucket, as replay admits it (lead rulings F-02, F-04).
+    assert [(u["label"], u["relative_to_cutoff"]) for u in facts["unlocks"]] == [
+        ("past", "PAST"),
+        ("next", "UPCOMING"),
+    ]
     from tank.event_tools import known_at
 
     day = (now - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -4804,14 +4789,21 @@ def test_schema_refusal_names_allowed_cutoff_precisions():
     from pathlib import Path
 
     schema = json.loads(
-        (Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/get_market_truth.schema.json").read_text()
+        (
+            Path(__file__).resolve().parents[1]
+            / "config/skills/tank-event-analyst/get_market_truth.schema.json"
+        ).read_text()
     )
     args = {"event_id": "e", "tokens": ["T"], "cutoff": "2026-10-20T19:07:00Z"}
     validate_schema(dict(args, cutoff_prec="BUCKET(1m)"), schema)
     validate_schema(dict(args, cutoff_prec="EXACT"), schema)
     with pytest.raises(ValueError) as refused:
         validate_schema(dict(args, cutoff_prec="FORTNIGHT"), schema)
-    assert "$.cutoff_prec" in str(refused.value) and "EXACT" in str(refused.value) and "BUCKET" in str(refused.value)
+    assert (
+        "$.cutoff_prec" in str(refused.value)
+        and "EXACT" in str(refused.value)
+        and "BUCKET" in str(refused.value)
+    )
 
 
 async def test_token_tools_resolve_tickers_and_refuse_unknown_names_explicitly(service):
@@ -4819,7 +4811,9 @@ async def test_token_tools_resolve_tickers_and_refuse_unknown_names_explicitly(s
     unknown name gets an error that states the expected form."""
     resolved = service.resolve_token_arguments("get_decision", {"event_id": "e", "token": "BTC"})
     assert resolved["token"] == "bitcoin:BTC"
-    many = service.resolve_token_arguments("get_market_truth", {"event_id": "e", "tokens": ["$WLD", "uniswap:UNI"]})
+    many = service.resolve_token_arguments(
+        "get_market_truth", {"event_id": "e", "tokens": ["$WLD", "uniswap:UNI"]}
+    )
     assert many["tokens"] == ["world:WLD", "uniswap:UNI"]
     assert service.resolve_token_arguments("get_token_facts", {"token": "Bitcoinz"}) == {"token": "Bitcoinz"}
     assert service.resolve_token_arguments("get_event", {"event_id": "e"}) == {"event_id": "e"}
@@ -4838,7 +4832,9 @@ def test_publish_card_schema_bounds_agent_text():
     from pathlib import Path
 
     schema = json.loads(
-        (Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/publish_card.schema.json").read_text()
+        (
+            Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/publish_card.schema.json"
+        ).read_text()
     )
     ok = {"event_id": "e", "kind": "FULL", "verdict": "v" * 160, "why": ["w" * 220, "x"]}
     validate_schema(ok, schema)
@@ -4867,10 +4863,17 @@ async def test_token_facts_for_btc_fit_the_context(service):
             "available": True,
         }
         if kind == "FUNDAMENTALS":
-            daily = {"complete": True, "total24h": str(200000 + n), "total30d": "7277898", "available": True,
-                     "totalDataChart": chart}
-            row.update(metrics={"dailyFees": daily, "dailyRevenue": daily},
-                       protocols={"bitcoin": {"dailyFees": dict(daily, source_url="https://api.llama.fi/x")}})
+            daily = {
+                "complete": True,
+                "total24h": str(200000 + n),
+                "total30d": "7277898",
+                "available": True,
+                "totalDataChart": chart,
+            }
+            row.update(
+                metrics={"dailyFees": daily, "dailyRevenue": daily},
+                protocols={"bitcoin": {"dailyFees": dict(daily, source_url="https://api.llama.fi/x")}},
+            )
         await service.repo.put("mkt.supply_obs", f"btc:{n}", row)
     facts = await service.dispatch("get_token_facts", {"token": "BTC"}, {})
     size = len(canonical_json(facts).encode())
@@ -4897,9 +4900,16 @@ async def test_read_tool_results_are_bounded_and_say_so(service):
     await service.repo.put(
         "evt.events",
         "open",
-        {"event_id": "open", "lifecycle": "ANALYZING", "statement": "World news", "claims_blob": "z" * 50_000},
+        {
+            "event_id": "open",
+            "lifecycle": "ANALYZING",
+            "statement": "World news",
+            "claims_blob": "z" * 50_000,
+        },
     )
-    await service.repo.put("ops.agent_sessions", "s1", {"session_id": "s1", "event_id": "open", "status": "OPEN"})
+    await service.repo.put(
+        "ops.agent_sessions", "s1", {"session_id": "s1", "event_id": "open", "status": "OPEN"}
+    )
     listed = await service.dispatch("list_open_events", {"entity_or_token": "world"}, {})
     event = listed["events"][0]
     assert "claims_blob" not in event and event["sessions"] == [{"session_id": "s1", "status": "OPEN"}]
@@ -4945,23 +4955,46 @@ async def test_token_facts_give_the_covered_daily_volume(service):
     volume per spot venue and in total, native and USD, with exclusions."""
     now = utcnow()
     rows = {
-        "binance:spot:BTCUSDT": {"volume_native": "12000.5", "volume_usd": "900000000", "ts": iso(now - timedelta(minutes=2))},
-        "coinbase:spot:BTC-USD": {"volume_native": "8000", "volume_usd": "600000000", "ts": iso(now - timedelta(minutes=1))},
-        "kraken:spot:XBT/USD": {"volume_native": "100", "volume_usd": "7500000", "ts": iso(now - timedelta(hours=3))},
-        "okx:spot:BTC-USDT": {"volume_native": "500", "volume_usd": None, "usd_reason": "NO_USD_RATE", "ts": iso(now)},
+        "binance:spot:BTCUSDT": {
+            "volume_native": "12000.5",
+            "volume_usd": "900000000",
+            "ts": iso(now - timedelta(minutes=2)),
+        },
+        "coinbase:spot:BTC-USD": {
+            "volume_native": "8000",
+            "volume_usd": "600000000",
+            "ts": iso(now - timedelta(minutes=1)),
+        },
+        "kraken:spot:XBT/USD": {
+            "volume_native": "100",
+            "volume_usd": "7500000",
+            "ts": iso(now - timedelta(hours=3)),
+        },
+        "okx:spot:BTC-USDT": {
+            "volume_native": "500",
+            "volume_usd": None,
+            "usd_reason": "NO_USD_RATE",
+            "ts": iso(now),
+        },
     }
     for iid, row in rows.items():
-        await service.repo.put("mkt.tickers_24h", iid + ":t", {"instrument_id": iid, "token_id": "bitcoin:BTC", **row})
+        await service.repo.put(
+            "mkt.tickers_24h", iid + ":t", {"instrument_id": iid, "token_id": "bitcoin:BTC", **row}
+        )
     facts = await service.dispatch("get_token_facts", {"token": "BTC"}, {})
     volume = facts["covered_daily_volume"]
-    # Native over every fresh venue; USD only where the venue reports it.
     assert volume["total_native"] == "20500.5" and volume["total_usd"] == "1500000000"
     assert {v["instrument_id"] for v in volume["venues"]} == {
-        "binance:spot:BTCUSDT", "coinbase:spot:BTC-USD", "okx:spot:BTC-USDT"
+        "binance:spot:BTCUSDT",
+        "coinbase:spot:BTC-USD",
+        "okx:spot:BTC-USDT",
     }
     assert volume["total_usd_excludes"] == [{"instrument_id": "okx:spot:BTC-USDT", "reason": "NO_USD_RATE"}]
     reasons = {e["instrument_id"]: e["reason"] for e in volume["excluded"]}
-    assert reasons["kraken:spot:XBT/USD"] == "TICKER_STALE" and reasons["bybit:spot:BTCUSDT"] == "NO_STORED_24H_TICKER"
+    assert (
+        reasons["kraken:spot:XBT/USD"] == "TICKER_STALE"
+        and reasons["bybit:spot:BTCUSDT"] == "NO_STORED_24H_TICKER"
+    )
     assert volume["market_cap"] is None and volume["market_cap_reason"].startswith("NOT_STORED")
 
 
@@ -5012,14 +5045,23 @@ async def test_named_cutoff_precisions_are_accepted_as_buckets(service):
     from pathlib import Path
 
     schema = json.loads(
-        (Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/get_market_truth.schema.json").read_text()
+        (
+            Path(__file__).resolve().parents[1]
+            / "config/skills/tank-event-analyst/get_market_truth.schema.json"
+        ).read_text()
     )
     for name in ("SECOND", "MINUTE", "HOUR"):
-        validate_schema({"event_id": "e", "tokens": ["T"], "cutoff": "2026-10-21T05:05:00Z", "cutoff_prec": name}, schema)
+        validate_schema(
+            {"event_id": "e", "tokens": ["T"], "cutoff": "2026-10-21T05:05:00Z", "cutoff_prec": name}, schema
+        )
     eid = "named-prec"
-    await service.repo.put("evt.events", eid, {"event_id": eid, "current_ems_id": "ems", "tokens_mentioned": ["T"]})
+    await service.repo.put(
+        "evt.events", eid, {"event_id": eid, "current_ems_id": "ems", "tokens_mentioned": ["T"]}
+    )
     await service.repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": eid, "class": "MAJOR"})
-    await service.repo.put("evt.beneficiary_maps", f"{eid}:1", {"event_id": eid, "map_version": 1, "analysis_set": ["T"]})
+    await service.repo.put(
+        "evt.beneficiary_maps", f"{eid}:1", {"event_id": eid, "map_version": 1, "analysis_set": ["T"]}
+    )
     task = asyncio.create_task(
         service.dispatch(
             "get_market_truth",
@@ -5056,13 +5098,20 @@ async def test_publish_card_keeps_market_truth_once_and_reads_each_collection_on
 
     truth = {"mta_id": "mta-1", "token_id": "T", "big": "x" * 10_000}
     calls = [
-        {"tool": "get_market_truth", "call_id": "c1", "result": {"market_truth": [truth, {"mta_id": "other", "v": 1}]}},
+        {
+            "tool": "get_market_truth",
+            "call_id": "c1",
+            "result": {"market_truth": [truth, {"mta_id": "other", "v": 1}]},
+        },
         {"tool": "get_decision", "call_id": "c2", "result": {"action": "WAIT"}},
     ]
     deduped = dedupe_request_log(calls, [sha256(truth)])
-    assert deduped[0]["result"]["market_truth"][0] == {"same_as_bundle_market_truth": "mta-1", "sha256": sha256(truth)}
-    assert deduped[0]["result"]["market_truth"][1] == {"mta_id": "other", "v": 1}  # not identical: kept
-    assert deduped[1] == calls[1] and calls[0]["result"]["market_truth"][0] is truth  # input untouched
+    assert deduped[0]["result"]["market_truth"][0] == {
+        "same_as_bundle_market_truth": "mta-1",
+        "sha256": sha256(truth),
+    }
+    assert deduped[0]["result"]["market_truth"][1] == {"mta_id": "other", "v": 1}
+    assert deduped[1] == calls[1] and calls[0]["result"]["market_truth"][0] is truth
 
     monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
     monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card")
@@ -5088,5 +5137,11 @@ async def test_publish_card_keeps_market_truth_once_and_reads_each_collection_on
         {"event_id": eid, "call_id": "c", "role": "system"},
     )
     assert result["published"]
-    for collection in ("evt.beneficiary_maps", "evt.beneficiary_edges", "evt.claims", "evt.event_observations", "ana.contradictions"):
+    for collection in (
+        "evt.beneficiary_maps",
+        "evt.beneficiary_edges",
+        "evt.claims",
+        "evt.event_observations",
+        "ana.contradictions",
+    ):
         assert reads.count(collection) == 1, (collection, reads.count(collection))

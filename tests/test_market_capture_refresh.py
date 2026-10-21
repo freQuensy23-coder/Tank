@@ -142,7 +142,6 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
         assert fired["status"] == "FIRED" and not fired.get("consumed_by")
         messages = [row async for row in repo.iter_all("ops.jobs", filters={"type": "AGENT_MESSAGE"})]
         assert any(row["payload"].get("kind") == "CONDITION_FIRED" for row in messages)
-        # The transient condition evaluator must not append a replacement MTA.
         assert len(await repo.list("ana.market_truth")) == 1
         await seed_bound_session(repo)
         sent = []
@@ -353,7 +352,6 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
             pending = asyncio.create_task(sessions.process_event("s", event, 8))
             try:
                 await asyncio.wait_for(entering.wait(), 5)
-                # Same expression intentionally exercises reconciliation's reuse branch.
                 second.update(status="FIRED", fired_at=iso())
                 await repo.put("ana.watch_conditions", second["cond_id"], second)
                 release.set()

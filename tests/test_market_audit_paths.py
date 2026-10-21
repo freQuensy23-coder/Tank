@@ -65,7 +65,6 @@ def raw_packet():
                 trade_aggregation="PER_FILL",
             )
         )
-        # Native volume history: every fifteen-minute window has150 units.
         for index in range(9 * 96):
             t = START - timedelta(minutes=15 * (index + 1))
             packet["klines"].append(
@@ -188,7 +187,6 @@ def raw_packet():
 
 def derive(packet, start=START, end=END):
     spot = spot_truth(packet["flow_bars"], [], packet["instruments"], start, end)
-    # A constant-cohort composite exists for this complete synthetic window.
     spot["composite_cohort"] = deepcopy(spot["composite_max"])
     relative = dict(
         ref_venue="A:spot:T",
@@ -215,7 +213,6 @@ def test_raw_native_volume_and_basis_support_require_complete_own_history():
     assert f["perp_volume_up_beyond_normal"] is True
     assert f["basis_within_normal"] is True
     assert f["perp_taker_flow_buy"] is True
-    # Same raw current windows at their historical150-unit volume no longer support an increase.
     for row in packet["klines"]:
         if parse_time(row["open_time"]) >= START:
             row["volume_native"] = "10"
@@ -249,7 +246,6 @@ def test_raw_lead_increment_ticket_and_depth_support_values():
     assert spot["size_profile"]["sell_share_rising"] is True
     assert deriv["support_features"]["ask_depth_building"] is True
     assert deriv["support_features"]["exchange_inflows"] is True
-    # Equal spot/perp incremental USD is no majority; change only current raw spot USD.
     assert deriv["incremental_share"]["spot"] == 0.5
     packet = raw_packet()
     for row in packet["klines"]:
@@ -264,7 +260,6 @@ def test_raw_large_ticket_minority_and_ask_refill_include_missing_and_failed_con
     for row in packet["flow_bars"]:
         row["size_buckets"]["B4"] = dict(buy_notional="1000", sell_notional="1000")
     assert derive(packet)[1]["support_features"]["large_tickets_minority"] is True
-    # A BUY burst clears100 USD of asks; a sample30s later restores that depth.
     for row in packet["books"]:
         row["depth"]["ask"]["p1"]["usd"] = "100"
     assert derive(packet)[1]["support_features"]["ask_replenishment"] is True
@@ -296,7 +291,6 @@ def test_raw_first_half_liquidation_majority_is_not_event_count_majority():
         ),
     ]
 
-    # COMPLETE is a declared source/capture prerequisite, not inferred from the two prints.
     def feature():
         spot, d, liquidity, s, _ = derive(packet)
         d["per_venue"][0]["liq_coverage"] = "COMPLETE"
@@ -331,7 +325,6 @@ def test_raw_funding_dispersion_fragmentation_needs_independent_complete_path():
     assert deriv["funding_dispersion_normal_range_8h"] == [Decimal(0), Decimal(0)]
     assert liq["fragmentation"]["funding_path_validated"] is True
     assert liq["fragmentation"]["validated"] is True
-    # This route reaches the public move class without a price-gap route.
     _, _, _, supply, relative = derive(packet)
     assert (
         select_move(spot, deriv, liq, supply, relative, "HIGH", "EVENT")["move_class"]
@@ -368,9 +361,6 @@ def test_raw_alternating_top_venue_signs_do_not_invent_second_path():
         )
         sign = 1 if minute // 15 in (0, 2) else -1
         for venue in ("A", "B"):
-            # A/B are the two largest venues and flip oppositely twice. C's
-            # steady selling creates compositeSELL; the largest venue A buys.
-            # Exact totals make the resulting primary classDIVERGENT.
             s = sign if venue == "A" else -sign
             packet["flow_bars"].append(
                 dict(
@@ -392,7 +382,6 @@ def test_raw_alternating_top_venue_signs_do_not_invent_second_path():
     candidate = next(c for c in classified["divergence"]["candidates"] if c["state"] == "FRAGMENTATION")
     assert candidate["eligible"] is True and candidate["refuted"] is False
     assert classified["move_class"] != "REAL_MARKET_FRAGMENTATION"
-    # Removing one real minute from each top venue makes the sequence incomplete.
     for row in packet["flow_bars"]:
         if row["minute_start"] == iso(start):
             row["complete"] = False
@@ -411,8 +400,6 @@ def scoring_qualifiers(spot, deriv, liq, supply, relative, cls, qualifier_native
     support feature, lead, funding classification, volume share, or depth trend
     is overwritten here. Those are raw-derived by derive().
     """
-    # OI support is from the actual raw-derived per-venue statistics. The
-    # synthetic P/Q labels intentionally do not impersonate real sync venues.
     deriv["synchronized"] = {
         key: deriv["per_venue"][0].get(key)
         for key in ("oi_native_chg_pct", "native_normal_range", "oi_class")
@@ -430,11 +417,7 @@ def scoring_qualifiers(spot, deriv, liq, supply, relative, cls, qualifier_native
     if cls == "SELL_SIDE_ABSORPTION":
         liq["elasticity"]["weak_response"] = True
     if cls == "DISTRIBUTION":
-        # Supply is held as an explicit REQUIRED-rule qualifier, independent of
-        # the raw exchange-inflows SUPPORT signal being removed in the delta test.
         supply["supply_in_evidence"] = "TRUE"
-        # Cohort trend eligibility does not depend on changing the current raw BUY
-        # support data to SELL and triggering the separate§5.9 discriminator.
         spot["cohort_comparisons"] = {
             "W24H": dict(current=dict(sign=-1), other=dict(sign=1), share_majority=True)
         }
@@ -455,8 +438,6 @@ def positive_packet(cls):
             if ":spot:" in row["instrument_id"] and parse_time(row["open_time"]) >= START:
                 row["quote_volume_usd"] = "3000"
     if cls == "PERP_LED_CHASE":
-        # Raw neutral spot, growing perp USD activity, positive perp taker prints,
-        # rising current basis and above-own-history settled funding.
         for row in packet["flow_bars"]:
             if ":spot:" in row["instrument_id"]:
                 row.update(buy_qty="10", sell_qty="10")
@@ -552,7 +533,6 @@ def test_raw_support_missing_evidence_never_counts_as_zero_or_positive():
         "exchange_inflows",
     ]:
         assert f[key] is None, key
-    # No participating perp venue is a structural False guard, never positive support.
     assert f["basis_within_normal"] is False
 
 
@@ -666,7 +646,5 @@ def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(
                 row["independent_rest"]["mid"] = "105"
     else:
         raise AssertionError("Unmapped written support term " + term)
-    # Hold REQUIRED eligibility qualifiers constant while removing raw support.
-    # The native-not-up SELL support is itself raw OI, so do not hold that one.
     reduced, _ = raw_scores(packet, cls, None if term == "native_not_up" else native)
     assert reduced[cls] == maximum - 1

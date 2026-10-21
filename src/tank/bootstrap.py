@@ -1,7 +1,5 @@
 """Materialize the captured, versioned configuration into queryable registry tables."""
 
-from __future__ import annotations
-
 import hashlib
 import json
 
@@ -9,8 +7,6 @@ from tank.settings import Settings
 from tank.storage import Repository
 from tank.time_precision import propagate_timestamp
 
-# Explicit configuration provenance clocks, including nested provider/source evidence.
-# Their values belong to the captured configuration, never to this bootstrap run.
 CONFIG_TIMESTAMP_FIELDS = frozenset({"verified_at", "resolved_at", "checked_at", "identity_reviewed_at"})
 
 
@@ -22,8 +18,6 @@ def _config_timestamp_metadata(value):
     result = {key: _config_timestamp_metadata(item) for key, item in value.items()}
     for field in CONFIG_TIMESTAMP_FIELDS.intersection(value):
         metadata = propagate_timestamp(value, field).fields(field)
-        # Keep the exact captured value/descriptor, including date-only legacy evidence.
-        # Only declared provenance is normalized; ISO formatting never establishes it.
         metadata.pop(field)
         result.update(metadata)
     return result
@@ -95,7 +89,6 @@ def validate_registry(settings):
             if section == "entities" and "name" not in record:
                 record["name"] = next(iter(record.get("names", [])), record[identifier])
             add("reg." + section, row[identifier], record, "registry.yaml", registry)
-    # Routing aliases are explicitly declared; display names are not routing policy.
     for entity in registry.get("entities", []):
         for alias in _routing_aliases(entity):
             add(
@@ -124,7 +117,6 @@ def validate_registry(settings):
     addresses = settings.load_config("exchange_addresses")
     for wallet in addresses.get("wallet_lists", []):
         for address in wallet.get("addresses", []):
-            # The pinned wallet lists assert EVM scope, not a particular EVM chain.
             record = {k: v for k, v in wallet.items() if k != "addresses"}
             record.update(address=address, chain=wallet.get("chain"), chain_scope="EVM")
             add(
@@ -134,7 +126,6 @@ def validate_registry(settings):
                 "exchange_addresses.yaml",
                 addresses,
             )
-    # Include empty collections so removal of their last configured row is reconciled.
     for table in (
         "sources",
         "tokens",
@@ -157,7 +148,7 @@ async def sync_registry(repo: Repository, settings: Settings) -> dict[str, int]:
     inferred from a URL, account, or exchange name. Configured metric meanings are
     authoritative immediately; legacy verification metadata does not gate their use.
     """
-    rows = validate_registry(settings)  # Validate all input before the first mutation.
+    rows = validate_registry(settings)
     async with repo.lock("tank:registry_sync"):
         for table, configured in rows.items():
             stale = []

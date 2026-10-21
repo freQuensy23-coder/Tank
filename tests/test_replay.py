@@ -98,8 +98,6 @@ def test_clock_and_query_bounds(packet):
         clock.advance("2026-09-24T09:00:00Z")
 
 
-
-
 async def test_bundle_reproduction_reexecutes_captured_tools(packet, tmp_path):
     from tank.replay import digest, replay_bundle, reproduce_bundle
 
@@ -533,7 +531,6 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
             if event.get("custom_tool_use_id") == "replay-decision":
                 decision_ack_bodies.append(copy.deepcopy(event))
                 if transient_case == "lost_decision_ack" and len(decision_ack_bodies) == 1:
-                    # Native reconnect redelivers the unacknowledged original use.
                     await queue.put(
                         (
                             4,
@@ -693,7 +690,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
     assert report["session_id"] != old_sid
     assert report["mode"] == "FRESH_OPENMA_SESSION"
     assert report["output"]["decisions"][0]["action"] == "WAIT"
-    assert results[-1]["action"] == "WAIT"  # deliberately wrong stored START was not reused
+    assert results[-1]["action"] == "WAIT"
     assert results[0]["market_truth"][0]["move_class"] == "UNKNOWN"
     if captured_http_status:
         assert results[1] == captured_error
@@ -1056,7 +1053,6 @@ def test_operator_cli_defaults_to_fresh_session_and_diagnostic_is_explicit(monke
         result = runner.invoke(cli.main, args + ["--database-url", "postgresql://replay/isolated"])
         assert result.exit_code == 0, result.output
     assert [row[2] for row in seen] == ["fresh-session", "fresh-session"]
-    # Fixture replay has only the 03 §11.1 path (lead ruling 2026-10-20 17:20).
     result = runner.invoke(
         cli.main,
         ["replay", "F-01", "--mode", "captured-tools", "--database-url", "postgresql://replay/isolated"],
@@ -1149,8 +1145,6 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
             },
         }
     )
-    # Synthetic original host transcript binds the rerun origin identity; the
-    # deliberately absent original call counterpart remains the timer divergence.
     data["records"].extend(
         [
             {
@@ -1343,8 +1337,6 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
 
                     assert result.get("event_id"), result
                     fresh_event_id, actor_stage = result["event_id"], "assessment"
-                    # Preserve this projection fixture's independently tested routing metadata;
-                    # extraction completion itself comes only from the accepted producer.
                     source = await repo.get("ingest.source_items", "first")
                     await repo.put(
                         "ingest.source_items", "first", dict(source, route_event_id=fresh_event_id)
@@ -1825,8 +1817,6 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         ]
     )
     if not premature_trigger:
-        # Explicit synthetic receipt for the newly required expiry UPDATE.
-        # It supplies captured transport acknowledgment, not a publication verdict.
         records.extend(
             [
                 (
@@ -2345,9 +2335,6 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
         )
 
         async def fixture_grade(arguments, context):
-            # This test already isolates a declared fixture-grade condition;
-            # retain that grade on refresh, while real reconciliation consumes
-            # the fired watch instead of rearming or adding unrelated watches.
             result = dict(
                 baseline_decision,
                 dec_id="fresh-decision" if len(messages) == 1 else "fresh-timer-decision",
@@ -2392,15 +2379,12 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
             timeout=3,
         )
     all_conditions = await repo.list("ana.watch_conditions")
-    # W1 (03 §6.6): the fired watch is spent; the same expression is re-armed.
     conditions = [c for c in all_conditions if not c.get("rearmed_from")]
     rearmed = [c for c in all_conditions if c.get("rearmed_from")]
     assert len(conditions) == 1 and conditions[0]["cond_id"] != "old-condition"
     assert report["identity_substitutions"]["old-condition"] == conditions[0]["cond_id"]
     assert report["causal_tool_receipts"][0]["source_call_id"] == "decision"
-    assert (
-        report["output"]["conditions"][0]["expires_at"] != old["expires_at"]
-    )  # Economic difference retained.
+    assert report["output"]["conditions"][0]["expires_at"] != old["expires_at"]
     assert report["status"] == ("COMPLETED" if state == "APPROVED" else "DIVERGED")
     if state == "APPROVED":
         assert conditions[0]["status"] == "FIRED"
@@ -2596,8 +2580,6 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
         for key in list(data["records"][0]):
             if key.startswith("simulated_"):
                 data["records"][0].pop(key)
-        # An explicitly incomplete synthetic original transcript has a prior
-        # publication but no SENT receipt. Ordinary replay must still refuse it.
         data["records"].extend(
             [
                 {

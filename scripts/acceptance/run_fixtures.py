@@ -24,6 +24,7 @@ Usage (never in parallel):
   python3 run_fixtures.py run --entries entries.json --fixtures F-17 --out /srv/tank/docs/verification/native-fixtures-2026-10-21
   python3 run_fixtures.py review --out DIR --fixture F-17 --review manual-review.json
 """
+
 import argparse
 import hashlib
 import json
@@ -35,22 +36,27 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import iso, utcnow, write_json  # noqa: E402
+from common import iso, utcnow, write_json
 
 ROOT = Path("/srv/tank")
-COMPOSE = shlex.split(os.environ.get(
-    "TANK_COMPOSE",
-    "docker compose -p tank --project-directory /srv/tank -f /srv/tank/compose.yaml -f /etc/tank/compose.server.yaml"
-    " -f /srv/tank/docs/verification/server-recovery-bootstrap-2026-10-20/pg.resources.yaml --env-file /etc/tank/compose.env"))
-# tank-sessions owns the per-run tank_replay reset and the DSN helper (password never on argv or stdout).
+COMPOSE = shlex.split(
+    os.environ.get(
+        "TANK_COMPOSE",
+        "docker compose -p tank --project-directory /srv/tank -f /srv/tank/compose.yaml -f /etc/tank/compose.server.yaml"
+        " -f /srv/tank/docs/verification/server-recovery-bootstrap-2026-10-20/pg.resources.yaml --env-file /etc/tank/compose.env",
+    )
+)
 RESET = os.environ.get("TANK_REPLAY_RESET", "/srv/tank-work/ts/reset_tank_replay.sh")
-DSN_HELPER = os.environ.get("TANK_REPLAY_DSN_HELPER", str(Path(__file__).resolve().parent / "replay_dsn_exec.py"))
-PRIVATE_IN_CONTAINER = "/replay-private/map.json"  # read-only bind mount outside /data
+DSN_HELPER = os.environ.get(
+    "TANK_REPLAY_DSN_HELPER", str(Path(__file__).resolve().parent / "replay_dsn_exec.py")
+)
+PRIVATE_IN_CONTAINER = "/replay-private/map.json"
 
 
 def sh(args, *, input=None, check=True, timeout=None):
-    out = subprocess.run(args, input=input, capture_output=True, text=isinstance(input, str) or input is None,
-                         timeout=timeout)
+    out = subprocess.run(
+        args, input=input, capture_output=True, text=isinstance(input, str) or input is None, timeout=timeout
+    )
     if check and out.returncode != 0:
         raise RuntimeError(f"{' '.join(args[:6])}… failed ({out.returncode}): {str(out.stderr)[-800:]}")
     return out
@@ -68,8 +74,10 @@ def resolve(p):
 def entries(path, fixtures):
     data = json.load(open(path))
     if isinstance(data, dict) and all(isinstance(v, dict) and "manifest_entry" in v for v in data.values()):
-        # assemble_packets.py output: {F-xx: {manifest_entry, container, ...}}
-        rows = [{**v["manifest_entry"], "fixture_id": k, "container": v.get("container", {})} for k, v in data.items()]
+        rows = [
+            {**v["manifest_entry"], "fixture_id": k, "container": v.get("container", {})}
+            for k, v in data.items()
+        ]
     else:
         rows = data["fixtures"] if isinstance(data, dict) and "fixtures" in data else data
     found = {r["fixture_id"]: r for r in rows if r.get("fixture_id") in fixtures}
@@ -137,18 +145,31 @@ def run_one(fid, entry, out_dir, timeout):
     config_dir = Path(hints["TANK_CONFIG_PATH"]) if hints.get("TANK_CONFIG_PATH") else ROOT / "config"
     raw = sh(["zstd", "-dc", str(resolve(entry["acceptance_input"]["path"]))]).stdout
     packet = json.loads(raw)
-    tank = container("tank")  # the running service must be up: openma's model card calls tank:8790
-    # load_inputs refuses unless the fixture's openma.yaml is byte-identical to the deployed one.
+    tank = container("tank")
     deployed = sh(COMPOSE + ["exec", "-T", "tank", "cat", "/config/openma.yaml"]).stdout
     if (config_dir / "openma.yaml").read_text() != deployed:
         raise SystemExit(f"{fid}: fixture config openma.yaml differs from the deployed /config/openma.yaml")
     with tempfile.TemporaryDirectory() as tmp:
         p = Path(tmp) / f"{fid}.json"
         p.write_text(raw)
-        if sh(COMPOSE + ["exec", "-T", "tank", "test", "-e", f"/data/replay/inputs/{fid}.json"], check=False).returncode == 0:
+        if (
+            sh(
+                COMPOSE + ["exec", "-T", "tank", "test", "-e", f"/data/replay/inputs/{fid}.json"], check=False
+            ).returncode
+            == 0
+        ):
             stamp = utcnow().strftime("%Y%m%dT%H%M%SZ")
-            sh(COMPOSE + ["exec", "-T", "tank", "mv", f"/data/replay/inputs/{fid}.json",
-                          f"/data/replay/inputs/{fid}.json.superseded-{stamp}"])
+            sh(
+                COMPOSE
+                + [
+                    "exec",
+                    "-T",
+                    "tank",
+                    "mv",
+                    f"/data/replay/inputs/{fid}.json",
+                    f"/data/replay/inputs/{fid}.json.superseded-{stamp}",
+                ]
+            )
         sh(COMPOSE + ["exec", "-T", "tank", "mkdir", "-p", "/data/replay/inputs"])
         sh(["docker", "cp", str(p), f"{tank}:/data/replay/inputs/{fid}.json"])
     wait_for_idle_live(int(os.environ.get("TANK_FIXTURE_MAX_WAIT_S", "21600")))
@@ -157,7 +178,6 @@ def run_one(fid, entry, out_dir, timeout):
     mask_path = hints.get("TANK_REPLAY_PRIVATE_MASK_PATH") or PRIVATE_IN_CONTAINER
     mounts = ["-v", f"{config_dir}:/config:ro"]
     if hints.get("TANK_REPLAY_PRIVATE_MASK_PATH"):
-        # The map and packet reference absolute /srv/tank paths: bind them read-only at the same paths.
         for path in hints.get("bind_same_path_read_only", []):
             mounts += ["-v", f"{path}:{path}:ro"]
         if not any(str(private).startswith(b) for b in hints.get("bind_same_path_read_only", [])):
@@ -167,33 +187,56 @@ def run_one(fid, entry, out_dir, timeout):
     if mask_path.startswith("/data/"):
         raise SystemExit("private map must stay outside /data")
     started = iso(utcnow())
-    # No --use-aliases: the one-off replay process must not take the `tank` alias. Default volumes keep
-    # /data on tank-data, where evidence for the tank-replay sandbox lives (/data/replay/evidence/<RPL-id>).
-    res = sh(COMPOSE + ["run", "--rm", "--no-deps", "-T",
-                        *mounts,
-                        "-e", f"TANK_REPLAY_PRIVATE_MASK_PATH={mask_path}",
-                        "-v", f"{DSN_HELPER}:/opt/replay_dsn_exec.py:ro",
-                        "tank", "/opt/tank/venv/bin/python", "/opt/replay_dsn_exec.py",
-                        "tank", "replay", fid, "--database-url", "@REPLAY_DSN@"],
-             check=False, timeout=timeout)
+    res = sh(
+        COMPOSE
+        + [
+            "run",
+            "--rm",
+            "--no-deps",
+            "-T",
+            *mounts,
+            "-e",
+            f"TANK_REPLAY_PRIVATE_MASK_PATH={mask_path}",
+            "-v",
+            f"{DSN_HELPER}:/opt/replay_dsn_exec.py:ro",
+            "tank",
+            "/opt/tank/venv/bin/python",
+            "/opt/replay_dsn_exec.py",
+            "tank",
+            "replay",
+            fid,
+            "--database-url",
+            "@REPLAY_DSN@",
+        ],
+        check=False,
+        timeout=timeout,
+    )
     finished = iso(utcnow())
     mark_window({"fixture_id": fid, "event": "END", "at": finished, "exit_code": res.returncode})
     (d / "replay-stdout.json").write_text(res.stdout)
     (d / "replay-stderr.log").write_text(res.stderr[-20000:])
-    # replay_fixture freezes under bundles/<digest of the packet JSON> (src/tank/replay.py replay_fixture).
     sys.path.insert(0, str(ROOT / "src"))
     from tank.replay import digest
 
     bundle = f"/data/replay/bundles/{digest(packet)}/outputs.json"
     if sh(COMPOSE + ["exec", "-T", "tank", "test", "-f", bundle], check=False).returncode != 0:
         bundle = None
-    receipt = {"fixture_id": fid, "started_at": started, "finished_at": finished, "exit_code": res.returncode,
-               "acceptance_input": entry["acceptance_input"], "config_dir": str(config_dir),
-               "evidence_mode": "FRESH_NATIVE_TANK_REPLAY",
-               "command": f"compose run tank tank replay {fid} --database-url <tank_replay> (config {config_dir})"}
+    receipt = {
+        "fixture_id": fid,
+        "started_at": started,
+        "finished_at": finished,
+        "exit_code": res.returncode,
+        "acceptance_input": entry["acceptance_input"],
+        "config_dir": str(config_dir),
+        "evidence_mode": "FRESH_NATIVE_TANK_REPLAY",
+        "command": f"compose run tank tank replay {fid} --database-url <tank_replay> (config {config_dir})",
+    }
     if bundle and res.returncode == 0:
         sh(["docker", "cp", f"{tank}:{bundle}", str(d / "outputs.json")])
-        receipt["frozen_output"] = {"path": os.path.relpath(d / "outputs.json", ROOT), "sha256": sha(d / "outputs.json")}
+        receipt["frozen_output"] = {
+            "path": os.path.relpath(d / "outputs.json", ROOT),
+            "sha256": sha(d / "outputs.json"),
+        }
         receipt["container_bundle"] = bundle
     write_json(d / "acceptance-run.json", receipt)
     return evaluate(fid, entry, d)
@@ -204,16 +247,29 @@ def evaluate(fid, entry, d, run_name="acceptance-run.json"):
     sys.path.insert(0, str(ROOT / "src"))
     import fixture_acceptance as fa
 
-    # Spec fields (case_description, cutoff_spec, assertion_spec, …) come from the manifest; the packet
-    # references come from the entry being evaluated.
-    spec = next((x for x in json.load(open(ROOT / "tests/fixtures/manifest.json"))["fixtures"]
-                 if x["fixture_id"] == fid), {})
+    spec = next(
+        (
+            x
+            for x in json.load(open(ROOT / "tests/fixtures/manifest.json"))["fixtures"]
+            if x["fixture_id"] == fid
+        ),
+        {},
+    )
     case = {**{k: v for k, v in spec.items() if k not in ("acceptance_run",)}, **entry}
     run_path = d / run_name
     case["acceptance_run"] = {"path": os.path.relpath(run_path, ROOT), "sha256": sha(run_path)}
-    errors = fa.check_completed(ROOT, case) if json.load(open(run_path)).get("frozen_output") else ["no frozen output"]
-    result = {"fixture_id": fid, "evaluated_at": iso(utcnow()), "passed": not errors, "errors": errors,
-              "manifest_acceptance_run": case["acceptance_run"]}
+    errors = (
+        fa.check_completed(ROOT, case)
+        if json.load(open(run_path)).get("frozen_output")
+        else ["no frozen output"]
+    )
+    result = {
+        "fixture_id": fid,
+        "evaluated_at": iso(utcnow()),
+        "passed": not errors,
+        "errors": errors,
+        "manifest_acceptance_run": case["acceptance_run"],
+    }
     write_json(d / "evaluation.json", result)
     print(json.dumps(result, indent=2))
     return result
@@ -245,7 +301,7 @@ if __name__ == "__main__":
     if a.step == "run":
         fids = [f for f in a.fixtures.split(",") if f]
         es = entries(a.entries, fids)
-        summary = [run_one(f, es[f], a.out, a.timeout) for f in fids]  # strictly sequential
+        summary = [run_one(f, es[f], a.out, a.timeout) for f in fids]
         write_json(Path(a.out) / f"summary-{utcnow().strftime('%Y%m%dT%H%M%SZ')}.json", summary)
     elif a.step == "review":
         review(a.out, a.fixture, a.review, a.entries)

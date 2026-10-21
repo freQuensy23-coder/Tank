@@ -26,7 +26,6 @@ def test_current_settlement_cannot_extend_training_history_into_a_week(history_c
     funding.append(
         dict(instrument_id=iid, kind="SETTLED", settlement_time=iso(end), rate=".01", interval_h=8)
     )
-    # Invalid old observations cannot extend the eligible history span either.
     funding.append(
         dict(
             instrument_id=iid,

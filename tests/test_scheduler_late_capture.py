@@ -18,7 +18,6 @@ from tank.util import iso, utcnow
 async def test_backfill_changes_append_reaction_revision_once_and_preserve_original(tmp_path, monkeypatch):
     import tank.scheduler as scheduler_module
 
-    # The end-to-end revision path, not the late-revision deferral (tested in test_scheduler).
     monkeypatch.setattr(scheduler_module, "LATE_REVISION_DEFER_S", 0)
     anchor = utcnow().replace(second=0, microsecond=0) - timedelta(hours=2)
     inst = {
@@ -102,9 +101,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         }
         original = await scheduler.reaction_capture(payload)
         assert original["r_raw"] is None and original["revision"] == 1
-        # The actual producer acquires historical HTTP data and persists terminal capture state.
         await market._schedule_event_backfill("e", "test:T", iso(anchor))
-        # Bounds the memory-repo backfill (about 16 s on the shared host), not scheduler code.
         async with asyncio.timeout(60):
             while (await market.capture_readiness("e", "test:T", anchor=iso(anchor)))["status"] not in {
                 "COMPLETE",
@@ -119,7 +116,6 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         assert jobs and all(job["payload"]["automatic_revision"] for job in jobs)
         for job in jobs:
             await scheduler.reaction_capture(job["payload"])
-            # As Runtime.worker does; a still-QUEUED revision would absorb the next change.
             await repo.put("ops.jobs", job["job_id"], {**job, "status": "DONE"})
         revised = await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:2")
         assert revised["revision"] == 2 and revised["r_raw"] is not None
@@ -129,7 +125,6 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         await scheduler.detect_late_data(utcnow())
         await scheduler.reaction_capture(jobs[0]["payload"])
         assert len([row async for row in repo.iter_all("out.reaction_checkpoints")]) == 2
-        # A fresh capture change with identical semantic outputs is acknowledged without another revision.
         unchanged = dict(
             jobs[0]["payload"],
             change_id=jobs[0]["payload"]["change_id"] + ":same",
@@ -138,7 +133,6 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         result = await scheduler.reaction_capture(unchanged)
         assert result["changed"] is False
         assert len([row async for row in repo.iter_all("out.reaction_checkpoints")]) == 2
-        # Ordinary live late print follows the same actual ingest→change feed→revision path.
         late = {
             "a": int(anchor.timestamp() * 1000),
             "p": "120",
@@ -175,7 +169,6 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         assert live["rwp_id"] == original["rwp_id"]
         assert await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:1") == original
         assert await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:2") == revised
-        # Exact duplicate frames do not create a new availability/revision watermark.
         assert not await market.ingest_trade(inst, late)
         await scheduler.detect_late_data(utcnow())
         assert (

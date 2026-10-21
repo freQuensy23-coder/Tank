@@ -158,7 +158,6 @@ def finalize(export, destination, architecture=None):
             "inherited_hardware_results": False,
         },
     )
-    # Refuse overwrite before creating a complete new candidate. No global install occurs.
     destination.mkdir(parents=False, exist_ok=False)
     for name in sorted(names):
         shutil.copy2(runtime / name, destination / name)

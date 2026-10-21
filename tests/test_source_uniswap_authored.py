@@ -157,7 +157,6 @@ async def test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches
                 assert item["observed_at"] != original["observed_at"]
             assert all("latest-updates" not in url for url in seen)
             jobs, items = await repo.list("ops.jobs"), await repo.list("ingest.source_items")
-            # Issuer and market-structure items go straight to routing (03 §3.1).
             assert {j["idem_key"] for j in jobs} == {x["item_id"] for x in items}
             assert {j["type"] for j in jobs} == {"ROUTE_ITEM"}
         finally:

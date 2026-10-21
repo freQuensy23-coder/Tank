@@ -5,14 +5,15 @@ Re-implements 03 §5.4 (venues observed within 60 s of both window bounds, nativ
 bounds; pairing tolerance max(60 s, half the venue's median cadence)) without product code.
 Usage: independent_oi.py btc_oi.csv <window start ISO> <window end ISO>
 """
+
 import csv
 import sys
 from bisect import bisect_left
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 
 def parse(s):
-    return datetime.strptime(s, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+    return datetime.strptime(s, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC)
 
 
 def pct(values, p):
@@ -67,7 +68,14 @@ n0 = sum(near(v, start, 60) for v in cohort)
 n1 = sum(near(v, end, 60) for v in cohort)
 print("cohort", cohort, "n0", round(n0, 4), "n1", round(n1, 4), "dn", f"{n1 / n0 - 1:+.4%}")
 for v in cohort:
-    print("  ", v, near(v, start, 60), "->", near(v, end, 60), f"{near(v, end, 60) / near(v, start, 60) - 1:+.4%}")
+    print(
+        "  ",
+        v,
+        near(v, start, 60),
+        "->",
+        near(v, end, 60),
+        f"{near(v, end, 60) / near(v, start, 60) - 1:+.4%}",
+    )
 
 floor = start - timedelta(days=90)
 hist, tol = {}, {}
@@ -75,7 +83,9 @@ for v in cohort:
     times, vals = series[v]
     lo, hi = bisect_left(times, floor), bisect_left(times, start)
     hist[v] = (times[lo:hi], vals[lo:hi])
-    gaps = sorted((b - a).total_seconds() for a, b in zip(times[lo:hi], times[lo + 1 : hi]) if b > a)
+    gaps = sorted(
+        (b - a).total_seconds() for a, b in zip(times[lo:hi], times[lo + 1 : hi], strict=False) if b > a
+    )
     tol[v] = max(60.0, gaps[len(gaps) // 2] / 2 if gaps else 0)
 saved = series
 series = hist
@@ -95,6 +105,11 @@ print("history windows", len(changes), "span_days", round(span, 2), "tolerance_s
 if span >= 7:
     lo, hi = pct(changes, 0.025), pct(changes, 0.975)
     dn = n1 / n0 - 1
-    print("native normal range", f"[{lo:+.4%}, {hi:+.4%}]", "state", "ABOVE" if dn > hi else "BELOW" if dn < lo else "WITHIN")
+    print(
+        "native normal range",
+        f"[{lo:+.4%}, {hi:+.4%}]",
+        "state",
+        "ABOVE" if dn > hi else "BELOW" if dn < lo else "WITHIN",
+    )
 else:
     print("native normal range n/a (< 7 days)")

@@ -43,11 +43,11 @@ def validate_checks(checks):
     if checks is None:
         return []
     if not isinstance(checks, list):
-        raise ValueError("checks must be a list")  # noqa: TRY004 - CLI input validation
+        raise ValueError("checks must be a list")
     seen = set()
     for row in checks:
         if not isinstance(row, dict):
-            raise ValueError("each check must be an object")  # noqa: TRY004 - CLI input validation
+            raise ValueError("each check must be an object")
         event_check = isinstance(row.get("event_id"), str) and "alert_id" not in row and "version" not in row
         alert_check = (
             isinstance(row.get("alert_id"), str) and type(row.get("version")) is int and "event_id" not in row
@@ -393,7 +393,6 @@ class ReviewService:
             for r in conditions
             if r.get("fired_at")
         ]
-        # A horizon-specific pre-call normal range is mandatory. Never borrow EVENT or refit beta.
         window = relative.get("windows", {}).get(
             {"H1": "W1H", "H4": "W4H", "H12": "W12H", "H24": "W24H", "D3": "W3D", "D7": "W7D"}[horizon], {}
         )
@@ -537,7 +536,6 @@ class ReviewService:
                 if "reproducible_verdict" in check
                 else None
             )
-        # S1 public-to-known uses events (one per fact), not repeated card versions.
         events = await self.rows("evt.events", "known_to_us_at", start, end)
         for event in events:
             ems = (

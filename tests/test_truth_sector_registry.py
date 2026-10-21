@@ -28,14 +28,12 @@ def packet_for(token):
 
     packet = rename(source)
     packet["tokens"] = copy.deepcopy(registry["tokens"])
-    # Genuine registry metadata; synthetic prices are explicitly unit-test controls.
     peers = [r for r in packet["klines"] if r["token_id"] == token["token_id"]]
     for index, peer in enumerate(registry["tokens"]):
         if peer["token_id"] == token["token_id"]:
             continue
         for original in peers:
             row = dict(original, token_id=peer["token_id"], instrument_id="peer:spot:" + peer["symbol"])
-            # Distinct peer returns exercise the equal-weight basket/fallback math.
             elapsed = (parse_time(row["open_time"]) - parse_time(packet["anchor"]["ts"])).total_seconds()
             row["c"] = str(float(row["c"]) * (1 + (index + 1) * elapsed / 1e9))
             packet["klines"].append(row)
@@ -74,7 +72,6 @@ def test_explicit_captured_basket_controls_measured_peer_returns():
     implicit = truth.relative_truth(packet, start, end)
     packet["sector_baskets"] = copy.deepcopy(registry["sector_baskets"])
     assert truth.relative_truth(packet, start, end) == implicit
-    # Explicit basket membership wins over stale token grouping for its constituents.
     basket = next(b for b in packet["sector_baskets"] if b["sector"] == "DEX_EXECUTION")
     basket["constituents"] = [token["token_id"], "aave:AAVE", "morpho:MORPHO"]
     changed = truth.relative_truth(packet, start, end)

@@ -1,6 +1,7 @@
 """Guest-only stable skill binding claims. CLI always targets the guest root."""
 
 import base64
+import contextlib
 import hashlib
 import json
 import os
@@ -39,10 +40,8 @@ def directories(root, relative, create=False):
         except FileNotFoundError:
             if not create:
                 return
-            try:
+            with contextlib.suppress(FileExistsError):
                 current.mkdir()
-            except FileExistsError:
-                pass
             info = current.lstat()
         if not stat.S_ISDIR(info.st_mode):
             raise ValueError("Stable skill path is not a plain directory")
@@ -117,8 +116,6 @@ def apply(bindings, operation, root=Path("/")):
             finally:
                 os.close(fd)
             try:
-                # Publish only complete durable JSON; link cannot overwrite an
-                # existing receipt. The O_EXCL tempfile is owned by this call.
                 os.link(temporary, receipt, follow_symlinks=False)
             except FileExistsError:
                 receipt_matches(receipt, binding)
@@ -141,10 +138,8 @@ def parent_fd(root, relative, create):
     try:
         for part in parts[:-1]:
             if create:
-                try:
+                with contextlib.suppress(FileExistsError):
                     os.mkdir(part, dir_fd=fd)
-                except FileExistsError:
-                    pass
             next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
             os.close(fd)
             fd = next_fd
@@ -155,7 +150,9 @@ def parent_fd(root, relative, create):
 
 
 def staging_path(source, digest):
-    if not re.fullmatch(r"[0-9a-f]{64}", digest) or not re.fullmatch(r"/tmp/\.openma-skills-[0-9a-f]{32}/" + digest + r"\.zip", source):
+    if not re.fullmatch(r"[0-9a-f]{64}", digest) or not re.fullmatch(
+        r"/tmp/\.openma-skills-[0-9a-f]{32}/" + digest + r"\.zip", source
+    ):
         raise ValueError("Invalid skill batch source")
     return source[1:]
 
@@ -169,7 +166,12 @@ def stage(source, digest, root=Path("/")):
         try:
             owned = os.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
             try:
-                fd = os.open(Path(relative).name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=owned)
+                fd = os.open(
+                    Path(relative).name,
+                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                    0o600,
+                    dir_fd=owned,
+                )
                 os.close(fd)
             finally:
                 os.close(owned)
@@ -219,7 +221,11 @@ def materialize(source, digest, root=Path("/")):
         fd = os.open(source_name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=source_parent)
         with os.fdopen(fd, "rb") as archive_file:
             source_info = os.fstat(archive_file.fileno())
-            if not stat.S_ISREG(source_info.st_mode) or stat.S_IMODE(source_info.st_mode) != 0o600 or source_info.st_size > 56 * 1024 * 1024:
+            if (
+                not stat.S_ISREG(source_info.st_mode)
+                or stat.S_IMODE(source_info.st_mode) != 0o600
+                or source_info.st_size > 56 * 1024 * 1024
+            ):
                 raise ValueError("Skill batch source exceeds bounds")
             actual = hashlib.file_digest(archive_file, "sha256").hexdigest()
             if actual != digest:
@@ -235,7 +241,11 @@ def materialize(source, digest, root=Path("/")):
                 if header.file_size > 2 * 1024 * 1024:
                     raise ValueError("Skill batch manifest exceeds bounds")
                 manifest = json.loads(archive.read(header))
-                if not isinstance(manifest, dict) or set(manifest) != {"version", "scopes"} or manifest["version"] != 1:
+                if (
+                    not isinstance(manifest, dict)
+                    or set(manifest) != {"version", "scopes"}
+                    or manifest["version"] != 1
+                ):
                     raise ValueError("Invalid skill batch manifest")
                 if not isinstance(manifest["scopes"], list) or not 1 <= len(manifest["scopes"]) <= 500:
                     raise ValueError("Invalid skill batch scopes")
@@ -246,28 +256,45 @@ def materialize(source, digest, root=Path("/")):
                     binding, canonical = scope["binding"], scope["canonical_root"]
                     validate(binding)
                     prefix = "/workspace/.openma/skills/" + quote(binding["skill_id"], safe="~()*!.'-") + "/"
-                    if not isinstance(canonical, str) or not canonical.startswith(prefix) or not canonical.endswith("/"):
+                    if (
+                        not isinstance(canonical, str)
+                        or not canonical.startswith(prefix)
+                        or not canonical.endswith("/")
+                    ):
                         raise ValueError("Invalid canonical skill root")
-                    requested = canonical[len(prefix):-1]
-                    if not requested or len(unquote(requested)) > 191 or quote(unquote(requested), safe="~()*!.'-") != requested:
+                    requested = canonical[len(prefix) : -1]
+                    if (
+                        not requested
+                        or len(unquote(requested)) > 191
+                        or quote(unquote(requested), safe="~()*!.'-") != requested
+                    ):
                         raise ValueError("Invalid requested skill version")
                     alias = "/home/user/.skills/" + binding["name"] + "/"
                     directories(root, "home/user/.skills/.openma-bindings")
-                    receipt_matches(root / "home/user/.skills/.openma-bindings" / (binding["name"] + ".json"), binding)
+                    receipt_matches(
+                        root / "home/user/.skills/.openma-bindings" / (binding["name"] + ".json"), binding
+                    )
                     roots.extend([canonical[1:], alias[1:]])
                 files, total = [], 0
                 for item in infos:
                     if item.filename == header.filename:
                         continue
                     name = item.filename
-                    if not any(name.startswith(prefix) for prefix in roots) or len(name) > 5120 or "\\" in name:
+                    if (
+                        not any(name.startswith(prefix) for prefix in roots)
+                        or len(name) > 5120
+                        or "\\" in name
+                    ):
                         raise ValueError("Skill batch target is outside its binding")
-                    if item.file_size > 32 * 1024 * 1024 or item.is_dir() or any(p in {"", ".", ".."} or "\0" in p for p in name.split("/")):
+                    if (
+                        item.file_size > 32 * 1024 * 1024
+                        or item.is_dir()
+                        or any(p in {"", ".", ".."} or "\0" in p for p in name.split("/"))
+                    ):
                         raise ValueError("Invalid skill batch file")
                     total += item.file_size
                     if total > 48 * 1024 * 1024:
                         raise ValueError("Skill batch contents exceed bounds")
-                    # Read and CRC-check the entire bounded batch before any target changes.
                     files.append((name, archive.read(item)))
                     directories(root, str(Path(name).parent))
                     try:
@@ -286,11 +313,15 @@ def materialize(source, digest, root=Path("/")):
                                 raise ValueError("Skill target is not a regular file")
                         except FileNotFoundError:
                             prior = None
-                        # The guest process owns only its unique adjacent temporary.
                         for _ in range(16):
                             candidate = ".openma-skill-" + os.urandom(12).hex()
                             try:
-                                target = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o666, dir_fd=parent)
+                                target = os.open(
+                                    candidate,
+                                    os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                    0o666,
+                                    dir_fd=parent,
+                                )
                             except FileExistsError:
                                 continue
                             temporary = candidate
@@ -331,7 +362,13 @@ if __name__ == "__main__":
     if len(sys.argv) == 4 and sys.argv[1] in {"stage", "materialize", "discard"}:
         operation = sys.argv[1]
         {"stage": stage, "materialize": materialize, "discard": discard}[operation](sys.argv[2], sys.argv[3])
-        print({"stage": "TANK_STABLE_SKILL_STAGE_OK", "materialize": "TANK_STABLE_SKILL_FILES_OK", "discard": "TANK_STABLE_SKILL_DISCARD_OK"}[operation])
+        print(
+            {
+                "stage": "TANK_STABLE_SKILL_STAGE_OK",
+                "materialize": "TANK_STABLE_SKILL_FILES_OK",
+                "discard": "TANK_STABLE_SKILL_DISCARD_OK",
+            }[operation]
+        )
     else:
         if len(sys.argv) != 3 or len(sys.argv[2]) > 64 * 1024:
             raise SystemExit("Invalid bounded skill claim request")

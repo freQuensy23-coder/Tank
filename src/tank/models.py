@@ -441,7 +441,6 @@ TABLE_COLUMNS["mkt.backfill_runs"] = {
     "reason": "text",
     "result": "jsonb",
 }
-# Daily spending caps were removed from the product; historical state is archived by migration014.
 TABLE_COLUMNS.pop("ops.budget_state", None)
 TABLE_COLUMNS["ops.scheduler_checkpoints"] = {"checkpoint_id": "text", "at": "timestamptz", "state": "jsonb"}
 
@@ -626,7 +625,6 @@ REQUIRED_FIELDS = {
     "ops.tool_calls": ["session_id", "tool", "input", "status", "requested_at"],
 }
 SERIAL_TABLES = frozenset(["evt.state_changes", "mkt.liq_obs", "out.deliveries", "ops.llm_usage"])
-# Availability is distinct from original transport receipt and semantic market time.
 MARKET_TIME_FIELDS = {
     "mkt.trades": "ts",
     "mkt.flow_bars_1m": "minute_start",
@@ -653,7 +651,6 @@ TABLE_COLUMNS["ops.capture_tier_transitions"] = {
     "code_version": "text",
 }
 
-# Explicit timestamp projection inventory; no origin/precision policy is inferred here.
 TIMESTAMP_PRECISION_FIELDS = {
     "ingest.source_items": {"published_at": "published_prec", "observed_at": "observed_at_prec"},
     "evt.events": {
@@ -739,7 +736,6 @@ for _table_name, _fields in TIMESTAMP_PRECISION_FIELDS.items():
         TABLE_COLUMNS[_table_name].update({_precision_field: "text", _precision_field + "_reason": "text"})
 TABLE_COLUMNS["ingest.source_items"]["published_at_bucket_size_s"] = "numeric"
 
-# §14 ed504e3: current market runtime has typed records only; legacy SQL trades retire via027.
 
 for _table_name in tuple(TABLE_COLUMNS):
     if _table_name.startswith("mkt."):

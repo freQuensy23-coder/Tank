@@ -25,7 +25,10 @@ def pairwise(observations, distinct_paths):
             and abs((parse_time(ws["as_of"]) - parse_time(rest["as_of"])).total_seconds()) <= 60
         ]
         if matching:
-            ws = min(matching, key=lambda row: abs((parse_time(row["as_of"]) - parse_time(rest["as_of"])).total_seconds()))
+            ws = min(
+                matching,
+                key=lambda row: abs((parse_time(row["as_of"]) - parse_time(rest["as_of"])).total_seconds()),
+            )
             pairs.append((rest, ws))
     return pairs
 
@@ -40,7 +43,6 @@ def observations(seed):
                 "instrument_id": rng.choice(["binance:perp_linear:BTCUSDT", "okx:perp_linear:BTC-USDT-SWAP"]),
                 "capture_source": rng.choice(["WEBSOCKET", "WEBSOCKET", "PUBLIC_REST"]),
                 "kind": rng.choice(["CURRENT_ESTIMATE", "CURRENT_ESTIMATE", "SETTLED"]),
-                # whole 15 s steps make exact ties and the 60 s edge common
                 "as_of": iso(start + timedelta(seconds=15 * rng.randrange(0, 240))),
                 "source_path": rng.choice(["ws:markPrice", "rest:premiumIndex", None]),
             }

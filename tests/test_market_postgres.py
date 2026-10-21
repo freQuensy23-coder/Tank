@@ -139,7 +139,6 @@ async def test_real_postgres_market_precision_funding_and_missing_usd_contract(t
                 if venue == "hyperliquid":
                     assert saved["ts"] == received and saved["sidedness"] == "UNKNOWN"
                     assert not saved["synchronized_eligible"]
-            # Actual typed projection, not merely the JSON document, must be populated.
             async with repo.transaction():
                 rows = await (
                     await repo._conn().execute(
@@ -267,8 +266,6 @@ async def test_real_postgres_cached_ticker_and_funding_point_identity_survives_r
             await service.flush_market()
             assert (await repo.get("mkt.tickers_24h", key))["recorded_at"] == original["recorded_at"]
             restarted = MarketService(repo, settings, http=client)
-            # Component clock is source data; an older mark with index atT must
-            # never replace the persisted newer mark at the same natural point.
             older = iso(parse_time(point) - timedelta(seconds=1))
             await save_mark(
                 restarted,
@@ -315,8 +312,6 @@ async def test_real_postgres_cached_ticker_and_funding_point_identity_survives_r
             newest = await repo.get("mkt.tickers_24h", instrument["instrument_id"] + ":" + later_index)
             assert newest["mark_price"] == "100" and newest["index_price"] == "101"
             assert newest["mark_as_of"] == point and newest["index_as_of"] == later_index
-            # A migrated legacy storage key converges to the typed natural
-            # identity without creating a second instrument/time observation.
             legacy_key = legacy["instrument_id"] + ":mark:" + point
             await service._put(
                 "mkt.tickers_24h", legacy_key, {**original, "instrument_id": legacy["instrument_id"]}
@@ -327,8 +322,6 @@ async def test_real_postgres_cached_ticker_and_funding_point_identity_survives_r
             assert (await repo.get("mkt.tickers_24h", legacy["instrument_id"] + ":" + point))[
                 "index_price"
             ] == "99"
-            # Real _ticker mark values use their actual HTTP observation clock,
-            # never the previous mark component's clock at the shared row time.
             clocked = {**instrument, "instrument_id": marker + ":clock-provenance"}
             await save_mark(
                 service,
@@ -371,7 +364,6 @@ async def test_real_postgres_cached_ticker_and_funding_point_identity_survives_r
             assert unclocked["unclocked_components"]["mark_price"]["as_of"] is None
             assert unclocked["unclocked_components"]["mark_price"]["reason"] == "SOURCE_CLOCK_UNAVAILABLE"
             assert unclocked["field_sources"]["index_price"] == clock_row["field_sources"]["index_price"]
-            # Rejected late components retain the original field-level lineage.
             await save_mark(
                 service,
                 clocked,
@@ -388,7 +380,6 @@ async def test_real_postgres_cached_ticker_and_funding_point_identity_survives_r
             assert retained["mark_price"] == "199" and retained["index_price"] == "201"
             assert retained["field_sources"]["mark_price"] == clock_row["field_sources"]["mark_price"]
             assert retained["field_sources"]["index_price"] == clock_row["field_sources"]["index_price"]
-            # Both actual transports retain their disagreeing same-time rates.
             await service._funding(instrument, raw, "CURRENT_ESTIMATE", "1", source="PUBLIC_REST")
             ws_received = iso(parse_time(point) + timedelta(milliseconds=1))
             ws = {"funding": ".002", "time": point, "_capture_observed_at": ws_received}

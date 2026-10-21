@@ -1,16 +1,13 @@
 """Explicit current-read smoke probes; never create source items or queue jobs."""
 
-from __future__ import annotations
-
 import asyncio
 from urllib.parse import urlsplit
 
 import httpx
 
+from tank.sources import parsers
 from tank.time_precision import collection_clock
 from tank.util import iso, sha256
-
-from . import parsers
 
 
 async def probe_feeds(service, *, include_browser=False):
@@ -87,7 +84,7 @@ async def probe_feeds(service, *, include_browser=False):
                 result.update(status="HTTP_ERROR", reason=f"HTTP {exc.response.status_code}")
             except httpx.RequestError as exc:
                 result.update(status="NETWORK_ERROR", reason=f"{type(exc).__name__}: {exc}")
-            except Exception as exc:  # noqa: BLE001 — each probe must report failure independently
+            except Exception as exc:
                 result.update(
                     status="UNAVAILABLE" if sid == "S19" else "PARSE_ERROR",
                     reason=f"{type(exc).__name__}: {exc}",

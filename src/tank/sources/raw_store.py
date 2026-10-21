@@ -1,7 +1,5 @@
 """Immutable raw-item files using the literal HLD §7.2 layout."""
 
-from __future__ import annotations
-
 import os
 import re
 from pathlib import Path
@@ -35,8 +33,6 @@ def _sync_directory(path):
 
 
 def _sync_hierarchy(directory, data_dir):
-    # The leaf entry and every possibly newly created ancestor must survive
-    # before a database transaction is allowed to reference this file.
     boundary = Path(data_dir).resolve().parent
     while True:
         _sync_directory(directory)
@@ -71,7 +67,6 @@ def write_raw_item(data_dir, source_id, item_id, observed_at, payload):
             compressed_file.write(zstandard.ZstdCompressor(level=3).compress(payload))
             compressed_file.flush()
             os.fsync(compressed_file.fileno())
-        # A concurrent creator must never replace an existing immutable item.
         try:
             path.hardlink_to(temporary)
         except FileExistsError:

@@ -32,7 +32,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - id: gomod
-        run: echo "dirs=$(find . -name go.mod -not -path './vendor/*' -exec dirname {} \; | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+        run: echo "dirs=$(find . -name go.mod -not -path './vendor/*' -not -path '*/upstream/*' -exec dirname {} \; | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-go@v5
         if: steps.gomod.outputs.dirs != ''
         with:

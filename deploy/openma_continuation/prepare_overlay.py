@@ -47,7 +47,6 @@ def apply(root):
     fixed = manifest["fixed_pre_final_runtime_identity"]
     if not re.fullmatch(r"[a-f0-9]{64}", identity):
         raise ValueError("Continuation requires the actual prepared runtime identity")
-    # Validate every source, destination and replacement before changing any file.
     for row in guards:
         target = safe_path(root, row["path"])
         asset = safe_path(BASE, row["asset"])

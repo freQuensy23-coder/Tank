@@ -11,7 +11,6 @@ from tank.analysis.cards import telegram_card_html
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import new_id, parse_time, utcnow
 
-
 DELIVERY_LOCK_WAIT_S = 6
 
 
@@ -55,76 +54,70 @@ class DeliveryService:
             if payload.get("notice_id")
             else {"alert_id": payload["alert_id"], "version": payload["version"]}
         )
-        async with self.repo.lock("deliver:" + subject + ":" + channel):
-            async with self.repo.transaction():
-                ledger = await self._all("out.deliveries", filters=filters)
-                if any(row["status"] == "SENT" for row in ledger):
-                    return
-                if not any(row.get("terminal") for row in ledger):
-                    source = payload
-                    if not payload.get("notice_id"):
-                        alerts = await self._all(
-                            "out.alerts",
-                            filters={"alert_id": payload["alert_id"], "version": payload["version"]},
-                        )
-                        source = alerts[0] if alerts else payload
-                    source_times = {
-                        key: value
-                        for field in ("generated_at", "delivery_not_before")
-                        if field in source
-                        for key, value in propagate_timestamp(source, field).fields(field).items()
-                    }
-                    failed_at = collection_clock(utcnow())
-                    await self.repo.put(
-                        "out.deliveries",
-                        new_id("delivery"),
-                        {
-                            **filters,
-                            **source_times,
-                            "status": "FAILED",
-                            "terminal": True,
-                            "attempt": attempt
-                            if attempt is not None
-                            else max((r.get("attempt", 0) for r in ledger), default=0),
-                            **failed_at.fields("at"),
-                            **failed_at.fields("failed_at"),
-                            "error": type(error).__name__ if isinstance(error, BaseException) else str(error),
-                        },
-                        immutable=True,
+        async with self.repo.lock("deliver:" + subject + ":" + channel), self.repo.transaction():
+            ledger = await self._all("out.deliveries", filters=filters)
+            if any(row["status"] == "SENT" for row in ledger):
+                return
+            if not any(row.get("terminal") for row in ledger):
+                source = payload
+                if not payload.get("notice_id"):
+                    alerts = await self._all(
+                        "out.alerts",
+                        filters={"alert_id": payload["alert_id"], "version": payload["version"]},
                     )
-                if payload.get("notice_id"):
-                    return
-                notice_id = "delivery_failed_" + subject.replace(":", "_")
-                if not await self.repo.get("out.ops_notices", notice_id):
-                    await self.repo.put(
-                        "out.ops_notices",
-                        notice_id,
-                        {
-                            "notice_id": notice_id,
-                            "kind": "DELIVERY_FAILED",
-                            "subject_id": payload["alert_id"],
-                            "text": f"Delivery failed: {subject}",
-                            **collection_clock(utcnow()).fields("created_at"),
-                            "created_by": "delivery",
-                        },
-                        immutable=True,
-                    )
-                await self.repo.enqueue(
-                    "DELIVER",
-                    {"notice_id": notice_id, "channel": "telegram:ops"},
-                    notice_id,
-                    priority=0,
-                    max_attempts=5,
-                    expires_at=offset_schedule(collection_clock(utcnow()), timedelta(days=1)),
+                    source = alerts[0] if alerts else payload
+                source_times = {
+                    key: value
+                    for field in ("generated_at", "delivery_not_before")
+                    if field in source
+                    for key, value in propagate_timestamp(source, field).fields(field).items()
+                }
+                failed_at = collection_clock(utcnow())
+                await self.repo.put(
+                    "out.deliveries",
+                    new_id("delivery"),
+                    {
+                        **filters,
+                        **source_times,
+                        "status": "FAILED",
+                        "terminal": True,
+                        "attempt": attempt
+                        if attempt is not None
+                        else max((r.get("attempt", 0) for r in ledger), default=0),
+                        **failed_at.fields("at"),
+                        **failed_at.fields("failed_at"),
+                        "error": type(error).__name__ if isinstance(error, BaseException) else str(error),
+                    },
+                    immutable=True,
                 )
+            if payload.get("notice_id"):
+                return
+            notice_id = "delivery_failed_" + subject.replace(":", "_")
+            if not await self.repo.get("out.ops_notices", notice_id):
+                await self.repo.put(
+                    "out.ops_notices",
+                    notice_id,
+                    {
+                        "notice_id": notice_id,
+                        "kind": "DELIVERY_FAILED",
+                        "subject_id": payload["alert_id"],
+                        "text": f"Delivery failed: {subject}",
+                        **collection_clock(utcnow()).fields("created_at"),
+                        "created_by": "delivery",
+                    },
+                    immutable=True,
+                )
+            await self.repo.enqueue(
+                "DELIVER",
+                {"notice_id": notice_id, "channel": "telegram:ops"},
+                notice_id,
+                priority=0,
+                max_attempts=5,
+                expires_at=offset_schedule(collection_clock(utcnow()), timedelta(days=1)),
+            )
 
     async def _enter_delivery_lock(self, stack, key):
         try:
-            # Bound acquisition only. A competing event mutation or network send
-            # is scheduling contention, not an attempted Telegram delivery. Under a
-            # loaded pool the acquisition itself takes seconds (r113: 1 s deferral
-            # loops added ~12 s), so wait up to DELIVERY_LOCK_WAIT_S inside the
-            # 10 s job (03 §3.8) before deferring.
             async with asyncio.timeout(DELIVERY_LOCK_WAIT_S):
                 await stack.enter_async_context(self.repo.lock(key))
         except TimeoutError:
@@ -141,7 +134,6 @@ class DeliveryService:
             )
             if not rows:
                 raise ValueError("Delivery subject does not exist")
-            # Serialize each event's network sends so updates retain their original reply anchor.
             async with AsyncExitStack() as locks:
                 await self._enter_delivery_lock(locks, "event:" + rows[0]["event_id"])
                 error = await self._deliver(payload)
@@ -185,11 +177,6 @@ class DeliveryService:
                     row["alert_id"] == record["alert_id"] and row["version"] > record["version"]
                     for row in prior
                 ):
-                    # Each version carries the whole current card. Once a newer
-                    # version exists, an unsent older update is superseded and is
-                    # never sent after it (§7.4, FR-A-04): the operator would get
-                    # an old state. Its ledger stays GENERATED; the newer version
-                    # records supersedes_version.
                     return None
                 ids = {r["alert_id"] for r in prior}
                 sent = []
@@ -204,18 +191,15 @@ class DeliveryService:
                 boundaries = []
                 if record.get("delivery_not_before"):
                     boundaries.append(propagate_timestamp(record, "delivery_not_before"))
-                if record.get("kind") == "UPDATE" and not record.get("delivery_immediate", False):
-                    if sent:
-                        latest_sent = max(sent, key=lambda row: parse_time(row["at"]))
-                        limits = ((record.get("card_struct") or {}).get("event") or {}).get(
-                            "thresholds"
-                        ) or {}
-                        boundaries.append(
-                            offset_schedule(
-                                propagate_timestamp(latest_sent, "at"),
-                                timedelta(seconds=limits.get("update_rate_limit_s", 900)),
-                            )
+                if record.get("kind") == "UPDATE" and not record.get("delivery_immediate", False) and sent:
+                    latest_sent = max(sent, key=lambda row: parse_time(row["at"]))
+                    limits = ((record.get("card_struct") or {}).get("event") or {}).get("thresholds") or {}
+                    boundaries.append(
+                        offset_schedule(
+                            propagate_timestamp(latest_sent, "at"),
+                            timedelta(seconds=limits.get("update_rate_limit_s", 900)),
                         )
+                    )
                 if boundaries:
                     due = max(boundaries, key=lambda stamp: parse_time(stamp.value))
                     if utcnow() < parse_time(due.value):
@@ -288,111 +272,113 @@ class DeliveryService:
                 )
                 failure.terminal = attempt == 5
                 return failure
-            async with self.repo.transaction():
-                async with self.repo.lock(
+            async with (
+                self.repo.transaction(),
+                self.repo.lock(
                     "event:" + record["event_id"] if not notice else "notice:" + payload["notice_id"]
-                ):
-                    sent_at = collection_clock(utcnow())
-                    await self.repo.put(
-                        "out.deliveries",
-                        new_id("delivery"),
-                        {
-                            **transition,
-                            **sent_at.fields("at"),
-                            **sent_at.fields("sent_at"),
-                            "status": "SENT",
-                            "message_ref": message_ref,
-                            "response_reply_to_message_ref": response_reply_to_message_ref,
-                        },
-                        immutable=True,
-                    )
-                    if not notice:
-                        await self._activate_calls(record, sent_at)
-                        event = await self.repo.get("evt.events", record["event_id"])
-                        if event and not event.get("first_card_delivered_at"):
-                            delivered = utcnow()
-                            event.update(
-                                **collection_clock(delivered).fields("first_card_delivered_at"),
-                                first_card_latency_s=(
-                                    delivered - parse_time(event["known_to_us_at"])
-                                ).total_seconds()
-                                if event.get("known_to_us_at")
-                                else None,
-                            )
-                            assessment = (record.get("card_struct") or {}).get("assessment") or {}
-                            if assessment.get("class") == "STRUCTURAL_SHOCK" and event.get("known_to_us_at"):
-                                if not event.get("first_card_deadline"):
-                                    event.update(
-                                        offset_schedule(
-                                            propagate_timestamp(event, "known_to_us_at"), timedelta(minutes=3)
-                                        ).fields("first_card_deadline")
-                                    )
-                            if event.get("first_card_deadline"):
-                                event["first_card_deadline_met"] = delivered <= parse_time(
-                                    event["first_card_deadline"]
-                                )
-                            await self.repo.put("evt.events", event["event_id"], event)
-                        if event and event.get("lifecycle") in ("ANALYZING", "ALERTED"):
-                            await self.repo.put(
-                                "evt.events",
-                                event["event_id"],
-                                {
-                                    **event,
-                                    "lifecycle": "ALERTED",
-                                    **collection_clock(utcnow()).fields("alerted_at"),
-                                },
-                            )
-                        if (
-                            event
-                            and event.get("lifecycle") == "INVALIDATED"
-                            and record.get("terminal_correction")
-                        ):
-                            open_calls = await self._all(
-                                "ana.calls", filters={"event_id": event["event_id"], "status": "OPEN"}
-                            )
-                            if not open_calls:
-                                await self.repo.put(
-                                    "evt.events",
-                                    event["event_id"],
-                                    {
-                                        **event,
-                                        **collection_clock(utcnow()).fields("session_finalized_at"),
-                                        "terminal_alert_id": record["alert_id"],
-                                        "terminal_alert_version": record["version"],
-                                    },
-                                )
-                    if not notice and record.get("milestone_resolution_id"):
-                        event = await self.repo.get("evt.events", record["event_id"])
-                        if (
-                            event
-                            and event.get("milestone_resolution_id") == record["milestone_resolution_id"]
-                        ):
-                            await self.repo.put(
-                                "evt.events", event["event_id"], {**event, "milestone_resolved": False}
-                            )
-                    if not notice:
-                        expired_ids = (
-                            record.get("expired_call_ids")
-                            or record.get("call_expired_ids")
-                            or ((record.get("card_struct") or {}).get("event") or {}).get("call_expired_ids")
-                            or []
+                ),
+            ):
+                sent_at = collection_clock(utcnow())
+                await self.repo.put(
+                    "out.deliveries",
+                    new_id("delivery"),
+                    {
+                        **transition,
+                        **sent_at.fields("at"),
+                        **sent_at.fields("sent_at"),
+                        "status": "SENT",
+                        "message_ref": message_ref,
+                        "response_reply_to_message_ref": response_reply_to_message_ref,
+                    },
+                    immutable=True,
+                )
+                if not notice:
+                    await self._activate_calls(record, sent_at)
+                    event = await self.repo.get("evt.events", record["event_id"])
+                    if event and not event.get("first_card_delivered_at"):
+                        delivered = utcnow()
+                        event.update(
+                            **collection_clock(delivered).fields("first_card_delivered_at"),
+                            first_card_latency_s=(
+                                delivered - parse_time(event["known_to_us_at"])
+                            ).total_seconds()
+                            if event.get("known_to_us_at")
+                            else None,
                         )
-                        if expired_ids:
-                            event = await self.repo.get("evt.events", record["event_id"])
-                            remaining = sorted(set(event.get("call_expired_ids", [])) - set(expired_ids))
+                        assessment = (record.get("card_struct") or {}).get("assessment") or {}
+                        if (
+                            assessment.get("class") == "STRUCTURAL_SHOCK"
+                            and event.get("known_to_us_at")
+                            and not event.get("first_card_deadline")
+                        ):
+                            event.update(
+                                offset_schedule(
+                                    propagate_timestamp(event, "known_to_us_at"), timedelta(minutes=3)
+                                ).fields("first_card_deadline")
+                            )
+                        if event.get("first_card_deadline"):
+                            event["first_card_deadline_met"] = delivered <= parse_time(
+                                event["first_card_deadline"]
+                            )
+                        await self.repo.put("evt.events", event["event_id"], event)
+                    if event and event.get("lifecycle") in ("ANALYZING", "ALERTED"):
+                        await self.repo.put(
+                            "evt.events",
+                            event["event_id"],
+                            {
+                                **event,
+                                "lifecycle": "ALERTED",
+                                **collection_clock(utcnow()).fields("alerted_at"),
+                            },
+                        )
+                    if (
+                        event
+                        and event.get("lifecycle") == "INVALIDATED"
+                        and record.get("terminal_correction")
+                    ):
+                        open_calls = await self._all(
+                            "ana.calls", filters={"event_id": event["event_id"], "status": "OPEN"}
+                        )
+                        if not open_calls:
                             await self.repo.put(
                                 "evt.events",
                                 event["event_id"],
                                 {
                                     **event,
-                                    "call_expired": bool(remaining),
-                                    "call_expired_ids": remaining,
-                                    "expiry_notices_sent": sorted(
-                                        set(event.get("expiry_notices_sent", [])) | set(expired_ids)
-                                    ),
-                                    **collection_clock(utcnow()).fields("last_expiry_notice_at"),
+                                    **collection_clock(utcnow()).fields("session_finalized_at"),
+                                    "terminal_alert_id": record["alert_id"],
+                                    "terminal_alert_version": record["version"],
                                 },
                             )
+                if not notice and record.get("milestone_resolution_id"):
+                    event = await self.repo.get("evt.events", record["event_id"])
+                    if event and event.get("milestone_resolution_id") == record["milestone_resolution_id"]:
+                        await self.repo.put(
+                            "evt.events", event["event_id"], {**event, "milestone_resolved": False}
+                        )
+                if not notice:
+                    expired_ids = (
+                        record.get("expired_call_ids")
+                        or record.get("call_expired_ids")
+                        or ((record.get("card_struct") or {}).get("event") or {}).get("call_expired_ids")
+                        or []
+                    )
+                    if expired_ids:
+                        event = await self.repo.get("evt.events", record["event_id"])
+                        remaining = sorted(set(event.get("call_expired_ids", [])) - set(expired_ids))
+                        await self.repo.put(
+                            "evt.events",
+                            event["event_id"],
+                            {
+                                **event,
+                                "call_expired": bool(remaining),
+                                "call_expired_ids": remaining,
+                                "expiry_notices_sent": sorted(
+                                    set(event.get("expiry_notices_sent", [])) | set(expired_ids)
+                                ),
+                                **collection_clock(utcnow()).fields("last_expiry_notice_at"),
+                            },
+                        )
 
     async def _activate_calls(self, alert, sent_at=None):
         sent_at = sent_at or collection_clock(utcnow())

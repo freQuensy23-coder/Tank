@@ -72,15 +72,13 @@ class HourlyParquet:
         self.root = Path(root)
         self.grace_s = grace_s
         self._buffer = defaultdict(list)
-        self._inflight = {}  # taken by the writer, not yet durable
+        self._inflight = {}
         self._journals = {}
         self._orphans = set()
         self._recovered = False
         self._segment = f"{os.getpid()}-{time.time_ns()}"
         self._sequence = itertools.count()
-        # Held only by worker threads (seal publication vs. readers), never by capture.
         self._publish = threading.Lock()
-        # Journal appends and seals of this archive never interleave (worker threads only).
         self._io = threading.RLock()
 
     def _identity(self, row):
@@ -224,8 +222,7 @@ class HourlyParquet:
             try:
                 with self._io:
                     self.seal(canonical)
-            except Exception as exc:  # noqa: BLE001 - one bad hour must not stop writes or other seals
-                # Journals stay on disk and the hour is retried on the next write.
+            except Exception as exc:
                 self._orphans.add(Path(canonical))
                 log.warning("seal of %s failed: %s", canonical, type(exc).__name__)
                 continue
@@ -247,17 +244,16 @@ class HourlyParquet:
                     while True:
                         try:
                             batch = reader.read_next_batch()
-                            # A batch cut mid-write can parse yet point outside its buffers.
                             batch.validate(full=True)
                         except StopIteration:
                             break
                         except (pa.ArrowInvalid, OSError):
-                            break  # torn tail of a journal cut by a crash: earlier batches stand
+                            break
                         if columns:
                             batch = batch.select([c for c in columns if c in batch.schema.names])
                         yield batch
             except (pa.ArrowInvalid, OSError):
-                continue  # journal created but its schema header never reached disk
+                continue
 
     def seal(self, canonical):
         import pyarrow as pa
@@ -279,8 +275,6 @@ class HourlyParquet:
             count = 0
             with pq.ParquetWriter(temporary, schema, compression="zstd") as writer:
                 for batch in self._batches(canonical, journals):
-                    # Every stored column is text; a journal or file from another writer
-                    # (e.g. an all-null column) is cast, never rejected.
                     columns = [
                         batch.column(name).cast(pa.string())
                         if name in batch.schema.names
@@ -484,10 +478,8 @@ class TradeArchive(HourlyParquet):
         return sorted(rows.values(), key=lambda r: (parse_time(r["ts"]), str(r["trade_id"])))
 
     def take(self):
-        # Identities are kept for the current and previous hour only: live prints of
-        # older hours are rare and are deduplicated again when their hour is sealed.
         horizon = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
-        idle = time.monotonic() - 600  # a backfill still writing an old hour keeps its identities
+        idle = time.monotonic() - 600
         for canonical in [
             c for c in self._seen if self.hour_of(c) < horizon and self._touched.get(c, 0) < idle
         ]:
@@ -560,7 +552,6 @@ class TradeArchive(HourlyParquet):
             and all(last.get(k) == point.get(k) for k in ("complete", "reason", "source"))
             and parse_time(last["start"]) <= parse_time(start) <= parse_time(last["end"])
         ):
-            # Contiguous proof of the same kind: extend it (one entry per unbroken span).
             if parse_time(end) > parse_time(last["end"]):
                 last.update(
                     end=point["end"], **{k: v for k, v in point.items() if k.startswith("observed_at")}
@@ -618,7 +609,6 @@ class TradeArchive(HourlyParquet):
             },
         }
 
-    # Replay and audit over explicitly frozen file references (tank.replay).
     @staticmethod
     def read_verified(path, checksum, *, byte_length=None):
         return read_verified(path, checksum, byte_length=byte_length)
@@ -649,7 +639,7 @@ class TradeArchive(HourlyParquet):
         """Explicit replay/audit from frozen refs; never discovers live files/APIs."""
         from datetime import timedelta
 
-        from .flow import FlowAccumulator
+        from tank.market.flow import FlowAccumulator
 
         if purpose not in ("REPLAY", "AUDIT"):
             raise ValueError("Window regeneration is restricted to explicit replay/audit")
@@ -874,7 +864,6 @@ def _verify_agg_trades(csv_bytes, sha, expected_unit, window):
         io.BytesIO(text),
         read_options=pacsv.ReadOptions(autogenerate_column_names=True),
         convert_options=pacsv.ConvertOptions(
-            # Prices and quantities stay exact decimal text; ids and times are integers.
             column_types={"f0": pa.int64(), "f1": pa.string(), "f2": pa.string(), "f5": pa.int64()}
         ),
     )
@@ -888,7 +877,6 @@ def _verify_agg_trades(csv_bytes, sha, expected_unit, window):
     gaps = [
         {"after": int(ids[i]), "before": int(ids[i + 1])} for i in np.flatnonzero((step != 0) & (step != 1))
     ]
-    # Rows keep the file's exact text; pyarrow keeps CSV order, so line i is table row i.
     lines = [line for line in text.splitlines() if line.strip()]
     if len(lines) != table.num_rows:
         raise ArchiveIntegrityError("archive row count mismatch")
@@ -940,11 +928,9 @@ def verify_binance_zip(
             raise ArchiveIntegrityError("metrics header absent")
         try:
             index = header.index("create_time")
-        except ValueError:
-            raise ArchiveIntegrityError("metrics timestamp column absent")
+        except ValueError as error:
+            raise ArchiveIntegrityError("metrics timestamp column absent") from error
         stamps = [int(parse_time(r[index]).timestamp() * 1000) for r in rows]
-        # Official metrics CSVs may be physically unordered. Preserve the ZIP
-        # and CSV evidence, and validate the actual chronological buckets.
         ordered = sorted(zip(stamps, rows, strict=True), key=lambda item: item[0])
         normalization = {
             "order_changed": stamps != [stamp for stamp, _ in ordered],
@@ -996,7 +982,6 @@ def verify_binance_zip(
 
 
 _IMPORTED = {
-    # kind -> (collection, time field, rows of one complete daily file)
     "klines": ("mkt.klines_1m", "open_time", 1440),
     "metrics": ("mkt.oi_obs", "ts", 288),
     "aggTrades": ("mkt.flow_bars_1m", "minute_start", 1440),
@@ -1007,7 +992,7 @@ async def _imported_rows(repo, instrument, kind, date, archive_id, span=None):
     """Rows a verified daily file (or its imported span) already left in PostgreSQL,
     or None if not imported."""
     if kind not in _IMPORTED:
-        return None  # monthly funding: one small idempotent upsert
+        return None
     collection, field, expected = _IMPORTED[kind]
     start, end = span or (parse_time(date), parse_time(date) + timedelta(days=1))
     if span:
@@ -1091,14 +1076,11 @@ async def fetch_archive(
             "imported": True,
         }
     try:
-        # A rejected file leaves nothing behind: the next daily bootstrap or event
-        # backfill fetches it again (lead ruling 2026-10-20 18:30, no retry records).
         response = await client.get(url)
         response.raise_for_status()
         checksum = await client.get(url + ".CHECKSUM")
         checksum.raise_for_status()
         expected = "MS" if futures or date < "2025-01" else "US"
-        # Unzip, CSV parsing and normalization are CPU work: off the event loop (HLD §5).
         verified = await asyncio.to_thread(
             verify_binance_zip,
             response.content,
@@ -1118,7 +1100,6 @@ async def fetch_archive(
         iid = instrument["instrument_id"]
         boundaries, references = {}, {}
         if market is not None:
-            # The worker reads private copies; the loop keeps mutating the live ones.
             boundaries = {k: set(v) for k, v in market.flow.boundaries.items() if k[0] == iid}
             references = {k: v for k, v in market.flow.references.items() if k[0] == iid}
         trades = None
@@ -1137,7 +1118,6 @@ async def fetch_archive(
             if prints:
                 for row in prints:
                     trades.append(row)
-                # Raw prints are durable before any bar derived from them reaches PostgreSQL.
                 if market is not None:
                     await market.flush_market(raw=True)
                 else:
@@ -1150,7 +1130,6 @@ async def fetch_archive(
         if market is None and trades is not None:
             await asyncio.to_thread(trades.close)
         if market is not None and kind == "klines":
-            # The service counts whole past days once; a newly imported day is counted again.
             market._kline_day_counts.pop((instrument["instrument_id"], parse_time(date)), None)
         return {
             "archive_id": archive_id,
@@ -1180,8 +1159,8 @@ def _archive_records(
 ):
     """Normalize a verified archive in a worker thread, yielding bounded chunks of
     (records by collection, trade prints, reference points) for the loop to write."""
-    from .flow import FlowAccumulator
-    from .normalize import funding, kline, oi, trade
+    from tank.market.flow import FlowAccumulator
+    from tank.market.normalize import funding, kline, oi, trade
 
     iid = instrument["instrument_id"]
     header = verified["header"]
@@ -1235,7 +1214,7 @@ def _archive_records(
             collection = "mkt.klines_1m"
             key = iid + ":" + record["open_time"]
         elif kind == "metrics":
-            source = dict(zip(header, raw))
+            source = dict(zip(header, raw, strict=False))
             record = oi(
                 instrument,
                 {
@@ -1247,16 +1226,17 @@ def _archive_records(
             collection = "mkt.oi_obs"
             key = iid + ":" + record["metric_key"] + ":" + record["ts"]
         elif kind == "aggTrades":
-            source = dict(zip(("a", "p", "q", "f", "l", "T", "m"), raw[:7]))
+            source = dict(zip(("a", "p", "q", "f", "l", "T", "m"), raw[:7], strict=False))
             source["m"] = str(source["m"]).lower() == "true"
             record = trade(instrument, source, source="ARCHIVE")
             collection = None
-            # Archive quantities remain quote/native; historic FX must be provided separately.
         elif kind == "fundingRate":
             source = (
-                dict(zip(header, raw))
+                dict(zip(header, raw, strict=False))
                 if header
-                else dict(zip(("calc_time", "funding_interval_hours", "last_funding_rate"), raw))
+                else dict(
+                    zip(("calc_time", "funding_interval_hours", "last_funding_rate"), raw, strict=False)
+                )
             )
             record = funding(
                 instrument,

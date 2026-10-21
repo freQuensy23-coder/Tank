@@ -13,7 +13,9 @@ from tank.storage import MemoryRepository
 
 
 async def main(out):
-    settings = resolve_versions(Settings(data_dir=Path(tempfile.mkdtemp()), capture_only=True, x_enabled=False))
+    settings = resolve_versions(
+        Settings(data_dir=Path(tempfile.mkdtemp()), capture_only=True, x_enabled=False)
+    )
     repo = MemoryRepository()
     await repo.open()
     service = SourceService(repo, settings)
@@ -30,11 +32,19 @@ async def main(out):
         for sid, statuses in sorted(by_source.items())
     }
     Path(out).mkdir(parents=True, exist_ok=True)
-    (Path(out) / "live-probe.json").write_text(json.dumps({"summary": summary, "feeds": results}, indent=1) + "\n")
+    (Path(out) / "live-probe.json").write_text(
+        json.dumps({"summary": summary, "feeds": results}, indent=1) + "\n"
+    )
     print(json.dumps(summary))
     for row in results:
         if not row["status"].startswith("PASS") and row["status"] != "DISABLED":
-            print(row["source_id"], row["feed_index"], row["url"][:90], row["status"], str(row.get("reason"))[:200])
+            print(
+                row["source_id"],
+                row["feed_index"],
+                row["url"][:90],
+                row["status"],
+                str(row.get("reason"))[:200],
+            )
 
 
 asyncio.run(main(sys.argv[1]))

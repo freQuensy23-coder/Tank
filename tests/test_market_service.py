@@ -82,7 +82,6 @@ async def test_trade_dedup_restart_and_precise_bar_reconstruction(setup):
     assert not await service.ingest_trade(inst, raw)
     await service._flush_flow()
     await service.flush_market()
-    # Restart resumes durable trade IDs and reconstructs existing minute before next print.
     restarted = MarketService(repo, settings, http=http)
     assert not await restarted.ingest_trade(inst, raw)
     second = dict(raw, a=2, q="1", T=ts + 1, m=True)
@@ -94,7 +93,7 @@ async def test_trade_dedup_restart_and_precise_bar_reconstruction(setup):
     assert bars[0]["buy_qty"] == "3" and bars[0]["sell_qty"] == "1" and bars[0]["sum_sq_qty"] == "10"
     assert Decimal(bars[0]["buy_notional"]) == Decimal("6.370370367037037034")
     semantics = await repo.get("qa.reviews", "semantic:" + inst["instrument_id"] + ":binance.spot.aggTrade")
-    assert semantics is None  # No runtime semantic promotion or self-test records.
+    assert semantics is None
     await http.aclose()
 
 
@@ -203,9 +202,8 @@ async def test_polling_venue_error_preserves_gap_not_zero(setup):
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     service = MarketService(repo, settings, http=http)
     await service.poll_once(inst["instrument_id"])
-    await service.flush_market()  # pollers leave the write to the supervisor's flush
+    await service.flush_market()
     gaps = await repo.list("mkt.capture_gaps")
-    # Binance metadata comes from the semantics registry (no request); klines and ticker fail.
     assert {g["kind"] for g in gaps} >= {"KLINES", "TICKER"}
     assert not await repo.list("mkt.klines_1m") and not await repo.list("mkt.oi_obs")
     await http.aclose()
@@ -224,7 +222,7 @@ async def test_independent_rest_confirmation_returns_evidence_without_duplicate_
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     service = MarketService(repo, settings, http=http)
     out = await service._independent_book(inst, {"mid": "100", "spread_bps": "200"})
-    assert paths == ["/api/v3/depth"]  # the listed snapshot, not bookTicker (audit W10)
+    assert paths == ["/api/v3/depth"]
     assert out["second_path_confirmed"] and out["independent_rest"]["source"] == "PUBLIC_REST"
     unlisted = await service._independent_book(dict(inst, venue="okx"), {"mid": "100", "spread_bps": "200"})
     assert unlisted == {"second_path_confirmed": False, "second_path_reason": "NO_LISTED_SECOND_PATH"}
@@ -264,7 +262,6 @@ async def test_fundamentals_use_registered_slugs_only_and_partial_holders_revenu
     def handler(request):
         path = request.url.path
         paths.append(path)
-        # HLD §4.8 lists only /summary/fees/{protocol}; no catalog lookups.
         assert path.startswith("/summary/fees/")
         metric = request.url.params["dataType"]
         if path.endswith("abc-v2") and metric == "dailyHoldersRevenue":
@@ -362,7 +359,6 @@ async def test_hot_escalation_priority_age_repeat_and_event_specific_demote(setu
     await service.escalate("old", ["bitcoin:BTC"])
     await service.demote("bitcoin:BTC", "old")
     assert len(await repo.list("mkt.hot_tokens")) == 1
-    # replay escalation has no external backfill/subscription effects.
     assert not service.streams
     await http.aclose()
 
@@ -401,7 +397,7 @@ async def test_backfill_prerequisite_is_durable_without_orphan_completion_jobs(s
         == 1440
     )
     jobs = await repo.list("ops.jobs")
-    assert jobs == []  # Original configured job waits on durable readiness.
+    assert jobs == []
     restarted = MarketService(repo, settings, http=http)
     await restarted._schedule_event_backfill("event-1", inst["token_id"], "2026-06-17T00:00:00Z")
     assert not restarted._background
@@ -428,7 +424,6 @@ async def test_registry_available_for_cold_benchmark_and_anchor_is_actual_trade(
     assert all("semantic_confidence" not in row for row in target + benchmark)
     assert not await repo.list("qa.reviews", filters={"subject": "METRIC_SEMANTICS"})
     points = [point for point in snapshot["reference_points"] if point["boundary"] == iso(anchor)]
-    # A source frame alone is not a proof that the boundary was exhaustively enumerated.
     assert not any(point["complete"] for point in points)
     assert "trades" not in snapshot
     await http.aclose()
@@ -447,8 +442,6 @@ async def test_exhausted_bounded_rest_proves_first_last_and_empty_minutes_despit
         )
     )
     service = MarketService(repo, settings, http=http)
-    # This scale test isolates capture logic; rollback/locking are covered against realPG.
-    # Avoid MemoryRepository's intentionally exhaustive O(n²) savepoint snapshots.
     from contextlib import asynccontextmanager
 
     @asynccontextmanager
@@ -462,7 +455,6 @@ async def test_exhausted_bounded_rest_proves_first_last_and_empty_minutes_despit
     class Adapter:
         async def trades(self, *, start=None, end=None, cursor=None):
             if cursor is not None:
-                # Quiet initial minute: the true ID predecessor is older.
                 return [
                     {
                         "a": 0,
@@ -472,7 +464,6 @@ async def test_exhausted_bounded_rest_proves_first_last_and_empty_minutes_despit
                         "m": False,
                     }
                 ], None
-            # Concurrent live housekeeping can evict old provisional accumulators.
             service._last_flow_flush = 0
             await service._flush_flow()
             hour = int((start - begin).total_seconds() // 3600)
@@ -588,8 +579,6 @@ async def test_fractional_boundary_actual_trades_and_proven_range_never_include_
     assert len(ending) == 1 and ending[0]["complete"] and Decimal(ending[0]["buy_qty"]) == 1
     prefix = [p for p in segments if parse_time(p["end"]) == anchor and parse_time(p["start"]) == start]
     assert len(prefix) == 1 and prefix[0]["complete"] and prefix[0]["last_trade"]["trade_id"] == "1"
-    # Ordinary truth is durable aggregates, independent of raw retention. An
-    # unrequested historical boundary remains unavailable, never interpolated.
     unknown = await service.snapshot(
         inst["token_id"], cutoff, {"ts": anchor + timedelta(seconds=1), "type": "T0"}
     )
@@ -643,7 +632,6 @@ async def test_snapshot_fractional_current_and_previous_15minute_flow_requires_r
             assert result["venues"][0]["buy_qty"] == Decimal(30)
             assert result["venues"][0]["sell_qty"] == Decimal(15)
 
-        # Removing a required typed boundary segment leaves the exact window incomplete.
         missing = cutoff - timedelta(minutes=15)
         for key, row in list(repo._data["mkt.flow_bars_1m"].items()):
             if parse_time(row["minute_start"]) == missing.replace(second=0):
@@ -908,7 +896,7 @@ async def test_liquidation_coverage_uses_processed_socket_watermark_not_last_liq
     assert capture["observed_through"][iid] == iso(stamp)
     assert capture["coverage_status_by_instrument"][iid] == "CONNECTED"
     assert capture["cadence_s"] == STREAM_PING_INTERVAL_S
-    assert snapshot["liquidations"] == []  # Noevent is not a fabricatedzero liquidation.
+    assert snapshot["liquidations"] == []
     assert capture["coverage_start"][iid] == iso(cutoff - timedelta(seconds=20))
     historical = await service.snapshot(spot["token_id"], cutoff - timedelta(hours=1))
     assert iid not in historical["capture_metadata"]["collections"]["liquidations"]["observed_through"]
@@ -934,7 +922,6 @@ async def test_backfill_cannot_regress_reconnect_checkpoint(setup):
     assert service._capture_checkpoints[inst["instrument_id"]]["last_trade_id"] == "100"
     await service._flush_flow()
     await service.flush_market(raw=True)
-    # A restart resumes from the last print of the newest stored flow bar, not a checkpoint table.
     restarted = MarketService(repo, settings)
     await restarted._ensure_market_restore()
     assert restarted._capture_checkpoints[inst["instrument_id"]]["last_trade_id"] == "100"
@@ -1169,7 +1156,7 @@ def test_documented_provider_scopes_and_hyperliquid_base_reservation():
     a = budgets("www.okx.com", "/api/v5/public/funding-rate", {"instId": "BTC-USDT-SWAP"})
     b = budgets("www.okx.com", "/api/v5/public/funding-rate", {"instId": "ETH-USDT-SWAP"})
     assert a[0][0] != b[0][0] and a[0][1:] == (5, 2, 1)
-    with pytest.raises(ValueError):  # unlisted endpoints are not admitted (audit W10)
+    with pytest.raises(ValueError):
         budgets("api.hyperliquid.xyz", payload={"type": "recentTrades"})
     candle = {"type": "candleSnapshot", "req": {"interval": "1m", "startTime": 0, "endTime": 180000}}
     assert budgets("api.hyperliquid.xyz", payload=candle) == [("hyperliquid", 600, 60, 21)]
@@ -1236,7 +1223,6 @@ async def test_hyperliquid_tokens_share_observed_context_and_next_cycle_refreshe
         )
 
     monkeypatch.setattr(shared_request_budgets, "acquire", acquire)
-    # Patch only this module's clock adapter; event-loop clock remains real.
     from types import SimpleNamespace
 
     monkeypatch.setattr("tank.market.service.time", SimpleNamespace(monotonic=lambda: clock[0]))
@@ -1414,15 +1400,12 @@ async def test_live_late_normalized_arrivals_coalesce_stably_and_ignore_future_p
         ]
 
     first = await changes()
-    assert (
-        len(first) == 1 and first[0]["source_count"] == 1
-    )  # One actual changed aggregate; prints remain Parquet-only.
+    assert len(first) == 1 and first[0]["source_count"] == 1
     assert first[0]["event_id"] == "E-late" and first[0]["anchor"] == iso(anchor)
-    # The changed bar ends at its minute + 60 s: windows ending earlier cannot change.
     minute = (cutoff - timedelta(seconds=10)).replace(second=0, microsecond=0)
     assert first[0]["market_from"] == iso(minute + timedelta(minutes=1))
     assert (await changes())[0]["change_id"] == first[0]["change_id"]
-    assert not await service.ingest_trade(inst, raw)  # Immutable dedup creates no new arrival.
+    assert not await service.ingest_trade(inst, raw)
     await service.ingest_trade(
         inst, {**raw, "a": 3, "T": int((cutoff + timedelta(seconds=10)).timestamp() * 1000)}
     )
@@ -1538,7 +1521,7 @@ async def test_bybit_legacy_temporal_proof_not_reused_by_condition_loader(setup)
     assert len(snapshot["semantics"]) == 1
     assert "semantic_confidence" not in snapshot["semantics"][0]
     assert snapshot["semantics"][0]["timestamp_semantics"] == "EXCHANGE_EVENT_TIME"
-    assert await repo.get("qa.reviews", "old-bybit-proof")  # old audit evidence remains immutable
+    assert await repo.get("qa.reviews", "old-bybit-proof")
     await service.close()
 
 
@@ -1557,7 +1540,7 @@ async def test_series_counts_survive_an_import_evicting_a_counted_day(setup, mon
         return {(iid, lo + timedelta(days=n)): 1440 for n in range((hi - lo).days)}
 
     async def edge_counts(ids, lo, hi, assembled):
-        service._kline_day_counts.clear()  # a klines archive import lands meanwhile
+        service._kline_day_counts.clear()
         return {}
 
     monkeypatch.setattr(service_module, "market_series_day_counts", day_counts)
@@ -1628,7 +1611,7 @@ async def test_unproven_minute_is_persisted_with_its_reason(setup, coverage):
         if coverage == "disconnected"
         else "STREAM_COVERAGE_UNPROVEN"
     )
-    assert service.flow.bars[key].get("gap_reason") is None  # a later proof can still complete it
+    assert service.flow.bars[key].get("gap_reason") is None
     await service.close()
 
 
@@ -1640,7 +1623,6 @@ async def test_bybit_window_beyond_its_1000_prints_is_a_named_source_limit(setup
 
     class Recent:
         async def trades(self, **kwargs):
-            # The newest prints only: the window start is far older than the oldest listed one.
             now = int(utcnow().timestamp() * 1000)
             return [{"execId": "1", "price": "1", "size": "1", "side": "Buy", "time": str(now - 1000)}], None
 
@@ -1664,7 +1646,7 @@ async def test_repair_windows_fills_incomplete_minutes_from_the_last_proven_prin
     from tank.util import iso
 
     repo, settings, inst = setup
-    settings.replay = False  # repairs fetch live REST
+    settings.replay = False
     service = MarketService(repo, settings)
     iid = inst["instrument_id"]
     m0 = utcnow().replace(second=0, microsecond=0) - timedelta(minutes=10)
@@ -1713,7 +1695,7 @@ async def test_repair_windows_fills_incomplete_minutes_from_the_last_proven_prin
     service.adapter = lambda instrument, **kwargs: Rest()
     service._backfill_klines = no_klines
     result = await service.repair_windows("test:ABC", m0 + timedelta(minutes=1), m0 + timedelta(minutes=3))
-    assert requests[0] == 11  # Binance fromId continues from the last proven print
+    assert requests[0] == 11
     assert result[iid] == {"incomplete_before": 2, "incomplete_after": 0}
     bars = {r["minute_start"]: r for r in await repo.list("mkt.flow_bars_1m", limit=100)}
     assert all(bars[iso(m0 + timedelta(minutes=k))]["complete"] for k in (1, 2))
@@ -1729,7 +1711,7 @@ async def test_unrepairable_minutes_keep_a_reason(setup, venue, budget, reason):
     from tank.util import iso
 
     repo, settings, inst = setup
-    settings.replay = False  # repairs fetch live REST
+    settings.replay = False
     service = MarketService(repo, settings)
     iid = inst["instrument_id"]
     service.instruments[iid] = dict(inst, venue=venue)
@@ -1798,7 +1780,7 @@ async def test_snapshot_keeps_book_levels_only_on_the_newest_rows(setup):
                 "instrument_id": inst["instrument_id"],
                 "token_id": inst["token_id"],
                 "exchange_ts": iso(start + timedelta(seconds=10 * i)),
-                "integrity_ok": i <= 5,  # the newest integrity-checked book is old
+                "integrity_ok": i <= 5,
                 "mid": "2",
                 "spread_bps": "1",
                 "depth": {"bid": {"p1": {"usd": "4"}}, "ask": {"p1": {"usd": "6"}}},
@@ -1869,7 +1851,7 @@ async def test_bybit_oi_history_fills_only_before_the_first_live_sample(setup):
     assert sorted(r["ts"] for r in rows)[:3] == [
         iso(first_live - timedelta(minutes=5 * k)) for k in (3, 2, 1)
     ]
-    assert (await repo.get("mkt.oi_obs", "live"))["oi_native"] == "7"  # the live sample is untouched
+    assert (await repo.get("mkt.oi_obs", "live"))["oi_native"] == "7"
     await service.close()
 
 
@@ -1904,7 +1886,7 @@ async def test_repair_goes_spot_first_newest_first_in_persisted_hours(setup):
     from tank.util import iso
 
     repo, settings, inst = setup
-    settings.replay = False  # repairs fetch live REST
+    settings.replay = False
     service = MarketService(repo, settings)
     spot = dict(inst, venue="coinbase", instrument_id="coinbase:spot:ABC-USD")
     perp = dict(inst, venue="binance", market_type="PERP_LINEAR", instrument_id="binance:perp_linear:ABCUSDT")
@@ -1922,7 +1904,6 @@ async def test_repair_goes_spot_first_newest_first_in_persisted_hours(setup):
                 checkpoint.get("end_cursor"),
             )
         )
-        # The first minute of the repaired hour now holds its first print.
         minute = parse_time(checkpoint["last_ts"])
         await repo.put(
             "mkt.flow_bars_1m",
@@ -1943,11 +1924,9 @@ async def test_repair_goes_spot_first_newest_first_in_persisted_hours(setup):
     ] * 24
     assert all(c[2] - c[1] <= timedelta(hours=1) for c in calls)
     coinbase = [c for c in calls if c[0] == "coinbase"]
-    assert [c[2] for c in coinbase] == sorted((c[2] for c in coinbase), reverse=True)  # newest first
-    assert coinbase[0][3] is None and coinbase[1][3] == "T" + iso(
-        coinbase[0][1]
-    )  # continue below the newer hour
-    assert calls[-1][1] == lo  # older history last
+    assert [c[2] for c in coinbase] == sorted((c[2] for c in coinbase), reverse=True)
+    assert coinbase[0][3] is None and coinbase[1][3] == "T" + iso(coinbase[0][1])
+    assert calls[-1][1] == lo
     await service.close()
 
 
@@ -1976,9 +1955,9 @@ async def test_hot_series_poll_context_on_their_own_schedule(setup):
         ),
         5,
     )
-    assert (True, False, False, 0) in polls  # base: klines only while hot
-    assert (False, True, False, -1) in polls  # the ticker on its own grid, ahead on its host
-    assert (False, False, True, -1) in polls  # derivatives on theirs, ahead on their host too
+    assert (True, False, False, 0) in polls
+    assert (False, True, False, -1) in polls
+    assert (False, False, True, -1) in polls
     await service.close()
 
 
@@ -2034,7 +2013,7 @@ async def test_condition_heads_are_reused_until_their_scope_is_written(setup, mo
 
     monkeypatch.setattr(service_module, "market_dependency_head", counted)
     window = ("mkt.oi_obs", "ts", now - timedelta(days=1), now)
-    assembled = utcnow()  # after the write: the head saw every row of its scope
+    assembled = utcnow()
     first = await service._condition_heads(*window, iso(assembled), {"instrument_id": iid})
     again = await service._condition_heads(
         *window, iso(assembled + timedelta(seconds=30)), {"instrument_id": iid}
@@ -2064,9 +2043,7 @@ async def test_condition_heads_are_reused_until_their_scope_is_written(setup, mo
     later = await service._condition_heads(
         *window, iso(utcnow() + timedelta(seconds=1)), {"instrument_id": iid}
     )
-    assert len(calls) == 2 and later[1]["ts"] == iso(
-        now - timedelta(minutes=1)
-    )  # a write invalidates the reuse
+    assert len(calls) == 2 and later[1]["ts"] == iso(now - timedelta(minutes=1))
     await service.close()
 
 
@@ -2096,7 +2073,7 @@ async def test_reference_spot_venue_is_repaired_first_and_never_waits_for_a_slot
     service = MarketService(repo, settings)
     venues = ("okx", "coinbase", "binance")
     service.instruments = {v: dict(inst, venue=v, instrument_id=v + ":spot:ABC") for v in venues}
-    service._repair_slots = asyncio.Semaphore(0)  # every shared slot is taken
+    service._repair_slots = asyncio.Semaphore(0)
     order = []
 
     async def backfill(instrument, anchor, *, checkpoint=None):
@@ -2105,8 +2082,8 @@ async def test_reference_spot_venue_is_repaired_first_and_never_waits_for_a_slot
     service.backfill = backfill
     now = utcnow()
     await service.repair_windows("test:ABC", now - timedelta(hours=2), now, budget_s=0.5)
-    assert order and set(order) == {"binance"}  # the reference venue ran; the others queue for a slot
-    assert HOT_POLL_S < 60  # HOT context stays inside its 60 s cadence at any minute cutoff
+    assert order and set(order) == {"binance"}
+    assert HOT_POLL_S < 60
     await service.close()
 
 
@@ -2144,7 +2121,6 @@ async def test_snapshot_anchors_yield_widest_first_and_equal_single_snapshots(se
     shared = [
         (a, stable(s)) async for a, s in service.snapshot_anchors(inst["token_id"], iso(cutoff), anchors)
     ]
-    # Windows reach back 2 x max(1 day, cutoff - anchor): the 30 h anchor is the widest; ties keep order.
     assert [a["ts"] for a, _ in shared] == [anchors[1]["ts"], anchors[0]["ts"], anchors[2]["ts"]]
     for anchor, snapshot in shared:
         single = stable(await service.snapshot(inst["token_id"], iso(cutoff), anchor=anchor))
@@ -2166,7 +2142,7 @@ async def test_snapshot_never_queues_behind_a_running_flush(setup):
         return await real(**kwargs)
 
     service.flush_market = counted
-    async with service._market_flush_lock:  # another task is flushing (and may wait for a connection)
+    async with service._market_flush_lock:
         await asyncio.wait_for(service.snapshot(inst["token_id"], utcnow()), 10)
     assert flushes == []
     await service.snapshot(inst["token_id"], utcnow())
@@ -2190,7 +2166,7 @@ async def test_hot_ticker_keeps_its_grid_when_a_request_is_stuck(setup):
     async def poll_once(iid, *, derivatives=True, klines=True, ticker=True, priority=0):
         ticks.append(service_module.time.monotonic())
         if len(ticks) == 2:
-            await asyncio.sleep(1)  # one ticker request stuck behind its host
+            await asyncio.sleep(1)
         if len(ticks) >= 5:
             service._stop.set()
 
@@ -2198,7 +2174,7 @@ async def test_hot_ticker_keeps_its_grid_when_a_request_is_stuck(setup):
     await asyncio.wait_for(service._hot_ticker_loop(inst), 5)
     await service.flush_market()
     gaps = [b - a for a, b in pairwise(ticks)]
-    assert len(ticks) == 5 and max(gaps) < 0.2  # the stuck request is cut at the next grid point
+    assert len(ticks) == 5 and max(gaps) < 0.2
     assert any("POLL" in str(g) for g in await repo.list("mkt.capture_gaps"))
     await service.close()
 
@@ -2311,7 +2287,7 @@ async def test_live_bars_flush_ahead_of_a_large_backfill_batch(setup):
 
     async def put(collection, records, keys=None):
         writes.append((collection, len(records)))
-        if len(writes) == 2:  # a live bar closes while the first kline chunk is written
+        if len(writes) == 2:
             service._pending_market.setdefault("mkt.flow_bars_1m", {})["f0"] = {"f": 0}
         if collection == "mkt.klines_1m" and len(writes) == 5:
             raise RuntimeError("pool timeout")
@@ -2423,7 +2399,6 @@ async def test_market_truth_snapshot_reads_one_day_of_books_and_tickers_at_windo
             edge - timedelta(minutes=15) <= t <= edge + timedelta(minutes=2, seconds=1) for edge in edges
         )
 
-    # Adjacent bound windows merge into one read; both ends of every read sit at a bound.
     ticker_reads = [(a, z) for c, a, z in reads if c == "mkt.tickers_24h"]
     assert ticker_reads and all(near_edge(a) and near_edge(z) for a, z in ticker_reads)
     assert sum((z - a).total_seconds() for a, z in ticker_reads) < 6 * 17 * 60
@@ -2479,7 +2454,6 @@ async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewr
     assert (await first._series_counts([iid], start, utcnow(), iso()))[iid] == 15
     assert counted == [(start, today)]
     await first._save_day_counts(force=True)
-    # After the save an audit rewrites a bar of two days ago.
     rewritten = today - timedelta(days=2) + timedelta(minutes=10)
     await repo.put_market_batch("mkt.klines_1m", [kline(rewritten, iso())], keys=[iid + ":" + iso(rewritten)])
     restarted = MarketService(repo, settings)
@@ -2487,7 +2461,6 @@ async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewr
     counted.clear()
     assert (await restarted._series_counts([iid], start, utcnow(), iso()))[iid] == 16
     assert counted == [(today - timedelta(days=2), today - timedelta(days=1))]
-    # A kline write that lands evicts its day again.
     restarted._pending_market = {"mkt.klines_1m": {"k": kline(today - timedelta(days=1), iso())}}
     await restarted.flush_market(raw=False)
     assert (iid, today - timedelta(days=1)) not in restarted._kline_day_counts
@@ -2506,18 +2479,15 @@ async def test_rest_range_keeps_a_complete_bar_and_its_recorded_at_unless_its_pr
     await service.flush_market()
     rest = await repo.get("mkt.flow_bars_1m", key)
     assert rest["complete"] is True
-    # As the live stream wrote it: complete, no REST evidence.
     ws = {k: v for k, v in rest.items() if k not in ("recorded_at", "semantic_fingerprint")}
     await service._put("mkt.flow_bars_1m", key, dict(ws, capture_method=None, backfill_verified=None))
     await service.flush_market()
     first = await repo.get("mkt.flow_bars_1m", key)
     assert first["capture_method"] is None and first["recorded_at"] != rest["recorded_at"]
-    # A repair walking back over the minute proves the same prints: no rewrite.
     await service._persist_rest_flow_ranges(inst, *span, [span])
     await service.flush_market()
     assert (await repo.get("mkt.flow_bars_1m", key))["recorded_at"] == first["recorded_at"]
     assert (inst["instrument_id"], iso(minute)) in service._rest_verified
-    # A print the stored bar lacks is a correction and is written.
     await service.ingest_trade(inst, {"a": 2, "p": "2", "q": "1", "T": at + 2000, "m": True}, backfill=True)
     await service._persist_rest_flow_ranges(inst, *span, [span])
     await service.flush_market()
@@ -2546,21 +2516,18 @@ async def test_reconnect_backfill_asks_rest_again_when_it_trails_the_stream(setu
         if not request.url.path.endswith("aggTrades"):
             return httpx.Response(200, json=[])
         calls.append(int(request.url.params["fromId"]))
-        # REST has 101-102 at the reconnect; 103 only once it caught up with the stream.
         published = [101, 102] + ([103] if catches_up and len(calls) > 1 else [])
         return httpx.Response(200, json=[trade(n) for n in published if n >= calls[-1]])
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = MarketService(repo, settings, http=http)
-        for number in (104, 105):  # the stream's first prints after the reconnect
+        for number in (104, 105):
             await service.ingest_trade(inst, trade(number))
         checkpoint = {"last_trade_id": "100", "last_ts": iso(minute)}
         await service.backfill(inst, iso(minute + timedelta(minutes=1)), checkpoint=checkpoint)
         while service._background:
             await asyncio.gather(*list(service._background), return_exceptions=True)
         await service.flush_market()
-    # The first backfill, then one retry from the last REST print before the gap (102);
-    # REST that never catches up is asked twice more, and the gap stays recorded.
     assert calls == ([101, 103] if catches_up else [101, 103, 103])
     bar = await repo.get("mkt.flow_bars_1m", inst["instrument_id"] + ":" + iso(minute))
     assert bar["complete"] is catches_up

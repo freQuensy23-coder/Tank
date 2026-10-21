@@ -1,17 +1,15 @@
-from __future__ import annotations
-
 import dataclasses
 import hashlib
 import json
 import secrets
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-UTC = timezone.utc
+UTC = UTC
 
 
 def utcnow() -> datetime:
@@ -75,7 +73,7 @@ def new_id(prefix: str, *, timestamp: Any = None, entropy: int | None = None) ->
 
 
 def jsonable(value: Any) -> Any:
-    if dataclasses.is_dataclass(value):
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
         return jsonable(dataclasses.asdict(value))
     if hasattr(value, "model_dump"):
         return jsonable(value.model_dump(mode="python"))

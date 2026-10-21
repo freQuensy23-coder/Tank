@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import json
@@ -8,12 +6,20 @@ import time
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from contextlib import suppress
+from contextvars import ContextVar
 from copy import deepcopy
 from datetime import timedelta
 from decimal import Decimal, localcontext
 
 import httpx
 
+from tank.market import normalize as norm
+from tank.market.adapters import VenueAdapter
+from tank.market.archive import BookArchive, TradeArchive
+from tank.market.capture import event_anchor
+from tank.market.flow import FlowAccumulator
+from tank.market.rate_gate import PriorityGate, binance_request_weight, public_request_constraints
+from tank.market.streams import STREAM_PING_INTERVAL_S, endpoint_keys, stream_group_loop
 from tank.market_storage import (
     latest_market_trades,
     market_dependency_head,
@@ -25,18 +31,8 @@ from tank.market_storage import (
 from tank.time_precision import Timestamp, chosen_boundary, collection_clock, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time, sha256, utcnow
 
-from . import normalize as norm
-from .adapters import VenueAdapter
-from .archive import BookArchive, TradeArchive
-from .capture import event_anchor
-from .flow import FlowAccumulator
-from .rate_gate import PriorityGate, binance_request_weight, public_request_constraints
-
-# Reaction snapshots read books and tickers only this close to the window bounds.
 REACTION_BOUND_MARGIN = timedelta(minutes=5)
 REACTION_NEWEST_MARGIN = timedelta(minutes=15)
-# Market Truth snapshots read tickers this far before each window bound (the latest ticker at
-# or before it) and after it (marks within the sync tolerance of the OI points at the bound).
 TICKER_ASOF_MARGIN = timedelta(minutes=15)
 TICKER_MARK_MARGIN = timedelta(minutes=2)
 
@@ -90,69 +86,37 @@ def book_level_keeper():
     return keep
 
 
-# Reads shared by the per-anchor snapshots of one snapshot_anchors() call.
-from contextvars import ContextVar
-
 _SHARED_READS = ContextVar("market_shared_snapshot_reads", default=None)
-from .streams import STREAM_PING_INTERVAL_S, endpoint_keys, stream_group_loop
 
 log = logging.getLogger(__name__)
-# Raw journals are appended and fsynced at most this often (seconds); typed rows of
-# the same prints follow in the same flush.
 RAW_FLUSH_S = 5
-LIVE_FIRST = ("mkt.flow_bars_1m", "mkt.tickers_24h")  # flushed ahead of other typed rows
-FLUSH_ROWS = 500  # typed rows per write; a live flush can run between two of them
-# Streamed mark/index/funding/OI context is stored at the hot tier's summary cadence
-# (03 §5.1: book summaries every 10 s); the newest value is kept in memory between.
+LIVE_FIRST = ("mkt.flow_bars_1m", "mkt.tickers_24h")
+FLUSH_ROWS = 500
 CONTEXT_S = 10
-# Pre-event windows ending within this span are filled from venue REST only; a missing
-# REST range stays an explicit gap instead of a whole-day archive parse.
 REST_ONLY_WINDOW = timedelta(hours=48)
-# Listed REST that cannot page trade history (03 §5.1): unproven minutes there keep this
-# reason instead of a request. Bybit recent-trade lists only the last 1000 prints, so only
-# minutes this recent are worth a request.
 NO_TRADE_HISTORY = {"hyperliquid": "NO_LISTED_TRADE_BACKFILL"}
 BYBIT_RECENT = timedelta(hours=1)
 BYBIT_LIMIT = "SOURCE_LIMIT: Bybit recent-trade lists only the last 1000 prints"
-# OI metrics that sources publish only as 5-min buckets (02 §4.2, §4.6).
 SOURCE_BUCKETED_OI, SOURCE_BUCKET_S = ("bybit.linear.open-interest", "binance.usdm.openInterestHist"), 300.0
-# Analysis windows around an anchor: PRE24 before it, reaction checkpoints up to 72 h after.
 WINDOW_BEFORE, WINDOW_AFTER = timedelta(hours=24), timedelta(hours=72)
-# Repairs go newest first in backfills of at most REPAIR_CHUNK, each persisted when done;
-# the trailing REFERENCE_SPAN of spot (03 §5.7 reference venue) is repaired before anything else.
 REPAIR_CHUNK, REFERENCE_SPAN = timedelta(hours=1), timedelta(hours=24)
 PAGES_PER_FLUSH = 25
-# A reconnect backfill whose REST prints stop short of the stream's first print is asked
-# again this much later, at most HANDOFF_RETRIES times; a gap that survives stays recorded.
 HANDOFF_RETRY_S = 15
 HANDOFF_RETRIES = 2
-# Requests in flight per venue host (Kraken: 1).
 HOST_IN_FLIGHT = 4
-# Reference spot venues by repair speed (03 §5.7 needs one complete trailing 24 h).
 REFERENCE_VENUES = ("binance", "coinbase", "okx", "kraken", "bybit")
-# HOT OI/funding and 24h REST tickers run on their own wall-clock grids, so at any minute
-# cutoff none is older than the 60 s HOT cadence of 03 §5.1, even after one missed point
-# (r117: a hyperliquid 24h ticker, REST only, once 62 s on a 30 s grid). Hyperliquid's
-# shared contexts response lives HL_CONTEXTS_S, so each grid point fetches it afresh.
 HOT_POLL_S = 30
 HOT_TICKER_S = 20
 HL_CONTEXTS_S = 10
-# Finished raw hours are sealed in their own pass, a few per pass.
 SEAL_PASS_S, SEALS_PER_PASS = 10, 2
 BOOK_SAVE_S = 8
-# The event loop is reported stalled (stacks logged) when its heartbeat is this stale.
 LOOP_STALL_S = 10
-# A reused dependency head is recomputed at least this often (retention deletes and other
-# processes are not in the write clock).
 HEAD_REUSE_S = 300
-# Past-day kline counts survive a restart in the data dir; a saved count is dropped when a
-# kline of its day was recorded after the save, less this margin for queued writes.
 DAY_COUNTS_SAVE_S = 60
 DAY_COUNTS_MARGIN = timedelta(minutes=30)
-SERIES_MARGIN = timedelta(hours=2)  # history a shared kline cursor holds before its window
-SERIES_TRIM = timedelta(days=1)  # a cursor sheds history once its windows moved this far past it
-SERIES_APPLY_ROWS = 20000  # kline rows a rebuild applies per worker-thread call
-# Rows read only from public exchange endpoints never contain a Tank secret.
+SERIES_MARGIN = timedelta(hours=2)
+SERIES_TRIM = timedelta(days=1)
+SERIES_APPLY_ROWS = 20000
 PUBLIC_MARKET = frozenset(
     {
         "mkt.flow_bars_1m",
@@ -165,8 +129,8 @@ PUBLIC_MARKET = frozenset(
     }
 )
 
-WIDE_PAGE_ROWS = 500  # rows per fetch for wide rows: one fetchall stays well under a second
-BOOK_LEVEL_ROWS = 30  # newest book rows per instrument that keep their levels in a snapshot
+WIDE_PAGE_ROWS = 500
+BOOK_LEVEL_ROWS = 30
 COLLECTIONS = {
     "flow_bars": ("mkt.flow_bars_1m", "minute_start"),
     "klines": ("mkt.klines_1m", "open_time"),
@@ -220,7 +184,6 @@ def funding_confirmations(observations, *, distinct_paths=False):
     return pairs
 
 
-# Flow fields a REST audit must reproduce for a complete stored bar to stand as written.
 REST_SAME_FLOW = (
     "n_buy",
     "n_sell",
@@ -275,21 +238,15 @@ class MarketService:
         self._raw_logged = time.monotonic()
         self._started = utcnow()
         self._hour_loads = {}
-        # Newest already-stored point of REST histories (OI history, settled funding)
-        # that every derivatives poll returns again in full.
         self._history_marks = {}
         self._context_due = {}
-        self._reads = {}  # host -> [succeeded, failed] REST reads since the last minute log
-        self._hot_since = {}  # hot token -> earliest anchor of its events
-        self._frames = {}  # WebSocket endpoint -> frames received since the last minute log
-        # instrument -> the last few times a klines poll succeeded. Venues omit minutes
-        # without trades (Coinbase), so a missing candle is not a stale poll.
+        self._reads = {}
+        self._hot_since = {}
+        self._frames = {}
         self._klines_polled = {}
-        # (instrument, UTC day) -> complete 1m closes, for whole past days (snapshot coverage).
         self._kline_day_counts = {}
-        # (instrument, minute) of complete stored bars a REST audit proved without a rewrite.
         self._rest_verified = {}
-        self._kline_day_counts_saved = ({}, 0.0)  # the counts last saved, and when
+        self._kline_day_counts_saved = ({}, 0.0)
         self._pending_market = {}
         self._market_cache = {}
         self._market_flush_lock = asyncio.Lock()
@@ -298,7 +255,6 @@ class MarketService:
         self._capture_checkpoints = {}
         self._recovery_pending = set()
         self._active_backfills = {}
-        # Earliest unrepaired checkpoint per instrument while its repair is running.
         self._pending_reconnects = {}
         self._repair_slots = asyncio.Semaphore(3)
         self._condition_heads_memo = {}
@@ -388,7 +344,6 @@ class MarketService:
         if collection.startswith("mkt."):
             if collection == "mkt.trades":
                 raise ValueError("Individual trades belong only in normalized hourly Parquet")
-            # Book summaries arrive JSON-ready (OrderBook.summary); re-walking their levels is waste.
             row = dict(row) if collection == "mkt.book_summaries" else jsonable(row)
             row = (
                 dict(
@@ -402,8 +357,6 @@ class MarketService:
             if collection in ("mkt.hot_tokens", "mkt.backfill_runs"):
                 changed = await self.repo.put_market_batch(collection, [row], keys=[str(key)])
                 return changed[0] if changed else row
-            # Repeated points of these series are dropped before PostgreSQL; the
-            # storage layer computes its own fingerprint for every written row.
             if collection in ("mkt.flow_bars_1m", "mkt.tickers_24h", "mkt.funding_obs"):
                 cache = self._market_cache.setdefault(collection, {})
                 content = self._semantic_content(row)
@@ -554,8 +507,6 @@ class MarketService:
                     )
                     self._market_cache.setdefault(collection, {}).setdefault(key, row)
             await self._restore_quote_usd()
-            # The reconnect backfill resumes from the last stored print (03 §5.2): the
-            # newest flow bar that holds a trade carries its ID and time.
             for row in await latest_market_trades(
                 self.repo, list(self.instruments), start=utcnow() - timedelta(days=2)
             ):
@@ -567,9 +518,6 @@ class MarketService:
                     "last_ts": last["ts"],
                 }
                 self.flow.last[iid] = dict(last, instrument_id=iid)
-            # Prints of the last minutes before a restart are on disk: remember them so
-            # none is taken twice, and resume the bar of the newest minute, which was
-            # still in progress. Earlier bars are already final in PostgreSQL.
             since = (utcnow() - timedelta(minutes=3)).replace(second=0, microsecond=0)
             for iid in self.instruments:
                 rows = await asyncio.to_thread(self.trade_archive.recent, iid, since)
@@ -602,8 +550,6 @@ class MarketService:
         async with self._market_flush_lock:
             if raw or (raw is None and time.monotonic() - self._raw_written >= RAW_FLUSH_S):
                 await self._write_raw()
-            # Live bars and tickers go first, and ones queued while a large batch (a
-            # startup kline backfill) is being written jump ahead of its next chunk.
             pending, self._pending_market = self._pending_market, {}
             queue = sorted(pending.items(), key=lambda item: item[0] not in LIVE_FIRST)
             try:
@@ -614,7 +560,6 @@ class MarketService:
                     for key in keys:
                         row = values.pop(key)
                         if collection == "mkt.klines_1m" and row.get("open_time"):
-                            # A count read between the queueing and this write saw the old row.
                             day = parse_time(row["open_time"]).replace(
                                 hour=0, minute=0, second=0, microsecond=0
                             )
@@ -626,7 +571,6 @@ class MarketService:
                         queue[:0] = [(c, self._pending_market.pop(c)) for c in live]
                     await asyncio.sleep(0)
             except Exception:
-                # Rows queued since the take are newer and win over the retried ones.
                 for collection, values in queue:
                     target = self._pending_market.setdefault(collection, {})
                     for key, row in values.items():
@@ -639,8 +583,6 @@ class MarketService:
         started = time.monotonic()
 
         def write():
-            # Seals run in _seal_loop: a backlog of finished hours (33 at once on r109 after
-            # repairs) must never hold this flush, and with it every typed write, for minutes.
             result = self.trade_archive.write(trades, seal_limit=0)
             booked = self.book_archive.write(books, seal_limit=0)
             return result["rows"] + booked["rows"], len(result["sealed"]) + len(booked["sealed"])
@@ -734,11 +676,11 @@ class MarketService:
                     ]
                 )
                 self._raw_stats["sealed"] += len(sealed)
-            except Exception as exc:  # noqa: BLE001 - the next pass retries; journals stay on disk
+            except Exception as exc:
                 log.warning("seal pass failed: %s", type(exc).__name__)
             try:
                 await self._save_day_counts()
-            except Exception as exc:  # noqa: BLE001 - a later pass saves; a restart recounts
+            except Exception as exc:
                 log.warning("series count save failed: %s", type(exc).__name__)
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), SEAL_PASS_S)
@@ -774,8 +716,6 @@ class MarketService:
                 self._response_cache.pop(expired_key, None)
         if not cache_key:
             return await self._request_live(method, url, **kwargs)
-        # One response per shared request: cache hits neither consume budget nor
-        # change the original HTTP observation timestamp.
         cache_lock_key = (
             "hyperliquid:funding:" + payload["coin"] if payload.get("type") == "fundingHistory" else cache_key
         )
@@ -815,8 +755,6 @@ class MarketService:
             if host == "api.etherscan.io"
             else 0.08
         )
-        # Several requests in flight per host (Kraken's 1 req/s counter stays serial); request
-        # starts are still spaced by the host interval and every venue budget still applies.
         lock = self._request_locks.setdefault(
             host, PriorityGate(1 if host == "api.kraken.com" else HOST_IN_FLIGHT)
         )
@@ -862,12 +800,9 @@ class MarketService:
                     budget_key, capacity, window, weight=charge, priority=priority
                 )
 
-        for attempt in range(4):
-            # Waiting for a weighted repair budget must not own the HTTP slot:
-            # a newly ready cheap baseline request can still be served first.
+        for _attempt in range(4):
             await admit_budget()
             async with lock.enter(priority):
-                # Reserve the next start slot before sleeping: concurrent holders never burst.
                 now = time.monotonic()
                 start = max(now, self._last_request.get(host, 0) + interval)
                 self._last_request[host] = start
@@ -885,14 +820,10 @@ class MarketService:
                     )
                     continue
                 if response.is_error:
-                    # The venue's error code/message is the gap evidence (bodies carry no credentials).
                     raise RuntimeError(f"{host}: HTTP {response.status_code} {response.text[:200]}")
-                # Binance reports whole-IP usage (including sandbox traffic). Tank
-                # separately enforces its own half via shared_request_budgets.
                 weight = response.headers.get("X-MBX-USED-WEIGHT-1M")
                 if weight and int(weight) >= (2400 if host == "fapi.binance.com" else 6000):
                     self._last_request[host] = max(self._last_request[host], time.monotonic() + 60)
-                # JSON floats must never enter native quantity or monetary arithmetic.
                 return json.loads(response.content, parse_float=Decimal)
         raise RuntimeError(f"{host}: rate limited after bounded retries")
 
@@ -917,7 +848,6 @@ class MarketService:
             return
         if quote not in ("USDT", "USDC"):
             return
-        # The listed Coinbase 24h stats (02 §4.3) carry the last price but no clock.
         body = await self._request("GET", f"https://api.exchange.coinbase.com/products/{quote}-USD/stats")
         rate = str(norm.decimal(body["last"]))
         ts = iso()
@@ -941,14 +871,12 @@ class MarketService:
         if instrument_id not in self._metadata:
             try:
                 await self.discover(instrument)
-            except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
+            except Exception as exc:
                 await self._gap(instrument, "METADATA", exc)
         try:
             await self._fx_rate(instrument)
-        except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
+        except Exception as exc:
             await self._gap(instrument, "QUOTE_FX", exc)
-        # OI and funding first: a slow host (shared by every series of the venue) must not
-        # push the 60 s HOT derivatives cadence behind klines and tickers (03 §5.1).
         for kind in ("derivatives", "klines", "ticker"):
             if kind == "derivatives" and (not derivatives or norm.venue_key(instrument).endswith(".spot")):
                 continue
@@ -1009,7 +937,7 @@ class MarketService:
                             "mkt.oi_obs", instrument_id + ":" + row["metric_key"] + ":" + row["ts"], row
                         )
                     if current and mark is not None:
-                        from .streams import save_mark
+                        from tank.market.streams import save_mark
 
                         await save_mark(
                             self,
@@ -1061,10 +989,8 @@ class MarketService:
                             )
                             continue
                         await self._funding(instrument, raw, "SETTLED", historical_interval)
-            except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
+            except Exception as exc:
                 await self._gap(instrument, kind.upper(), exc)
-        # Typed rows are written by the supervisor's flush every RAW_FLUSH_S; 181 pollers
-        # each taking the flush lock would stall the stream consumers.
 
     def _fresh(self, instrument_id, kind, rows, stamp):
         """Points of a repeated REST history newer than those processed before, and the
@@ -1216,7 +1142,7 @@ class MarketService:
         merged = dict(previous or {})
         for field, value in row.items():
             if field in ("capture_source", "capture_sources"):
-                continue  # Aggregate lineage is derived from the retained fields.
+                continue
             if value is not None or merged.get(field) is None:
                 merged[field] = value
                 if value is not None and field in incoming_sources:
@@ -1232,8 +1158,6 @@ class MarketService:
                         or comparable(prior_source) != comparable(incoming)
                     ):
                         sources[field] = incoming
-        # Legacy rows may lack field-level lineage. Do not attribute their
-        # retained fields to the newest partial source.
         for field in ("mark_price", "index_price", "last", "quote_volume", "volume_native", "volume_usd"):
             if merged.get(field) is not None and field not in sources:
                 clock = merged.get(
@@ -1307,7 +1231,6 @@ class MarketService:
             native, quote, price = raw["v"][1], None, raw["c"][0]
         else:
             native, quote, price = None, raw.get("dayNtlVlm"), raw.get("markPx")
-        # OKX swap vol24h is contracts, volCcy24h is BASE rather than quote.
         if key == "okx.swap":
             native = raw.get("volCcy24h")
             quote = None
@@ -1352,8 +1275,6 @@ class MarketService:
             if row.get(field) is not None
         }
         if row["mark_price"] is not None:
-            # REST tickers do not expose an independent exchange mark timestamp.
-            # This is the actual HTTP observation clock, not an invented update time.
             row["mark_as_of"] = received
             row["field_sources"]["mark_price"] = {
                 "capture_source": "PUBLIC_REST",
@@ -1381,7 +1302,6 @@ class MarketService:
         if backfill:
             return True
         if late:
-            # The minute's bar already left memory: rebuild it from its archived prints.
             fresh = bar_key not in self.flow.bars
             self._merge_prints(bar_key, await self._archived_minute(iid, minute))
             if fresh:
@@ -1425,7 +1345,6 @@ class MarketService:
         """Every print of one minute this capture holds: durable journals, plus rows
         buffered or being written. It never waits for a flush (stream consumers call it)."""
         hour = iso(parse_time(minute).replace(minute=0, second=0, microsecond=0))
-        # Taken before the read: a write that completes meanwhile moves its rows to disk.
         pending = self.trade_archive.buffered(iid, minute)
         if hours is None or hour not in hours:
             grouped = await asyncio.to_thread(self.trade_archive.read_minutes, iid, hour)
@@ -1445,18 +1364,12 @@ class MarketService:
     async def _save_book(self, instrument):
         iid = instrument["instrument_id"]
         if not self.books[iid].verified:
-            return  # summarize only a checksum-verified state (the next one is <= 1 s away)
-        # Summaries on a fixed wall-clock grid, from the first update at or after each grid
-        # point, so a cutoff finds one younger than the 10 s cadence.
+            return
         now = time.time()
         if self._book_due.get(iid, 0) > now:
             return
-        # The grid is a little finer than the cadence: frame gaps and loop lag (r109:
-        # hyperliquid books 10.28 s old) must not push the age past it.
         interval = float(self.thresholds.get("book_save_interval_s", BOOK_SAVE_S))
         self._book_due[iid] = (now // interval + 1) * interval
-        # Summarize a frozen copy in the thread pool; a crossed book found there is
-        # recorded on the live book exactly as an in-place summary would.
         frozen = self.books[iid].frozen()
         row = await asyncio.to_thread(frozen.summary)
         if not frozen.integrity_ok and self.books[iid].integrity_ok:
@@ -1492,7 +1405,7 @@ class MarketService:
                         timeout=float(self.thresholds.get("book_interval_s", 10)),
                     )
                 )
-            except Exception as exc:  # noqa: BLE001 - confirmation failure must not stall capture
+            except Exception as exc:
                 row.update(second_path_confirmed=False, second_path_reason=str(exc))
             await self._put("mkt.book_summaries", key, row)
 
@@ -1515,14 +1428,12 @@ class MarketService:
                     if not allow_recovery:
                         cursor += timedelta(minutes=1)
                         continue
-                    # A minute whose prints were archived but whose bar left memory is
-                    # rebuilt from them; any other unseen connected minute is empty.
                     rows = (
                         await self._archived_minute(iid, cursor)
                         if self.trade_archive.minute_archived(iid, cursor)
                         else []
                     )
-                    if key not in self.flow.bars:  # no live print arrived during the read
+                    if key not in self.flow.bars:
                         self.flow.empty_minute(self.instruments[iid], cursor)
                         self.flow.bars[key]["_coverage"] = self.trade_archive.coverage_for(iid, cursor)
                         if rows:
@@ -1551,7 +1462,6 @@ class MarketService:
                 since.replace(second=0, microsecond=0),
                 through.replace(second=0, microsecond=0) - timedelta(minutes=1),
             )
-        # Only bars that changed since the last flush are recorded again.
         dirty, self.flow.dirty = self.flow.dirty, set()
         for key, bar in list(self.flow.bars.items()):
             minute = parse_time(key[1])
@@ -1561,8 +1471,6 @@ class MarketService:
                 complete = covered and not bar.get("gap_reason")
                 row = self.flow.record(key, complete=complete)
                 if not covered and not row.get("gap_reason"):
-                    # Persist why the minute is unproven (stream down, REST repair pending);
-                    # the in-memory bar keeps gap_reason None so a later proof completes it.
                     row["gap_reason"] = next(
                         (
                             p["reason"]
@@ -1595,13 +1503,10 @@ class MarketService:
         iid = instrument["instrument_id"]
         for lo, hi in proven_ranges:
             self.trade_archive.coverage(iid, lo, hi, complete=True, source="REST_RANGE_EXHAUSTED")
-        await self.flush_market(raw=True)  # Raw journals are durable before any derived bar.
+        await self.flush_market(raw=True)
         previous = self.flow.references.get((iid, iso(start)), {}).get("last_trade")
         minute = parse_time(start).replace(second=0, microsecond=0)
-        hours = {}  # the one archived hour this audit is reading
-        # Complete bars already held for the range: a REST audit with the same prints
-        # proves them without a rewrite. A rewrite moved recorded_at past snapshots
-        # assembled meanwhile (r113: 48 complete coinbase WS bars re-recorded at 05:10).
+        hours = {}
         held = {
             row["minute_start"]: row
             async for row in self.repo.iter_market_projection(
@@ -1618,7 +1523,7 @@ class MarketService:
             if row["instrument_id"] == iid and minute <= parse_time(row["minute_start"]) < parse_time(end):
                 held[row["minute_start"]] = row
         consecutive = norm.venue_key(instrument).split(".")[0] in ("binance", "coinbase", "kraken")
-        found = []  # (print before, print after) of every trade-ID gap
+        found = []
 
         def audit(minute, rows, coverage, boundaries, previous):
             """One minute's bar from its archived prints, built in a worker thread: it reads
@@ -1634,8 +1539,6 @@ class MarketService:
             gap = None
             gaps = []
             if consecutive:
-                # Check continuity in ID order: the archive's (ts, str id) order misplaces ids
-                # across a digit boundary, or when WS and REST prints differ in ts precision.
                 rows.sort(key=lambda r: int(r["trade_id"]))
             for point in rows:
                 if (
@@ -1664,7 +1567,6 @@ class MarketService:
             row = accumulator.record(key, complete=complete)
             row.update(backfill_verified=complete, capture_method="REST_RANGE_EXHAUSTED")
             if not complete and not row.get("gap_reason"):
-                # Part of the minute lies outside every proof this process holds.
                 row["gap_reason"] = next(
                     (
                         p["reason"]
@@ -1707,7 +1609,7 @@ class MarketService:
                 await self._put("mkt.flow_bars_1m", iid + ":" + iso(minute), row)
             if minute >= utcnow() - timedelta(minutes=3):
                 self.flow.bars[key] = bar
-            await asyncio.sleep(0)  # one minute's bar at a time: a repaired hour never holds the loop
+            await asyncio.sleep(0)
             if minute.minute == 59:
                 await self.flush_market(raw=False)
             minute += timedelta(minutes=1)
@@ -1761,12 +1663,8 @@ class MarketService:
         key = norm.venue_key(instrument)
         start = parse_time(checkpoint["last_ts"]) if checkpoint else parse_time(anchor) - timedelta(hours=24)
         end = parse_time(anchor)
-        # PRE24 itself uses start as its return anchor, requiring an actual
-        # print strictly before start. Keep the analysis window unchanged.
         capture_start = start if checkpoint else start - timedelta(minutes=1)
         self._register_capture_boundaries({instrument["instrument_id"]}, end, {"ts": start})
-        # A reconnect repair is short and completes live minutes; behind base polling
-        # (priority 0) it never got a Kraken slot (1 req/s) on prod.
         adapter = self.adapter(instrument, priority=0 if checkpoint else 1)
         cursor = None
         seen = set()
@@ -1775,8 +1673,7 @@ class MarketService:
         kraken_forward_ranges = []
         first_window_trade = None
         reference_candidate = None
-        rest_last = None  # newest trade id REST returned for the window
-        # Binance timestamp slices cannot exceed one hour. Others paginate to oldest print.
+        rest_last = None
         slices = (
             [
                 (start + timedelta(hours=i), min(start + timedelta(hours=i + 1), end))
@@ -1819,7 +1716,6 @@ class MarketService:
                             "response": rows,
                         },
                     )
-                    # A page is normalized once, in a worker thread (r113: twice, on the loop).
                     normalized = await asyncio.to_thread(
                         lambda rows=rows: sorted(
                             ((norm.trade(instrument, raw, source="REST"), raw) for raw in rows),
@@ -1850,11 +1746,9 @@ class MarketService:
                             if key.startswith(("binance", "coinbase", "kraken")):
                                 rest_last = max(rest_last or 0, int(t["trade_id"]))
                             await self.ingest_trade(instrument, raw, backfill=True, row=dict(t))
-                    # A flush per page waited on the shared fsynced journal write (prod r106:
-                    # ~5k prints/min); the prints of PAGES_PER_FLUSH pages are bounded memory.
                     if page % PAGES_PER_FLUSH == PAGES_PER_FLUSH - 1:
                         await self.flush_market()
-                    await asyncio.sleep(0)  # one page at a time: streams and polls keep their turns
+                    await asyncio.sleep(0)
                     if key.startswith("binance"):
                         if len(rows) < 1000 or parse_time(normalized[-1][0]["ts"]) >= hi:
                             exhausted = True
@@ -1875,16 +1769,12 @@ class MarketService:
                     cursor = next_cursor
                 if exhausted:
                     proven_ranges.append((lo, min(hi, utcnow())))
-        except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
+        except Exception as exc:
             await self._gap(instrument, "PRE_EVENT_FLOW", exc, start=start, end=end)
-        # Verified Binance print archives cover only fully published historical days.
-        # Retention/ID gaps are retained as evidence even if an archive repairs coverage.
-        # Fresh windows come from REST only (03 §5.1, lead ruling 2026-10-20): whole daily
-        # archives are parsed only for replays of windows older than REST_ONLY_WINDOW.
         if not checkpoint and key.startswith("binance") and end < utcnow() - REST_ONLY_WINDOW:
             missing = not self._ranges_cover(proven_ranges, start, end)
             if missing:
-                from .archive import fetch_archive
+                from tank.market.archive import fetch_archive
 
                 day = start.date()
                 while day <= end.date():
@@ -1901,7 +1791,7 @@ class MarketService:
                                 market=self,
                                 window=(capture_start, end),
                             )
-                        except Exception as exc:  # noqa: BLE001 - archive absence preserves explicit missing historical coverage
+                        except Exception as exc:
                             await self._gap(
                                 instrument,
                                 "TRADE_ARCHIVE",
@@ -1912,11 +1802,7 @@ class MarketService:
                     day += timedelta(days=1)
         if not checkpoint and reference_candidate and not key.startswith("binance"):
             self._record_reference(instrument, start, reference_candidate[1], "REST_ENUMERATION")
-        # Binance aggregate IDs expose the actual preceding prints, including
-        # quiet minutes: walk backwards by ID, never substitute a kline close.
         if not checkpoint and key == "binance.spot" and first_window_trade is None:
-            # Official Spot REST ordering: endTime alone returns most recent
-            # records up to that bound. Covers a wholly quiet PRE24 window.
             try:
                 rows, _ = await adapter.trades(end=start - timedelta(milliseconds=1))
                 await self._raw(
@@ -1930,7 +1816,7 @@ class MarketService:
                     _, raw = max(earlier, key=lambda pair: int(pair[0]["trade_id"]))
                     await self.ingest_trade(instrument, raw, backfill=True)
                     self._record_reference(instrument, start, raw, "BINANCE_END_BOUND")
-            except Exception as exc:  # noqa: BLE001 - source limitations remain gaps
+            except Exception as exc:
                 await self._gap(instrument, "PRE24_REFERENCE", exc, start=None, end=start)
         if not checkpoint and key.startswith("binance") and first_window_trade:
             before_id = int(first_window_trade["trade_id"])
@@ -1954,22 +1840,18 @@ class MarketService:
                         self._record_reference(instrument, start, raw, "BINANCE_ID_PREDECESSOR")
                         break
                     before_id = lower_id
-            except Exception as exc:  # noqa: BLE001 - preserve actual source failure
+            except Exception as exc:
                 await self._gap(instrument, "PRE24_REFERENCE", exc, start=None, end=start)
-        # Backfill OHLC without pretending klines are aggressive flow.
         if (
             not checkpoint
             and key == "kraken.spot"
             and not self.flow.references.get((instrument["instrument_id"], iso(start)))
         ):
-            # Kraken exposes a forward `since` cursor rather than a reverse ID.
-            # Expand the time search only when a quiet interval has no print,
-            # then follow its actual cursor until crossing the requested bound.
             span = timedelta(minutes=1)
             cursor = None
             candidate = None
             query_start = start - span
-            for attempt in range(32):
+            for _attempt in range(32):
                 try:
                     rows, next_cursor = await adapter.trades(start=query_start, cursor=cursor)
                     await self._raw(
@@ -2002,7 +1884,7 @@ class MarketService:
                         cursor = None
                         span *= 2
                         query_start = start - min(span, start - parse_time("1970-01-01T00:00:00Z"))
-                except Exception as exc:  # noqa: BLE001 - retain source evidence
+                except Exception as exc:
                     await self._gap(instrument, "PRE24_REFERENCE", exc, start=query_start, end=start)
                     break
             else:
@@ -2014,9 +1896,6 @@ class MarketService:
                     end=start,
                 )
         if kraken_forward_ranges and first_window_trade:
-            # A forward since traversal through cutoff can start after the requested
-            # boundary during a quiet interval. Native consecutive IDs plus an actual
-            # earlier print prove that prefix; a clamped/truncated first page cannot.
             predecessor = self.flow.references.get((instrument["instrument_id"], iso(start)), {}).get(
                 "last_trade"
             )
@@ -2029,8 +1908,6 @@ class MarketService:
                 proven_ranges.extend(kraken_forward_ranges)
         if checkpoint and not self._ranges_cover(proven_ranges, start, end):
             await self._gap(instrument, "RECONNECT", "CHECKPOINT_RANGE_NOT_EXHAUSTED", start=start, end=end)
-        # Bybit lists only its last 1000 public prints (03 §5.1): older windows are a
-        # source limit, recorded as such rather than as a collection failure.
         limit = (
             " (SOURCE_LIMIT: Bybit recent-trade lists only the last 1000 prints)"
             if key.startswith("bybit")
@@ -2055,12 +1932,9 @@ class MarketService:
                 end=start,
             )
         gaps = await self._persist_rest_flow_ranges(instrument, start, end, proven_ranges)
-        # A gap at the handoff ends at a print newer than every print REST returned here.
         handoff = [pair for pair in gaps if rest_last is None or int(pair[1]["trade_id"]) > rest_last]
         retries = int((checkpoint or {}).get("handoff_retry", 0))
         if checkpoint and handoff and retries < HANDOFF_RETRIES:
-            # REST trails the stream (coinbase r114 05:52: ids 621-623 were in neither
-            # source at the reconnect): ask REST again from the last print it had.
             before = min((pair[0] for pair in handoff), key=lambda p: int(p["trade_id"]))
             retry = {
                 "last_ts": iso(parse_time(before["ts"]).replace(second=0, microsecond=0)),
@@ -2092,11 +1966,9 @@ class MarketService:
         within budget_s. Minutes REST cannot reach stay incomplete with their reason.
         Returns {instrument_id: {"incomplete_before", "incomplete_after"}}."""
         if getattr(self.settings, "replay", False):
-            return {}  # a replay reads frozen evidence; it never fetches live market data
+            return {}
         deadline = time.monotonic() + budget_s if budget_s else None
         lo = parse_time(start).replace(second=0, microsecond=0)
-        # The last finished minute is in (the restart minute of a startup repair); the
-        # minute in progress is not.
         hi = min(parse_time(end), utcnow() - timedelta(seconds=5)).replace(second=0, microsecond=0)
         instruments = [
             i for i in self.instruments.values() if i["token_id"] == token_id and i.get("active", True)
@@ -2104,8 +1976,6 @@ class MarketService:
         spot = [i for i in instruments if norm.venue_key(i).endswith(".spot")]
         perp = [i for i in instruments if i not in spot]
         recent = max(lo, hi - REFERENCE_SPAN)
-        # One fast spot venue's trailing 24 h first, outside the shared repair slots: it is the
-        # 03 §5.7 reference input. Then the other spot venues, derivatives, older history.
         reference = sorted(
             spot, key=lambda i: REFERENCE_VENUES.index(i["venue"]) if i["venue"] in REFERENCE_VENUES else 99
         )[:1]
@@ -2156,8 +2026,6 @@ class MarketService:
         runs, bars = await self._incomplete_runs(iid, lo, hi)
         before = sum((b - a) // timedelta(minutes=1) for a, b in runs)
         venue = instrument["venue"]
-        # Newest first, at most an hour per backfill: the event and primary windows come
-        # before older history, and every finished hour is persisted (a restart keeps it).
         chunks = [
             (max(start, end - REPAIR_CHUNK * (n + 1)), end - REPAIR_CHUNK * n)
             for start, end in reversed(runs)
@@ -2177,17 +2045,15 @@ class MarketService:
                 )
             elif venue == "kraken":
                 checkpoint.update(await self._kraken_predecessor(instrument, start))
-            # Paging venues continue below the first print of the newer minute (just repaired)
-            # instead of walking back from now for every chunk.
             following = await self.repo.get("mkt.flow_bars_1m", iid + ":" + iso(end)) or {}
             if venue in ("coinbase", "okx") and (following.get("first_trade") or {}).get("trade_id"):
                 checkpoint["end_cursor"] = following["first_trade"]["trade_id"]
 
             async def repair(end=end, checkpoint=checkpoint):
-                if reserved:  # the reference venue never queues behind other repairs
+                if reserved:
                     await self.backfill(instrument, iso(end), checkpoint=checkpoint)
                     return
-                async with self._repair_slots:  # repair CPU never takes the whole loop
+                async with self._repair_slots:
                     await self.backfill(instrument, iso(end), checkpoint=checkpoint)
 
             try:
@@ -2213,7 +2079,6 @@ class MarketService:
             while minute < end:
                 bar = bars.get(minute)
                 if bar is not None and not bar.get("gap_reason"):
-                    # An unproven minute always says why (never a null reason).
                     await self._put("mkt.flow_bars_1m", iid + ":" + iso(minute), dict(bar, gap_reason=reason))
                 minute += timedelta(minutes=1)
         await self.flush_market()
@@ -2270,7 +2135,7 @@ class MarketService:
                     row = norm.kline(instrument, raw)
                     if first <= parse_time(row["open_time"]) < last:
                         await self._store_kline(instrument, row)
-            except Exception as exc:  # noqa: BLE001 - actual source failure remains explicit
+            except Exception as exc:
                 await self._gap(instrument, kind, exc, start=lo, end=hi)
         await self.flush_market()
         points = await observed()
@@ -2523,23 +2388,20 @@ class MarketService:
                     self._register_capture_boundaries(
                         {i["instrument_id"] for i in instruments}, cutoff, {"ts": begin}
                     )
-                # Benchmark closes first: two cheap kline reads that market context needs,
-                # which a long trade enumeration (or a restart during it) must not hold back.
                 benchmarks = await self._backfill_benchmark_klines(anchor)
 
                 async def capture_window(inst):
-                    async with self._repair_slots:  # shares slots: never starves the reference venue
+                    async with self._repair_slots:
                         await self.backfill(inst, anchor)
 
                 await asyncio.gather(*(capture_window(inst) for inst in instruments))
-                # Whatever REST enumeration left unproven, and the post-anchor windows so far.
                 try:
                     await self.repair_windows(
                         token_id,
                         parse_time(anchor) - WINDOW_BEFORE,
                         iso(min(utcnow(), parse_time(anchor) + WINDOW_AFTER)),
                     )
-                except Exception as exc:  # noqa: BLE001 - repair leaves explicit gaps; capture still completes
+                except Exception as exc:
                     log.warning("window repair for %s failed: %s", token_id, type(exc).__name__)
                 coverage = await asyncio.gather(
                     *(self._capture_window_coverage(inst, anchor) for inst in instruments)
@@ -2554,9 +2416,8 @@ class MarketService:
                 async with self.repo.transaction():
                     await self._put("mkt.backfill_runs", backfill_id, row)
             except asyncio.CancelledError:
-                # Persisted RUNNING obligation is resumed from hot membership after restart.
                 raise
-            except Exception as exc:  # noqa: BLE001 - durable failed prerequisite must remain inspectable
+            except Exception as exc:
                 row.update(status="FAILED", finished_at=iso(), reason=str(exc))
                 await self._put("mkt.backfill_runs", backfill_id, row)
 
@@ -2591,7 +2452,7 @@ class MarketService:
         latest = {}
         async for row in self.repo.iter_metadata("out.reaction_checkpoints", fields, batch_size=1000):
             if not row.get("anchor") or not row.get("window_end") or not row.get("captured_at"):
-                continue  # Legacy unknown availability/window metadata is not invented.
+                continue
             key = (row["event_id"], row["token_id"], row["checkpoint"])
             if key not in latest or int(row.get("revision") or 1) > int(latest[key].get("revision") or 1):
                 latest[key] = row
@@ -2647,7 +2508,7 @@ class MarketService:
             ):
                 checked += 1
                 if checked % 200 == 0:
-                    await asyncio.sleep(0)  # after a restart, every repaired row arrives "late"
+                    await asyncio.sleep(0)
                 stamp = parse_time(row[semantic_field]) + timedelta(seconds=offset)
                 arrival = parse_time(row["recorded_at"])
                 source_token = row.get("token_id") or self.instruments.get(row.get("instrument_id"), {}).get(
@@ -2676,7 +2537,6 @@ class MarketService:
                     target["highwater"] = (
                         max(target["highwater"], arrival) if target["highwater"] else arrival
                     )
-                    # Earliest market time touched: windows ending before it are unchanged.
                     target["market_from"] = (
                         min(target["market_from"], stamp) if target["market_from"] else stamp
                     )
@@ -2708,8 +2568,6 @@ class MarketService:
 
     async def capture_readiness(self, event_id, token_id, *, anchor=None):
         if anchor is not None:
-            # Same deterministic primary key as schedule: exact anchor cannot inherit
-            # a completed obligation for a previous version of the event time.
             backfill_id = "BF-" + sha256({"event_id": event_id, "token_id": token_id, "anchor": iso(anchor)})
             row = await self.repo.get("mkt.backfill_runs", backfill_id)
             if (
@@ -2775,7 +2633,7 @@ class MarketService:
         await self._sync_streams()
 
     async def _record_capture_tier(self, token_id, tier, reason):
-        from .supply import supply_cadences
+        from tank.market.supply import supply_cadences
 
         cadences = {
             "oi_funding_s": float(
@@ -2885,7 +2743,7 @@ class MarketService:
         else:
             return {"second_path_confirmed": False, "second_path_reason": "NO_LISTED_SECOND_PATH"}
         bid, ask = raw["bids"][0][0], raw["asks"][0][0]
-        ts = iso()  # neither listed snapshot carries a clock
+        ts = iso()
         await self._raw(instrument, "independent_rest_book", raw)
         bid, ask = norm.decimal(bid), norm.decimal(ask)
         if bid <= 0 or ask <= bid:
@@ -2959,7 +2817,7 @@ class MarketService:
         ]
 
     async def _capture_metadata(self, token_id, cutoff):
-        from .supply import supply_cadences
+        from tank.market.supply import supply_cadences
 
         end = parse_time(cutoff)
         history = [
@@ -3035,7 +2893,6 @@ class MarketService:
                 "flow_bars": {"cadence_s": 60, "basis": "ONE_MINUTE_CLOSED_FLOW_BAR"},
                 "klines": {
                     "cadence_s": base,
-                    # End of the last successful poll at or before the cutoff, per instrument.
                     "observed_through": {
                         iid: max(at for at in polls if parse_time(at) <= end)
                         for iid, polls in self._klines_polled.items()
@@ -3050,8 +2907,6 @@ class MarketService:
                 "oi": {
                     "cadence_s": oi if tier != "UNKNOWN" else None,
                     "reason": "CAPTURE_TIER_HISTORY_UNAVAILABLE" if tier == "UNKNOWN" else None,
-                    # Series a source publishes only in 5-min buckets cannot be faster than
-                    # the bucket (03 §5.4: Bybit singleOpenInterest, never openInterest).
                     "cadence_s_by_metric": {
                         metric: max(oi, SOURCE_BUCKET_S) if oi is not None and tier != "UNKNOWN" else None
                         for metric in SOURCE_BUCKETED_OI
@@ -3222,8 +3077,6 @@ class MarketService:
             "interval_s",
             "c" if kind == "price" else "volume_native",
         ]
-        # One round trip, reused while nothing was written to the series since: 52
-        # conditions a minute each asked for the same three heads (r117 E2E #9).
         heads = (
             []
             if captured_rows is not None
@@ -3233,14 +3086,7 @@ class MarketService:
         )
         cache = self.__dict__.setdefault("_condition_series", {})
         locks = self.__dict__.setdefault("_condition_series_locks", {})
-        # Concurrent historical checkpoints must not evict each other's rolling
-        # cursor and repeatedly reload the same history. Live conditions retain
-        # their incremental cursor; fixed snapshots have their own bounded keys.
         key = (iid, kind, rolling) if rolling else (iid, kind, start, cutoff) if fixed_window else (iid, kind)
-        # A shared cursor holds SERIES_MARGIN of history before the window it was read
-        # for, and keeps every bar it has read up to its latest cutoff: a reaction
-        # checkpoint a few minutes behind the live snapshots is served from the same
-        # cursor instead of rebuilding 90 days of minutes (r113 E2E #5).
         margin = SERIES_MARGIN if rolling or not fixed_window else timedelta(0)
         async with locks.setdefault(key, asyncio.Lock()):
             previous = cache.get(key)
@@ -3257,10 +3103,6 @@ class MarketService:
                 and parse_time(assembled_at) < parse_time(previous["assembled_at"])
             )
             if behind:
-                # An assembly clock older than the cursor's: a reaction capture keeps the
-                # clock it started with while live snapshots advance it, and a rebuild per
-                # switch was most of the loop on r117. The cursor serves it as it stands
-                # when nothing in its range was recorded between the two clocks.
                 reset = upper_open > previous["upper_open"] or await self._klines_recorded_between(
                     iid, assembled_at, previous["assembled_at"], previous["upper_open"]
                 )
@@ -3325,7 +3167,6 @@ class MarketService:
                     if row.get("recorded_at") is None or parse_time(row["recorded_at"]) <= availability:
                         apply(row)
             elif reset:
-                # Decoded pages are applied in a worker thread: the loop only awaits SQL.
                 page = []
                 async for row in self.repo.iter_market_projection(
                     "mkt.klines_1m",
@@ -3335,7 +3176,6 @@ class MarketService:
                     end=upper_open + timedelta(microseconds=1),
                     instrument_ids=[iid],
                     assembled_at=assembled_at,
-                    # One page: every keyset page re-sorts the rest of the range.
                     batch_size=200000,
                 ):
                     page.append(row)
@@ -3370,7 +3210,6 @@ class MarketService:
                 ):
                     apply(row)
             if margin and start - margin > state_start + SERIES_TRIM:
-                # The window moved a day past the cursor: drop what no later window reads.
                 drop = bisect_left(times, microseconds(start - margin))
                 state_start = start - margin
                 times, values = times[drop:], values[drop:]
@@ -3378,9 +3217,6 @@ class MarketService:
 
             def state_digest():
                 if reset:
-                    # The whole content of a freshly read cursor, hashed without
-                    # per-point JSON (canonical JSON of 90 days of minutes took
-                    # ~4% of the loop on r113).
                     digest = hashlib.sha256(repr((kind, iid, state_start, state_upper)).encode())
                     digest.update(times.tobytes())
                     digest.update(values.tobytes() if kind == "price" else json.dumps(values).encode())
@@ -3704,8 +3540,6 @@ class MarketService:
         result["tickers"] = await self.repo.latest_market_records(
             "mkt.tickers_24h", cutoff=end, assembled_at=assembled, filters={"token_id": token_id}
         )
-        # Only the recent target OHLC/volume fields are materialized. Historical
-        # statistical prices and native quantities are compact typed vectors.
         result["klines"] = []
         recent_fields = [
             "instrument_id",
@@ -3827,8 +3661,6 @@ class MarketService:
                 self.settings.code_version,
             ]
         )
-        # Runtime confidence still needs actual target registry identities;
-        # comparator identities are added only for statistical source lookup.
         result["instruments"] = target + [i for i in selected if i not in target]
         heads["relative"] = sha256(
             [
@@ -4049,8 +3881,6 @@ class MarketService:
             if duration and duration > 0:
                 durations.append(duration)
         if any(r["metric"] in ("mt.move_class", "mt.divergence_state") for r in requirements):
-            # The complete graph subsumes primitive inputs; do not issue a second
-            # independent history load for a mixed condition requirement batch.
             domains = {"composite"}
         instruments = [i for i in self.instruments.values() if i["token_id"] == token_id]
         spot = [i for i in instruments if i["market_type"] == "SPOT"]
@@ -4332,7 +4162,6 @@ class MarketService:
                             order=order,
                         )
                     )
-            # Benchmark and sector comparator klines are actual full-assessment dependencies.
             peers = [
                 i["instrument_id"]
                 for i in self.instruments.values()
@@ -4390,7 +4219,6 @@ class MarketService:
             return await self.repo.market_series_counts(instrument_ids, start, cutoff, assembled)
         cache = self._kline_day_counts
         days = [first + timedelta(days=n) for n in range((last - first).days)]
-        # Read the cache before any await: an archive import evicts a recounted day meanwhile.
         counts = {
             (iid, day): cache[iid, day] for day in days for iid in instrument_ids if (iid, day) in cache
         }
@@ -4433,7 +4261,6 @@ class MarketService:
             self.repo, parse_time(saved["saved_at"]) - DAY_COUNTS_MARGIN, today
         )
         loaded = 0
-        # No await from the query to here: a write landing after it evicts what is set now.
         for iid, day, count in saved["counts"]:
             key = (iid, parse_time(day))
             if key[1] < today and key not in changed and key not in self._kline_day_counts:
@@ -4468,7 +4295,7 @@ class MarketService:
         a previous process saved are reused first."""
         try:
             log.info("series counts restored: %d past days", await self._load_day_counts())
-        except Exception as exc:  # noqa: BLE001 - the warm-up below counts what is missing
+        except Exception as exc:
             log.warning("series count restore failed: %s", type(exc).__name__)
         spot = [iid for iid, inst in self.instruments.items() if norm.venue_key(inst).endswith(".spot")]
         end = utcnow()
@@ -4477,7 +4304,7 @@ class MarketService:
                 return
             try:
                 await self._series_counts(spot[offset : offset + 4], end - timedelta(days=90), end, iso())
-            except Exception as exc:  # noqa: BLE001 - a later snapshot counts what is missing
+            except Exception as exc:
                 log.warning("series count warm-up failed: %s", type(exc).__name__)
                 return
             await asyncio.sleep(1)
@@ -4508,8 +4335,6 @@ class MarketService:
         if sliced is not None:
             return sliced
         if books:
-            # Levels only for the newest BOOK_LEVEL_ROWS rows and the newest checked one: in
-            # the query on PostgreSQL, by stripping after decode in memory.
             return await market_range_by_instrument(
                 self.repo,
                 collection,
@@ -4522,7 +4347,6 @@ class MarketService:
                 keep=None if hasattr(self.repo, "_conn") else book_level_keeper(),
                 level_rows=BOOK_LEVEL_ROWS if hasattr(self.repo, "_conn") else None,
             )
-        # Wide rows (ticker field_sources) in small pages: one fetchall decodes a page.
         page = WIDE_PAGE_ROWS if collection == "mkt.tickers_24h" else 1000
         return await market_range_by_instrument(
             self.repo, collection, field, ids, start, end, filters, batch_size=page
@@ -4606,8 +4430,6 @@ class MarketService:
         bars, klines, OI, funding and liquidations from 2 x the event window before the cutoff
         (previous-window comparisons), books over the last 24 h and the hour before the anchor,
         and tickers only around the window bounds (see the scope branches below)."""
-        # Strings passed to this API select an analysis boundary. Timestamp
-        # callers preserve the uncertainty of an event-derived schedule.
         requested = cutoff if isinstance(cutoff, Timestamp) else chosen_boundary(cutoff, precision="EXACT")
         if requested.value is None:
             raise ValueError("Snapshot requires a cutoff value")
@@ -4636,11 +4458,6 @@ class MarketService:
             )
             bounded = {"books": bounds, "tickers": bounds}
         elif scope is None:
-            # Market Truth reads books over the last 24 h (W24H liquidity: hit-side depth,
-            # bursts and replenishment around every flow bar) and the hour before the anchor
-            # (pre-event depth); the latest ticker at or before each window bound and previous-
-            # window bound (spot coverage estimate) and the marks next to the OI points at the
-            # window bounds (03 §5.4 USD endpoints). Nothing else of two days of books/tickers.
             from tank.analysis.truth import WINDOWS
 
             lower = cutoff_dt - timedelta(days=1)
@@ -4683,16 +4500,12 @@ class MarketService:
         ids = {r["instrument_id"] for r in instruments}
         self._register_capture_boundaries(ids, cutoff, anchor)
         await self._flush_flow(allow_recovery=False)
-        # Callers can hold a DB connection (a job lock) that a running flush is waiting for:
-        # never queue behind it; that flush already carries the pending rows it took.
         if not self._market_flush_lock.locked():
             await self.flush_market()
         result["flow_segments"] = []
         result["reference_points"] = []
         for name, (collection, field) in COLLECTIONS.items():
             values = []
-            # One query per series family for all of the token's instruments (BTC: 9),
-            # split per instrument in the same order as one range read per instrument.
             if name in bounded:
                 window_rows = {iid: [] for iid in ids}
                 for low, high in bounded[name]:
@@ -4733,10 +4546,6 @@ class MarketService:
                     collection, "funding_time", ids, history_start, snapshot_end
                 )
             for iid in ids if name != "supply" else [None]:
-                # Event windows (03 §5.3-§5.5) are read in full from recent_start. Only
-                # the normal ranges reach back 90 days (03 §0): OI at the base-tier
-                # cadence (300 s, 03 §5.1), funding as its settled history; book,
-                # ticker, flow and liquidation history beyond the windows is unused.
                 if iid is None:
                     rows = await self._range(
                         collection,
@@ -4786,8 +4595,6 @@ class MarketService:
             result[name] = sorted(
                 values, key=lambda r: r.get(field) or r.get("funding_time") or r.get("settlement_time")
             )
-        # Benchmarks plus the peers Market Truth can compare against (03 §5.7): the
-        # token's sector, or the DeFi sectors when its sector has fewer than two peers.
         members = {}
         for t in self.tokens.values():
             if t.get("sector"):
@@ -4800,7 +4607,6 @@ class MarketService:
             self.tokens.get(token_id, {}).get("sector"),
         )
         same_sector = members.get(sector, set()) - {token_id} if sector != "BENCHMARK" else set()
-        # IDENTITY_PAYMENTS has no sector adjustment at all (Market Truth: not applicable).
         if len(same_sector) < 2 and sector != "IDENTITY_PAYMENTS":
             same_sector |= {
                 identity
@@ -4821,14 +4627,9 @@ class MarketService:
         } - {token_id}
         shared = _SHARED_READS.get()
         assembled = shared.setdefault("assembled", iso()) if shared is not None else iso()
-        # A live snapshot (cutoff within the last hour) extends one cursor per series;
-        # a historical cutoff reads its own fixed window.
         rolling = "LIVE_SNAPSHOT" if cutoff_dt >= utcnow() - timedelta(hours=1) else None
         captured_klines = None
         if recent_start == history_start:
-            # Long event windows already loaded every target candle used by the
-            # statistical histories. Project those same observations once more
-            # in memory instead of reading the entire history twice from SQL.
             captured_klines = {iid: [] for iid in ids}
             for row in result["klines"]:
                 captured_klines[row["instrument_id"]].append(row)
@@ -4891,8 +4692,6 @@ class MarketService:
                 rolling=rolling,
             )
             result["stat_price_series"][iid] = series
-            # Exact reference prices remain original decimal observations, not
-            # values converted back from statistical floats, even across gaps.
             wanted = set(series["times_us"][-1:])
             hourly = next((v for v in reversed(series["times_us"]) if v % 3600000000 == 0), None)
             if hourly is not None:
@@ -4936,10 +4735,6 @@ class MarketService:
             current = chosen.get(inst["token_id"])
             if current is None or counts[inst["instrument_id"]] > counts[current["instrument_id"]]:
                 chosen[inst["token_id"]] = inst
-        # Sector adjustment uses returns at the requested bounds, not a dense
-        # 90-day history for every peer. Preserve the original 90-day venue
-        # ranking, then retain the same as-of prices at those bounds. BTC/ETH
-        # keep their full histories for beta, normal ranges and market context.
         from math import isfinite
 
         boundaries = [cutoff_dt - timedelta(seconds=n) for n in (0, 900, 3600, 14400, 86400)]
@@ -4956,8 +4751,6 @@ class MarketService:
             upper_open = boundary - timedelta(minutes=1)
             if upper_open < history_start or not sector_ids:
                 continue
-            # One indexed query serves every chosen sector peer at this bound.
-            # Only an invalid observed close needs a narrower backward seek.
             pending = await self.repo.latest_market_records(
                 "mkt.klines_1m",
                 time_field="open_time",
@@ -4997,8 +4790,6 @@ class MarketService:
                 continue
             instruments.append(inst)
             if self.tokens[inst["token_id"]].get("symbol") not in {"BTC", "ETH"}:
-                # Freshness is assessed per venue, including venues not chosen
-                # for the sector return. Keep its original last observation.
                 if inst["instrument_id"] in latest_closes:
                     await retain_close(latest_closes[inst["instrument_id"]])
                 if chosen[inst["token_id"]]["instrument_id"] != inst["instrument_id"]:
@@ -5187,21 +4978,18 @@ class MarketService:
     async def _instrument_loop(self, instrument):
         iid = instrument["instrument_id"]
         deriv_due = 0
-        audit_due = time.monotonic() + 60  # after the first poll of every series
+        audit_due = time.monotonic() + 60
         while not self._stop.is_set():
             started = time.monotonic()
-            hot = instrument["token_id"] in self._hot_since  # hot set, refreshed by _sync_streams
-            # HOT tickers and derivatives run on their own 60 s schedule (_hot_context_loop).
+            hot = instrument["token_id"] in self._hot_since
             do_deriv = started >= deriv_due and not hot
             try:
                 await self.poll_once(iid, derivatives=do_deriv, ticker=not hot)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
+            except Exception as exc:
                 await self._gap(instrument, "POLL", exc)
             if time.monotonic() >= audit_due:
-                # A poll returns only the newest candles: minutes lost while this process
-                # was down or stalled are fetched back over REST (1m klines, trailing 25 h).
                 audit_due = time.monotonic() + float(self.thresholds.get("kline_audit_interval_s", 3600))
                 now = utcnow().replace(second=0, microsecond=0)
                 try:
@@ -5210,7 +4998,7 @@ class MarketService:
                     )
                 except asyncio.CancelledError:
                     raise
-                except Exception as exc:  # noqa: BLE001 - the next audit retries; the gap stays visible
+                except Exception as exc:
                     await self._gap(instrument, "KLINES_GAP", exc)
             if do_deriv:
                 deriv_due = time.monotonic() + float(self.thresholds.get("base_oi_funding_interval_s", 300))
@@ -5251,7 +5039,7 @@ class MarketService:
                     await asyncio.wait_for(self.poll_once(iid, priority=-1, **kinds), interval)
                 except asyncio.CancelledError:
                     raise
-                except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
+                except Exception as exc:
                     await self._gap(instrument, "POLL", exc)
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(
@@ -5303,16 +5091,15 @@ class MarketService:
                         break
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001 - a venue failure stays a visible historical gap
+            except Exception as exc:
                 await self._gap(inst, "HISTORICAL_OI", exc, start=iso(start), end=iso(upto))
 
     async def _bootstrap_pass(self, days):
-        from .archive import fetch_archive
+        from tank.market.archive import fetch_archive
 
         instruments = [i for i in self.instruments.values() if norm.venue_key(i).startswith("binance")]
         for age in range(1, days + 1):
             date = (utcnow() - timedelta(days=age)).date().isoformat()
-            # OI is inexpensive and needed for uncontaminated normal distributions.
             for inst in instruments:
                 if self._stop is not None and self._stop.is_set():
                     return
@@ -5331,7 +5118,7 @@ class MarketService:
                         )
                     except asyncio.CancelledError:
                         raise
-                    except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
+                    except Exception as exc:
                         await self._gap(
                             inst,
                             "HISTORICAL_" + kind.upper(),
@@ -5341,7 +5128,7 @@ class MarketService:
                         )
 
     async def _supply_loop(self):
-        from .supply import SUPPLY_LOOP_SLEEP_S, SupplyCapture
+        from tank.market.supply import SUPPLY_LOOP_SLEEP_S, SupplyCapture
 
         capture = SupplyCapture(self)
         while not self._stop.is_set():
@@ -5350,7 +5137,7 @@ class MarketService:
                 await capture.poll(hot)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
+            except Exception as exc:
                 log.warning("supply capture failed: %s", type(exc).__name__)
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), SUPPLY_LOOP_SLEEP_S)
@@ -5361,7 +5148,7 @@ class MarketService:
             try:
                 result = await self.repair_windows(token_id, start, end)
                 log.info("startup repair %s: %s", token_id, result)
-            except Exception as exc:  # noqa: BLE001 - one token's repair failure leaves explicit gaps
+            except Exception as exc:
                 log.warning("startup repair %s failed: %s", token_id, type(exc).__name__)
 
     async def run(self, stop):
@@ -5388,8 +5175,6 @@ class MarketService:
                 span = earliest.setdefault(hot["token_id"], [at - WINDOW_BEFORE, at + WINDOW_AFTER])
                 span[0], span[1] = min(span[0], at - WINDOW_BEFORE), max(span[1], at + WINDOW_AFTER)
             if earliest:
-                # A restart is a reconnect (03 §5.2 step 2): repair each hot token's windows
-                # from the last persisted print up to this start; streams cover from here on.
                 repairs = [
                     (token_id, start, iso(min(parse_time(started), end)))
                     for token_id, (start, end) in earliest.items()
@@ -5429,8 +5214,6 @@ class MarketService:
                 task.cancel()
             await asyncio.gather(*workers, *self.streams.values(), *self._background, return_exceptions=True)
             self.streams.clear()
-            # Supervisors reuse this instance after transient failures. Only
-            # the owner calls close() when the service lifetime actually ends.
             self._background.clear()
             self._stream_groups.clear()
             self._stream_controls.clear()

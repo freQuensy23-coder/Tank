@@ -9,14 +9,15 @@ Read-only. Targets:
 
 Usage: python3 latency.py --since 2026-10-21T00:00:00Z --until 2026-10-24T00:00:00Z --out DIR
 """
+
 import argparse
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import json  # noqa: E402
+import json
 
-from common import iso, parse, query, seconds, summary, utcnow, write_json  # noqa: E402
+from common import iso, parse, query, seconds, summary, utcnow, write_json
 
 MAJOR_PLUS = ("MAJOR", "STRUCTURAL_SHOCK")
 
@@ -89,8 +90,10 @@ def fixture_windows(path):
 
 
 def overlaps(start, end, windows):
-    return any(start is not None and end is not None and parse(start) < parse(b) and parse(a) < parse(end)
-               for a, b in windows)
+    return any(
+        start is not None and end is not None and parse(start) < parse(b) and parse(a) < parse(end)
+        for a, b in windows
+    )
 
 
 def measure(since, until, windows=()):
@@ -107,52 +110,87 @@ def measure(since, until, windows=()):
         elif it["route_decision"] == "NEW_SESSION" and it["recorded_at"]:
             lat, path = seconds(it["recorded_at"], it["observed_at"]), "NEW_SESSION"
         elif it["route_decision"] == "NEW_SESSION" and it["session_status"] in ("ENDED", "FAILED"):
-            dismissed.append({"item_id": it["item_id"], "source_id": it["source_id"],
-                              "verdict_s": seconds(it["last_tool_at"], it["observed_at"]),
-                              "session_status": it["session_status"]})
+            dismissed.append(
+                {
+                    "item_id": it["item_id"],
+                    "source_id": it["source_id"],
+                    "verdict_s": seconds(it["last_tool_at"], it["observed_at"]),
+                    "session_status": it["session_status"],
+                }
+            )
             continue
         else:
-            pending.append({"item_id": it["item_id"], "source_id": it["source_id"],
-                            "route_decision": it["route_decision"], "session_status": it["session_status"],
-                            "filter_s": seconds(it["filtered_at"], it["observed_at"]),
-                            "age_s": seconds(until, it["observed_at"])})
+            pending.append(
+                {
+                    "item_id": it["item_id"],
+                    "source_id": it["source_id"],
+                    "route_decision": it["route_decision"],
+                    "session_status": it["session_status"],
+                    "filter_s": seconds(it["filtered_at"], it["observed_at"]),
+                    "age_s": seconds(until, it["observed_at"]),
+                }
+            )
             continue
         event_lat.append(lat)
-        item_rows.append({"item_id": it["item_id"], "source_id": it["source_id"], "path": path,
-                          "during_fixture": overlaps(it["observed_at"], it["recorded_at"] or it["routed_at"], windows),
-                          "observed_at": it["observed_at"], "seconds": lat,
-                          "filter_s": seconds(it["filtered_at"], it["observed_at"]),
-                          "route_s": seconds(it["routed_at"], it["observed_at"])})
+        item_rows.append(
+            {
+                "item_id": it["item_id"],
+                "source_id": it["source_id"],
+                "path": path,
+                "during_fixture": overlaps(it["observed_at"], it["recorded_at"] or it["routed_at"], windows),
+                "observed_at": it["observed_at"],
+                "seconds": lat,
+                "filter_s": seconds(it["filtered_at"], it["observed_at"]),
+                "route_s": seconds(it["routed_at"], it["observed_at"]),
+            }
+        )
 
     structural, major = [], []
     for ev in events:
         classes = set(ev["classes"] or [])
-        row = {"event_id": ev["event_id"], "known_to_us_at": ev["known_to_us_at"], "classes": sorted(classes),
-               "first_card_generated_s": seconds(ev["first_alert_at"], ev["known_to_us_at"]),
-               "first_card_sent_s": seconds(ev["first_sent_at"], ev["known_to_us_at"]),
-               "full_card_generated_s": seconds(ev["first_full_at"], ev["known_to_us_at"]),
-               "full_card_sent_s": seconds(ev["first_full_sent_at"], ev["known_to_us_at"])}
+        row = {
+            "event_id": ev["event_id"],
+            "known_to_us_at": ev["known_to_us_at"],
+            "classes": sorted(classes),
+            "first_card_generated_s": seconds(ev["first_alert_at"], ev["known_to_us_at"]),
+            "first_card_sent_s": seconds(ev["first_sent_at"], ev["known_to_us_at"]),
+            "full_card_generated_s": seconds(ev["first_full_at"], ev["known_to_us_at"]),
+            "full_card_sent_s": seconds(ev["first_full_sent_at"], ev["known_to_us_at"]),
+        }
         if "STRUCTURAL_SHOCK" in classes:
             structural.append(row)
         if classes & set(MAJOR_PLUS):
             major.append(row)
 
-    cond_rows = [{**c, "update_s": seconds(c["update_at"], c["fired_at"]),
-                  "session_idle_at_fire": c["turns_running_at_fire"] == 0} for c in conditions]
+    cond_rows = [
+        {
+            **c,
+            "update_s": seconds(c["update_at"], c["fired_at"]),
+            "session_idle_at_fire": c["turns_running_at_fire"] == 0,
+        }
+        for c in conditions
+    ]
     idle = [c for c in cond_rows if c["session_idle_at_fire"]]
     deliveries = [{**a, "delivery_s": seconds(a["sent_at"], a["generated_at"])} for a in alerts]
 
     metrics = {
         "item_to_event": summary(event_lat, 90, "p95"),
-        "item_to_event_without_fixture_load": summary([r["seconds"] for r in item_rows if not r["during_fixture"]], 90, "p95"),
-        # Items without an event yet count with their age at the window end: a lower bound, never hidden.
-        "item_to_event_with_pending_lower_bound": summary(event_lat + [p["age_s"] for p in pending], 90, "p95"),
-        "structural_first_card_generated": summary([r["first_card_generated_s"] for r in structural], 180, "max"),
+        "item_to_event_without_fixture_load": summary(
+            [r["seconds"] for r in item_rows if not r["during_fixture"]], 90, "p95"
+        ),
+        "item_to_event_with_pending_lower_bound": summary(
+            event_lat + [p["age_s"] for p in pending], 90, "p95"
+        ),
+        "structural_first_card_generated": summary(
+            [r["first_card_generated_s"] for r in structural], 180, "max"
+        ),
         "structural_first_card_sent": summary([r["first_card_sent_s"] for r in structural], 190, "max"),
         "major_full_card_generated": summary([r["full_card_generated_s"] for r in major], 480, "max"),
         "major_full_card_sent": summary([r["full_card_sent_s"] for r in major], 490, "max"),
         "update_after_condition_idle": summary([c["update_s"] for c in idle], 60, "max"),
-        "update_after_condition_busy": summary([c["update_s"] for c in cond_rows if not c["session_idle_at_fire"]]),
+        "update_after_condition_busy": summary(
+            [c["update_s"] for c in cond_rows if not c["session_idle_at_fire"]]
+        ),
         "delivery_after_generation": summary([d["delivery_s"] for d in deliveries], 10, "max"),
     }
     return {
@@ -160,26 +198,46 @@ def measure(since, until, windows=()):
         "computed_at": iso(utcnow()),
         "definitions": __doc__.strip().splitlines()[2:8],
         "metrics": metrics,
-        "items_dismissed_by_agent": {"count": len(dismissed), "verdict": summary([d["verdict_s"] for d in dismissed])},
+        "items_dismissed_by_agent": {
+            "count": len(dismissed),
+            "verdict": summary([d["verdict_s"] for d in dismissed]),
+        },
         "items_pending_or_unrouted": len(pending),
-        "rows": {"items": item_rows, "dismissed": dismissed, "pending": pending, "structural": structural,
-                 "major": major, "conditions": cond_rows, "deliveries": deliveries},
+        "rows": {
+            "items": item_rows,
+            "dismissed": dismissed,
+            "pending": pending,
+            "structural": structural,
+            "major": major,
+            "conditions": cond_rows,
+            "deliveries": deliveries,
+        },
     }
 
 
 def render(result):
-    lines = [f"# Tank speed — {result['window']['since']} → {result['window']['until']}", "",
-             "| Metric | n | measured | median s | p95 s | max s | target s | status |",
-             "|---|---:|---:|---:|---:|---:|---:|---|"]
+    lines = [
+        f"# Tank speed — {result['window']['since']} → {result['window']['until']}",
+        "",
+        "| Metric | n | measured | median s | p95 s | max s | target s | status |",
+        "|---|---:|---:|---:|---:|---:|---:|---|",
+    ]
     for name, m in result["metrics"].items():
+
         def f(v):
             return "—" if v is None else f"{v:.1f}"
-        lines.append(f"| {name} | {m['n']} | {m['measured']} | {f(m['median'])} | {f(m['p95'])} | {f(m['max'])} | "
-                     f"{m.get('target_s') or '—'} ({m['statistic']}) | {m.get('status', '—')} |")
-    lines += ["", f"Items dismissed by the agent (no event): {result['items_dismissed_by_agent']['count']}; "
-              f"still pending/unrouted at computation: {result['items_pending_or_unrouted']}.",
-              "Card latencies use `out.alerts.generated_at` and the first SENT row of `out.deliveries`;"
-              " `sent` targets add the 10 s delivery budget."]
+
+        lines.append(
+            f"| {name} | {m['n']} | {m['measured']} | {f(m['median'])} | {f(m['p95'])} | {f(m['max'])} | "
+            f"{m.get('target_s') or '—'} ({m['statistic']}) | {m.get('status', '—')} |"
+        )
+    lines += [
+        "",
+        f"Items dismissed by the agent (no event): {result['items_dismissed_by_agent']['count']}; "
+        f"still pending/unrouted at computation: {result['items_pending_or_unrouted']}.",
+        "Card latencies use `out.alerts.generated_at` and the first SENT row of `out.deliveries`;"
+        " `sent` targets add the 10 s delivery budget.",
+    ]
     return "\n".join(lines) + "\n"
 
 

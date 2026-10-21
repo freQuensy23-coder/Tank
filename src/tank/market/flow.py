@@ -4,10 +4,9 @@ from datetime import timedelta
 from decimal import Decimal as D
 from itertools import pairwise
 
+from tank.market.normalize import precise, timestamp_fields
 from tank.time_precision import collection_clock, propagate_timestamp
 from tank.util import iso, jsonable, parse_time
-
-from .normalize import precise, timestamp_fields
 
 
 class FlowAccumulator:
@@ -18,7 +17,6 @@ class FlowAccumulator:
         self.boundaries = {}
         self.references = {}
         self.coverage_ranges = {}
-        # Bars changed since the service last recorded them.
         self.dirty = set()
 
     def prove_range(self, instrument_id, start, end, *, complete, source, reason=None, observed_at=None):
@@ -354,8 +352,6 @@ class FlowAccumulator:
                 )
                 record["boundary_segments"].append(segment)
             record["reference_points"] = []
-            # Nonempty complete bars already carry their exact last print.
-            # A proved quiet minute needs its prior actual print at the close.
             for boundary in sorted(set(points) | ({end} if bar.get("last_trade") is None else set())):
                 explicit = self.references.get((key[0], iso(boundary)))
                 last_trade = max(

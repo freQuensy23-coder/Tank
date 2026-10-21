@@ -1,12 +1,10 @@
 """Selective producer reads must not flush capture or load unrelated histories."""
 
-# ruff: noqa: F811
 from datetime import timedelta
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
-from test_market_service import setup  # noqa: F401
 
 from tank.market.service import MarketService
 from tank.util import iso, utcnow
@@ -455,7 +453,7 @@ async def test_compact_kline_vectors_preserve_native_precision_and_prove_append_
         )
         assert appended["append_only"] is True
         assert appended["previous_dependency_fingerprint"] == first["dependency_fingerprint"]
-        assert first["values"] == [quantity, "2"]  # prior in-flight snapshot remains frozen
+        assert first["values"] == [quantity, "2"]
         await repo.put_market_batch("mkt.klines_1m", [row(0, "4")], keys=["first"])
         corrected = await service._condition_kline_series(
             inst, start, cutoff + timedelta(minutes=1), iso(), kind="volume", coverage_count=2
@@ -561,7 +559,6 @@ async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereadi
                 fixed_window=True,
                 rolling="LIVE_SNAPSHOT",
             )
-            # A reaction checkpoint ten minutes behind, with a window starting earlier.
             behind = await service._condition_kline_series(
                 inst,
                 start + timedelta(minutes=2),
@@ -600,7 +597,7 @@ async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereadi
                 fixed_window=True,
                 rolling="LIVE_SNAPSHOT",
             )
-            assert len(reads) == 2 and reads[1] > start + timedelta(minutes=20)  # only the new minutes
+            assert len(reads) == 2 and reads[1] > start + timedelta(minutes=20)
             assert later["append_only"] is True
             assert later["previous_dependency_fingerprint"] == corrected["dependency_fingerprint"]
             repo.iter_market_projection = original
@@ -658,22 +655,21 @@ async def test_rolling_kline_cursor_serves_an_older_assembly_clock_unless_a_row_
     async with httpx.AsyncClient() as http:
         service = MarketService(repo, settings, http=http)
         repo.iter_market_projection = projection
-        older = iso(utcnow() - timedelta(minutes=10))  # a reaction capture's clock
-        await series(service, iso())  # live: the cursor's clock is now
+        older = iso(utcnow() - timedelta(minutes=10))
+        await series(service, iso())
         behind = await series(service, older)
-        assert len(reads) == 1  # served by the cursor
+        assert len(reads) == 1
         repo.iter_market_projection = original
         async with httpx.AsyncClient() as other:
             assert list(behind["values"]) == list(
                 (await series(MarketService(repo, settings, http=other), older))["values"]
             )
         repo.iter_market_projection = projection
-        # A correction recorded after the older clock: that clock must not see it.
         await repo.put_market_batch("mkt.klines_1m", [row(5, "99", iso())], keys=["k5"])
         await series(service, iso(), cutoff=16)
         reads.clear()
         rebuilt = await series(service, older)
-        assert reads  # rebuilt for the older clock
+        assert reads
         assert 99.0 not in list(rebuilt["values"])
         repo.iter_market_projection = original
         async with httpx.AsyncClient() as other:

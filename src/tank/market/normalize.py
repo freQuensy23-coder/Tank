@@ -1,9 +1,7 @@
 """Strict exchange normalization. Missing semantic fields are errors, never estimates."""
 
-from __future__ import annotations
-
 from bisect import bisect_right
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal, localcontext
 from functools import wraps
 from inspect import iscoroutinefunction
@@ -21,13 +19,9 @@ def timestamp_fields(field, value, precision, *, bucket_size=None):
     ).fields(field)
 
 
-# Quote asset -> ((as_of, rate), ...) ascending: the stablecoin USD samples the service
-# fetched or restored. A print or bucket is valued with the latest sample at or before
-# its time, never a later one; a REST backfill or a late print keeps its USD value
-# (r116 E2E #8: 2463 BTC spot bars lost their notional to a newer live sample).
-QUOTE_USD_HISTORY = {}
-QUOTE_USD_REACH = timedelta(days=4)  # samples kept: beyond every repair window
-QUOTE_USD_MAX_AGE = timedelta(hours=6)  # an older sample values nothing
+QUOTE_USD_HISTORY: dict[str, tuple[tuple[datetime, str], ...]] = {}
+QUOTE_USD_REACH = timedelta(days=4)
+QUOTE_USD_MAX_AGE = timedelta(hours=6)
 
 
 def remember_quote_usd(quote, samples):
@@ -37,7 +31,6 @@ def remember_quote_usd(quote, samples):
     if not merged:
         return
     newest = max(merged)
-    # A new tuple each time: worker threads may be reading the previous one.
     QUOTE_USD_HISTORY[quote] = tuple(
         sorted(item for item in merged.items() if item[0] >= newest - QUOTE_USD_REACH)
     )
@@ -181,7 +174,6 @@ def trade(instrument, raw, *, received_ts=None, source="WS"):
     if qty <= 0 or price <= 0:
         raise SemanticError("nonpositive trade")
     quote = instrument.get("quote_asset", "").upper()
-    # Stablecoin quote units are retained as quote units, never silently called USD.
     fx, _ = quote_usd_rate(instrument, ts)
     usd = qty * price * decimal(fx) if fx is not None else None
     return jsonable(
@@ -284,7 +276,6 @@ def kline(instrument, row, *, now=None):
     for name in ("quote_volume", "n_trades", "taker_buy_native", "taker_buy_quote"):
         result[name] = extra.get(name)
     quote = result.get("quote_volume")
-    # A historical bucket is valued as of its close, never with a later live FX sample.
     fx, fx_asof = quote_usd_rate(instrument, parse_time(ts) + timedelta(minutes=1))
     result.update(
         quote_asset=instrument.get("quote_asset"),
@@ -333,8 +324,6 @@ def oi(instrument, raw, *, mark=None, mark_ts=None, mark_ts_prec=None, received_
     if ts is None:
         raise SemanticError("OI source timestamp absent")
     bucketed = "Hist" in metric
-    # Bybit historical OI is a timestamped stock sample; intervalTime is
-    # request sampling cadence, not an aggregation window or unknown edge.
     if bucketed or key == "bybit.linear":
         allowed = (
             {300, 900, 1800, 3600, 14400, 86400}
@@ -463,7 +452,6 @@ def liquidation(instrument, raw, *, received_ts=None):
         ts = x["T"]
         coverage = "SAMPLED"
     elif key == "bybit.linear":
-        # Bybit S identifies the liquidated position, unlike Binance order side.
         if raw.get("S") not in ("Buy", "Sell"):
             raise SemanticError("unknown Bybit liquidated position side")
         side = "LONG_LIQ" if raw["S"] == "Buy" else "SHORT_LIQ"

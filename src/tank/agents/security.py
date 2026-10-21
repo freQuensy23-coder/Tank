@@ -22,8 +22,6 @@ def redact_tool_arguments(arguments, settings):
         for key, value in configured.items()
         if _SECRET_SETTING.search(key) and isinstance(value, str) and value
     }
-    # DSNs are configuration values too. Extract only their authentication
-    # components so a password copied into other arguments is also removed.
     for key, value in configured.items():
         if key.endswith("_url") and isinstance(value, str):
             try:
@@ -55,8 +53,6 @@ def redact_tool_arguments(arguments, settings):
             found = True
             return match.group(1) + _REDACTED + "@"
 
-        # Match embedded HTTP URLs and database DSNs, including query-text
-        # arguments rather than only strings consisting of one URL.
         clean = re.sub(r"([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\s?#@]+@", hide_userinfo, value)
         try:
             parts = urlsplit(clean)
@@ -70,7 +66,6 @@ def redact_tool_arguments(arguments, settings):
                     clean = urlunsplit(parts._replace(query=urlencode(pairs)))
                     found = True
         except ValueError:
-            # A malformed URL still goes through known-secret scrubbing below.
             pass
         secret_forms = {
             form for secret in secrets for form in (secret, quote(secret, safe=""), quote_plus(secret))

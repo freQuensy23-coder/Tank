@@ -193,7 +193,7 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case):
                     event = await repo.get("evt.events", eid)
                     assert event["lifecycle"] == "MONITORING"
                     assert event["monitoring_at_prec"] == "COLLECTION_ONLY"
-                    assert "thresholds" not in event  # Publication context is not event state.
+                    assert "thresholds" not in event
                     assert not await repo.list("out.alerts")
                     assert not await repo.list("ops.jobs", filters={"type": "DELIVER"})
             last = (await repo.get("ops.tool_calls", "s:tool-" + str(count)))["remote_event_id"]
@@ -214,8 +214,6 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case):
             )
 
 
-
-
 @pytest.mark.parametrize(
     "tools", [[], ["publish_card"], ["get_decision", "publish_card", "set_beneficiaries", "set_assessment"]]
 )
@@ -227,7 +225,6 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
     repo = MemoryRepository()
     session = await seeded(repo)
     session["message_log"][0]["payload"] = {"kind": "NEW_ITEM", "item_id": "item"}
-    # A historical failed playbook proof must not keep enforcing the old order.
     session["message_log"][0]["workflow_completion_verified"] = {
         "valid": False,
         "reason": "MISSING_CAUSAL_TURN_MARKET_TRUTH",
@@ -259,7 +256,6 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         service = SessionService(repo, config(), dispatch, http=client)
 
-        # Provenance is irrelevant to this fixture's harmless fake dispatcher.
         async def hydrate(session):
             pass
 
@@ -282,7 +278,7 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
         current = await repo.get("ops.agent_sessions", "s")
         assert current["status"] == "OPEN" and current["message_log"][0]["turn_status"] == "DONE"
         assert current["message_log"][0]["retry_count"] == 0
-        assert len(posts) == len(tools)  # Only original durable custom-tool results.
+        assert len(posts) == len(tools)
         assert not current.get("host_analysis_outcomes")
         assert "workflow_completion_verified" not in current["message_log"][0]
         assert current["message_log"][0]["legacy_workflow_completion_verified"] == {
@@ -293,7 +289,6 @@ async def test_native_idle_accepts_agent_chosen_order_without_semantic_retry(too
         for _ in range(3):
             assert (await service.completed_turn("s"))["complete"]
         assert not reads and len(posts) == len(tools)
-        # Genuine process errors retain the once-only retry and terminal failure.
         await service.process_event(
             "s",
             {

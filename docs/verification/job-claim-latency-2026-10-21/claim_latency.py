@@ -76,13 +76,20 @@ async def main():
     await asyncio.gather(*tasks, return_exceptions=True)
     await repo.close()
     latencies.sort()
-    print(json.dumps({
-        "rounds": len(latencies),
-        "p50_s": round(statistics.median(latencies), 3),
-        "p90_s": round(latencies[int(0.9 * len(latencies)) - 1], 3),
-        "max_s": round(latencies[-1], 3),
-        "stall_s": args.stall, "period_s": args.period, "holders": args.holders, "hold_s": args.hold,
-    }))
+    print(
+        json.dumps(
+            {
+                "rounds": len(latencies),
+                "p50_s": round(statistics.median(latencies), 3),
+                "p90_s": round(latencies[int(0.9 * len(latencies)) - 1], 3),
+                "max_s": round(latencies[-1], 3),
+                "stall_s": args.stall,
+                "period_s": args.period,
+                "holders": args.holders,
+                "hold_s": args.hold,
+            }
+        )
+    )
 
 
 asyncio.run(main())

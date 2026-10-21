@@ -78,7 +78,6 @@ async def test_archive_checksum_rejected_and_durable_hour_retry(tmp_path):
 
     from tank.market.archive import fetch_archive
     from tank.storage import MemoryRepository
-    from tank.util import parse_time
 
     payload, _ = zipped("1767225600000000,1,1,1,1,1,1767225659999999,1,1,1,1\n")
     downloads = []
@@ -114,7 +113,6 @@ async def test_archive_checksum_rejected_and_durable_hour_retry(tmp_path):
     async with httpx.AsyncClient(transport=httpx.MockTransport(response)) as client:
         with pytest.raises(ArchiveIntegrityError):
             await fetch_archive(repo, settings, "BTCUSDT", "2026-01-01", http=client)
-        # No retry record anywhere: nothing was imported, so the next pass fetches again.
         assert not await repo.list("qa.reviews")
         assert not (tmp_path / "archive").exists() or not list((tmp_path / "archive").rglob("*.zip"))
         with pytest.raises(ArchiveIntegrityError):
@@ -180,8 +178,7 @@ def test_aggtrade_window_keeps_file_continuity_and_returns_only_its_rows():
         b, c, filename="test.zip", kind="aggTrades", window=("2026-01-01T00:01:00Z", "2026-01-01T00:02:00Z")
     )
     assert r["complete"] and r["rows_in_file"] == 6 and r["header"][0] == "agg_trade_id"
-    assert [row[:2] for row in r["rows"]] == [["2", "1.50"], ["3", "1.50"]]  # exact file text
-    # A gap outside the window still leaves the file unverified.
+    assert [row[:2] for row in r["rows"]] == [["2", "1.50"], ["3", "1.50"]]
     b, c = zipped(header + rows.replace("4,1.50", "5,1.50"))
     window = ("2026-01-01T00:00:00Z", "2026-01-01T00:01:00Z")
     gapped = verify_binance_zip(b, c, filename="test.zip", kind="aggTrades", window=window)

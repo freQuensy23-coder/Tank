@@ -54,7 +54,6 @@ async def exercise_external_tool_burst(repo, tool):
         ]
         try:
             await asyncio.wait_for(all_entered.wait(), timeout=2)
-            # A worker must be able to commit even while every remote tool is blocked.
             await asyncio.wait_for(
                 repo.put("ops.agent_sessions", "worker", dict(template, session_id="worker")),
                 timeout=2,

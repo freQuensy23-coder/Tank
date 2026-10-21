@@ -174,8 +174,6 @@ async def finish_market_migration(repo):
                     keys = []
             if batch:
                 await _put_market_batch(repo, collection, batch, keys=keys, _columns=target_columns)
-        # Preserve all historical enum/value/completeness checks. Domain null reasons
-        # now live in their named typed JSONB column, not a whole-row document.
         checks = await (
             await conn.execute(
                 "SELECT conname,pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid=%s::regclass AND contype='c'",
@@ -353,7 +351,6 @@ async def prepare_archive_cleanup(repo, bundle_dir, version):
             (list(ARCHIVE_CLEANUP_TABLES[version]),),
         )
     ).fetchall()
-    # Child partitions are included by the parent lock and scan, exactly once.
     for row in tables:
         await conn.execute(
             sql.SQL("LOCK TABLE {} IN ACCESS EXCLUSIVE MODE").format(
@@ -404,8 +401,6 @@ async def prepare_archive_cleanup(repo, bundle_dir, version):
                     header = json.dumps(metadata, sort_keys=True, separators=(",", ":")).removesuffix("}")
                     compressor.write((header + ',"rows":[\n').encode())
                     async with conn.cursor(name="archive_export_" + table) as cursor:
-                        # Keep PostgreSQL's JSON text verbatim: parsing into floats
-                        # here would round old evidence numbers before exporting.
                         await cursor.execute(
                             sql.SQL(
                                 "SELECT to_jsonb(t)::text AS original FROM {} t ORDER BY storage_key"
@@ -429,8 +424,6 @@ async def prepare_archive_cleanup(repo, bundle_dir, version):
                         return hashlib.file_digest(source, "sha256").hexdigest()
 
                 digest = await asyncio.to_thread(file_digest)
-                # The complete object has already been fsynced; publish the
-                # content-addressed name only after exhaustive readback.
                 entry = {
                     "collection": identity,
                     "sha256": digest,
@@ -461,8 +454,6 @@ async def prepare_archive_cleanup(repo, bundle_dir, version):
         "row_count": sum(r["row_count"] for r in exported),
     }
     if exported:
-        # This manifest is itself a permanent bundle and is included by the
-        # existing pg_dump + bundles/ backup without expanding backup scope.
         body = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
         digest = hashlib.sha256(body).hexdigest()
         destination = root / (digest + ".json.zst")

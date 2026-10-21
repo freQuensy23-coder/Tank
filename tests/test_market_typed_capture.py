@@ -1,13 +1,11 @@
 """§14 producer batching, verified raw recovery, and aggregate-only queries."""
 
-# ruff: noqa: F811
 from datetime import timedelta
 from decimal import Decimal
 from pathlib import Path
 
 import httpx
 import pytest
-from test_market_service import setup  # noqa: F401
 
 from tank.market import normalize
 from tank.market.archive import TradeArchive
@@ -217,7 +215,6 @@ async def test_actual_postgres_batch_producer_restart_and_late_minute(setup):
     if destination.get("port") != "55437" or not destination.get("dbname", "").startswith("tank_"):
         pytest.skip("Only dedicated QA PostgreSQL allowed")
     _, settings, inst = setup
-    # Isolate the real natural key from any previous run without deleting evidence.
     from tank.util import new_id
 
     inst["instrument_id"] += ":" + new_id("PG")
@@ -280,7 +277,7 @@ async def test_verified_daily_trade_import_uses_parquet_and_multirow_aggregates(
     archive = TradeArchive(settings.data_dir, instruments=registry["instruments"])
     instrument = next(i for i in registry["instruments"] if i["venue_symbol"] == "ABCUSD")
     path = archive.path(instrument["instrument_id"], day)
-    assert path.exists() and not list(path.parent.glob(".*.arrows"))  # finished hours are sealed
+    assert path.exists() and not list(path.parent.glob(".*.arrows"))
     decoded = archive.read_hour(path)
     by_id = {point["trade_id"]: point for point in decoded}
     assert set(by_id) == {"1", "2"}
@@ -327,7 +324,6 @@ async def test_proved_quiet_aligned_cutoff_retains_actual_prior_print_without_ra
             backfill=True,
         )
         await service._persist_rest_flow_ranges(inst, start, end, [(start, end)])
-        # Restart drops private trade buffers; ordinary analysis uses only bars.
         restarted = MarketService(repo, settings, http=http)
 
         def forbidden(*args, **kwargs):
@@ -425,4 +421,4 @@ async def test_windowed_trade_import_covers_only_the_minutes_it_touches(setup):
         "2026-01-01T00:03:00Z",
     ]
     assert all(b["complete"] for b in bars) and result["rows"] == 3
-    assert again["imported"] and len(downloads) == 2  # the span is already in PostgreSQL
+    assert again["imported"] and len(downloads) == 2

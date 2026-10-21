@@ -112,9 +112,9 @@ async def test_agent_claim_time_certainty_and_stage_are_not_readjudicated(owner_
     assert result["dropped_claims"] == []
     for key, value in supplied["claims"][0].items():
         assert claim[key] == value
-    assert event["event_state"] == "LIVE"  # No SDK/future-keyword downgrade.
+    assert event["event_state"] == "LIVE"
     assert event["state_verified"] is verified
-    assert event["certainty"] == "HIGH"  # No source-class/authority downgrade.
+    assert event["certainty"] == "HIGH"
     assert event["certainty_reason"] == supplied["certainty_reason"]
     assert event["event_time"]["precision"] == "EXACT"
     assert event["public_at"] == supplied["public_at"]["value"]
@@ -225,7 +225,6 @@ async def test_capture_caps_and_source_side_integration_remain_deterministic(own
     await owner_service.set_assessment({"event_id": eid, "assessment": supplied}, {})
     chain = (await owner_service.rows("evt.capture_chains", eid))[0]
     assert chain["capture_score"] == 3 and chain["conditional"]
-    # Agent-declared one-sided stage support is still capped by §3.6.
     claim = await owner_service.repo.get("evt.claims", proof)
     claim.update(directionality="SOURCE_SIDE_SUPPORT", state_claim="LIVE")
     await owner_service.repo.put("evt.claims", proof, claim)
@@ -307,7 +306,6 @@ async def test_structural_criterion_quote_binds_selected_gate_verified_claim(
     assert result["criterion"] == "G1"
     assert result["criterion_quote"] == original["criterion_quote"]
     assert ("STRUCTURAL_GATE" in result["class_reasons"]) == (expected != "STRUCTURAL_SHOCK")
-    # Identity/quote integrity is the only host check: no wording rubric or second judge.
     assert (await owner_service.repo.get("evt.claims", proof))["evidence"][0]["quote"] == primary_quote
 
 

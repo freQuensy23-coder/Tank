@@ -4,8 +4,6 @@ Network acquisition never waits for article enrichment. Completed coverage moves
 in acquisition order; failed originals stay in the checkpoint's pending batches.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import re
@@ -15,9 +13,8 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
+from tank.sources import parsers
 from tank.util import new_id, parse_time, sha256
-
-from . import parsers
 
 ARTICLE_KINDS = {"html", "rendered", "rendered_html", "html_diff"}
 
@@ -31,8 +28,6 @@ def count_read(state, name, *, ok, n=1):
 def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
     """S14 diff rows against the previous snapshot and the snapshot digest (CPU-bound, runs in a thread)."""
     if previous is not None and str(feed.get("venue", "")).lower() == "coinbase":
-        # Pre-v2 snapshots did not observe these flags. Establish their
-        # baseline now; missing historical fields are not false statuses.
         previous = deepcopy(previous)
         for symbol, old in previous.items():
             if symbol in snapshot and "status_flags" not in old:
@@ -49,7 +44,6 @@ def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
                         "text": json.dumps({"before": old, "after": current}, sort_keys=True),
                         "url": feed["url"],
                         "published_at": None,
-                        # A removal is proven by the absence from every page.
                         **(
                             {
                                 "observed_at": pages[found_on[symbol]][1],
@@ -78,8 +72,6 @@ class SourcePoller:
         self.acquisition_locks = {}
         self.state_locks = {}
         self.processing_locks = {}
-        # Separate article admission leaves configured feed acquisitions independent.
-        # Every HTTP request still passes the existing shared publisher/venue budgets.
         self.details = asyncio.Semaphore(4)
         self.active_acquisitions = {}
         self.active_details = {}
@@ -108,7 +100,6 @@ class SourcePoller:
         )
 
     async def state(self, key):
-        # Repositories return a fresh document; S14 snapshots make a second copy costly.
         return await self.service.repo.get("ops.source_checkpoints", key) or {}
 
     async def save(self, key, state):
@@ -129,7 +120,6 @@ class SourcePoller:
                     if value.get(field):
                         value.update(collection_clock(value[field]).fields(field))
                 for name, child in list(value.items()):
-                    # Instrument snapshots hold no clock fields and are thousands of entries.
                     if name != "instruments" and isinstance(child, (list, dict)):
                         annotate(child)
             elif isinstance(value, list):
@@ -205,8 +195,6 @@ class SourcePoller:
         )
 
     async def retain_page(self, key, source, feed, rows, page_state, *, kind="json"):
-        # Commit each available page before requesting the next. A later timeout
-        # must not leave already discovered originals only in a volatile coroutine.
         async with self.lock(self.state_locks, key):
             current = await self.state(key)
             await self.queue_rows(
@@ -284,13 +272,10 @@ class SourcePoller:
                     found_on.update(dict.fromkeys(page_snapshot, len(pages)))
                     pages.append((page, page_state.get("fetched_at") or self.stamp()))
                     cursor = json.loads(page).get("result", {}).get("nextPageCursor")
-            # Diff against the newest snapshot. It lives in its own document, written
-            # only when it changes, so the feed checkpoint stays small.
             snapshot_key = key + ":instruments"
             stored = await self.state(snapshot_key)
             previous = stored.get("instruments")
             if previous is None:
-                # Checkpoints written before the split kept the snapshot inline.
                 previous = state.get("instruments")
                 for batch in state.get("pending_batches", []):
                     if "instruments" in batch["coverage"]:
@@ -349,7 +334,6 @@ class SourcePoller:
                 row["_payload"] = page
                 if identity(row) == checkpoint:
                     found = True
-                    # Include the boundary itself: proposal state may have changed.
                     rows.append(row)
                     retained.append(row)
                     break
@@ -409,9 +393,6 @@ class SourcePoller:
                 query = re.sub(r"\bskip\s*:\s*\d+\s*,?", "", query)
                 query = re.sub(r"proposals\s*\(", f"proposals(skip: {offset}, ", query, count=1)
                 page_feed = dict(feed, body=dict(feed["body"], query=query))
-            # A long catch-up must not monopolize this feed's current head.
-            # Refresh it at the current normal/escalated cadence between history
-            # requests, while retaining the conservative original coverage target.
             escalated = await svc.is_escalated(sid)
             if (self.now() - last_head_check).total_seconds() >= self.interval(source, feed, escalated):
                 head, head_state = await svc.fetch(feed, key, on_start=lambda: self.mark_request_start(key))
@@ -435,8 +416,6 @@ class SourcePoller:
                 raise ValueError(f"{sid} history returned 304 without retained page replay")
         state["entry_errors"] = entry_errors
         if checkpoint and not found and exhausted:
-            # Do not discard available originals merely because an old checkpoint
-            # disappeared. Retain them and surface incomplete historical coverage.
             state["history_gap"] = {
                 "reason": "KNOWN_BOUNDARY_NOT_IN_AVAILABLE_HISTORY",
                 "checkpoint": checkpoint,
@@ -453,8 +432,6 @@ class SourcePoller:
             pending = state.get("pending_proposals", [])
             returned_ids = {row["proposal_id"] for row in rows}
             pending_evidence = {}
-            # Snapshot id_in queries use the same documented proposals schema.
-            # Chunk the configured first1000 API window; never silently truncate.
             for start in range(0, len(pending), 1000):
                 ids = pending[start : start + 1000]
                 query = (
@@ -588,7 +565,7 @@ class SourcePoller:
                         current["status"] = "PENDING"
                     await self.save(key, current)
                 return {"items": 0, "errors": []}
-            except Exception as exc:  # noqa: BLE001 -- isolate a feed, retain prior coverage
+            except Exception as exc:
                 async with self.lock(self.state_locks, key):
                     current = await self.state(key)
                     current.pop("etag", None)
@@ -695,8 +672,6 @@ class SourcePoller:
                 detail = await asyncio.to_thread(parsers.article, payload, source_id=sid)
                 if not detail["text"].strip():
                     return self._empty_body(item["url"], detail_state)
-                # A detail page with no publication value must not erase the index's
-                # actual source timestamp or its known precision.
                 item.update(
                     {
                         k: v
@@ -713,7 +688,6 @@ class SourcePoller:
                 payload, source_id=sid, item_id=item["item_id"], observed_at=item["observed_at"]
             )
         stored = await svc.ingest(source, item)
-        # A content duplicate of another item: remember it so later polls skip it.
         return "DUPLICATE" if stored["item_id"] != item["item_id"] else None
 
     async def drain(self, source, index, *, force=False, escalated=False):
@@ -732,8 +706,6 @@ class SourcePoller:
             if any(
                 "item_id" not in row for batch in state.get("pending_batches", []) for row in batch["rows"]
             ):
-                # Rows queued before raw-at-capture carry no item_id or raw payload; drop them,
-                # the next poll rediscovers whatever is still in the feed.
                 async with self.lock(self.state_locks, key):
                     current = await self.state(key)
                     for batch in current.get("pending_batches", []):
@@ -742,7 +714,6 @@ class SourcePoller:
                 state = await self.state(key)
             batches = deepcopy(state.get("pending_batches", []))
             if not any(batch["rows"] for batch in batches) and state.get("article_errors"):
-                # Failed articles stay pending; with nothing pending there is no article failure.
                 async with self.lock(self.state_locks, key):
                     current = await self.state(key)
                     current["article_errors"] = {}
@@ -786,7 +757,7 @@ class SourcePoller:
                             }
                             errors.append(f"Article HTTP{exc.response.status_code}: " + str(row.get("url")))
                             return row
-                        except Exception as exc:  # noqa: BLE001 -- durable backlog retries storage/parse errors, never classifies them as publisher defects
+                        except Exception as exc:
                             errors.append(str(exc))
                             return row
 
@@ -805,9 +776,6 @@ class SourcePoller:
                     if batch["batch_id"] in completed:
                         done = completed[batch["batch_id"]]
                         batch["rows"] = [row for row in batch["rows"] if row["item_id"] not in done]
-                # Advance coverage strictly in acquisition order. Empty newer
-                # batches remain behind a failed older original, despite siblings
-                # already being safely ingested.
                 while current.get("pending_batches") and not current["pending_batches"][0]["rows"]:
                     batch = current["pending_batches"].pop(0)
                     current.update(batch["coverage"])
@@ -903,8 +871,6 @@ class SourcePoller:
                     self.active_details[key] = asyncio.create_task(
                         self.drain(source, index, escalated=escalated)
                     )
-            # Wake on completed acquisition to begin details immediately, while
-            # retaining one timed orchestrator per source rather than per feed.
             active = [
                 task
                 for key, task in self.active_acquisitions.items()

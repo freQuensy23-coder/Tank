@@ -1,13 +1,10 @@
 """Public REST endpoint contracts for the nine supported venue/market paths."""
 
-from __future__ import annotations
-
 from datetime import timedelta
 from decimal import Decimal
 
+from tank.market.normalize import SemanticError, venue_key
 from tank.util import iso, parse_time
-
-from .normalize import SemanticError, venue_key
 
 
 class VenueAdapter:
@@ -92,7 +89,6 @@ class VenueAdapter:
                 "tick_size": None,
                 "tick_size_reason": "SIGNIFICANT_FIGURES_AND_SIZE_DEPENDENT",
             }
-        # Base-unit quantities by the semantics registry; no metadata endpoint is listed.
         return {"contract_multiplier": "1", "metadata_status": "SEMANTICS_REGISTRY"}
 
     async def klines(self, *, start=None, end=None):
@@ -230,7 +226,6 @@ class VenueAdapter:
             interval = str(
                 (__import__("decimal").Decimal(following) - __import__("decimal").Decimal(prev)) / 3600000
             )
-            # Mark and index come from the listed WebSocket channels only (02 §4.4).
             mark = None
             return oi, current, settled, interval, mark
         if k == "bybit.linear":
@@ -292,8 +287,6 @@ class VenueAdapter:
             if cursor:
                 params["after"] = cursor
             elif end is not None:
-                # The first page starts at end by time (records earlier than `after`); later
-                # pages follow exact trade IDs, so a repair never walks back from now.
                 params.update(type=2, after=int(parse_time(end).timestamp() * 1000) + 1)
             rows = self.result(
                 await self.get(
@@ -325,5 +318,4 @@ class VenueAdapter:
                 params["since"] = int(parse_time(start).timestamp() * 1_000_000_000)
             rows = self.result(await self.get("https://api.kraken.com", "/0/public/Trades", pair=s, **params))
             return next(v for key, v in rows.items() if key != "last"), rows["last"]
-        # 02 §4.7 lists no REST trade history: those minutes stay incomplete (03 §5.1).
         raise SemanticError("NO_LISTED_TRADE_BACKFILL")

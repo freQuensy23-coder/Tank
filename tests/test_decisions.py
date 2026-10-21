@@ -197,7 +197,6 @@ def test_start_blocker_combinations_and_secondary_requirements():
     assert engine.evaluate(e, a, b, m)["action_rule"] == "A1"
     e["contradictions"] = [{"type": "FATAL"}]
     m["data_confidence"]["class"] = "HIGH"
-    # Spec explicitly orders primary-heavy A0 before fatal no-call A3.
     assert engine.evaluate(e, a, b, m)["action_rule"] == "A0"
 
 
@@ -469,7 +468,6 @@ def test_stale_expiry_never_bypasses_publication_gate():
 
 def test_exact_majority_flag_preserves_tiny_sell_boundary():
     e, a, b, m = inputs()
-    # Display ratio rounds to half; truth computes this flag from exact Decimal venue weights.
     m["spot"] = {
         "W4H": {
             "direction": "SELL",
@@ -479,10 +477,8 @@ def test_exact_majority_flag_preserves_tiny_sell_boundary():
         }
     }
     assert DecisionEngine().evaluate(e, a, b, m)["trade_grade"] == "D"
-    # Exactly half is not "most" and must not trigger the sell veto.
     m["spot"]["W4H"]["exact_majority"]["sell"] = False
     assert DecisionEngine().evaluate(e, a, b, m)["trade_grade"] == "A"
-    # Decimal text legacy fixtures also retain the strict boundary.
     m["spot"]["W4H"].pop("exact_majority")
     m["spot"]["W4H"]["cw_breadth"]["sell"] = "0.50000000000000000000000000001"
     assert DecisionEngine().evaluate(e, a, b, m)["trade_grade"] == "D"
@@ -745,7 +741,10 @@ def test_unknown_move_with_usable_data_names_the_observed_flow(data):
         truth,
     )
     scenarios = result["outlook"]["scenarios"]
-    assert scenarios["base"] == "No classifiable move yet: spot flow NEUTRAL and BROAD in the primary window on complete venues."
+    assert (
+        scenarios["base"]
+        == "No classifiable move yet: spot flow NEUTRAL and BROAD in the primary window on complete venues."
+    )
     assert "incomplete" not in scenarios["base"] + scenarios["upside"]
     assert "BUY and BROAD" in scenarios["upside"] and "accumulation" not in scenarios["upside"].lower()
     text = " ".join(scenarios.values()).lower()
@@ -755,7 +754,9 @@ def test_unknown_move_with_usable_data_names_the_observed_flow(data):
 
 def test_low_data_keeps_the_incomplete_evidence_scenarios():
     truth = {"token_id": "T", "move_class": "UNKNOWN", "data_confidence": {"class": "LOW"}, "relative": {}}
-    result = DecisionEngine().evaluate({"event_id": "e"}, {"class": "MAJOR"}, {"token_id": "T", "role": "PRIMARY"}, truth)
+    result = DecisionEngine().evaluate(
+        {"event_id": "e"}, {"class": "MAJOR"}, {"token_id": "T", "role": "PRIMARY"}, truth
+    )
     assert result["outlook"]["scenarios"]["base"] == "UNKNOWN: market evidence incomplete."
 
 

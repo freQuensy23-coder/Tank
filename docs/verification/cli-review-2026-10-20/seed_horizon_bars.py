@@ -12,10 +12,10 @@ import sys
 from datetime import timedelta
 
 sys.path.insert(0, "/srv/tank-work/wt/tank-ops/tests")
-from review_typed_fixtures import put_flow  # noqa: E402
+from review_typed_fixtures import put_flow
 
-from tank.storage import PostgresRepository  # noqa: E402
-from tank.util import iso, parse_time  # noqa: E402
+from tank.storage import PostgresRepository
+from tank.util import iso, parse_time
 
 
 async def main():

@@ -33,8 +33,6 @@ async def isolated_routing_repo():
         params = conninfo_to_dict(dsn)
         params["dbname"] = name
         repo = await PostgresRepository(make_conninfo(**params)).open()
-        # Await migration before yielding: no tests share a schema or migrate it
-        # concurrently, and the suite's existing legacy rows remain untouched.
         await repo.migrate()
         yield repo
     finally:
@@ -141,7 +139,6 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
                     await repo.put(
                         "ingest.source_items", identifiers[0], {**latest, "new_observation": "preserved"}
                     )
-                # These independent jobs run while both Jev requests wait.
                 unrelated = await pipe.route_item({"item_id": identifiers[3]})
                 assert unrelated["routing_message"] == {"kind": "NEW_ITEM", "item_id": identifiers[3]}
                 new_one, new_two = await asyncio.gather(

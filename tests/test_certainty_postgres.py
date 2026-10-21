@@ -74,6 +74,4 @@ async def test_primary_paraphrase_persists_high_in_postgres(tmp_path):
         assert event["certainty"] == "HIGH" and event["state_verified"]
         assert event["certainty_evidence_claims"] == [created["accepted_claims"][0]["claim_id"]]
     finally:
-        # The isolated database runner drops the complete owned database;
-        # append-only production rows must never be deleted through repository APIs.
         await repo.close()

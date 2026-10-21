@@ -1,16 +1,16 @@
 """Test-only assembly; existing readers/masking, no news, new mode or model."""
 
-import copy
 import hashlib
 import json
-import sys
 import os
-import zstandard
+import sys
 from pathlib import Path
 
+import zstandard
+
 from tank.replay import digest, prepare_masked_packet
-from tank.util import iso
 from tank.settings import _capture_tree, _digest
+from tank.util import iso
 
 ROOT = Path.cwd()
 HERE = Path(__file__).resolve().parent
@@ -18,18 +18,19 @@ OUT = HERE / "server-market-packets-f11-baseline-v3"
 sys.path.insert(0, str(ROOT / "tests"))
 from fixture_acceptance import check_ready  # noqa: E402
 
-
 OLD_ROOT = "/Users/a.mametyev/Downloads/Tank_V0_MVP_Docs/"
 PATH_PROJECTIONS = {}
+
 
 def host_path(value):
     text = str(value)
     if text.startswith(OLD_ROOT):
-        return ROOT / text[len(OLD_ROOT):]
+        return ROOT / text[len(OLD_ROOT) :]
     if text.startswith("/data/"):
         return ROOT / text.lstrip("/")
     path = Path(text)
     return path if path.is_absolute() else ROOT / path
+
 
 def stored_path(value):
     path = host_path(value)
@@ -39,6 +40,7 @@ def stored_path(value):
     PATH_PROJECTIONS[str(value)] = str(actual.relative_to(ROOT))
     return actual
 
+
 def read_json(value):
     path = stored_path(value)
     if path.suffix == ".zst":
@@ -46,6 +48,7 @@ def read_json(value):
             return json.load(stream)
     with path.open() as stream:
         return json.load(stream)
+
 
 def sha(value):
     path = stored_path(value)
@@ -55,6 +58,7 @@ def sha(value):
                 return hashlib.file_digest(stream, "sha256").hexdigest()
         return hashlib.file_digest(raw, "sha256").hexdigest()
 
+
 def reference(value):
     path = stored_path(value)
     result = {"path": str(path.relative_to(ROOT)), "sha256": sha(path)}
@@ -62,12 +66,14 @@ def reference(value):
         result.update(declared_path=str(value), uncompressed_sha256=sha(value))
     return result
 
+
 def stream_digest(value):
     state = hashlib.sha256()
     encoder = json.JSONEncoder(sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     for piece in encoder.iterencode(value):
         state.update(piece.encode())
     return state.hexdigest()
+
 
 def compress_verified(source):
     target = source.with_suffix(source.suffix + ".zst")
@@ -100,14 +106,21 @@ def replacements(packet, target):
         # Longest-match substitution also masks the same pair inside its
         # instrument ID, so venue/market type and all joins remain unchanged.
         name = instrument.get("symbol") or instrument.get("venue_symbol")
-        if name and symbol in name and name not in {"BTC", "ETH"} and name.casefold() not in {key.casefold() for key in result}:
+        if (
+            name
+            and symbol in name
+            and name not in {"BTC", "ETH"}
+            and name.casefold() not in {key.casefold() for key in result}
+        ):
             result.setdefault(name, name.replace(symbol, "ASSETK"))
     for name in [symbol + "USDT", symbol + "USD", symbol + "-USD", symbol + "/USD", symbol + "-USDT-SWAP"]:
         result.setdefault(name, name.replace(symbol, "ASSETK"))
     seen = {key.casefold() for key in result}
     entity = next((e for e in packet["registry"]["entities"] if e["entity_id"] == entity_id), {})
     aliases = [token.get("name"), *entity.get("names", []), *entity.get("aliases", [])]
-    aliases += [r.get("handle") for r in packet["registry"].get("x_accounts", []) if r.get("entity_id") == entity_id]
+    aliases += [
+        r.get("handle") for r in packet["registry"].get("x_accounts", []) if r.get("entity_id") == entity_id
+    ]
     for number, name in enumerate(aliases):
         if name and name.casefold() not in seen and name not in {"BTC", "ETH"}:
             result[name] = "IdentityAlias" + str(number)
@@ -126,7 +139,10 @@ def assertions(number):
             {"path": decision + ["action"], "in": ["DONT_CHASE", "WAIT"]},
         ]
     if number == 12:
-        return [equality(oi + ["oi_class"], "PRICE_MARKUP"), equality(["observations", "price_markup_oi_flag"], True)]
+        return [
+            equality(oi + ["oi_class"], "PRICE_MARKUP"),
+            equality(["observations", "price_markup_oi_flag"], True),
+        ]
     if number == 13:
         return [
             equality(oi + ["oi_class"], "REAL_NATIVE"),
@@ -178,9 +194,16 @@ def main():
             packet["records"][0]["record"] = read_json(snapshot_path)
             packet["assembled_at"] = successor["assembled_at"]
             packet["records"][0]["available_at"] = successor["assembled_at"]
-            retained_sources = [reference(source_manifest), reference(source_path), reference(successor_manifest), reference(snapshot_path)]
+            retained_sources = [
+                reference(source_manifest),
+                reference(source_path),
+                reference(successor_manifest),
+                reference(snapshot_path),
+            ]
         else:
-            source_manifest = ROOT / "data/replay/candidates/pure-market-retained-20261019" / fid / "manifest.json"
+            source_manifest = (
+                ROOT / "data/replay/candidates/pure-market-retained-20261019" / fid / "manifest.json"
+            )
             original = read_json(source_manifest)
             source_path = ROOT / original["input_path"]
             assert sha(source_path) == original["sha256"]
@@ -233,15 +256,30 @@ def main():
             "no_news_event_catalyst_or_assessment_seeded": True,
             "original_cutoff_preserved": masked["cutoff"] == original_cutoff,
             "original_observations_and_times_preserved_before_identity_mask": True,
-            "benchmark_symbol_exception": "BTC remains the benchmark symbol to preserve production market-context semantics" if number == 16 else None,
+            "benchmark_symbol_exception": "BTC remains the benchmark symbol to preserve production market-context semantics"
+            if number == 16
+            else None,
             "financial_performance_claim": False,
             "native_wording_phase": "PLANNED_NOT_RUN",
         }
         (folder / "prepared.json").write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n")
         prepared.append(record)
-        print(fid, "READY" if not errors else errors, flush=True)
-    (OUT / "host-path-projections.json").write_text(json.dumps({"scope": "HOST_LOOKUP_ONLY_NO_SEMANTIC_SOURCE_FIELD_REWRITE", "projections": PATH_PROJECTIONS}, indent=2) + "\n")
-    (OUT / "index.json").write_text(json.dumps({"scope": "TEST_ONLY_MARKET_VALIDATION_NOT_CANONICAL_ADOPTION", "prepared": prepared}, ensure_ascii=False, indent=2) + "\n")
+        print(fid, errors if errors else "READY", flush=True)
+    (OUT / "host-path-projections.json").write_text(
+        json.dumps(
+            {"scope": "HOST_LOOKUP_ONLY_NO_SEMANTIC_SOURCE_FIELD_REWRITE", "projections": PATH_PROJECTIONS},
+            indent=2,
+        )
+        + "\n"
+    )
+    (OUT / "index.json").write_text(
+        json.dumps(
+            {"scope": "TEST_ONLY_MARKET_VALIDATION_NOT_CANONICAL_ADOPTION", "prepared": prepared},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n"
+    )
 
 
 if __name__ == "__main__":

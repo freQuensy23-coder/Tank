@@ -36,8 +36,6 @@ def package(
     if not official:
         previous_meta = json.loads((previous / "provenance.json").read_text())
     else:
-        # A clean host only needs the official eight-file archive as input.
-        # Do not compile an unused unpatched shim or require a private baseline.
         original = (previous / "boxlite-shim").read_bytes()
         architecture = (
             {183: "arm64", 62: "amd64"}.get(struct.unpack_from("<H", original, 18)[0])

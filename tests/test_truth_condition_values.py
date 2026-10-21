@@ -420,7 +420,6 @@ def test_compact_statistical_projections_preserve_full_catalog_and_exact_prices(
                 ),
                 "values": array("d", [float(r.get("c", r.get("close"))) for r in rows]),
             }
-    # The separate exact current monetary rows remain available; history is compact.
     end = module.parse_time(raw["cutoff"])
     compact["klines"] = [r for r in raw["klines"] if module._time(r) >= end - module.timedelta(hours=1)]
     actual = module.compute_condition_values(

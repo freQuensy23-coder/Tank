@@ -2,7 +2,7 @@ import sys
 import tokenize
 from pathlib import Path
 
-SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "vendor", "__pycache__"}
+SKIP_DIRS = {".git", ".venv", "venv", "node_modules", "vendor", "__pycache__", "upstream"}
 
 
 def python_comments(path: Path) -> list[int]:

@@ -5,7 +5,6 @@ from decimal import Decimal
 from tank.time_precision import propagate_timestamp
 from tank.util import new_id
 
-
 POSITIVE_ACTIONS = frozenset({"START", "WATCH_TO_START", "ADD", "HOLD"})
 
 
@@ -106,7 +105,6 @@ class DecisionEngine:
             any(c.get("type") == "FATAL" for c in contradictions) or event.get("lifecycle") == "INVALIDATED"
         )
         unresolved = any(c.get("type") == "UNRESOLVED" for c in contradictions)
-        # LOSER is a thesis relationship, not positive beneficiary eligibility (§4.7).
         credible = (
             beneficiary.get("thesis_link_credible") is True
             if role == "LOSER"
@@ -313,7 +311,6 @@ class DecisionEngine:
         )
         rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
         confidence = min([data, certainty, class_conf], key=lambda x: rank.get(x, 0))
-        # §6.5: the input at the minimum, first in order data -> certainty -> class.
         limiting_input = (
             None
             if confidence == "HIGH"
@@ -327,7 +324,7 @@ class DecisionEngine:
         confidence_limiting = {
             "input": limiting_input,
             "text": None
-            if limiting_input in {None, "data"}  # data: the card names Data Confidence's own limit (§5.10)
+            if limiting_input in {None, "data"}
             else f"Event certainty {certainty}: not confirmed by a HIGH-certainty source"
             if limiting_input == "certainty"
             else "Move class unresolved: no class eligible (UNKNOWN)"
@@ -343,9 +340,6 @@ class DecisionEngine:
                 "failure": "Thesis invalid if the event is denied.",
             }
         elif move == "UNKNOWN":
-            # §5.8: no class is eligible although the data is usable. §6.4: name
-            # the path and the market condition from the fields present; no
-            # numbers, prices or probabilities in a scenario (FR-O-02, L7).
             complete = (spot.get("coverage") or {}).get("n_complete")
             venues = " on complete venues" if isinstance(complete, int) and complete else ""
             flow = (
@@ -365,8 +359,6 @@ class DecisionEngine:
                 "failure": "Move unwinds if price loses the event anchor.",
             }
         elif move == "PRICE_MARKUP_FAKE_OI":
-            # §5.8: the class may hold with spot BUY (no other class eligible).
-            # L2: the OI rise is price markup, never new positions or leverage.
             scenarios = (
                 {
                     "base": "USD OI rose on price markup, not new positions; spot buying carries the move.",
@@ -422,16 +414,12 @@ class DecisionEngine:
                 "upside": "Move extends if spot demand strengthens without crowding.",
                 "failure": "Thesis fails on denial or loss of the event anchor.",
             }
-        # A scenario never names an event the analysis does not have (03 §7.5):
-        # with no event premise, event-dependent texts print n/a with a reason.
         scenario_reasons = {}
         if not event.get("event_id") and not event.get("statement"):
             for name, text in list(scenarios.items()):
                 if "event" in text.casefold():
                     scenarios[name] = None
                     scenario_reasons[name] = "no event premise"
-        # FR-O-03 / §4.8 row C: weak capture labels only a positive action or a
-        # positive outlook as tactical; WAIT, DON'T CHASE, REDUCE and EXIT are not.
         tactical = thesis == "C" and action in POSITIVE_ACTIONS
         outlook_tactical = thesis == "C" and bias == "BULLISH"
         return {

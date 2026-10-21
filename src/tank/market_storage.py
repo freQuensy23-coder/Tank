@@ -1,7 +1,5 @@
 """Typed market encoding and batched SQL writes (§14)."""
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import json
@@ -25,7 +23,7 @@ def encode(collection, record):
     result = {}
     for key, value in record.items():
         if key in precision_names or key.removesuffix("_reason") in precision_names:
-            continue  # validated with canonical declarations below, never silently chosen
+            continue
         target = aliases.get(key, key)
         if target not in columns:
             raise ValueError(f"Unknown typed market field {collection}.{key}")
@@ -35,7 +33,7 @@ def encode(collection, record):
             value = parse_time(value) if value is not None else None
         if target in result and result[target] != value:
             if target.endswith("_prec"):
-                continue  # duration-equivalent declarations are resolved by shared validation
+                continue
             raise ValueError(f"Conflicting market aliases {collection}.{key}")
         result[target] = value
     for field in timestamps:
@@ -85,8 +83,6 @@ def decode(collection, row):
     return result
 
 
-# Fields left out of a collection's fingerprint: book levels belong to their exchange_ts
-# (the row's identity) and are the bulk of each summary.
 FINGERPRINT_EXCLUDED = {"mkt.book_summaries": frozenset({"bids", "asks"})}
 
 
@@ -196,8 +192,6 @@ async def put_market_batch(self, collection, records, *, keys=None):
     keys = None if keys is None else list(keys)
     if not hasattr(self, "_conn") or len(records) <= WRITE_CHUNK:
         return await _put_market_batch(self, collection, records, keys=keys)
-    # psycopg dumps the array parameters of one statement on the event loop: bound them.
-    # Later chunks overwrite or merge like later rows of one batch (same-batch tests).
     changed = []
     for at in range(0, len(records), WRITE_CHUNK):
         part = None if keys is None else keys[at : at + WRITE_CHUNK]
@@ -205,9 +199,6 @@ async def put_market_batch(self, collection, records, *, keys=None):
     return changed
 
 
-# A flow bar written incomplete only because its writer holds no proof for the minute is
-# absence of evidence, not evidence of loss: it never replaces a stored complete bar (a
-# restarted or second process would otherwise unprove minutes the live stream proved).
 UNPROVEN = "STREAM_COVERAGE_UNPROVEN"
 
 
@@ -220,11 +211,8 @@ def _unproves(collection, old, new):
     )
 
 
-# Rows a batched range read decodes between two turns of the event loop.
 YIELD_ROWS = 1000
-# Rows per write statement (array parameters are serialized on the event loop).
 WRITE_CHUNK = 500
-# Book summary columns read only for the rows whose levels are walked.
 LEVELS = ("bids", "asks")
 
 
@@ -292,8 +280,6 @@ def _load_json(collection, row):
 
 
 async def _put_market_batch(self, collection, records, *, keys=None, _columns=None):
-    # Forward migration import can target a historical typed schema. Ordinary
-    # production writes always use the entire current explicit column contract.
     columns = MARKET_COLUMNS[collection] if _columns is None else _columns
     from psycopg import sql
 
@@ -337,8 +323,6 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
     names = ["storage_key", *columns]
 
     def prepare():
-        # Worker thread: encoding, fingerprints and JSON text of a batch are CPU work, and
-        # psycopg would otherwise serialize every jsonb value on the event loop.
         unique = _prepare_records(collection, records, keys, columns, _columns is not None)
         arrays = []
         for name in names:
@@ -496,7 +480,6 @@ async def latest_market_records(
                 continue
             key = tuple(row.get(k) for k in group_by)
             previous = grouped.get(key)
-            # iter_all is storage-key ascending; replacing ties matches SQL key DESC.
             if (
                 previous is None
                 or (
@@ -510,8 +493,6 @@ async def latest_market_records(
         return list(grouped.values())
     groups = sql.SQL(",").join(map(sql.Identifier, group_by))
     if instrument_ids is not None and tuple(group_by) == ("instrument_id",):
-        # Each scope seeks its last point through the existing instrument/time
-        # index. DISTINCT ON over a whole history scans and sorts every point.
         clauses.append(sql.SQL("instrument_id = scope.instrument_id"))
         bounded = start is not None or cutoff is not None
         unique_time = bounded and set(MARKET_IDENTITIES[collection]) <= {*group_by, time_field}
@@ -620,7 +601,6 @@ async def market_dependency_head(
         }
 
     if not hasattr(self, "_conn"):
-        # Validate filters with the same allowlist even when no rows match.
         _exact_predicate(collection, filters)
         selected = None
         async with self.transaction():
@@ -736,7 +716,6 @@ async def iter_market_projection(
     start = parse_time(start) if start is not None else None
     end = parse_time(end) if end is not None else None
     assembled_at = parse_time(assembled_at) if assembled_at is not None else None
-    # Validate typed predicates even for Memory and empty matching populations.
     _exact_predicate(collection, filters)
 
     def project(row, key):
@@ -800,7 +779,6 @@ async def iter_market_projection(
                     page.append((row["_cursor_time"], row["_cursor_key"], result))
                 return page
 
-            # A long page is converted in a worker thread (r117: 90 days of minutes on the loop).
             page = await asyncio.to_thread(convert) if len(raw) > YIELD_ROWS else convert()
         else:
             page = []
@@ -1029,7 +1007,6 @@ async def sampled_market_history(
         cursor = _json_as_text(repo._conn().cursor())
         await cursor.execute(query, args)
         rows = await cursor.fetchall()
-    # JSON and typed decode in a worker thread (r117: 4.4% of the loop in reaction snapshots).
     return await asyncio.to_thread(
         lambda: sorted(
             (decode(collection, _load_json(collection, row)) for row in rows), key=lambda r: r[time_field]
@@ -1094,8 +1071,6 @@ async def market_range_by_instrument(
         extra, values = _exact_predicate(collection, filters)
         clauses.extend(extra)
         args.extend(values)
-    # Book levels are the bulk of a summary row and are decoded inside fetchall: pages carry
-    # every column but bids/asks, and only the rows Market Truth walks get them after.
     selected = (
         sql.SQL("*")
         if level_rows is None
@@ -1122,8 +1097,6 @@ async def market_range_by_instrument(
             cursor = _json_as_text(repo._conn().cursor())
             await cursor.execute(query, [*page_args, batch_size])
             rows = await cursor.fetchall()
-        # JSON parsing and typed decode run in a worker thread (r111: json.loads inside
-        # fetchall held the loop); with a short GIL switch interval the loop keeps its turns.
         decoded = await asyncio.to_thread(
             lambda rows=rows: [
                 (
@@ -1147,7 +1120,6 @@ async def market_range_by_instrument(
         last = rows[-1]
         after = (last["instrument_id"], last[time_field], last["storage_key"])
     if level_rows is not None:
-        # The newest `level_rows` rows per instrument, and its newest integrity-checked row.
         query = sql.SQL(
             "SELECT storage_key, bids, asks FROM (SELECT storage_key, bids, asks, integrity_ok,"
             " row_number() OVER (PARTITION BY instrument_id ORDER BY {f} DESC, storage_key DESC) AS rn,"

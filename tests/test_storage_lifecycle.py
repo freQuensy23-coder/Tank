@@ -44,7 +44,6 @@ async def test_pg_early_iterator_exit_releases_transaction(lifecycle_repo, caplo
     async for row in iterator:
         assert row["token_id"] == "one"
         break
-    # Retain the unclosed generator intentionally: it must not retain a transaction.
     assert repo._connection.get() is None
     assert repo._pool.get_stats()["pool_available"] == repo._pool.get_stats()["pool_size"]
     await iterator.aclose()

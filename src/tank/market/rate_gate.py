@@ -19,7 +19,7 @@ class PriorityGate:
         while self.waiters:
             _, _, future = heapq.heappop(self.waiters)
             if not future.done():
-                future.set_result(True)  # the slot passes to this waiter
+                future.set_result(True)
                 return
         self.active -= 1
 
@@ -52,7 +52,6 @@ def binance_request_weight(host, path, params):
     """
     limit = int(params.get("limit", 100))
     if host == "api.binance.com":
-        # exchangeInfo is read by the Binance listing source (tank.sources), not by market.
         fixed = {"/api/v3/exchangeInfo": 20, "/api/v3/aggTrades": 4, "/api/v3/klines": 2}
         if path in fixed:
             return fixed[path]
@@ -117,7 +116,7 @@ def public_request_constraints(host, path, params, payload):
         if kind in ("meta", "metaAndAssetCtxs"):
             weight = 20
         elif kind == "fundingHistory":
-            weight = 45  # 20 +ceil(documented500 time-range response rows/20).
+            weight = 45
         elif kind == "candleSnapshot":
             request = payload.get("req", {})
             if request.get("interval") == "1m" and "endTime" in request and "startTime" in request:

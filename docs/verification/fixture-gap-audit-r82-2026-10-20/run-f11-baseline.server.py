@@ -1,6 +1,6 @@
 """Test-only execution through existing offline production replay helpers."""
+
 import asyncio
-import hashlib
 import importlib.util
 import json
 import os
@@ -25,6 +25,7 @@ spec.loader.exec_module(helper)
 sys.path.insert(0, str(ROOT / "tests"))
 from fixture_acceptance import assertion_passes, check_completed, check_ready
 
+
 async def runner(inputs, repo):
     token = inputs.records("replay.market_snapshots")[0]["token_id"]
     snapshot = await ReplayMarketReader(inputs).snapshot(token, inputs.cutoff)
@@ -42,6 +43,7 @@ async def runner(inputs, repo):
         "policy_scope": "Separate disclosed synthetic controls; no historical business facts seeded",
     }
 
+
 async def main():
     RUN.mkdir(exist_ok=False)
     prepared = helper.read_json(PACKETS / "index.json")
@@ -56,14 +58,21 @@ async def main():
         packet = helper.read_json(path)
         current_code = _digest(_capture_tree(ROOT / "src/tank", {".py", ".sql", ".json"}))
         assert packet["code_version"] == current_code, "SOURCE_CODE_CHANGED_AFTER_PREPARATION"
-        settings = SimpleNamespace(code_version=packet["code_version"], config_version=packet["config_version"])
+        settings = SimpleNamespace(
+            code_version=packet["code_version"], config_version=packet["config_version"]
+        )
         folder = RUN / case["fixture_id"]
         folder.mkdir()
         temporary = folder / "runtime-input.json"
         # Existing loader needs plain JSON. This is one lossless temporary
         # representation of the exact prepared compressed input, not a new mode.
-        with path.open("rb") as raw, helper.zstandard.ZstdDecompressor().stream_reader(raw) as plain, temporary.open("wb") as dest:
+        with (
+            path.open("rb") as raw,
+            helper.zstandard.ZstdDecompressor().stream_reader(raw) as plain,
+            temporary.open("wb") as dest,
+        ):
             import shutil
+
             shutil.copyfileobj(plain, dest)
         del packet
         repo = MemoryRepository()
@@ -81,21 +90,31 @@ async def main():
         assert frozen.is_file()
         # Expectations are opened only after the actual execution output froze.
         seal = helper.read_json(ROOT / case["sealed_outcomes"]["path"])
-        checks = [{"assertion": assertion, "passed": assertion_passes(result["output"], assertion)} for assertion in seal["assertions"]]
+        checks = [
+            {"assertion": assertion, "passed": assertion_passes(result["output"], assertion)}
+            for assertion in seal["assertions"]
+        ]
         manual = {
             "input_sha256": seal["input_sha256"],
             "frozen_output_sha256": helper.reference(frozen)["sha256"],
-            "checks": [{
-                "requirement": row["requirement"],
-                "passed": False,
-                "reason": "Full literal wording/policy review is pending. Production formula predicates are separate; no native/full acceptance claim.",
-                "evidence": [helper.reference(frozen)],
-            } for row in seal["manual_predicates"]],
+            "checks": [
+                {
+                    "requirement": row["requirement"],
+                    "passed": False,
+                    "reason": "Full literal wording/policy review is pending. Production formula predicates are separate; no native/full acceptance claim.",
+                    "evidence": [helper.reference(frozen)],
+                }
+                for row in seal["manual_predicates"]
+            ],
         }
         manual_path = folder / "manual-review.pending.json"
         manual_path.write_text(json.dumps(manual, ensure_ascii=False, indent=2) + "\n")
-        receipt = {"started_at": started, "frozen_output": helper.reference(frozen), "manual_review": helper.reference(manual_path),
-                   "scope": "Completed formula phase only; native wording and full literal acceptance pending"}
+        receipt = {
+            "started_at": started,
+            "frozen_output": helper.reference(frozen),
+            "manual_review": helper.reference(manual_path),
+            "scope": "Completed formula phase only; native wording and full literal acceptance pending",
+        }
         receipt_path = folder / "run.json"
         receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
         evaluated = {**case, "acceptance_run": helper.reference(receipt_path)}
@@ -115,7 +134,15 @@ async def main():
         summary.append(row)
         print(case["fixture_id"], "COMPLETED", "automated_passed=" + str(row["automated_passed"]), flush=True)
         del result
-    (RUN / "summary.json").write_text(json.dumps({"scope": "TEST_ONLY_AUTHENTIC_MARKET_PACKETS_NO_PRODUCT_INTEGRATION", "cases": summary}, ensure_ascii=False, indent=2) + "\n")
+    (RUN / "summary.json").write_text(
+        json.dumps(
+            {"scope": "TEST_ONLY_AUTHENTIC_MARKET_PACKETS_NO_PRODUCT_INTEGRATION", "cases": summary},
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n"
+    )
+
 
 if __name__ == "__main__":
     asyncio.run(main())

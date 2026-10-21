@@ -95,5 +95,5 @@ async def test_raw_large_prices_preserve_tiny_return_excursions_and_direction(su
     expected = price_return(endpoint, entry) - price_return(btc_endpoint, btc_entry)
     assert result["btc_adjusted_return"] == float(expected) > 0
     assert result["direction_correct"] is True
-    assert isinstance(result["realized_return"], float)  # Existing dimensionless output contract.
+    assert isinstance(result["realized_return"], float)
     assert Decimal(entry) != Decimal(endpoint) and float(entry) == float(endpoint)

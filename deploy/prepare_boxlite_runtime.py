@@ -234,8 +234,6 @@ def verify_runtime(directory):
             **actual,
             "boxlite_version": version,
             "artifact_sha256": actual["shim_sha256"],
-            # This later receipt is external: the raw build provenance remains
-            # unchanged, including its truthful pre-qualification NOT_RUN state.
             "external_qualification": expected["qualification"],
         }
     elif version == "0.9.0":
@@ -300,8 +298,6 @@ def prepare(directory):
         provenance.is_file()
         and json.loads(provenance.read_text()).get("source", {}).get("version") == "0.10.6"
     ):
-        # The versioned builder supplies its complete source/toolchain evidence.
-        # Never relabel a new bundle with the legacy 0.9 export template.
         return verify_runtime(directory)
     if (directory / "guest-resize2fs").exists():
         raise ValueError(

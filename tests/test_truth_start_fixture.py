@@ -235,7 +235,6 @@ def test_synthetic_start_truth_positive_path():
 def test_confidence_diagnostics_do_not_add_unlisted_grade_conditions():
     snapshot = synthetic_start_snapshot()
     snapshot["capture_status"] = {"status": "RUNNING", "reason": "BACKFILL_PENDING"}
-    # Native coverage and semantics remain valid when USD decomposition is unavailable.
     for row in snapshot["oi"]:
         row["oi_usd"] = None
     result = compute_market_truth(snapshot)
@@ -280,8 +279,6 @@ def test_missing_instrument_registry_and_selftest_records_do_not_cap_observed_co
     baseline = compute_market_truth(snapshot)
     assert baseline["data_confidence"]["class"] == "HIGH"
 
-    # Actual typed observations carry identities even if discovery/self-test
-    # metadata has not arrived. Those metadata records are not a fourth gate.
     snapshot["instruments"] = []
     for row in snapshot["semantics"]:
         row["semantic_confidence"] = "DOCUMENTED_UNTESTED"
@@ -290,7 +287,6 @@ def test_missing_instrument_registry_and_selftest_records_do_not_cap_observed_co
     assert observed["spot"] == baseline["spot"]
     assert observed["derivatives"] == baseline["derivatives"]
 
-    # Removing metadata must not hide a genuinely stale observed field.
     snapshot["books"] = [
         row for row in snapshot["books"] if parse_time(row["exchange_ts"]) < end - timedelta(seconds=10)
     ]

@@ -13,19 +13,18 @@ Usage:
   python3 v0a_health.py --snapshot $RUN/start.json                       # at the window start
   python3 v0a_health.py --start-snapshot $RUN/start.json --end-snapshot $RUN/end.json --out $RUN/report
 """
+
 import argparse
 import json
 import os
-import re
 import sys
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import iso, parse, query, seconds, utcnow, write_json  # noqa: E402
+from common import iso, parse, query, seconds, utcnow, write_json
 
 LIMIT = 0.01
-# Gap kinds written by the streaming (HOT) path; history/backfill/FX gaps belong to other paths.
-HOT_GAP_PREFIXES = ("STREAM", "RECONNECT", "TRADE_INTEGRITY", "ORDER_BOOK_STREAM")  # tank-market, stream health
+HOT_GAP_PREFIXES = ("STREAM", "RECONNECT", "TRADE_INTEGRITY", "ORDER_BOOK_STREAM")
 
 KLINES = """
 SELECT instrument_id, count(DISTINCT open_time) AS minutes
@@ -71,7 +70,9 @@ def take_snapshot():
     """Same shape as `python -m tank.sources.read_report --save` (cumulative per-feed read counters)."""
     feeds = {}
     for r in query(SNAPSHOT):
-        feeds[r["key"]] = {name: dict(r[name] or {"ok": 0, "failed": 0}) for name in ("reads", "detail_reads")}
+        feeds[r["key"]] = {
+            name: dict(r[name] or {"ok": 0, "failed": 0}) for name in ("reads", "detail_reads")
+        }
         feeds[r["key"]].update(status=r["status"], error=r["error"])
     return {"taken_at": iso(utcnow()), "feeds": feeds}
 
@@ -89,14 +90,34 @@ def feed_intervals(path):
 
 def sources(start, end, intervals, window_s):
     expected_ids = sorted({k.split(":")[0] for k in intervals})
-    rows = {sid: {"source_id": sid, "polls_ok": 0, "polls_failed": 0, "detail_ok": 0, "detail_failed": 0,
-                  "polls_expected": 0, "degraded_feeds": []} for sid in expected_ids}
+    rows = {
+        sid: {
+            "source_id": sid,
+            "polls_ok": 0,
+            "polls_failed": 0,
+            "detail_ok": 0,
+            "detail_failed": 0,
+            "polls_expected": 0,
+            "degraded_feeds": [],
+        }
+        for sid in expected_ids
+    }
     for key, interval in intervals.items():
         rows[key.split(":")[0]]["polls_expected"] += int(window_s // interval)
     for key, now in end["feeds"].items():
         sid = key.split(":")[0]
-        row = rows.setdefault(sid, {"source_id": sid, "polls_ok": 0, "polls_failed": 0, "detail_ok": 0,
-                                    "detail_failed": 0, "polls_expected": 0, "degraded_feeds": []})
+        row = rows.setdefault(
+            sid,
+            {
+                "source_id": sid,
+                "polls_ok": 0,
+                "polls_failed": 0,
+                "detail_ok": 0,
+                "detail_failed": 0,
+                "polls_expected": 0,
+                "degraded_feeds": [],
+            },
+        )
         before = start["feeds"].get(key, {})
         for name, prefix in (("reads", "polls"), ("detail_reads", "detail")):
             for field in ("ok", "failed"):
@@ -108,9 +129,12 @@ def sources(start, end, intervals, window_s):
         reads = row["polls_ok"] + row["polls_failed"] + row["detail_ok"] + row["detail_failed"]
         failed = row["polls_failed"] + row["detail_failed"]
         polls = row["polls_ok"] + row["polls_failed"]
-        row.update(reads=reads, failures=failed, failed_ratio=failed / reads if reads else None,
-                   poll_coverage=polls / row["polls_expected"] if row["polls_expected"] else None)
-        # Unattended: the feeds were actually polled at (at least ~) their cadence for the whole window.
+        row.update(
+            reads=reads,
+            failures=failed,
+            failed_ratio=failed / reads if reads else None,
+            poll_coverage=polls / row["polls_expected"] if row["polls_expected"] else None,
+        )
         continuous = row["poll_coverage"] is not None and row["poll_coverage"] >= 0.95
         row["status"] = "PASS" if reads and failed / reads < LIMIT and continuous else "FAIL"
         out.append(row)
@@ -139,9 +163,20 @@ def rest_reads(path, since, until):
     for host, c in sorted(hosts.items()):
         total = c["ok"] + c["failed"]
         ratio = c["failed"] / total if total else None
-        rows.append({"host": host, **c, "failed_ratio": ratio, "status": "PASS" if total and ratio < LIMIT else "FAIL"})
-    return {"log_lines": lines, "expected_lines": int(seconds(until, since) // 60), "hosts": rows,
-            "status": "PASS" if rows and all(r["status"] == "PASS" for r in rows) else "FAIL"}
+        rows.append(
+            {
+                "host": host,
+                **c,
+                "failed_ratio": ratio,
+                "status": "PASS" if total and ratio < LIMIT else "FAIL",
+            }
+        )
+    return {
+        "log_lines": lines,
+        "expected_lines": int(seconds(until, since) // 60),
+        "hosts": rows,
+        "status": "PASS" if rows and all(r["status"] == "PASS" for r in rows) else "FAIL",
+    }
 
 
 def market(since, until):
@@ -155,13 +190,22 @@ def market(since, until):
     for i in inst:
         iid = i["instrument_id"]
         exp_k = int(window_s // 60)
-        row = {**i, "klines_expected": exp_k, "klines_live": kl.get(iid, 0),
-               "klines_failed_ratio": 1 - kl.get(iid, 0) / exp_k if exp_k else None}
+        row = {
+            **i,
+            "klines_expected": exp_k,
+            "klines_live": kl.get(iid, 0),
+            "klines_failed_ratio": 1 - kl.get(iid, 0) / exp_k if exp_k else None,
+        }
         if i["market_type"] != "SPOT":
             exp_p = int(window_s // 300)
-            row.update(oi_expected=exp_p, oi_live=oi.get(iid, 0), oi_failed_ratio=max(0.0, 1 - oi.get(iid, 0) / exp_p) if exp_p else None,
-                       funding_expected=exp_p, funding_live=fu.get(iid, 0),
-                       funding_failed_ratio=max(0.0, 1 - fu.get(iid, 0) / exp_p) if exp_p else None)
+            row.update(
+                oi_expected=exp_p,
+                oi_live=oi.get(iid, 0),
+                oi_failed_ratio=max(0.0, 1 - oi.get(iid, 0) / exp_p) if exp_p else None,
+                funding_expected=exp_p,
+                funding_live=fu.get(iid, 0),
+                funding_failed_ratio=max(0.0, 1 - fu.get(iid, 0) / exp_p) if exp_p else None,
+            )
         ratios = [v for k, v in row.items() if k.endswith("_failed_ratio") and v is not None]
         row["status"] = "PASS" if ratios and max(ratios) < LIMIT else "FAIL"
         base.append(row)
@@ -182,35 +226,72 @@ def market(since, until):
     for (tok, iid, kind), s in sorted(gap_s.items()):
         exposure = hot_s.get(tok)
         if not exposure or not kind or not kind.startswith(HOT_GAP_PREFIXES):
-            continue  # base-path or history gaps are measured by the BASE poll counts
-        hot_rows.append({"token_id": tok, "instrument_id": iid, "kind": kind, "gap_s": s, "hot_s": exposure,
-                         "gap_share": s / exposure if exposure else None})
+            continue
+        hot_rows.append(
+            {
+                "token_id": tok,
+                "instrument_id": iid,
+                "kind": kind,
+                "gap_s": s,
+                "hot_s": exposure,
+                "gap_share": s / exposure if exposure else None,
+            }
+        )
     hot_fail = [r for r in hot_rows if r["gap_share"] is not None and r["gap_share"] >= LIMIT]
     return {
-        "base": {"instruments": len(base), "failing": [r for r in base if r["status"] == "FAIL"], "rows": base,
-                 "status": "PASS" if base and all(r["status"] == "PASS" for r in base) else "FAIL"},
-        "hot": {"hot_tokens_in_window": len(hot_s), "hot_seconds": dict(hot_s), "gap_rows": hot_rows,
-                "status": ("PASS" if not hot_fail else "FAIL") if hot_s else "NOT_EXERCISED"},
+        "base": {
+            "instruments": len(base),
+            "failing": [r for r in base if r["status"] == "FAIL"],
+            "rows": base,
+            "status": "PASS" if base and all(r["status"] == "PASS" for r in base) else "FAIL",
+        },
+        "hot": {
+            "hot_tokens_in_window": len(hot_s),
+            "hot_seconds": dict(hot_s),
+            "gap_rows": hot_rows,
+            "status": ("PASS" if not hot_fail else "FAIL") if hot_s else "NOT_EXERCISED",
+        },
     }
 
 
 def render(res):
-    out = [f"# V0-A health {res['window']['since']} → {res['window']['until']}", "",
-           f"Sources: {res['sources_pass']}/{res['sources_expected']} pass (< 1% failed reads incl. detail fetches; polled >= 95% of cadence).", "",
-           "| Source | reads | failed | failed % | polls / expected | degraded feeds | status |", "|---|---:|---:|---:|---:|---:|---|"]
+    out = [
+        f"# V0-A health {res['window']['since']} → {res['window']['until']}",
+        "",
+        f"Sources: {res['sources_pass']}/{res['sources_expected']} pass (< 1% failed reads incl. detail fetches; polled >= 95% of cadence).",
+        "",
+        "| Source | reads | failed | failed % | polls / expected | degraded feeds | status |",
+        "|---|---:|---:|---:|---:|---:|---|",
+    ]
     for r in res["sources"]:
         pct = "—" if r["failed_ratio"] is None else f"{100 * r['failed_ratio']:.2f}"
-        cov = "—" if r["poll_coverage"] is None else f"{r['polls_ok'] + r['polls_failed']}/{r['polls_expected']}"
-        out.append(f"| {r['source_id']} | {r['reads']} | {r['failures']} | {pct} | {cov} | {len(r['degraded_feeds'])} | {r['status']} |")
+        cov = (
+            "—"
+            if r["poll_coverage"] is None
+            else f"{r['polls_ok'] + r['polls_failed']}/{r['polls_expected']}"
+        )
+        out.append(
+            f"| {r['source_id']} | {r['reads']} | {r['failures']} | {pct} | {cov} | {len(r['degraded_feeds'])} | {r['status']} |"
+        )
     b, h = res["market"]["base"], res["market"]["hot"]
-    out += ["", f"Market BASE (REST): {b['instruments'] - len(b['failing'])}/{b['instruments']} instruments < 1% missing polls → {b['status']}",
-            f"Market HOT (WebSocket): {h['hot_tokens_in_window']} hot tokens; gap rows {len(h['gap_rows'])} → {h['status']}", "",
-            f"Overall V0-A source/market part: {res['status']}"]
+    out += [
+        "",
+        f"Market BASE (REST): {b['instruments'] - len(b['failing'])}/{b['instruments']} instruments < 1% missing polls → {b['status']}",
+        f"Market HOT (WebSocket): {h['hot_tokens_in_window']} hot tokens; gap rows {len(h['gap_rows'])} → {h['status']}",
+        "",
+        f"Overall V0-A source/market part: {res['status']}",
+    ]
     if b["failing"]:
         out += ["", "Failing BASE instruments (first 30):", ""]
         for r in b["failing"][:30]:
-            out.append(f"- {r['instrument_id']}: klines {r['klines_live']}/{r['klines_expected']}"
-                       + (f", OI {r.get('oi_live')}/{r.get('oi_expected')}, funding {r.get('funding_live')}/{r.get('funding_expected')}" if "oi_live" in r else ""))
+            out.append(
+                f"- {r['instrument_id']}: klines {r['klines_live']}/{r['klines_expected']}"
+                + (
+                    f", OI {r.get('oi_live')}/{r.get('oi_expected')}, funding {r.get('funding_live')}/{r.get('funding_expected')}"
+                    if "oi_live" in r
+                    else ""
+                )
+            )
     return "\n".join(out) + "\n"
 
 
@@ -220,7 +301,9 @@ if __name__ == "__main__":
     ap.add_argument("--start-snapshot", help="snapshot taken at the window start")
     ap.add_argument("--end-snapshot", help="write the end snapshot here (taken now)")
     ap.add_argument("--sources-yaml", default="/srv/tank/config/sources.yaml")
-    ap.add_argument("--rest-log", help="captured market log lines (`rest reads: host=ok/failed`) for the window")
+    ap.add_argument(
+        "--rest-log", help="captured market log lines (`rest reads: host=ok/failed`) for the window"
+    )
     ap.add_argument("--out")
     a = ap.parse_args()
     if a.snapshot:
@@ -237,17 +320,25 @@ if __name__ == "__main__":
     src = sources(start, end, intervals, seconds(a.until, a.since))
     mk = market(a.since, a.until)
     if a.rest_log:
-        # Exact REST read counts from the market service are the BASE-path denominator (tank-market);
-        # row coverage stays as a secondary check (Coinbase /candles omits trade-less minutes).
         mk["base"]["rest_reads"] = rest_reads(a.rest_log, a.since, a.until)
         mk["base"]["row_coverage_status"] = mk["base"]["status"]
         mk["base"]["status"] = mk["base"]["rest_reads"]["status"]
     passing = sum(1 for r in src if r["status"] == "PASS")
-    res = {"window": {"since": a.since, "until": a.until, "hours": seconds(a.until, a.since) / 3600},
-           "computed_at": iso(utcnow()), "sources_expected": len(expected), "sources_pass": passing,
-           "sources": src, "market": mk,
-           "status": "PASS" if len(expected) == 34 and passing == 34 and mk["base"]["status"] == "PASS"
-           and mk["hot"]["status"] in ("PASS",) and seconds(a.until, a.since) >= 72 * 3600 else "FAIL"}
+    res = {
+        "window": {"since": a.since, "until": a.until, "hours": seconds(a.until, a.since) / 3600},
+        "computed_at": iso(utcnow()),
+        "sources_expected": len(expected),
+        "sources_pass": passing,
+        "sources": src,
+        "market": mk,
+        "status": "PASS"
+        if len(expected) == 34
+        and passing == 34
+        and mk["base"]["status"] == "PASS"
+        and mk["hot"]["status"] in ("PASS",)
+        and seconds(a.until, a.since) >= 72 * 3600
+        else "FAIL",
+    }
     md = render(res)
     if a.out:
         write_json(os.path.join(a.out, "v0a-health.json"), res)

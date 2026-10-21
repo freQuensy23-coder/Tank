@@ -22,8 +22,6 @@ def stage(tmp_path):
 
 
 def input_tree(tmp_path, overlay):
-    # Tiny labeled source fixtures exercise all fifteen preflight boundaries.
-    # The separate preserved-source composition verifies the frozen real hashes.
     root = tmp_path / "source"
     root.mkdir()
     manifest = json.loads((overlay.BASE / "manifest.json").read_text())

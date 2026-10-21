@@ -16,10 +16,6 @@ def module(name):
     return m
 
 
-
-
-
-
 def test_openma_preparation_is_offline_and_has_responses_model(tmp_path):
     result = module("prepare_openma").prepare(ROOT / "config", tmp_path)
     assert result["sessions_created"] == 0
@@ -163,8 +159,6 @@ def test_network_hba_confines_roles_and_rejects_broad_or_guessed_defaults(tmp_pa
             helper.prepare(compose, sandbox, tmp_path / "bad")
 
 
-
-
 def test_bootstrap_hba_denies_all_sandbox_roles_until_actual_source_is_observed(tmp_path):
     helper = module("prepare_network")
     text = helper.prepare("172.30.42.0/24", None, tmp_path / "bootstrap", bootstrap_only=True)
@@ -175,16 +169,6 @@ def test_bootstrap_hba_denies_all_sandbox_roles_until_actual_source_is_observed(
     assert "host all all 0.0.0.0/0 reject" in text
     with pytest.raises(ValueError):
         helper.prepare("172.30.42.0/24", "172.30.42.3/32", tmp_path / "bad", bootstrap_only=True)
-
-
-
-
-
-
-
-
-
-
 
 
 def test_sandbox_route_defaults_and_validated_isolated_override():

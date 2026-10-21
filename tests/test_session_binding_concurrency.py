@@ -157,8 +157,6 @@ async def test_controller_snapshot_cannot_erase_domain_binding(tmp_path, backend
                 tools.dispatch("record_event", args, {"session_id": "s", "role": "analyst"})
             )
             waiting = asyncio.create_task(binding_waiting.wait())
-            # Old code completes the domain write before the stale controller put.
-            # Correct code waits for that same session lock before reading/binding.
             await asyncio.wait([domain_task, waiting], return_when=asyncio.FIRST_COMPLETED)
             if simulate_old_boundary:
                 await domain_task

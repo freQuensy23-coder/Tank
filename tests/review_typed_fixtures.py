@@ -14,8 +14,6 @@ async def put_flow(repo, key, row):
         if row.get(field) is None:
             reasons[field] = "INCOMPLETE"
     row["null_reasons"] = reasons
-    # This fixture describes three explicit unit BUY prints (low, high, close),
-    # or one close print when extrema are unnecessary for a BTC benchmark.
     count = 3 if row.get("h") is not None and row.get("l") is not None else 1
     for field, value in {
         "buy_qty": str(count),

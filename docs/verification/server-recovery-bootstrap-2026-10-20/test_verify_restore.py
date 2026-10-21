@@ -1,4 +1,5 @@
 """Pure parser/projection checks; no server or network/database startup."""
+
 import importlib.util
 import io
 import unittest

@@ -31,8 +31,6 @@ async def test_retained_kraken_forward_range_requires_boundary_and_terminal_proo
         cache[request["url"]] = json.loads(blob)
     shifted = {}
     if mode == "ts_disorder":
-        # Two consecutive trade IDs of one minute whose timestamps run backwards: ID
-        # continuity is still complete, the audit must not read it as a gap.
         rows = {
             int(r[6]): r
             for request in fixture["requests"]
@@ -57,7 +55,7 @@ async def test_retained_kraken_forward_range_requires_boundary_and_terminal_proo
     async def request(method, url, *, params):
         key = str(httpx.URL(url, params=params))
         requests.append(key)
-        body = deepcopy(cache[key])  # An unknown/unfinished cursor cannot reach the network.
+        body = deepcopy(cache[key])
         if "/Trades?" in key:
             for pair, rows in body["result"].items():
                 if pair == "last":

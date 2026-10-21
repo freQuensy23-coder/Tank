@@ -38,8 +38,6 @@ console.log(JSON.stringify({opaque,raw,decoded,encoded,resultHistory,resultDecod
     return json.loads(result.stdout)
 
 
-
-
 def test_guarded_codec_preserves_opaque_input_but_transforms_envelope(tmp_path):
     result = run_codec(tmp_path, True)
     assert result["decoded"]["input"] == result["opaque"] == result["encoded"]["input"]

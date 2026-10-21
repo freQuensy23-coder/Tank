@@ -17,7 +17,6 @@ class SmallPageRepository(MemoryRepository):
         self.yielded = []
 
     async def list(self, collection, *, filters=None, limit=1000):
-        # Existential reads are valid; broad list reads recreate the original bug.
         assert limit == 1, f"Unbounded scheduler list: {collection}"
         return await super().list(collection, filters=filters, limit=limit)
 
@@ -163,7 +162,6 @@ async def test_scout_recent_truth_pages_and_checkpoint_resume(tmp_path):
     truth_reads = [r for kind, table, r in repo.yielded if table == "ana.market_truth"]
     assert len(truth_reads) == 7
     assert not any(scan[:2] == ("all", "ana.market_truth") for scan in repo.scans)
-    # A late assessment must revisit an old closed event after the checkpoint.
     await repo.put(
         "evt.events",
         "closed",

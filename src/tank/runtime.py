@@ -1,6 +1,7 @@
 """The single Tank asyncio process and its durable worker pool."""
 
 import asyncio
+import contextlib
 import logging
 import traceback
 from datetime import timedelta
@@ -12,7 +13,6 @@ from tank.time_precision import collection_clock, offset_schedule, propagate_tim
 from tank.util import parse_time, utcnow
 
 log = logging.getLogger(__name__)
-# Spec job timeouts (03 §3.8). User decision 2026-10-20: every timeout x15 while the system is under test.
 TIMEOUT_SCALE = 15
 SPEC_TIMEOUTS = {
     "FILTER_ITEM": 10,
@@ -30,11 +30,9 @@ TIMEOUTS = {kind: seconds * TIMEOUT_SCALE for kind, seconds in SPEC_TIMEOUTS.ite
 
 
 ADMISSION_TIMEOUT_S = 10 * TIMEOUT_SCALE
-# On-demand window repair before each Market Truth (lead ruling, 03 §5.1 fill order):
-# bounded so the FULL card stays within 03 §3.9; unrepaired minutes keep their reason.
 REPAIR_BUDGET_S = 45
 REPAIR_LOOKBACK = timedelta(hours=24)
-CAPTURE_WAIT_S = 15  # Included in the RUN_MARKET_TRUTH job time.
+CAPTURE_WAIT_S = 15
 
 
 class Runtime:
@@ -140,8 +138,6 @@ class Runtime:
         thresholds = settings.load_config("thresholds")
         if thresholds.get("filter_cutoff") is None or thresholds.get("routing_cutoff") is None:
             raise ValueError("Filter and routing cutoffs require calibration before live service startup")
-        # Use the same complete validation as registry synchronization while the
-        # old generation is still live. A malformed reload must not stop it.
         validate_registry(settings)
 
     async def escalate(self, payload):
@@ -162,9 +158,6 @@ class Runtime:
         if prerequisite["status"] not in {"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"}:
             raise RuntimeError("Required durable event capture was not scheduled")
         if prerequisite["status"] in {"PENDING", "RUNNING"}:
-            # The durable capture task is independent of this worker. A bounded
-            # wait uses at most 15s of its 90s budget; timeout remains explicitly
-            # incomplete and never upgrades a venue's measured coverage.
             await self.market.wait_capture(payload["event_id"], payload["token_id"], timeout_s=CAPTURE_WAIT_S)
         cutoff = propagate_timestamp(payload, "cutoff") if payload.get("cutoff") is not None else None
         if hasattr(self.market, "repair_windows"):
@@ -197,7 +190,6 @@ class Runtime:
             self.active_jobs.add(job["job_id"])
             try:
                 if job.get("expires_at") and parse_time(job["expires_at"]) <= utcnow():
-                    # claim_job atomically expires queued jobs; this also protects custom repositories.
                     await self.repo.put(
                         "ops.jobs",
                         job["job_id"],
@@ -228,14 +220,10 @@ class Runtime:
                 if kind not in self.handlers:
                     raise ValueError(f"Unregistered durable job kind: {kind}")
                 if kind in ADMITTED_JOB_TYPES and hasattr(getattr(self, "sessions", None), "admit"):
-                    # Admission is scheduling, not the job's work: it has its own bound
-                    # and does not spend the 03 §3.8 timeout of the message itself.
                     try:
                         async with asyncio.timeout(ADMISSION_TIMEOUT_S):
                             await self.sessions.admit(job)
                     except TimeoutError as slow:
-                        # A slow admission check is a wait: it must never spend an
-                        # attempt, so a waiting turn is never dropped.
                         raise AdmissionDeferred(
                             offset_schedule(collection_clock(utcnow()), timedelta(seconds=5))
                         ) from slow
@@ -245,9 +233,6 @@ class Runtime:
                     await self.repo.put("ops.jobs", job["job_id"], {**job, "result": result})
                     await self.repo.finish_job(job["job_id"])
             except DeliveryDeferred as deferred:
-                # Waiting for delivery order or the actual SENT clock is ordinary
-                # scheduling, not a failed Telegram attempt. Keep the accepted
-                # payload and its bounded expiry unchanged across restarts.
                 async with self.repo.transaction():
                     current = await self.repo.get("ops.jobs", job["job_id"])
                     if current and current["status"] == "RUNNING":
@@ -262,8 +247,6 @@ class Runtime:
                             },
                         )
             except AdmissionDeferred as deferred:
-                # A full running-session cap is a wait, not a failed attempt: keep
-                # the payload, the expiry and the first-wait order key.
                 async with self.repo.transaction():
                     current = await self.repo.get("ops.jobs", job["job_id"])
                     if current and current["status"] == "RUNNING":
@@ -280,18 +263,13 @@ class Runtime:
                             },
                         )
             except asyncio.CancelledError:
-                # Remains RUNNING and is recovered on the next process start.
                 raise
-            except Exception as exc:  # noqa: BLE001 - persist the failed job and keep the worker alive
-                # asyncio.timeout wraps the cancelled await in TimeoutError;
-                # its cause retains the useful suspended operation frames.
+            except Exception as exc:
                 failure = exc.__cause__ if isinstance(exc, TimeoutError) and exc.__cause__ else exc
                 frames = " > ".join(
                     f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}:{frame.name}"
                     for frame in traceback.extract_tb(failure.__traceback__)
                 )
-                # Exception values can contain provider URLs with credentials.
-                # Function/line locations identify the fault without those values.
                 log.error(
                     "Job %s (%s) failed: %s [%s]", job["job_id"], job["type"], type(exc).__name__, frames
                 )
@@ -321,7 +299,6 @@ class Runtime:
         ):
             return
         self._delivery_reconciled_at = now
-        # claim/recovery can terminate a job without entering its handler.
         for status in ("FAILED", "EXPIRED"):
             async for job in self.repo.iter_all("ops.jobs", filters={"type": "DELIVER", "status": status}):
                 if not job.get("delivery_failure_recorded_at"):
@@ -334,10 +311,8 @@ class Runtime:
 
     @staticmethod
     async def pause(stop, seconds):
-        try:
+        with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(stop.wait(), seconds)
-        except TimeoutError:
-            pass
 
     async def supervise(self, name, service, stop):
         while not stop.is_set():
@@ -431,8 +406,6 @@ class Runtime:
                 for task in pending:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
-                # A controlled generation swap is not a failed execution attempt.
-                # Preserve the final retry even when its old handler needed cancellation.
                 for job_id in interrupted:
                     try:
                         async with self.repo.lock("job:" + job_id):

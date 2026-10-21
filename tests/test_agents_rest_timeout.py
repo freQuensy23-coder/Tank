@@ -54,12 +54,10 @@ async def test_stalled_rest_read_times_out_without_changing_sse(monkeypatch, inj
                 assert service.http is not service.stream_http
             else:
                 assert injected.timeout.read is None
-            # Exercise the actual socket timeout without spending the production budget.
             monkeypatch.setattr(session_module, "REST_TIMEOUT_S", 0.05, raising=False)
             with pytest.raises(httpx.ReadTimeout):
                 await asyncio.wait_for(service.request("GET", "sessions/stalled"), timeout=1)
             assert accepted
-            # Request-level REST settings must not alter the client's SSE defaults.
             assert service.stream_http.timeout.read is None
         finally:
             await service.close()

@@ -15,6 +15,6 @@ def test_serve_sets_short_gil_switch_interval_before_running(monkeypatch):
         result = CliRunner().invoke(cli.main, ["serve"])
         assert result.exit_code == 0, result.output
         assert seen == [cli.GIL_SWITCH_INTERVAL_S]
-        assert cli.GIL_SWITCH_INTERVAL_S < before
+        assert before > cli.GIL_SWITCH_INTERVAL_S
     finally:
         sys.setswitchinterval(before)

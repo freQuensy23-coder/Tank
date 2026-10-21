@@ -329,6 +329,7 @@ def compose_card(
 
     def name(token):
         return token_name(token, token_labels)
+
     data_classes = [(m.get("data_confidence") or {}).get("class") for m in market_truths]
     header_data = (
         min(data_classes, key=lambda c: {"LOW": 0, "MEDIUM": 1, "HIGH": 2}.get(c, 0))
@@ -437,8 +438,6 @@ def compose_card(
         lines.append("Market analysis pending — token actions and outlook unavailable.")
     else:
         mapping = event.get("beneficiary_map") or {}
-        # Token blocks use the selected analysis set. Named entities outside
-        # that set remain visible only when they have no tradable market block.
         named_edges = beneficiaries + [
             edge
             for edge in event.get("beneficiary_edges", [])
@@ -446,9 +445,6 @@ def compose_card(
         ]
 
         def outside_universe(edge):
-            # PRD §4.1: a beneficiary or loser outside the 22 tokens is named
-            # without a market block. Only edges the agent submitted with
-            # evidence count; dependency-map candidates are not named.
             return bool(
                 universe
                 and edge.get("token_id")
@@ -579,7 +575,6 @@ def compose_card(
             if relative.get("repricing_band") is not None or any(
                 event_return.get(k) is not None for k in ("r_raw", "r_btc_adj")
             ):
-                # BTC is the benchmark: its net-of-BTC move does not exist (NOT_APPLICABLE_BENCHMARK).
                 net = (
                     " (BTC is the benchmark)"
                     if event_return.get("r_btc_adj_reason") == "NOT_APPLICABLE_BENCHMARK"
@@ -699,7 +694,12 @@ def _market_breadth(truth, token):
         venue = (row.get("coverage") or {}).get("venue") or row.get("venue") or "n/a (venue unknown)"
         text = venue + " " + str(row["oi_class"])
         if row.get("oi_native_chg_pct") is not None:
-            text += " " + format(Decimal(str(row["oi_native_chg_pct"])) * 100, "+.2f") + "% in " + _token_label(token)
+            text += (
+                " "
+                + format(Decimal(str(row["oi_native_chg_pct"])) * 100, "+.2f")
+                + "% in "
+                + _token_label(token)
+            )
         share = (row.get("decomposition") or {}).get("pos_share")
         if (row.get("decomposition") or {}).get("markup") is not None and share is not None:
             text += (
@@ -708,16 +708,15 @@ def _market_breadth(truth, token):
                 + "% of the OI value change; price-markup component present)"
             )
         venues.append(text)
-    # tank-truth's decisive OI fact already names venue classes when the
-    # synchronized class is unavailable; print them only when it does not.
     covered = any("by venue:" in str(fact) for fact in truth.get("decisive_facts") or [])
     if venues and window and not covered:
         lines.append(window + ": open interest by venue: " + "; ".join(venues))
     sync = derivatives.get("synchronized") or {}
     change = sync.get("oi_native_chg_pct")
     if change is not None and Decimal(str(change)) < 0 and window:
-        # Native OI falling is positions closing (01 hard rule 3: native units only).
-        price = ((truth.get("relative") or {}).get("windows") or {}).get(derivatives.get("window") or "") or {}
+        price = ((truth.get("relative") or {}).get("windows") or {}).get(
+            derivatives.get("window") or ""
+        ) or {}
         move = price.get("r_raw")
         if move is None:
             during = "; price move n/a (not available for this window)"
@@ -725,7 +724,6 @@ def _market_breadth(truth, token):
             during = " while price rose " + format(Decimal(str(move)) * 100, "+.2f") + "%"
         else:
             during = "; price " + format(Decimal(str(move)) * 100, "+.2f") + "%"
-        # Only a fall beyond the normal range reads as positions closing.
         verdict = {
             "BELOW": ": positions closing",
             "WITHIN": "; within its normal range",
@@ -746,10 +744,13 @@ def _market_breadth(truth, token):
 
         def side(sign):
             chosen = [r for r in rows if r.get("sign") == sign and r.get("volume_share") is not None]
-            return ", ".join(
-                str(r.get("venue")) + " " + format(Decimal(str(r["volume_share"])) * 100, ".1f") + "%"
-                for r in sorted(chosen, key=lambda r: -r["volume_share"])
-            ) or "none"
+            return (
+                ", ".join(
+                    str(r.get("venue")) + " " + format(Decimal(str(r["volume_share"])) * 100, ".1f") + "%"
+                    for r in sorted(chosen, key=lambda r: -r["volume_share"])
+                )
+                or "none"
+            )
 
         lines.append(
             spot_window
@@ -769,7 +770,9 @@ def _market_context(truth, decision):
     inputs = relative.get("context_inputs") or {}
     btc, normal = inputs.get("btc_return_24h"), inputs.get("return_normal_range")
     if context is None:
-        text = "Market context: n/a (" + ("BTC normal range unavailable" if not normal else "not computed") + ")"
+        text = (
+            "Market context: n/a (" + ("BTC normal range unavailable" if not normal else "not computed") + ")"
+        )
     else:
         text = "Market context: " + str(context)
         if btc is not None:

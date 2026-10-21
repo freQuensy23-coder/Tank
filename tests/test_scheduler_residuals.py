@@ -33,7 +33,6 @@ async def test_verified_backup_is_cached_per_process_day_but_force_and_restart_r
     final = tmp_path / f"tank-{NOW.date()}"
     final.mkdir()
     (final / "COMPLETE").write_text(iso(NOW))
-    # to_thread needs a synchronous callable; record all actual verification calls.
     calls = []
     monkeypatch.setattr("tank.scheduler.verify_backup", lambda path, **kwargs: calls.append(path))
     settings = SimpleNamespace(backup_dir=tmp_path)
@@ -127,7 +126,6 @@ async def test_terminal_capture_is_recorded_as_gap_and_not_resurrected_or_claime
     await repo.delete("ops.jobs", job["job_id"])
     await scheduler.tick(NOW)
     assert not await repo.list("ops.jobs", filters={"idem_key": "e:T:POST_72H"})
-    # Literal lifecycle requires an actual +72h capture, even after exhausted attempts.
     real_scheduler = Scheduler(repo, SimpleNamespace(), None, None)
     real_scheduler.analysis_tokens = AsyncMock(return_value={"T"})
     await real_scheduler.lifecycle(NOW)
@@ -191,7 +189,12 @@ async def test_conditions_share_truth_for_identical_event_token_cutoff():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "relative",
-    ["raw/trades/v/spot/T/{day}", "raw/books/v/T/{day}", "raw/market_frames/{day}", "archive/binance/spot/klines"],
+    [
+        "raw/trades/v/spot/T/{day}",
+        "raw/books/v/T/{day}",
+        "raw/market_frames/{day}",
+        "archive/binance/spot/klines",
+    ],
 )
 async def test_raw_retention_by_path_with_verified_backup(tmp_path, relative):
     import hashlib
@@ -226,7 +229,10 @@ async def test_raw_retention_by_path_with_verified_backup(tmp_path, relative):
     (backup / "COMPLETE").write_text(iso(NOW))
     verify_backup(backup)
     scheduler = Scheduler(
-        MemoryRepository(), SimpleNamespace(data_dir=data, load_config=lambda name: {"instruments": []}), None, None
+        MemoryRepository(),
+        SimpleNamespace(data_dir=data, load_config=lambda name: {"instruments": []}),
+        None,
+        None,
     )
     removed = await scheduler.prune_raw_files(NOW, backup)
     assert [row["path"] for row in removed] == [str(path if archive else directory)]

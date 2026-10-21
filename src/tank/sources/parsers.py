@@ -1,7 +1,5 @@
 """Source-specific wire parsers. No network side effects."""
 
-from __future__ import annotations
-
 import json
 import re
 from datetime import datetime
@@ -36,7 +34,6 @@ def published(value):
             instant = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
         except ValueError:
             instant = parsedate_to_datetime(str(value))
-        # A provider's timezone-free wall clock is not a verified UTC instant.
         return iso(instant) if instant.tzinfo is not None else None
     except (ValueError, TypeError, OverflowError):
         return None
@@ -57,8 +54,6 @@ def timestamp_fields(value, name="published_at", *, date_only=False):
     )
     reason = None if normalized else "INCOMPLETE" if value is None else "UNVERIFIED_SEMANTICS"
     fields = Timestamp(normalized, precision, reason).fields(name)
-    # Preserve documented producer aliases while emitting the shared canonical
-    # names (including §14's published_prec + explicit day bucket size).
     fields[name + "_precision"] = precision
     return fields
 
@@ -173,8 +168,6 @@ def article_links(payload, feed):
         target = url if pattern.startswith("http") else urlsplit(url).path
         if re.search(pattern, target):
             result[url] = text(a.text())
-    # Explicit publisher schema: Robinhood delivers article cards through Next.js
-    # Contentful canonicalUrl fields instead of anchors in its server HTML.
     fields = feed.get("embedded_json_fields", [])
     if fields:
         script = tree.css_first('script#__NEXT_DATA__[type="application/json"]')
@@ -202,7 +195,6 @@ def article_links(payload, feed):
         {"external_id": u, "url": u, "title": t, "text": "", "published_at": None} for u, t in result.items()
     ]
     if fields:
-        # Bind only the canonical URL declared inside the same complete entry.
         data = json.loads(script.text())
         bindings = {}
         identities = publisher_cms_entries(payload)
@@ -254,13 +246,11 @@ def article(payload, *, source_id=None):
     title_node = tree.css_first("h1")
     body_text = None
     if source_id == "S01":
-        # SEC pages carry a "More in this Section" side menu; the release is the body field.
         authored = tree.css("main .field--name-body")
         if len(authored) != 1 or not text(authored[0].html):
             raise ValueError("SEC release requires one nonempty body field")
         body = authored[0]
     elif source_id == "S13":
-        # Robinhood renders the release from its Contentful entry; the HTML around it is menus and footer.
         script = tree.css_first('script#__NEXT_DATA__[type="application/json"]')
         entry = (
             json.loads(script.text()).get("props", {}).get("pageProps", {}).get("article") if script else None
@@ -273,30 +263,21 @@ def article(payload, *, source_id=None):
         if not title_node and (entry or {}).get("fields", {}).get("title"):
             title_node = HTMLParser("<h1>" + entry["fields"]["title"] + "</h1>").css_first("h1")
     elif source_id == "S08":
-        # DTCC's <article> elements are contact cards and related-news cards.
-        # Authored release blocks are separate ordered rich-text components.
         authored = tree.css("main .content-item--richtextblock .rtf")
         if not authored or any(not text(node.html) or len(node.css(".rtf")) > 1 for node in authored):
             raise ValueError("DTCC release requires nonempty unambiguous authored rich-text blocks")
         body = HTMLParser("<div>" + "\n".join(node.html for node in authored) + "</div>").body
     elif source_id == "S28":
-        # Anchorage uses <article> for a navigation/form dropdown as well.
-        # Only its unique authored rich-text node is an article body; missing
-        # or ambiguous structure is an acquisition failure, never nav content.
         authored = tree.css(".insight-rich-text.w-richtext")
         if len(authored) != 1 or not text(authored[0].html):
             raise ValueError("Anchorage article requires one nonempty authored body")
         body = authored[0]
     elif source_id == "S15":
-        # Uniswap's <main> also contains current related-post cards. Their
-        # claims must not inherit the older authored article's publication time.
         authored = tree.css("main .ArticleContent")
         if len(authored) != 1 or not text(authored[0].html):
             raise ValueError("Uniswap article requires one nonempty authored body")
         body = authored[0]
     elif source_id == "S07" and tree.css("article.node--type-mega_menu_panel"):
-        # Treasury marks navigation panels as articles; its release is the
-        # uniquely identified article inside main, headed by the page title.
         authored = tree.css("main article[about]")
         headings = tree.css("main .uswds-page-title")
         if len(authored) != 1 or len(headings) != 1 or not text(authored[0].html):
@@ -318,7 +299,6 @@ def article(payload, *, source_id=None):
                 value.get("datePublished")
             ):
                 yield value
-            # Only graph roots, never arbitrary nested related-item widgets.
             if "@graph" in value:
                 yield from publication_nodes(value["@graph"])
 
@@ -337,8 +317,6 @@ def article(payload, *, source_id=None):
         if meta:
             timestamp, basis = meta.attributes.get("content"), "ARTICLE_PUBLICATION_META"
         elif source_id == "S08":
-            # The release masthead declares a calendar day; related-news cards
-            # elsewhere on the page must never supply this article's timestamp.
             dates = {
                 node.text(strip=True)
                 for node in tree.css("main .page-detail-masthead__meta .paragraph-small")
@@ -350,8 +328,6 @@ def article(payload, *, source_id=None):
                 except ValueError:
                     pass
         elif source_id == "S18":
-            # BlackRock's retained official HTML uses a calendar publicationDate
-            # encoded as epoch milliseconds, rather than an event-time instant.
             meta = tree.css_first('meta[name="publicationDate"]')
             if meta:
                 timestamp, basis = meta.attributes.get("content"), "BLACKROCK_CALENDAR_PUBLICATION_META"
@@ -359,8 +335,6 @@ def article(payload, *, source_id=None):
             times = (body or tree).css("time[datetime]")
             designated = tree.css('time[itemprop="datePublished"][datetime]')
             if source_id == "S07":
-                # Treasury's retained official Drupal article repeats the same
-                # explicitly named publication field in desktop/mobile markup.
                 designated += tree.css(".field--name-field-news-publication-date time[datetime]")
             declared_values = {node.attributes["datetime"] for node in designated}
             if len(declared_values) == 1:
@@ -502,7 +476,6 @@ def _json_items(payload, source_id):
             {
                 "external_id": r["url"],
                 "title": r["title"],
-                # The generic opening sentence is not content; no description keeps the title.
                 "text": BYBIT_BOILERPLATE.sub("", text(r.get("description", ""))).strip() or r["title"],
                 "url": r["url"],
                 **timestamp_fields(r.get("publishTime") or r.get("dateTimestamp")),
@@ -604,8 +577,6 @@ def binance_body(value):
     if isinstance(value, list):
         return " ".join(filter(None, (binance_body(v) for v in value)))
     if isinstance(value, dict):
-        # CMS currently uses singular child; older rich documents use children.
-        # Only authored text and the explicit child sequence belong to the body.
         own = value.get("text", "")
         own = text(own) if isinstance(own, str) else ""
         children = value.get("child", value.get("children", []))

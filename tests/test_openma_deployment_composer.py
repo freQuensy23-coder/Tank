@@ -261,7 +261,9 @@ def test_deploy_refuses_local_runtime_without_native_qualification(tmp_path, mon
 
 
 def test_deploy_admits_local_runtime_after_native_qualification(tmp_path, monkeypatch):
-    gate_fixture(tmp_path, monkeypatch, {"amd64": {"status": "PASS", "shim_sha256": "a" * 64, "checks": PASSED}})
+    gate_fixture(
+        tmp_path, monkeypatch, {"amd64": {"status": "PASS", "shim_sha256": "a" * 64, "checks": PASSED}}
+    )
     with pytest.raises(RuntimeError, match="gate passed"):
         composer.prepare(tmp_path / "source", tmp_path / "output", tmp_path / "runtime")
 

@@ -138,8 +138,6 @@ def test_captured_unlock_calendar_uses_observation_time_not_future_release(refer
     assert inputs.records("mkt.unlocks", cutoff="2022-09-21T11:59:59Z") == []
     assert inputs.records("mkt.unlocks") == [schedule["record"]]
 
-    # Today's calendar does not establish what was known at a historical cutoff: an undeclared
-    # late capture is refused (only a HISTORICAL_RECONSTRUCTION with schedule_as_of may enter).
     late = packet["assembled_at"]
     schedule["available_at"] = schedule["record"]["observed_at"] = late
     save(path, packet)
@@ -242,7 +240,7 @@ def test_trusted_reference_clock_binds_body_and_preserves_physical_observation(r
     clock = TrustedFixtureClock(inputs)
     source = inputs.records("ingest.source_items")[0]
     assert clock.known_at(source).value == packet["cutoff"]
-    assert clock.known_at(source).precision == "EXACT"  # Explicit logical scheduling boundary only.
+    assert clock.known_at(source).precision == "EXACT"
     provenance = clock.provenance(source)
     assert provenance["clock_domain"] == "FIXTURE_SIMULATED_AS_OF"
     assert provenance["actual_observed_at"] == source["observed_at"] == "2026-10-19T00:00:00Z"
@@ -504,12 +502,9 @@ def test_insufficient_catalog_refuses_before_configuration_or_session(tmp_path):
 
 
 def test_declared_empty_synthetic_lookup_is_not_a_fabricated_source(reference_packet):
-    # Reuse the validated input-only synthetic fixture builder above, then exercise
-    # the exact response contract independently of model/native/network execution.
     from tank.fixture_reference import validate
 
     _path, packet = reference_packet
-    # A normal acquired-source fixture cannot activate the synthetic response route.
     packet["tool_results"] = [
         {"origin": "DECLARED_SYNTHETIC_TOOL_RESPONSE", "tool": "fetch_page", "result": {"items": []}}
     ]
@@ -806,7 +801,6 @@ def test_uniform_minute_reference_convention_preserves_all_original_literals(ref
         )
         p["cutoff"] = boundary
         p["config"]["replay_messages"][0]["replay_at"] = boundary
-        # Retained synthetic evidence is independently controlled by this parser test.
         p["records"][0]["simulated_available_at"] = (
             (start + timedelta(seconds=8.368)).isoformat().replace("+00:00", "Z")
         )
@@ -1319,7 +1313,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
     assert result["status"] == "COMPLETED"
     assert sent[:2] == ["lead", "confirmation"]
     assert all(item == "confirmation" for item in sent[2:])
-    assert len(sent) <= 3  # Existing bounded ordinary retry remains observable, never a new run.
+    assert len(sent) <= 3
     assert len(created) == 1
     checkpoints = result["phase_checkpoints"]
     assert [x["phase_id"] for x in checkpoints] == ["initial", "confirmation"]
@@ -1349,7 +1343,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
         assert call["is_error"] is True
         assert gap["origin"] == "LOCAL_REPLAY_DIAGNOSTIC"
         assert gap["requested_at"] == "2026-10-16T12:01:00Z"
-        assert call["arguments"]  # The exact request is retained by the ordinary ledger.
+        assert call["arguments"]
         assert all(not phase["requested_external_captures_complete"] for phase in checkpoints)
         assert all(phase["external_capture_gaps"] == [gap] for phase in checkpoints)
     if publication:

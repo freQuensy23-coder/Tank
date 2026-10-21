@@ -1,7 +1,5 @@
 """Credential-free, offline-by-default pytest boundary. Never imported by Tank."""
 
-from __future__ import annotations
-
 import atexit
 import builtins
 import io
@@ -15,6 +13,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
+
+pytest_plugins = ["test_market_service", "test_storage_typed_market"]
 
 TEST_DATABASE_VARIABLES = frozenset(
     {"TANK_TEST_DATABASE_URL", "TANK_E2E_DATABASE_URL", "TANK_SOURCE_TEST_DATABASE_URL"}
@@ -65,7 +65,6 @@ def test_database_hosts(environment):
             if host:
                 hosts.add(host.casefold().rstrip("."))
         else:
-            # libpq conninfo is supported without connecting or looking up DNS.
             from psycopg.conninfo import conninfo_to_dict
 
             for host in conninfo_to_dict(value).get("host", "").split(","):
@@ -95,11 +94,8 @@ def check_test_databases(environment):
             raise pytest.UsageError(f"{name} must name a dedicated tank_test_* database, not {database!r}")
 
 
-# Run before test-module collection: collection cannot inherit operator settings.
 check_test_databases(os.environ)
 scrub_inherited_environment(os.environ)
-# Sandbox home/config lookup as well as explicit settings; browser binaries are
-# public cached executables, so preserve only their known cache location.
 _operator_home = Path.home()
 _browser_cache = (
     _operator_home / "Library" / "Caches" / "ms-playwright"
@@ -260,16 +256,12 @@ def offline_credentials(monkeypatch, tmp_path):
     """Synthetic default locations; explicit constructor/fake env values still win."""
     from pydantic_settings.sources import DotEnvSettingsSource
 
-    # Keep dynamic default factories real while resolving auth inside this test's
-    # synthetic home. Tests may still explicitly override CODEX_HOME/Path.home.
     synthetic_home = tmp_path / "offline-home"
     synthetic_home.mkdir()
     monkeypatch.setenv("HOME", str(synthetic_home))
     monkeypatch.setenv("CODEX_HOME", str(synthetic_home / ".codex"))
     monkeypatch.setattr(sys.modules[__name__], "_OFFLINE_HOME", synthetic_home)
 
-    # Pydantic constructs this source before settings_customise_sources, so block
-    # the reader itself: neither default .env nor an inherited path is opened.
     monkeypatch.setattr(DotEnvSettingsSource, "_read_env_files", lambda self: {})
     empty = tmp_path / "offline-empty-secrets"
     empty.mkdir()
@@ -282,8 +274,6 @@ def offline_credentials(monkeypatch, tmp_path):
         monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path / "FAKE-empty-docker-config"))
     from tank.settings import Settings
 
-    # Defaults, rather than environment overrides, preserve Docker-secret and
-    # explicit fake environment precedence (notably x_session bootstrap).
     defaults = {
         "codex_auth_path": tmp_path / "FAKE-absent-codex-auth.json",
         "x_storage_state_path": tmp_path / "FAKE-absent-x-state.json",

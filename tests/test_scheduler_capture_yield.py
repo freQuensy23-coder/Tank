@@ -44,5 +44,5 @@ async def test_capture_near_expiry_does_not_yield(monkeypatch):
 
     monkeypatch.setattr(scheduler_module.asyncio, "sleep", no_sleep)
     scheduler = Scheduler(repo, SimpleNamespace(), None, None)
-    checkpoint = utcnow() - timedelta(hours=5, minutes=45)  # expires in 15 min
+    checkpoint = utcnow() - timedelta(hours=5, minutes=45)
     await scheduler._yield_to_market_truth({"event_id": "EVT-1"}, checkpoint)

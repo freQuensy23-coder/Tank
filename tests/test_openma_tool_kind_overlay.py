@@ -43,8 +43,6 @@ def prepared(tmp_path, monkeypatch):
     return root, assets
 
 
-
-
 def test_apply_is_exact_and_repeat_is_refused(prepared):
     root, _ = prepared
     assert overlay.apply(root) == {"a.ts": sha("new-a"), "nested/b.ts": sha("new-b")}

@@ -63,7 +63,7 @@ async def test_review_horizon_and_public_bucket_preserve_true_interval_anchor():
         immutable=True,
     )
     report = await service.report("2026-10-03T00:00:00Z", "2026-10-04T00:00:00Z")
-    assert report["metrics"]["S2"]["value"] is None  # Age straddles 48h at actual 00:03..00:08 bounds.
+    assert report["metrics"]["S2"]["value"] is None
     assert report["metrics"]["S2"]["precision_counts"]["BUCKET(5m)"] == 1
     assert report["computed_at_prec"] == "COLLECTION_ONLY"
     assert report["period"]["start_prec"] == "EXACT"

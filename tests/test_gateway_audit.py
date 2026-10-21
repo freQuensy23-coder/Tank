@@ -128,7 +128,6 @@ async def test_cancelled_refresh_caller_still_persists_provider_rotation(tmp_pat
         with pytest.raises(asyncio.CancelledError):
             await caller
         exchange_finish.set()
-        # close is the generation-drain boundary and must await persistence.
         await asyncio.wait_for(service.close(), 1)
         assert json.loads(path.read_text())["tokens"]["refresh_token"] == "AUDIT_REFRESH_ROTATED"
 
