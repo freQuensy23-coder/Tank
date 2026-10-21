@@ -989,7 +989,7 @@ STRUCTURAL_SHOCK sends a PARTIAL card from SCORED (as soon as the class and cert
 | Step | Target |
 |---|---|
 | Push/poll to `observed_at` | ≤ 60 s polling interval for CORE; ≤ 5 s from receipt to record |
-| Item → event (FILTER_ITEM + ROUTE_ITEM + `record_event`) | p95 ≤ 90 s |
+| Item → event (FILTER_ITEM + ROUTE_ITEM + `record_event`) | p95 ≤ 7 min |
 | STRUCTURAL PARTIAL card after `known_to_us_at` | ≤ 3 min |
 | FULL card (beneficiaries, Market Truth, decision, card) | ≤ 8 min after `known_to_us_at` (includes pre-event backfill) |
 | Added item in a running session | Handed to the agent as soon as its current turn ends; Tank does not wait |

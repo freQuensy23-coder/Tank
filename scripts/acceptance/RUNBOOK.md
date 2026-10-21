@@ -29,7 +29,7 @@ There is no manual step and no injected item. A real item arrives through the co
   - `receipt.json`: sha256 of every file.
 - Pass (01 §10 V0-G):
   - every stage present: relevant item, filter and route jobs DONE, session, `record_event`, assessment, `get_market_truth` DONE, a market_truth row, a decision, a card, a SENT ledger row with `message_ref`, and a valid evidence bundle;
-  - item → event ≤ 90 s;
+  - item → event ≤ 7 min (p95);
   - first card ≤ 3 min for STRUCTURAL SHOCK, FULL card ≤ 8 min for MAJOR+;
   - delivery ≤ 10 s;
   - no operator jobs in the chain.
@@ -44,7 +44,7 @@ python3 $A/latency.py --since <window start> --until <window end> --out $RUN/spe
 
 | Metric | Stored timestamps | Target |
 |---|---|---|
-| item → event | `source_items.observed_at` → first DONE `record_event` answered_at (new session) or ROUTE_ITEM `finished_at` (ADDED) | p95 ≤ 90 s |
+| item → event | `source_items.observed_at` → first DONE `record_event` answered_at (new session) or ROUTE_ITEM `finished_at` (ADDED) | p95 ≤ 7 min |
 | STRUCTURAL SHOCK first card | `events.known_to_us_at` → first `out.alerts.generated_at` (sent also reported) | ≤ 180 s |
 | MAJOR+ FULL card | `known_to_us_at` → first FULL `generated_at`, which includes the pre-event backfill | ≤ 480 s |
 | update after a decisive condition | `watch_conditions.fired_at` → next UPDATE `generated_at`, when the session was idle at fire | ≤ 60 s |

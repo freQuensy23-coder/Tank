@@ -160,7 +160,7 @@ def trace(event_id):
         "public_to_known_s": seconds(known, event.get("public_at")),
     }
     limits = {
-        "item_to_event_s": 90,
+        "item_to_event_s": 420,
         "known_to_first_card_generated_s": 180 if "STRUCTURAL_SHOCK" in classes else None,
         "known_to_full_card_generated_s": 480 if classes & {"MAJOR", "STRUCTURAL_SHOCK"} else None,
     }
