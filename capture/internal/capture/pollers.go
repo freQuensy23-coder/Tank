@@ -475,17 +475,20 @@ func floatText(f float64) (string, error) {
 }
 
 // instrumentLoop is _instrument_loop: klines every base_kline_interval_s, BASE tickers
-// and derivatives (HOT ones run on their own grids), and the hourly kline audit of the
+// every base_ticker_interval_s and derivatives (HOT ones run on their own grids), and the hourly kline audit of the
 // trailing 25 h, which fetches only the minutes the database lacks.
 func (s *Service) instrumentLoop(ctx context.Context, inst *venue.Instrument) {
 	iid := inst.ID
-	var derivDue time.Duration
+	var derivDue, tickerDue time.Duration
 	auditDue := s.clock.Monotonic() + 60*time.Second
 	for ctx.Err() == nil {
 		started := s.clock.Monotonic()
 		_, hot := s.hot(inst.TokenID)
 		doDeriv := started >= derivDue && !hot
-		s.poll(ctx, iid, pollKinds{derivatives: doDeriv, klines: true, ticker: !hot}, 0)
+		// A 24 h ticker every base_ticker_interval_s, not every kline minute (r135: 181
+		// instruments x 60/h were most of mkt.tickers_24h).
+		doTicker := started >= tickerDue && !hot
+		s.poll(ctx, iid, pollKinds{derivatives: doDeriv, klines: true, ticker: doTicker}, 0)
 		if s.clock.Monotonic() >= auditDue {
 			auditDue = s.clock.Monotonic() + time.Duration(s.opt.Threshold("kline_audit_interval_s", 3600)*float64(time.Second))
 			now := pytime.MinuteFloor(s.clock.Now())
@@ -495,6 +498,9 @@ func (s *Service) instrumentLoop(ctx context.Context, inst *venue.Instrument) {
 		}
 		if doDeriv {
 			derivDue = s.clock.Monotonic() + time.Duration(s.opt.Threshold("base_oi_funding_interval_s", 300)*float64(time.Second))
+		}
+		if doTicker {
+			tickerDue = s.clock.Monotonic() + time.Duration(s.opt.Threshold("base_ticker_interval_s", 300)*float64(time.Second))
 		}
 		wait := time.Duration(s.opt.Threshold("base_kline_interval_s", 60)*float64(time.Second)) - (s.clock.Monotonic() - started)
 		if wait < time.Second {

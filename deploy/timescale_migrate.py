@@ -11,9 +11,8 @@ Per table, smallest first, and resumable:
 3. Swap, in one transaction holding the parent's lock (writers wait, nothing is lost):
    the last 8 days are upserted, the parent is renamed away and dropped, `__ts` takes
    its name, and grants are copied.
-4. Compression (segment by instrument, after 7 days: repairs of 96 h event windows and
-   late bar revisions touch only uncompressed chunks) and, for book_summaries, a 72 h
-   retention policy (03 §14).
+4. Compression (segment by instrument) after 2 days, except book_summaries, which only
+   gets its 72 h retention policy (03 §14): it is gone before it would compress.
 """
 
 import sys
@@ -35,7 +34,7 @@ TABLES = {
 }
 # Columns not carried over (order-book levels are not stored any more, 03 §14).
 DROPPED = {"book_summaries": {"bids", "asks"}}
-COMPRESS_AFTER = "7 days"
+COMPRESS_AFTER = "2 days"  # gap repair DML still works on compressed chunks
 # Partitions this recent are copied in the swap itself (revisions and repairs may still
 # change them); older ones are copied and compressed beforehand.
 SWAP_WINDOW = timedelta(days=8)
@@ -269,10 +268,11 @@ def finish(conn, table, segment, ts):
                     "timescaledb.compress_orderby = {})"
                 ).format(sql.Identifier("mkt", table), sql.Literal(segment), sql.Literal(ts + " DESC"))
             )
-        cur.execute(
-            "SELECT add_compression_policy(%s, %s::interval, if_not_exists => true)",
-            (f"mkt.{table}", COMPRESS_AFTER),
-        )
+        if table != "book_summaries":
+            cur.execute(
+                "SELECT add_compression_policy(%s, %s::interval, if_not_exists => true)",
+                (f"mkt.{table}", COMPRESS_AFTER),
+            )
         if table == "book_summaries":
             cur.execute(
                 "SELECT add_retention_policy('mkt.book_summaries', '72 hours'::interval, if_not_exists => true)"
