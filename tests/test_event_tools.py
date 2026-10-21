@@ -4938,3 +4938,28 @@ async def test_daily_vesting_unlocks_stay_visible_around_the_cutoff(service):
     dates = [parse_time(row["date"]) for row in facts["unlocks"]]
     assert len(dates) == 14 and all(abs(d - now) <= timedelta(days=3) for d in dates)
     assert {row["relative_to_cutoff"] for row in facts["unlocks"]} == {"PAST", "UPCOMING"}
+
+
+async def test_token_facts_give_the_covered_daily_volume(service):
+    """03 §4.2 base of M (access and distribution): the token's covered daily
+    volume per spot venue and in total, native and USD, with exclusions."""
+    now = utcnow()
+    rows = {
+        "binance:spot:BTCUSDT": {"volume_native": "12000.5", "volume_usd": "900000000", "ts": iso(now - timedelta(minutes=2))},
+        "coinbase:spot:BTC-USD": {"volume_native": "8000", "volume_usd": "600000000", "ts": iso(now - timedelta(minutes=1))},
+        "kraken:spot:XBT/USD": {"volume_native": "100", "volume_usd": "7500000", "ts": iso(now - timedelta(hours=3))},
+        "okx:spot:BTC-USDT": {"volume_native": "500", "volume_usd": None, "usd_reason": "NO_USD_RATE", "ts": iso(now)},
+    }
+    for iid, row in rows.items():
+        await service.repo.put("mkt.tickers_24h", iid + ":t", {"instrument_id": iid, "token_id": "bitcoin:BTC", **row})
+    facts = await service.dispatch("get_token_facts", {"token": "BTC"}, {})
+    volume = facts["covered_daily_volume"]
+    # Native over every fresh venue; USD only where the venue reports it.
+    assert volume["total_native"] == "20500.5" and volume["total_usd"] == "1500000000"
+    assert {v["instrument_id"] for v in volume["venues"]} == {
+        "binance:spot:BTCUSDT", "coinbase:spot:BTC-USD", "okx:spot:BTC-USDT"
+    }
+    assert volume["total_usd_excludes"] == [{"instrument_id": "okx:spot:BTC-USDT", "reason": "NO_USD_RATE"}]
+    reasons = {e["instrument_id"]: e["reason"] for e in volume["excluded"]}
+    assert reasons["kraken:spot:XBT/USD"] == "TICKER_STALE" and reasons["bybit:spot:BTCUSDT"] == "NO_STORED_24H_TICKER"
+    assert volume["market_cap"] is None and volume["market_cap_reason"].startswith("NOT_STORED")
