@@ -77,15 +77,17 @@ replace a failed receipt with a fabricated PASS. Native compilation occurs once,
 for the strict-DNS shim. The seven other files must remain the official platform
 bytes; source contracts reject an unpatched or differently patched shim build.
 
-Prepare the pinned OpenMA checkout and architecture-matched sandbox OCI using
-[OPENMA_PREPARATION.md](../../OPENMA_PREPARATION.md) and Operations. The ordinary
-`prepare_openma_source.py --boxlite-runtime <runtime-bundle>` command accepts this
-verified build; no source edits, private artifact registration or diagnostic
-bypass is needed. Its composition receipt explicitly keeps native qualification
-`NOT_RUN`. Only the one generated runtime-identity literal varies between builds;
-every other stage source byte remains guarded.
+The normal OpenMA build uses the committed `vendor/openma` source and native
+archive in `vendor/openma/tank-native`. From the repository root, run
+`docker compose --env-file "$TANK_COMPOSE_ENV" build openma`; no prepared checkout
+or manual runtime export is required.
 
-Build the prepared OpenMA image in isolation. Then run the public
+When intentionally adopting a newly built native artifact, update the versioned
+archive, adjacent checksums, source/provenance mapping and matching runtime
+identity together. Keep its qualification `NOT_RUN` until the new immutable image
+and architecture-matched sandbox OCI pass their own native qualification.
+
+Build the OpenMA image in isolation. Then run the public
 [native qualification command](../../openma_lifecycle/NATIVE_QUALIFICATION.md#exact-invocation-template)
 with that immutable image, its generated identity and the matching OCI. It uses
 an owned proof volume/HOME, no credentials or live service database, and real KVM,

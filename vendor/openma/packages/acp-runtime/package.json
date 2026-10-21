@@ -1,0 +1,33 @@
+{
+  "name": "@open-managed-agents/acp-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./node-spawner": "./src/spawners/node.ts",
+    "./sandbox-spawner": "./src/spawners/sandbox.ts",
+    "./placement": "./src/placement.ts",
+    "./registry": "./src/registry.ts",
+    "./known-agents": "./src/known-agents.ts",
+    "./native-state": "./src/native-state.ts",
+    "./sandbox-agent": "./src/sandbox-agent.ts",
+    "./inference-config": "./src/inference/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --config vitest.config.ts",
+    "test:native-state:coverage": "vitest run --config vitest.native-state.coverage.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@open-managed-agents/inference-proxy": "workspace:*",
+    "@open-managed-agents/sandbox": "workspace:*",
+    "@openma/common": "^0.9.1",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.3"
+  }
+}

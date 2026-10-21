@@ -102,10 +102,10 @@ services:
     networks:
     - tank-net
   openma:
-    image: tank-openma:85d5361f535c7221de975838dc48444e468cc02e-tank5-startup
+    image: tank-openma:local
     build:
-      context: ${OPENMA_SOURCE_PATH:?Set pinned prepared OpenMA checkout path}
-      dockerfile: apps/main-node/Dockerfile.tank
+      context: ./vendor/openma
+      dockerfile: Dockerfile
       args:
         SKIP_CONSOLE: '1'
     restart: unless-stopped

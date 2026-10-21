@@ -1,0 +1,26 @@
+{
+  "name": "@open-managed-agents/managed-agents-adapters-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.1.0",
+    "@open-managed-agents/app": "workspace:*",
+    "@open-managed-agents/managed-agents-application": "workspace:*",
+    "@open-managed-agents/session-runtime-contract": "workspace:*",
+    "croner": "^9.1.0",
+    "fflate": "^0.8.2",
+    "standardwebhooks": "1.0.0"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "0.120.0",
+    "vitest": "^4.1.3"
+  }
+}

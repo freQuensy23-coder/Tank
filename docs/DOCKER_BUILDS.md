@@ -85,30 +85,35 @@ so changing analysis packages keeps the pinned browser layer. Worker changes
 rerun only the worker copy and font-cache preparation. The sandbox-specific
 ignore file restricts its context to those browser implementation assets.
 
-## Prepared OpenMA
+## Vendored OpenMA
 
-Prepare and verify a fresh checkout with the public
-[OpenMA composer](../deploy/OPENMA_PREPARATION.md). Set `OPENMA_SOURCE_PATH` to
-that prepared directory, then build its generated recipe:
+OpenMA and Tank's compatibility changes are checked in under `vendor/openma`.
+Compose uses that directory and its static `Dockerfile` directly:
+
+```sh
+docker compose --env-file /path/to/compose.env build
+```
+
+Build just the OpenMA image without deployment configuration:
 
 ```sh
 docker buildx build --progress=plain --platform "linux/$task_arch" --load \
   --build-arg SKIP_CONSOLE=1 \
-  -f "${OPENMA_SOURCE_PATH:?Set the verified prepared checkout}/apps/main-node/Dockerfile.tank" \
-  -t tank-openma:local "$OPENMA_SOURCE_PATH"
+  -f vendor/openma/Dockerfile -t tank-openma:local vendor/openma
 ```
 
-Keep `SKIP_CONSOLE=1` consistent with Compose. The generated recipe extracts the
-final root and workspace package manifests before copying package source. One
-frozen pnpm installation uses that manifest tree; sources are copied afterwards.
-The runtime copies the stable dependency layer separately from the updated
-sources, so source edits retain installed dependencies. Entrypoint/native-asset
-changes enter the runtime stage. The pnpm store stays on the build-stage
-filesystem so shared package files retain hardlinks. The same install command
-removes the unused store afterwards, keeping it out of dependency and runtime
-images. Dependency changes repeat the frozen install. Regenerate
-through the composer so the generated Dockerfile, checked hashes and runtime
-identity match.
+The static recipe uses Node24, pnpm11.0.8 and the checked-in frozen workspace
+lockfile. Its dependency layer precedes application source copies. The pnpm
+store stays on the build-stage filesystem during installation so shared package
+files retain hardlinks, then the same command removes the unused store.
+Dependency changes repeat the frozen install. The native bundle, license notices
+and provenance live inside the same build context. No external source checkout,
+source generator or patch command is part of a normal build.
+
+The Tank image copies only its database-secret entrypoint and the OpenMA resource
+registration helper from `deploy/`. Config, network and sandbox export utilities
+remain repository tools, mounted explicitly when needed. Native rebuild and KVM
+qualification instructions remain under `deploy/boxlite`.
 
 ## Cache and verification
 

@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "node:http";
-import { createSandboxBrowserHarness } from "./sandbox-browser.ts";
+import { createSandboxBrowserHarness } from "../../vendor/openma/apps/agent/src/harness/sandbox-browser.ts";
 
 const run = promisify(execFile);
 const here = dirname(fileURLToPath(import.meta.url));

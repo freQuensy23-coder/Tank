@@ -1,0 +1,58 @@
+name: Enable KVM for Litebox
+description: >-
+  Make /dev/kvm readable and writable for the runner user so Litebox
+  microVMs can start. Fails the step when the device is missing or cannot
+  be made accessible.
+
+# The official two-owner persistence test runs real Litebox microVMs.
+# Litebox aborts its host process when /dev/kvm is not accessible.
+#
+# ubuntu-24.04 runners expose /dev/kvm as root:kvm mode 0660, and the
+# runner user is not in the kvm group. `udevadm trigger` applies a
+# 0666 rule asynchronously: the access check failed ~26ms after
+# trigger, while the mode change landed ~45ms later. `udevadm settle`
+# can also return before that uevent is queued. chmod is synchronous.
+# The udev rule keeps a later uevent from restoring 0660. A missing
+# device fails this step with an explicit error, which fails the job.
+
+runs:
+  using: composite
+  steps:
+    - name: Enable KVM for Litebox
+      shell: bash
+      run: |
+        echo "=== Initial KVM state ==="
+        ls -la /dev/kvm 2>&1 || true
+        id
+        if [ ! -e /dev/kvm ]; then
+          echo "::error::/dev/kvm does not exist. This runner has no KVM device, so the MySQL integration tests were not run."
+          exit 1
+        fi
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+        echo "Waiting for udev to settle..."
+        sudo udevadm settle --timeout=10 || echo "WARN: udevadm settle timed out; setting /dev/kvm mode directly"
+        # Last writer. Covers settle returning before the uevent is queued,
+        # and a node udev recreated with mode 0660.
+        if ! sudo chmod 666 /dev/kvm; then
+          echo "::error::chmod 666 /dev/kvm failed. The MySQL integration tests were not run."
+          ls -la /dev/kvm 2>&1 || true
+          exit 1
+        fi
+        # The observed uevent landed within 50ms. Wait past that, then
+        # re-assert if a late event restored 0660.
+        sleep 0.5
+        if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+          sudo chmod 666 /dev/kvm || true
+        fi
+        echo "=== Final KVM state ==="
+        ls -la /dev/kvm 2>&1 || true
+        if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
+          echo "SUCCESS: /dev/kvm is readable and writable"
+        else
+          echo "::error::/dev/kvm exists but is not readable and writable by $(id -un). The MySQL integration tests were not run."
+          ls -la /dev/kvm 2>&1 || true
+          id
+          exit 1
+        fi

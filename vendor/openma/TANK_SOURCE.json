@@ -1,0 +1,226 @@
+{
+  "upstream": {
+    "repository": "https://github.com/openma-ai/open-managed-agents",
+    "commit": "85d5361f535c7221de975838dc48444e468cc02e",
+    "license": "Apache-2.0",
+    "license_sha256": "de7e1c0a470cf7ba259c07c2b6a7874f6e5e9a44e0ffbaae781d67f04ef23290",
+    "notice_sha256": "fafac72fd143a95a4d2878876c14547daccb2601a97787a4dc97560ce9479f01"
+  },
+  "tank_import": {
+    "revision": "14ed2c63e65dac5dfb9d597ccc21aa0d0d29e5a6",
+    "canonical_runtime_identity": "c4afefbdddba3e6f05634a3bb5a46db20d5636413f4f24909b2abcdfa8fa8654",
+    "canonical_source_tree_sha256": "70b297c185595558e03c9ac8a7f34421f39de94d06b72150a03220f6cc75c98e",
+    "canonical_source_files": 3495,
+    "composition_receipt_sha256": "9dbe65ec131277af2c0004c391533e522c25b4592a8ca51ae13b388493658f75",
+    "prepared_dockerfile_sha256": "39ff26b148b1d22b0ed47e1dedafbd12256b12666fc41974bb8881a0c57e8a91",
+    "method": "One-time import of the complete verified Tank-prepared source. Normal builds use only committed source and the static Dockerfile.",
+    "omitted_build_artifacts": [
+      "apps/main-node/Dockerfile.tank",
+      "tank-deployment-composition.json"
+    ],
+    "preserved_runtime_metadata": "tank-overlay.json and embedded retained-session identity are imported unchanged; composition receipt hashes above describe the one-time historical baseline, not a normal build requirement."
+  },
+  "dependencies": {
+    "pnpm": "11.0.8",
+    "selected_workspace_projects": 186,
+    "package_snapshots": 1667,
+    "lock_sha256": "85fff8559737ce2e7313cd18b21f9770a24591d211c84a23c1f97dbd8581fecc",
+    "workspace_sha256": "bc0d5f96518edf962d2d64e3bc4a43b03365c061c7158f73b01e84e443388149",
+    "baseline_workspace_sha256": "280eeb1cf424dec6b8a03173813f83db2350b9f8aabd3f1e315804e6087ca711"
+  },
+  "native_runtime": {
+    "archive": "tank-native/boxlite-runtime-v0.10.6-tank-replay-dns-amd64.tar.gz",
+    "archive_sha256": "3ea02ae7ca0563b2f8266e07310c41b4f99db1aaf463a25f3d0eaac7a348377f",
+    "source": "tank-native/SOURCE.json",
+    "runtime_files": 18,
+    "runtime_payload_bytes": 76914180
+  },
+  "static_build": {
+    "dockerfile": "Dockerfile",
+    "context": ".",
+    "runtime_entrypoint": "tank-deploy/openma_entrypoint.mjs",
+    "source_transformations_during_build": false,
+    "manifest_extraction": "Plain find/cp build stage; package source bytes are never rewritten."
+  },
+  "comment_policy": {
+    "third_party_comments": "Preserved verbatim",
+    "tank_comments": "First-party explanatory comments and unused docstrings removed without changing noncomment TypeScript tokens, Python AST, or parsed YAML",
+    "runtime_identity_unchanged": true,
+    "comment_only_source_deviations": [
+      {
+        "path": "apps/agent/src/harness/default-loop.ts",
+        "sha256_before": "59aa7ab7e45db11446fd467f61e843b5a866e0f66c2f8fce0cdf0013c65e314b",
+        "sha256_after": "520cac8e1ef3b318e7bf845f3dd7f0504e75ba7edf45f851ddbda852cf73054c",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "apps/agent/src/harness/sandbox-browser.ts",
+        "sha256_before": "d5395c7bf669a0fe626c0d27fbf4f0e2060892879df803fdf98ed342747a69eb",
+        "sha256_after": "af79834e2ae907a5dc2c8fd77b0f30affd449043ae39ecf77dbce3da9abb5b54",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "apps/agent/src/harness/tools.ts",
+        "sha256_before": "b3b7c4f3bc26fabb1395a841c3396e63198ba1d5e0c7f746ff220c9a06a8da5d",
+        "sha256_after": "a2b6833b49c488ec73566f3e5026b1a3c03edf65f0c147265e308341dfb634fc",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/browser-harness/src/index.ts",
+        "sha256_before": "1f3e1c6f75f1b620abdeeb2876cd5ae946f658de0824f0fb2ef8b51fbe37c6e4",
+        "sha256_after": "28b938d3e69fa0217df5f1740ad3f94c4b4d01d002e4c5c4686479510df600c0",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/node-managed-agent-codec.ts",
+        "sha256_before": "98c52e43d14b0690732a015c0bd364d162637357defd66a62f3e5655f3f51690",
+        "sha256_after": "13afa1dbb5756ef40598cc64547dfd1c9f6ef5ed11a0a619392c5a219c1bef1d",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/node-managed-harness-runtime.ts",
+        "sha256_before": "42df88fbb28b07b137df2a61ff0aa76fe686bb792998bd231d95e91972b2ab79",
+        "sha256_after": "9677b8e230295031ce09549a0a1c8bcf61d8db033f70446266f4c2306ecf97ca",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/node-managed-session-inputs.ts",
+        "sha256_before": "776848d050f96c84317bd69d85aeb55467dae9a3523019fdc02cfd9562e4b2ba",
+        "sha256_after": "f64dbb8bb4c191dc20b9788bce1b67a098457065cc6754b0e491aa9e8c532c3c",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/node-managed-session-runner.ts",
+        "sha256_before": "3a56b0977b8f5c1a6512b64c039f64ee4eff9c2de84693157a5e12e2eac15172",
+        "sha256_after": "dafcca564f6ce442581bfe8f7c257fda4e41926b6313c93bc397baa8c56aa930",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/node-managed-session-runtime.ts",
+        "sha256_before": "87291a579358a0043d93a54a6bd8684bea6eb75ba0364ae7e8d986217333368f",
+        "sha256_after": "9fa7a2f8d4d194809db4d6716174efa6ee1839361737b08eb5ec9dc38055aced",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/node-managed-skill-manifest.ts",
+        "sha256_before": "2ff175a9e795ea381ce6625c679c2045ba42aee1f8a905b5bfeba5ab38c9859c",
+        "sha256_after": "506fcde08e4a6536cf618016c08d02b441f2e233314c80267f35b23eb776cc8d",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/node-managed-stable-skills.ts",
+        "sha256_before": "44a2ab8688f7abcbdf51489dc05775efa7191c1a58679abd60fd5c7be5f22dd4",
+        "sha256_after": "a9f6ba3bf37517ee21046fbe152fb75d309a71d2c5708caf3972743ca5dddb23",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/node-session-execution-status.ts",
+        "sha256_before": "952af24c214b778c4b498ba422726e725ec7adaacd8a75fa94134d1b5e761e87",
+        "sha256_after": "be6c8bd343e34074dc52b9b865e9a5a817d016e4e6713a599133071144160650",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/node-session-execution-worker.ts",
+        "sha256_before": "ed9faf75de150e24813f99381749394e61b47c9145f6cb3f5b683bd7ac42c152",
+        "sha256_after": "2a52f5f6754b5e65dd77a626a24a298adc0925321c9c774d5ec0dbc1fe6852d9",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts",
+        "sha256_before": "ce1a3cfc3db0c8939289be02615d52a419e9fca6fcc29a33e9dfd8a4c4478f14",
+        "sha256_after": "6f2c6f3ead3410e95577363ea73a45848c55d9235d242141963b55a3923244ed",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/tank-retained/guest-file-io.ts",
+        "sha256_before": "d149658b6e95b2aae3690a9538f9a52a7123cdab18d77ebf788e36cfcb4360bc",
+        "sha256_after": "f3c30e333e3e0b013264334c8f0d829aa1a09d7be131a4701a8d98c3bf67b477",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts",
+        "sha256_before": "5c272de72bc4289db4c138d7e114cbfad84163d1df19a8d5978a210e8c25ff52",
+        "sha256_after": "9eb10bb1dd1c188f6de145bf42704a81ed4638017b7ad42a4cee0bc2a7bd1258",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/tank-retained/replay-attachment.ts",
+        "sha256_before": "18847f3ef29f34259d8fd504acf5f8cfcc16636b609a5b3bc7be8cd23487ea46",
+        "sha256_after": "24515c58fdb3bcad8e49e0a8bd199f8ff3e2b55d574b2ea0cbdfd7ab6cc76b1d",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/tank-retained/retained-session.ts",
+        "sha256_before": "57553be1a6716aa0395b851c71d0ec8aac06c16236c2c54d968e3699d4fd832d",
+        "sha256_after": "c2e634ba013e02fa5797825915bd1af08a772c3ddaca18a51c8b1153765114a0",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/modules/node-managed.ts",
+        "sha256_before": "cdddaf02fc32eba97344ca220860f42ec60330e46d3cf91e73a89182df4c756b",
+        "sha256_after": "a1585724024d32c24e52ed53f7f46238802702dacfd5ca2e8006407855638848",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/managed-agents-adapters-runtime/src/index.ts",
+        "sha256_before": "4f7431d8f036f27108437bbbbcb34953293a2139940726c0f354e1423357fb7f",
+        "sha256_after": "08e863e77d96f8a4c20c68d67638139b282ebdbd2964e3a6da0ca7b0138e1ec3",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/sandbox-adapter-litebox/src/litebox.ts",
+        "sha256_before": "de3acae49e3e71886386ce2a70ce5adc798d800f722d83c05f85ffe3edafe894",
+        "sha256_after": "9b620c4b19ee021da5667c1b2f3d4321201f64864daea407cb54ebd04c9358f2",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/sandbox-adapter-litebox/src/tank-replay-evidence.ts",
+        "sha256_before": "4850cafe8c8d209d1f8d7b6e7db4cceb08e437d13a109153a786feb9d0444601",
+        "sha256_after": "7353ecc2ead4e15850eb32f3d5ec51558ba055b40e23e8f71b646c249b162090",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/session-runtime-contract/src/continuation.ts",
+        "sha256_before": "17b8acdfe263b6f433013bb962ee8947b2e02207ebd38dfc3504d024e963047a",
+        "sha256_after": "33f5cc8a61d7fc7dc6c56f1adf0442653e7a4e8f5402d4356b14fd9ef7027127",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/session-runtime-contract/src/coordination.ts",
+        "sha256_before": "60caf26ff1404bfee6d5210abd7224bf72f03ad2552b8022d4fc6efe55c0530b",
+        "sha256_after": "9d4d55e9c4293e538b00ccc24187d49552ae14655aae6c032cd6b7710ce3a1e6",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/session-runtime-contract/src/history.ts",
+        "sha256_before": "5df3895ee215284548064b5f75de6175bfa41f26e7b59ea89946ede4956fd9ef",
+        "sha256_after": "bc2f68dbd341a7e1ed6c63a54c8769a88cf783efada45d7caf6e3531ecab881e",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/session-runtime-sql/src/continuation.ts",
+        "sha256_before": "6ab25a6e2a697276bab0de548d7d7e0b38c33dbb89d5f3b04020d49b98157a06",
+        "sha256_after": "85f93046c5ff17307645424df804933b67d3eda18b36f60e4ae6bcd1d5d1c9af",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/session-runtime-sql/src/coordination.ts",
+        "sha256_before": "f3856ddc5fab7bf483608577161dd27e57498cecb545383645b64c9e029c65c2",
+        "sha256_after": "55b762ad136273ef3cb21de69271368ccf769d597b7b7ccfbbbce7e50edd400b",
+        "proof": "identical noncomment TypeScript tokens"
+      },
+      {
+        "path": "packages/control-plane-node/src/lib/node-managed-skill-aliases.py",
+        "sha256_before": "c3d2c932acb5a48e4208e85a4f802856bd9f8420cada6aa84b27aaa47b598141",
+        "sha256_after": "1b27b96c71d34c0b9288d1a26928c6092a3526ee7fedf519fe41a0ddfc5d4a5e",
+        "proof": "identical Python AST excluding unused docstrings"
+      },
+      {
+        "path": "pnpm-workspace.yaml",
+        "sha256_before": "280eeb1cf424dec6b8a03173813f83db2350b9f8aabd3f1e315804e6087ca711",
+        "sha256_after": "bc0d5f96518edf962d2d64e3bc4a43b03365c061c7158f73b01e84e443388149",
+        "proof": "identical parsed YAML"
+      }
+    ]
+  }
+}

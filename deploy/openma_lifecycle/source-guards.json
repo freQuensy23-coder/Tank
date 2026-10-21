@@ -1,7 +1,0 @@
-{
-  "packages/managed-runtime-boxlite/src/boxlite.ts": "72bcf42641a42adcc1f240478a018f82a6711bf39f62f155d8536ea132f3290b",
-  "packages/runtime-resource-fence-sql/src/index.ts": "e4dddf3fd931b5a521f267c82d59ba1b12306d6d351563e9b845e69e9d338855",
-  "packages/runtime-resource-contract/src/fence.ts": "63247d78f98abdd373ce53abe213b2c9a24b2690229b043bc163c72bd5d8e373",
-  "packages/control-plane-node/package.json": "4bdf19151b316b50e779d2a9fc352465179feaa3738419c387e61313f400682a",
-  "pnpm-lock.yaml": "8db697971714ee04b538d90653a370f1ce25cc792f7304da1c57ebff276aa128"
-}

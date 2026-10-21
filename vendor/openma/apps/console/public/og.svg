@@ -1,0 +1,54 @@
+<!--
+  Open Graph share image — 1200×630 (the Facebook/Twitter/LinkedIn standard
+  large-card size). Clean light background with the canonical OpenMA mark
+  and the "openma" wordmark.
+
+  NOTE on format: most modern social platforms (Facebook, Twitter/X,
+  LinkedIn, Slack, Discord) now render SVG OG images fine. The one stale
+  cache that historically struggled is the older Twitter card snapshotter,
+  which sometimes returns a blank preview the first time it sees an SVG.
+  If we hit that in practice, generate a PNG via a build-time step
+  (`sharp` or similar) and update the og:image URL to `/og.png`. For now,
+  SVG keeps the asset crisp and ~2 KB instead of ~120 KB.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" role="img" aria-label="Open Managed Agents">
+  <!-- Background — same #fefefe as the light-mode --bg token. -->
+  <rect width="1200" height="630" fill="#fefefe"/>
+
+  <!-- Subtle brand-tinted halo so the image isn't a flat white card in
+       a feed. Radial gradient, very low opacity coral, off-center to
+       feel intentional. -->
+  <defs>
+    <radialGradient id="halo" cx="0.18" cy="0.22" r="0.7">
+      <stop offset="0%"  stop-color="#f84f32" stop-opacity="0.12"/>
+      <stop offset="60%" stop-color="#f84f32" stop-opacity="0.03"/>
+      <stop offset="100%" stop-color="#f84f32" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="630" fill="url(#halo)"/>
+
+  <!-- Brand glyph + wordmark, vertically stacked, optically centered.
+       Glyph drawn at ~3x of header size to fill the share card; wordmark
+       sits below at display weight. -->
+  <g transform="translate(480 100) scale(.438) translate(-240 -244)" fill="#f84f32">
+    <path d="M279 363H346C356 363 363 371 363 381V397C363 407 356 414 346 414H320C312 414 308 419 308 427V620C308 628 313 633 321 633H349C357 633 363 640 363 648V665C363 675 355 683 345 683H279C265 683 254 672 254 658V388C254 374 265 363 279 363Z"/>
+    <path d="M748 363H681C671 363 666 371 666 381V397C666 407 673 414 683 414H708C716 414 720 419 720 427V620C720 628 715 633 707 633H680C671 633 666 640 666 648V665C666 675 674 683 684 683H748C762 683 773 672 773 658V388C773 374 762 363 748 363Z"/>
+    <path d="M500 258C496 258 491 260 488 264C486 267 485 271 485 275V343C485 351 491 357 499 357H575C583 357 587 348 581 342L507 264C505 261 503 258 500 258Z"/>
+    <circle cx="535" cy="520" r="42"/>
+  </g>
+
+  <!-- Wordmark — "openma" in display serif, matches the --font-display
+       Source Serif 4 we use in the app. Falls back to Georgia/serif on
+       systems that don't have the webfont, which is fine for a static
+       SVG meant for OG previews (most renderers don't load webfonts). -->
+  <text x="600" y="475" text-anchor="middle"
+        font-family="'Source Serif 4', Georgia, 'Times New Roman', serif"
+        font-size="84" font-weight="700" fill="#1a1a1a"
+        letter-spacing="-1">openma</text>
+
+  <!-- Tagline -->
+  <text x="600" y="540" text-anchor="middle"
+        font-family="'DM Sans', -apple-system, 'Segoe UI', sans-serif"
+        font-size="26" font-weight="400" fill="#6b6b6b"
+        letter-spacing="0.2">Manage agents, sessions, and infrastructure.</text>
+</svg>

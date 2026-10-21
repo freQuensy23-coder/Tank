@@ -1,0 +1,1288 @@
+// @ts-nocheck
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+import { env, exports } from "cloudflare:workers";
+import { describe, it, expect, vi } from "vitest";
+import { registerHarness } from "../../apps/agent/src/harness/registry";
+import { resolveSkills, registerSkill } from "../../apps/agent/src/harness/skills";
+import { SummarizeCompaction } from "../../apps/agent/src/harness/compaction";
+import { TestSandbox, createSandbox, CloudflareSandbox } from "../../apps/agent/src/runtime/sandbox";
+import {
+  createCloudflareManagedEnvironmentWorker,
+  createCloudflareManagedRuntime,
+  createCloudflareManagedRuntimeDriver,
+  createCloudflareManagedRuntimeHost,
+} from "../../apps/agent/src/runtime/managed-runtime";
+import { buildTools } from "../../apps/agent/src/harness/tools";
+import { InMemoryHistory, eventsToMessages } from "../../apps/agent/src/runtime/history";
+import type { AgentConfig, SessionEvent, SessionThreadCreatedEvent, SessionThreadIdleEvent, AgentThreadMessageEvent, AgentMessageEvent, UserMessageEvent } from "@open-managed-agents/shared";
+
+// ============================================================
+// Helpers
+// ============================================================
+const HEADERS = { "x-api-key": "test-key", "Content-Type": "application/json" };
+
+function api(path: string, init?: RequestInit) {
+  return exports.default.fetch(new Request(`http://localhost${path}`, init));
+}
+
+function post(path: string, body: Record<string, unknown>) {
+  return api(path, {
+    method: "POST",
+    headers: HEADERS,
+    body: JSON.stringify(body),
+  });
+}
+
+// ============================================================
+// 1. Skills system
+// ============================================================
+describe("Skills system", () => {
+  it("resolveSkills returns registered skills", () => {
+    registerSkill({ id: "test_skill_1", name: "Test Skill", system_prompt_addition: "test prompt" });
+    const skills = resolveSkills([{ skill_id: "test_skill_1" }]);
+    expect(skills.length).toBe(1);
+    expect(skills[0].name).toBe("Test Skill");
+  });
+
+  it("resolveSkills ignores unknown skill IDs", () => {
+    const skills = resolveSkills([
+      { skill_id: "totally_made_up_skill" },
+      { skill_id: "another_fake" },
+    ]);
+    expect(skills.length).toBe(0);
+  });
+
+  it("no hardcoded built-in skills — all skills via API/KV", () => {
+    // Built-in skills removed — all skills are managed via /v1/oma/skills API
+    const skills = resolveSkills([
+      { skill_id: "web_research" },
+      { skill_id: "pptx" },
+    ]);
+    // These should NOT resolve from in-memory registry (they're in KV now)
+    expect(skills.length).toBe(0);
+  });
+
+  it("registerSkill adds a new skill and resolveSkills finds it", () => {
+    registerSkill({
+      id: "custom_testing_skill",
+      name: "Custom Testing",
+      system_prompt_addition: "You are a testing specialist.",
+    });
+
+    const skills = resolveSkills([{ skill_id: "custom_testing_skill" }]);
+    expect(skills.length).toBe(1);
+    expect(skills[0].name).toBe("Custom Testing");
+    expect(skills[0].system_prompt_addition).toBe("You are a testing specialist.");
+  });
+
+  it("resolveSkills returns empty array when no skill IDs match", () => {
+    const skills = resolveSkills([
+      { skill_id: "nonexistent_1" },
+      { skill_id: "nonexistent_2" },
+    ]);
+    expect(skills).toEqual([]);
+  });
+
+  it("resolveSkills returns empty array for empty input", () => {
+    const skills = resolveSkills([]);
+    expect(skills).toEqual([]);
+  });
+
+  it("registerSkill overwrites existing skill with same ID", () => {
+    registerSkill({
+      id: "overwrite_test_skill",
+      name: "Original",
+      system_prompt_addition: "original prompt",
+    });
+    let skills = resolveSkills([{ skill_id: "overwrite_test_skill" }]);
+    expect(skills[0].name).toBe("Original");
+
+    registerSkill({
+      id: "overwrite_test_skill",
+      name: "Updated",
+      system_prompt_addition: "updated prompt",
+    });
+    skills = resolveSkills([{ skill_id: "overwrite_test_skill" }]);
+    expect(skills[0].name).toBe("Updated");
+    expect(skills[0].system_prompt_addition).toBe("updated prompt");
+  });
+});
+
+// ============================================================
+// 2. Compaction
+// ============================================================
+describe("Compaction", () => {
+  const compaction = new SummarizeCompaction();
+
+  it("shouldCompact returns false for short conversations", () => {
+    const messages = [
+      { role: "user" as const, content: "hello" },
+      { role: "assistant" as const, content: "hi there" },
+    ];
+    expect(compaction.shouldCompact(messages)).toBe(false);
+  });
+
+  it("shouldCompact returns true for very long conversations", () => {
+    // Create messages totaling ~400K chars => ~100K tokens at 4 chars/token
+    // 85% threshold = 85K tokens => 340K chars
+    const messages = Array.from({ length: 100 }, (_, i) => ({
+      role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+      content: "x".repeat(4000), // ~1000 tokens each => 100K tokens total
+    }));
+    expect(compaction.shouldCompact(messages)).toBe(true);
+  });
+
+  it("shouldCompact respects custom maxTokens threshold", () => {
+    // 10 messages * 400 chars = 4000 chars => ~1000 tokens
+    const messages = Array.from({ length: 10 }, (_, i) => ({
+      role: (i % 2 === 0 ? "user" : "assistant") as "user" | "assistant",
+      content: "y".repeat(400),
+    }));
+    // With default 100K, should NOT compact
+    expect(compaction.shouldCompact(messages, 100000)).toBe(false);
+    // With low threshold (500 tokens * 0.85 = 425 tokens), should compact
+    expect(compaction.shouldCompact(messages, 500)).toBe(true);
+  });
+
+  it("compact returns original messages when 4 or fewer", async () => {
+    const messages = [
+      { role: "user" as const, content: "msg1" },
+      { role: "assistant" as const, content: "msg2" },
+      { role: "user" as const, content: "msg3" },
+      { role: "assistant" as const, content: "msg4" },
+    ];
+    // compact should short-circuit for <= 4 messages
+    const fakeModel = {} as any; // Won't be called
+    const result = await compaction.compact(messages, fakeModel);
+    expect(result).toEqual(messages);
+    expect(result.length).toBe(4);
+  });
+
+  it("shouldCompact returns false at exactly below the threshold", () => {
+    // maxTokens=100, threshold = 85 tokens = 340 chars
+    // Create a message with exactly 336 chars => 84 tokens (below 85)
+    const messages = [
+      { role: "user" as const, content: "a".repeat(336) },
+    ];
+    expect(compaction.shouldCompact(messages, 100)).toBe(false);
+  });
+});
+
+// ============================================================
+// 3. Multi-agent callable_agents
+// ============================================================
+describe("Multi-agent callable_agents", () => {
+  it("stores callable_agents in AgentConfig and builds tools", async () => {
+    const agentConfig: AgentConfig = {
+      id: "agent_coord_api",
+      name: "Coordinator",
+      model: "claude-sonnet-4-6",
+      system: "You coordinate.",
+      tools: [{ type: "agent_toolset_20260401" }],
+      callable_agents: [{ type: "agent", id: "agent_worker1", version: 1 }],
+      version: 1,
+      created_at: new Date().toISOString(),
+    };
+
+    expect(agentConfig.callable_agents).toHaveLength(1);
+    expect(agentConfig.callable_agents![0].id).toBe("agent_worker1");
+    expect(agentConfig.callable_agents![0].type).toBe("agent");
+
+    // Verify tools are created from this config
+    const sandbox = new TestSandbox();
+    const tools = await buildTools(agentConfig, sandbox, {
+      ANTHROPIC_API_KEY: "sk-ant-test",
+    });
+    expect(tools.call_agent_agent_worker1).toBeDefined();
+  });
+
+  it("agent with callable_agents creates call tools via buildTools", async () => {
+    const agentConfig: AgentConfig = {
+      id: "agent_coord",
+      name: "Coordinator",
+      model: "claude-sonnet-4-6",
+      system: "You coordinate.",
+      tools: [{ type: "agent_toolset_20260401" }],
+      callable_agents: [
+        { type: "agent", id: "agent_worker1", version: 1 },
+        { type: "agent", id: "agent_worker2", version: 1 },
+      ],
+      version: 1,
+      created_at: new Date().toISOString(),
+    };
+
+    const sandbox = new TestSandbox();
+    const tools = await buildTools(agentConfig, sandbox, {
+      ANTHROPIC_API_KEY: "sk-ant-test",
+    });
+
+    // Should have call_agent tools for each callable agent
+    expect(tools.call_agent_agent_worker1).toBeDefined();
+    expect(tools.call_agent_agent_worker2).toBeDefined();
+
+    // Tools should have the expected description pattern
+    expect(typeof tools.call_agent_agent_worker1).toBe("object");
+    expect(typeof tools.call_agent_agent_worker2).toBe("object");
+  });
+
+  it("callable_agents tools are NOT created without ANTHROPIC_API_KEY", async () => {
+    const agentConfig: AgentConfig = {
+      id: "agent_coord_nokey",
+      name: "Coordinator No Key",
+      model: "claude-sonnet-4-6",
+      system: "You coordinate.",
+      tools: [{ type: "agent_toolset_20260401" }],
+      callable_agents: [{ type: "agent", id: "agent_worker1", version: 1 }],
+      version: 1,
+      created_at: new Date().toISOString(),
+    };
+
+    const sandbox = new TestSandbox();
+    // No env.ANTHROPIC_API_KEY provided
+    const tools = await buildTools(agentConfig, sandbox, undefined);
+    expect(tools.call_agent_agent_worker1).toBeUndefined();
+  });
+
+  it("thread event types are valid SessionEvent variants", () => {
+    // Type-level check: verify these events conform to SessionEvent
+    const threadCreated: SessionEvent = {
+      type: "session.thread_created",
+      session_thread_id: "thread_123",
+      agent_id: "agent_worker1",
+      agent_name: "Worker 1",
+    };
+    expect(threadCreated.type).toBe("session.thread_created");
+    expect((threadCreated as SessionThreadCreatedEvent).session_thread_id).toBe("thread_123");
+
+    const threadMessage: SessionEvent = {
+      type: "agent.thread_message",
+      session_thread_id: "thread_123",
+      content: [{ type: "text", text: "sub-agent response" }],
+    };
+    expect(threadMessage.type).toBe("agent.thread_message");
+    expect((threadMessage as AgentThreadMessageEvent).content[0].text).toBe("sub-agent response");
+  });
+
+  it("callable_agents with multiple agents produces multiple tools", async () => {
+    const agentConfig: AgentConfig = {
+      id: "agent_multi_coord",
+      name: "Multi Coordinator",
+      model: "claude-sonnet-4-6",
+      system: "You coordinate multiple agents.",
+      tools: [{ type: "agent_toolset_20260401" }],
+      callable_agents: [
+        { type: "agent", id: "agent_alpha", version: 1 },
+        { type: "agent", id: "agent_beta", version: 1 },
+        { type: "agent", id: "agent_gamma", version: 1 },
+      ],
+      version: 1,
+      created_at: new Date().toISOString(),
+    };
+
+    const sandbox = new TestSandbox();
+    const tools = await buildTools(agentConfig, sandbox, {
+      ANTHROPIC_API_KEY: "sk-ant-test",
+    });
+
+    expect(tools.call_agent_agent_alpha).toBeDefined();
+    expect(tools.call_agent_agent_beta).toBeDefined();
+    expect(tools.call_agent_agent_gamma).toBeDefined();
+
+    // Verify they are distinct tool objects
+    expect(tools.call_agent_agent_alpha).not.toBe(tools.call_agent_agent_beta);
+  });
+});
+
+// ============================================================
+// 4. Sandbox lifecycle
+// ============================================================
+describe("Sandbox lifecycle", () => {
+  it("TestSandbox exec returns test response with command", async () => {
+    const stub = new TestSandbox();
+    const result = await stub.exec("echo hello");
+    expect(result).toContain("test");
+    expect(result).toContain("echo hello");
+    expect(result).toContain("exit=0");
+  });
+
+  it("TestSandbox readFile returns test file message", async () => {
+    const stub = new TestSandbox();
+    const result = await stub.readFile("/some/path.txt");
+    expect(result).toContain("test");
+    expect(result).toContain("/some/path.txt");
+  });
+
+  it("TestSandbox writeFile returns ok", async () => {
+    const stub = new TestSandbox();
+    const result = await stub.writeFile("/test/file.txt", "content here");
+    expect(result).toBe("ok");
+  });
+
+  it("createSandbox always returns CloudflareSandbox", () => {
+    const fakeEnv = { SANDBOX: {} } as any;
+    const sandbox = createSandbox(fakeEnv, "test-session-id");
+    expect(sandbox).toBeDefined();
+    expect(sandbox).not.toBeInstanceOf(TestSandbox);
+  });
+
+  it("CloudflareSandbox injects secrets for direct matching commands only", async () => {
+    const calls: Array<{ command: string; options?: { env?: Record<string, string> } }> = [];
+    const fakeSandbox = {
+      exec: async (command: string, options?: { env?: Record<string, string> }) => {
+        calls.push({ command, options });
+        return { stdout: "ok", stderr: "", exitCode: 0 };
+      },
+    };
+    const sandbox = new CloudflareSandbox({ SANDBOX: {} } as any, "test-session-id") as any;
+    sandbox.sandboxPromise = Promise.resolve(fakeSandbox);
+    sandbox.registerCommandSecrets("git", { GITHUB_TOKEN: "gh_test_token" });
+
+    await sandbox.exec("git push origin main");
+    await sandbox.exec("cd /workspace && git push origin main");
+
+    expect(calls[0].options?.env).toEqual({ GITHUB_TOKEN: "gh_test_token" });
+    expect(calls[1].options?.env).toBeUndefined();
+  });
+
+  it("CloudflareSandbox preserves runtime env when the provider stub has no setEnvVars", async () => {
+    const exec = vi.fn(async () => ({ stdout: "ok", stderr: "", exitCode: 0 }));
+    const sandbox = new CloudflareSandbox({ SANDBOX: {} } as any, "test-session-id") as any;
+    sandbox.sandboxPromise = Promise.resolve({ exec });
+
+    await sandbox.setEnvVars({ OMA_OUTPUTS_DIR: "/mnt/session/outputs" });
+    await sandbox.exec("printf ready");
+
+    expect(exec).toHaveBeenCalledWith("printf ready", {
+      timeout: 120000,
+      env: { OMA_OUTPUTS_DIR: "/mnt/session/outputs" },
+    });
+  });
+
+  it("CloudflareSandbox does not inject secrets for prefixed chained commands", async () => {
+    const calls: Array<{ command: string; options?: { env?: Record<string, string> } }> = [];
+    const fakeSandbox = {
+      exec: async (command: string, options?: { env?: Record<string, string> }) => {
+        calls.push({ command, options });
+        return { stdout: "", stderr: "failed", exitCode: 1 };
+      },
+    };
+    const sandbox = new CloudflareSandbox({ SANDBOX: {} } as any, "test-session-id") as any;
+    sandbox.sandboxPromise = Promise.resolve(fakeSandbox);
+    sandbox.registerCommandSecrets("git", { GITHUB_TOKEN: "gh_test_token" });
+
+    await sandbox.exec("git push origin main && echo done");
+
+    expect(calls[0].options?.env).toBeUndefined();
+  });
+
+  it("CloudflareSandbox appends a retry hint after chained secret-backed command failure", async () => {
+    const fakeSandbox = {
+      exec: async () => ({
+        stdout: "",
+        stderr: "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+        exitCode: 1,
+      }),
+    };
+    const sandbox = new CloudflareSandbox({ SANDBOX: {} } as any, "test-session-id") as any;
+    sandbox.sandboxPromise = Promise.resolve(fakeSandbox);
+    sandbox.registerCommandSecrets("git", { GITHUB_TOKEN: "gh_test_token" });
+
+    const result = await sandbox.exec("cd /workspace && git push origin main");
+
+    expect(result).toContain("fatal: could not read Username");
+    expect(result).toContain("Hint:");
+    expect(result).toContain("secret-backed command (`git`)");
+  });
+
+  it("CloudflareSandbox restores a workspace backup exactly once", async () => {
+    const restoreBackup = vi.fn(async () => {});
+    const sandbox = new CloudflareSandbox({ SANDBOX: {} } as any, "test-session-id") as any;
+    sandbox.sandboxPromise = Promise.resolve({ restoreBackup });
+
+    await expect(
+      sandbox.restoreWorkspaceBackup({ id: "backup-1", dir: "/workspace" }),
+    ).resolves.toEqual({ ok: true });
+    expect(restoreBackup).toHaveBeenCalledOnce();
+  });
+
+  it("Cloudflare managed runtime does not claim a durable output mount without R2 FUSE credentials", async () => {
+    const runtime = createCloudflareManagedRuntime({ SANDBOX: {}, FILES_BUCKET: {} } as any);
+    const scope = {
+      workspaceId: "workspace-1",
+      environmentId: "environment-1",
+      sessionId: "session-1",
+      workId: "work-1",
+    };
+
+    await expect(runtime.sandbox.capabilities(scope)).resolves.toEqual({
+      suspendResume: "unsupported",
+      hardTerminate: "supported",
+      runtimeCheckpoints: [],
+    });
+    await expect(runtime.workspace.capabilities(scope)).resolves.toEqual({
+      strategies: ["checkpoint_restore"],
+    });
+    await expect(runtime.outputs.capabilities(scope)).resolves.toEqual({
+      strategies: [{ strategy: "final_collect", durability: "durable" }],
+    });
+    await expect(runtime.harness.driverCapabilities(scope)).resolves.toEqual({
+      drivers: ["ama_worker"],
+    });
+  });
+
+  it("Cloudflare managed runtime advertises durable output mount with complete R2 FUSE credentials", async () => {
+    const runtime = createCloudflareManagedRuntime({
+      SANDBOX: {},
+      FILES_BUCKET: {},
+      R2_ENDPOINT: "https://example.r2.cloudflarestorage.com",
+      R2_ACCESS_KEY_ID: "access",
+      R2_SECRET_ACCESS_KEY: "secret",
+    } as any);
+    const scope = {
+      workspaceId: "workspace-1",
+      environmentId: "environment-1",
+      sessionId: "session-1",
+      workId: "work-1",
+    };
+
+    await expect(runtime.outputs.capabilities(scope)).resolves.toEqual({
+      strategies: [
+        { strategy: "durable_mount", durability: "durable" },
+        { strategy: "final_collect", durability: "durable" },
+      ],
+    });
+  });
+
+  it("projects the configured Cloudflare runtime through the swappable provider driver Port", async () => {
+    const driver = createCloudflareManagedRuntimeDriver({
+      SANDBOX: {},
+      FILES_BUCKET: {},
+      R2_ENDPOINT: "https://example.r2.cloudflarestorage.com",
+      R2_ACCESS_KEY_ID: "access",
+      R2_SECRET_ACCESS_KEY: "secret",
+    } as any);
+
+    expect(driver.descriptor()).toEqual({
+      provider: "cloudflare",
+      version: "1.0.0",
+      placements: ["in_process"],
+      capabilities: {
+        sandbox: {
+          suspendResume: "unsupported",
+          hardTerminate: "supported",
+          runtimeCheckpoints: [],
+        },
+        workspace: { strategies: ["checkpoint_restore"] },
+        outputs: {
+          strategies: [
+            { strategy: "durable_mount", durability: "durable" },
+            { strategy: "final_collect", durability: "durable" },
+          ],
+        },
+        harness: { drivers: ["ama_worker", "openma_supervised"] },
+      },
+      credentialEgress: {
+        enforcement: "enforced",
+        credentialMode: "live",
+        interceptedProtocols: ["http", "https"],
+      },
+    });
+
+    const resources = await driver.create({
+      environmentId: "environment-1",
+      placement: "in_process",
+      profile: {
+        workspace: { requirement: "durable" },
+        outputs: { requirement: "durable" },
+        runtimeCheckpoint: "disabled",
+        credentialEgress: { requirement: "required" },
+        driver: {
+          type: "openma_supervised",
+          protocol: "openma-harness-supervisor-v1",
+          supervisor: { command: "openma-harness-supervisor" },
+          harness: { id: "pi", version: "1" },
+          readyTimeoutMs: 30_000,
+          heartbeatTimeoutMs: 30_000,
+          drainTimeoutMs: 30_000,
+        },
+      },
+      plan: {
+        workspaceStrategy: "checkpoint_restore",
+        outputStrategy: "durable_mount",
+        runtimeCheckpoint: null,
+        driver: {
+          type: "openma_supervised",
+          protocol: "openma-harness-supervisor-v1",
+          supervisor: { command: "openma-harness-supervisor" },
+          harness: { id: "pi", version: "1" },
+          readyTimeoutMs: 30_000,
+          heartbeatTimeoutMs: 30_000,
+          drainTimeoutMs: 30_000,
+        },
+      },
+      providerConfig: {},
+    });
+    const scope = {
+      workspaceId: "workspace-1",
+      environmentId: "environment-1",
+      sessionId: "session-1",
+      workId: "work-1",
+    };
+
+    await expect(resources.outputs.capabilities(scope)).resolves.toEqual(
+      driver.descriptor().capabilities.outputs,
+    );
+    await expect(resources.harnessDriver.driverCapabilities(scope)).resolves.toEqual(
+      driver.descriptor().capabilities.harness,
+    );
+    await expect(resources.credentialEgress?.capabilities(scope)).resolves.toEqual(
+      driver.descriptor().credentialEgress,
+    );
+  });
+
+  it("Cloudflare managed runtime mounts Session outputs through the dedicated output Port", async () => {
+    const mounted: Array<{ tenantId: string; sessionId: string }> = [];
+    const fakeSandbox = {
+      runtimeHandle: () => ({ provider: "cloudflare", runtimeId: "session-1" }),
+      runtimeCapabilities: () => ({
+        lease: true,
+        suspend: [],
+        checkpoint: ["filesystem"],
+      }),
+      status: async () => "running",
+      renewLease: async () => {},
+      suspend: async () => { throw new Error("not supported"); },
+      resume: async () => {},
+      checkpoint: async () => ({
+        provider: "cloudflare",
+        checkpointId: "backup-1",
+        sourceRuntimeId: "session-1",
+        kind: "filesystem",
+        scope: "portable",
+      }),
+      exec: async (command: string) =>
+        command.includes("__OPENMA_RUNTIME_READY__")
+          ? "__OPENMA_RUNTIME_READY__"
+          : "",
+      readFile: async () => "",
+      writeFile: async (path: string) => path,
+      destroy: async () => {},
+      sessionOutputMountCapabilities: () => ({ durability: "durable" }),
+      async mountSessionOutputs(input: { tenantId: string; sessionId: string }) {
+        mounted.push(input);
+      },
+    };
+    const runtime = createCloudflareManagedRuntime(
+      {
+        SANDBOX: {},
+        FILES_BUCKET: {},
+        R2_ENDPOINT: "https://example.r2.cloudflarestorage.com",
+        R2_ACCESS_KEY_ID: "access",
+        R2_SECRET_ACCESS_KEY: "secret",
+      } as any,
+      { createSandbox: () => fakeSandbox as any },
+    );
+    const scope = {
+      workspaceId: "tenant-1",
+      environmentId: "environment-1",
+      sessionId: "session-1",
+      workId: "work-1",
+    };
+    const fence = {
+      ...scope,
+      ownerId: "owner-1",
+      generation: 1,
+      token: "secret-fence",
+      expiresAt: "2026-09-04T00:00:00.000Z",
+    };
+    const signal = new AbortController().signal;
+    const workspace = await runtime.workspace.materialize({
+      scope,
+      fence,
+      strategy: "checkpoint_restore",
+      activeCheckpoint: null,
+      idempotencyKey: "workspace",
+      signal,
+    });
+    const outputs = await runtime.outputs.prepare({
+      scope,
+      fence,
+      strategy: "durable_mount",
+      idempotencyKey: "outputs",
+      signal,
+    });
+    const lease = await runtime.sandbox.acquire({
+      scope,
+      fence,
+      plan: {
+        workspaceStrategy: "checkpoint_restore",
+        outputStrategy: "durable_mount",
+        runtimeCheckpoint: null,
+        driver: { type: "ama_worker", process: { command: "worker" } },
+      },
+      workspace,
+      outputs,
+      signal,
+    });
+    await runtime.outputs.attach({
+      scope,
+      fence,
+      strategy: "durable_mount",
+      binding: outputs,
+      sandbox: lease,
+      signal,
+    });
+
+    expect(mounted).toEqual([{ tenantId: "tenant-1", sessionId: "session-1" }]);
+  });
+
+  it("Cloudflare managed runtime fences and revokes credential egress", async () => {
+    const outboundContexts: unknown[] = [];
+    const revocations: unknown[] = [];
+    const fakeSandbox = {
+      runtimeHandle: () => ({ provider: "cloudflare", runtimeId: "session-1" }),
+      runtimeCapabilities: () => ({
+        lease: true,
+        suspend: [],
+        checkpoint: ["filesystem"],
+      }),
+      status: async () => "running",
+      renewLease: async () => {},
+      suspend: async () => { throw new Error("not supported"); },
+      resume: async () => {},
+      checkpoint: async () => ({
+        provider: "cloudflare",
+        checkpointId: "backup-1",
+        sourceRuntimeId: "session-1",
+        kind: "filesystem",
+        scope: "portable",
+      }),
+      exec: async (command: string) =>
+        command.includes("__OPENMA_RUNTIME_READY__")
+          ? "__OPENMA_RUNTIME_READY__"
+          : "",
+      readFile: async () => "",
+      writeFile: async (path: string) => path,
+      destroy: async () => {},
+      async setOutboundContext(input: unknown) { outboundContexts.push(input); },
+      async revokeOutboundContext(input: unknown) { revocations.push(input); },
+    };
+    const runtime = createCloudflareManagedRuntime(
+      { SANDBOX: {} } as any,
+      {
+        createSandbox: () => fakeSandbox as any,
+        controlPlaneBaseUrl: "https://api.openma.test/v1",
+      },
+    );
+    const scope = {
+      workspaceId: "tenant-1",
+      environmentId: "environment-1",
+      sessionId: "session-1",
+      workId: "work-1",
+    };
+    const fence = {
+      ...scope,
+      ownerId: "worker-1",
+      generation: 7,
+      token: "secret-fence",
+      expiresAt: "2026-09-06T12:00:00.000Z",
+    };
+    const signal = new AbortController().signal;
+
+    await expect(runtime.credentialEgress!.capabilities(scope)).resolves.toEqual({
+      enforcement: "enforced",
+      credentialMode: "live",
+      interceptedProtocols: ["http", "https"],
+    });
+    const egress = await runtime.credentialEgress!.prepare({
+      scope,
+      fence,
+      requirement: "required",
+      idempotencyKey: "egress",
+      signal,
+    });
+    const workspace = await runtime.workspace.materialize({
+      scope,
+      fence,
+      strategy: "checkpoint_restore",
+      activeCheckpoint: null,
+      idempotencyKey: "workspace",
+      signal,
+    });
+    const lease = await runtime.sandbox.acquire({
+      scope,
+      fence,
+      plan: {
+        workspaceStrategy: "checkpoint_restore",
+        outputStrategy: null,
+        runtimeCheckpoint: null,
+        driver: { type: "ama_worker", process: { command: "worker" } },
+      },
+      workspace,
+      outputs: null,
+      credentialEgress: egress,
+      signal,
+    });
+    await runtime.credentialEgress!.attach({
+      scope,
+      fence,
+      binding: egress!,
+      sandbox: lease,
+      signal,
+    });
+    await runtime.credentialEgress!.revoke({
+      scope,
+      fence,
+      binding: egress!,
+      reason: "lease_lost",
+    });
+
+    expect(outboundContexts).toEqual([{
+      tenantId: "tenant-1",
+      environmentId: "environment-1",
+      sessionId: "session-1",
+      workId: "work-1",
+      ownerId: "worker-1",
+      generation: 7,
+      fenceToken: "secret-fence",
+      required: true,
+      controlPlaneBaseUrl: "https://api.openma.test/v1",
+    }]);
+    expect(revocations).toEqual([{
+      workId: "work-1",
+      generation: 7,
+      reason: "lease_lost",
+    }]);
+  });
+
+  it("CloudflareSandbox mounts a scoped live workspace via R2 FUSE only", async () => {
+    const mountBucket = vi.fn(async () => {});
+    const unmountBucket = vi.fn(async () => {});
+    const sandbox = new CloudflareSandbox({
+      SANDBOX: {}, WORKSPACE_BUCKET: {}, WORKSPACE_BUCKET_NAME: "workspace-bucket",
+      R2_ENDPOINT: "https://example.r2.cloudflarestorage.com",
+      R2_ACCESS_KEY_ID: "access", R2_SECRET_ACCESS_KEY: "secret",
+    } as any, "test-session-id") as any;
+    sandbox.sandboxPromise = Promise.resolve({ mountBucket, unmountBucket });
+
+    await sandbox.mountDurableWorkspace({ workspaceId: "tenant-1", sessionId: "session-1" });
+    expect(unmountBucket).toHaveBeenCalledWith("/workspace");
+    expect(mountBucket).toHaveBeenCalledWith("workspace-bucket", "/workspace", {
+      endpoint: "https://example.r2.cloudflarestorage.com",
+      provider: "r2",
+      credentials: { accessKeyId: "access", secretAccessKey: "secret" },
+      prefix: "/openma-workspaces/tenant-1/session-1/",
+      readOnly: false,
+      credentialProxy: true,
+    });
+  });
+
+  it("CloudflareSandbox rejects missing R2 mount credentials and propagates native failures", async () => {
+    const sandbox = new CloudflareSandbox({
+      SANDBOX: {}, WORKSPACE_BUCKET: {}, WORKSPACE_BUCKET_NAME: "workspace-bucket",
+    } as any, "test-session-id") as any;
+    const mountBucket = vi.fn(async () => { throw new Error("native FUSE unavailable"); });
+    sandbox.sandboxPromise = Promise.resolve({ mountBucket });
+    const identity = { workspaceId: "tenant-1", sessionId: "session-1" };
+    await expect(sandbox.mountDurableWorkspace(identity)).rejects.toThrow(/R2 credentials/);
+    expect(mountBucket).not.toHaveBeenCalled();
+    sandbox.env.R2_ENDPOINT = "https://example.r2.cloudflarestorage.com";
+    sandbox.env.R2_ACCESS_KEY_ID = "access";
+    sandbox.env.R2_SECRET_ACCESS_KEY = "secret";
+    await expect(sandbox.mountDurableWorkspace(identity)).rejects.toThrow("native FUSE unavailable");
+    await expect(sandbox.mountDurableWorkspace({ workspaceId: "..", sessionId: "session-1" }))
+      .rejects.toThrow(/Unsafe workspace mount/);
+    sandbox.sandboxPromise = Promise.resolve({});
+    await expect(sandbox.mountDurableWorkspace(identity)).rejects.toThrow(/mount primitive/);
+  });
+
+  it("CloudflareSandbox surfaces an output mount failure to its Port caller", async () => {
+    const sandbox = new CloudflareSandbox({
+      SANDBOX: {},
+      FILES_BUCKET: {},
+      R2_ENDPOINT: "https://example.r2.cloudflarestorage.com",
+      R2_ACCESS_KEY_ID: "access",
+      R2_SECRET_ACCESS_KEY: "secret",
+    } as any, "test-session-id") as any;
+    sandbox.sandboxPromise = Promise.resolve({
+      unmountBucket: async () => {},
+      mountBucket: async () => { throw new Error("r2 mount unavailable"); },
+    });
+
+    await expect(sandbox.mountSessionOutputs({
+      tenantId: "tenant-1",
+      sessionId: "session-1",
+    })).rejects.toThrow("r2 mount unavailable");
+  });
+
+  it("CloudflareSandbox creates an explicit non-durable output directory in local dev", async () => {
+    const exec = vi.fn(async () => ({ stdout: "", stderr: "", exitCode: 0 }));
+    const sandbox = new CloudflareSandbox({
+      SANDBOX: {},
+      FILES_BUCKET: {},
+    } as any, "test-session-id") as any;
+    sandbox.sandboxPromise = Promise.resolve({ exec });
+
+    await expect(sandbox.mountSessionOutputs({
+      tenantId: "tenant-1",
+      sessionId: "session-1",
+    })).resolves.toBeUndefined();
+    expect(exec).toHaveBeenCalledWith(
+      "mkdir -p /mnt/session/outputs",
+      { timeout: 5000 },
+    );
+    expect(sandbox.sessionOutputMountCapabilities()).toEqual({
+      durability: "best_effort",
+    });
+  });
+
+  it("Cloudflare host preset preinstalls fencing, orphan cleanup, and both harness lanes", async () => {
+    const runtime = createCloudflareManagedRuntimeHost(
+      { SANDBOX: {}, FILES_BUCKET: {}, MAIN_DB: {} } as any,
+      { ownerId: "session-do:session-1" },
+    );
+    const scope = {
+      workspaceId: "workspace-1",
+      environmentId: "environment-1",
+      sessionId: "session-1",
+      workId: "work-1",
+    };
+
+    await expect(runtime.harnessDriver.driverCapabilities(scope)).resolves.toEqual({
+      drivers: ["ama_worker", "openma_supervised"],
+    });
+    expect(runtime.host).toBeDefined();
+    expect(runtime.orphanReconciler).toBeDefined();
+  });
+
+  it("Cloudflare host preset exposes the operator Session metadata materializer", () => {
+    const sessionInputs = {
+      materialize: vi.fn(async () => undefined),
+    };
+    const runtime = createCloudflareManagedRuntimeHost(
+      { SANDBOX: {}, FILES_BUCKET: {}, MAIN_DB: {} } as any,
+      {
+        ownerId: "environment-worker:one",
+        sessionInputs,
+      },
+    );
+
+    expect(runtime.sessionInputs).toBe(sessionInputs);
+  });
+
+  it("Cloudflare Environment Worker preset composes the official queue runner with the fenced host", () => {
+    const client = {
+      baseURL: "https://api.example.test",
+      beta: {
+        environments: { work: { poller: vi.fn() } },
+        webhooks: { unwrap: vi.fn() },
+      },
+      withOptions: () => ({
+        beta: {
+          environments: {
+            work: { heartbeat: vi.fn(), stop: vi.fn() },
+          },
+        },
+      }),
+    };
+    const cluster = createCloudflareManagedEnvironmentWorker(
+      { SANDBOX: {}, FILES_BUCKET: {}, MAIN_DB: {} } as any,
+      {
+        runtime: { ownerId: "environment-worker:one" },
+        worker: {
+          client,
+          environmentId: "env_01",
+          environmentKey: "environment-key",
+          workspaceId: "workspace_01",
+          profileFor: async () => ({
+            workspace: { requirement: "ephemeral" },
+            outputs: { requirement: "disabled" },
+            runtimeCheckpoint: "disabled",
+            driver: {
+              type: "ama_worker",
+              process: { command: "node", args: ["worker.mjs"] },
+            },
+          }),
+        },
+      },
+    );
+
+    expect(cluster.host).toBeDefined();
+    expect(cluster.environmentWorker).toMatchObject({
+      drain: expect.any(Function),
+      handleWebhook: expect.any(Function),
+      run: expect.any(Function),
+    });
+  });
+
+  it("TestSandbox exec works with various commands", async () => {
+    const stub = new TestSandbox();
+
+    const r1 = await stub.exec("ls -la /workspace");
+    expect(r1).toContain("exit=0");
+    expect(r1).toContain("ls -la /workspace");
+
+    const r2 = await stub.exec("python3 script.py");
+    expect(r2).toContain("exit=0");
+    expect(r2).toContain("python3 script.py");
+
+    // Even empty command works
+    const r3 = await stub.exec("");
+    expect(r3).toContain("exit=0");
+  });
+});
+
+// ============================================================
+// 5. buildTools integration
+// ============================================================
+describe("buildTools integration", () => {
+  it("builds all default tools when agent_toolset is specified", async () => {
+    const agentConfig: AgentConfig = {
+      id: "agent_full",
+      name: "Full Tools Agent",
+      model: "claude-sonnet-4-6",
+      system: "You are helpful.",
+      tools: [{ type: "agent_toolset_20260401" }],
+      version: 1,
+      created_at: new Date().toISOString(),
+    };
+    const sandbox = new TestSandbox();
+    const tools = await buildTools(agentConfig, sandbox);
+
+    expect(tools.bash).toBeDefined();
+    expect(tools.read).toBeDefined();
+    expect(tools.write).toBeDefined();
+    expect(tools.edit).toBeDefined();
+    expect(tools.glob).toBeDefined();
+    expect(tools.grep).toBeDefined();
+    expect(tools.web_fetch).toBeDefined();
+    expect(tools.web_search).toBeDefined(); // DuckDuckGo default
+  });
+
+  it("selective tool config disables non-listed tools", async () => {
+    const agentConfig: AgentConfig = {
+      id: "agent_selective",
+      name: "Selective Agent",
+      model: "claude-sonnet-4-6",
+      system: "Read only.",
+      tools: [
+        {
+          type: "agent_toolset_20260401",
+          default_config: { enabled: false },
+          configs: [
+            { name: "bash", enabled: true },
+            { name: "read", enabled: true },
+          ],
+        },
+      ],
+      version: 1,
+      created_at: new Date().toISOString(),
+    };
+    const sandbox = new TestSandbox();
+    const tools = await buildTools(agentConfig, sandbox);
+
+    expect(tools.bash).toBeDefined();
+    expect(tools.read).toBeDefined();
+    expect(tools.write).toBeUndefined();
+    expect(tools.edit).toBeUndefined();
+    expect(tools.glob).toBeUndefined();
+    expect(tools.grep).toBeUndefined();
+  });
+
+  // buildMemoryTools / memory_* tools were removed in the Anthropic Memory
+  // Store migration — agents use standard file tools on /mnt/memory/<store>/
+  // mounts instead. See test/unit/memory-store-service.test.ts and
+  // test/unit/memory-events-consumer.test.ts for the new coverage.
+});
+
+// ============================================================
+// 6. InMemoryHistory
+// ============================================================
+describe("InMemoryHistory", () => {
+  it("appends and retrieves events", () => {
+    const history = new InMemoryHistory();
+    const userMsg: SessionEvent = {
+      type: "user.message",
+      content: [{ type: "text", text: "hello" }],
+    };
+    const agentMsg: SessionEvent = {
+      type: "agent.message",
+      content: [{ type: "text", text: "hi there" }],
+    };
+    history.append(userMsg);
+    history.append(agentMsg);
+
+    const events = history.getEvents();
+    expect(events).toHaveLength(2);
+    expect(events[0].type).toBe("user.message");
+    expect(events[1].type).toBe("agent.message");
+  });
+
+  it("getEvents with afterSeq returns a slice", () => {
+    const history = new InMemoryHistory();
+    for (let i = 0; i < 5; i++) {
+      history.append({
+        type: "user.message",
+        content: [{ type: "text", text: `msg ${i}` }],
+      });
+    }
+    const after2 = history.getEvents(2);
+    expect(after2).toHaveLength(3);
+    expect((after2[0] as UserMessageEvent).content[0].text).toBe("msg 2");
+  });
+
+  it("getMessages converts events to CoreMessage format", () => {
+    const history = new InMemoryHistory();
+    history.append({
+      type: "user.message",
+      content: [{ type: "text", text: "What is 2+2?" }],
+    });
+    history.append({
+      type: "agent.message",
+      content: [{ type: "text", text: "4" }],
+    });
+
+    const messages = history.getMessages();
+    expect(messages).toHaveLength(2);
+    expect(messages[0].role).toBe("user");
+    expect(messages[1].role).toBe("assistant");
+  });
+
+  it("getEvents returns a copy, not the internal array", () => {
+    const history = new InMemoryHistory();
+    history.append({
+      type: "user.message",
+      content: [{ type: "text", text: "hello" }],
+    });
+    const events1 = history.getEvents();
+    const events2 = history.getEvents();
+    expect(events1).not.toBe(events2);
+    expect(events1).toEqual(events2);
+  });
+});
+
+// ============================================================
+// 7. eventsToMessages shared function
+// ============================================================
+describe("eventsToMessages", () => {
+  it("converts user and agent message events", () => {
+    const events: SessionEvent[] = [
+      { type: "user.message", content: [{ type: "text", text: "hello" }] },
+      { type: "agent.message", content: [{ type: "text", text: "hi" }] },
+    ];
+    const messages = eventsToMessages(events);
+    expect(messages).toHaveLength(2);
+    expect(messages[0].role).toBe("user");
+    expect(messages[1].role).toBe("assistant");
+  });
+
+  it("groups tool_use and tool_result into assistant/tool pairs", () => {
+    const events: SessionEvent[] = [
+      { type: "user.message", content: [{ type: "text", text: "run ls" }] },
+      { type: "agent.tool_use", id: "tc_1", name: "bash", input: { command: "ls" } },
+      { type: "agent.tool_result", tool_use_id: "tc_1", content: "file1.txt\nfile2.txt" },
+      { type: "agent.message", content: [{ type: "text", text: "Here are the files." }] },
+    ];
+    const messages = eventsToMessages(events);
+    // user, assistant (tool-call), tool (tool-result), assistant (text)
+    expect(messages).toHaveLength(4);
+    expect(messages[0].role).toBe("user");
+    expect(messages[1].role).toBe("assistant");
+    expect(messages[2].role).toBe("tool");
+    expect(messages[3].role).toBe("assistant");
+  });
+
+  it("ignores non-message events like session.status_idle", () => {
+    const events: SessionEvent[] = [
+      { type: "session.status_running" },
+      { type: "user.message", content: [{ type: "text", text: "hi" }] },
+      { type: "session.status_idle" },
+    ];
+    const messages = eventsToMessages(events);
+    expect(messages).toHaveLength(1);
+    expect(messages[0].role).toBe("user");
+  });
+});
+
+// ============================================================
+// 8. Thread model / delegateToAgent
+// ============================================================
+describe("Thread model — delegateToAgent", () => {
+  it("call_agent tool uses delegateToAgent when provided", async () => {
+    const delegateCalls: Array<{ agentId: string; message: string }> = [];
+
+    const agentConfig: AgentConfig = {
+      id: "agent_coord_thread",
+      name: "Coordinator",
+      model: "claude-sonnet-4-6",
+      system: "You coordinate.",
+      tools: [{ type: "agent_toolset_20260401" }],
+      callable_agents: [{ type: "agent", id: "agent_worker1", version: 1 }],
+      version: 1,
+      created_at: new Date().toISOString(),
+    };
+
+    const sandbox = new TestSandbox();
+    const mockDelegate = async (agentId: string, message: string) => {
+      delegateCalls.push({ agentId, message });
+      return "sub-agent response from thread";
+    };
+
+    const tools = await buildTools(agentConfig, sandbox, {
+      ANTHROPIC_API_KEY: "sk-ant-test",
+      delegateToAgent: mockDelegate,
+    });
+
+    expect(tools.call_agent_agent_worker1).toBeDefined();
+
+    // Execute the tool
+    const result = await tools.call_agent_agent_worker1.execute(
+      { message: "analyze this code" },
+      { toolCallId: "tc_1", messages: [], abortSignal: undefined as any }
+    );
+
+    expect(result).toBe("sub-agent response from thread");
+    expect(delegateCalls).toHaveLength(1);
+    expect(delegateCalls[0].agentId).toBe("agent_worker1");
+    expect(delegateCalls[0].message).toBe("analyze this code");
+  });
+
+  it("call_agent tool returns fallback when delegateToAgent is not provided", async () => {
+    const agentConfig: AgentConfig = {
+      id: "agent_coord_no_delegate",
+      name: "Coordinator",
+      model: "claude-sonnet-4-6",
+      system: "You coordinate.",
+      tools: [{ type: "agent_toolset_20260401" }],
+      callable_agents: [{ type: "agent", id: "agent_worker1", version: 1 }],
+      version: 1,
+      created_at: new Date().toISOString(),
+    };
+
+    const sandbox = new TestSandbox();
+    const tools = await buildTools(agentConfig, sandbox, {
+      ANTHROPIC_API_KEY: "sk-ant-test",
+      // No delegateToAgent
+    });
+
+    const result = await tools.call_agent_agent_worker1.execute(
+      { message: "do something" },
+      { toolCallId: "tc_1", messages: [], abortSignal: undefined as any }
+    );
+
+    expect(result).toContain("not available");
+  });
+
+  it("call_agent tool catches delegateToAgent errors gracefully", async () => {
+    const agentConfig: AgentConfig = {
+      id: "agent_coord_error",
+      name: "Coordinator",
+      model: "claude-sonnet-4-6",
+      system: "You coordinate.",
+      tools: [{ type: "agent_toolset_20260401" }],
+      callable_agents: [{ type: "agent", id: "agent_flaky", version: 1 }],
+      version: 1,
+      created_at: new Date().toISOString(),
+    };
+
+    const sandbox = new TestSandbox();
+    const tools = await buildTools(agentConfig, sandbox, {
+      ANTHROPIC_API_KEY: "sk-ant-test",
+      delegateToAgent: async () => {
+        throw new Error("sub-agent harness crashed");
+      },
+    });
+
+    const result = await tools.call_agent_agent_flaky.execute(
+      { message: "crash test" },
+      { toolCallId: "tc_1", messages: [], abortSignal: undefined as any }
+    );
+
+    expect(result).toContain("Sub-agent error");
+    expect(result).toContain("sub-agent harness crashed");
+  });
+
+  it("InMemoryHistory used in thread context captures sub-agent events independently", () => {
+    // Simulate what runSubAgent does: isolated history for sub-agent
+    const parentEvents: SessionEvent[] = [];
+    const subHistory = new InMemoryHistory();
+
+    // Sub-agent receives a message
+    const userMsg: UserMessageEvent = {
+      type: "user.message",
+      content: [{ type: "text", text: "analyze this" }],
+    };
+    subHistory.append(userMsg);
+
+    // Sub-agent produces a response
+    const agentMsg: AgentMessageEvent = {
+      type: "agent.message",
+      content: [{ type: "text", text: "Analysis complete." }],
+    };
+    subHistory.append(agentMsg);
+
+    // Parent also receives a tagged copy
+    parentEvents.push({ ...agentMsg, session_thread_id: "thread_123" } as SessionEvent);
+
+    // Verify sub-agent history is isolated
+    const subEvents = subHistory.getEvents();
+    expect(subEvents).toHaveLength(2);
+
+    // Verify sub-agent messages convert correctly
+    const subMessages = subHistory.getMessages();
+    expect(subMessages).toHaveLength(2);
+    expect(subMessages[0].role).toBe("user");
+    expect(subMessages[1].role).toBe("assistant");
+
+    // Verify parent received tagged event
+    expect(parentEvents).toHaveLength(1);
+    expect((parentEvents[0] as any).session_thread_id).toBe("thread_123");
+  });
+
+  it("multiple call_agent tools each delegate to their own agent ID", async () => {
+    const delegateCalls: Array<{ agentId: string; message: string }> = [];
+
+    const agentConfig: AgentConfig = {
+      id: "agent_multi_coord",
+      name: "Multi Coordinator",
+      model: "claude-sonnet-4-6",
+      system: "You coordinate.",
+      tools: [{ type: "agent_toolset_20260401" }],
+      callable_agents: [
+        { type: "agent", id: "agent_alpha", version: 1 },
+        { type: "agent", id: "agent_beta", version: 1 },
+      ],
+      version: 1,
+      created_at: new Date().toISOString(),
+    };
+
+    const sandbox = new TestSandbox();
+    const mockDelegate = async (agentId: string, message: string) => {
+      delegateCalls.push({ agentId, message });
+      return `response from ${agentId}`;
+    };
+
+    const tools = await buildTools(agentConfig, sandbox, {
+      ANTHROPIC_API_KEY: "sk-ant-test",
+      delegateToAgent: mockDelegate,
+    });
+
+    // Call alpha
+    const r1 = await tools.call_agent_agent_alpha.execute(
+      { message: "task for alpha" },
+      { toolCallId: "tc_1", messages: [], abortSignal: undefined as any }
+    );
+    expect(r1).toBe("response from agent_alpha");
+
+    // Call beta
+    const r2 = await tools.call_agent_agent_beta.execute(
+      { message: "task for beta" },
+      { toolCallId: "tc_2", messages: [], abortSignal: undefined as any }
+    );
+    expect(r2).toBe("response from agent_beta");
+
+    expect(delegateCalls).toHaveLength(2);
+    expect(delegateCalls[0].agentId).toBe("agent_alpha");
+    expect(delegateCalls[1].agentId).toBe("agent_beta");
+  });
+});

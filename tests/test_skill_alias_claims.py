@@ -7,7 +7,7 @@ import pytest
 
 ROOT = Path(__file__).parents[1]
 SPEC = importlib.util.spec_from_file_location(
-    "skill_alias_claims", ROOT / "deploy/openma_skill_aliases/claim-skill-paths.py"
+    "skill_alias_claims", ROOT / "vendor/openma/packages/control-plane-node/src/lib/node-managed-skill-aliases.py"
 )
 claims = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(claims)
@@ -99,21 +99,6 @@ def test_corrupt_receipt_is_never_treated_as_absent(tmp_path):
         claims.apply([binding()], "claim", tmp_path)
 
 
-def test_guarded_overlay_refuses_unreviewed_materializer(tmp_path):
-    spec = importlib.util.spec_from_file_location(
-        "alias_overlay", ROOT / "deploy/openma_skill_aliases/prepare_overlay.py"
-    )
-    overlay = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(overlay)
-    target = tmp_path / overlay.TARGET
-    target.parent.mkdir(parents=True)
-    target.write_text("changed input")
-    with pytest.raises(ValueError, match="source guard"):
-        overlay.apply(tmp_path)
-    assert target.read_text() == "changed input"
-    assert not target.with_name("node-managed-stable-skills.ts").exists()
-
-
 def test_failed_atomic_publication_leaves_no_partial_receipt_and_retries(tmp_path, monkeypatch):
     original = claims.os.link
 
@@ -131,45 +116,3 @@ def test_failed_atomic_publication_leaves_no_partial_receipt_and_retries(tmp_pat
     assert json.loads((receipts / "tank-data.json").read_text()) == binding()
 
 
-def test_overlay_refuses_hash_matching_target_symlink(tmp_path, monkeypatch):
-    import hashlib
-
-    spec = importlib.util.spec_from_file_location(
-        "alias_symlink_guard", ROOT / "deploy/openma_skill_aliases/prepare_overlay.py"
-    )
-    overlay = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(overlay)
-    outside = tmp_path / "outside"
-    outside.write_text("matching bytes")
-    monkeypatch.setattr(overlay, "INPUT_SHA256", hashlib.sha256(outside.read_bytes()).hexdigest())
-    root = tmp_path / "prepared"
-    target = root / overlay.TARGET
-    target.parent.mkdir(parents=True)
-    target.symlink_to(outside)
-    with pytest.raises(ValueError, match="plain scoped"):
-        overlay.apply(root)
-    assert outside.read_text() == "matching bytes"
-
-
-def test_overlay_refuses_dangling_generated_asset_symlink(tmp_path, monkeypatch):
-    import hashlib
-
-    spec = importlib.util.spec_from_file_location(
-        "alias_new_asset_guard", ROOT / "deploy/openma_skill_aliases/prepare_overlay.py"
-    )
-    overlay = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(overlay)
-    root = tmp_path / "prepared"
-    target = root / overlay.TARGET
-    target.parent.mkdir(parents=True)
-    target.write_text("matching bytes")
-    monkeypatch.setattr(overlay, "INPUT_SHA256", hashlib.sha256(target.read_bytes()).hexdigest())
-    assets = tmp_path / "assets"
-    assets.mkdir()
-    (assets / "manifest.json").write_text('{"assets_sha256":{}}')
-    monkeypatch.setattr(overlay, "BASE", assets)
-    target.with_name("node-managed-stable-skills.ts").symlink_to(tmp_path / "absent")
-    with pytest.raises(ValueError, match="already exists"):
-        overlay.apply(root)
-    assert target.read_text() == "matching bytes"
-    assert not (tmp_path / "absent").exists()

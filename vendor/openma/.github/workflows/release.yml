@@ -1,0 +1,156 @@
+name: Release
+
+# Changesets-driven release flow, split into two jobs so only the publish
+# half requires the production environment approval:
+#
+#   1. version-pr (no environment, runs every push):
+#      - Pending .changeset/*.md files → open / update "Version Packages" PR.
+#      - No pending changesets → noop here, hand off to publish job.
+#
+#   2. publish (environment: production, only runs when version-pr says
+#      "no pending changesets" — which is the moment right after a Version
+#      Packages PR was merged):
+#      - Builds + runs `pnpm release` which publishes the bumped packages.
+#      - Tag is auto-derived from the version: `0.x.y` → latest,
+#        `0.x.y-beta.N` → beta. No NPM_TOKEN; uses OIDC trusted publisher.
+#
+# Net effect: opening a Version Packages PR is friction-free (no approval),
+# only actually pushing bits to npm needs you to acknowledge the
+# production deploy. This is the right friction split — the PR is a
+# review opportunity, the npm publish is the irreversible action.
+#
+# Trusted publisher config on npmjs.com must list this workflow filename
+# (`release.yml`) for each public package — see docs/release-process.md.
+#
+# Prerelease workflow: to enter beta mode for the next release cycle:
+#   pnpm changeset pre enter beta
+#   git add .changeset/pre.json && git commit -m "enter beta prerelease mode"
+#   git push
+# Subsequent `pnpm changeset` will produce 0.x.y-beta.N bumps. Exit with:
+#   pnpm changeset pre exit
+# and the next Version Packages PR will roll up to the stable version.
+
+on:
+  push:
+    branches: [main]
+  # Manual escape hatch when changesets is in a weird state and you need to
+  # re-trigger the release machinery without a real push (e.g. you fixed a
+  # trusted-publisher misconfig and want to re-run publish for an already-
+  # bumped version sitting on main).
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  version-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write       # push bump commits to changeset-release/main branch
+      pull-requests: write  # open / update the Version Packages PR
+    outputs:
+      hasChangesets: ${{ steps.changesets.outputs['has-changesets'] }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # full history so changelog diffs work
+
+      - name: Setup pnpm
+        # No version pin — reads `packageManager` from root package.json.
+        uses: pnpm/action-setup@v6.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Storage integration tests
+        run: pnpm test:integration:storage
+
+      # Same Litebox setup as CI. The two-owner MySQL test aborts the host
+      # process on Linux when /dev/kvm is not readable and writable.
+      - name: Enable KVM for Litebox
+        uses: ./.github/actions/enable-kvm
+
+      - name: MySQL integration tests
+        run: pnpm test:integration:mysql
+
+      - name: Create / update Version Packages PR
+        # No `publish-script` input → action only opens the Version PR. Publishing
+        # is in the next job, gated on environment approval.
+        id: changesets
+        uses: changesets/action@v2
+        with:
+          version-script: pnpm changeset version
+          commit-message: "chore: version packages"
+          pr-title: "chore: version packages"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    needs: version-pr
+    # Only fire when version-pr reports there are no pending changesets,
+    # i.e. the Version Packages PR was just merged and main has the bumped
+    # versions ready to publish. On a regular push that introduced a new
+    # changeset, hasChangesets='true' and we skip publishing.
+    if: needs.version-pr.outputs.hasChangesets == 'false'
+    runs-on: ubuntu-latest
+    environment: production  # ← the one approval gate, only for the publish
+    permissions:
+      contents: write   # to push the git tag (@openma/cli@x.y.z) after publish
+      id-token: write   # required for npm OIDC publish
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup pnpm
+        # No version pin — reads `packageManager` from root package.json.
+        uses: pnpm/action-setup@v6.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          # npm OIDC publish needs npm 11.5.1+, which ships with node 24.
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+          registry-url: 'https://registry.npmjs.org'
+
+      # Refuses to publish when CHANGELOG does not cover pull requests merged
+      # since the previous @openma/<pkg>@* tag, or when the version and
+      # .changeset/pre.json disagree about the npm dist-tag. Does not bump,
+      # tag, or publish; `pnpm release` below is unchanged.
+      - name: Check release notes before publish
+        run: node scripts/release-check.mjs --publish
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Publish to npm
+        # `changesets/action` again, but this time only the publish path
+        # — no version step. It detects nothing to bump and runs the
+        # publish script directly. create-github-releases mirrors the
+        # CHANGELOG entries to GitHub Releases.
+        uses: changesets/action@v2
+        with:
+          publish-script: pnpm release
+          create-github-releases: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          # Clear setup-node's placeholder so npm publish falls back to OIDC.
+          NODE_AUTH_TOKEN: ''

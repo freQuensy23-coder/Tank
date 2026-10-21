@@ -35,7 +35,7 @@ RUN useradd --create-home --uid 1000 tank \
 COPY src ./src
 RUN --mount=type=cache,id=tank-uv,target=/root/.cache/uv \
     uv sync --frozen --no-dev
-COPY deploy /app/deploy
+COPY deploy/tank_entrypoint.py deploy/prepare_openma.py /app/deploy/
 USER tank
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/tank/venv/bin/python", "/app/deploy/tank_entrypoint.py"]
 CMD ["tank", "serve"]

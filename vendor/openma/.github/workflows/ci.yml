@@ -1,0 +1,116 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    # Full repository tests plus browser, storage and MySQL integration now
+    # approach 20 minutes on GitHub runners; allow cleanup to finish.
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Install browser for Console E2E
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Console Agent editor E2E
+        run: pnpm test:e2e:agent-editor
+
+      - name: Protocol coverage gate
+        run: pnpm test:coverage:protocol
+
+      - name: Harness web HTTP coverage (#281)
+        run: pnpm test:coverage:harness-web-http
+
+      - name: Upload harness web HTTP coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: coverage/harness-web-http/lcov.info,coverage/harness-tools-wiring/lcov.info
+          flags: harness_web_http
+          name: harness-web-http
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Storage integration tests
+        run: pnpm test:integration:storage
+
+      # The official two-owner persistence test runs real Litebox microVMs.
+      # Litebox aborts its host process when /dev/kvm is not accessible.
+      #
+      # ubuntu-24.04 runners expose /dev/kvm as root:kvm mode 0660, and the
+      # runner user is not in the kvm group. `udevadm trigger` applies a
+      # 0666 rule asynchronously: the access check failed ~26ms after
+      # trigger, while the mode change landed ~45ms later. `udevadm settle`
+      # can also return before that uevent is queued. chmod is synchronous.
+      # The udev rule keeps a later uevent from restoring 0660. A missing
+      # device fails this step with an explicit error, which fails the job.
+      # Script: .github/actions/enable-kvm (also used by release.yml).
+      - name: Enable KVM for Litebox
+        uses: ./.github/actions/enable-kvm
+
+      - name: MySQL integration tests
+        run: pnpm test:integration:mysql
+
+      - name: PostgreSQL MCP access-loss integration
+        run: pnpm --filter @open-managed-agents/main-node test:integration:postgres
+
+  # Separate from verify so it does not wait on the 20+ minute suite and does
+  # not use the Litebox /dev/kvm action. Checkout plus a Node script only.
+  release-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Fetch the base branch and tags
+        run: git fetch origin "${{ github.base_ref }}" --tags --force
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+
+      - name: Test the release check
+        run: node --test scripts/release-check.test.mjs scripts/release-check.history.test.mjs
+
+      - name: Check changesets and unreleased pull requests
+        env:
+          RELEASE_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: node scripts/release-check.mjs

@@ -1,0 +1,50 @@
+packages:
+  - 'packages/*'
+  - 'apps/main'
+  - 'apps/main-node'
+  - 'apps/main-fly'
+  - 'apps/main-vercel'
+  - 'apps/oma-vault'
+  - 'apps/agent'
+  - 'apps/console'
+  - 'apps/integrations'
+  - 'apps/docs'
+  - 'apps/web'
+
+# Provider SDKs are optional peers of their isolated adapter packages. Keep the
+# default monorepo install provider-neutral; a deployment installs only the SDK
+# for the adapter it selects.
+autoInstallPeers: false
+
+# pnpm v11 reads ALL pnpm config from this file — `pnpm` block in
+# package.json is no longer honored. Keep peerDependencyRules + the
+# build allowlist here.
+peerDependencyRules:
+  allowAny:
+    - zod
+
+# v11 renamed `onlyBuiltDependencies` (array) → `allowBuilds` (map).
+# Without these entries pnpm v11 hard-fails install (strictDepBuilds=true
+# by default) with ERR_PNPM_IGNORED_BUILDS.
+allowBuilds:
+  '@anthropic-ai/tokenizer': true
+  '@google/genai': false
+  # better-sqlite3 13 ships prebuilt addons for linux (glibc and musl),
+  # darwin and win32 on x64 and arm64, and lib/binding.js loads them before
+  # any local build. It has no install script, so the only build pnpm would
+  # run is the implicit `node-gyp rebuild`, which needs a C++ toolchain and
+  # downloads Node headers from nodejs.org.
+  better-sqlite3: false
+  # Optional Modal SDK acceleration. Keep provider installation portable and
+  # prevent an adapter from gaining native install-script execution by default.
+  cbor-extract: false
+  cpu-features: false
+  esbuild: true
+  msw: false
+  protobufjs: true
+  sharp: true
+  ssh2: false
+  workerd: true
+
+overrides:
+  '@boxlite-ai/boxlite': '0.10.6'

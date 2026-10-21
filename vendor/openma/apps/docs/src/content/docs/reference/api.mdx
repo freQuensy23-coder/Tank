@@ -1,0 +1,311 @@
+---
+title: API Endpoints
+description: Endpoint-by-endpoint REST reference for openma's /v1/* surface.
+---
+
+import { Aside, LinkCard } from '@astrojs/starlight/components';
+
+Every endpoint requires the `x-api-key: <api_key>` header unless noted. JSON request and response bodies. Errors follow the shape in [REST API → Errors](/build/api/#errors).
+
+## Agents
+
+### `GET /v1/agents`
+List all agents in the tenant. Query params: `archived` (bool), `limit`, `cursor`.
+
+### `POST /v1/agents`
+Create an agent. Body: `AgentConfig` minus the platform-assigned fields (`id`, `version`, timestamps).
+
+### `GET /v1/agents/:id`
+Get a single agent's current version.
+
+### `GET /v1/agents/:id/versions`
+List all versions of an agent.
+
+### `GET /v1/agents/:id/versions/:version`
+Get a specific historical version.
+
+### `PATCH /v1/agents/:id`
+Update an agent. Bumps version. Body: partial `AgentConfig`.
+
+### `DELETE /v1/agents/:id`
+Archive an agent (soft delete; sessions retain pinned version).
+
+## Sessions
+
+### `POST /v1/sessions`
+Create a session. Returns `SessionMeta`.
+```json
+{
+  "agent": "agent_...",
+  "environment_id": "env_...",
+  "title": "optional"
+}
+```
+Post the first user turn afterwards via `POST /v1/sessions/:id/messages` (one-shot, streams reply) or `POST /v1/sessions/:id/events` (fire-and-forget; pair with a separate SSE consumer).
+
+### `GET /v1/sessions`
+List sessions. Query: `agent_id`, `status`, `limit`, `cursor`.
+
+### `GET /v1/sessions/:id`
+Get session metadata + status.
+
+### `GET /v1/sessions/:id/events`
+JSON-paginated event log. Query: `limit` (1–1000, default 100), `order` (`asc`|`desc`), `after_seq`. Returns `{ data: SessionEvent[], has_more, next_page }`.
+
+Pass `Accept: text/event-stream` to switch to the SSE variant (or call `/v1/sessions/:id/events/stream` directly). Default behavior is Anthropic-spec-aligned: no history replay, only the spec event union (third-party `@anthropic-ai/sdk` parses cleanly). Two opt-ins:
+
+- `?include=chunks` — admit OMA extension events (token chunks, lifecycle, `system.user_message_*`, `session.warning`, extra spans like `aux.model_call`)
+- `?replay=1` (or `Last-Event-ID: <seq>` header) — replay persisted history before tailing
+
+See [REST API → Stream session events](/build/api/#stream-session-events-sse) for the full event tables.
+
+### `GET /v1/sessions/:id/log`
+Full event log as a JSON array (non-streaming).
+
+### `GET /v1/sessions/:id/outputs`
+OpenMA extension that lists durable files deliberately written beneath
+`/mnt/session/outputs`. Returns `{ data, has_more: false }`. It is available
+on the Node entrypoint and on Cloudflare when `FILES_BUCKET` is configured.
+This is not currently a generated `@anthropic-ai/sdk` method, so call it with
+ordinary HTTP and include `anthropic-beta: managed-agents-2026-04-01`.
+
+### `GET /v1/sessions/:id/outputs/:filename`
+Streams one durable output. Filenames are a single path segment; parent or
+nested traversal is rejected. The Session is resolved in the authenticated
+workspace before the backing filesystem or object store is read.
+
+### `POST /v1/sessions/:id/messages`
+Chatbot one-shot: post a user turn AND stream the response in one HTTP call. Body: `{ "content": string | ContentBlock[] }`. Returns `text/event-stream` and auto-closes when the turn finishes (`session.status_idle`). For the fire-and-forget variant (when you already have a separate SSE consumer open), POST to `/v1/sessions/:id/events` instead with the user.message wrapped in `{events:[...]}` — returns `202`.
+
+### `POST /v1/sessions/:id/cancel`
+Cancel a running session.
+
+### `DELETE /v1/sessions/:id`
+Soft-delete a session.
+
+## Environments
+
+### `GET /v1/environments`
+List environment templates.
+
+### `POST /v1/environments`
+Create an environment. Body: `EnvironmentConfig`.
+
+### `GET /v1/environments/:id`
+Get one.
+
+### `PATCH /v1/environments/:id`
+Update.
+
+### `DELETE /v1/environments/:id`
+Delete (only if no agents reference it).
+
+## Skills
+
+### `GET /v1/skills`
+List custom + built-in skills.
+
+### `POST /v1/skills`
+Upload a custom skill. **multipart/form-data** with `id`, `display_title`, `description`, and one or more `files`.
+
+### `GET /v1/skills/:id`
+Get metadata.
+
+### `GET /v1/skills/:id/files/:filename`
+Download a skill file.
+
+### `DELETE /v1/skills/:id`
+Delete (built-in skills can't be deleted).
+
+## Vaults
+
+### `GET /v1/vaults`
+List. Returned objects never include the secret material.
+
+### `POST /v1/vaults`
+Create. Body includes the secret; subsequent reads will not.
+
+### `PATCH /v1/vaults/:id`
+Update — including rotating the secret.
+
+### `DELETE /v1/vaults/:id`
+Delete.
+
+## Memory Stores
+
+### `GET /v1/memory_stores`
+List per agent.
+
+### `POST /v1/memory_stores`
+Create.
+
+### `GET /v1/memory_stores/:id/entries`
+List recent entries.
+
+### `POST /v1/memory_stores/:id/search`
+Semantic search. Body: `{ "query": "...", "limit": 10 }`.
+
+### `DELETE /v1/memory_stores/:id`
+Delete the store and its index.
+
+## Files
+
+### `POST /v1/files`
+Upload. **multipart/form-data** with `session_id` and `file`.
+
+### `GET /v1/files/:id`
+Download.
+
+### `DELETE /v1/files/:id`
+Delete.
+
+## Model Cards
+
+Model Cards are the tenant-scoped executable model registry. A card binds a
+stable handle (`model_id`) to a Pi provider, its wire-level model id, endpoint,
+metadata, and encrypted credential. Keys are AES-256-GCM-encrypted at rest
+under `PLATFORM_ROOT_SECRET`; list/retrieve responses surface only the preview.
+
+### The two model catalogs
+
+| Endpoint | Shape and purpose |
+|---|---|
+| `GET /v1/models` / `GET /v1/models/:id` | Official Managed Agents Model resources. Lists active Model Cards the tenant can execute. Display name, token limits, image/thinking/effort and strict-output capabilities are conservatively projected from Pi metadata. Provider credentials never appear. |
+| `POST /v1/oma/models/list` | OMA setup helper. Body `{ "provider": "deepseek" }` returns Pi's built-in catalog for that provider. The SDK-first path does not send provider credentials. Optional `api_key` is a deprecated 0.x compatibility path for Anthropic/OpenAI live discovery. |
+
+An unknown custom provider has no discoverable catalog. Create its Model Card
+directly with `base_url` and `pi_config.api`.
+
+### `GET /v1/oma/model_cards`
+List configured model cards.
+
+### `POST /v1/oma/model_cards`
+Add a model card. Runs a 6-second capability probe so a bad key fails loudly. Body:
+```json
+{
+  "model_id": "deepseek-fast",
+  "provider": "deepseek",
+  "model": "deepseek-v4-flash",
+  "custom_headers": { "x-extra": "..." },
+  "api_key": "sk-...",
+  "pi_config": { "reasoning": true }
+}
+```
+
+`provider` is an open Pi provider id, not an OpenMA enum. Pi built-ins include
+`anthropic`, `openai`, `deepseek`, `openrouter`, `google`, `minimax`, and more.
+Legacy aliases `ant`, `oai`, `ant-compatible`, and `oai-compatible` remain
+accepted. `model_id` is the handle used in the official Agent model:
+
+```json
+{
+  "model": {
+    "id": "deepseek-fast",
+    "effort": { "type": "high" },
+    "speed": "standard",
+    "inference_geo": "us"
+  }
+}
+```
+
+These controls belong to the Agent version, not the Model Card. A Session pins
+an Agent version and inherits them:
+
+| Field | Runtime mapping |
+|---|---|
+| `effort` | Pi `thinkingLevel`. Pi normalizes a requested level to the nearest level the resolved model supports. |
+| `speed: "standard"` | Leaves Pi/provider defaults unchanged. |
+| `speed: "fast"` | Anthropic fast mode (`speed: fast` plus its beta header), or OpenAI priority service tier. Other Pi APIs return an explicit unsupported error. |
+| `inference_geo` | Validated, stored, versioned, and returned; currently ignored by runtime routing. |
+
+`pi_config` accepts Pi's serializable Model metadata (`name`, `api`,
+`reasoning`, `thinkingLevelMap`, `input`, `cost`, `contextWindow`, `maxTokens`,
+`samplingParams`, `headers`, and `compat`). It cannot override card identity,
+provider, wire model, endpoint, or credential. Custom providers must specify
+`pi_config.api` so Pi can select a protocol implementation.
+
+Create returns a `probe` result. The current bounded live probe covers the
+legacy Anthropic/OpenAI protocols. `{"ok":null,"reason":"unsupported_provider"}`
+means the probe was skipped; it is not a Pi runtime rejection.
+
+### `POST /v1/oma/model_cards/:id`
+Rotate the api_key, base_url, headers, or default model. Body shape matches `POST`. In-flight sessions keep the cached key until next credential resolve.
+
+### `DELETE /v1/oma/model_cards/:id`
+Delete.
+
+### `GET /v1/oma/model_cards/:id/key` *(internal — agent worker only)*
+Returns cleartext credentials for the agent worker. Not exposed publicly.
+
+## Integrations
+
+### `GET /v1/oma/integrations`
+List shipped + active integrations.
+
+### `GET /v1/oma/integrations/:id/install`
+Start the OAuth flow for the integration. Returns a redirect URL.
+
+### `POST /v1/oma/integrations/:id/uninstall`
+Revoke the install.
+
+### `GET /v1/oma/integrations/:id/publications`
+List publications (which agents serve which workspaces).
+
+### `POST /v1/oma/integrations/:id/publications`
+Create a publication.
+
+### `DELETE /v1/oma/integrations/:id/publications/:pub_id`
+Delete a publication.
+
+## Evals
+
+### `GET /v1/oma/evals`
+List eval runs.
+
+### `POST /v1/oma/evals`
+Start an eval.
+
+### `GET /v1/oma/evals/:id`
+Get an eval's results.
+
+## API Keys
+
+### `GET /v1/oma/api_keys`
+List your keys (the actual key value is not returned).
+
+### `POST /v1/oma/api_keys`
+Create. Body: `{ "name": "..." }`. Returns the key once — store it now.
+
+### `DELETE /v1/oma/api_keys/:id`
+Revoke.
+
+## OAuth (Console use)
+
+### `GET /v1/oma/oauth/:provider/authorize`
+Start an OAuth flow (Google sign-in for the Console).
+
+### `GET /v1/oma/oauth/:provider/callback`
+OAuth callback handler.
+
+## Health
+
+### `GET /healthz`
+Returns `{"ok": true}`. **Unauthenticated.**
+
+## Where to go next
+
+<LinkCard
+  title="REST API overview"
+  href="/build/api/"
+  description="Patterns, auth, error handling."
+/>
+<LinkCard
+  title="CLI & SDK"
+  href="/build/cli-sdk/"
+  description="Skip curl: use the Node CLI."
+/>
+<LinkCard
+  title="Configuration reference"
+  href="/reference/configuration/"
+  description="Body schemas for all the request payloads above."
+/>

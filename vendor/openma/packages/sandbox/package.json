@@ -1,0 +1,22 @@
+{
+  "name": "@open-managed-agents/sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./adapters/local-subprocess": "./src/adapters/local-subprocess.ts",
+    "./orchestrator": "./src/orchestrator.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --config vitest.config.ts"
+  },
+  "dependencies": {
+    "@open-managed-agents/observability": "workspace:*",
+    "@open-managed-agents/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.3"
+  }
+}
