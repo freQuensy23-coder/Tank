@@ -1088,6 +1088,19 @@ async def test_book_pages_never_fetch_levels_outside_the_walked_rows(typed_repo)
             queries.append(query.as_string(self.conn) if hasattr(query, "as_string") else str(query))
             return await self.conn.execute(query, *args, **kwargs)
 
+        def cursor(self, *args, **kwargs):
+            conn, cursor = self.conn, self.conn.cursor(*args, **kwargs)
+
+            class RecordingCursor:
+                async def execute(self, query, *a, **k):
+                    queries.append(query.as_string(conn) if hasattr(query, "as_string") else str(query))
+                    return await cursor.execute(query, *a, **k)
+
+                def __getattr__(self, name):
+                    return getattr(cursor, name)
+
+            return RecordingCursor()
+
         def __getattr__(self, name):
             return getattr(self.conn, name)
 
@@ -1110,3 +1123,66 @@ async def test_book_pages_never_fetch_levels_outside_the_walked_rows(typed_repo)
     assert got[0]["bids"] == levels and got[4]["asks"] == levels
     pages = [q for q in queries if "LIMIT" in q]
     assert len(pages) == 3 and not any('"bids"' in q for q in pages)  # levels never decoded per page
+
+
+async def test_a_5k_row_snapshot_read_keeps_the_loop_heartbeat_under_100_ms(typed_repo):
+    import asyncio
+    import time
+    from datetime import timedelta
+
+    from tank.market_storage import market_range_by_instrument
+    from tank.util import iso, parse_time
+
+    await typed_repo.migrate()
+    base = parse_time("2026-10-18T00:00:00Z")
+    levels = [[str(100 + n), "1.5"] for n in range(200)]  # wide rows: 200 levels a side
+    await typed_repo.put_market_batch(
+        "mkt.flow_bars_1m", [flow(iso(base + timedelta(minutes=n))) for n in range(5000)]
+    )
+    await typed_repo.put_market_batch(
+        "mkt.book_summaries",
+        [
+            {
+                "instrument_id": "test:BTC",
+                "token_id": "BTC",
+                "exchange_ts": iso(base + timedelta(seconds=10 * n)),
+                "integrity_ok": True,
+                "mid": "2",
+                "bids": levels,
+                "asks": levels,
+                "recorded_at": iso(base + timedelta(seconds=10 * n + 1)),
+                "recorded_at_prec": "COLLECTION_ONLY",
+            }
+            for n in range(5000)
+        ],
+    )
+    worst, done = [0.0], asyncio.Event()
+
+    async def heartbeat():
+        last = time.monotonic()
+        while not done.is_set():
+            await asyncio.sleep(0.005)
+            now = time.monotonic()
+            worst[0] = max(worst[0], now - last)
+            last = now
+
+    beat = asyncio.create_task(heartbeat())
+    await asyncio.sleep(0.01)
+    flows = await market_range_by_instrument(
+        typed_repo, "mkt.flow_bars_1m", "minute_start", ["test:BTC"], base, base + timedelta(days=5)
+    )
+    books = await market_range_by_instrument(
+        typed_repo,
+        "mkt.book_summaries",
+        "exchange_ts",
+        ["test:BTC"],
+        base,
+        base + timedelta(days=1),
+        batch_size=500,
+        level_rows=30,
+    )
+    done.set()
+    await beat
+    assert len(flows["test:BTC"]) == 5000 and len(books["test:BTC"]) == 5000
+    assert sum("bids" in r for r in books["test:BTC"]) == 30
+    assert worst[0] < 0.1, f"loop held {worst[0]:.3f} s"

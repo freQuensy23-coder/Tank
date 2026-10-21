@@ -192,7 +192,17 @@ def merge_point(collection, old, incoming):
 
 
 async def put_market_batch(self, collection, records, *, keys=None):
-    return await _put_market_batch(self, collection, records, keys=keys)
+    records = list(records)
+    keys = None if keys is None else list(keys)
+    if not hasattr(self, "_conn") or len(records) <= WRITE_CHUNK:
+        return await _put_market_batch(self, collection, records, keys=keys)
+    # psycopg dumps the array parameters of one statement on the event loop: bound them.
+    # Later chunks overwrite or merge like later rows of one batch (same-batch tests).
+    changed = []
+    for at in range(0, len(records), WRITE_CHUNK):
+        part = None if keys is None else keys[at : at + WRITE_CHUNK]
+        changed += await _put_market_batch(self, collection, records[at : at + WRITE_CHUNK], keys=part)
+    return changed
 
 
 # A flow bar written incomplete only because its writer holds no proof for the minute is
@@ -212,6 +222,8 @@ def _unproves(collection, old, new):
 
 # Rows a batched range read decodes between two turns of the event loop.
 YIELD_ROWS = 1000
+# Rows per write statement (array parameters are serialized on the event loop).
+WRITE_CHUNK = 500
 # Book summary columns read only for the rows whose levels are walked.
 LEVELS = ("bids", "asks")
 
@@ -230,18 +242,10 @@ def _note_writes(self, collection, rows):
                 clock[collection, scope, row[scope]] = now
 
 
-async def _put_market_batch(self, collection, records, *, keys=None, _columns=None):
-    # Forward migration import can target a historical typed schema. Ordinary
-    # production writes always use the entire current explicit column contract.
-    columns = MARKET_COLUMNS[collection] if _columns is None else _columns
-    from psycopg import sql
-    from psycopg.types.json import Jsonb
-
-    records = list(records)
-    if not records:
-        return []
+def _prepare_records(collection, records, keys, columns, migration_target):
+    """Encoded, de-duplicated and fingerprinted batch records by storage key (no I/O)."""
     encoded = [encode(collection, r) for r in records]
-    if _columns is not None:
+    if migration_target:
         for row in encoded:
             unsupported = [name for name, value in row.items() if name not in columns and value is not None]
             if unsupported:
@@ -267,7 +271,37 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
         identity_keys[identity] = str(key)
         record["semantic_fingerprint"] = semantic_fingerprint(record, collection)
         unique[str(key)] = record
+    return unique
+
+
+def _json_as_text(cursor):
+    """A cursor whose json/jsonb columns arrive as text, to be parsed off the event loop."""
+    from psycopg.types.string import TextLoader
+
+    for name in ("json", "jsonb"):
+        cursor.adapters.register_loader(name, TextLoader)
+    return cursor
+
+
+def _load_json(collection, row):
+    """Worker thread: parse the jsonb columns of a row read through _json_as_text."""
+    for name, kind in MARKET_COLUMNS[collection].items():
+        if kind == "jsonb" and isinstance(row.get(name), str):
+            row[name] = json.loads(row[name])
+    return row
+
+
+async def _put_market_batch(self, collection, records, *, keys=None, _columns=None):
+    # Forward migration import can target a historical typed schema. Ordinary
+    # production writes always use the entire current explicit column contract.
+    columns = MARKET_COLUMNS[collection] if _columns is None else _columns
+    from psycopg import sql
+
+    records = list(records)
+    if not records:
+        return []
     if not hasattr(self, "_conn"):
+        unique = _prepare_records(collection, records, keys, columns, _columns is not None)
         changed = []
         async with self.transaction():
             rows = self._data.setdefault(collection, {})
@@ -301,14 +335,24 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
         _note_writes(self, collection, changed)
         return changed
     names = ["storage_key", *columns]
-    arrays = []
-    for name in names:
-        kind = "text" if name == "storage_key" else columns[name]
-        values = []
-        for key, row in unique.items():
-            value = key if name == "storage_key" else row.get(name)
-            values.append(Jsonb(value) if kind in ("jsonb", "text[]") and value is not None else value)
-        arrays.append(values)
+
+    def prepare():
+        # Worker thread: encoding, fingerprints and JSON text of a batch are CPU work, and
+        # psycopg would otherwise serialize every jsonb value on the event loop.
+        unique = _prepare_records(collection, records, keys, columns, _columns is not None)
+        arrays = []
+        for name in names:
+            kind = "text" if name == "storage_key" else columns[name]
+            values = []
+            for key, row in unique.items():
+                value = key if name == "storage_key" else row.get(name)
+                values.append(
+                    json.dumps(value) if kind in ("jsonb", "text[]") and value is not None else value
+                )
+            arrays.append(values)
+        return arrays
+
+    arrays = await asyncio.to_thread(prepare)
     selection = sql.SQL(",").join(
         sql.SQL(
             "CASE WHEN u.{} IS NULL THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(u.{})) END"
@@ -376,8 +420,10 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
             merged,
         )
     async with self.transaction():
-        rows = await (await self._conn().execute(query, arrays)).fetchall()
-    changed = [decode(collection, r) for r in rows]
+        cursor = _json_as_text(self._conn().cursor())
+        await cursor.execute(query, arrays)
+        rows = await cursor.fetchall()
+    changed = await asyncio.to_thread(lambda: [decode(collection, _load_json(collection, r)) for r in rows])
     _note_writes(self, collection, changed)
     return changed
 
@@ -964,7 +1010,7 @@ async def market_range_by_instrument(
     end,
     filters=None,
     *,
-    batch_size=5000,
+    batch_size=1000,
     keep=None,
     level_rows=None,
 ):
@@ -975,7 +1021,7 @@ async def market_range_by_instrument(
     reads (e.g. 9 collections x the instruments of a token) without changing any output.
     Pages are keyset-paged like iter_range; `keep(instrument_id, rows)` runs after each
     appended row so a caller can shrink older rows while they stream (book levels).
-    5k-row pages bound the transient of one page and the loop time of its fetch.
+    1k-row pages (wide rows: 500) bound the transient of one page and the loop time of its fetch.
     """
     from psycopg import sql
 
@@ -1037,17 +1083,28 @@ async def market_range_by_instrument(
             sql.Identifier(time_field),
         )
         async with repo.transaction():
-            rows = await (await repo._conn().execute(query, [*page_args, batch_size])).fetchall()
-        for n, row in enumerate(rows, 1):
-            iid = row["instrument_id"]
-            out[iid].append(_read_record(collection, row))
+            cursor = _json_as_text(repo._conn().cursor())
+            await cursor.execute(query, [*page_args, batch_size])
+            rows = await cursor.fetchall()
+        # JSON parsing and typed decode run in a worker thread (r111: json.loads inside
+        # fetchall held the loop); with a short GIL switch interval the loop keeps its turns.
+        decoded = await asyncio.to_thread(
+            lambda rows=rows: [
+                (
+                    row["instrument_id"],
+                    _read_record(collection, _load_json(collection, row)),
+                    row["storage_key"],
+                )
+                for row in rows
+            ]
+        )
+        for n, (iid, record, key) in enumerate(decoded, 1):
+            out[iid].append(record)
             if level_rows is not None:
-                keys[iid].append(row["storage_key"])
+                keys[iid].append(key)
             if keep is not None:
                 keep(iid, out[iid])
             if n % YIELD_ROWS == 0:
-                # A BTC reaction snapshot decodes ~10^6 rows (r109 03:23: streams and flushes
-                # starved for minutes): every YIELD_ROWS rows the loop serves the others.
                 await asyncio.sleep(0)
         if len(rows) < batch_size:
             break
@@ -1067,8 +1124,17 @@ async def market_range_by_instrument(
             w=sql.SQL(" AND ").join(clauses),
         )
         async with repo.transaction():
-            found = await (await repo._conn().execute(query, [*args, level_rows])).fetchall()
-        levels = {row["storage_key"]: row for row in found}
+            cursor = _json_as_text(repo._conn().cursor())
+            await cursor.execute(query, [*args, level_rows])
+            found = await cursor.fetchall()
+        levels = await asyncio.to_thread(
+            lambda: {
+                row["storage_key"]: {
+                    name: json.loads(row[name]) if row[name] is not None else None for name in LEVELS
+                }
+                for row in found
+            }
+        )
         for iid, records in out.items():
             for record, key in zip(records, keys[iid], strict=True):
                 if key in levels:

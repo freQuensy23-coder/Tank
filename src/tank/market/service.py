@@ -4163,7 +4163,7 @@ class MarketService:
                 level_rows=BOOK_LEVEL_ROWS if hasattr(self.repo, "_conn") else None,
             )
         # Wide rows (ticker field_sources) in small pages: one fetchall decodes a page.
-        page = WIDE_PAGE_ROWS if collection == "mkt.tickers_24h" else 5000
+        page = WIDE_PAGE_ROWS if collection == "mkt.tickers_24h" else 1000
         return await market_range_by_instrument(
             self.repo, collection, field, ids, start, end, filters, batch_size=page
         )
