@@ -31,7 +31,7 @@ concurrency:
 
 env:
   BEFORE_REF: c9d2ced6cefcfc3e6b26cfccc2b0aa0e634caa81
-  AFTER_REF: 42af88ac13320e1f1da4177d943eb6aca065b421
+  AFTER_REF: 0549017a1a019a641fce1b929b61c6ed54c1c7d0
   BENCHMARK_INPUTS: scripts/ci/docker-benchmark-inputs.json
 
 jobs:

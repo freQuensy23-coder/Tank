@@ -19,7 +19,7 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 BEFORE = "c9d2ced6cefcfc3e6b26cfccc2b0aa0e634caa81"
-AFTER = "42af88ac13320e1f1da4177d943eb6aca065b421"
+AFTER = "0549017a1a019a641fce1b929b61c6ed54c1c7d0"
 RECIPES = {"tank": "Dockerfile", "sandbox": "deploy/sandbox.Dockerfile", "capture": "capture/Dockerfile"}
 BUILD_KIT = "moby/buildkit:buildx-stable-1"
 
