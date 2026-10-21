@@ -15,6 +15,7 @@ from tank.event_tools import EventToolService
 from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import ImmutableRecordError, MemoryRepository
+from tank.telegram_inbox import TelegramInbox
 
 pytestmark = [pytest.mark.integration]
 
@@ -1100,6 +1101,8 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                     )
             return httpx.Response(200, json={})
         if request.url.host == "api.telegram.org":
+            if request.url.path.endswith("/getUpdates"):
+                return httpx.Response(200, json={"ok": True, "result": []})
             if json.loads(request.content)["chat_id"] == "mock-alerts":
                 delivered.set()
             else:
@@ -1223,6 +1226,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                 event_tools=tools,
                 sessions=sessions,
                 delivery=delivery,
+                inbox=TelegramInbox(repo, settings, http=http),
                 scheduler=FixtureScheduler(repo, settings, market, truth),
             )
             runtime_task = asyncio.create_task(runtime.run(stop))
