@@ -314,10 +314,26 @@ class DecisionEngine:
         confidence = min(
             [data, certainty, class_conf], key=lambda x: {"LOW": 0, "MEDIUM": 1, "HIGH": 2}.get(x, 0)
         )
-        if data == "LOW" or move == "UNKNOWN":
+        if data == "LOW":
             scenarios = {
                 "base": "UNKNOWN: market evidence incomplete.",
                 "upside": "UNKNOWN until class and data resolve.",
+                "failure": "Thesis invalid if the event is denied.",
+            }
+        elif move == "UNKNOWN":
+            # §5.8: no class is eligible although the data is usable. §6.4: name
+            # the path and the market condition from the fields present; no
+            # numbers, prices or probabilities in a scenario (FR-O-02, L7).
+            complete = (spot.get("coverage") or {}).get("n_complete")
+            venues = " on complete venues" if isinstance(complete, int) and complete else ""
+            flow = (
+                f"spot flow {direction} and {breadth}"
+                if direction != "UNKNOWN" and breadth != "UNKNOWN"
+                else "spot flow not classified"
+            )
+            scenarios = {
+                "base": f"No classifiable move yet: {flow} in the primary window{venues}.",
+                "upside": "Upgrade if spot turns BUY and BROAD with native OI within its normal range (spot-led buying).",
                 "failure": "Thesis invalid if the event is denied.",
             }
         elif move in {"PERP_LED_CHASE", "PRICE_MARKUP_FAKE_OI"}:
