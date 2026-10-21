@@ -264,7 +264,7 @@ jobs:
           enable-cache: false
       - name: Run the preserved application behavior tests
         run: |
-          node --test deploy/openma-entrypoint.test.cjs > "$RUNNER_TEMP/vendor-entrypoint.log"
+          node --test --test-reporter=tap deploy/openma-entrypoint.test.cjs > "$RUNNER_TEMP/vendor-entrypoint.log"
           cat "$RUNNER_TEMP/vendor-entrypoint.log"
           uv sync --frozen --extra dev
           uv run --frozen --extra dev pytest -q tests/test_deploy.py tests/test_openma_browser_worker.py tests/test_skill_alias_claims.py --junitxml="$RUNNER_TEMP/vendor-python.xml"
