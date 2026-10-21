@@ -33,7 +33,8 @@ EXCHANGE_FETCH_HOSTS = frozenset(
         "api.hyperliquid.xyz",
     }
 )
-FETCH_BUDGET_S = 25.0
+# A restart's capture burst holds a venue budget (Hyperliquid) for ~25 s; polls are 60 s apart.
+FETCH_BUDGET_S = 45.0
 ARCHIVE_BUDGET_S = 600.0
 FETCH_GRACE_S = 3.0
 TERMINAL = ("COMPLETE", "FAILED", "EXPIRED")
