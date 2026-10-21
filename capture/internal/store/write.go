@@ -204,6 +204,9 @@ func (s *Store) putChunk(ctx context.Context, q querier, collection string, rows
 	if len(rows) == 0 {
 		return nil, nil
 	}
+	if s.clickhouse(collection) {
+		return s.chPutChunk(ctx, collection, rows, keys)
+	}
 	order, unique, err := prepareRecords(collection, rows, keys)
 	if err != nil {
 		return nil, err

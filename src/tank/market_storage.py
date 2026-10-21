@@ -469,6 +469,20 @@ async def latest_market_records(
     cutoff = parse_time(cutoff) if cutoff is not None else None
     start = parse_time(start) if start is not None else None
     assembled_at = parse_time(assembled_at) if assembled_at is not None else None
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(self, collection)) is not None:
+        return await chm.latest_market_records(
+            ch,
+            collection,
+            group_by=group_by,
+            time_field=time_field,
+            filters=filters,
+            cutoff=cutoff,
+            assembled_at=assembled_at,
+            start=start,
+            instrument_ids=instrument_ids,
+        )
     clauses, args = _exact_predicate(collection, filters)
     for bound, operator in ((start, ">="), (cutoff, "<=")):
         if bound is not None:
@@ -648,6 +662,22 @@ async def market_dependency_head(
                 if selected is None or (candidate < selected[0] if ascending else candidate > selected[0]):
                     selected = (candidate, metadata(dict(row, storage_key=key)))
         return selected[1] if selected else None
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(self, collection)) is not None:
+        wanted = [order] if orders is None else list(orders)
+        found = await chm.market_dependency_head(
+            ch,
+            collection,
+            semantic_field,
+            cutoff,
+            start=start,
+            filters=filters,
+            instrument_ids=instrument_ids,
+            assembled_at=assembled_at,
+            wanted=wanted,
+        )
+        return found.get(order) if orders is None else {o: found.get(o) for o in wanted}
     clauses, args = _exact_predicate(collection, filters)
     clauses.extend(
         [sql.SQL("recorded_at IS NOT NULL"), sql.SQL("{} <= %s").format(sql.Identifier(semantic_field))]
@@ -752,8 +782,25 @@ async def iter_market_projection(
         return result
 
     after = None
+    from tank import clickhouse_market as chm
+
+    ch = chm.client(self, collection)
     while True:
-        if hasattr(self, "_conn"):
+        if ch is not None:
+            page = await chm.projection_page(
+                ch,
+                collection,
+                selected,
+                time_field,
+                start=start,
+                end=end,
+                filters=filters,
+                instrument_ids=instrument_ids,
+                assembled_at=assembled_at,
+                after=after,
+                limit=batch_size,
+            )
+        elif hasattr(self, "_conn"):
             clauses, args = _exact_predicate(collection, filters)
             clauses.append(sql.SQL("{} IS NOT NULL").format(sql.Identifier(time_field)))
             for bound, operator in ((start, ">="), (end, "<")):
@@ -850,6 +897,11 @@ async def market_series_counts(self, instrument_ids, start, cutoff, assembled_at
         return counts
     start, cutoff = parse_time(start), parse_time(cutoff)
     assembled_at = parse_time(assembled_at) if assembled_at is not None else None
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(self, "mkt.klines_1m")) is not None:
+        counts.update(await chm.market_series_counts(ch, instrument_ids, start, cutoff, assembled_at))
+        return counts
     if not hasattr(self, "_conn"):
         async for row in self.iter_market_projection(
             "mkt.klines_1m",
@@ -890,6 +942,10 @@ async def latest_market_trades(repo, instrument_ids, *, start):
     start = parse_time(start)
     if not instrument_ids:
         return []
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(repo, "mkt.flow_bars_1m")) is not None:
+        return await chm.latest_market_trades(ch, instrument_ids, start)
     if not hasattr(repo, "_conn"):
         latest = {}
         async for row in repo.iter_all("mkt.flow_bars_1m"):
@@ -925,6 +981,12 @@ async def market_series_day_counts(repo, instrument_ids, start, end, assembled_a
     counts = {}
     if not instrument_ids or start >= end:
         return counts
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(repo, "mkt.klines_1m")) is not None:
+        return await chm.market_series_day_counts(
+            ch, instrument_ids, start, end, parse_time(assembled_at) if assembled_at is not None else None
+        )
     if not hasattr(repo, "_conn"):
         async for row in repo.iter_market_projection(
             "mkt.klines_1m",
@@ -965,6 +1027,10 @@ async def market_kline_days_recorded_since(repo, since, end):
     """(instrument, UTC day) of every 1m kline in [.., end) recorded at or after `since`."""
     since, end = parse_time(since), parse_time(end)
     days = set()
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(repo, "mkt.klines_1m")) is not None:
+        return await chm.market_kline_days_recorded_since(ch, since, end)
     if not hasattr(repo, "_conn"):
         async for row in repo.iter_late_arrivals(
             "mkt.klines_1m", "recorded_at", "open_time", since=since, market_end=end
@@ -1002,6 +1068,12 @@ async def market_rows_recorded_since(
     since, start, end = parse_time(since), parse_time(start), parse_time(end)
     if not instrument_ids or start >= end:
         return []
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(repo, collection)) is not None:
+        return await chm.market_rows_recorded_since(
+            ch, collection, time_field, instrument_ids, since, start, end, filters
+        )
     if not hasattr(repo, "_conn"):
         found = []
         for iid in instrument_ids:
@@ -1058,6 +1130,12 @@ async def sampled_market_history(
     start, end = parse_time(start), parse_time(end)
     if not instrument_ids or start >= end:
         return []
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(repo, collection)) is not None:
+        return await chm.sampled_market_history(
+            ch, collection, time_field, group_fields, instrument_ids, start, end, bucket_s
+        )
     if not hasattr(repo, "_conn"):
         latest = {}
         for iid in instrument_ids:
@@ -1127,6 +1205,39 @@ async def market_range_by_instrument(
     out = {iid: [] for iid in instrument_ids}
     if not instrument_ids:
         return out
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(repo, collection)) is not None:
+        # Order-book levels are not stored (03 §14): every summary row comes without them.
+        after = None
+        while True:
+            page = await chm.range_by_instrument_page(
+                ch,
+                collection,
+                time_field,
+                instrument_ids,
+                start,
+                end,
+                filters,
+                after,
+                batch_size,
+                levels=False,
+            )
+            for n, (iid, record, key, _) in enumerate(page, 1):
+                if level_rows is not None:
+                    for name in LEVELS:
+                        record.pop(name, None)
+                out[iid].append(record)
+                if keys_out is not None:
+                    keys_out.setdefault(iid, []).append(key)
+                if keep is not None:
+                    keep(iid, out[iid])
+                if n % YIELD_ROWS == 0:
+                    await asyncio.sleep(0)
+            if len(page) < batch_size:
+                return out
+            iid, _, key, at = page[-1]
+            after = (iid, at, key)
     if not hasattr(repo, "_conn"):
         for iid in instrument_ids:
             async for row in repo.iter_range(

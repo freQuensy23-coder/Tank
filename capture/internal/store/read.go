@@ -22,6 +22,9 @@ func (s *Store) Get(ctx context.Context, collection, key string) (map[string]any
 	if !schema.Known(collection) {
 		return nil, fmt.Errorf("unknown market collection %s", collection)
 	}
+	if s.clickhouse(collection) {
+		return s.chGet(ctx, collection, key)
+	}
 	rows, err := s.Pool.Query(ctx, "SELECT "+selectList(collection, "")+" FROM "+s.Table(collection)+" WHERE storage_key=$1", key)
 	if err != nil {
 		return nil, err
@@ -119,6 +122,9 @@ func (s *Store) Range(ctx context.Context, collection, field string, start, end 
 	if schema.Kind(collection, field) != "timestamptz" {
 		return nil, fmt.Errorf("%s.%s is not a typed timestamp column", collection, field)
 	}
+	if s.clickhouse(collection) {
+		return s.chRange(ctx, collection, field, start, end, filters)
+	}
 	column := quote(field)
 	clauses := []string{column + " IS NOT NULL"}
 	var args []any
@@ -143,6 +149,9 @@ func (s *Store) Range(ctx context.Context, collection, field string, start, end 
 func (s *Store) Earliest(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) (time.Time, bool, error) {
 	if schema.Kind(collection, field) != "timestamptz" {
 		return time.Time{}, false, fmt.Errorf("%s.%s is not a typed timestamp column", collection, field)
+	}
+	if s.clickhouse(collection) {
+		return s.chEarliest(ctx, collection, field, start, end, filters)
 	}
 	column := quote(field)
 	clauses := []string{column + " IS NOT NULL"}
@@ -214,6 +223,9 @@ func (s *Store) Projection(ctx context.Context, collection string, fields []stri
 			return nil, nil
 		}
 	}
+	if s.clickhouse(collection) {
+		return s.chProjection(ctx, collection, fields, field, start, end, instrumentIDs)
+	}
 	column := quote(field)
 	clauses := []string{column + " IS NOT NULL"}
 	var args []any
@@ -264,6 +276,9 @@ func (s *Store) LatestTrades(ctx context.Context, ids []string, start time.Time)
 		}
 	}
 	sort.Strings(scope)
+	if s.clickhouse("mkt.flow_bars_1m") {
+		return s.chLatestTrades(ctx, scope, start)
+	}
 	query := "SELECT point.instrument_id, point.last_trade::text FROM unnest($1::text[]) AS scope(instrument_id) " +
 		"CROSS JOIN LATERAL (SELECT instrument_id, last_trade FROM " + s.Table("mkt.flow_bars_1m") + " " +
 		"WHERE instrument_id = scope.instrument_id AND minute_start >= $2 AND last_trade IS NOT NULL " +
@@ -322,6 +337,9 @@ func (s *Store) LatestRecords(ctx context.Context, collection string, groupBy []
 			return nil, nil
 		}
 		instrumentIDs = scope
+	}
+	if s.clickhouse(collection) {
+		return s.chLatestRecords(ctx, collection, groupBy, timeField, instrumentIDs)
 	}
 	groups := make([]string, len(groupBy))
 	for i, g := range groupBy {

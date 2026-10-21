@@ -38,11 +38,16 @@ def run_db(fn, *, database_url=None, replay=False):
                 )
             settings = settings.model_copy(update={"database_url": database_url, "replay": True})
         repo = PostgresRepository(settings.database_url)
+        from tank import clickhouse_market
+
+        clickhouse = clickhouse_market.install(repo, settings)
         await repo.open()
         try:
             return await fn(repo, settings)
         finally:
             await repo.close()
+            if clickhouse is not None:
+                await clickhouse.close()
 
     try:
         output(asyncio.run(execute()))
@@ -96,7 +101,28 @@ def migrate(market_export_dir):
             market_export_dir=market_export_dir,
             legacy_bundle_dir=settings.data_dir / "bundles",
         )
+        if getattr(repo, "clickhouse", None) is not None:
+            from tank.clickhouse_market import ddl
+
+            for statement in ddl():
+                await repo.clickhouse.execute(statement)
         return {"status": "migrated"}
+
+    run_db(command)
+
+
+@db.command("clickhouse")
+def clickhouse_schema():
+    """Create the ClickHouse market tables (idempotent; HLD §7.1)."""
+
+    async def command(repo, settings):
+        if getattr(repo, "clickhouse", None) is None:
+            raise click.ClickException("TANK_CLICKHOUSE_URL is not set")
+        from tank.clickhouse_market import ddl
+
+        for statement in ddl():
+            await repo.clickhouse.execute(statement)
+        return {"status": "clickhouse schema applied", "statements": len(ddl())}
 
     run_db(command)
 

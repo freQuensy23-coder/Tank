@@ -130,6 +130,9 @@ class Settings(BaseSettings):
     config_dir: Path = Path("config")
     replay_private_mask_path: Path | None = Field(default=None, repr=False, exclude=True)
     database_url: str = "postgresql:///tank"
+    # Exchange market series (HLD §7.1): ClickHouse HTTP endpoint, user tank (password: the
+    # tank_db_password secret). None keeps them in PostgreSQL (tests, replay databases).
+    clickhouse_url: str | None = None
     openma_url: str = "http://127.0.0.1:8787"
     openma_database_url: str = "postgresql:///oma"
     openma_api_key: str | None = None

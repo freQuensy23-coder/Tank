@@ -1,132 +1,57 @@
 package rawstore
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/normalize"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pydec"
+	"github.com/freQuensy23-coder/Tank/capture/internal/store"
 )
 
 func print(id string, ts time.Time) *normalize.Trade {
 	return &normalize.Trade{
 		InstrumentID: "kraken:spot:BTC/USD", TokenID: "bitcoin:BTC", Venue: "kraken", VenueSymbol: "BTC/USD",
 		MarketType: "SPOT", TradeID: id, TS: ts, TSPrec: "EXACT", Side: "BUY",
-		Qty: pydec.MustParse("0.5"), Price: pydec.MustParse("100"), QuoteNotional: pydec.MustParse("50"),
-		QuoteAsset: "USD", MetricKey: "kraken.spot.trades", CaptureSource: "STREAM",
+		Qty: pydec.MustParse("0.5"), Price: pydec.MustParse("84758.80"), QuoteNotional: pydec.MustParse("42379.4"),
+		QuoteAsset: "USD", MetricKey: "kraken.spot.trades", CaptureSource: "WS",
 	}
 }
 
-func rows(t *testing.T, path string) []Row {
-	t.Helper()
-	var out []Row
-	if err := readParquet(path, func(r Row) error { out = append(out, r); return nil }); err != nil {
+// A print captured twice reads once; the stored price keeps its exact digits.
+func TestTradesInsertAndDeduplicate(t *testing.T) {
+	raw := os.Getenv("CLICKHOUSE_TEST_URL")
+	if raw == "" {
+		t.Skip("CLICKHOUSE_TEST_URL not set")
+	}
+	ch, err := store.NewClickHouse(raw, "")
+	if err != nil {
 		t.Fatal(err)
 	}
-	return out
-}
-
-func TestJournalThenSealMergesAndDeduplicates(t *testing.T) {
-	dir := t.TempDir()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	hour := time.Date(2026, 10, 21, 14, 0, 0, 0, time.UTC)
-	w := New(dir, "tank-capture/abc", "cfg1", 2*time.Minute, log)
-	w.Add(print("1", hour.Add(time.Minute)))
-	w.Add(print("2", hour.Add(2*time.Minute)))
-	if err := w.Flush(hour.Add(30 * time.Minute)); err != nil {
+	ctx := context.Background()
+	if err := ch.Exec(ctx, "TRUNCATE TABLE "+Table); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "raw", "trades", "kraken", "spot", "BTC%2FUSD", "2026-10-21", "14.parquet")
-	if _, err := os.Stat(journalOf(path)); err != nil {
-		t.Fatalf("journal not written: %v", err)
-	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatal("hour sealed before it ended")
-	}
-	// A restarted process: the duplicate print and a new one, then the hour ends.
-	w2 := New(dir, "tank-capture/abc", "cfg1", 2*time.Minute, log)
-	w2.Add(print("2", hour.Add(2*time.Minute)))
-	w2.Add(print("3", hour.Add(59*time.Minute)))
-	if err := w2.Flush(hour.Add(time.Hour + time.Minute)); err != nil {
+	w := New(ch, "tank-capture/test", "cfg", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	at := time.Date(2026, 10, 21, 12, 0, 1, 500000000, time.UTC)
+	w.Add(print("1", at))
+	w.Add(print("2", at.Add(time.Second)))
+	if err := w.Flush(at); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
-		t.Fatal("hour sealed inside its grace")
-	}
-	if err := w2.Flush(hour.Add(time.Hour + 3*time.Minute)); err != nil {
+	w.Add(print("1", at))
+	if err := w.Flush(at); err != nil {
 		t.Fatal(err)
 	}
-	got := rows(t, path)
-	if len(got) != 3 {
-		t.Fatalf("rows = %d, want 3", len(got))
-	}
-	r := got[0]
-	if *r["trade_id"] != "1" || *r["price"] != "100" || *r["code_version"] != "tank-capture/abc" ||
-		*r["ts"] != "2026-10-21T14:01:00Z" || r["notional_usd"] != nil {
-		t.Fatalf("row = %s %s %s %s", *r["trade_id"], *r["price"], *r["code_version"], *r["ts"])
-	}
-	if _, err := os.Stat(journalOf(path)); !os.IsNotExist(err) {
-		t.Fatal("journal kept after seal")
-	}
-	// A late print of a sealed hour is merged into the existing file.
-	w2.Add(print("4", hour.Add(59*time.Minute)))
-	if err := w2.Flush(hour.Add(2 * time.Hour)); err != nil {
+	rows, err := ch.Rows(ctx, "SELECT count() AS n, toString(min(price)) AS p, toString(min(ts)) AS ts FROM "+Table+" FINAL", nil)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(rows(t, path)); n != 4 {
-		t.Fatalf("after late print rows = %d, want 4", n)
-	}
-}
-
-func TestResealWithOnlyKnownPrintsKeepsTheFile(t *testing.T) {
-	dir := t.TempDir()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	hour := time.Date(2026, 10, 21, 14, 0, 0, 0, time.UTC)
-	w := New(dir, "c", "f", time.Minute, log)
-	w.Add(print("1", hour.Add(time.Minute)))
-	if err := w.Flush(hour.Add(2 * time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(dir, "raw", "trades", "kraken", "spot", "BTC%2FUSD", "2026-10-21", "14.parquet")
-	before, _ := os.Stat(path)
-	w.Add(print("1", hour.Add(time.Minute))) // a repair repeats a stored print
-	if err := w.Flush(hour.Add(3 * time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	after, _ := os.Stat(path)
-	if !after.ModTime().Equal(before.ModTime()) {
-		t.Fatal("file rewritten for a known print")
-	}
-	if _, err := os.Stat(journalOf(path)); !os.IsNotExist(err) {
-		t.Fatal("journal kept")
-	}
-	if ids, err := readIDs(path); err != nil || len(ids) != 1 || !ids["1"] {
-		t.Fatalf("ids = %v %v", ids, err)
-	}
-}
-
-func TestTornJournalLineDoesNotHideLaterPrints(t *testing.T) {
-	dir := t.TempDir()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	hour := time.Date(2026, 10, 21, 14, 0, 0, 0, time.UTC)
-	w := New(dir, "c", "f", time.Minute, log)
-	w.Add(print("1", hour.Add(time.Minute)))
-	if err := w.Flush(hour.Add(10 * time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(dir, "raw", "trades", "kraken", "spot", "BTC%2FUSD", "2026-10-21", "14.parquet")
-	f, _ := os.OpenFile(journalOf(path), os.O_APPEND|os.O_WRONLY, 0o644)
-	f.WriteString(`{"trade_id":"tor`) // a disk-full cut in an old journal
-	f.Close()
-	w.Add(print("2", hour.Add(2*time.Minute)))
-	if err := w.Flush(hour.Add(2 * time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if n := len(rows(t, path)); n != 2 {
-		t.Fatalf("rows = %d, want 2", n)
+	if n := rows[0]["n"]; n == nil || n.(interface{ String() string }).String() != "2" || rows[0]["p"] != "84758.8" || rows[0]["ts"] != "2026-10-21 12:00:01.500000" {
+		t.Fatalf("rows = %v", rows)
 	}
 }

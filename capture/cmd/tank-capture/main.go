@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
@@ -92,6 +93,22 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer st.Close()
+	// Exchange market series and prints live in ClickHouse (HLD §7.1): same password as the
+	// tank database role.
+	chURL := os.Getenv("TANK_CLICKHOUSE_URL")
+	if chURL == "" {
+		return errors.New("TANK_CLICKHOUSE_URL is not set")
+	}
+	dbURL, err := url.Parse(cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	password, _ := dbURL.User.Password()
+	ch, err := store.NewClickHouse(chURL, password)
+	if err != nil {
+		return err
+	}
+	st.CH = ch
 	health := &healthState{}
 	server := serveHealth(cfg.HealthAddr, health, log)
 	defer server.Close()
@@ -112,7 +129,7 @@ func run(log *slog.Logger) error {
 		Leading:  leading,
 		Fetcher:  client, Log: log,
 		DataDir: cfg.DataDir,
-		Raw:     rawstore.New(cfg.DataDir, cfg.CodeVersion, cfg.ConfigVersion, rawstore.Grace, log),
+		Raw:     rawstore.New(ch, cfg.CodeVersion, cfg.ConfigVersion, log),
 	}, st, writer, capture.RESTVenues(client), dial(cfg.UserAgent), clock)
 	health.set(svc, nil)
 	runCtx, cancel := context.WithCancel(ctx)

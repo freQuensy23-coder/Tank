@@ -49,6 +49,8 @@ type querier interface {
 type Store struct {
 	Pool   *pgxpool.Pool
 	Schema string
+	// CH stores the exchange market series (ClickHouseTables) when set (clickhouse.go).
+	CH *ClickHouse
 
 	url        string
 	statements sync.Map // collection -> upsert statement
