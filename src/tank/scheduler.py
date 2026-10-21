@@ -31,6 +31,10 @@ EVAL_CONDITIONS_BUDGET_S = 15
 REACTION_RETRY_S = 30
 
 
+class _EvalBudgetSpent(Exception):
+    """The EVAL_CONDITIONS batch budget ran out inside a market read."""
+
+
 def field(record, path):
     value = record
     for part in path.split("."):
@@ -515,11 +519,32 @@ class Scheduler:
                 (item["metric"], item["window"]) for item in self.condition_requirements(condition["expr"])
             )
         # Invalidation (EXIT) first, then the least recently evaluated.
+        # Conditions without market reads (fatal contradiction, milestone) are
+        # cheap and go first; market ones rotate from the least recently
+        # touched (evaluated or attempted), invalidations first on ties.
         conditions.sort(
-            key=lambda c: (c.get("role") != "INVALIDATION", str(c.get("last_evaluated_at") or ""))
+            key=lambda c: (
+                bool(self.condition_requirements(c["expr"])),
+                max(str(c.get("last_evaluated_at") or ""), str(c.get("last_attempted_at") or "")),
+                c.get("role") != "INVALIDATION",
+            )
         )
         loop = asyncio.get_running_loop()
         started = loop.time()
+        deadline = started + EVAL_CONDITIONS_BUDGET_S
+
+        async def bounded_truth(key, requirements):
+            # One market read may exceed the whole job (r107: 60-80 head queries
+            # per evaluation); it gets only the budget that is left.
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise _EvalBudgetSpent
+            try:
+                return await asyncio.wait_for(
+                    self.condition_truth(*key, requirements=requirements), timeout=remaining
+                )
+            except TimeoutError:
+                raise _EvalBudgetSpent from None
         event_cache = {}
         for position, cond in enumerate(conditions):
             if loop.time() - started > EVAL_CONDITIONS_BUDGET_S:
@@ -625,12 +650,9 @@ class Scheduler:
                                 (item["metric"], item["window"])
                                 for item in self.condition_requirements(cond["expr"])
                             }
-                            cache[cache_key] = await self.condition_truth(
-                                *cache_key,
-                                requirements=[
-                                    {"metric": metric, "window": window}
-                                    for metric, window in sorted(requirements)
-                                ],
+                            cache[cache_key] = await bounded_truth(
+                                cache_key,
+                                [{"metric": metric, "window": window} for metric, window in sorted(requirements)],
                             )
                         truth = cache[cache_key]
                     value = metric_value(truth, event, metric, expr.get("window", "W1H"))
@@ -687,13 +709,15 @@ class Scheduler:
                         old_key = (cond["event_id"], cond["token_id"], old_stamp)
                         if old_key not in cache:
                             requirements = requirement_sets[(cond["event_id"], cond["token_id"])]
-                            cache[old_key] = await self.condition_truth(
-                                *old_key,
-                                requirements=[
-                                    {"metric": name, "window": window}
-                                    for name, window in sorted(requirements)
-                                ],
-                            )
+                            try:
+                                cache[old_key] = await bounded_truth(
+                                    old_key,
+                                    [{"metric": name, "window": window} for name, window in sorted(requirements)],
+                                )
+                            except _EvalBudgetSpent:
+                                # Re-checking a closed window for late corrections
+                                # waits for a later minute; its stored result stays.
+                                continue
                         old_truth = cache[old_key]
                         old_value = metric_value(old_truth, event, metric, expr.get("window", "W1H"))
                         old_proof = next(
@@ -728,7 +752,21 @@ class Scheduler:
                     }
                     return count >= required
 
-                fired = await evaluate(expr)
+                try:
+                    fired = await evaluate(expr)
+                except _EvalBudgetSpent:
+                    # Record the attempt so the next minute starts with others.
+                    await self.repo.put(
+                        "ana.watch_conditions", cond["cond_id"], {**cond, **cutoff_stamp.fields("last_attempted_at")}
+                    )
+                    log.warning(
+                        "EVAL_CONDITIONS budget of %ss spent inside %s; %s of %s conditions continue next minute",
+                        EVAL_CONDITIONS_BUDGET_S,
+                        cond["cond_id"],
+                        len(conditions) - position,
+                        len(conditions),
+                    )
+                    break
                 updated = {**cond, "counters": counters, **cutoff_stamp.fields("last_evaluated_at")}
                 if cond.get("rearmed_from") and not cond.get("cleared_at"):
                     # A re-armed watch fires on an edge, not a level: it must be
