@@ -35,7 +35,7 @@ REACTION_RETRY_S = 30
 # A late-data revision (03 §8.6) waits this long before it measures, so the late completions
 # that follow a restart's repairs fold into one queued revision per checkpoint (it measures all
 # data present when it runs) instead of re-queuing every checkpoint per repair.
-LATE_REVISION_DEFER_S = 900
+LATE_REVISION_DEFER_S = 1800
 
 
 class _EvalBudgetSpent(Exception):

@@ -1558,12 +1558,12 @@ async def test_late_revision_is_deferred_so_following_late_completions_fold_into
                    "anchor": anchor, "observed_at": iso(now)}
 
     scheduler = Scheduler(repo, SimpleNamespace(), Market(), None)
-    for minute in range(10):
+    for minute in range(0, 30, 5):  # every completion within the 30 min deferral folds
         await scheduler.detect_late_data(now + timedelta(minutes=minute))
     (job,) = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
     assert parse_time(job["run_after"]) == now + timedelta(seconds=scheduler_module.LATE_REVISION_DEFER_S)
     await repo.put("ops.jobs", job["job_id"], dict(job, status="DONE"))
-    await scheduler.detect_late_data(now + timedelta(minutes=20))
+    await scheduler.detect_late_data(now + timedelta(minutes=40))
     jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
     assert len(jobs) == 2
 
