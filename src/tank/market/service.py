@@ -133,6 +133,10 @@ REFERENCE_VENUES = ("binance", "coinbase", "okx", "kraken", "bybit")
 # HOT tickers, OI and funding are polled this often so that their age at any minute cutoff
 # stays within the 60 s HOT cadence of 03 §5.1 despite poll and loop latency.
 HOT_POLL_S = 45
+# HOT 24h REST tickers run on this wall-clock grid, so one is never older than about twice
+# it at a cutoff (cadence 60 s); hyperliquid's shared contexts response lives HL_CONTEXTS_S.
+HOT_TICKER_S = 30
+HL_CONTEXTS_S = 15
 # Finished raw hours are sealed in their own pass, a few per pass.
 SEAL_PASS_S, SEALS_PER_PASS = 10, 2
 BOOK_SAVE_S = 8
@@ -731,14 +735,14 @@ class MarketService:
         payload = kwargs.get("json", {})
         if host == "api.hyperliquid.xyz":
             if payload.get("type") == "metaAndAssetCtxs":
-                cache_key, cache_ttl = "hyperliquid:contexts", 30
+                cache_key, cache_ttl = "hyperliquid:contexts", HL_CONTEXTS_S
             elif payload.get("type") == "fundingHistory":
                 cache_key = "hyperliquid:funding:" + sha256(
                     {"request": payload, "settlement_period": iso()[:13]}
                 )
                 cache_ttl = 3600
         for expired_key, (captured_mono, _) in list(self._response_cache.items()):
-            ttl = 30 if expired_key == "hyperliquid:contexts" else 3600
+            ttl = HL_CONTEXTS_S if expired_key == "hyperliquid:contexts" else 3600
             if time.monotonic() - captured_mono >= ttl:
                 self._response_cache.pop(expired_key, None)
         if not cache_key:
@@ -895,10 +899,10 @@ class MarketService:
         await self._put("reg.instruments", iid, instrument)
         self._metadata.add(iid)
 
-    async def poll_once(self, instrument_id, *, derivatives=True, klines=True, ticker=True):
+    async def poll_once(self, instrument_id, *, derivatives=True, klines=True, ticker=True, priority=0):
         await self._ensure_market_restore()
         instrument = self.instruments[instrument_id]
-        adapter = self.adapter(instrument)
+        adapter = self.adapter(instrument, priority=priority)
         if instrument_id not in self._metadata:
             try:
                 await self.discover(instrument)
@@ -5167,27 +5171,44 @@ class MarketService:
                 )
 
     async def _hot_context_loop(self, instrument):
-        """HOT tickers, OI and funding every 60 s (03 §5.1), on their own schedule: the base
+        """HOT OI and funding every 60 s (03 §5.1), on their own schedule: the base
         cycle over every series of a venue shares one host and must not stretch it."""
         iid = instrument["instrument_id"]
         interval = float(self.thresholds.get("hot_poll_interval_s", HOT_POLL_S))
         while not self._stop.is_set():
-            if instrument["token_id"] not in self._hot_since:
+            if instrument["token_id"] not in self._hot_since or norm.venue_key(instrument).endswith(".spot"):
                 with suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(self._stop.wait(), 5)
                 continue
             started = time.monotonic()
-            # The ticker first and on its own: it must not wait behind (or fail with) the
-            # heavier derivative reads (r109: hyperliquid ticker 96.7 s old at a cutoff).
-            for kinds in ({"derivatives": False}, {"ticker": False}):
+            try:
+                await self.poll_once(iid, klines=False, ticker=False)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
+                await self._gap(instrument, "POLL", exc)
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), max(1, interval - (time.monotonic() - started)))
+
+    async def _hot_ticker_loop(self, instrument):
+        """HOT 24h REST tickers on a fixed wall-clock grid, ahead of other requests to their
+        host. In the derivatives cycle a slow host stretched them: r115 E2E #7 read a
+        hyperliquid ticker 119.5 s old (a ~3 min cycle) against its 60 s cadence."""
+        iid = instrument["instrument_id"]
+        interval = float(self.thresholds.get("hot_ticker_interval_s", HOT_TICKER_S))
+        while not self._stop.is_set():
+            if instrument["token_id"] in self._hot_since:
                 try:
-                    await self.poll_once(iid, klines=False, **kinds)
+                    # A request stuck behind its host never holds the next grid point.
+                    await asyncio.wait_for(
+                        self.poll_once(iid, klines=False, derivatives=False, priority=-1), interval
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
                     await self._gap(instrument, "POLL", exc)
             with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._stop.wait(), max(1, interval - (time.monotonic() - started)))
+                await asyncio.wait_for(self._stop.wait(), max(0.01, interval - time.time() % interval))
 
     async def bootstrap_history(self, *, days=90):
         """Daily: import missing verified archive days, newest first; failures remain visible
@@ -5336,6 +5357,9 @@ class MarketService:
             workers = [asyncio.create_task(self._instrument_loop(inst)) for inst in self.instruments.values()]
             workers += [
                 asyncio.create_task(self._hot_context_loop(inst)) for inst in self.instruments.values()
+            ]
+            workers += [
+                asyncio.create_task(self._hot_ticker_loop(inst)) for inst in self.instruments.values()
             ]
             workers.append(asyncio.create_task(self._warm_series_counts()))
             workers.append(asyncio.create_task(self._seal_loop()))

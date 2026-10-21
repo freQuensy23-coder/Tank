@@ -1954,25 +1954,31 @@ async def test_repair_goes_spot_first_newest_first_in_persisted_hours(setup):
 @pytest.mark.asyncio
 async def test_hot_series_poll_context_on_their_own_schedule(setup):
     repo, settings, inst = setup
+    inst = dict(inst, instrument_id="binance:perp_linear:ABCUSDT", market_type="PERP_LINEAR")
     service = MarketService(repo, settings)
+    service.instruments[inst["instrument_id"]] = inst
     service._stop = asyncio.Event()
     service._hot_since = {inst["token_id"]: utcnow()}
-    service.thresholds.update(base_kline_interval_s=0.01, hot_poll_interval_s=0.01)
+    service.thresholds.update(
+        base_kline_interval_s=0.01, hot_poll_interval_s=0.01, hot_ticker_interval_s=0.01
+    )
     polls = []
 
-    async def poll_once(iid, *, derivatives=True, klines=True, ticker=True):
-        polls.append((klines, ticker, derivatives))
-        if len(polls) >= 4:
+    async def poll_once(iid, *, derivatives=True, klines=True, ticker=True, priority=0):
+        polls.append((klines, ticker, derivatives, priority))
+        if len(polls) >= 6:
             service._stop.set()
 
     service.poll_once = poll_once
-    await asyncio.wait_for(asyncio.gather(service._instrument_loop(inst), service._hot_context_loop(inst)), 5)
-    assert (True, False, False) in polls  # base: klines only while hot
-    assert (False, True, False) in polls and (
-        False,
-        False,
-        True,
-    ) in polls  # hot context: ticker, then derivatives
+    await asyncio.wait_for(
+        asyncio.gather(
+            service._instrument_loop(inst), service._hot_context_loop(inst), service._hot_ticker_loop(inst)
+        ),
+        5,
+    )
+    assert (True, False, False, 0) in polls  # base: klines only while hot
+    assert (False, True, False, -1) in polls  # the ticker on its own grid, ahead on its host
+    assert (False, False, True, 0) in polls  # derivatives on theirs
     await service.close()
 
 
@@ -2169,27 +2175,31 @@ async def test_snapshot_never_queues_behind_a_running_flush(setup):
 
 
 @pytest.mark.asyncio
-async def test_hot_ticker_is_polled_before_and_apart_from_derivatives(setup):
+async def test_hot_ticker_keeps_its_grid_when_a_request_is_stuck(setup):
+    from itertools import pairwise
+
+    from tank.market import service as service_module
+
     repo, settings, inst = setup
     service = MarketService(repo, settings)
     service._stop = asyncio.Event()
     service._hot_since = {inst["token_id"]: utcnow()}
-    service.thresholds.update(hot_poll_interval_s=0.01)
-    calls = []
+    service.thresholds.update(hot_ticker_interval_s=0.05)
+    ticks = []
 
-    async def poll_once(iid, *, derivatives=True, klines=True, ticker=True):
-        calls.append((ticker, derivatives))
-        if derivatives:
-            raise RuntimeError("derivatives source down")
-        if len(calls) >= 4:
+    async def poll_once(iid, *, derivatives=True, klines=True, ticker=True, priority=0):
+        ticks.append(service_module.time.monotonic())
+        if len(ticks) == 2:
+            await asyncio.sleep(1)  # one ticker request stuck behind its host
+        if len(ticks) >= 5:
             service._stop.set()
 
     service.poll_once = poll_once
-    await asyncio.wait_for(service._hot_context_loop(inst), 5)
-    assert calls[:2] == [
-        (True, False),
-        (False, True),
-    ]  # the ticker first; a derivatives failure never skips it
+    await asyncio.wait_for(service._hot_ticker_loop(inst), 5)
+    await service.flush_market()
+    gaps = [b - a for a, b in pairwise(ticks)]
+    assert len(ticks) == 5 and max(gaps) < 0.2  # the stuck request is cut at the next grid point
+    assert any("POLL" in str(g) for g in await repo.list("mkt.capture_gaps"))
     await service.close()
 
 
