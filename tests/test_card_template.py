@@ -862,3 +862,19 @@ def test_native_oi_fall_inside_its_range_is_not_called_positions_closing(vs_norm
     market = render(values).split("MARKET TRUTH:", 1)[1].split("OUTLOOK:", 1)[0]
     line = next(line for line in market.splitlines() if "open positions" in line)
     assert line.endswith(ending) and "positions closing" not in line
+
+
+def test_btc_priced_line_names_the_benchmark_instead_of_a_missing_net_move():
+    """BTC is the benchmark: Market Truth reports r_btc_adj n/a (NOT_APPLICABLE_BENCHMARK)."""
+    values = card_inputs()
+    values[4]["relative"]["windows"]["EVENT"] = {
+        "r_raw": ".0003",
+        "r_btc_adj": None,
+        "r_btc_adj_reason": "NOT_APPLICABLE_BENCHMARK",
+    }
+    card = render(values)
+    assert "Priced: EARLY · EVENT 0.03% raw (BTC is the benchmark)\n" in card
+    assert "net BTC" not in card
+    values[4]["relative"]["windows"]["EVENT"] = {"r_raw": ".03", "r_btc_adj": None}
+    assert "Priced: EARLY · EVENT 3.00% raw; n/a (not available) net BTC" in render(values)
+
