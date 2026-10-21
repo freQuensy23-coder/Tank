@@ -4846,3 +4846,60 @@ def test_publish_card_schema_bounds_agent_text():
         validate_schema(dict(ok, verdict="v" * 161), schema)
     with pytest.raises(ValueError, match=r"\$\.why\[0\]: 221 characters"):
         validate_schema(dict(ok, why=["w" * 221]), schema)
+
+
+async def test_token_facts_for_btc_fit_the_context(service):
+    """r107 P0: get_token_facts("bitcoin:BTC") returned 6.7 MB (143 raw supply
+    rows with daily charts since 2011) and ended the session on the context
+    window. It now returns the latest known row per kind, series shortened,
+    under 40 KB, with the documented figures kept."""
+    from tank.event_tools import TOOL_RESULT_MAX_BYTES
+    from tank.util import canonical_json
+
+    now = utcnow()
+    chart = [[1296432000 + day * 86400, str(day)] for day in range(5500)]
+    for n in range(143):
+        kind = ["FUNDAMENTALS", "LENDING", "EXCHANGE_INVENTORY", "CHAIN_LIQUIDITY", "UNLOCKS"][n % 5]
+        row = {
+            "token_id": "bitcoin:BTC",
+            "kind": kind,
+            "ts": iso(now - timedelta(hours=143 - n)),
+            "available": True,
+        }
+        if kind == "FUNDAMENTALS":
+            daily = {"complete": True, "total24h": str(200000 + n), "total30d": "7277898", "available": True,
+                     "totalDataChart": chart}
+            row.update(metrics={"dailyFees": daily, "dailyRevenue": daily},
+                       protocols={"bitcoin": {"dailyFees": dict(daily, source_url="https://api.llama.fi/x")}})
+        await service.repo.put("mkt.supply_obs", f"btc:{n}", row)
+    facts = await service.dispatch("get_token_facts", {"token": "BTC"}, {})
+    size = len(canonical_json(facts).encode())
+    assert size < TOOL_RESULT_MAX_BYTES, size
+    kinds = [row["kind"] for row in facts["supply_obs"]]
+    assert sorted(kinds) == ["CHAIN_LIQUIDITY", "EXCHANGE_INVENTORY", "FUNDAMENTALS", "LENDING", "UNLOCKS"]
+    fundamentals = next(row for row in facts["supply_obs"] if row["kind"] == "FUNDAMENTALS")
+    fees = fundamentals["metrics"]["dailyFees"]
+    assert fees["total24h"] == "200140" and fees["totalDataChart"]["count"] == 5500
+    assert len(fees["totalDataChart"]["last"]) == 7 and "_truncated" not in facts
+
+
+async def test_read_tool_results_are_bounded_and_say_so(service):
+    """Any read tool result above 40 KB is shortened with a note; list_open_events
+    returns its compact view (03 §3.2: statements, stages, known_to_us_at, sessions)."""
+    from tank.event_tools import TOOL_RESULT_MAX_BYTES, fit_result
+    from tank.util import canonical_json
+
+    big = {"text": "x" * 200_000, "hits": [{"title": "t", "text": "y" * 5000} for _ in range(40)]}
+    fitted = fit_result(big)
+    assert len(canonical_json(fitted).encode()) <= TOOL_RESULT_MAX_BYTES
+    assert fitted["_truncated"]["original_bytes"] > 200_000 and "more characters stored" in fitted["text"]
+    assert fit_result({"small": 1}) == {"small": 1}
+    await service.repo.put(
+        "evt.events",
+        "open",
+        {"event_id": "open", "lifecycle": "ANALYZING", "statement": "World news", "claims_blob": "z" * 50_000},
+    )
+    await service.repo.put("ops.agent_sessions", "s1", {"session_id": "s1", "event_id": "open", "status": "OPEN"})
+    listed = await service.dispatch("list_open_events", {"entity_or_token": "world"}, {})
+    event = listed["events"][0]
+    assert "claims_blob" not in event and event["sessions"] == [{"session_id": "s1", "status": "OPEN"}]
