@@ -2612,3 +2612,83 @@ async def test_a_restart_values_backfilled_prints_with_restored_quote_usd_sample
     assert norm.trade(inst, dict(raw, T=later), source="REST")["notional_usd"] == "99.800"
     assert norm.trade(inst, dict(raw, T=earlier), source="REST")["notional_usd"] is None
     await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("collection", ["mkt.flow_bars_1m", "mkt.book_summaries"])
+async def test_window_cache_reads_equal_fresh_reads_through_appends_rewrites_and_late_rows(setup, collection):
+    from tank.market import service as service_module
+
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+    books = collection == "mkt.book_summaries"
+    field = "exchange_ts" if books else "minute_start"
+    base = (utcnow() - timedelta(hours=3)).replace(second=0, microsecond=0)
+
+    def row(minute, value, recorded_at=None):
+        point = {
+            "instrument_id": inst["instrument_id"],
+            "token_id": inst["token_id"],
+            field: iso(base + timedelta(minutes=minute)),
+            "recorded_at": recorded_at or iso(),
+        }
+        if books:
+            point.update(mid=value, integrity_ok=minute % 3 == 0, bids=[[value, "1"]], asks=[[value, "2"]])
+        else:
+            point.update(buy_qty=value, sell_qty="0", complete=True)
+        return point
+
+    async def put(rows):
+        await repo.put_market_batch(collection, rows, keys=[iso_key(r) for r in rows])
+
+    def iso_key(point):
+        return point["instrument_id"] + ":" + point[field]
+
+    async def both(start, end):
+        cached = await service._ranged(collection, field, [inst["instrument_id"]], start, end, books=books)
+        fresh = await service._ranged_read(
+            collection, field, [inst["instrument_id"]], start, end, books=books
+        )
+        return cached, fresh
+
+    await put([row(m, str(m)) for m in range(0, 120, 2)])
+    start, end = base, base + timedelta(minutes=100)
+    cached, fresh = await both(start, end)
+    assert cached == fresh
+    reads = []
+    original = service_module.market_range_by_instrument
+
+    async def spy(repo_, collection_, field_, ids, start_, end_, *args, **kwargs):
+        reads.append((parse_time(start_), parse_time(end_)))
+        return await original(repo_, collection_, field_, ids, start_, end_, *args, **kwargs)
+
+    service_module.market_range_by_instrument = spy
+    try:
+        # A rewrite, a late older row, rows past the window, and a later window.
+        await put([row(10, "999"), row(11, "777")])
+        cached = await service._ranged(
+            collection,
+            field,
+            [inst["instrument_id"]],
+            start + timedelta(minutes=5),
+            end + timedelta(minutes=10),
+            books=books,
+        )
+        assert reads == [(end, end + timedelta(minutes=10))]  # only the rows past the cached window
+    finally:
+        service_module.market_range_by_instrument = original
+    fresh = await service._ranged_read(
+        collection,
+        field,
+        [inst["instrument_id"]],
+        start + timedelta(minutes=5),
+        end + timedelta(minutes=10),
+        books=books,
+    )
+    assert cached == fresh
+    held = cached[inst["instrument_id"]]
+    assert any(r.get("mid", r.get("buy_qty")) == "999" for r in held)
+    assert any(r[field] == iso(base + timedelta(minutes=11)) for r in held)
+    if books:
+        assert sum("bids" in r for r in held) <= service_module.BOOK_LEVEL_ROWS + 1
+    await service.close()

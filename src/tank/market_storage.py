@@ -984,6 +984,66 @@ async def market_kline_days_recorded_since(repo, since, end):
     return {(row["instrument_id"], row["day"].replace(tzinfo=UTC)) for row in rows}
 
 
+def _identity_key(collection, row):
+    """A row key for stores that do not return storage keys (the in-memory test double)."""
+    from tank.market_schema import MARKET_IDENTITIES
+
+    return "|".join(str(row.get(field)) for field in MARKET_IDENTITIES[collection])
+
+
+async def market_rows_recorded_since(
+    repo, collection, time_field, instrument_ids, since, start, end, filters=None
+):
+    """Rows of the instruments in [start, end) recorded at or after `since` (rewritten or
+    late), as (instrument_id, record, key), JSON decoded in a worker thread."""
+    from psycopg import sql
+
+    instrument_ids = sorted(set(instrument_ids))
+    since, start, end = parse_time(since), parse_time(start), parse_time(end)
+    if not instrument_ids or start >= end:
+        return []
+    if not hasattr(repo, "_conn"):
+        found = []
+        for iid in instrument_ids:
+            async for row in repo.iter_late_arrivals(
+                collection,
+                "recorded_at",
+                time_field,
+                since=since,
+                market_end=end,
+                filters=dict(filters or {}, instrument_id=iid),
+            ):
+                if start <= parse_time(row[time_field]) < end:
+                    found.append((iid, row, _identity_key(collection, row)))
+        return found
+    from tank.storage import _exact_predicate, _read_record
+
+    clauses = [
+        sql.SQL("instrument_id = ANY(%s::text[])"),
+        sql.SQL("recorded_at >= %s"),
+        sql.SQL("{} >= %s").format(sql.Identifier(time_field)),
+        sql.SQL("{} < %s").format(sql.Identifier(time_field)),
+    ]
+    args = [instrument_ids, since, start, end]
+    if filters:
+        extra, values = _exact_predicate(collection, filters)
+        clauses.extend(extra)
+        args.extend(values)
+    query = sql.SQL("SELECT * FROM {} WHERE {} ORDER BY instrument_id, {}, storage_key").format(
+        sql.Identifier(*collection.split(".")), sql.SQL(" AND ").join(clauses), sql.Identifier(time_field)
+    )
+    async with repo.transaction():
+        cursor = _json_as_text(repo._conn().cursor())
+        await cursor.execute(query, args)
+        rows = await cursor.fetchall()
+    return await asyncio.to_thread(
+        lambda: [
+            (row["instrument_id"], _read_record(collection, _load_json(collection, row)), row["storage_key"])
+            for row in rows
+        ]
+    )
+
+
 async def sampled_market_history(
     repo, collection, time_field, group_fields, instrument_ids, start, end, bucket_s
 ):
@@ -1049,6 +1109,7 @@ async def market_range_by_instrument(
     batch_size=1000,
     keep=None,
     level_rows=None,
+    keys_out=None,
 ):
     """Rows of several instruments in [start, end), paged on one key for all of them.
 
@@ -1058,6 +1119,7 @@ async def market_range_by_instrument(
     Pages are keyset-paged like iter_range; `keep(instrument_id, rows)` runs after each
     appended row so a caller can shrink older rows while they stream (book levels).
     1k-row pages (wide rows: 500) bound the transient of one page and the loop time of its fetch.
+    `keys_out`, a dict, receives each instrument's row keys in the order of its rows.
     """
     from psycopg import sql
 
@@ -1076,6 +1138,8 @@ async def market_range_by_instrument(
                 batch_size=batch_size,
             ):
                 out[iid].append(row)
+                if keys_out is not None:
+                    keys_out.setdefault(iid, []).append(_identity_key(collection, row))
                 if keep is not None:
                     keep(iid, out[iid])
         return out
@@ -1138,6 +1202,8 @@ async def market_range_by_instrument(
             out[iid].append(record)
             if level_rows is not None:
                 keys[iid].append(key)
+            if keys_out is not None:
+                keys_out.setdefault(iid, []).append(key)
             if keep is not None:
                 keep(iid, out[iid])
             if n % YIELD_ROWS == 0:
