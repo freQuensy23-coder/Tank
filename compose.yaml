@@ -68,7 +68,7 @@ services:
     environment:
       TANK_CONFIG_DIR: /config
       TANK_CAPTURE_HEALTH_ADDR: ':8791'
-      GOMEMLIMIT: 640MiB
+      GOMEMLIMIT: 1400MiB
     secrets:
     - tank_db_password
     volumes:
@@ -92,7 +92,7 @@ services:
       resources:
         limits:
           cpus: '1.0'
-          memory: 768M
+          memory: 1536M
         reservations:
           memory: 256M
     logging: *id001
