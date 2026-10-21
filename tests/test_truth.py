@@ -662,6 +662,97 @@ def test_vacuum_detects_loss_on_sell_side_despite_deep_asks():
     assert result["liquidity_state"] == "VACUUM"
 
 
+def _e2e8_liquidity(c_notional, covered_c=False):
+    """E2E #8 shape: BTC BUY BROAD over 15 min; venues A and B cover the 1% band, venue C (OKX/Bybit
+    channel depth) covers 0.08%; C's USD notionals may be missing (historical quote rate)."""
+    from tank.analysis.truth import liquidity_truth
+
+    end = parse_time("2026-10-16T12:00:00Z")
+    start = end - timedelta(minutes=15)
+
+    def book(venue, t, native, usd, covered=True):
+        side = {"p1": {"usd": usd, "native": native}}
+        return {
+            "instrument_id": f"{venue}:spot:T",
+            "exchange_ts": iso(t),
+            "integrity_ok": True,
+            "mid": 100,
+            "spread_bps": 1,
+            "range_covered_pct": {"bid": 2, "ask": 2} if covered else {"bid": "0.22", "ask": "0.08"},
+            "depth": {"bid": side, "ask": side},
+        }
+
+    books = []
+    for venue, native in (("A", 100), ("B", 120), ("C", 500)):
+        covered = venue != "C" or covered_c
+        for t in (start - timedelta(minutes=30), end):
+            books.append(book(venue, t, native, native * 100, covered))
+    flow = [
+        {
+            "instrument_id": f"{venue}:spot:T",
+            "minute_start": iso(start + timedelta(minutes=i)),
+            "complete": True,
+            "buy_qty": 2,
+            "sell_qty": 1,
+            "buy_notional": None if venue == "C" and not c_notional else 200,
+            "sell_notional": None if venue == "C" and not c_notional else 100,
+        }
+        for venue in ("A", "B", "C")
+        for i in range(15)
+    ]
+    spot = {"venues": [{"venue": v} for v in ("A", "B", "C")]}
+    relative = {"windows": {"W4H": {"r_raw": 0.0051, "beyond_normal": True}}}
+    return liquidity_truth({"books": books, "flow_bars": flow}, start, end, spot, relative)
+
+
+def test_net_flow_is_native_so_a_missing_quote_rate_does_not_null_elasticity():
+    result = _e2e8_liquidity(c_notional=False)
+    elasticity = result["elasticity"]
+    assert elasticity["depth_unit"] == "NATIVE"
+    assert elasticity["net_flow"] == 45  # 3 venues x 15 bars x (2 - 1)
+    assert elasticity["hit_side"] == "ask"
+
+
+def test_partial_band_coverage_gives_a_depth_lower_bound_not_null():
+    """03 §5.5: OKX/Bybit channel depth does not reach 1%, so their band is unknown; the covered
+    venues still bound the depth from below: net 45 < 220 means the response is not weak."""
+    result = _e2e8_liquidity(c_notional=True)
+    elasticity = result["elasticity"]
+    assert elasticity["hit_side_depth_lower_bound"] == 220
+    assert elasticity["hit_side_covered_venues"] == ["A", "B"]
+    assert elasticity["hit_side_coverage_complete"] is False
+    assert elasticity["hit_side_depth_p1_usd"] is None  # the full sum stays unknown
+    assert elasticity["weak_response"] is False
+    assert elasticity["excess_response"] is True  # beyond normal and net < pre-event lower bound
+    assert result["depth_drop_cohort"]["ask"] == ["A", "B"]
+    assert result["depth_drop"] == 0 and result["depth_majority_lost"] is False
+    assert result["liquidity_state"] == "NORMAL"  # both sides' lower bounds clear T2
+    # Every venue covered: the bound is the exact depth and a large flow is a weak response.
+    full = _e2e8_liquidity(c_notional=True, covered_c=True)["elasticity"]
+    assert full["hit_side_coverage_complete"] is True and full["hit_side_depth_lower_bound"] == 720
+
+
+def test_decisive_facts_print_ranges_as_percents_and_singular_venues():
+    from tank.analysis.truth import canonical_fact_text, decisive_facts
+
+    end = parse_time("2026-10-16T12:00:00Z")
+    start = end - timedelta(minutes=15)
+    spot = {"coverage": {"n_complete": 1}, "composite_max": {"cvd": 1, "venues": []}, "venues": [],
+            "classification": "INSUFFICIENT_DATA", "direction": "BUY"}
+    relative = {
+        "windows": {"W15M": {"r_btc_adj": 0.0051, "relative_return": 0.0051, "relative_measure": "R_BTC_ADJ",
+                             "normal_range": [-0.0040379591952467205, 0.00423267670536415]}},
+        "reference_coverage": {"binance:spot:T": {"complete": True}},
+        "ref_venue": "binance:spot:T",
+    }
+    facts = decisive_facts(spot, {"synchronized": None, "per_venue": []}, {}, relative, {}, "UNKNOWN", "W15M", start, end)
+    price = next(f for f in facts if f["metric"] == "relative.r_btc_adj")
+    assert price["text"] == "W15M BTC-adjusted price move +0.51%; normal range -0.40% to +0.42%."
+    assert "1 complete trailing-24h reference venue]" in canonical_fact_text(price)
+    flow = next(f for f in facts if f["metric"].startswith("spot."))
+    assert flow["text"].endswith("1 complete venue.")
+
+
 def test_oi_seconds_anchor_uses_actual_synchronized_observation_duration():
     end = parse_time("2026-10-16T12:00:00Z")
     start = end - timedelta(hours=4, seconds=-17)
