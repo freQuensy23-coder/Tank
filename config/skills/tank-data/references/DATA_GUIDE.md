@@ -498,8 +498,9 @@ Fixture
 | `event_observations`, `claims` | `obs_id`, `claim_id` | FK to events/items. |
 | `state_changes` | serial | Append-only. |
 | `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | id + version | Versioned rows. |
-| `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | Time-partitioned; base tier 90 days ⚙. |
-| `book_summaries`, `oi_obs`, `funding_obs`, `liq_obs` | (`instrument_id`, ts) | Time-partitioned. |
+| `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | TimescaleDB hypertable (1-day chunks, compressed after 2 days); base tier 90 days ⚙. |
+| `book_summaries` | (`instrument_id`, ts) | Hypertable; kept 72 hours; summary fields only (no order-book levels). |
+| `oi_obs`, `funding_obs`, `liq_obs` | (`instrument_id`, ts) | Hypertable (1-day chunks, compressed after 2 days). |
 | `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`). |
 | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). |
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
@@ -1262,7 +1263,7 @@ The sandbox does not call exchange APIs or WebSockets. Exchange data is in the `
 
 This column inventory is generated from the frozen `MARKET_COLUMNS` producer/storage contract, not an executable schema creation script. Inspect `information_schema` on the selected database to verify migration status and nullability. Numeric values remain Decimal/numeric; never turn unavailable USD into zero. Migration 027 has not been applied to the persistent local database at this guide revision. Existing local tables are not evidence that this new physical layout is deployed.
 
-There is no `mkt.trades` SQL table. Native trades live in immutable, verified hourly Parquet, indexed by `mkt.raw_archives`; journals and checksums are explicit references. Read only manifests selected for the instrument/hour/cutoff through the verified archive reader. Never glob the live data tree. Replay guests use only the selected run's sealed evidence mapping under `/replay/evidence`, not original live paths or evaluator outcomes. Legacy SQL trade export requires an explicitly authorized migration export directory and verified manifest; a raw reference alone does not grant sandbox file access.
+There is no `mkt.trades` SQL table, and the sandbox cannot read the hourly trade files (`/data/raw/trades`, tank-capture's per-trade archive for replay and audit). Per-trade questions are answered from `mkt.flow_bars_1m`: per-minute taker buy/sell quantity and USD, sum of squared sizes, and the first and last trade of each minute. The market tables are TimescaleDB hypertables: always filter on the time column (`minute_start`, `open_time`, `ts`, `as_of`, `exchange_ts`), which reads only the chunks needed; older chunks are compressed and read the same way.
 
 ```sql
 SELECT minute_start, minute_start_prec, buy_qty, sell_qty, sum_sq_qty,
@@ -1276,12 +1277,6 @@ SELECT instrument_id, kind, as_of, as_of_prec, rate, rate_8h_eq,
 FROM mkt.funding_obs
 WHERE instrument_id = %s AND as_of <= %s
 ORDER BY as_of DESC LIMIT 20;
-
-SELECT instrument_id, hour_start, kind, path, parquet_path, sha256,
-       byte_length, checksum_scope, row_count, integrity
-FROM mkt.raw_archives
-WHERE instrument_id = %s AND hour_start >= %s AND hour_start < %s
-ORDER BY hour_start;
 ```
 
 Ticker natural identity is instrument plus timestamp; funding identity is instrument plus kind plus as-of. Preserve component clocks and source observations when combining a mark/index/ticker point. Named structures such as `first_trade`, `boundary_segments`, `reference_points`, `source_observations`, `integrity`, `capture_proof` and `null_reasons` are evidence/provenance, not arbitrary row copies. Point/receipt/recording precision remains explicit; legacy unknown is null with its reason.
@@ -1521,8 +1516,8 @@ Ticker natural identity is instrument plus timestamp; funding identity is instru
 | `spread_bps` | `numeric` |
 | `token_id` | `text` |
 | `depth` | `jsonb` |
-| `bids` | `jsonb` |
-| `asks` | `jsonb` |
+| `bids` | `jsonb` (always null: levels are not stored) |
+| `asks` | `jsonb` (always null: levels are not stored) |
 | `range_covered_pct` | `jsonb` |
 | `independent_rest` | `jsonb` |
 | `semantic_fingerprint` | `text` |
