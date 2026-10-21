@@ -25,14 +25,17 @@
           "enum": [
             "EXACT",
             "COLLECTION_ONLY",
-            "BUCKET"
+            "BUCKET",
+            "SECOND",
+            "MINUTE",
+            "HOUR"
           ]
         },
         {
           "pattern": "^BUCKET\\((?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)(?:us|ms|s|m|h|d|w)\\)$"
         }
       ],
-      "description": "Explicit timestamp provenance; ISO formatting does not establish precision. BUCKET requires an explicit positive duration, embedded or in the companion bucket-size field."
+      "description": "Explicit timestamp provenance; ISO formatting does not establish precision. BUCKET requires an explicit positive duration, embedded or in the companion bucket-size field. SECOND, MINUTE and HOUR are accepted as BUCKET(1s), BUCKET(1m) and BUCKET(1h)."
     },
     "cutoff_bucket_size_s": {
       "type": "number",

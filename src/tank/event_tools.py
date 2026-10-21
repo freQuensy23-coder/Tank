@@ -215,6 +215,48 @@ def summarize_unlocks(rows, cutoff):
     }
 
 
+def write_evidence_bundle(bundle, data_dir):
+    """Freeze the bundle file durably; runs in a thread (pure CPU and blocking
+    file I/O: canonical JSON, zstd, fsync), never on the event loop."""
+    for k, v in bundle.items():
+        if isinstance(v, list) and v and isinstance(v[0], dict):
+            v.sort(key=canonical_json)
+    digest = sha256(bundle)
+    bundle_path = Path(data_dir).resolve() / "bundles" / (digest + ".json.zst")
+    bundle_path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = canonical_json(bundle).encode("utf-8")
+    if not bundle_path.exists():
+        temporary = bundle_path.with_name(bundle_path.name + "." + new_id("bundle") + ".tmp")
+        try:
+            with temporary.open("xb") as output:
+                output.write(zstandard.ZstdCompressor(level=3).compress(encoded))
+                output.flush()
+                os.fsync(output.fileno())
+            try:
+                os.link(temporary, bundle_path)
+            except FileExistsError:
+                pass
+        finally:
+            temporary.unlink(missing_ok=True)
+    if sha256(zstandard.ZstdDecompressor().decompress(bundle_path.read_bytes())) != digest:
+        raise ValueError("Immutable evidence bundle file hash mismatch")
+    # Establish file and directory-entry durability before any immutable database reference.
+    with bundle_path.open("rb") as published:
+        os.fsync(published.fileno())
+    directory = bundle_path.parent
+    volume_root = Path(data_dir).resolve()
+    while True:
+        descriptor = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        if directory == volume_root.parent:
+            break
+        directory = directory.parent
+    return digest, bundle_path
+
+
 def known_at(row):
     """When a stored fact became known. A late-receipt historical reconstruction
     (lead rulings F-02, F-04) is known from the end of its schedule_as_of bucket,
@@ -1995,6 +2037,13 @@ class EventToolService:
         return prepared_ids
 
     async def get_market_truth(self, a, c, *, refresh_key=None):
+        # Named units are accepted as their bucket (live: "MINUTE" was refused
+        # three times, each costing a retry); stored semantics are unchanged.
+        named = {"SECOND": "BUCKET(1s)", "MINUTE": "BUCKET(1m)", "HOUR": "BUCKET(1h)"}
+        normalized_prec = None
+        if a.get("cutoff_prec") in named:
+            normalized_prec = {"from": a["cutoff_prec"], "to": named[a["cutoff_prec"]]}
+            a = dict(a, cutoff_prec=named[a["cutoff_prec"]])
         eid = a["event_id"]
         event = await self.require("evt.events", eid)
         assessment = await self.require("evt.ems_assessments", event["current_ems_id"])
@@ -2097,6 +2146,7 @@ class EventToolService:
             await self.repo.put("evt.beneficiary_maps", f"{eid}:{mapping['map_version']}", mapping)
         return {
             "market_truth": truths,
+            **({"cutoff_prec_normalized": normalized_prec} if normalized_prec else {}),
             **cutoff_stamp.fields("requested_cutoff"),
             **chosen_boundary(cutoff_minute, precision="BUCKET(1m)").fields("cutoff_minute"),
         }
@@ -2777,42 +2827,7 @@ class EventToolService:
             set([r["call_id"] for r in calls if r.get("call_id")] + bundle["tool_call_ids"])
         )
         # Canonical ordering makes the exact frozen payload independently hashable.
-        for k, v in bundle.items():
-            if isinstance(v, list) and v and isinstance(v[0], dict):
-                v.sort(key=canonical_json)
-        digest = sha256(bundle)
-        bundle_path = Path(self.settings.data_dir).resolve() / "bundles" / (digest + ".json.zst")
-        bundle_path.parent.mkdir(parents=True, exist_ok=True)
-        encoded = canonical_json(bundle).encode("utf-8")
-        if not bundle_path.exists():
-            temporary = bundle_path.with_name(bundle_path.name + "." + new_id("bundle") + ".tmp")
-            try:
-                with temporary.open("xb") as output:
-                    output.write(zstandard.ZstdCompressor(level=3).compress(encoded))
-                    output.flush()
-                    os.fsync(output.fileno())
-                try:
-                    os.link(temporary, bundle_path)
-                except FileExistsError:
-                    pass
-            finally:
-                temporary.unlink(missing_ok=True)
-        if sha256(zstandard.ZstdDecompressor().decompress(bundle_path.read_bytes())) != digest:
-            raise ValueError("Immutable evidence bundle file hash mismatch")
-        # Establish file and directory-entry durability before any immutable database reference.
-        with bundle_path.open("rb") as published:
-            os.fsync(published.fileno())
-        directory = bundle_path.parent
-        volume_root = Path(self.settings.data_dir).resolve()
-        while True:
-            descriptor = os.open(directory, os.O_RDONLY)
-            try:
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
-            if directory == volume_root.parent:
-                break
-            directory = directory.parent
+        digest, bundle_path = await asyncio.to_thread(write_evidence_bundle, bundle, self.settings.data_dir)
         await self.repo.put(
             "out.evidence_bundles",
             digest,
@@ -2821,6 +2836,12 @@ class EventToolService:
         )
         aid = previous["alert_id"] if previous else new_id("alert")
         version = previous["version"] + 1 if previous else 1
+        # "Generated" is when this immutable version is written, after its
+        # evidence is durable; an unheld card is deliverable from then on.
+        generated = collection_clock()
+        if not rate_limited:
+            delivery_stamp = generated
+            delivery_not_before = delivery_stamp.value
         alert = dict(
             alert_id=aid,
             version=version,
@@ -2836,7 +2857,7 @@ class EventToolService:
             and event["lifecycle"] == "INVALIDATED"
             and any(r["type"] == "FATAL" for r in event["contradictions"]),
             event_id=eid,
-            **collection_clock(cutoff).fields("generated_at"),
+            **generated.fields("generated_at"),
             card_text=text,
             card_struct=ctx,
             decisions=[
@@ -2860,7 +2881,7 @@ class EventToolService:
                 "channel": "telegram:alerts",
                 "status": "GENERATED",
                 "attempt": 0,
-                **collection_clock(cutoff).fields("at"),
+                **generated.fields("at"),
             },
             immutable=True,
         )
