@@ -100,6 +100,16 @@ def copy_rows(cur, table, source, upsert):
     return cur.rowcount
 
 
+def unvalidated_checks(cur, table):
+    """The parent's NOT VALID CHECK constraints: (name, definition)."""
+    cur.execute(
+        "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint "
+        "WHERE conrelid = %s::regclass AND contype = 'c' AND NOT convalidated",
+        (f"mkt.{table}",),
+    )
+    return cur.fetchall()
+
+
 def prepare(conn, table, ts, segment):
     with conn.cursor() as cur:
         cur.execute("SELECT to_regclass(%s)", (f"mkt.{table}__ts",))
@@ -110,6 +120,14 @@ def prepare(conn, table, ts, segment):
                 "CREATE TABLE {} (LIKE {} INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING STORAGE)"
             ).format(sql.Identifier("mkt", table + "__ts"), sql.Identifier("mkt", table))
         )
+        # NOT VALID legacy checks would reject old rows on copy: dropped here, added back
+        # NOT VALID after the swap (unvalidated_checks).
+        for name, _ in unvalidated_checks(cur, table):
+            cur.execute(
+                sql.SQL("ALTER TABLE {} DROP CONSTRAINT {}").format(
+                    sql.Identifier("mkt", table + "__ts"), sql.Identifier(name)
+                )
+            )
         cur.execute(
             "SELECT create_hypertable(%s, by_range(%s, INTERVAL '1 day'), create_default_indexes => false)",
             (f"mkt.{table}__ts", ts),
@@ -185,6 +203,7 @@ def swap(conn, table, segment, ts):
             (table,),
         )
         grants = cur.fetchall()
+        checks = unvalidated_checks(cur, table)
         cur.execute(
             sql.SQL("ALTER TABLE {} RENAME TO {}").format(
                 sql.Identifier("mkt", table), sql.Identifier(table + "__old")
@@ -203,6 +222,20 @@ def swap(conn, table, segment, ts):
             )
         cur.execute(sql.SQL("DROP TABLE {} CASCADE").format(sql.Identifier("mkt", table + "__old")))
     conn.commit()
+    for name, definition in checks:
+        with conn.cursor() as cur:
+            try:
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD CONSTRAINT {} {} NOT VALID").format(
+                        sql.Identifier("mkt", table),
+                        sql.Identifier(name),
+                        sql.SQL(definition.replace(" NOT VALID", "")),
+                    )
+                )
+                conn.commit()
+            except psycopg.Error as exc:
+                conn.rollback()
+                log(table, "check", name, "not re-added:", type(exc).__name__, str(exc).splitlines()[0])
     log(table, "swapped")
     finish(conn, table, segment, ts)
 
