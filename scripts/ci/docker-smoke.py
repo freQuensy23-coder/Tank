@@ -77,6 +77,16 @@ for name in ("pg_dump", "pg_restore", "psql"):
     assert "(PostgreSQL) 16." in value, value
     pg[name] = value
 from playwright.sync_api import sync_playwright
+import playwright
+package = Path(playwright.__file__).parent
+canonical_driver = package / "driver" / "package"
+links = list(Path("/opt/playwright/.links").glob("*"))
+assert links, "Browser installation registration missing"
+for link in links:
+    registered = Path(link.read_text().strip())
+    assert registered.is_dir() and registered.resolve() == canonical_driver.resolve(), (link, registered)
+nodes = [path for path in Path("/opt").rglob("node") if path.is_file() and path.parent.name == "driver"]
+assert nodes == [package / "driver" / "node"], nodes
 browsers = []
 with sync_playwright() as playwright:
     for executable in (None, playwright.chromium.executable_path):

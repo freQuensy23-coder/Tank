@@ -32,12 +32,19 @@ docker buildx build --progress=plain --platform "linux/$task_arch" --load \
 Build capture from its own context. Its revision argument records the source
 commit in captured rows; supply the actual revision being built.
 
-The main image installs frozen Python dependencies and Chromium before copying
-application source. Source edits rerun the project installation; deployment-only
-edits rerun the deployment copy. Neither should reinstall dependencies or
-Chromium. The uv cache mount retains downloaded wheels and build backends without
-baking that cache into the runtime image. Installed files use copy mode and do
-not depend on that mount at runtime.
+The main image installs frozen Python dependencies in a separate stage. A
+scratch stage selects only its locked Playwright package; the runtime mounts
+that installer temporarily at its final package path to install Chromium and
+system dependencies. The full venv and project metadata are copied afterwards.
+This makes browser installation depend on the selected installer bytes rather
+than unrelated project metadata, with no second version pin or duplicate
+Playwright/Node payload in the runtime image.
+
+Source edits rerun the project installation; deployment-only edits rerun the
+deployment copy. Neither should reinstall dependencies or Chromium. The uv cache
+mount retains downloaded wheels and build backends without baking that cache
+into the runtime image. Installed files use copy mode and do not depend on that
+mount at runtime.
 
 Capture keeps module downloads and compilation in separate Go cache mounts.
 A source or revision change reuses downloaded modules and unchanged compiled
@@ -91,13 +98,14 @@ docker buildx build --progress=plain --platform "linux/$task_arch" --load \
   -t tank-openma:local "$OPENMA_SOURCE_PATH"
 ```
 
-Keep `SKIP_CONSOLE=1` consistent with Compose. The generated recipe fetches the
-frozen pnpm lock before copying package source, then installs offline. Source
-changes reuse fetched dependencies; entrypoint/native-asset changes enter the
-runtime stage. pnpm fetch also retains its virtual store in an image layer;
-that layer supports installation when the external package cache is empty.
-Do not hand-edit the generated Dockerfile: regenerate through the composer so
-its checked hashes and runtime identity match.
+Keep `SKIP_CONSOLE=1` consistent with Compose. The generated recipe extracts the
+final root and workspace package manifests before copying package source. One
+frozen pnpm installation uses that manifest tree; sources are copied afterwards.
+The runtime copies the stable dependency layer separately from the updated
+sources, so source edits retain installed dependencies. Entrypoint/native-asset
+changes enter the runtime stage. Dependency edits use the persistent pnpm cache
+while retaining the frozen lockfile checks. Regenerate through the composer so
+the generated Dockerfile, checked hashes and runtime identity match.
 
 ## Cache and verification
 
