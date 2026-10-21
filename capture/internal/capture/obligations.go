@@ -306,9 +306,10 @@ func (s *Service) repairWindows(ctx context.Context, token string, start, end ti
 }
 
 // incompleteRuns is _incomplete_runs: contiguous [start, end) runs of minutes without a
-// complete persisted bar, and the bars of [lo - 1 min, hi) by minute.
+// complete persisted bar, and the bars of [lo - 1 min, hi) by minute. Only the fields a
+// repair reads are loaded (a full bar row is kilobytes; a 96 h window has 5760 of them).
 func (s *Service) incompleteRuns(ctx context.Context, iid string, lo, hi time.Time) ([]span, map[int64]map[string]any, error) {
-	rows, err := s.store.Range(ctx, "mkt.flow_bars_1m", "minute_start", lo.Add(-time.Minute), hi, map[string]any{"instrument_id": iid})
+	rows, err := s.store.Projection(ctx, "mkt.flow_bars_1m", []string{"minute_start", "complete", "last_trade"}, "minute_start", lo.Add(-time.Minute), hi, []string{iid})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -661,12 +662,44 @@ func (s *Service) startupRepairs(ctx context.Context, hot []map[string]any, star
 	}
 	for _, token := range order {
 		w := spans[token]
-		if ctx.Err() != nil {
-			return
+		hi := pytime.MinuteFloor(minTime(started, w.end))
+		var wg sync.WaitGroup
+		for _, inst := range s.tokenInstruments(token) {
+			if ctx.Err() != nil {
+				return
+			}
+			gap, ok := s.downtimeGap(ctx, inst.ID, w.start, hi)
+			if !ok {
+				continue
+			}
+			s.log.Info("startup repair", "instrument", inst.ID, "start", pytime.ISO(gap.start), "end", pytime.ISO(gap.end))
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				s.repairInstrument(ctx, inst, gap.start, gap.end, false)
+			}()
 		}
-		s.log.Info("startup repair", "token", token, "start", pytime.ISO(w.start), "end", pytime.ISO(minTime(started, w.end)))
-		s.repairWindows(ctx, token, w.start, minTime(started, w.end), 0)
+		wg.Wait()
 	}
+}
+
+// downtimeGap is the run of minutes without a complete bar that ends at hi (this process's
+// start): the minutes the previous process did not write. Older incomplete minutes of the
+// window were already attempted by the process that saw them (repair, obligations); a
+// restart does not page them again.
+func (s *Service) downtimeGap(ctx context.Context, iid string, lo, hi time.Time) (span, bool) {
+	if !hi.After(lo) {
+		return span{}, false
+	}
+	runs, _, err := s.incompleteRuns(ctx, iid, lo, hi)
+	if err != nil {
+		s.log.Warn("startup repair read failed", "instrument", iid, "error", err)
+		return span{}, false
+	}
+	if n := len(runs); n > 0 && runs[n-1].end.Equal(hi) {
+		return runs[n-1], true
+	}
+	return span{}, false
 }
 
 // hotAnchors is the anchor of every hot (token, event): the newest obligation's anchor,
