@@ -2237,6 +2237,20 @@ def liquidity_truth(snapshot, start, end, spot, relative):
     )
 
 
+def _quote(row):
+    return str(row.get("quote_asset") or "").upper()
+
+
+def _usd_mid(row, mid):
+    """A mid in USD: USD quotes as is, others by the row's stored quote_usd_rate (None without)."""
+    if mid is None:
+        return None
+    if _quote(row) == "USD":
+        return mid
+    rate = decimal(row.get("quote_usd_rate"))
+    return mid * rate if rate else None
+
+
 def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liquidity):
     """Compute cross-window claims only on pairwise common, complete venues."""
     for name, left in spots.items():
@@ -2476,6 +2490,11 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         assembled_at=snapshot.get("assembled_at"),
     )
     complete_venues = {v["venue"] for v in capture["venues"]}
+    # 03 §5.8 "an arbitrage that pays": mids of different quote assets (USDT vs USD) are compared
+    # in USD with the book's stored quote rate, and the gap must also clear the conversion's own
+    # uncertainty (a Coinbase last price cached up to 300 s, no spread of its own).
+    conversion_bps = decimal(parameter("quote_conversion_uncertainty_bps", 2))
+    unevaluated = []
     for index, a in enumerate(sorted(grouped)):
         for b in sorted(grouped)[index + 1 :]:
             ar, br = grouped[a], grouped[b]
@@ -2497,7 +2516,15 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
                 if None in (xm, ym, xs, ys) or not ym:
                     gaps = []
                     break
-                gap = abs(xm - ym) * 10000 > (xs + ys) * ym
+                same_quote = _quote(x) == _quote(y)
+                cost = Decimal(0) if same_quote else conversion_bps
+                xm, ym = (xm, ym) if same_quote else (_usd_mid(x, xm), _usd_mid(y, ym))
+                if xm is None or not ym:
+                    # No quote rate: a cross-quote pair cannot be compared (recorded, never a gap).
+                    unevaluated.append([a, b])
+                    gaps = []
+                    break
+                gap = abs(xm - ym) * 10000 > (xs + ys + cost) * ym
                 if t < end:
                     gaps.append(gap)
                 elif gaps and gaps[-1] and not gap:
@@ -2519,10 +2546,11 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
                         and rm > 0
                         and rs is not None
                     )
-                    rest.append((rm, rs) if good else None)
+                    rest.append((rm if same_quote else _usd_mid(stream, rm), rs) if good else None)
                 second = second or (
                     None not in rest
-                    and abs(rest[0][0] - rest[1][0]) * 10000 > (rest[0][1] + rest[1][1]) * rest[1][0]
+                    and None not in (rest[0][0], rest[1][0])
+                    and abs(rest[0][0] - rest[1][0]) * 10000 > (rest[0][1] + rest[1][1] + cost) * rest[1][0]
                 )
             if gaps and all(gaps):
                 persistent = True
@@ -2644,6 +2672,8 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         top_sign_flips=top_flips,
         gap_closed_quickly=closed,
         venues=pairs,
+        cross_quote_not_evaluated=unevaluated,
+        quote_conversion_uncertainty_bps=conversion_bps,
         complete_venues=sorted(complete_venues),
         reason=None if books or dispersion is not None else "INCOMPLETE",
     )
