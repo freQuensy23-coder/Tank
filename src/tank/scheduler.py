@@ -286,6 +286,8 @@ class Scheduler:
 
                 async def capture_pre(payloads=missing_pre):
                     # A background task, not a worker: it waits for a slot.
+                    if await self._capture_pre_shared(payloads):
+                        return
                     for payload in payloads:
                         await self.reaction_capture(payload, wait_for_slot=True)
 
@@ -839,7 +841,54 @@ class Scheduler:
             else "Accepted primary evidence resolved the scheduled milestone.",
         )
 
-    async def reaction_capture(self, payload, *, wait_for_slot=False):
+    def _reaction_window(self, payload):
+        anchor_stamp = propagate_timestamp(payload["anchor"], "ts", precision_aliases=("precision",))
+        origin = parse_time(anchor_stamp.value)
+        offset = CHECKPOINTS[payload["checkpoint"]]
+        start = origin + timedelta(seconds=offset) if offset < 0 else origin
+        end = origin if offset < 0 else origin + timedelta(seconds=offset)
+        return {
+            "anchor_stamp": anchor_stamp,
+            "start": start,
+            "end": end,
+            "start_stamp": offset_schedule(anchor_stamp, start - origin),
+            "end_stamp": offset_schedule(anchor_stamp, end - origin),
+        }
+
+    async def _benchmark_only(self, payload):
+        if payload["token_id"] not in BENCHMARK_TOKENS:
+            return False
+        event = await self.repo.get("evt.events", payload["event_id"]) or {"event_id": payload["event_id"]}
+        return payload["token_id"] not in await self.analysis_set(event)
+
+    async def _capture_pre_shared(self, payloads):
+        """The PRE windows of one (event, token) share their cutoff (the anchor),
+        so their snapshots come from one market read (snapshot_anchors), each
+        equal to its own snapshot(), under one measurement slot."""
+        reader = getattr(self.market, "snapshot_anchors", None)
+        if len(payloads) < 2 or not callable(reader) or await self._benchmark_only(payloads[0]):
+            return False
+        windows = [self._reaction_window(payload) for payload in payloads]
+        cutoffs = {window["end_stamp"].value for window in windows}
+        if len(cutoffs) != 1 or len({p["token_id"] for p in payloads}) != 1:
+            return False
+        by_start = {}
+        anchors = []
+        for payload, window in zip(payloads, windows, strict=True):
+            anchor = {**window["start_stamp"].fields("ts"), "type": payload["anchor"]["type"]}
+            by_start[window["start_stamp"].value] = payload
+            anchors.append(anchor)
+        async with self._reaction_slots:
+            async for anchor, snapshot in reader(payloads[0]["token_id"], windows[0]["end_stamp"], anchors):
+                key = anchor.get("ts") if isinstance(anchor, dict) else anchor
+                payload = by_start.pop(key, None)
+                if payload is not None:
+                    await self.reaction_capture(payload, prefetched=snapshot)
+        for payload in by_start.values():  # anything the reader did not yield
+            await self.reaction_capture(payload, wait_for_slot=True)
+        return True
+
+    async def reaction_capture(self, payload, *, wait_for_slot=False, prefetched=None):
         if payload.get("automatic_revision"):
             # 03 §8.6: a later queued revision of the same checkpoint measures all
             # the data this one would; running both only repeats the capture.
@@ -862,14 +911,19 @@ class Scheduler:
                     return plan["result"]
             # Capturing market buffers and computing history must not keep a
             # database transaction (and its market row locks) open for minutes.
-            if self._reaction_slots.locked() and not wait_for_slot:
-                from tank.delivery import DeliveryDeferred
+            if prefetched is not None:
+                # The caller already holds a slot for the shared read.
+                measured = await self._measure_reaction(plan["payload"], snapshot=prefetched)
+                prefetched, wait_for_slot = None, True  # a retry measures on its own
+            else:
+                if self._reaction_slots.locked() and not wait_for_slot:
+                    from tank.delivery import DeliveryDeferred
 
-                raise DeliveryDeferred(
-                    offset_schedule(collection_clock(), timedelta(seconds=REACTION_RETRY_S))
-                )
-            async with self._reaction_slots:
-                measured = await self._measure_reaction(plan["payload"])
+                    raise DeliveryDeferred(
+                        offset_schedule(collection_clock(), timedelta(seconds=REACTION_RETRY_S))
+                    )
+                async with self._reaction_slots:
+                    measured = await self._measure_reaction(plan["payload"])
             async with self.repo.lock(lock):
                 current = await self._reaction_plan(payload)
                 if current["complete"]:
@@ -1027,31 +1081,31 @@ class Scheduler:
             "latest": latest,
         }
 
-    async def _measure_reaction(self, payload):
+    async def _measure_reaction(self, payload, *, snapshot=None):
         payload = dict(payload)
         captured_stamp = collection_clock()
         from tank.analysis.truth import compute_market_truth
 
-        anchor_stamp = propagate_timestamp(payload["anchor"], "ts", precision_aliases=("precision",))
+        window = self._reaction_window(payload)
+        anchor_stamp = window["anchor_stamp"]
         payload["anchor"] = {**payload["anchor"], **anchor_stamp.fields("ts")}
-        origin = parse_time(anchor_stamp.value)
-        offset = CHECKPOINTS[payload["checkpoint"]]
-        start = origin + timedelta(seconds=offset) if offset < 0 else origin
-        end = origin if offset < 0 else origin + timedelta(seconds=offset)
-        start_stamp = offset_schedule(anchor_stamp, start - origin)
-        end_stamp = offset_schedule(anchor_stamp, end - origin)
-        if payload["token_id"] in BENCHMARK_TOKENS:
-            event = await self.repo.get("evt.events", payload["event_id"]) or {"event_id": payload["event_id"]}
-            if payload["token_id"] not in await self.analysis_set(event):
-                return await self._measure_benchmark(payload, captured_stamp, start, end, start_stamp, end_stamp)
-        snapshot = await self.market.snapshot(
-            payload["token_id"],
-            end_stamp,
-            anchor={**start_stamp.fields("ts"), "type": payload["anchor"]["type"]},
-        )
-        snapshot.update(
-            event_id=payload["event_id"], token_id=payload["token_id"], **end_stamp.fields("cutoff")
-        )
+        start, end = window["start"], window["end"]
+        start_stamp, end_stamp = window["start_stamp"], window["end_stamp"]
+        if await self._benchmark_only(payload):
+            return await self._measure_benchmark(payload, captured_stamp, start, end, start_stamp, end_stamp)
+        if snapshot is None:
+            snapshot = await self.market.snapshot(
+                payload["token_id"],
+                end_stamp,
+                anchor={**start_stamp.fields("ts"), "type": payload["anchor"]["type"]},
+            )
+        # A shared snapshot's rows are shared: only the top-level dict is new.
+        snapshot = {
+            **snapshot,
+            "event_id": payload["event_id"],
+            "token_id": payload["token_id"],
+            **end_stamp.fields("cutoff"),
+        }
         knobs = self.settings.load_config("thresholds") if hasattr(self.settings, "load_config") else {}
         truth = await asyncio.to_thread(
             compute_market_truth,
