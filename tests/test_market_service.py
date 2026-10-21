@@ -2191,3 +2191,29 @@ async def test_hot_ticker_is_polled_before_and_apart_from_derivatives(setup):
         (False, True),
     ]  # the ticker first; a derivatives failure never skips it
     await service.close()
+
+
+@pytest.mark.asyncio
+async def test_loop_watchdog_logs_the_stack_that_holds_the_loop(setup, monkeypatch, caplog):
+    import time as clock
+
+    from tank.market import service as service_module
+
+    repo, settings, _ = setup
+    service = MarketService(repo, settings)
+    service._stop = asyncio.Event()
+    monkeypatch.setattr(service_module, "LOOP_STALL_S", 1)
+    watchdog = asyncio.create_task(service._loop_watchdog())
+    await asyncio.sleep(0.1)
+
+    def hogging_the_loop():
+        clock.sleep(2.5)
+
+    with caplog.at_level("WARNING", logger="tank.market.service"):
+        hogging_the_loop()
+        await asyncio.sleep(0.1)
+    service._stop.set()
+    await watchdog
+    stalls = [r.getMessage() for r in caplog.records if "event loop stalled" in r.getMessage()]
+    assert stalls and "hogging_the_loop" in stalls[0]
+    await service.close()
