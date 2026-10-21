@@ -301,6 +301,7 @@ async def test_runtime_waits_for_capture_release_before_numerical_assessment():
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
+@pytest.mark.integration
 async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
     tmp_path, backend, postgres_template
 ):
@@ -373,6 +374,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
+@pytest.mark.integration
 async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_refresh(
     tmp_path, backend, postgres_template
 ):
@@ -474,6 +476,7 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
         ("DOWNGRADE", "milestone.outcome", "FAILED", "REDUCE"),
     ],
 )
+@pytest.mark.integration
 async def test_event_only_risk_watch_never_waits_for_market_refresh(tmp_path, role, metric, value, expected):
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path, _env_file=None)
