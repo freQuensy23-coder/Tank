@@ -1100,6 +1100,9 @@ class Scheduler:
         if await self._benchmark_only(payload):
             return await self._measure_benchmark(payload, captured_stamp, start, end, start_stamp, end_stamp)
         await self._yield_to_market_truth(payload, end)
+        # The capture time is when the market is read, after any yield, so late
+        # data already in this read is not taken for a later change (03 §8.6).
+        captured_stamp = collection_clock()
         # Only the checkpoint's own windows are read (FR-R-01 values, 03 §8): days of
         # 10 s books and tickers per capture exhausted the pool on r110.
         snapshot = await self.market.snapshot(
