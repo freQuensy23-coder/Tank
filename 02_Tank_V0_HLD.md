@@ -350,7 +350,7 @@ A MAJOR+ class from the agent's `set_assessment` → pre-event windows computed 
 | `reg` | `sources`, `entities`, `entity_aliases`, `tokens`, `instruments`, `sector_baskets`, `dependency_map`, `metric_semantics`, `exchange_addresses` | Versioned with config |
 | `ingest` | `source_items` | Permanent |
 | `evt` | `events`, `event_entities`, `event_observations`, `claims`, `state_changes`, `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | Permanent |
-| `mkt` | `klines_1m`, `flow_bars_1m`, `book_summaries`, `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `unlocks`, `hot_tokens` | TimescaleDB hypertables, 1-day chunks, compressed (columnar, by instrument) after 7 days; base tier 90 days; days overlapping a MAJOR+ event window kept permanently. `book_summaries`: 72 hours, no exception (summaries only, no order-book levels) |
+| `mkt` | `klines_1m`, `flow_bars_1m`, `book_summaries`, `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `unlocks`, `hot_tokens` | TimescaleDB hypertables, 1-day chunks, compressed (columnar, by instrument) after 2 days; base tier 90 days; days overlapping a MAJOR+ event window kept permanently. `book_summaries`: 72 hours, no exception (summaries only, no order-book levels) |
 | `ana` | `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | Permanent |
 | `out` | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints` | Permanent, append-only |
 | `ops` | `jobs`, `agent_sessions`, `tool_calls`, `llm_usage` | Jobs 30 days; LLM usage permanent |
