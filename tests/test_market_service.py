@@ -1957,7 +1957,7 @@ async def test_hot_series_poll_context_on_their_own_schedule(setup):
     service = MarketService(repo, settings)
     service._stop = asyncio.Event()
     service._hot_since = {inst["token_id"]: utcnow()}
-    service.thresholds.update(base_kline_interval_s=0.01, hot_oi_funding_interval_s=0.01)
+    service.thresholds.update(base_kline_interval_s=0.01, hot_poll_interval_s=0.01)
     polls = []
 
     async def poll_once(iid, *, derivatives=True, klines=True, ticker=True):
@@ -1974,7 +1974,7 @@ async def test_hot_series_poll_context_on_their_own_schedule(setup):
 
 @pytest.mark.asyncio
 async def test_replay_never_repairs_from_live_rest(setup):
-    repo, settings, inst = setup
+    repo, settings, _ = setup
     service = MarketService(repo, settings)
 
     async def backfill(*args, **kwargs):
@@ -1995,3 +1995,150 @@ async def test_bucketed_oi_cadence_is_bounded_by_its_source(setup):
     assert oi["cadence_s_by_metric"]["bybit.linear.open-interest"] == 300.0
     assert oi["cadence_basis_by_metric"]["bybit.linear.open-interest"] == "SOURCE_BUCKET_300S"
     await service.close()
+
+
+@pytest.mark.asyncio
+async def test_condition_heads_are_reused_until_their_scope_is_written(setup, monkeypatch):
+    from tank.market import service as service_module
+    from tank.util import iso
+
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+    iid = inst["instrument_id"]
+    now = utcnow().replace(microsecond=0)
+    row = {
+        "instrument_id": iid,
+        "token_id": "test:ABC",
+        "metric_key": "binance.usdm.openInterest",
+        "ts": iso(now - timedelta(minutes=5)),
+        "oi_native": "1",
+        "recorded_at": iso(now - timedelta(minutes=4)),
+    }
+    await repo.put_market_batch("mkt.oi_obs", [row])
+    calls = []
+    real = service_module.market_dependency_head
+
+    async def counted(*args, **kwargs):
+        calls.append(kwargs.get("orders"))
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(service_module, "market_dependency_head", counted)
+    window = ("mkt.oi_obs", "ts", now - timedelta(days=1), now)
+    assembled = utcnow()  # after the write: the head saw every row of its scope
+    first = await service._condition_heads(*window, iso(assembled), {"instrument_id": iid})
+    again = await service._condition_heads(
+        *window, iso(assembled + timedelta(seconds=30)), {"instrument_id": iid}
+    )
+    assert (
+        first == again
+        and len(calls) == 1
+        and calls[0] == ("availability", "semantic_latest", "semantic_earliest")
+    )
+    singles = [
+        await real(
+            repo,
+            "mkt.oi_obs",
+            "ts",
+            now,
+            start=now - timedelta(days=1),
+            filters={"instrument_id": iid},
+            assembled_at=iso(assembled),
+            order=o,
+        )
+        for o in ("availability", "semantic_latest", "semantic_earliest")
+    ]
+    assert first == singles and first[0]["storage_key"]
+    await repo.put_market_batch(
+        "mkt.oi_obs", [dict(row, ts=iso(now - timedelta(minutes=1)), recorded_at=iso(utcnow()))]
+    )
+    later = await service._condition_heads(
+        *window, iso(utcnow() + timedelta(seconds=1)), {"instrument_id": iid}
+    )
+    assert len(calls) == 2 and later[1]["ts"] == iso(
+        now - timedelta(minutes=1)
+    )  # a write invalidates the reuse
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_startup_repair_includes_the_minute_that_just_ended(setup):
+    repo, settings, _ = setup
+    settings.replay = False
+    service = MarketService(repo, settings)
+    ended = []
+
+    async def backfill(instrument, anchor, *, checkpoint=None):
+        ended.append(parse_time(anchor))
+
+    service.backfill = backfill
+    now = utcnow()
+    await service.repair_windows("test:ABC", now - timedelta(minutes=5), now)
+    assert max(ended) == (now - timedelta(seconds=5)).replace(second=0, microsecond=0)
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_reference_spot_venue_is_repaired_first_and_never_waits_for_a_slot(setup):
+    from tank.market.service import HOT_POLL_S
+
+    repo, settings, inst = setup
+    settings.replay = False
+    service = MarketService(repo, settings)
+    venues = ("okx", "coinbase", "binance")
+    service.instruments = {v: dict(inst, venue=v, instrument_id=v + ":spot:ABC") for v in venues}
+    service._repair_slots = asyncio.Semaphore(0)  # every shared slot is taken
+    order = []
+
+    async def backfill(instrument, anchor, *, checkpoint=None):
+        order.append(instrument["venue"])
+
+    service.backfill = backfill
+    now = utcnow()
+    await service.repair_windows("test:ABC", now - timedelta(hours=2), now, budget_s=0.5)
+    assert order and set(order) == {"binance"}  # the reference venue ran; the others queue for a slot
+    assert HOT_POLL_S < 60  # HOT context stays inside its 60 s cadence at any minute cutoff
+    await service.close()
+
+
+async def test_snapshot_anchors_yield_widest_first_and_equal_single_snapshots(setup):
+    """PRE windows of one token and cutoff share their reads; each snapshot equals its own call."""
+    from tank.market.service import BOOK_LEVEL_ROWS
+    from tank.util import iso, parse_time
+
+    repo, settings, inst = setup
+    http = httpx.AsyncClient()
+    service = MarketService(repo, settings, http=http)
+    cutoff = parse_time("2026-06-17T12:00:00Z")
+    levels = [["2", "1"], ["3", "1"]]
+    for i in range(BOOK_LEVEL_ROWS + 300):
+        await repo.put(
+            "mkt.book_summaries",
+            f"book{i:04d}",
+            {
+                "instrument_id": inst["instrument_id"],
+                "token_id": inst["token_id"],
+                "exchange_ts": iso(cutoff - timedelta(minutes=10 * i)),
+                "integrity_ok": i % 7 == 3,
+                "mid": "2",
+                "bids": levels,
+                "asks": levels,
+            },
+        )
+    anchors = [{"type": "T1", "ts": iso(cutoff - timedelta(hours=h)), "ts_prec": "EXACT"} for h in (1, 30, 4)]
+
+    def stable(snapshot):
+        out = {k: v for k, v in snapshot.items() if not k.startswith("assembled_at")}
+        out["capture_status"] = {k: v for k, v in out["capture_status"].items() if k != "observed_at"}
+        return out
+
+    shared = [
+        (a, stable(s)) async for a, s in service.snapshot_anchors(inst["token_id"], iso(cutoff), anchors)
+    ]
+    # Windows reach back 2 x max(1 day, cutoff - anchor): the 30 h anchor is the widest; ties keep order.
+    assert [a["ts"] for a, _ in shared] == [anchors[1]["ts"], anchors[0]["ts"], anchors[2]["ts"]]
+    for anchor, snapshot in shared:
+        single = stable(await service.snapshot(inst["token_id"], iso(cutoff), anchor=anchor))
+        assert snapshot == single
+        assert sum("asks" in b for b in snapshot["books"]) <= BOOK_LEVEL_ROWS + 1
+    assert len(shared[0][1]["books"]) > len(shared[-1][1]["books"])
+    await http.aclose()

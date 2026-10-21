@@ -8,7 +8,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
-from tank.util import iso, jsonable, parse_time
+from tank.util import iso, jsonable, parse_time, utcnow
 
 
 def encode(collection, record):
@@ -209,6 +209,20 @@ def _unproves(collection, old, new):
     )
 
 
+def _note_writes(self, collection, rows):
+    """When rows of a scope last changed: a dependency head that saw every row recorded by
+    its assembly clock stays valid for a later clock until its scope is written again."""
+    if not rows:
+        return
+    clock = self.__dict__.setdefault("_market_write_clock", {})
+    now = utcnow()
+    clock[collection, None, None] = now
+    for row in rows:
+        for scope in ("instrument_id", "token_id"):
+            if row.get(scope) is not None:
+                clock[collection, scope, row[scope]] = now
+
+
 async def _put_market_batch(self, collection, records, *, keys=None, _columns=None):
     # Forward migration import can target a historical typed schema. Ordinary
     # production writes always use the entire current explicit column contract.
@@ -277,6 +291,7 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
                         rows.pop(previous)
                     rows[key] = value
                     changed.append(value.copy())
+        _note_writes(self, collection, changed)
         return changed
     names = ["storage_key", *columns]
     arrays = []
@@ -355,7 +370,9 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
         )
     async with self.transaction():
         rows = await (await self._conn().execute(query, arrays)).fetchall()
-    return [decode(collection, r) for r in rows]
+    changed = [decode(collection, r) for r in rows]
+    _note_writes(self, collection, changed)
+    return changed
 
 
 async def latest_market_records(
@@ -487,8 +504,10 @@ async def market_dependency_head(
     instrument_ids=None,
     assembled_at=None,
     order="availability",
+    orders=None,
 ):
     """Availability or semantic-boundary head within a scope, returning metadata only.
+    With `orders`, every listed head comes from one round trip as {order: head}.
 
     A correction to an old point participates by its actual recorded_at, not by its
     position in semantic history. Unknown legacy availability is explicitly excluded.
@@ -498,12 +517,26 @@ async def market_dependency_head(
 
     from tank.storage import _exact_predicate
 
-    if order not in ("availability", "semantic_latest", "semantic_earliest"):
+    if any(o not in ("availability", "semantic_latest", "semantic_earliest") for o in orders or (order,)):
         raise ValueError("Unsupported market dependency head order")
+    if orders is not None and not hasattr(self, "_conn"):
+        return {
+            o: await market_dependency_head(
+                self,
+                collection,
+                semantic_field,
+                cutoff,
+                start=start,
+                filters=filters,
+                instrument_ids=instrument_ids,
+                assembled_at=assembled_at,
+                order=o,
+            )
+            for o in orders
+        }
     ascending = order == "semantic_earliest"
     columns = MARKET_COLUMNS.get(collection)
     semantic_field = MARKET_ALIASES.get(collection, {}).get(semantic_field, semantic_field)
-    order_field = "recorded_at" if order == "availability" else semantic_field
     if (
         columns is None
         or columns.get(semantic_field) != "timestamptz"
@@ -518,7 +551,7 @@ async def market_dependency_head(
             raise ValueError("instrument_ids must contain instrument identifier strings")
         instrument_ids = sorted(set(instrument_ids))
         if not instrument_ids:
-            return None
+            return None if orders is None else dict.fromkeys(orders)
         if "instrument_id" not in columns:
             raise ValueError(f"{collection} has no typed instrument_id")
     cutoff = parse_time(cutoff)
@@ -580,19 +613,28 @@ async def market_dependency_head(
         else:
             clauses.append(sql.SQL("instrument_id = ANY(%s::text[])"))
             args.append(instrument_ids)
-    query = sql.SQL(
-        "SELECT storage_key,recorded_at,semantic_fingerprint,{} FROM {} WHERE {} ORDER BY {} {},storage_key {} LIMIT 1"
-    ).format(
-        sql.Identifier(semantic_field),
-        sql.Identifier(*collection.split(".")),
-        sql.SQL(" AND ").join(clauses),
-        sql.Identifier(order_field),
-        sql.SQL("ASC" if ascending else "DESC"),
-        sql.SQL("ASC" if ascending else "DESC"),
-    )
+    wanted = [order] if orders is None else list(orders)
+
+    def head(o):
+        direction = sql.SQL("ASC" if o == "semantic_earliest" else "DESC")
+        return sql.SQL(
+            "(SELECT {} AS head,storage_key,recorded_at,semantic_fingerprint,{} FROM {} WHERE {}"
+            " ORDER BY {} {},storage_key {} LIMIT 1)"
+        ).format(
+            sql.Literal(o),
+            sql.Identifier(semantic_field),
+            sql.Identifier(*collection.split(".")),
+            sql.SQL(" AND ").join(clauses),
+            sql.Identifier("recorded_at" if o == "availability" else semantic_field),
+            direction,
+            direction,
+        )
+
+    query = sql.SQL(" UNION ALL ").join(head(o) for o in wanted)
     async with self.transaction():
-        row = await (await self._conn().execute(query, args)).fetchone()
-    return metadata(row) if row else None
+        rows = await (await self._conn().execute(query, args * len(wanted))).fetchall()
+    found = {row["head"]: metadata(row) for row in rows}
+    return found.get(order) if orders is None else {o: found.get(o) for o in wanted}
 
 
 async def iter_market_projection(
@@ -904,3 +946,76 @@ async def sampled_market_history(
     async with repo.transaction():
         rows = await (await repo._conn().execute(query, args)).fetchall()
     return sorted((decode(collection, row) for row in rows), key=lambda r: r[time_field])
+
+
+async def market_range_by_instrument(
+    repo, collection, time_field, instrument_ids, start, end, filters=None, *, batch_size=20000, keep=None
+):
+    """Rows of several instruments in [start, end), paged on one key for all of them.
+
+    Per instrument the rows come in the order iter_range returns them for that instrument
+    alone ((time_field, storage_key)), so callers can replace a per-instrument loop of range
+    reads (e.g. 9 collections x the instruments of a token) without changing any output.
+    Pages are keyset-paged like iter_range; `keep(instrument_id, rows)` runs after each
+    appended row so a caller can shrink older rows while they stream (book levels).
+    20k-row pages bound the raw-plus-record transient of one page (~100 MB at 100k on BTC).
+    """
+    from psycopg import sql
+
+    instrument_ids = sorted(set(instrument_ids))
+    out = {iid: [] for iid in instrument_ids}
+    if not instrument_ids:
+        return out
+    if not hasattr(repo, "_conn"):
+        for iid in instrument_ids:
+            async for row in repo.iter_range(
+                collection,
+                time_field,
+                start=start,
+                end=end,
+                filters=dict(filters or {}, instrument_id=iid),
+                batch_size=batch_size,
+            ):
+                out[iid].append(row)
+                if keep is not None:
+                    keep(iid, out[iid])
+        return out
+    from tank.storage import _exact_predicate, _read_record
+
+    clauses = [
+        sql.SQL("{} IS NOT NULL").format(sql.Identifier(time_field)),
+        sql.SQL("instrument_id = ANY(%s::text[])"),
+    ]
+    args = [instrument_ids]
+    for op, bound in ((">=", start), ("<", end)):
+        if bound is not None:
+            clauses.append(sql.SQL("{} " + op + " %s").format(sql.Identifier(time_field)))
+            args.append(parse_time(bound))
+    if filters:
+        extra, values = _exact_predicate(collection, filters)
+        clauses.extend(extra)
+        args.extend(values)
+    after = None
+    while True:
+        page_clauses, page_args = list(clauses), list(args)
+        if after is not None:
+            page_clauses.append(
+                sql.SQL("(instrument_id, {}, storage_key) > (%s, %s, %s)").format(sql.Identifier(time_field))
+            )
+            page_args.extend(after)
+        query = sql.SQL("SELECT * FROM {} WHERE {} ORDER BY instrument_id, {}, storage_key LIMIT %s").format(
+            sql.Identifier(*collection.split(".")),
+            sql.SQL(" AND ").join(page_clauses),
+            sql.Identifier(time_field),
+        )
+        async with repo.transaction():
+            rows = await (await repo._conn().execute(query, [*page_args, batch_size])).fetchall()
+        for row in rows:
+            iid = row["instrument_id"]
+            out[iid].append(_read_record(collection, row))
+            if keep is not None:
+                keep(iid, out[iid])
+        if len(rows) < batch_size:
+            return out
+        last = rows[-1]
+        after = (last["instrument_id"], last[time_field], last["storage_key"])

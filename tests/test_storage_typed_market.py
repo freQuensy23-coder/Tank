@@ -994,3 +994,22 @@ async def test_unproven_flow_bar_never_replaces_a_complete_one_memory():
 async def test_unproven_flow_bar_never_replaces_a_complete_one_postgres(typed_repo):
     await typed_repo.migrate()
     await _unproven_writes_keep_complete_bars(typed_repo)
+
+
+async def test_dependency_heads_in_one_round_trip_equal_single_heads(typed_repo):
+    from tank.market_storage import market_dependency_head
+
+    await typed_repo.migrate()
+    rows = [flow(at) for at in ("2026-10-18T00:00:00Z", "2026-10-18T00:01:00Z", "2026-10-18T00:02:00Z")]
+    rows[1]["recorded_at"] = "2026-10-18T00:05:00Z"
+    await typed_repo.put_market_batch("mkt.flow_bars_1m", rows)
+    args = ("mkt.flow_bars_1m", "minute_start", "2026-10-18T00:03:00Z")
+    kwargs = {
+        "start": "2026-10-18T00:00:00Z",
+        "filters": {"instrument_id": "test:BTC"},
+        "assembled_at": "2026-10-18T01:00:00Z",
+    }
+    orders = ("availability", "semantic_latest", "semantic_earliest")
+    batched = await market_dependency_head(typed_repo, *args, **kwargs, orders=orders)
+    assert batched == {o: await market_dependency_head(typed_repo, *args, **kwargs, order=o) for o in orders}
+    assert batched["availability"]["minute_start"] == "2026-10-18T00:01:00Z"
