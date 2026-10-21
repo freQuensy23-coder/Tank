@@ -891,3 +891,19 @@ async def test_due_captures_are_claimed_earliest_expiry_first(repo):
     assert first["job_id"] == urgent["job_id"]
     await repo.finish_job(first["job_id"])
     assert (await repo.claim_job())["job_id"] == slack["job_id"]
+
+
+async def test_late_deliver_claim_is_logged_with_type_and_wait(repo, caplog):
+    import logging
+
+    if not isinstance(repo, PostgresRepository):
+        pytest.skip("The claim timing log is the PostgreSQL claim path")
+    async with repo.transaction():
+        await repo._conn().execute("DELETE FROM ops.jobs WHERE status IN ('QUEUED','RUNNING')")
+    await repo.enqueue(
+        "DELIVER", {}, new_id("idem"), priority=0, run_after=iso(utcnow() - timedelta(seconds=7))
+    )
+    with caplog.at_level(logging.INFO, logger="tank.storage"):
+        job = await repo.claim_job()
+    assert job["type"] == "DELIVER"
+    assert "type DELIVER" in caplog.text and "after run_after" in caplog.text

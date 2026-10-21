@@ -6,7 +6,9 @@ import asyncio
 import copy
 import hashlib
 import json
+import logging
 import random
+import time
 import weakref
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
@@ -127,12 +129,14 @@ class Repository(Protocol):
 # Job types whose RUNNING count is capped at claim time. A REACTION_CAPTURE holds a
 # pooled connection through long reads; a backlog of them took 6 of 8 workers and
 # drained the pool (r110, 03:52Z), so one runs at a time and other types never wait.
+log = logging.getLogger(__name__)
+
 RUNNING_CAPS = {"REACTION_CAPTURE": 1}
 # Due jobs of these types are claimed earliest expiry first within their priority: a
 # capture backlog must not let a checkpoint expire behind ones with hours of slack
 # (FR-R-01; captures expire at checkpoint + 6 h, 03 §3.8).
 EARLIEST_EXPIRY_FIRST = ("REACTION_CAPTURE",)
-_CLAIM_LOCK = int.from_bytes(hashlib.sha256(b"tank:job_claim").digest()[:8], "big", signed=True)
+CLAIM_SLOW_S, DELIVER_LATE_S = 0.5, 1.0
 
 
 def _table(collection):
@@ -998,31 +1002,65 @@ class PostgresRepository(QueueMixin):
             )
 
     async def claim_job(self):
+        started = time.monotonic()
+        job = await self._claim_job()
+        elapsed = time.monotonic() - started
+        # Timing evidence for the 10 s delivery target (01 §9); the elapsed time includes
+        # the wait for a pooled connection.
+        late = None
+        if job and job.get("type") == "DELIVER" and job.get("attempts") == 1 and job.get("run_after"):
+            late = (utcnow() - parse_time(job["run_after"])).total_seconds()
+        if elapsed > CLAIM_SLOW_S or (late is not None and late > DELIVER_LATE_S):
+            log.info(
+                "claim_job %.2f s, type %s, %s",
+                elapsed,
+                job.get("type") if job else None,
+                f"first claimed {late:.2f} s after run_after" if late is not None else "no DELIVER",
+            )
+        return job
+
+    async def _claim_job(self):
         async with self.transaction():
             conn = self._conn()
-            # Claims serialize so two workers cannot both see a capped type below its cap.
-            await conn.execute("SELECT pg_advisory_xact_lock(%s)", (_CLAIM_LOCK,))
-            await conn.execute(
-                "UPDATE ops.jobs SET status='EXPIRED', document=jsonb_set(document,'{status}','\"EXPIRED\"') WHERE status='QUEUED' AND expires_at <= now()"
-            )
-            await conn.execute(
-                "UPDATE ops.jobs SET status='FAILED', document=jsonb_set(document,'{status}','\"FAILED\"') WHERE status='QUEUED' AND attempts >= max_attempts AND coalesce((document->>'recovery_reclaim')::boolean,false)=false"
-            )
+            # Capped types: try (never wait) for each type's claim lock. A type whose lock
+            # another claimer holds is skipped this round; every other type is claimable,
+            # so a stalled capture claim can no longer queue DELIVER behind it (r114 E2E #6:
+            # 7.7 s pickup while claimers waited in pg_advisory_xact_lock). The RUNNING
+            # count is read by the next statement, after the lock, so it sees every
+            # capture claimed before the lock was released.
+            held = (
+                await (
+                    await conn.execute(
+                        "SELECT coalesce(array_agg(t), '{}') AS held FROM unnest(%s::text[]) AS t"
+                        " WHERE pg_try_advisory_xact_lock(hashtextextended('tank:job_cap:' || t, 0))",
+                        (list(RUNNING_CAPS),),
+                    )
+                ).fetchone()
+            )["held"]
             row = await (
                 await conn.execute(
-                    """UPDATE ops.jobs SET status='RUNNING',
-              attempts=attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END,
-              document=document||jsonb_build_object('status','RUNNING','recovery_reclaim',false,
-                'attempts',attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END)
-              WHERE storage_key=(SELECT storage_key FROM ops.jobs j WHERE status='QUEUED' AND run_after<=now()
+                    """WITH expired AS (
+                UPDATE ops.jobs SET status='EXPIRED', document=jsonb_set(document,'{status}','"EXPIRED"')
+                WHERE status='QUEUED' AND expires_at <= now() RETURNING 1),
+              failed AS (
+                UPDATE ops.jobs SET status='FAILED', document=jsonb_set(document,'{status}','"FAILED"')
+                WHERE status='QUEUED' AND attempts >= max_attempts
+                AND coalesce((document->>'recovery_reclaim')::boolean,false)=false RETURNING 1),
+              pick AS (
+                SELECT storage_key FROM ops.jobs j WHERE status='QUEUED' AND run_after<=now()
                 AND (expires_at IS NULL OR expires_at>now())
                 AND (attempts<max_attempts OR document->>'recovery_reclaim'='true')
                 AND NOT EXISTS (SELECT 1 FROM unnest(%s::text[], %s::int[]) AS c(type, cap)
-                  WHERE c.type=j.type
-                  AND (SELECT count(*) FROM ops.jobs r WHERE r.status='RUNNING' AND r.type=c.type)>=c.cap)
+                  WHERE c.type=j.type AND (NOT c.type=ANY(%s::text[])
+                    OR (SELECT count(*) FROM ops.jobs r WHERE r.status='RUNNING' AND r.type=c.type)>=c.cap))
                 ORDER BY priority,CASE WHEN type=ANY(%s::text[]) THEN expires_at END NULLS LAST,
-                  run_after,storage_key FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING document""",
-                    (list(RUNNING_CAPS), list(RUNNING_CAPS.values()), list(EARLIEST_EXPIRY_FIRST)),
+                  run_after,storage_key FOR UPDATE SKIP LOCKED LIMIT 1)
+              UPDATE ops.jobs SET status='RUNNING',
+              attempts=attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END,
+              document=document||jsonb_build_object('status','RUNNING','recovery_reclaim',false,
+                'attempts',attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END)
+              WHERE storage_key=(SELECT storage_key FROM pick) RETURNING document""",
+                    (list(RUNNING_CAPS), list(RUNNING_CAPS.values()), held, list(EARLIEST_EXPIRY_FIRST)),
                 )
             ).fetchone()
             return row["document"] if row else None
