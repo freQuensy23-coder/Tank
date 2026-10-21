@@ -201,6 +201,23 @@ class EventToolService:
             ).items()
         }
 
+    def resolve_token_arguments(self, tool, arguments):
+        """V3 for token arguments: a ticker or $TICKER becomes its registry
+        token_id ("BTC" -> "bitcoin:BTC"). Other values pass unchanged; a tool
+        that cannot use them names the token and the expected form."""
+        fields = {"get_decision": "token", "get_token_facts": "token", "get_market_truth": "tokens"}
+        field = fields.get(tool)
+        if field is None or field not in arguments:
+            return arguments
+        registry = self.settings.load_config("registry")
+
+        def one(value):
+            resolved = resolve_token(registry, value)
+            return value if isinstance(resolved, str) and resolved.startswith("UNRESOLVED:") else resolved
+
+        value = arguments[field]
+        return dict(arguments, **{field: [one(v) for v in value] if isinstance(value, list) else one(value)})
+
     async def dispatch(self, tool, arguments, context):
         if tool not in self.TOOLS:
             raise ValueError(f"Unknown Tank tool: {tool}")
@@ -293,6 +310,7 @@ class EventToolService:
         )
         if self.settings.has_config(schema_relative):
             validate_schema(arguments, self.settings.read_config_json(schema_relative))
+        arguments = self.resolve_token_arguments(tool, arguments)
         ctx = dict(context or {})
         event_id = arguments.get("event_id") or ctx.get("event_id")
         if tool == "get_decision" and not ctx.get("_decision_market_refresh_completed"):
@@ -711,9 +729,10 @@ class EventToolService:
         self.validate_evidence_url(a["url"])
         if urlparse(a["url"]).scheme != "https":
             raise ValueError("Only HTTPS evidence fetches are allowed")
-        async with asyncio.timeout(20):
+        limit = min(20, float(a.get("timeout_s") or 20))  # 03 §3.2: at most 20 s
+        async with asyncio.timeout(limit):
             async with (
-                httpx.AsyncClient(timeout=20, follow_redirects=False)
+                httpx.AsyncClient(timeout=limit, follow_redirects=False)
                 if self.http is None
                 else _borrow(self.http) as client
             ):
@@ -1882,7 +1901,12 @@ class EventToolService:
         if management_only and historical_edges:
             edges = [max(historical_edges, key=lambda row: int(row["map_version"]))]
         if not edges or latest_truth is None:
-            raise ValueError("Decision requires current-map beneficiary and market truth")
+            current = max(maps, key=lambda m: int(m["map_version"])) if maps else {}
+            raise ValueError(
+                f"Decision for {token!r} requires a current-map beneficiary edge and Market Truth "
+                f"({'no edge' if not edges else 'no Market Truth'}); use a registry token_id from the "
+                f"analysis set: {current.get('analysis_set', [])}"
+            )
         calls = [
             r for r in await self.rows("ana.calls", eid) if r["token_id"] == token and r["status"] == "OPEN"
         ]
@@ -2840,6 +2864,8 @@ def validate_schema(value, schema, path="$"):
             raise ValueError(f"{path}: does not match pattern {schema['pattern']}")
         if len(value) < schema.get("minLength", 0):
             raise ValueError(f"{path}: shorter than {schema['minLength']}")
+        if "maxLength" in schema and len(value) > schema["maxLength"]:
+            raise ValueError(f"{path}: {len(value)} characters, at most {schema['maxLength']}")
     if isinstance(value, list) and len(value) < schema.get("minItems", 0):
         raise ValueError(f"{path}: fewer than {schema['minItems']} items")
     if (

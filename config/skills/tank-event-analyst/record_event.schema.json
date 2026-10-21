@@ -177,13 +177,16 @@
             "description": "Atomic claim kind. Use STATE when the verbatim quote establishes an event or integration stage and set state_claim explicitly. FACT describes a fact but FACT with state_claim null does not advance the event stage. NUMBER, RELATION, TIMESTAMP, MECHANISM and MILESTONE retain their evidence contracts."
           },
           "subject": {
-            "type": "string"
+            "type": "string",
+            "description": "Short plain-language subject, e.g. 'OJK'. Printed on the card."
           },
           "predicate": {
-            "type": "string"
+            "type": "string",
+            "description": "Plain-language verb phrase as it reads in a sentence, e.g. 'expects trading to start on', never snake_case. Printed on the card."
           },
           "object": {
-            "type": "string"
+            "type": "string",
+            "description": "Short plain-language object, at most about 12 words; details stay in the quote. Printed on the card."
           },
           "state_claim": {
             "type": [
@@ -275,7 +278,7 @@
               "string",
               "null"
             ],
-            "description": "Agent-supplied explanation of what confirmation is missing for this unverified claim (for example, no announcement from the named organization). Tank preserves and displays it verbatim; null means the reason was not established."
+            "description": "Agent-supplied explanation of what confirmation is missing for this unverified claim (for example, no announcement from the named organization). Tank preserves and displays it verbatim; null means the reason was not established. Keep it to about 10 words; it is printed in NOT VERIFIED."
           },
           "evidence": {
             "type": "array",

@@ -4812,3 +4812,37 @@ def test_schema_refusal_names_allowed_cutoff_precisions():
     with pytest.raises(ValueError) as refused:
         validate_schema(dict(args, cutoff_prec="MINUTE"), schema)
     assert "$.cutoff_prec" in str(refused.value) and "EXACT" in str(refused.value) and "BUCKET" in str(refused.value)
+
+
+async def test_token_tools_resolve_tickers_and_refuse_unknown_names_explicitly(service):
+    """E2E msg 15/16: get_decision("BTC") must reach bitcoin:BTC, and an
+    unknown name gets an error that states the expected form."""
+    resolved = service.resolve_token_arguments("get_decision", {"event_id": "e", "token": "BTC"})
+    assert resolved["token"] == "bitcoin:BTC"
+    many = service.resolve_token_arguments("get_market_truth", {"event_id": "e", "tokens": ["$WLD", "uniswap:UNI"]})
+    assert many["tokens"] == ["world:WLD", "uniswap:UNI"]
+    assert service.resolve_token_arguments("get_token_facts", {"token": "Bitcoinz"}) == {"token": "Bitcoinz"}
+    assert service.resolve_token_arguments("get_event", {"event_id": "e"}) == {"event_id": "e"}
+    await service.repo.put("evt.events", "e", {"event_id": "e", "current_ems_id": "ems"})
+    await service.repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": "e", "class": "MAJOR"})
+    await service.repo.put(
+        "evt.beneficiary_maps", "e:1", {"event_id": "e", "map_version": 1, "analysis_set": ["bitcoin:BTC"]}
+    )
+    with pytest.raises(ValueError, match=r"'Bitcoinz'.*analysis set: \['bitcoin:BTC'\]"):
+        await service.dispatch("get_decision", {"event_id": "e", "token": "Bitcoinz"}, {})
+
+
+def test_publish_card_schema_bounds_agent_text():
+    """E2E msg 16: agent text is bounded at the schema, before the card is built."""
+    import json
+    from pathlib import Path
+
+    schema = json.loads(
+        (Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/publish_card.schema.json").read_text()
+    )
+    ok = {"event_id": "e", "kind": "FULL", "verdict": "v" * 160, "why": ["w" * 220, "x"]}
+    validate_schema(ok, schema)
+    with pytest.raises(ValueError, match=r"\$\.verdict: 161 characters, at most 160"):
+        validate_schema(dict(ok, verdict="v" * 161), schema)
+    with pytest.raises(ValueError, match=r"\$\.why\[0\]: 221 characters"):
+        validate_schema(dict(ok, why=["w" * 221]), schema)

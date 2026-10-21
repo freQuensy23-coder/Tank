@@ -687,7 +687,10 @@ def _market_breadth(truth, token):
                 + "% of the OI value change; price-markup component present)"
             )
         venues.append(text)
-    if venues and window:
+    # tank-truth's decisive OI fact already names venue classes when the
+    # synchronized class is unavailable; print them only when it does not.
+    covered = any("by venue:" in str(fact) for fact in truth.get("decisive_facts") or [])
+    if venues and window and not covered:
         lines.append(window + ": open interest by venue: " + "; ".join(venues))
     sync = derivatives.get("synchronized") or {}
     change = sync.get("oi_native_chg_pct")

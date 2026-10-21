@@ -94,7 +94,8 @@
       "additionalProperties": false,
       "properties": {
         "token": {
-          "type": "string"
+          "type": "string",
+          "description": "Registry token_id, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
         }
       },
       "required": [
@@ -128,6 +129,12 @@
         "url": {
           "type": "string",
           "format": "uri"
+        },
+        "timeout_s": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 20,
+          "description": "Seconds to wait for the page, at most 20 (the default). Use a short value (e.g. 8) for the one immediate official-source check before record_event, so a slow site cannot hold the event."
         }
       },
       "required": [
@@ -317,13 +324,16 @@
                 "description": "Atomic claim kind. Use STATE when the verbatim quote establishes an event or integration stage and set state_claim explicitly. FACT describes a fact but FACT with state_claim null does not advance the event stage. NUMBER, RELATION, TIMESTAMP, MECHANISM and MILESTONE retain their evidence contracts."
               },
               "subject": {
-                "type": "string"
+                "type": "string",
+                "description": "Short plain-language subject, e.g. 'OJK'. Printed on the card."
               },
               "predicate": {
-                "type": "string"
+                "type": "string",
+                "description": "Plain-language verb phrase as it reads in a sentence, e.g. 'expects trading to start on', never snake_case. Printed on the card."
               },
               "object": {
-                "type": "string"
+                "type": "string",
+                "description": "Short plain-language object, at most about 12 words; details stay in the quote. Printed on the card."
               },
               "state_claim": {
                 "type": [
@@ -415,7 +425,7 @@
                   "string",
                   "null"
                 ],
-                "description": "Agent-supplied explanation of what confirmation is missing for this unverified claim (for example, no announcement from the named organization). Tank preserves and displays it verbatim; null means the reason was not established."
+                "description": "Agent-supplied explanation of what confirmation is missing for this unverified claim (for example, no announcement from the named organization). Tank preserves and displays it verbatim; null means the reason was not established. Keep it to about 10 words; it is printed in NOT VERIFIED."
               },
               "evidence": {
                 "type": "array",
@@ -517,13 +527,16 @@
                 "description": "Atomic claim kind. Use STATE when the verbatim quote establishes an event or integration stage and set state_claim explicitly. FACT describes a fact but FACT with state_claim null does not advance the event stage. NUMBER, RELATION, TIMESTAMP, MECHANISM and MILESTONE retain their evidence contracts."
               },
               "subject": {
-                "type": "string"
+                "type": "string",
+                "description": "Short plain-language subject, e.g. 'OJK'. Printed on the card."
               },
               "predicate": {
-                "type": "string"
+                "type": "string",
+                "description": "Plain-language verb phrase as it reads in a sentence, e.g. 'expects trading to start on', never snake_case. Printed on the card."
               },
               "object": {
-                "type": "string"
+                "type": "string",
+                "description": "Short plain-language object, at most about 12 words; details stay in the quote. Printed on the card."
               },
               "state_claim": {
                 "type": [
@@ -615,7 +628,7 @@
                   "string",
                   "null"
                 ],
-                "description": "Agent-supplied explanation of what confirmation is missing for this unverified claim (for example, no announcement from the named organization). Tank preserves and displays it verbatim; null means the reason was not established."
+                "description": "Agent-supplied explanation of what confirmation is missing for this unverified claim (for example, no announcement from the named organization). Tank preserves and displays it verbatim; null means the reason was not established. Keep it to about 10 words; it is printed in NOT VERIFIED."
               },
               "supersedes_claim_ids": {
                 "type": "array",
@@ -2098,7 +2111,8 @@
         "tokens": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "description": "Registry token_id, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
           }
         },
         "cutoff": {
@@ -2144,7 +2158,8 @@
           "type": "string"
         },
         "token": {
-          "type": "string"
+          "type": "string",
+          "description": "Registry token_id, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
         }
       },
       "required": [
@@ -2172,12 +2187,15 @@
         },
         "verdict": {
           "type": "string",
-          "description": "One neutral factual headline sentence for the canonical card, grounded in the event evidence. Not an action recommendation: actions come from get_decision."
+          "description": "One neutral factual headline sentence for the canonical card, grounded in the event evidence. Not an action recommendation: actions come from get_decision. At most 160 characters.",
+          "maxLength": 160
         },
         "why": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 220,
+            "description": "One factual bullet, at most 220 characters."
           },
           "maxItems": 3
         }

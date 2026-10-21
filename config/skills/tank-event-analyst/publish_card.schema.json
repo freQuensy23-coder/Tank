@@ -16,12 +16,15 @@
     },
     "verdict": {
       "type": "string",
-      "description": "One neutral factual headline sentence for the canonical card, grounded in the event evidence. Not an action recommendation: actions come from get_decision."
+      "description": "One neutral factual headline sentence for the canonical card, grounded in the event evidence. Not an action recommendation: actions come from get_decision. At most 160 characters.",
+      "maxLength": 160
     },
     "why": {
       "type": "array",
       "items": {
-        "type": "string"
+        "type": "string",
+        "maxLength": 220,
+        "description": "One factual bullet, at most 220 characters."
       },
       "maxItems": 3
     }
