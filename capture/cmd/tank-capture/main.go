@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -39,7 +40,10 @@ const shutdownLimit = 45 * time.Second
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
-		os.Exit(healthcheck())
+		os.Exit(healthcheck("/healthz"))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "readycheck" {
+		os.Exit(healthcheck("/readyz"))
 	}
 	if err := run(log); err != nil {
 		log.Error("tank-capture stopped", "error", err)
@@ -47,8 +51,9 @@ func main() {
 	}
 }
 
-// healthcheck is the container healthcheck: GET /healthz on the local health address.
-func healthcheck() int {
+// healthcheck is the container healthcheck (GET /healthz on the local health address);
+// readycheck (/readyz) tells a roll that a standby process has every stream connected.
+func healthcheck(path string) int {
 	addr := os.Getenv("TANK_CAPTURE_HEALTH_ADDR")
 	if addr == "" {
 		addr = ":8791"
@@ -58,7 +63,7 @@ func healthcheck() int {
 		return 1
 	}
 	client := http.Client{Timeout: 4 * time.Second}
-	resp, err := client.Get("http://127.0.0.1:" + port + "/healthz")
+	resp, err := client.Get("http://127.0.0.1:" + port + path)
 	if err != nil {
 		return 1
 	}
@@ -90,29 +95,26 @@ func run(log *slog.Logger) error {
 	health := &healthState{}
 	server := serveHealth(cfg.HealthAddr, health, log)
 	defer server.Close()
-	log.Info("waiting for the writer lock", "key", cfg.LockKey())
-	lock, err := st.Lock(ctx, cfg.LockKey())
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil
-		}
-		return err
-	}
-	defer lock.Release()
-	log.Info("writer lock held", "key", cfg.LockKey())
+	// Make-before-break: streams connect now and their rows wait in memory while the
+	// previous process still holds the writer lock; nothing is written, claimed or repaired
+	// until this process takes the lock, so a roll leaves no capture hole.
 	owner := config.Writer
 	clock := capture.NewSystemClock()
 	gate := budget.NewGate(st.Ledger(), owner)
 	client := rest.NewClient(cfg.UserAgent, gate, clock.Now)
 	writer := store.NewWriter(st)
+	var held atomic.Pointer[store.Lock]
+	leading := make(chan struct{})
 	svc := capture.New(capture.Options{
 		Instruments: cfg.Instruments, Order: cfg.Order, Tokens: cfg.Tokens, Thresholds: cfg.Thresholds,
 		ConfigVersion: cfg.ConfigVersion, CodeVersion: cfg.CodeVersion, Writer: config.Writer,
-		CanWrite: lock.Held, Fetcher: client, Log: log,
+		CanWrite: func() bool { l := held.Load(); return l != nil && l.Held() },
+		Leading:  leading,
+		Fetcher:  client, Log: log,
 		DataDir: cfg.DataDir,
 		Raw:     rawstore.New(cfg.DataDir, cfg.CodeVersion, cfg.ConfigVersion, rawstore.Grace, log),
 	}, st, writer, capture.RESTVenues(client), dial(cfg.UserAgent), clock)
-	health.set(svc, lock)
+	health.set(svc, nil)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	notifications, err := st.Listen(runCtx, "tank_capture")
@@ -124,14 +126,6 @@ func run(log *slog.Logger) error {
 			svc.Wake()
 		}
 	}()
-	go func() {
-		select {
-		case <-lock.Lost():
-			log.Error("another writer holds the writer lock: stopping")
-			cancel()
-		case <-runCtx.Done():
-		}
-	}()
 	go logReads(runCtx, client, log)
 	go func() {
 		// A stop that does not finish must not hold the writer lock: exit with the stacks.
@@ -141,11 +135,39 @@ func run(log *slog.Logger) error {
 		log.Error("shutdown exceeded its limit", "limit", shutdownLimit.String(), "stacks", string(buf[:runtime.Stack(buf, true)]))
 		os.Exit(1)
 	}()
+	go func() {
+		log.Info("standby: capturing, waiting for the writer lock", "key", cfg.LockKey())
+		lock, err := st.Lock(runCtx, cfg.LockKey())
+		if err != nil {
+			if runCtx.Err() == nil {
+				log.Error("writer lock failed", "error", err)
+				cancel()
+			}
+			return
+		}
+		held.Store(lock)
+		health.set(svc, lock)
+		log.Info("writer lock held", "key", cfg.LockKey())
+		close(leading)
+		select {
+		case <-lock.Lost():
+			log.Error("another writer holds the writer lock: stopping")
+			cancel()
+		case <-runCtx.Done():
+		}
+	}()
+	defer func() {
+		if l := held.Load(); l != nil {
+			l.Release()
+		}
+	}()
 	err = svc.Run(runCtx)
-	select {
-	case <-lock.Lost():
-		return errors.New("another writer holds the writer lock")
-	default:
+	if l := held.Load(); l != nil {
+		select {
+		case <-l.Lost():
+			return errors.New("another writer holds the writer lock")
+		default:
+		}
 	}
 	return err
 }
@@ -216,7 +238,7 @@ func (h *healthState) get() (*capture.Service, *store.Lock) {
 func (h *healthState) healthy() (bool, string) {
 	svc, lock := h.get()
 	if svc == nil || lock == nil {
-		return false, "waiting for the writer lock"
+		return false, "standby: waiting for the writer lock"
 	}
 	select {
 	case <-lock.Lost():
@@ -242,6 +264,14 @@ func serveHealth(addr string, h *healthState, log *slog.Logger) *http.Server {
 			return
 		}
 		fmt.Fprintln(w, reason)
+	})
+	// /readyz: every stream member connected (a standby process is ready to take over).
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if svc, _ := h.get(); svc != nil && svc.Ready() {
+			fmt.Fprintln(w, "ready")
+			return
+		}
+		http.Error(w, "streams connecting", http.StatusServiceUnavailable)
 	})
 	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
 		ok, reason := h.healthy()

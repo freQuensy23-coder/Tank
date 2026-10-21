@@ -109,6 +109,47 @@ func New(opt Options, store Store, writer Writer, venues Venues, dial Dialer, cl
 	return s
 }
 
+// leading reports whether this process holds the writer lock (Options.Leading).
+func (s *Service) leading() bool {
+	if s.opt.Leading == nil {
+		return true
+	}
+	select {
+	case <-s.opt.Leading:
+		return true
+	default:
+		return false
+	}
+}
+
+// waitLeading blocks until this process holds the writer lock; false if ctx ends first.
+func (s *Service) waitLeading(ctx context.Context) bool {
+	if s.opt.Leading == nil {
+		return true
+	}
+	select {
+	case <-s.opt.Leading:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// Ready reports that every stream member is connected (a standby can take over).
+func (s *Service) Ready() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.members) == 0 {
+		return false
+	}
+	for _, m := range s.members {
+		if m.state != "CONNECTED" {
+			return false
+		}
+	}
+	return true
+}
+
 // Wake makes the hot set, obligations and requests be read now (a tank_capture notification).
 func (s *Service) Wake() {
 	select {
@@ -163,10 +204,20 @@ func (s *Service) Run(ctx context.Context) error {
 		return err
 	}
 	s.syncHot(ctx, hot)
-	s.spawn(func(ctx context.Context) { s.startupRepairs(ctx, hot, started) })
+	s.spawn(func(ctx context.Context) {
+		if !s.waitLeading(ctx) {
+			return
+		}
+		// Write what the standby captured first: the gap left to repair is then only what
+		// no process saw.
+		s.flush(ctx)
+		s.startupRepairs(ctx, hot, maxTime(started, s.clock.Now()))
+	})
 	s.loop(ctx, time.Second, s.tick)
 	s.loop(ctx, streamStateEvery, func(context.Context) { s.publishStreams() })
 	s.loop(ctx, rawFlushEvery, func(context.Context) { s.flushRaw() })
+	s.loop(ctx, fetchPruneEvery, s.pruneFetches)
+	s.loop(ctx, sweepEvery, s.sweep)
 	s.spawn(s.hotLoop)
 	for _, iid := range s.opt.Order {
 		inst := s.opt.Instruments[iid]
@@ -183,7 +234,11 @@ func (s *Service) Run(ctx context.Context) error {
 		interval := s.opt.Threshold("hot_ticker_interval_s", HotTickerS)
 		s.spawn(func(ctx context.Context) { s.hotGrid(ctx, inst, interval, 0, pollKinds{ticker: true}) })
 	}
-	s.spawn(s.oiHistoryLoop)
+	s.spawn(func(ctx context.Context) {
+		if s.waitLeading(ctx) {
+			s.oiHistoryLoop(ctx)
+		}
+	})
 	<-ctx.Done()
 	s.mu.Lock()
 	for _, g := range s.groups {
@@ -200,6 +255,18 @@ func (s *Service) Run(ctx context.Context) error {
 	return nil
 }
 
+// fetchPruneEvery and fetchKeep bound finished HTTP_FETCH rows (their bodies are one-shot).
+const fetchPruneEvery, fetchKeep = 10 * time.Minute, time.Hour
+
+func (s *Service) pruneFetches(ctx context.Context) {
+	if s.opt.CanWrite != nil && !s.opt.CanWrite() {
+		return
+	}
+	if _, err := s.store.PruneFetches(ctx, s.clock.Now().Add(-fetchKeep)); err != nil {
+		s.log.Warn("fetch prune failed", "error", err)
+	}
+}
+
 // raw keeps a print for the hourly trade files.
 func (s *Service) raw(t *normalize.Trade) {
 	if s.opt.Raw != nil {
@@ -207,9 +274,10 @@ func (s *Service) raw(t *normalize.Trade) {
 	}
 }
 
-// flushRaw writes the buffered prints to their hour journals and seals finished hours.
+// flushRaw writes the buffered prints to their hour journals and seals finished hours
+// (only while holding the writer lock: the previous process still appends until then).
 func (s *Service) flushRaw() {
-	if s.opt.Raw == nil {
+	if s.opt.Raw == nil || (s.opt.CanWrite != nil && !s.opt.CanWrite()) {
 		return
 	}
 	if err := s.opt.Raw.Flush(s.clock.Now()); err != nil {
@@ -408,8 +476,10 @@ func (s *Service) hotLoop(ctx context.Context) {
 		} else {
 			s.syncHot(ctx, hot)
 		}
-		s.obligations(ctx)
-		s.requests(ctx)
+		if s.leading() {
+			s.obligations(ctx)
+			s.requests(ctx)
+		}
 		select {
 		case <-ctx.Done():
 			return

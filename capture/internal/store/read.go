@@ -441,6 +441,17 @@ func (s *Store) FinishRequest(ctx context.Context, row map[string]any) error {
 	return err
 }
 
+// PruneFetches deletes finished HTTP_FETCH requests older than before: their response
+// bodies are one-shot (core deletes the row once read; this catches rows it gave up on).
+func (s *Store) PruneFetches(ctx context.Context, before time.Time) (int64, error) {
+	tag, err := s.Pool.Exec(ctx, "DELETE FROM "+liveTable(requests)+
+		" WHERE kind='HTTP_FETCH' AND status IN ('COMPLETE','FAILED','EXPIRED') AND finished_at < $1", before)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
 // Now is the database clock (clock_timestamp()).
 func (s *Store) Now(ctx context.Context) (time.Time, error) {
 	var t time.Time

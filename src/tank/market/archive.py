@@ -275,7 +275,7 @@ class HourlyParquet:
             try:
                 rows.append(json.loads(line))
             except ValueError:
-                break  # torn tail of an append cut by a crash
+                continue  # a line torn by a crash or a full disk; later lines still count
         for start in range(0, len(rows), 10000):
             chunk = rows[start : start + 10000]
             names = columns or sorted({k for row in chunk for k in row})

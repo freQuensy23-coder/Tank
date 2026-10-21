@@ -221,25 +221,48 @@ func appendJournal(path string, rows []Row) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
+		return err
+	}
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return err
+	}
+	if st.Size() > 0 {
+		// An earlier process cut mid-line: end that line so the next row stands alone.
+		last := make([]byte, 1)
+		if _, err := f.ReadAt(last, st.Size()-1); err == nil && last[0] != '\n' {
+			if _, err := f.Write([]byte{'\n'}); err != nil {
+				f.Close()
+				return err
+			}
+			if st, err = f.Stat(); err != nil {
+				f.Close()
+				return err
+			}
+		}
+	}
+	// A failed append (disk full) is cut back to the last whole line, so the rows are
+	// retried and nothing after them is hidden behind a torn line.
+	fail := func(err error) error {
+		_ = f.Truncate(st.Size())
+		f.Close()
 		return err
 	}
 	w := bufio.NewWriter(f)
 	enc := json.NewEncoder(w)
 	for _, r := range rows {
 		if err := enc.Encode(r); err != nil {
-			f.Close()
-			return err
+			return fail(err)
 		}
 	}
 	if err := w.Flush(); err != nil {
-		f.Close()
-		return err
+		return fail(err)
 	}
 	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
+		return fail(err)
 	}
 	if err := f.Close(); err != nil {
 		return err
@@ -443,7 +466,8 @@ func readParquet(path string, put func(Row) error) error {
 	return nil
 }
 
-// readJournal streams a journal; a torn last line (crash mid-append) ends it.
+// readJournal streams a journal; a torn line (a crash or a full disk mid-append) is
+// skipped, the lines after it still count.
 func readJournal(path string, put func(Row) error) error {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
@@ -458,7 +482,7 @@ func readJournal(path string, put func(Row) error) error {
 	for sc.Scan() {
 		var row Row
 		if json.Unmarshal(sc.Bytes(), &row) != nil {
-			break
+			continue
 		}
 		if err := put(row); err != nil {
 			return err

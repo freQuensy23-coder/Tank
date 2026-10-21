@@ -667,44 +667,81 @@ func (s *Service) startupRepairs(ctx context.Context, hot []map[string]any, star
 	}
 	for _, token := range order {
 		w := spans[token]
-		hi := pytime.MinuteFloor(minTime(started, w.end))
-		var wg sync.WaitGroup
-		for _, inst := range s.tokenInstruments(token) {
-			if ctx.Err() != nil {
-				return
-			}
-			gap, ok := s.downtimeGap(ctx, inst.ID, w.start, hi)
-			if !ok {
-				continue
-			}
-			s.log.Info("startup repair", "instrument", inst.ID, "start", pytime.ISO(gap.start), "end", pytime.ISO(gap.end))
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				s.repairInstrument(ctx, inst, gap.start, gap.end, false)
-			}()
+		if ctx.Err() != nil {
+			return
 		}
-		wg.Wait()
+		s.log.Info("startup repair", "token", token, "start", pytime.ISO(w.start), "end", pytime.ISO(minTime(started, w.end)))
+		s.repairUnrepaired(ctx, token, w.start, pytime.MinuteFloor(minTime(started, w.end)))
 	}
 }
 
-// downtimeGap is the run of minutes without a complete bar that ends at hi (this process's
-// start): the minutes the previous process did not write. Older incomplete minutes of the
-// window were already attempted by the process that saw them (repair, obligations); a
-// restart does not page them again.
-func (s *Service) downtimeGap(ctx context.Context, iid string, lo, hi time.Time) (span, bool) {
+// unrepaired are the runs of minutes in [lo, hi) without a complete bar that no repair
+// has tried yet (no row, or a row without gap_reason): what the previous process left,
+// whatever the cause. A minute a repair already gave a reason for is not paged again.
+func (s *Service) unrepaired(ctx context.Context, iid string, lo, hi time.Time) []span {
 	if !hi.After(lo) {
-		return span{}, false
+		return nil
 	}
-	runs, _, err := s.incompleteRuns(ctx, iid, lo, hi)
+	runs, bars, err := s.incompleteRuns(ctx, iid, lo, hi)
 	if err != nil {
-		s.log.Warn("startup repair read failed", "instrument", iid, "error", err)
-		return span{}, false
+		s.log.Warn("repair read failed", "instrument", iid, "error", err)
+		return nil
 	}
-	if n := len(runs); n > 0 && runs[n-1].end.Equal(hi) {
-		return runs[n-1], true
+	var out []span
+	for _, r := range runs {
+		for m := r.start; m.Before(r.end); m = m.Add(time.Minute) {
+			if b := bars[m.Unix()]; b != nil && b["gap_reason"] != nil {
+				continue
+			}
+			if n := len(out); n > 0 && out[n-1].end.Equal(m) {
+				out[n-1].end = m.Add(time.Minute)
+			} else {
+				out = append(out, span{m, m.Add(time.Minute)})
+			}
+		}
 	}
-	return span{}, false
+	return out
+}
+
+// repairUnrepaired repairs every unrepaired run of every instrument of token in [lo, hi),
+// instruments in parallel.
+func (s *Service) repairUnrepaired(ctx context.Context, token string, lo, hi time.Time) {
+	var wg sync.WaitGroup
+	for _, inst := range s.tokenInstruments(token) {
+		for _, gap := range s.unrepaired(ctx, inst.ID, lo, hi) {
+			s.log.Info("gap repair", "instrument", inst.ID, "start", pytime.ISO(gap.start), "end", pytime.ISO(gap.end))
+			wg.Add(1)
+			go func(inst *venue.Instrument, gap span) {
+				defer wg.Done()
+				s.repairInstrument(ctx, inst, gap.start, gap.end, false)
+			}(inst, gap)
+		}
+	}
+	wg.Wait()
+}
+
+// sweepEvery and sweepSpan: the sweeper repairs what live repair left in the last hour
+// (a dropped stream, a failed repair), a little behind the sealer.
+const sweepEvery, sweepSpan, sweepLag = 5 * time.Minute, time.Hour, 2 * time.Minute
+
+func (s *Service) sweep(ctx context.Context) {
+	if !s.leading() {
+		return
+	}
+	s.mu.Lock()
+	tokens := make([]string, 0, len(s.hotSince))
+	for t := range s.hotSince {
+		tokens = append(tokens, t)
+	}
+	s.mu.Unlock()
+	sort.Strings(tokens)
+	hi := pytime.MinuteFloor(s.clock.Now().Add(-sweepLag))
+	for _, token := range tokens {
+		if ctx.Err() != nil {
+			return
+		}
+		s.repairUnrepaired(ctx, token, hi.Add(-sweepSpan), hi)
+	}
 }
 
 // hotAnchors is the anchor of every hot (token, event): the newest obligation's anchor,

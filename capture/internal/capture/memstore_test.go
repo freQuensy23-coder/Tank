@@ -138,6 +138,8 @@ func (m *memStore) Earliest(ctx context.Context, collection, field string, start
 	return pytime.MustParse(rows[0][field]), true, nil
 }
 
+func (m *memStore) PruneFetches(context.Context, time.Time) (int64, error) { return 0, nil }
+
 func (m *memStore) LatestTrades(context.Context, []string, time.Time) (map[string]map[string]any, error) {
 	return map[string]map[string]any{}, nil
 }

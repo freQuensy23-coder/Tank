@@ -165,6 +165,7 @@ func (noStore) Projection(context.Context, string, []string, string, time.Time, 
 func (noStore) Earliest(context.Context, string, string, time.Time, time.Time, map[string]any) (time.Time, bool, error) {
 	return time.Time{}, false, nil
 }
+func (noStore) PruneFetches(context.Context, time.Time) (int64, error) { return 0, nil }
 func (noStore) LatestTrades(context.Context, []string, time.Time) (map[string]map[string]any, error) {
 	return nil, nil
 }

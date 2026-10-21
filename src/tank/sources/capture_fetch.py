@@ -90,6 +90,9 @@ async def capture_fetch(
         request["body"] = body
     request_id, row = await _capture_request(repo, "HTTP_FETCH", request, budget_s)
     result = row.get("result") or {}
+    if row.get("status") in TERMINAL:
+        # The response is one-shot: the source poller stores what it keeps (raw items).
+        await repo.delete("mkt.capture_requests", request_id)
     http_request = httpx.Request(request["method"], url)
     if row.get("status") != "COMPLETE":
         reason = row.get("reason") or row.get("status") or "NO_ANSWER"

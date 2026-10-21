@@ -30,6 +30,7 @@ type Store interface {
 	HotTokens(ctx context.Context) ([]map[string]any, error)
 	BackfillRuns(ctx context.Context, statuses []string) ([]map[string]any, error)
 	ClaimRequest(ctx context.Context, writer string, now time.Time) (map[string]any, error)
+	PruneFetches(ctx context.Context, before time.Time) (int64, error)
 	FinishRequest(ctx context.Context, row map[string]any) error
 }
 
@@ -111,6 +112,9 @@ type Options struct {
 	// CanWrite reports whether the writer lock is held; while it is not, flushes keep the
 	// queued rows in memory (nil: always).
 	CanWrite func() bool
+	// Leading is closed once this process holds the writer lock; until then it captures
+	// streams only (no claims, repairs or file writes). nil: leading from the start.
+	Leading <-chan struct{}
 	// Fetcher serves HTTP_FETCH capture requests (nil: they fail).
 	Fetcher Fetcher
 	// Raw stores every print in the hourly trade files (nil: none are stored).

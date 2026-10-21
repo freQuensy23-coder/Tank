@@ -108,3 +108,25 @@ func TestResealWithOnlyKnownPrintsKeepsTheFile(t *testing.T) {
 		t.Fatalf("ids = %v %v", ids, err)
 	}
 }
+
+func TestTornJournalLineDoesNotHideLaterPrints(t *testing.T) {
+	dir := t.TempDir()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	hour := time.Date(2026, 10, 21, 14, 0, 0, 0, time.UTC)
+	w := New(dir, "c", "f", time.Minute, log)
+	w.Add(print("1", hour.Add(time.Minute)))
+	if err := w.Flush(hour.Add(10 * time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "raw", "trades", "kraken", "spot", "BTC%2FUSD", "2026-10-21", "14.parquet")
+	f, _ := os.OpenFile(journalOf(path), os.O_APPEND|os.O_WRONLY, 0o644)
+	f.WriteString(`{"trade_id":"tor`) // a disk-full cut in an old journal
+	f.Close()
+	w.Add(print("2", hour.Add(2*time.Minute)))
+	if err := w.Flush(hour.Add(2 * time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(rows(t, path)); n != 2 {
+		t.Fatalf("rows = %d, want 2", n)
+	}
+}
