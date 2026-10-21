@@ -168,6 +168,52 @@ def fit_result(result, max_bytes=TOOL_RESULT_MAX_BYTES):
     return {"items": fitted, "_truncated": note}
 
 
+UNLOCK_ROWS_SHOWN = 14
+UNLOCK_WINDOW_DAYS = 14
+
+
+def summarize_unlocks(rows, cutoff):
+    """Per label, the unlocks within 14 days before and after the cutoff
+    (03 §5.6: unlocks within 14 days are shown; potential supply, never a
+    sale): totals in token units, counts, and the nearest tranche each side."""
+    window = timedelta(days=UNLOCK_WINDOW_DAYS)
+    labels = {}
+    for row in rows:
+        label = labels.setdefault(
+            str(row.get("label") or "unlabelled"),
+            {"label": str(row.get("label") or "unlabelled"), "kind": row.get("kind"), "count": 0,
+             "past_14d": {"count": 0, "qty": Decimal(0)}, "upcoming_14d": {"count": 0, "qty": Decimal(0)},
+             "nearest_past": None, "nearest_upcoming": None, "qty_missing": 0},
+        )
+        label["count"] += 1
+        if not row.get("date"):
+            continue
+        date = parse_time(row["date"])
+        qty = row.get("qty")
+        side = "past" if date < cutoff else "upcoming"
+        if abs(date - cutoff) <= window:
+            bucket = label[side + "_14d"]
+            bucket["count"] += 1
+            if qty is None:
+                label["qty_missing"] += 1
+            else:
+                bucket["qty"] += Decimal(str(qty))
+        nearest = label["nearest_" + side]
+        if nearest is None or abs(date - cutoff) < abs(parse_time(nearest["date"]) - cutoff):
+            label["nearest_" + side] = {"date": iso(date), "qty": None if qty is None else str(qty)}
+    for label in labels.values():
+        for side in ("past_14d", "upcoming_14d"):
+            label[side]["qty"] = str(label[side]["qty"])
+    return {
+        "analysis_cutoff": iso(cutoff),
+        "window_days": UNLOCK_WINDOW_DAYS,
+        "count": len(rows),
+        "rows_shown": min(len(rows), UNLOCK_ROWS_SHOWN),
+        "by_label": sorted(labels.values(), key=lambda label: label["label"]),
+        "note": "Unlocks are potential supply, never a sale.",
+    }
+
+
 def known_at(row):
     """When a stored fact became known. A late-receipt historical reconstruction
     (lead rulings F-02, F-04) is known from the end of its schedule_as_of bucket,
@@ -615,6 +661,13 @@ class EventToolService:
                     else "UPCOMING",
                 )
             )
+        unlock_summary = summarize_unlocks(unlocks, cutoff)
+        # The rows nearest the cutoff on each side, never the newest N: a daily
+        # vesting schedule would otherwise hide the tranches that matter (F-04).
+        dated = [row for row in unlocks if row.get("date")]
+        dated.sort(key=lambda row: abs((parse_time(row["date"]) - cutoff).total_seconds()))
+        nearest = sorted(dated[:UNLOCK_ROWS_SHOWN], key=lambda row: str(row["date"]))
+        unlocks = nearest + [row for row in unlocks if not row.get("date")][: max(0, UNLOCK_ROWS_SHOWN - len(nearest))]
         # 03 §5.6: the latest known observation of each kind (per chain,
         # instrument and fee scope), not the raw history.
         latest = {}
@@ -637,6 +690,7 @@ class EventToolService:
             "supply_obs": [
                 compact_series(row) for row in sorted(latest.values(), key=lambda r: str(r.get("kind")))
             ],
+            "unlock_summary": unlock_summary,
             "unlocks": unlocks,
             "capture_chains": [compact_series(row) for row in list(newest_chain.values())[-5:]],
         }
