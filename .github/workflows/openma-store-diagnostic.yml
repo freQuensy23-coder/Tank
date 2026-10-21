@@ -1,0 +1,66 @@
+name: OpenMA store diagnostic
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    paths:
+      - .github/workflows/openma-store-diagnostic.yml
+      - tools/benchmarks/openma-store-diagnostic.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openma-store-diagnostic-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  diagnostic:
+    name: One full OpenMA store diagnostic
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check cold-build disk capacity
+        run: |
+          task_docker_root=$(docker info --format '{{.DockerRootDir}}')
+          python3 - "$task_docker_root" "$RUNNER_TEMP" <<'PYTHON'
+          import shutil
+          import sys
+          for path in sys.argv[1:]:
+              available = shutil.disk_usage(path).free
+              print(f"{path}: {available:,} bytes available")
+              assert available >= 12_000_000_000, "Cold diagnostic requires 12 GB free"
+          PYTHON
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Download exact official native runtime
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/boxlite-ai/boxlite/releases/download/v0.10.6/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz \
+            --output "$RUNNER_TEMP/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz"
+          echo "241171320f008c86d2f4af95ed6690edf93417ade956a196b2c3e366e4857e1b  $RUNNER_TEMP/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz" | sha256sum --check -
+      - name: Build one diagnostic full image and inspect installed files
+        run: |
+          python3 tools/benchmarks/openma-store-diagnostic.py \
+            --inputs-file scripts/ci/docker-benchmark-inputs.json \
+            --official-archive "$RUNNER_TEMP/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz" \
+            --shim-archive scripts/ci/benchmark-assets/qualified-shim-amd64.tar.gz \
+            --output "$RUNNER_TEMP/store-diagnostic"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: openma-store-diagnostic-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/store-diagnostic/*.json
+            ${{ runner.temp }}/store-diagnostic/*.jsonl
+            ${{ runner.temp }}/store-diagnostic/**/*.stdout
+            ${{ runner.temp }}/store-diagnostic/**/*.stderr
+            ${{ runner.temp }}/store-diagnostic/**/*.command.json
+            ${{ runner.temp }}/store-diagnostic/**/result.json
+            ${{ runner.temp }}/store-diagnostic/**/metadata.json
+          if-no-files-found: error
+          retention-days: 14
