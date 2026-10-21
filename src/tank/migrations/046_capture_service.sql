@@ -1,11 +1,11 @@
--- tank-capture (capture/README.md) is the separate exchange capture service. It writes the
--- typed market tables (mkt.*) and Tank reads them; these are the tables between the two.
--- Nothing here changes Tank while TANK_EXTERNAL_CAPTURE is off: the new columns stay
--- null, the new tables stay empty and the notifications have no listener.
+-- tank-capture (capture/README.md) is the only exchange capture: it writes the typed market
+-- tables (mkt.*) and Tank reads them; these are the tables between the two. Backward-safe:
+-- the new flow-bar columns are nullable and every object is created IF NOT EXISTS, so a
+-- core build without this migration still reads and writes as before.
 
 -- A print landing in a flow bar that was already written rewrites the bar as a revision:
--- bar_version + 1 and revised set, with the reason in capture_proof. Bars written by the
--- in-process capture leave both null (version 1).
+-- bar_version + 1 and revised set, with the reason in capture_proof. Bars written before
+-- tank-capture leave both null (version 1).
 ALTER TABLE mkt.flow_bars_1m
     ADD COLUMN IF NOT EXISTS bar_version bigint,
     ADD COLUMN IF NOT EXISTS revised boolean;

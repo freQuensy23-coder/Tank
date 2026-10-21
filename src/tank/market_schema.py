@@ -508,6 +508,7 @@ MARKET_COLUMNS = {
         "status": "text",
         "token_id": "text",
         "writer": "text",
+        "request": "jsonb",
         "result": "jsonb",
         "semantic_fingerprint": "text",
     },
