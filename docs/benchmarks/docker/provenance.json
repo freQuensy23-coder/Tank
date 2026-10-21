@@ -1,0 +1,173 @@
+{
+  "status": "PASS",
+  "date": "2026-10-21",
+  "before_recipe": "c9d2ced6cefcfc3e6b26cfccc2b0aa0e634caa81",
+  "final_product": "0549017a1a019a641fce1b929b61c6ed54c1c7d0",
+  "final_product_tree": "1c789e2ac563b06bd5e0b082630a35c6db13f0b1",
+  "final_benchmark_head": "f937e991e2fea62c08ec58a077abe939cab259c7",
+  "final_inputs_sha256": "497cf63d94aa56725310c9b7116ebf07ce03c46260ea093ee4ddcf31c3a697b5",
+  "common_paired_product": "fca4e38bee455d22c30dabcd4a758e3fb3261c2e",
+  "common_paired_inputs_sha256": "f199817d951fee43bbdb2cf593f95d1fe3fbe0b811ab2208267f0efb492b59e1",
+  "paired_sets": [
+    {
+      "set": "paired-tank",
+      "run_id": 39651244453,
+      "run_url": "https://github.com/freQuensy23-coder/Tank/actions/runs/39651244453",
+      "after_product": "fca4e38bee455d22c30dabcd4a758e3fb3261c2e",
+      "inputs_sha256": "f199817d951fee43bbdb2cf593f95d1fe3fbe0b811ab2208267f0efb492b59e1",
+      "source_files": {
+        "result.json": {
+          "sha256": "047778365e244f78696116f349d0df7b45a6f0eb9edacecccd16e4fd3e1b99ce",
+          "bytes": 141828
+        },
+        "inputs.json": {
+          "sha256": "f199817d951fee43bbdb2cf593f95d1fe3fbe0b811ab2208267f0efb492b59e1",
+          "bytes": 314814
+        }
+      }
+    },
+    {
+      "set": "paired-sandbox",
+      "run_id": 39651244453,
+      "run_url": "https://github.com/freQuensy23-coder/Tank/actions/runs/39651244453",
+      "after_product": "fca4e38bee455d22c30dabcd4a758e3fb3261c2e",
+      "inputs_sha256": "f199817d951fee43bbdb2cf593f95d1fe3fbe0b811ab2208267f0efb492b59e1",
+      "source_files": {
+        "result.json": {
+          "sha256": "8b0235a34e824c23adc4ab6a28d620fb22721b4d216245f0c0aba86b6f53dbf5",
+          "bytes": 163322
+        },
+        "inputs.json": {
+          "sha256": "f199817d951fee43bbdb2cf593f95d1fe3fbe0b811ab2208267f0efb492b59e1",
+          "bytes": 314814
+        }
+      }
+    },
+    {
+      "set": "paired-capture",
+      "run_id": 39651244453,
+      "run_url": "https://github.com/freQuensy23-coder/Tank/actions/runs/39651244453",
+      "after_product": "fca4e38bee455d22c30dabcd4a758e3fb3261c2e",
+      "inputs_sha256": "f199817d951fee43bbdb2cf593f95d1fe3fbe0b811ab2208267f0efb492b59e1",
+      "source_files": {
+        "result.json": {
+          "sha256": "4dce4d2fe913815e03d534c4913d48318b7a069df098d11bd6dbbc22c04db2c2",
+          "bytes": 84907
+        },
+        "inputs.json": {
+          "sha256": "f199817d951fee43bbdb2cf593f95d1fe3fbe0b811ab2208267f0efb492b59e1",
+          "bytes": 314814
+        }
+      }
+    },
+    {
+      "set": "paired-openma",
+      "run_id": 39655937087,
+      "run_url": "https://github.com/freQuensy23-coder/Tank/actions/runs/39655937087",
+      "after_product": "0549017a1a019a641fce1b929b61c6ed54c1c7d0",
+      "inputs_sha256": "497cf63d94aa56725310c9b7116ebf07ce03c46260ea093ee4ddcf31c3a697b5",
+      "source_files": {
+        "result.json": {
+          "sha256": "5247466dd5337920489345775c447b76753c10d4b156b94dfe509852b16480bb",
+          "bytes": 92100
+        },
+        "inputs.json": {
+          "sha256": "497cf63d94aa56725310c9b7116ebf07ce03c46260ea093ee4ddcf31c3a697b5",
+          "bytes": 314814
+        }
+      }
+    }
+  ],
+  "whole_ci": {
+    "before_run": 39655929438,
+    "after_run": 39655933389,
+    "head": "f937e991e2fea62c08ec58a077abe939cab259c7",
+    "inputs_sha256": "497cf63d94aa56725310c9b7116ebf07ce03c46260ea093ee4ddcf31c3a697b5",
+    "dispatch": "concurrent, separate hosted runners",
+    "graph": "Controlled seven jobs including full OpenMA; stronger than ordinary deps-only image CI.",
+    "raw_metadata": "raw-ci-{before,after}-{run,jobs}.json"
+  },
+  "interpretation": "Single observed pair per set, not a stable median or promised improvement. Common paired results keep original fca provenance; no input-SHA checks relaxed. Final OpenMA no-change/dependency cases explicitly UNMEASURED.",
+  "excluded_superseded_run": {
+    "run_id": 39654954352,
+    "status": "CANCELED",
+    "after_product": "42af88ac13320e1f1da4177d943eb6aca065b421"
+  },
+  "versioned_evidence_files": [
+    {
+      "path": "docs/DOCKER_BENCHMARK_RESULTS.md",
+      "bytes": 7490,
+      "sha256": "54e57f316601210bbf7779180566241f0377f28fc208ab258fae20ab81762b2f"
+    },
+    {
+      "path": "docs/benchmarks/docker/component-input-equivalence.json",
+      "bytes": 2875,
+      "sha256": "6938b890093a8367364460f169832fa7c93976b5a74b7e64878e0f81b0d127cc"
+    },
+    {
+      "path": "docs/benchmarks/docker/critical-path.json",
+      "bytes": 1571,
+      "sha256": "4c10c3dc72771b039acfb7b3a3b32c6ddc15d336a2776b2f140eeb101ac660f7"
+    },
+    {
+      "path": "docs/benchmarks/docker/openma-independent-review.json",
+      "bytes": 4938,
+      "sha256": "1d3a6aba6565e7b799cb34013e71632288ade1a6e5fb9fe3417cdbb330982567"
+    },
+    {
+      "path": "docs/benchmarks/docker/paired-common.json",
+      "bytes": 8003,
+      "sha256": "96819f186498fe2c39609e69131f4237ec7fd226223a329e95b0da54540cf09b"
+    },
+    {
+      "path": "docs/benchmarks/docker/paired-openma.json",
+      "bytes": 2545,
+      "sha256": "9120dc2f0e554675eea16e4ac77766c078b7c5ddda7b255973680f051158310b"
+    },
+    {
+      "path": "docs/benchmarks/docker/product-pr6-checks.json",
+      "bytes": 1869,
+      "sha256": "0850ff33d1469b3b540c9fa6e6d67c1b3f36530df10703baf95c2127c2a301ef"
+    },
+    {
+      "path": "docs/benchmarks/docker/product-scope-audit.json",
+      "bytes": 1981,
+      "sha256": "93a66d7ba9ad589a2eb5a7ccc6bcc2c5d8acfa23c019fc63b7409a46d43f931a"
+    },
+    {
+      "path": "docs/benchmarks/docker/raw-ci-after-jobs.json",
+      "bytes": 20834,
+      "sha256": "133eb9b44d12ba205cc39f488c44d37225ba9c2a6f3ef6919702cef9d18431ac"
+    },
+    {
+      "path": "docs/benchmarks/docker/raw-ci-after-run.json",
+      "bytes": 13278,
+      "sha256": "8a099f2bac5886cab50ce35e6f14070d6040f144f3f6f776b373fc4f8dc29bc3"
+    },
+    {
+      "path": "docs/benchmarks/docker/raw-ci-before-jobs.json",
+      "bytes": 20834,
+      "sha256": "2c6fe434b8873b23393d1f4d0ad337c75d1fc86067db7c18e56f9145bfea9764"
+    },
+    {
+      "path": "docs/benchmarks/docker/raw-ci-before-run.json",
+      "bytes": 13278,
+      "sha256": "dcdb778617b442fc840d68e00dcfb5126d8a44028fecf85b07cd363d40e94e24"
+    },
+    {
+      "path": "docs/benchmarks/docker/verification-identity.json",
+      "bytes": 1688,
+      "sha256": "aa8589e5341019f098a1bb8e5a4159693ca5fba5a7ad81da6ccc27734b5187ef"
+    },
+    {
+      "path": "docs/benchmarks/docker/whole-ci.json",
+      "bytes": 9214,
+      "sha256": "679d634d7cca4ffaefde8bf78670b43ec68dd223b5c6d3a6386e4c13162e2260"
+    },
+    {
+      "path": "tools/benchmarks/analyze-build-benchmarks.py",
+      "bytes": 19351,
+      "sha256": "39d909994df61d3cac9a720770b307b3a0ddb953e253796c7b3f693de77689b9"
+    }
+  ]
+}

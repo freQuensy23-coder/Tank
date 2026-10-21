@@ -1,0 +1,60 @@
+{
+  "status": "PASS",
+  "expected_product": "0549017a1a019a641fce1b929b61c6ed54c1c7d0",
+  "arms": {
+    "before": {
+      "go": {
+        "kind": "go",
+        "status": "success",
+        "variant": "before",
+        "source_ref": "0549017a1a019a641fce1b929b61c6ed54c1c7d0",
+        "run_id": "39655929438",
+        "run_attempt": "1",
+        "timing_source": "GitHub Actions run and job started_at/completed_at"
+      },
+      "parity": {
+        "kind": "parity",
+        "status": "success",
+        "variant": "before",
+        "source_ref": "0549017a1a019a641fce1b929b61c6ed54c1c7d0",
+        "run_id": "39655929438",
+        "run_attempt": "1",
+        "timing_source": "GitHub Actions run and job started_at/completed_at"
+      },
+      "focused": {
+        "tests": "54",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "1.020"
+      }
+    },
+    "after": {
+      "go": {
+        "kind": "go",
+        "status": "success",
+        "variant": "after",
+        "source_ref": "0549017a1a019a641fce1b929b61c6ed54c1c7d0",
+        "run_id": "39655933389",
+        "run_attempt": "1",
+        "timing_source": "GitHub Actions run and job started_at/completed_at"
+      },
+      "parity": {
+        "kind": "parity",
+        "status": "success",
+        "variant": "after",
+        "source_ref": "0549017a1a019a641fce1b929b61c6ed54c1c7d0",
+        "run_id": "39655933389",
+        "run_attempt": "1",
+        "timing_source": "GitHub Actions run and job started_at/completed_at"
+      },
+      "focused": {
+        "tests": "54",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "time": "1.631"
+      }
+    }
+  }
+}

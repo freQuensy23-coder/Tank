@@ -1,0 +1,68 @@
+{
+  "status": "PASS",
+  "old_product": "fca4e38bee455d22c30dabcd4a758e3fb3261c2e",
+  "final_product": "0549017a1a019a641fce1b929b61c6ed54c1c7d0",
+  "changed_paths": [
+    "deploy/prepare_openma_source.py",
+    "docs/DOCKER_BUILDS.md",
+    "tests/test_openma_docker_build.py"
+  ],
+  "identical_objects": {
+    "Dockerfile": {
+      "fca_git_object": "98df3ece0de46ce13457f55ed97c7d83a3433187",
+      "final_git_object": "98df3ece0de46ce13457f55ed97c7d83a3433187",
+      "identical": true
+    },
+    ".dockerignore": {
+      "fca_git_object": "5c4206b4dcdad1e81e969d07939fd58ccd44765c",
+      "final_git_object": "5c4206b4dcdad1e81e969d07939fd58ccd44765c",
+      "identical": true
+    },
+    "pyproject.toml": {
+      "fca_git_object": "671f3b6f619396f96ef717bd4c639f2f428079c1",
+      "final_git_object": "671f3b6f619396f96ef717bd4c639f2f428079c1",
+      "identical": true
+    },
+    "uv.lock": {
+      "fca_git_object": "3d68157f5f8d2f2bb190a9dc393abedd994dce9a",
+      "final_git_object": "3d68157f5f8d2f2bb190a9dc393abedd994dce9a",
+      "identical": true
+    },
+    "src": {
+      "fca_git_object": "29b6a663dba72a481a8b90864146f15c2d568f3d",
+      "final_git_object": "29b6a663dba72a481a8b90864146f15c2d568f3d",
+      "identical": true
+    },
+    "deploy/sandbox.Dockerfile": {
+      "fca_git_object": "451365feb5a8e59da3a2ecf4cd6ede991796e662",
+      "final_git_object": "451365feb5a8e59da3a2ecf4cd6ede991796e662",
+      "identical": true
+    },
+    "deploy/sandbox.Dockerfile.dockerignore": {
+      "fca_git_object": "aec14d917d31eaedb63f3842d04ebca6bdffce83",
+      "final_git_object": "aec14d917d31eaedb63f3842d04ebca6bdffce83",
+      "identical": true
+    },
+    "deploy/openma_browser": {
+      "fca_git_object": "dd67ca180790d37c16d9c275d6607df947ea540d",
+      "final_git_object": "dd67ca180790d37c16d9c275d6607df947ea540d",
+      "identical": true
+    },
+    "capture": {
+      "fca_git_object": "ab1b513b4405d36038738b75c97564c370ecbad3",
+      "final_git_object": "ab1b513b4405d36038738b75c97564c370ecbad3",
+      "identical": true
+    }
+  },
+  "inputs_difference": {
+    "only_field": "after",
+    "old": "fca4e38bee455d22c30dabcd4a758e3fb3261c2e",
+    "new": "0549017a1a019a641fce1b929b61c6ed54c1c7d0",
+    "all_other_values_identical": true
+  },
+  "qualification": {
+    "tank": "Recipes, source tree, dependency files and runtime entrypoint are identical. COPY deploy also includes the changed OpenMA renderer; therefore full Tank image source is not byte-identical across fca and final. Earlier paired timings are explicitly fca observations, not relabeled final measurements.",
+    "sandbox": "Recipe and consumed deploy/openma_browser source tree are identical.",
+    "capture": "Recipe and entire capture source tree are identical. GIT_SHA stamp intentionally changes with product reference; no executable-byte identity claim across references."
+  }
+}

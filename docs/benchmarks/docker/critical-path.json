@@ -1,0 +1,38 @@
+{
+  "status": "PASS",
+  "wall_definition": "Run created_at to maximum required job completed_at; parallel job sums are not elapsed time.",
+  "arms": {
+    "before": {
+      "run_id": 39655929438,
+      "critical_job_id": 119416045095,
+      "critical_job": "Full OpenMA image",
+      "critical_started_at": "2026-10-21T18:47:50Z",
+      "critical_completed_at": "2026-10-21T18:52:11Z",
+      "critical_start_lag_seconds": 4.0,
+      "cold_build_load_seconds": 176.832482272,
+      "other_critical_job_seconds": 84.167517728,
+      "critical_job_duration_seconds": 261.0,
+      "time_to_green_seconds": 265.0
+    },
+    "after": {
+      "run_id": 39655933389,
+      "critical_job_id": 119416059984,
+      "critical_job": "Full OpenMA image",
+      "critical_started_at": "2026-10-21T18:47:51Z",
+      "critical_completed_at": "2026-10-21T18:51:31Z",
+      "critical_start_lag_seconds": 4.0,
+      "cold_build_load_seconds": 165.032087543,
+      "other_critical_job_seconds": 54.96791245700001,
+      "critical_job_duration_seconds": 220.0,
+      "time_to_green_seconds": 224.0
+    }
+  },
+  "limits": "One concurrent before/after observation on separate hosted runners. Residual job time includes setup, context proof, smoke, export/cache handling and cleanup; its change is not an isolated causal effect.",
+  "after_minus_before_seconds": {
+    "critical_start_lag_seconds": 0.0,
+    "cold_build_load_seconds": -11.800394729000004,
+    "other_critical_job_seconds": -29.199605270999996,
+    "critical_job_duration_seconds": -41.0,
+    "time_to_green_seconds": -41.0
+  }
+}

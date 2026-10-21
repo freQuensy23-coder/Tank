@@ -1,0 +1,272 @@
+{
+  "status": "PASS",
+  "scope": "Controlled seven-job verification graph: original Go/parity commands, 54 focused deployment tests, full Tank/Capture/Sandbox/OpenMA runtime images and identical offline smokes. OpenMA API-only SKIP_CONSOLE=1; no new KVM acceptance. Stronger than historical/ordinary deps-only Docker coverage; historical capture-only runs are not valid before/after baselines.",
+  "interpretation": "One observed before/after pair. No statistically stable median or typical-speed claim.",
+  "delta_definition": "Negative change_percent / positive reduction_percent means faster. Ratios are explicitly named.",
+  "ci_images": {
+    "capture": {
+      "runtime_contract": {
+        "kind": "same Go source + identical static ELF/version/config/health smoke",
+        "match": true,
+        "Python_runtime_inventory": "not applicable to static Go executable"
+      },
+      "measured_scenarios": [
+        "cold"
+      ],
+      "omitted_unmeasured_scenarios": {
+        "dependency-text-edit-same-versions": {
+          "status": "UNMEASURED",
+          "before_seconds": null,
+          "after_seconds": null
+        },
+        "no-change": {
+          "status": "UNMEASURED",
+          "before_seconds": null,
+          "after_seconds": null
+        },
+        "source-edit": {
+          "status": "UNMEASURED",
+          "before_seconds": null,
+          "after_seconds": null
+        }
+      },
+      "build_load_seconds": {
+        "cold": {
+          "before": 29.004196434000008,
+          "after": 32.356858947999996,
+          "change_percent": 11.559232546328534,
+          "reduction_percent": -11.559232546328534,
+          "after_over_before": 1.1155923254632854,
+          "speedup_before_over_after": 0.8963847968250571
+        }
+      },
+      "image_bytes": {
+        "cold": {
+          "before": 14557644,
+          "after": 14557644,
+          "delta": 0
+        }
+      },
+      "context_probe": {
+        "scope": "Neutral scratch COPY export, not production transfer savings",
+        "before_logical_bytes": 855840,
+        "after_logical_bytes": 526683
+      }
+    },
+    "openma": {
+      "runtime_contract": {
+        "kind": "exact dependency/workspace lock, entrypoint, native bytes and shared Node base",
+        "match": true,
+        "full_OS_or_npm_inventory": "not recorded; no broader inventory equivalence claim"
+      },
+      "measured_scenarios": [
+        "cold"
+      ],
+      "omitted_unmeasured_scenarios": {
+        "dependency-text-edit-same-versions": {
+          "status": "UNMEASURED",
+          "before_seconds": null,
+          "after_seconds": null
+        },
+        "no-change": {
+          "status": "UNMEASURED",
+          "before_seconds": null,
+          "after_seconds": null
+        },
+        "source-edit": {
+          "status": "UNMEASURED",
+          "before_seconds": null,
+          "after_seconds": null
+        }
+      },
+      "build_load_seconds": {
+        "cold": {
+          "before": 176.832482272,
+          "after": 165.032087543,
+          "change_percent": -6.673205384771386,
+          "reduction_percent": 6.673205384771386,
+          "after_over_before": 0.9332679461522861,
+          "speedup_before_over_after": 1.0715036385025751
+        }
+      },
+      "image_bytes": {
+        "cold": {
+          "before": 2069818480,
+          "after": 1993017289,
+          "delta": -76801191
+        }
+      },
+      "context_probe": {
+        "scope": "Neutral scratch COPY export, not production transfer savings",
+        "before_logical_bytes": 112161408,
+        "after_logical_bytes": 112162295
+      }
+    },
+    "sandbox": {
+      "runtime_contract": {
+        "kind": "exact Python/OS runtime inventory",
+        "match": true
+      },
+      "measured_scenarios": [
+        "cold"
+      ],
+      "omitted_unmeasured_scenarios": {
+        "dependency-text-edit-same-versions": {
+          "status": "UNMEASURED",
+          "before_seconds": null,
+          "after_seconds": null
+        },
+        "no-change": {
+          "status": "UNMEASURED",
+          "before_seconds": null,
+          "after_seconds": null
+        },
+        "worker-edit": {
+          "status": "UNMEASURED",
+          "before_seconds": null,
+          "after_seconds": null
+        }
+      },
+      "build_load_seconds": {
+        "cold": {
+          "before": 164.41391130800002,
+          "after": 151.99415635000003,
+          "change_percent": -7.553956267565343,
+          "reduction_percent": 7.553956267565343,
+          "after_over_before": 0.9244604373243466,
+          "speedup_before_over_after": 1.0817120556227227
+        }
+      },
+      "image_bytes": {
+        "cold": {
+          "before": 2926677449,
+          "after": 2906872523,
+          "delta": -19804926
+        }
+      },
+      "context_probe": {
+        "scope": "Neutral scratch COPY export, not production transfer savings",
+        "before_logical_bytes": 312421990,
+        "after_logical_bytes": 22212
+      }
+    },
+    "tank": {
+      "runtime_contract": {
+        "kind": "exact Python/OS runtime inventory",
+        "match": true
+      },
+      "measured_scenarios": [
+        "cold"
+      ],
+      "omitted_unmeasured_scenarios": {
+        "dependency-text-edit-same-versions": {
+          "status": "UNMEASURED",
+          "before_seconds": null,
+          "after_seconds": null
+        },
+        "no-change": {
+          "status": "UNMEASURED",
+          "before_seconds": null,
+          "after_seconds": null
+        },
+        "source-edit": {
+          "status": "UNMEASURED",
+          "before_seconds": null,
+          "after_seconds": null
+        }
+      },
+      "build_load_seconds": {
+        "cold": {
+          "before": 93.801780638,
+          "after": 104.878630807,
+          "change_percent": 11.808784538694205,
+          "reduction_percent": -11.808784538694205,
+          "after_over_before": 1.118087845386942,
+          "speedup_before_over_after": 0.8943841077656337
+        }
+      },
+      "image_bytes": {
+        "cold": {
+          "before": 1817009442,
+          "after": 1794850646,
+          "delta": -22158796
+        }
+      },
+      "context_probe": {
+        "scope": "Neutral scratch COPY export, not production transfer savings",
+        "before_logical_bytes": 312420997,
+        "after_logical_bytes": 5076580
+      }
+    }
+  },
+  "whole_ci": {
+    "before": {
+      "run_id": 39655929438,
+      "head_sha": "f937e991e2fea62c08ec58a077abe939cab259c7",
+      "event": "workflow_dispatch",
+      "created_at": "2026-10-21T18:47:46Z",
+      "run_started_at": "2026-10-21T18:47:46Z",
+      "last_required_job_completed_at": "2026-10-21T18:52:11+00:00",
+      "time_to_green_seconds": 265.0,
+      "dispatch_to_run_start_seconds": 0.0,
+      "queue_to_first_job_seconds": 3.0,
+      "execution_window_seconds": 265.0,
+      "job_envelope_seconds": 262.0,
+      "max_job_seconds": 261.0,
+      "sum_job_seconds": 919.0,
+      "job_seconds": {
+        "parity": 135.0,
+        "Full image (sandbox)": 220.0,
+        "Full OpenMA image": 261.0,
+        "Full image (tank)": 135.0,
+        "go": 95.0,
+        "Focused deployment tests": 13.0,
+        "Full image (capture)": 60.0
+      },
+      "note": "Sum of overlapping job durations is not whole-CI elapsed wall time."
+    },
+    "after": {
+      "run_id": 39655933389,
+      "head_sha": "f937e991e2fea62c08ec58a077abe939cab259c7",
+      "event": "workflow_dispatch",
+      "created_at": "2026-10-21T18:47:47Z",
+      "run_started_at": "2026-10-21T18:47:47Z",
+      "last_required_job_completed_at": "2026-10-21T18:51:31+00:00",
+      "time_to_green_seconds": 224.0,
+      "dispatch_to_run_start_seconds": 0.0,
+      "queue_to_first_job_seconds": 4.0,
+      "execution_window_seconds": 224.0,
+      "job_envelope_seconds": 220.0,
+      "max_job_seconds": 220.0,
+      "sum_job_seconds": 845.0,
+      "job_seconds": {
+        "Full OpenMA image": 220.0,
+        "Full image (capture)": 62.0,
+        "go": 93.0,
+        "Focused deployment tests": 13.0,
+        "parity": 127.0,
+        "Full image (tank)": 145.0,
+        "Full image (sandbox)": 185.0
+      },
+      "note": "Sum of overlapping job durations is not whole-CI elapsed wall time."
+    },
+    "time_to_green": {
+      "before": 265.0,
+      "after": 224.0,
+      "change_percent": -15.471698113207545,
+      "reduction_percent": 15.471698113207545,
+      "after_over_before": 0.8452830188679246,
+      "speedup_before_over_after": 1.1830357142857142
+    },
+    "execution_window": {
+      "before": 265.0,
+      "after": 224.0,
+      "change_percent": -15.471698113207545,
+      "reduction_percent": 15.471698113207545,
+      "after_over_before": 0.8452830188679246,
+      "speedup_before_over_after": 1.1830357142857142
+    },
+    "graph": "Controlled seven-job verification graph: original Go/parity commands, 54 focused deployment tests, full Tank/Capture/Sandbox/OpenMA runtime images and identical offline smokes. OpenMA API-only SKIP_CONSOLE=1; no new KVM acceptance. Stronger than historical/ordinary deps-only Docker coverage; historical capture-only runs are not valid before/after baselines."
+  },
+  "captured_inputs_sha256": "497cf63d94aa56725310c9b7116ebf07ce03c46260ea093ee4ddcf31c3a697b5"
+}

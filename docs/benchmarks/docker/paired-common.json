@@ -1,0 +1,237 @@
+{
+  "status": "PASS",
+  "scope": "Paired image-only experiments on a shared runner per image; independent before/after builders, frozen inputs, same application source and offline smokes. Measured and explicitly UNMEASURED scenarios are listed per image. No whole-CI wall-time observation in this section.",
+  "interpretation": "One observed before/after pair. No statistically stable median or typical-speed claim.",
+  "delta_definition": "Negative change_percent / positive reduction_percent means faster. Ratios are explicitly named.",
+  "requested_paired_kinds": [
+    "capture",
+    "sandbox",
+    "tank"
+  ],
+  "paired_images": {
+    "capture": {
+      "runtime_contract": {
+        "kind": "same Go source + identical static ELF/version/config/health smoke",
+        "match": true,
+        "Python_runtime_inventory": "not applicable to static Go executable"
+      },
+      "measured_scenarios": [
+        "cold",
+        "no-change",
+        "source-edit",
+        "dependency-text-edit-same-versions"
+      ],
+      "omitted_unmeasured_scenarios": {},
+      "build_load_seconds": {
+        "cold": {
+          "before": 25.593991589000005,
+          "after": 27.254097957,
+          "change_percent": 6.486312860685195,
+          "reduction_percent": -6.486312860685195,
+          "after_over_before": 1.064863128606852,
+          "speedup_before_over_after": 0.9390878255952841
+        },
+        "no-change": {
+          "before": 0.3668019619999967,
+          "after": 0.3938159650000159,
+          "change_percent": 7.36473786910099,
+          "reduction_percent": -7.36473786910099,
+          "after_over_before": 1.07364737869101,
+          "speedup_before_over_after": 0.9314045000689138
+        },
+        "source-edit": {
+          "before": 15.74208329599999,
+          "after": 1.4028227069999843,
+          "change_percent": -91.08870992090077,
+          "reduction_percent": 91.08870992090077,
+          "after_over_before": 0.08911290079099231,
+          "speedup_before_over_after": 11.221719763622392
+        },
+        "dependency-text-edit-same-versions": {
+          "before": 15.820367727999994,
+          "after": 0.7834394059999852,
+          "change_percent": -95.04790647430148,
+          "reduction_percent": 95.04790647430148,
+          "after_over_before": 0.049520935256985164,
+          "speedup_before_over_after": 20.193479683099184
+        }
+      },
+      "image_bytes": {
+        "cold": {
+          "before": 14557644,
+          "after": 14557644,
+          "delta": 0
+        },
+        "no-change": {
+          "before": 14557644,
+          "after": 14557644,
+          "delta": 0
+        },
+        "source-edit": {
+          "before": 14557644,
+          "after": 14557644,
+          "delta": 0
+        },
+        "dependency-text-edit-same-versions": {
+          "before": 14557644,
+          "after": 14557644,
+          "delta": 0
+        }
+      },
+      "context_probe": {
+        "scope": "Neutral scratch COPY export, not production transfer savings",
+        "before_logical_bytes": 855840,
+        "after_logical_bytes": 526683
+      }
+    },
+    "sandbox": {
+      "runtime_contract": {
+        "kind": "exact Python/OS runtime inventory",
+        "match": true
+      },
+      "measured_scenarios": [
+        "cold",
+        "no-change",
+        "worker-edit",
+        "dependency-text-edit-same-versions"
+      ],
+      "omitted_unmeasured_scenarios": {},
+      "build_load_seconds": {
+        "cold": {
+          "before": 153.012863884,
+          "after": 151.97788511499994,
+          "change_percent": -0.6763998416399186,
+          "reduction_percent": 0.6763998416399186,
+          "after_over_before": 0.9932360015836008,
+          "speedup_before_over_after": 1.0068100616627012
+        },
+        "no-change": {
+          "before": 6.001861942000005,
+          "after": 5.410094169999979,
+          "change_percent": -9.859736490420346,
+          "reduction_percent": 9.859736490420346,
+          "after_over_before": 0.9014026350957965,
+          "speedup_before_over_after": 1.1093821573904374
+        },
+        "worker-edit": {
+          "before": 9.004066579999972,
+          "after": 8.852226243000018,
+          "change_percent": -1.686352890117715,
+          "reduction_percent": 1.686352890117715,
+          "after_over_before": 0.9831364710988229,
+          "speedup_before_over_after": 1.0171527853933944
+        },
+        "dependency-text-edit-same-versions": {
+          "before": 103.84777577199998,
+          "after": 52.82842774699998,
+          "change_percent": -49.12897521947323,
+          "reduction_percent": 49.12897521947323,
+          "after_over_before": 0.5087102478052676,
+          "speedup_before_over_after": 1.9657555638289328
+        }
+      },
+      "image_bytes": {
+        "cold": {
+          "before": 2926677449,
+          "after": 2906872523,
+          "delta": -19804926
+        },
+        "no-change": {
+          "before": 2926677449,
+          "after": 2906872523,
+          "delta": -19804926
+        },
+        "worker-edit": {
+          "before": 2926677482,
+          "after": 2906872556,
+          "delta": -19804926
+        },
+        "dependency-text-edit-same-versions": {
+          "before": 2926677449,
+          "after": 2906872523,
+          "delta": -19804926
+        }
+      },
+      "context_probe": {
+        "scope": "Neutral scratch COPY export, not production transfer savings",
+        "before_logical_bytes": 312421767,
+        "after_logical_bytes": 22212
+      }
+    },
+    "tank": {
+      "runtime_contract": {
+        "kind": "exact Python/OS runtime inventory",
+        "match": true
+      },
+      "measured_scenarios": [
+        "cold",
+        "no-change",
+        "source-edit",
+        "dependency-text-edit-same-versions"
+      ],
+      "omitted_unmeasured_scenarios": {},
+      "build_load_seconds": {
+        "cold": {
+          "before": 92.257278708,
+          "after": 95.40395560300004,
+          "change_percent": 3.4107627485517655,
+          "reduction_percent": -3.4107627485517655,
+          "after_over_before": 1.0341076274855177,
+          "speedup_before_over_after": 0.967017333032876
+        },
+        "no-change": {
+          "before": 3.8835656510000263,
+          "after": 3.9368665119999946,
+          "change_percent": 1.3724722533335676,
+          "reduction_percent": -1.3724722533335676,
+          "after_over_before": 1.0137247225333357,
+          "speedup_before_over_after": 0.9864610951787414
+        },
+        "source-edit": {
+          "before": 6.561548390000013,
+          "after": 6.19147505799998,
+          "change_percent": -5.640030523344686,
+          "reduction_percent": 5.640030523344686,
+          "after_over_before": 0.9435996947665531,
+          "speedup_before_over_after": 1.059771432256981
+        },
+        "dependency-text-edit-same-versions": {
+          "before": 77.916226354,
+          "after": 8.486474409000039,
+          "change_percent": -89.10820658787671,
+          "reduction_percent": 89.10820658787671,
+          "after_over_before": 0.10891793412123284,
+          "speedup_before_over_after": 9.181224451860555
+        }
+      },
+      "image_bytes": {
+        "cold": {
+          "before": 1817009442,
+          "after": 1794850396,
+          "delta": -22159046
+        },
+        "no-change": {
+          "before": 1817009442,
+          "after": 1794850396,
+          "delta": -22159046
+        },
+        "source-edit": {
+          "before": 1817009475,
+          "after": 1794850429,
+          "delta": -22159046
+        },
+        "dependency-text-edit-same-versions": {
+          "before": 1817009505,
+          "after": 1794850458,
+          "delta": -22159047
+        }
+      },
+      "context_probe": {
+        "scope": "Neutral scratch COPY export, not production transfer savings",
+        "before_logical_bytes": 312420774,
+        "after_logical_bytes": 5076330
+      }
+    }
+  },
+  "captured_inputs_sha256": "f199817d951fee43bbdb2cf593f95d1fe3fbe0b811ab2208267f0efb492b59e1"
+}

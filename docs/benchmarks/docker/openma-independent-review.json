@@ -1,0 +1,131 @@
+{
+  "status": "PASS",
+  "run_id": 39655937087,
+  "artifact_id": 12372511778,
+  "profile": "cold-source",
+  "omitted_unmeasured": [
+    "no-change",
+    "dependency-text-edit-same-versions"
+  ],
+  "same_frozen_inputs": true,
+  "four_full_offline_smokes_pass": true,
+  "native_bundle": {
+    "artifact_sha256": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+    "native_bundle_qualification": "PASS"
+  },
+  "arms": {
+    "before": {
+      "reference": "c9d2ced6cefcfc3e6b26cfccc2b0aa0e634caa81",
+      "canonical_dockerfile_sha256": "a55f75be7fdca953ea8cd42d0e26c4cfbf80745ba8715a5725915cd44a39d5e4",
+      "runtime_identity": "5dd1d3495f79bc203f9d0ea5a2320e148cf7a963b4709fe06dad0ac62430d296",
+      "frozen_inputs": {
+        "node_base": "node:24-bookworm-slim@sha256:8cabefbd444809cf0e319b5831c65da1ea202200ca552a5e75fd7938a6f86658",
+        "frozen_lock_sha256": "85fff8559737ce2e7313cd18b21f9770a24591d211c84a23c1f97dbd8581fecc",
+        "workspace_sha256": "280eeb1cf424dec6b8a03173813f83db2350b9f8aabd3f1e315804e6087ca711",
+        "entrypoint_sha256": "48e5bf5eb78706c3a939b954fcdcbedd6ecde0fef1f2b7f022a2abddb8ec2898",
+        "native_shim_sha256": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+        "native_provenance_sha256": "101ec15464c6610b673e68ce7c80cc6695248221ad9410172501a8356ea7e172"
+      },
+      "workspace_projects": 186,
+      "package_snapshots": 1667,
+      "scenarios": {
+        "cold": {
+          "wall_seconds": 176.01005224300002,
+          "image_bytes": 2069818480,
+          "install_cached": false,
+          "stable_runtime_dependency_copy_cached": null,
+          "smoke": "PASS",
+          "export": [
+            [
+              "exporting to docker image format",
+              101.235247
+            ],
+            [
+              "importing to docker",
+              47.111776
+            ]
+          ]
+        },
+        "source-edit": {
+          "wall_seconds": 165.443480289,
+          "image_bytes": 2069818532,
+          "install_cached": false,
+          "stable_runtime_dependency_copy_cached": null,
+          "smoke": "PASS",
+          "export": [
+            [
+              "exporting to docker image format",
+              92.037608
+            ],
+            [
+              "importing to docker",
+              37.966091
+            ]
+          ]
+        }
+      }
+    },
+    "after": {
+      "reference": "0549017a1a019a641fce1b929b61c6ed54c1c7d0",
+      "canonical_dockerfile_sha256": "39ff26b148b1d22b0ed47e1dedafbd12256b12666fc41974bb8881a0c57e8a91",
+      "runtime_identity": "52ec0e4cc6892eb87e5127a9b266c1d01f179924e6741e29b7a8be2acb6565b8",
+      "frozen_inputs": {
+        "node_base": "node:24-bookworm-slim@sha256:8cabefbd444809cf0e319b5831c65da1ea202200ca552a5e75fd7938a6f86658",
+        "frozen_lock_sha256": "85fff8559737ce2e7313cd18b21f9770a24591d211c84a23c1f97dbd8581fecc",
+        "workspace_sha256": "280eeb1cf424dec6b8a03173813f83db2350b9f8aabd3f1e315804e6087ca711",
+        "entrypoint_sha256": "48e5bf5eb78706c3a939b954fcdcbedd6ecde0fef1f2b7f022a2abddb8ec2898",
+        "native_shim_sha256": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+        "native_provenance_sha256": "101ec15464c6610b673e68ce7c80cc6695248221ad9410172501a8356ea7e172"
+      },
+      "workspace_projects": 186,
+      "package_snapshots": 1667,
+      "scenarios": {
+        "cold": {
+          "wall_seconds": 161.29643016799992,
+          "image_bytes": 1993017305,
+          "install_cached": false,
+          "stable_runtime_dependency_copy_cached": false,
+          "smoke": "PASS",
+          "export": [
+            [
+              "exporting to docker image format",
+              95.885348
+            ],
+            [
+              "importing to docker",
+              44.727455
+            ]
+          ]
+        },
+        "source-edit": {
+          "wall_seconds": 16.035855997999988,
+          "image_bytes": 1993017357,
+          "install_cached": true,
+          "stable_runtime_dependency_copy_cached": true,
+          "smoke": "PASS",
+          "export": [
+            [
+              "exporting to docker image format",
+              10.54057
+            ],
+            [
+              "importing to docker",
+              4.542238
+            ]
+          ]
+        }
+      }
+    }
+  },
+  "comparison": {
+    "cold_before_seconds": 176.01005224300002,
+    "cold_after_seconds": 161.29643016799992,
+    "cold_percent_change": -8.35953508762467,
+    "source_before_seconds": 165.443480289,
+    "source_after_seconds": 16.035855997999988,
+    "source_speedup": 10.31709690518762,
+    "source_percent_change": -90.30735090316752,
+    "image_bytes_difference": -76801175
+  },
+  "scope": "Final exact054product measured on same hosted runner. Full image/load plus offline native/dependency smoke; no new KVM/system acceptance. No-change and dependency edits intentionally unmeasured for this final profile."
+}

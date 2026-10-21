@@ -1,0 +1,70 @@
+{
+  "status": "PASS",
+  "scope": "Paired image-only experiments on a shared runner per image; independent before/after builders, frozen inputs, same application source and offline smokes. Measured and explicitly UNMEASURED scenarios are listed per image. No whole-CI wall-time observation in this section.",
+  "interpretation": "One observed before/after pair. No statistically stable median or typical-speed claim.",
+  "delta_definition": "Negative change_percent / positive reduction_percent means faster. Ratios are explicitly named.",
+  "requested_paired_kinds": [
+    "openma"
+  ],
+  "paired_images": {
+    "openma": {
+      "runtime_contract": {
+        "kind": "exact dependency/workspace lock, entrypoint, native bytes and shared Node base",
+        "match": true,
+        "full_OS_or_npm_inventory": "not recorded; no broader inventory equivalence claim"
+      },
+      "measured_scenarios": [
+        "cold",
+        "source-edit"
+      ],
+      "omitted_unmeasured_scenarios": {
+        "dependency-text-edit-same-versions": {
+          "status": "UNMEASURED",
+          "before_seconds": null,
+          "after_seconds": null
+        },
+        "no-change": {
+          "status": "UNMEASURED",
+          "before_seconds": null,
+          "after_seconds": null
+        }
+      },
+      "build_load_seconds": {
+        "cold": {
+          "before": 176.01005224300002,
+          "after": 161.29643016799992,
+          "change_percent": -8.35953508762467,
+          "reduction_percent": 8.35953508762467,
+          "after_over_before": 0.9164046491237533,
+          "speedup_before_over_after": 1.0912210025955007
+        },
+        "source-edit": {
+          "before": 165.443480289,
+          "after": 16.035855997999988,
+          "change_percent": -90.30735090316752,
+          "reduction_percent": 90.30735090316752,
+          "after_over_before": 0.09692649096832484,
+          "speedup_before_over_after": 10.31709690518762
+        }
+      },
+      "image_bytes": {
+        "cold": {
+          "before": 2069818480,
+          "after": 1993017305,
+          "delta": -76801175
+        },
+        "source-edit": {
+          "before": 2069818532,
+          "after": 1993017357,
+          "delta": -76801175
+        }
+      },
+      "context_probe": {
+        "scope": "Neutral scratch COPY export, not production transfer savings",
+        "before_logical_bytes": 112161408,
+        "after_logical_bytes": 112162295
+      }
+    }
+  },
+  "captured_inputs_sha256": "497cf63d94aa56725310c9b7116ebf07ce03c46260ea093ee4ddcf31c3a697b5"
+}

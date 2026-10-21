@@ -1,0 +1,88 @@
+{
+  "status": "PASS",
+  "product_head": "0549017a1a019a641fce1b929b61c6ed54c1c7d0",
+  "base": "c9d2ced6cefcfc3e6b26cfccc2b0aa0e634caa81",
+  "file_count": 13,
+  "files": [
+    {
+      "filename": ".dockerignore",
+      "status": "modified",
+      "additions": 20,
+      "deletions": 17
+    },
+    {
+      "filename": ".github/workflows/docker-images.yml",
+      "status": "added",
+      "additions": 120,
+      "deletions": 0
+    },
+    {
+      "filename": "Dockerfile",
+      "status": "modified",
+      "additions": 30,
+      "deletions": 5
+    },
+    {
+      "filename": "capture/.dockerignore",
+      "status": "modified",
+      "additions": 4,
+      "deletions": 0
+    },
+    {
+      "filename": "capture/Dockerfile",
+      "status": "modified",
+      "additions": 13,
+      "deletions": 4
+    },
+    {
+      "filename": "deploy/prepare_openma_source.py",
+      "status": "modified",
+      "additions": 70,
+      "deletions": 9
+    },
+    {
+      "filename": "deploy/sandbox.Dockerfile",
+      "status": "modified",
+      "additions": 12,
+      "deletions": 3
+    },
+    {
+      "filename": "deploy/sandbox.Dockerfile.dockerignore",
+      "status": "added",
+      "additions": 7,
+      "deletions": 0
+    },
+    {
+      "filename": "docs/DOCKER_BUILDS.md",
+      "status": "added",
+      "additions": 149,
+      "deletions": 0
+    },
+    {
+      "filename": "scripts/ci/docker-context.py",
+      "status": "added",
+      "additions": 99,
+      "deletions": 0
+    },
+    {
+      "filename": "scripts/ci/docker-smoke.py",
+      "status": "added",
+      "additions": 206,
+      "deletions": 0
+    },
+    {
+      "filename": "scripts/ci/openma-docker-check.py",
+      "status": "added",
+      "additions": 90,
+      "deletions": 0
+    },
+    {
+      "filename": "tests/test_openma_docker_build.py",
+      "status": "added",
+      "additions": 250,
+      "deletions": 0
+    }
+  ],
+  "app_schema_lock_and_existing_ci_unchanged": true,
+  "existing_tests_removed_or_modified": false
+}
