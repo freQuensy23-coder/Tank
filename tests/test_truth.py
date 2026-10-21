@@ -563,6 +563,65 @@ def test_fragmentation_needs_actual_cutoff_safe_independent_rest_gap(confirmatio
     assert liquidity["fragmentation"]["validated"] is (confirmation == "VALID")
 
 
+def _fragmentation_of(quotes):
+    """Fragmentation evidence for two venues A and B over a 15-minute window.
+    quotes: {venue: (mid, quote_asset, quote_usd_rate)}; spreads 0.1 bp."""
+    from tank.analysis.truth import enrich_evidence
+
+    end = parse_time("2026-10-16T12:00:00Z")
+    start = end - timedelta(minutes=15)
+    books = [
+        {
+            "instrument_id": f"{venue}:spot:T",
+            "exchange_ts": iso(start + timedelta(seconds=10 * i)),
+            "integrity_ok": True,
+            "mid": mid,
+            "spread_bps": "0.1",
+            "quote_asset": quote,
+            "quote_usd_rate": rate,
+        }
+        for i in range(90)
+        for venue, (mid, quote, rate) in quotes.items()
+    ]
+    spot = {"venues": [], "composite_max": {"volume": 0}, "direction": "NEUTRAL", "composite_cohort": None, "cohort_consistent": {}}
+    relative = {
+        "windows": {"W15M": {"normal_range": None}, "W1H": {"r_raw": None}},
+        "context_inputs": {"rv24": None, "rv_normal_range": None},
+        "ref_venue": None,
+    }
+    liquidity = {"per_venue": []}
+    enrich_evidence({"books": books, "flow_bars": [], "cutoff": iso(end)}, start, end, {"W1H": spot}, "W1H", {}, relative, liquidity)
+    return liquidity["fragmentation"]
+
+
+def test_usdt_usd_basis_is_not_fragmentation():
+    """E2E #7 (MTA-01M5EM1TGWBN38TRFNGYAE5DYF): every USDT venue against every USD venue read as
+    REAL_MARKET_FRAGMENTATION. USDT 3 bp under USD with no dislocation: compared in USD, no gap."""
+    frag = _fragmentation_of({"A": ("100.030009", "USDT", "0.9997"), "B": ("100", "USD", None)})
+    assert frag["persistent_gap"] is False
+    assert frag["venues"] == []
+    assert frag["cross_quote_not_evaluated"] == []
+
+
+def test_same_quote_ten_bp_dislocation_is_fragmentation():
+    frag = _fragmentation_of({"A": ("100", "USD", None), "B": ("100.10", "USD", None)})
+    assert frag["persistent_gap"] is True
+    assert frag["venues"] == [["A", "B"]]
+
+
+def test_cross_quote_gap_must_clear_conversion_uncertainty_and_needs_a_rate():
+    # 1.5 bp after conversion: beyond both 0.1 bp spreads, within the 2 bp conversion uncertainty.
+    frag = _fragmentation_of({"A": ("100.045", "USDT", "0.9997"), "B": ("100", "USD", None)})
+    assert frag["persistent_gap"] is False and frag["quote_conversion_uncertainty_bps"] == 2
+    # 10 bp after conversion is a real cross-quote gap.
+    frag = _fragmentation_of({"A": ("100.130039", "USDT", "0.9997"), "B": ("100", "USD", None)})
+    assert frag["venues"] == [["A", "B"]]
+    # Without a quote rate the pair is recorded as not evaluated, never as a gap.
+    frag = _fragmentation_of({"A": ("100.5", "USDT", None), "B": ("100", "USD", None)})
+    assert frag["persistent_gap"] is False
+    assert frag["cross_quote_not_evaluated"] == [["A", "B"]]
+
+
 def test_vacuum_detects_loss_on_sell_side_despite_deep_asks():
     from tank.analysis.truth import liquidity_truth
 
