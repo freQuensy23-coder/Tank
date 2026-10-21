@@ -169,6 +169,7 @@ def fit_result(result, max_bytes=TOOL_RESULT_MAX_BYTES):
 
 
 UNLOCK_ROWS_SHOWN = 14
+TICKER_MAX_AGE_S = 3600
 UNLOCK_WINDOW_DAYS = 14
 
 
@@ -633,6 +634,62 @@ class EventToolService:
             for name in ["entities", "tokens", "instruments", "x_accounts"]
         } | {"dependency_map": self.settings.load_config("dependency_map")}
 
+    async def covered_daily_volume(self, token, cutoff):
+        """03 §4.2: the base of M for access and distribution effects is the
+        token's covered daily volume. Per covered spot venue, the venue's 24 h
+        volume (native and USD) from the latest stored 24 h ticker at or before
+        the cutoff; a venue without a fresh, complete figure is excluded with
+        its reason and is not part of the total."""
+        registry = self.settings.load_config("registry")
+        instruments = [
+            row
+            for row in registry.get("instruments", [])
+            if row.get("token_id") == token and row.get("market_type") == "SPOT" and row.get("active", True)
+        ]
+        venues, excluded, usd_missing = [], [], []
+        total_native, total_usd = Decimal(0), Decimal(0)
+        for instrument in instruments:
+            iid = instrument["instrument_id"]
+            row = await self.repo.latest_before(
+                "mkt.tickers_24h", "ts", iso(cutoff + timedelta(microseconds=1)), filters={"instrument_id": iid}
+            )
+            if row is None:
+                excluded.append({"instrument_id": iid, "reason": "NO_STORED_24H_TICKER"})
+                continue
+            age = (cutoff - parse_time(row["ts"])).total_seconds()
+            if age > TICKER_MAX_AGE_S:
+                excluded.append({"instrument_id": iid, "reason": "TICKER_STALE", "ticker_ts": row["ts"]})
+                continue
+            if row.get("volume_native") is None:
+                excluded.append({"instrument_id": iid, "reason": "VOLUME_INCOMPLETE", "ticker_ts": row["ts"]})
+                continue
+            native = Decimal(str(row["volume_native"]))
+            usd = None if row.get("volume_usd") is None else Decimal(str(row["volume_usd"]))
+            total_native += native
+            if usd is None:
+                usd_missing.append({"instrument_id": iid, "reason": row.get("usd_reason") or "USD_UNAVAILABLE"})
+            else:
+                total_usd += usd
+            venues.append(
+                {"instrument_id": iid, "venue": instrument.get("venue"), "volume_native": str(native),
+                 "volume_usd": None if usd is None else str(usd), "usd_reason": None if usd is not None
+                 else row.get("usd_reason") or "USD_UNAVAILABLE", "ticker_ts": row["ts"], "age_s": round(age, 1)}
+            )
+        return {
+            "window": "trailing 24 h at the venue's latest 24 h ticker up to the analysis cutoff",
+            "analysis_cutoff": iso(cutoff),
+            "total_native": str(total_native) if venues else None,
+            # USD only over venues that report it; the others are listed.
+            "total_usd": str(total_usd) if venues and len(usd_missing) < len(venues) else None,
+            "total_usd_excludes": usd_missing,
+            "unit_native": token.rpartition(":")[2],
+            "venues": venues,
+            "excluded": excluded,
+            "reason": None if venues else "NO_COVERED_SPOT_VOLUME",
+            "market_cap": None,
+            "market_cap_reason": "NOT_STORED: Tank stores no circulating supply or market cap for the token",
+        }
+
     async def get_token_facts(self, a, c):
         """Stored fundamentals, supply and unlocks known at the analysis cutoff
         (03 §3.2). Unlocks dated before the cutoff stay visible, labelled PAST,
@@ -690,6 +747,7 @@ class EventToolService:
             "supply_obs": [
                 compact_series(row) for row in sorted(latest.values(), key=lambda r: str(r.get("kind")))
             ],
+            "covered_daily_volume": await self.covered_daily_volume(token, cutoff),
             "unlock_summary": unlock_summary,
             "unlocks": unlocks,
             "capture_chains": [compact_series(row) for row in list(newest_chain.values())[-5:]],
