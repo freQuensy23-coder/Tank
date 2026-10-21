@@ -1729,7 +1729,9 @@ class MarketService:
             return {}  # a replay reads frozen evidence; it never fetches live market data
         deadline = time.monotonic() + budget_s if budget_s else None
         lo = parse_time(start).replace(second=0, microsecond=0)
-        hi = min(parse_time(end), utcnow() - timedelta(minutes=1)).replace(second=0, microsecond=0)
+        # The last finished minute is in (the restart minute of a startup repair); the
+        # minute in progress is not.
+        hi = min(parse_time(end), utcnow() - timedelta(seconds=5)).replace(second=0, microsecond=0)
         instruments = [
             i for i in self.instruments.values() if i["token_id"] == token_id and i.get("active", True)
         ]

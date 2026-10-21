@@ -2026,7 +2026,9 @@ async def test_condition_heads_are_reused_until_their_scope_is_written(setup, mo
     window = ("mkt.oi_obs", "ts", now - timedelta(days=1), now)
     assembled = utcnow()  # after the write: the head saw every row of its scope
     first = await service._condition_heads(*window, iso(assembled), {"instrument_id": iid})
-    again = await service._condition_heads(*window, iso(assembled + timedelta(seconds=30)), {"instrument_id": iid})
+    again = await service._condition_heads(
+        *window, iso(assembled + timedelta(seconds=30)), {"instrument_id": iid}
+    )
     assert (
         first == again
         and len(calls) == 1
@@ -2055,4 +2057,21 @@ async def test_condition_heads_are_reused_until_their_scope_is_written(setup, mo
     assert len(calls) == 2 and later[1]["ts"] == iso(
         now - timedelta(minutes=1)
     )  # a write invalidates the reuse
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_startup_repair_includes_the_minute_that_just_ended(setup):
+    repo, settings, inst = setup
+    settings.replay = False
+    service = MarketService(repo, settings)
+    ended = []
+
+    async def backfill(instrument, anchor, *, checkpoint=None):
+        ended.append(parse_time(anchor))
+
+    service.backfill = backfill
+    now = utcnow()
+    await service.repair_windows("test:ABC", now - timedelta(minutes=5), now)
+    assert max(ended) == (now - timedelta(seconds=5)).replace(second=0, microsecond=0)
     await service.close()
