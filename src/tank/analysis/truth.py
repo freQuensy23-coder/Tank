@@ -2984,6 +2984,9 @@ def capture_cadence(snapshot, collection, row=None):
         and kind in ("EXCHANGE_INVENTORY", "WALLET_FLOWS")
     ):
         return None, "CAPTURE_TIER_HISTORY_UNAVAILABLE"
+    bymetric = entry.get("cadence_s_by_metric", {}) if isinstance(entry, dict) else {}
+    if row.get("metric_key") in (bymetric or {}) and number(bymetric[row["metric_key"]]):
+        return float(bymetric[row["metric_key"]]), "CAPTURE_METADATA_BY_METRIC"
     bykind = entry.get("by_kind", {}) if isinstance(entry, dict) else {}
     explicit = (
         bykind.get(kind) if kind in bykind else entry.get("cadence_s") if isinstance(entry, dict) else None

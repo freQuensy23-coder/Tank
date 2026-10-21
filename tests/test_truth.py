@@ -695,6 +695,18 @@ def test_once_per_interval_oi_is_fresh_within_two_intervals_plus_publish_lag():
     assert check(61, "binance.usdm.openInterest", "binance:perp_linear:BTCUSDT")["fresh"] is False
 
 
+def test_capture_cadence_prefers_the_per_metric_cadence():
+    from tank.analysis.truth import capture_cadence
+
+    entry = {"cadence_s": 60, "cadence_s_by_metric": {"bybit.linear.open-interest": 300}}
+    snapshot = {"capture_metadata": {"collections": {"oi": entry}}}
+    assert capture_cadence(snapshot, "oi", {"metric_key": "bybit.linear.open-interest"}) == (
+        300.0,
+        "CAPTURE_METADATA_BY_METRIC",
+    )
+    assert capture_cadence(snapshot, "oi", {"metric_key": "binance.usdm.openInterest"}) == (60.0, "CAPTURE_METADATA")
+
+
 def test_data_confidence_required_oi_uses_the_interval_rule_for_bybit_5min():
     from tank.analysis.truth import data_confidence
 
