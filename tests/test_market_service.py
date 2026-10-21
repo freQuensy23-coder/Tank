@@ -1978,7 +1978,7 @@ async def test_hot_series_poll_context_on_their_own_schedule(setup):
     )
     assert (True, False, False, 0) in polls  # base: klines only while hot
     assert (False, True, False, -1) in polls  # the ticker on its own grid, ahead on its host
-    assert (False, False, True, 0) in polls  # derivatives on theirs
+    assert (False, False, True, -1) in polls  # derivatives on theirs, ahead on their host too
     await service.close()
 
 

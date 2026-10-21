@@ -132,11 +132,12 @@ HOST_IN_FLIGHT = 4
 REFERENCE_VENUES = ("binance", "coinbase", "okx", "kraken", "bybit")
 # HOT tickers, OI and funding are polled this often so that their age at any minute cutoff
 # stays within the 60 s HOT cadence of 03 §5.1 despite poll and loop latency.
-HOT_POLL_S = 45
-# HOT 24h REST tickers run on this wall-clock grid, so one is never older than about twice
-# it at a cutoff (cadence 60 s); hyperliquid's shared contexts response lives HL_CONTEXTS_S.
+# HOT OI/funding and 24h REST tickers each run on a 30 s wall-clock grid, so none is older
+# than one step plus its request at a cutoff (cadence 60 s); hyperliquid's shared contexts
+# response lives HL_CONTEXTS_S, so each grid point fetches it afresh.
+HOT_POLL_S = 30
 HOT_TICKER_S = 30
-HL_CONTEXTS_S = 15
+HL_CONTEXTS_S = 10
 # Finished raw hours are sealed in their own pass, a few per pass.
 SEAL_PASS_S, SEALS_PER_PASS = 10, 2
 BOOK_SAVE_S = 8
@@ -5206,44 +5207,38 @@ class MarketService:
                 )
 
     async def _hot_context_loop(self, instrument):
-        """HOT OI and funding every 60 s (03 §5.1), on their own schedule: the base
-        cycle over every series of a venue shares one host and must not stretch it."""
-        iid = instrument["instrument_id"]
+        """HOT OI and funding (perps) on a fixed HOT_POLL_S wall-clock grid half a step from
+        the tickers', ahead of other requests to their host. A cycle that waited on a slow
+        host doubled their age (r116: binance funding max 92 s against its 60 s cadence)."""
         interval = float(self.thresholds.get("hot_poll_interval_s", HOT_POLL_S))
-        while not self._stop.is_set():
-            if instrument["token_id"] not in self._hot_since or norm.venue_key(instrument).endswith(".spot"):
-                with suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(self._stop.wait(), 5)
-                continue
-            started = time.monotonic()
-            try:
-                await self.poll_once(iid, klines=False, ticker=False)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
-                await self._gap(instrument, "POLL", exc)
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._stop.wait(), max(1, interval - (time.monotonic() - started)))
+        if norm.venue_key(instrument).endswith(".spot"):
+            return
+        await self._hot_grid(instrument, interval, interval / 2, klines=False, ticker=False)
 
     async def _hot_ticker_loop(self, instrument):
         """HOT 24h REST tickers on a fixed wall-clock grid, ahead of other requests to their
         host. In the derivatives cycle a slow host stretched them: r115 E2E #7 read a
         hyperliquid ticker 119.5 s old (a ~3 min cycle) against its 60 s cadence."""
-        iid = instrument["instrument_id"]
         interval = float(self.thresholds.get("hot_ticker_interval_s", HOT_TICKER_S))
+        await self._hot_grid(instrument, interval, 0, klines=False, derivatives=False)
+
+    async def _hot_grid(self, instrument, interval, offset, **kinds):
+        """Poll `kinds` of a HOT instrument at every grid point (wall clock, `offset` into
+        each `interval`) at gate priority -1; a request stuck past the next point is cut
+        and recorded as a POLL gap, so a missed point never doubles an age."""
+        iid = instrument["instrument_id"]
         while not self._stop.is_set():
             if instrument["token_id"] in self._hot_since:
                 try:
-                    # A request stuck behind its host never holds the next grid point.
-                    await asyncio.wait_for(
-                        self.poll_once(iid, klines=False, derivatives=False, priority=-1), interval
-                    )
+                    await asyncio.wait_for(self.poll_once(iid, priority=-1, **kinds), interval)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
                     await self._gap(instrument, "POLL", exc)
             with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._stop.wait(), max(0.01, interval - time.time() % interval))
+                await asyncio.wait_for(
+                    self._stop.wait(), max(0.01, interval - (time.time() - offset) % interval)
+                )
 
     async def bootstrap_history(self, *, days=90):
         """Daily: import missing verified archive days, newest first; failures remain visible
