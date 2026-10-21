@@ -21,6 +21,9 @@ import (
 // ArchiveHost is the Binance public data archive (DATA_GUIDE §4.8).
 const ArchiveHost = "data.binance.vision"
 
+// archivePriority keeps archive files behind live capture: they are large and not urgent.
+const archivePriority = 1
+
 // runArchive is an ARCHIVE_FETCH request: request {url} names one daily or monthly zip of
 // the Binance public data archive. Its .CHECKSUM is read first; the zip is streamed to
 // DataDir/archive/binance/<path after /data/>, hashed on the way, and kept only when the
@@ -45,7 +48,7 @@ func (s *Service) runArchive(ctx context.Context, row map[string]any, budgetS ti
 		defer cancel()
 	}
 	name := path.Base(u.Path)
-	got, err := s.opt.Fetcher.Fetch(ctx, "GET", raw+".CHECKSUM", nil, nil, nil, fetchPriority)
+	got, err := s.opt.Fetcher.Fetch(ctx, "GET", raw+".CHECKSUM", nil, nil, nil, archivePriority)
 	if err != nil {
 		finish("FAILED", fetchReason(err), map[string]any{"error": err.Error()})
 		return
@@ -87,7 +90,7 @@ func (s *Service) runArchive(ctx context.Context, row map[string]any, budgetS ti
 	}
 	defer os.Remove(tmp)
 	h := sha256.New()
-	status, size, err := s.opt.Fetcher.Download(ctx, raw, io.MultiWriter(f, h), fetchPriority)
+	status, size, err := s.opt.Fetcher.Download(ctx, raw, io.MultiWriter(f, h), archivePriority)
 	if err == nil {
 		err = f.Sync()
 	}
