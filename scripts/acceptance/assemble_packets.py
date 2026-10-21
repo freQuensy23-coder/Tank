@@ -183,7 +183,7 @@ def content_hash(record):
         (record.get("title", "") + " " + record["text"] + " " + (record.get("quoted") or "")).split()).encode()).hexdigest()
 
 
-ASSEMBLER_REVISION = 10
+ASSEMBLER_REVISION = 13
 SLUG_FIELDS = {"entity_id", "name"}
 HOST_MASK_FIXTURES = {"F-24", "F-25", "F-26", "F-27"}
 
@@ -265,6 +265,172 @@ def mask_bytes(raw, fwd, fwd_text):
         return canonical_json(fwd(json.loads(raw))).encode(), "json"
     except (ValueError, UnicodeDecodeError):
         return fwd_text(raw.decode("utf-8")).encode(), "txt"
+
+
+def _norm(value):
+    return re.sub(r"[-_\s]+", " ", str(value).casefold()).strip()
+
+
+def _pipeline_text(packet):
+    parts = []
+    for row in packet.get("records", []):
+        if row.get("collection") == "ingest.source_items":
+            parts += [str(row["record"].get(k) or "") for k in ("title", "text", "body", "author", "quoted")]
+    parts += [json.dumps(t.get("result"), ensure_ascii=False) for t in packet.get("tool_results", [])]
+    parts.append(json.dumps((packet.get("config") or {}).get("replay_messages"), ensure_ascii=False))
+    return "\n".join(parts)
+
+
+def entity_families(registry, replacements, sensitive, parent_text, host_mask, venues=frozenset()):
+    """One real entity -> one placeholder family (coordinator rule after the r119 F-08/F-06 findings).
+
+    The display name (primary) keeps or receives a root placeholder; explicit keys of names prefixed by
+    the primary are dropped so the primary's word replacement yields "<root> Network"; lowercase/slug
+    variants of the primary follow the root (non-host-mask only: host admission needs casefold-unique
+    aliases); token symbol keys that would swallow a differently-cased display name become exact-case;
+    registry aliases of the entity left without any key get "<root><sep>AliasN". Registry names equal to
+    the primary are masked to the root by registry_family_pass. Token role: a symbol matches exactly,
+    a token_id or exchange ticker case-insensitively."""
+    sep = "_" if host_mask else " "
+    repl, sens = dict(replacements), list(dict.fromkeys(sensitive))
+    symbols, token_forms = set(), set()
+    for token in registry.get("tokens", []):
+        sym, tid = token.get("symbol"), token.get("token_id")
+        if sym:
+            symbols.add(str(sym))
+            token_forms.update(f"{sym}{x}".casefold() for x in ("USDT", "-USD", "/USD", "-USDT", "-USDT-SWAP"))
+        if tid:
+            token_forms.add(str(tid).casefold())
+
+    def token_role(key):
+        return key in symbols or key.casefold() in token_forms
+
+    used_numbers = {int(m.group(1)) for v in repl.values() for m in [re.fullmatch(r"Name(\d+)", v)] if m}
+    families, log = [], []
+
+    def new_root():
+        n = 1
+        while n in used_numbers:
+            n += 1
+        used_numbers.add(n)
+        return f"Name{n:02d}"
+
+    for index, entity in enumerate(registry.get("entities", [])):
+        ids = [x for x in [entity.get("entity_id"), entity.get("name"), *(entity.get("names") or []), *(entity.get("aliases") or [])] if isinstance(x, str) and x]
+        idn = {_norm(x) for x in ids}
+        ekeys = [k for k in repl if not token_role(k) and (_norm(k) in idn or any(_norm(k).startswith(n + " ") for n in idn))]
+        forms = sorted({m.group(0) for x in ids for m in re.finditer(r"(?<!\w)" + re.escape(x) + r"(?!\w)", parent_text, re.I)
+                        if not m.group(0).islower() and not token_role(m.group(0))}, key=len)
+        swallowed = [k for k in repl if k in symbols and k not in sens and any(f.casefold() == k.casefold() and f != k for f in forms)]
+        if not ekeys and not swallowed:
+            continue
+        canonical = _norm((entity.get("names") or [entity.get("entity_id")])[0])
+        candidates = [k for k in ekeys if not k.islower()] + [f for f in forms if f not in repl]
+        primary = next((c for c in sorted(candidates, key=len) if _norm(c) == canonical), None) or (sorted(candidates, key=len)[0] if candidates else None)
+        if primary is None:
+            continue
+        changes = {}
+
+        def put(key, value):
+            old = repl.get(key)
+            if value is None:
+                if key in repl:
+                    del repl[key]
+                    changes[key] = [old, None]
+                    if key in sens:
+                        sens.remove(key)
+            elif old != value:
+                repl[key] = value
+                changes[key] = [old, value]
+
+        newly_added = primary not in repl
+        if not newly_added:
+            root = repl[primary]
+        else:
+            prefixed = sorted((k for k in ekeys if k.startswith(primary + " ")), key=len)
+            root = repl[prefixed[0]] if prefixed else new_root()
+            put(primary, root)
+        if primary not in sens and (newly_added or any(k != primary and k.casefold() == primary.casefold() for k in repl)):
+            sens.append(primary)
+        for k in swallowed:  # a token symbol key must not swallow the protocol display name
+            sens.append(k)
+        if swallowed and not host_mask:
+            # The symbol key used to mask lowercase forms too ("aave" in URLs, handles, slugs): keep them
+            # masked, now as the entity family's lowercase root.
+            low = primary.lower()
+            if low not in repl and re.search(r"(?<!\w)" + re.escape(low) + r"(?!\w)", parent_text + json.dumps(registry, ensure_ascii=False)):
+                put(low, root.lower())
+                sens.append(low)
+        for k in [k for k in list(repl) if k != primary and k.startswith(primary + " ") and not token_role(k)]:
+            put(k, None)
+        if not host_mask:
+            taken = set(repl.values())
+            for k in [k for k in list(repl) if k.islower() and not token_role(k) and (_norm(k) == _norm(primary) or _norm(k).startswith(_norm(primary) + " "))]:
+                rest = _norm(k)[len(_norm(primary)):].strip()
+                value = root.lower() + ("-" + rest.replace(" ", "-") if rest else "")
+                if value != repl[k] and value not in taken:
+                    taken.discard(repl[k])
+                    put(k, value)
+                    taken.add(value)
+        (fwd_text, _), _ = transform_pair(repl, sens)
+        alias_n = 0
+        for alias in [*(entity.get("aliases") or []), *(entity.get("names") or [])]:
+            if (not isinstance(alias, str) or _norm(alias) == _norm(primary) or alias in venues or alias.islower()
+                    or fwd_text(alias) != alias or token_role(alias)):
+                continue
+            alias_n += 1
+            value = f"{root}{sep}Alias{alias_n}"
+            while value in repl.values():
+                alias_n += 1
+                value = f"{root}{sep}Alias{alias_n}"
+            put(alias, value)
+            sens.append(alias)
+            (fwd_text, _), _ = transform_pair(repl, sens)
+        sens = [k for k in dict.fromkeys(sens) if k in repl]
+        families.append({"index": index, "entity_id": entity.get("entity_id"), "primary": primary, "root": root})
+        if changes or swallowed:
+            log.append({"entity_id": entity.get("entity_id"), "primary": primary, "root": root, "key_changes": changes,
+                        "made_exact_case": swallowed})
+    return repl, sens, families, log
+
+
+def registry_family_pass(parent_registry, masked_registry, families):
+    """Registry names/aliases equal to an entity's primary name carry its root placeholder (not the slug)."""
+    pents, ments = parent_registry.get("entities", []), masked_registry.get("entities", [])
+    for fam in families:
+        pe, me = pents[fam["index"]], ments[fam["index"]]
+        for field in ("names", "aliases"):
+            for j, value in enumerate(pe.get(field) or []):
+                if isinstance(value, str) and _norm(value) == _norm(fam["primary"]):
+                    me[field][j] = fam["root"]
+
+
+def family_gate(parent_registry, masked, families, replacements, venues=frozenset()):
+    """Fail when an entity placeholder used in pipeline-visible text is not among that entity's masked
+    registry name/names/aliases, or an original alias of a mapped entity survives in the masked registry."""
+    errors, text = [], _pipeline_text(masked)
+    ments, pents = masked["registry"].get("entities", []), parent_registry.get("entities", [])
+    symbols = {str(t["symbol"]) for t in parent_registry.get("tokens", []) if t.get("symbol")}
+    token_forms = {str(t["token_id"]).casefold() for t in parent_registry.get("tokens", []) if t.get("token_id")}
+    token_forms |= {f"{x}{y}".casefold() for x in symbols for y in ("USDT", "-USD", "/USD", "-USDT", "-USDT-SWAP")}
+    for fam in families:
+        me, pe = ments[fam["index"]], pents[fam["index"]]
+        known = {str(v).casefold() for v in [me.get("name"), *(me.get("names") or []), *(me.get("aliases") or [])] if v}
+        known |= {str(r.get("alias", "")).casefold() for r in me.get("qualified_aliases") or []}
+        ids = {_norm(x) for x in [pe.get("entity_id"), pe.get("name"), *(pe.get("names") or []), *(pe.get("aliases") or [])] if x}
+        keys = [k for k in replacements if (k not in symbols and k.casefold() not in token_forms)
+                and (_norm(k) in ids or any(_norm(k).startswith(n + " ") for n in ids))]
+        for k in keys:
+            value = replacements[k]
+            if value.islower() and re.search(r"[-_]", value):
+                continue  # slug form (ids, URLs), not a name the agent resolves
+            if re.search(r"(?<!\w)" + re.escape(value) + r"(?!\w)", text) and value.casefold() not in known:
+                errors.append(f"{fam['entity_id']}: placeholder {value!r} (for {k!r}) is used in pipeline text but not in the masked registry entity")
+        for field in ("names", "aliases"):
+            for orig, now in zip(pe.get(field) or [], me.get(field) or []):
+                if isinstance(orig, str) and orig == now and not orig.islower() and orig not in venues and len(orig) > 1:
+                    errors.append(f"{fam['entity_id']}: registry {field} {orig!r} left unmasked")
+    return errors
 
 
 def resolved_settings(config_dir):
@@ -496,8 +662,30 @@ def assemble(fixture, args, sections, code_version, out_root):
             if drift:
                 raise AssemblyError(f"{fixture}: inverse snapshot disagrees with the parent snapshot outside the supplement: {drift[:8]}")
             parent["records"][index] = restored
-    scan_names = {**replacements, **{k: v for k, v in slugs.items()}}
+    # Placeholder families: one real entity -> one placeholder family, registry names carry the root.
+    # (Any inverse restoration above used the map that produced the prior masked view.)
     venues = registry_venues(parent["registry"])
+    host_mask_family = fixture in HOST_MASK_FIXTURES or any(
+        (r.get("as_of_evidence") or {}).get("derivation", {}).get("kind") == "SNAPSHOT_SIGNED_IPFS_V1"
+        for r in parent["records"] if r["collection"] == "ingest.source_items")
+    replacements, sensitive, families, family_log = entity_families(
+        parent["registry"], replacements, sensitive, _pipeline_text(parent), host_mask_family, venues)
+    (fwd_text, fwd0), (_, inv) = transform_pair(replacements, sensitive)
+    if exceptions:
+        exceptions = {**exceptions, "masked_forms": sorted({fwd_text(t) for t in exceptions["tokens"]} - set(exceptions["tokens"]))}
+
+    def fwd(value):  # noqa: F811 - the family map supersedes the pre-family transform from here on
+        masked_value = fwd0(value)
+        if slugs:
+            apply_slugs(value, masked_value, slugs, fwd_text)
+        if isinstance(value, dict):
+            if isinstance(value.get("entities"), list):
+                registry_family_pass(value, masked_value, families)
+            elif isinstance(value.get("registry"), dict):
+                registry_family_pass(value["registry"], masked_value["registry"], families)
+        return masked_value
+
+    scan_names = {**replacements, **{k: v for k, v in slugs.items()}}
     slug_text = (re.compile(r"(?<!\w)(?:" + "|".join(map(re.escape, sorted(slugs, key=len, reverse=True))) + r")(?!\w)")
                  if slugs else None)
 
@@ -535,7 +723,7 @@ def assemble(fixture, args, sections, code_version, out_root):
     host_mask = fixture in HOST_MASK_FIXTURES or any(
         (r.get("as_of_evidence") or {}).get("derivation", {}).get("kind") == "SNAPSHOT_SIGNED_IPFS_V1"
         for r in parent["records"] if r["collection"] == "ingest.source_items")
-    pinned = ("input_sha256", "config_version", "code_version")
+    pinned = ("input_sha256", "config_version", "code_version", "registry")  # registry: family pass, not admission-checked
     reversible = (not slugs and inv({k: v for k, v in masked.items() if k not in pinned})
                   == {k: v for k, v in parent.items() if k not in pinned})
     if host_mask and not reversible and not slugs:
@@ -543,6 +731,9 @@ def assemble(fixture, args, sections, code_version, out_root):
     hits, warnings = leak_scan(masked, scan_names, venues, exceptions)
     if hits:
         raise AssemblyError(f"{fixture}: original identities remain in masked envelope: {dict(list(hits.items())[:8])}")
+    family_errors = family_gate(parent["registry"], masked, families, replacements, venues)
+    if family_errors:
+        raise AssemblyError(f"{fixture}: placeholder family gate: {family_errors[:6]}")
 
     # Identity-only derivatives of every retained source byte stream the masked packet references.
     files, derived = {}, {}
@@ -625,6 +816,8 @@ def assemble(fixture, args, sections, code_version, out_root):
         private["added_exact_case_replacements"] = sorted(added)
     if fixture in args.note:
         private["generation_note"] = args.note[fixture]
+    private["placeholder_families"] = {"rule": "one real entity -> one placeholder family; registry names equal to the display name carry the root; gate: every entity placeholder in pipeline text is a registry name/alias of that entity",
+                                       "families": families, "changes": family_log}
     if recovery_log:
         private["recovered_originals"] = recovery_log
     if fixture in args.inverse_snapshots:
@@ -664,6 +857,7 @@ def assemble(fixture, args, sections, code_version, out_root):
         "generation_note": args.note.get(fixture), "inverse_restored_snapshots": fixture in args.inverse_snapshots,
         "declared_technical_context_exceptions": exceptions,
         "replay_timeout_seconds": parent["config"]["replay_timeout_seconds"],
+        "placeholder_family_changes": family_log,
         "recovered_originals": recovery_log + [{"path": p, "status": "declared UTF-8 raw recovered from record text, sha256-verified"}
                                                for p in recovered if p not in staged
                                                and not any(p.endswith(r["sha256"] + ".zst") for r in recovery_log)],
