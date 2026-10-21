@@ -212,6 +212,35 @@ def funding_confirmations(observations, *, distinct_paths=False):
     return pairs
 
 
+# Flow fields a REST audit must reproduce for a complete stored bar to stand as written.
+REST_SAME_FLOW = (
+    "n_buy",
+    "n_sell",
+    "buy_qty",
+    "sell_qty",
+    "sum_sq_qty",
+    "buy_notional",
+    "sell_notional",
+    "open",
+    "high",
+    "low",
+    "close",
+    "first_trade_id",
+    "last_trade_id",
+)
+REST_VERIFIED_KEEP = 200000
+
+
+def _same_flow(stored, audited):
+    def value(row, field):
+        item = row.get(field)
+        if item is None or field in ("first_trade_id", "last_trade_id"):
+            return None if item is None else str(item)
+        return Decimal(str(item))
+
+    return all(value(stored, field) == value(audited, field) for field in REST_SAME_FLOW)
+
+
 class MarketService:
     def __init__(self, repo, settings, *, http=None):
         self.repo = repo
@@ -250,6 +279,8 @@ class MarketService:
         self._klines_polled = {}
         # (instrument, UTC day) -> complete 1m closes, for whole past days (snapshot coverage).
         self._kline_day_counts = {}
+        # (instrument, minute) of complete stored bars a REST audit proved without a rewrite.
+        self._rest_verified = {}
         self._kline_day_counts_saved = ({}, 0.0)  # the counts last saved, and when
         self._pending_market = {}
         self._market_cache = {}
@@ -403,7 +434,7 @@ class MarketService:
             row = by_minute.get(key[1])
             private = self.flow.bars.get(key)
             trusted = row and (row.get("backfill_verified") or row.get("source_archive"))
-            trusted = trusted or (private and private.get("_rest_verified"))
+            trusted = trusted or (private and private.get("_rest_verified")) or key in self._rest_verified
             if not (preserve_verified and trusted):
                 left, right = max(lo, cursor), min(hi, cursor + timedelta(minutes=1))
                 if left < right:
@@ -1524,6 +1555,24 @@ class MarketService:
         previous = self.flow.references.get((iid, iso(start)), {}).get("last_trade")
         minute = parse_time(start).replace(second=0, microsecond=0)
         hours = {}  # the one archived hour this audit is reading
+        # Complete bars already held for the range: a REST audit with the same prints
+        # proves them without a rewrite. A rewrite moved recorded_at past snapshots
+        # assembled meanwhile (r113: 48 complete coinbase WS bars re-recorded at 05:10).
+        held = {
+            row["minute_start"]: row
+            async for row in self.repo.iter_market_projection(
+                "mkt.flow_bars_1m",
+                ["minute_start", "complete", *REST_SAME_FLOW],
+                "minute_start",
+                start=minute,
+                end=parse_time(end),
+                instrument_ids=[iid],
+                batch_size=5000,
+            )
+        }
+        for row in self._pending_market.get("mkt.flow_bars_1m", {}).values():
+            if row["instrument_id"] == iid and minute <= parse_time(row["minute_start"]) < parse_time(end):
+                held[row["minute_start"]] = row
         consecutive = norm.venue_key(instrument).split(".")[0] in ("binance", "coinbase", "kraken")
 
         def audit(minute, rows, coverage, boundaries, previous):
@@ -1596,7 +1645,18 @@ class MarketService:
                 await self.mark_capture_gap(instrument, lo, hi, "REST_TRADE_ID_GAP", preserve_verified=False)
             if span:
                 self.trade_archive.coverage(iid, *span, complete=False, reason="REST_TRADE_ID_GAP")
-            await self._put("mkt.flow_bars_1m", iid + ":" + iso(minute), row)
+            stored = held.get(iso(minute))
+            if (
+                bar["_rest_verified"]
+                and stored
+                and stored.get("complete") is True
+                and _same_flow(stored, row)
+            ):
+                self._rest_verified[key] = True
+                while len(self._rest_verified) > REST_VERIFIED_KEEP:
+                    self._rest_verified.pop(next(iter(self._rest_verified)))
+            else:
+                await self._put("mkt.flow_bars_1m", iid + ":" + iso(minute), row)
             if minute >= utcnow() - timedelta(minutes=3):
                 self.flow.bars[key] = bar
             await asyncio.sleep(0)  # one minute's bar at a time: a repaired hour never holds the loop
