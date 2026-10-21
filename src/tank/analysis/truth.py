@@ -1950,7 +1950,7 @@ def walk_book(levels, notional, mid, side="ask"):
     return float(((spent / native / mid) - 1) * 10000) if native and remaining <= 1e-8 else None
 
 
-def depth_at_band(book, side):
+def depth_at_band(book, side, unit="usd"):
     covered = book.get("range_covered_pct") or {}
     coverage = number(covered.get(side)) if isinstance(covered, dict) else number(covered)
     band = float(parameter("depth_band_pct", 1))
@@ -1959,7 +1959,7 @@ def depth_at_band(book, side):
             (
                 ((book.get("depth") or {}).get(side) or {}).get({0.5: "p0_5", 1.0: "p1", 2.0: "p2"}[band])
                 or {}
-            ).get("usd")
+            ).get(unit)
         )
         if coverage is not None and coverage >= band
         else None
@@ -2020,6 +2020,9 @@ def liquidity_truth(snapshot, start, end, spot, relative):
     nowdepth = []
     side_now = {"bid": [], "ask": []}
     side_pre = {"bid": [], "ask": []}
+    # Per covered venue and side: (usd, native) depth within the band, now and pre-event mean.
+    venue_now = {"bid": {}, "ask": {}}
+    venue_pre = {"bid": {}, "ask": {}}
     spreads = []
     prespreads = []
     burst_results = []
@@ -2046,6 +2049,7 @@ def liquidity_truth(snapshot, start, end, spot, relative):
         for side, value in [("bid", bid), ("ask", ask)]:
             if value is not None:
                 side_now[side].append(value)
+                venue_now[side][venue] = (value, depth(b, side, "native"))
         pre = (
             rs[bisect_left(times, pre_anchor - timedelta(hours=1)) : bisect_left(times, pre_anchor)]
             if pre_anchor is not None
@@ -2055,6 +2059,11 @@ def liquidity_truth(snapshot, start, end, spot, relative):
             vals = [depth(x, side) for x in pre if depth(x, side) is not None]
             if vals:
                 side_pre[side].append(mean(vals))
+                natives = [depth(x, side, "native") for x in pre]
+                venue_pre[side][venue] = (
+                    mean(vals),
+                    mean(natives) if natives and None not in natives else None,
+                )
         pd = [
             depth(x, "bid") + depth(x, "ask")
             for x in pre
@@ -2137,10 +2146,16 @@ def liquidity_truth(snapshot, start, end, spot, relative):
     pre = sum(predepth) if predepth and len(predepth) == len(groups) else None
     drop = float(1 - aggregate / pre) if aggregate is not None and pre else None
     bn, sn = _sum(flow, "buy_notional"), _sum(flow, "sell_notional")
-    net = bn - sn if bn is not None and sn is not None else None
+    net_usd = bn - sn if bn is not None and sn is not None else None
+    # 03 §5.5/§5.8 in native units: net taker flow against native depth, no FX dependency
+    # (a venue's missing historical quote rate nulls its USD notionals); USD only without native.
+    bq, sq = _sum(flow, "buy_qty"), _sum(flow, "sell_qty")
+    if bq is not None and sq is not None:
+        net, unit, k = bq - sq, "NATIVE", 1
+    else:
+        net, unit, k = net_usd, "USD", 0
     raw = relative["windows"].get(snapshot.get("_primary", "W4H"), {}).get("r_raw")
     beyondprice = relative["windows"].get(snapshot.get("_primary", "W4H"), {}).get("beyond_normal")
-    avg = mean(nowdepth + predepth) if nowdepth and predepth else None
     side_totals = {
         side: sum(values) if values and len(values) == len(groups) else None
         for side, values in side_now.items()
@@ -2152,6 +2167,16 @@ def liquidity_truth(snapshot, start, end, spot, relative):
     hit_side = "ask" if net is not None and net > 0 else "bid" if net is not None and net < 0 else None
     hit_depth = side_totals.get(hit_side)
     pre_hit_depth = pre_totals.get(hit_side)
+    all_venues = set(groups)
+
+    def lower_bound(table, side, index):
+        """Sum over the venues whose band is covered: a lower bound of the depth (exact when
+        every venue is covered); venues without the band are never extrapolated."""
+        rows = {v: t[index] for v, t in table.get(side, {}).items() if t[index] is not None}
+        return (sum(rows.values()) if rows else None), sorted(rows), bool(all_venues) and set(rows) == all_venues
+
+    bound, covered, complete = lower_bound(venue_now, hit_side, k) if hit_side else (None, [], False)
+    pre_bound, pre_covered, pre_complete = lower_bound(venue_pre, hit_side, k) if hit_side else (None, [], False)
     average_hit_depth = []
     if hit_side:
         for rs in groups.values():
@@ -2161,31 +2186,71 @@ def liquidity_truth(snapshot, start, end, spot, relative):
             if values:
                 average_hit_depth.append(mean(values))
     avg = sum(average_hit_depth) if average_hit_depth and len(average_hit_depth) == len(groups) else None
+    small_price = (
+        (raw if net > 0 else -raw) < float(parameter("depth_band_pct", 1)) / 100 if net and raw is not None else None
+    )
+    absorbed = (
+        None
+        if not net or bound is None
+        else False
+        if abs(net) < bound
+        else True
+        if complete
+        else None
+    )
     weak = (
-        (abs(net) >= hit_depth and (raw if net > 0 else -raw) < float(parameter("depth_band_pct", 1)) / 100)
-        if net and hit_depth is not None and raw is not None
+        None
+        if not net
+        else False
+        if absorbed is False or small_price is False
+        else True
+        if absorbed and small_price
         else None
     )
     excess = (
-        bool(beyondprice and abs(net) < pre_hit_depth)
-        if beyondprice is not None and net is not None and pre_hit_depth is not None
+        False
+        if beyondprice is False
+        else (True if abs(net) < pre_bound else False if pre_complete else None)
+        if beyondprice is True and net is not None and pre_bound is not None
         else None
     )
+    cohorts = {
+        side: sorted(
+            v for v in set(venue_now[side]) & set(venue_pre[side]) if venue_pre[side][v][0] is not None
+        )
+        for side in ("bid", "ask")
+    }
+    cohort_now = {side: sum(venue_now[side][v][0] for v in cohorts[side]) for side in cohorts}
+    cohort_pre = {side: sum(venue_pre[side][v][0] for v in cohorts[side]) for side in cohorts}
+    # Depth change over the venues covered both now and pre-event (like the synchronized OI cohort).
     side_drops = {
-        side: float(1 - side_totals[side] / pre_totals[side])
-        if side_totals[side] is not None and pre_totals[side]
-        else None
+        side: float(1 - cohort_now[side] / cohort_pre[side]) if cohorts[side] and cohort_pre[side] else None
         for side in ("bid", "ask")
     }
     drop = side_drops.get(hit_side) if hit_side else None
     depth_majority_lost = (
-        bool(hit_depth * 2 < pre_hit_depth) if hit_depth is not None and pre_hit_depth is not None else None
+        bool(cohort_now[hit_side] * 2 < cohort_pre[hit_side])
+        if hit_side and cohorts[hit_side] and cohort_pre[hit_side]
+        else None
     )
     vacuum = (
         bool(beyondprice and depth_majority_lost and excess)
         if drop is not None and excess is not None and beyondprice is not None
         else None
     )
+    thin_sides = []
+    for side in ("bid", "ask"):
+        low, _, full = lower_bound(venue_now, side, 0)
+        thin_sides.append(
+            None
+            if low is None or tiers["T2"] is None
+            else low < tiers["T2"]
+            if full
+            else False
+            if low >= tiers["T2"]
+            else None
+        )
+    thin = True if True in thin_sides else False if thin_sides == [False, False] else None
     return dict(
         depth_measurement_band_pct=parameter("depth_band_pct", 1),
         per_venue=per,
@@ -2204,6 +2269,7 @@ def liquidity_truth(snapshot, start, end, spot, relative):
         depth_drop_by_side=side_drops,
         depth_drop=drop,
         depth_majority_lost=depth_majority_lost,
+        depth_drop_cohort=cohorts,
         spread_ratio=ratio(mean(spreads), mean(prespreads)) if spreads and prespreads else None,
         replenishment=dict(
             available=bool(books and flow),
@@ -2218,23 +2284,31 @@ def liquidity_truth(snapshot, start, end, spot, relative):
             observations=burst_results,
         ),
         elasticity=dict(
-            bps_per_depth_unit=raw * 10000 / float(abs(net) / avg)
-            if raw is not None and net and avg
+            bps_per_depth_unit=raw * 10000 / float(abs(net_usd) / avg)
+            if raw is not None and net_usd and avg
             else None,
             weak_response=weak,
             excess_response=excess,
             hit_side=hit_side,
+            depth_unit=unit,
+            net_flow=net,
+            hit_side_depth_lower_bound=bound,
+            hit_side_covered_venues=covered,
+            hit_side_coverage_complete=complete,
+            pre_event_hit_side_depth_lower_bound=pre_bound,
+            pre_event_hit_side_covered_venues=pre_covered,
             hit_side_depth_p1_usd=hit_depth,
             pre_event_hit_side_depth_p1_usd=pre_hit_depth,
             avg_hit_side_depth_p1_usd=avg,
         ),
         vol_compression=dict(rv24=None, normal_range=None, state=None, reason="INCOMPLETE"),
-        liquidity_state="VACUUM"
-        if vacuum
-        else ("THIN" if min(side_totals.values()) < tiers["T2"] else "NORMAL")
-        if None not in side_totals.values() and tiers["T2"] is not None
-        else None,
+        liquidity_state="VACUUM" if vacuum else ("THIN" if thin else "NORMAL") if thin is not None else None,
     )
+
+
+def _count(n, noun):
+    """'1 complete venue', '3 complete venues'."""
+    return f"{n} {noun}" + ("" if n == 1 else "s")
 
 
 def _quote(row):
@@ -4105,7 +4179,7 @@ def decisive_facts(spot, derivatives, liquidity, relative, supply, move_class, w
         "spot.cvd",
         cvd,
         "NATIVE_TOKEN",
-        f"{window} spot flow {direction or 'unknown'}: CVD {cvd:g}, {spot['classification']}; {coverage['n_complete']} complete venues."
+        f"{window} spot flow {direction or 'unknown'}: CVD {cvd:g}, {spot['classification']}; {_count(coverage['n_complete'], 'complete venue')}."
         if cvd is not None
         else "",
         "mkt.flow_bars_1m",
@@ -4163,7 +4237,11 @@ def decisive_facts(spot, derivatives, liquidity, relative, supply, move_class, w
         r,
         "DECIMAL_RETURN",
         f"{window} {'price move (benchmark, raw)' if raw_measure else 'BTC-adjusted price move'} {r:+.2%}; "
-        + (f"normal range {span}." if span else f"normal range unavailable ({rel.get('normal_range_reason') or 'INCOMPLETE'}).")
+        + (
+            f"normal range {span[0]:+.2%} to {span[1]:+.2%}."
+            if span
+            else f"normal range unavailable ({rel.get('normal_range_reason') or 'INCOMPLETE'})."
+        )
         if r is not None
         else "",
         "mkt.klines_1m",
@@ -4270,7 +4348,9 @@ def decisive_facts(spot, derivatives, liquidity, relative, supply, move_class, w
                 window=window,
                 start=iso(start),
                 cutoff=iso(end),
-                text=f"Supply in evidence: inventory change {inventory.get('chg_pct')}; labeled exchange transfers {len(classified)}.",
+                text="Supply in evidence: inventory change "
+                + (f"{float(inventory['chg_pct']):+.2%}" if inventory.get("chg_pct") is not None else "unknown")
+                + f"; labeled exchange transfers {len(classified)}.",
                 evidence=[
                     dict(
                         collection="mkt.supply_context",
@@ -4296,23 +4376,29 @@ def canonical_fact_text(fact):
     coverage = fact.get("coverage") or {}
     if "n_complete" in coverage:
         share = coverage.get("covered_share_est")
-        label = f"{coverage['n_complete']} complete spot venues"
+        label = _count(coverage["n_complete"], "complete spot venue")
         if share is not None:
             label += f", {share:.1%} estimated volume coverage"
     elif "venues" in coverage:
-        label = f"{len(coverage['venues'])} covered venues"
+        label = _count(len(coverage["venues"]), "covered venue")
     elif "hit_side" in coverage:
-        label = f"{coverage.get('hit_side') or 'unknown side'} depth {coverage.get('depth_usd')} USD"
+        depth_usd = coverage.get("depth_usd")
+        label = f"{coverage.get('hit_side') or 'unknown side'} depth " + (
+            f"{float(depth_usd):,.0f} USD" if depth_usd is not None else "unknown"
+        )
     elif "complete_balances" in coverage:
-        label = f"{coverage['complete_balances']} complete balances, {coverage.get('comparable_balances', 0)} comparable"
+        label = (
+            f"{_count(coverage['complete_balances'], 'complete balance')}, "
+            f"{coverage.get('comparable_balances', 0)} comparable"
+        )
     elif coverage.get("validated") is True:
         label = "independent public REST confirmation"
     elif coverage and all(isinstance(v, dict) and "complete" in v for v in coverage.values()):
         label = (
-            f"{sum(v['complete'] is True for v in coverage.values())} complete trailing-24h reference venues"
+            _count(sum(v["complete"] is True for v in coverage.values()), "complete trailing-24h reference venue")
         )
     elif "classified_flows" in coverage:
-        label = f"{coverage['classified_flows']} classified flows"
+        label = _count(coverage["classified_flows"], "classified flow")
     else:
         label = "coverage unavailable"
     return f"{fact['text']} [{fact['window']}; {fact['unit']}; {label}]"
