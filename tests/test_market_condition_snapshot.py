@@ -611,3 +611,71 @@ async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereadi
             assert same(later, await fresh(start + timedelta(minutes=2), start + timedelta(minutes=28), kind))
             repo.iter_market_projection = projection
             await repo.put_market_batch("mkt.klines_1m", [row(3, "13")], keys=["k3"])
+
+
+@pytest.mark.asyncio
+async def test_rolling_kline_cursor_serves_an_older_assembly_clock_unless_a_row_arrived_between(setup):
+    repo, settings, inst = setup
+    start = (utcnow() - timedelta(hours=3)).replace(second=0, microsecond=0)
+    early = iso(utcnow() - timedelta(minutes=30))
+
+    def row(number, close, recorded_at):
+        return {
+            "instrument_id": inst["instrument_id"],
+            "token_id": inst["token_id"],
+            "open_time": iso(start + timedelta(minutes=number)),
+            "open_time_prec": "BUCKET(60s)",
+            "interval_s": 60,
+            "complete": True,
+            "c": close,
+            "volume_native": close,
+            "recorded_at": recorded_at,
+        }
+
+    await repo.put_market_batch(
+        "mkt.klines_1m", [row(n, str(10 + n), early) for n in range(20)], keys=[f"k{n}" for n in range(20)]
+    )
+    reads = []
+    original = repo.iter_market_projection
+
+    async def projection(collection, fields, field, **kwargs):
+        reads.append(kwargs["start"])
+        async for record in original(collection, fields, field, **kwargs):
+            yield record
+
+    async def series(service, assembled, cutoff=15):
+        return await service._condition_kline_series(
+            inst,
+            start + timedelta(minutes=2),
+            start + timedelta(minutes=cutoff),
+            assembled,
+            kind="price",
+            coverage_count=1,
+            fixed_window=True,
+            rolling="LIVE_SNAPSHOT",
+        )
+
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        repo.iter_market_projection = projection
+        older = iso(utcnow() - timedelta(minutes=10))  # a reaction capture's clock
+        await series(service, iso())  # live: the cursor's clock is now
+        behind = await series(service, older)
+        assert len(reads) == 1  # served by the cursor
+        repo.iter_market_projection = original
+        async with httpx.AsyncClient() as other:
+            assert list(behind["values"]) == list(
+                (await series(MarketService(repo, settings, http=other), older))["values"]
+            )
+        repo.iter_market_projection = projection
+        # A correction recorded after the older clock: that clock must not see it.
+        await repo.put_market_batch("mkt.klines_1m", [row(5, "99", iso())], keys=["k5"])
+        await series(service, iso(), cutoff=16)
+        reads.clear()
+        rebuilt = await series(service, older)
+        assert reads  # rebuilt for the older clock
+        assert 99.0 not in list(rebuilt["values"])
+        repo.iter_market_projection = original
+        async with httpx.AsyncClient() as other:
+            fresh = await series(MarketService(repo, settings, http=other), older)
+        assert list(rebuilt["values"]) == list(fresh["values"])

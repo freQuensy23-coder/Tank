@@ -130,13 +130,12 @@ HANDOFF_RETRIES = 2
 HOST_IN_FLIGHT = 4
 # Reference spot venues by repair speed (03 §5.7 needs one complete trailing 24 h).
 REFERENCE_VENUES = ("binance", "coinbase", "okx", "kraken", "bybit")
-# HOT tickers, OI and funding are polled this often so that their age at any minute cutoff
-# stays within the 60 s HOT cadence of 03 §5.1 despite poll and loop latency.
-# HOT OI/funding and 24h REST tickers each run on a 30 s wall-clock grid, so none is older
-# than one step plus its request at a cutoff (cadence 60 s); hyperliquid's shared contexts
-# response lives HL_CONTEXTS_S, so each grid point fetches it afresh.
+# HOT OI/funding and 24h REST tickers run on their own wall-clock grids, so at any minute
+# cutoff none is older than the 60 s HOT cadence of 03 §5.1, even after one missed point
+# (r117: a hyperliquid 24h ticker, REST only, once 62 s on a 30 s grid). Hyperliquid's
+# shared contexts response lives HL_CONTEXTS_S, so each grid point fetches it afresh.
 HOT_POLL_S = 30
-HOT_TICKER_S = 30
+HOT_TICKER_S = 20
 HL_CONTEXTS_S = 10
 # Finished raw hours are sealed in their own pass, a few per pass.
 SEAL_PASS_S, SEALS_PER_PASS = 10, 2
@@ -3223,21 +3222,14 @@ class MarketService:
             "interval_s",
             "c" if kind == "price" else "volume_native",
         ]
+        # One round trip, reused while nothing was written to the series since: 52
+        # conditions a minute each asked for the same three heads (r117 E2E #9).
         heads = (
             []
             if captured_rows is not None
-            else [
-                await self.repo.market_dependency_head(
-                    "mkt.klines_1m",
-                    "open_time",
-                    upper_open,
-                    start=start,
-                    instrument_ids=[iid],
-                    assembled_at=assembled_at,
-                    order=order,
-                )
-                for order in ("availability", "semantic_latest", "semantic_earliest")
-            ]
+            else await self._condition_heads(
+                "mkt.klines_1m", "open_time", start, upper_open, assembled_at, {"instrument_id": iid}
+            )
         )
         cache = self.__dict__.setdefault("_condition_series", {})
         locks = self.__dict__.setdefault("_condition_series_locks", {})
@@ -3257,10 +3249,21 @@ class MarketService:
                 or start < previous["start"]
                 or previous["unknown_availability"]
                 or not any(heads)
-                or assembled_at is not None
+            )
+            behind = bool(
+                not reset
+                and assembled_at is not None
                 and previous["assembled_at"] is not None
                 and parse_time(assembled_at) < parse_time(previous["assembled_at"])
             )
+            if behind:
+                # An assembly clock older than the cursor's: a reaction capture keeps the
+                # clock it started with while live snapshots advance it, and a rebuild per
+                # switch was most of the loop on r117. The cursor serves it as it stands
+                # when nothing in its range was recorded between the two clocks.
+                reset = upper_open > previous["upper_open"] or await self._klines_recorded_between(
+                    iid, assembled_at, previous["assembled_at"], previous["upper_open"]
+                )
             if not reset and (heads, start, cutoff) == previous["served"]["request"]:
                 return dict(previous["series"], coverage_count=coverage_count)
             state_start = start - margin if reset else previous["start"]
@@ -3340,7 +3343,7 @@ class MarketService:
                         rows, page = page, []
                         await asyncio.to_thread(lambda rows=rows: [apply(row) for row in rows])
                 await asyncio.to_thread(lambda: [apply(row) for row in page])
-            else:
+            elif not behind:
                 if upper_open > previous["upper_open"]:
                     rows = [
                         row
@@ -3459,7 +3462,7 @@ class MarketService:
             state = {
                 "start": state_start,
                 "upper_open": state_upper,
-                "assembled_at": assembled_at,
+                "assembled_at": previous["assembled_at"] if behind and not reset else assembled_at,
                 "opens": times,
                 "values": values,
                 "complete": complete,
@@ -3479,6 +3482,21 @@ class MarketService:
                 while len(cache) > 256:
                     cache.pop(next(iter(cache)))
             return series
+
+    async def _klines_recorded_between(self, iid, after, upto, market_end):
+        """Whether a kline of the instrument opened by `market_end` was recorded in (after, upto]."""
+        async for _ in self.repo.iter_late_arrivals(
+            "mkt.klines_1m",
+            "recorded_at",
+            "open_time",
+            since=parse_time(after) + timedelta(microseconds=1),
+            end=parse_time(upto) + timedelta(microseconds=1),
+            market_end=market_end,
+            filters={"instrument_id": iid},
+            batch_size=1,
+        ):
+            return True
+        return False
 
     async def _condition_heads(self, collection, field, start, cutoff, assembled_at, filters):
         """The three dependency heads of a window in one round trip. A head counts only rows
