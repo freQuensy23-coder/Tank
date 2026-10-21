@@ -212,6 +212,8 @@ def _unproves(collection, old, new):
 
 # Rows a batched range read decodes between two turns of the event loop.
 YIELD_ROWS = 1000
+# Book summary columns read only for the rows whose levels are walked.
+LEVELS = ("bids", "asks")
 
 
 def _note_writes(self, collection, rows):
@@ -954,7 +956,17 @@ async def sampled_market_history(
 
 
 async def market_range_by_instrument(
-    repo, collection, time_field, instrument_ids, start, end, filters=None, *, batch_size=5000, keep=None
+    repo,
+    collection,
+    time_field,
+    instrument_ids,
+    start,
+    end,
+    filters=None,
+    *,
+    batch_size=5000,
+    keep=None,
+    level_rows=None,
 ):
     """Rows of several instruments in [start, end), paged on one key for all of them.
 
@@ -1000,6 +1012,16 @@ async def market_range_by_instrument(
         extra, values = _exact_predicate(collection, filters)
         clauses.extend(extra)
         args.extend(values)
+    # Book levels are the bulk of a summary row and are decoded inside fetchall: pages carry
+    # every column but bids/asks, and only the rows Market Truth walks get them after.
+    selected = (
+        sql.SQL("*")
+        if level_rows is None
+        else sql.SQL(",").join(
+            map(sql.Identifier, ["storage_key", *(c for c in MARKET_COLUMNS[collection] if c not in LEVELS)])
+        )
+    )
+    keys = {iid: [] for iid in instrument_ids}
     after = None
     while True:
         page_clauses, page_args = list(clauses), list(args)
@@ -1008,7 +1030,8 @@ async def market_range_by_instrument(
                 sql.SQL("(instrument_id, {}, storage_key) > (%s, %s, %s)").format(sql.Identifier(time_field))
             )
             page_args.extend(after)
-        query = sql.SQL("SELECT * FROM {} WHERE {} ORDER BY instrument_id, {}, storage_key LIMIT %s").format(
+        query = sql.SQL("SELECT {} FROM {} WHERE {} ORDER BY instrument_id, {}, storage_key LIMIT %s").format(
+            selected,
             sql.Identifier(*collection.split(".")),
             sql.SQL(" AND ").join(page_clauses),
             sql.Identifier(time_field),
@@ -1018,6 +1041,8 @@ async def market_range_by_instrument(
         for n, row in enumerate(rows, 1):
             iid = row["instrument_id"]
             out[iid].append(_read_record(collection, row))
+            if level_rows is not None:
+                keys[iid].append(row["storage_key"])
             if keep is not None:
                 keep(iid, out[iid])
             if n % YIELD_ROWS == 0:
@@ -1025,6 +1050,30 @@ async def market_range_by_instrument(
                 # starved for minutes): every YIELD_ROWS rows the loop serves the others.
                 await asyncio.sleep(0)
         if len(rows) < batch_size:
-            return out
+            break
         last = rows[-1]
         after = (last["instrument_id"], last[time_field], last["storage_key"])
+    if level_rows is not None:
+        # The newest `level_rows` rows per instrument, and its newest integrity-checked row.
+        query = sql.SQL(
+            "SELECT storage_key, bids, asks FROM (SELECT storage_key, bids, asks, integrity_ok,"
+            " row_number() OVER (PARTITION BY instrument_id ORDER BY {f} DESC, storage_key DESC) AS rn,"
+            " row_number() OVER (PARTITION BY instrument_id, integrity_ok IS TRUE ORDER BY {f} DESC,"
+            " storage_key DESC) AS ok_rn FROM {t} WHERE {w}) AS ranked"
+            " WHERE rn <= %s OR (integrity_ok IS TRUE AND ok_rn = 1)"
+        ).format(
+            f=sql.Identifier(time_field),
+            t=sql.Identifier(*collection.split(".")),
+            w=sql.SQL(" AND ").join(clauses),
+        )
+        async with repo.transaction():
+            found = await (await repo._conn().execute(query, [*args, level_rows])).fetchall()
+        levels = {row["storage_key"]: row for row in found}
+        for iid, records in out.items():
+            for record, key in zip(records, keys[iid], strict=True):
+                if key in levels:
+                    record.update(bids=levels[key]["bids"], asks=levels[key]["asks"])
+                else:
+                    for name in LEVELS:
+                        record.pop(name, None)
+    return out
