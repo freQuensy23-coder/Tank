@@ -35,11 +35,12 @@ def prepare_dockerfile(docker):
     )
     # Keep the store on the build-stage filesystem: pnpm can preserve shared
     # package hardlinks. The installed dependency layer is cached independently
-    # of source; this build-only store is never copied into the runtime image.
+    # of source. Remove the unused store in this same layer; /app hardlinks
+    # retain their data without shipping store files in dependency-stage images.
     edit_docker(
         "RUN corepack enable \\\n  && pnpm install --frozen-lockfile",
         "RUN corepack enable && corepack prepare pnpm@11.0.8 --activate"
-        " && pnpm install --frozen-lockfile --store-dir=/pnpm/store",
+        " && pnpm install --frozen-lockfile --store-dir=/pnpm/store && rm -rf /pnpm/store",
     )
     edit_docker(
         "# Now bring in the source code",
