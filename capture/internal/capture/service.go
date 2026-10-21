@@ -28,6 +28,9 @@ type Service struct {
 	dial   Dialer
 	clock  Clock
 	log    *slog.Logger
+	// repairGate bounds the instruments repaired at once across tokens (repairParallel).
+	repairGate     chan struct{}
+	repairGateOnce sync.Once
 
 	fx     *normalize.FX
 	points *points.Points

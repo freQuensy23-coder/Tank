@@ -717,23 +717,39 @@ func sourceLimit(reason string) bool {
 	return false
 }
 
-// repairUnrepaired repairs every unrepaired run of every instrument of token in [lo, hi),
-// instruments in parallel; reserved skips the shared repair slots (the recent sweep must
-// not queue behind a long history backlog).
+// repairUnrepaired repairs every unrepaired run of every instrument of token in [lo, hi):
+// one worker per instrument, newest run first (a fresh hole before old history), at most
+// repairParallel instruments at once so the venue budgets are not flooded; reserved skips
+// the shared repair slots (the recent sweep must not queue behind a long backlog).
 func (s *Service) repairUnrepaired(ctx context.Context, token string, lo, hi time.Time, reserved bool) {
+	s.repairGateOnce.Do(func() { s.repairGate = make(chan struct{}, repairParallel) })
+	sem := s.repairGate
 	var wg sync.WaitGroup
 	for _, inst := range s.tokenInstruments(token) {
-		for _, gap := range s.unrepaired(ctx, inst.ID, lo, hi) {
-			s.log.Info("gap repair", "instrument", inst.ID, "start", pytime.ISO(gap.start), "end", pytime.ISO(gap.end))
-			wg.Add(1)
-			go func(inst *venue.Instrument, gap span) {
-				defer wg.Done()
-				s.repairInstrument(ctx, inst, gap.start, gap.end, reserved)
-			}(inst, gap)
+		gaps := s.unrepaired(ctx, inst.ID, lo, hi)
+		if len(gaps) == 0 {
+			continue
 		}
+		wg.Add(1)
+		go func(inst *venue.Instrument, gaps []span) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+			for i := len(gaps) - 1; i >= 0 && ctx.Err() == nil; i-- {
+				s.log.Info("gap repair", "instrument", inst.ID, "start", pytime.ISO(gaps[i].start), "end", pytime.ISO(gaps[i].end))
+				s.repairInstrument(ctx, inst, gaps[i].start, gaps[i].end, reserved)
+			}
+		}(inst, gaps)
 	}
 	wg.Wait()
 }
+
+// repairParallel bounds the instruments a sweep or startup repair pages at once.
+const repairParallel = 8
 
 // sweepEvery and sweepSpan: the sweeper repairs what live repair left in the last hour
 // (a dropped stream, a failed repair), a little behind the sealer.
@@ -751,12 +767,15 @@ func (s *Service) sweep(ctx context.Context) {
 	s.mu.Unlock()
 	sort.Strings(tokens)
 	hi := pytime.MinuteFloor(s.clock.Now().Add(-sweepLag))
+	var wg sync.WaitGroup
 	for _, token := range tokens {
-		if ctx.Err() != nil {
-			return
-		}
-		s.repairUnrepaired(ctx, token, hi.Add(-sweepSpan), hi, true)
+		wg.Add(1)
+		go func(token string) {
+			defer wg.Done()
+			s.repairUnrepaired(ctx, token, hi.Add(-sweepSpan), hi, true)
+		}(token)
 	}
+	wg.Wait()
 }
 
 // hotAnchors is the anchor of every hot (token, event): the newest obligation's anchor,
