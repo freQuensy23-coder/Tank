@@ -307,9 +307,10 @@ func (s *Service) repairWindows(ctx context.Context, token string, start, end ti
 
 // incompleteRuns is _incomplete_runs: contiguous [start, end) runs of minutes without a
 // complete persisted bar, and the bars of [lo - 1 min, hi) by minute. Only the fields a
-// repair reads are loaded (a full bar row is kilobytes; a 96 h window has 5760 of them).
+// repair reads are loaded (a full bar row is kilobytes; a 96 h window has 5760 of them):
+// these are never written back, a full row is read for that.
 func (s *Service) incompleteRuns(ctx context.Context, iid string, lo, hi time.Time) ([]span, map[int64]map[string]any, error) {
-	rows, err := s.store.Projection(ctx, "mkt.flow_bars_1m", []string{"minute_start", "complete", "last_trade"}, "minute_start", lo.Add(-time.Minute), hi, []string{iid})
+	rows, err := s.store.Projection(ctx, "mkt.flow_bars_1m", []string{"minute_start", "complete", "last_trade", "gap_reason"}, "minute_start", lo.Add(-time.Minute), hi, []string{iid})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -423,6 +424,10 @@ func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, 
 		for m := r.start; m.Before(r.end); m = m.Add(time.Minute) {
 			if bar := bars[m.Unix()]; bar != nil && bar["gap_reason"] == nil {
 				// An unproven minute always says why (never a null reason).
+				bar, err := s.store.Get(context.WithoutCancel(ctx), "mkt.flow_bars_1m", iid+":"+pytime.ISO(m))
+				if err != nil || bar == nil {
+					continue
+				}
 				row := copyRow(bar)
 				row["gap_reason"] = reason
 				s.writeStored(inst, flow.Key{IID: iid, Minute: m.Unix()}, row, bar, "REASON_RECORDED", now)

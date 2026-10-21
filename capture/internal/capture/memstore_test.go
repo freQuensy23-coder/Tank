@@ -111,7 +111,16 @@ func (m *memStore) Projection(ctx context.Context, collection string, fields []s
 	var out []map[string]any
 	for _, id := range ids {
 		rows, _ := m.Range(ctx, collection, field, start, end, map[string]any{"instrument_id": id})
-		out = append(out, rows...)
+		for _, r := range rows {
+			// Only the requested fields, like the PostgreSQL projection.
+			p := make(map[string]any, len(fields))
+			for _, f := range fields {
+				if v, ok := r[f]; ok {
+					p[f] = v
+				}
+			}
+			out = append(out, p)
+		}
 	}
 	return out, nil
 }
