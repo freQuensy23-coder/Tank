@@ -8,21 +8,82 @@ import { stableSkillPlan } from '../../../packages/control-plane-node/src/lib/no
 const registered = new Uint8Array(readFileSync(new URL('./fixtures/tank-registered-skill.zip', import.meta.url)));
 const at='2026-10-19T00:00:00Z';
 const knownWorker=readFileSync(new URL('../../../packages/control-plane-node/src/lib/node-managed-skill-aliases.py',import.meta.url),'utf8');
-function knownClaim(command:string) {
-  const quote=(value:string)=>`'${value.replaceAll("'","'\\''")}'`;
-  const prefix=`python3 -c ${quote(knownWorker)} `;
-  if(!command.startsWith(prefix))throw new Error('Unexpected claim worker source');
-  const parsed=/^(check|claim) '([A-Za-z0-9+/=]+)'$/u.exec(command.slice(prefix.length));
-  if(!parsed)throw new Error('Unexpected claim arguments');
-  expect(JSON.parse(Buffer.from(parsed[2]!,'base64').toString())).toEqual([{name:'tank-data',skill_id:'skill-data',version:'1792364806411000',archive_sha256:'c6d0d6c0eb69b355069ca6c954ff5f477e1003cf47fa73257fb5cfc7765cbe20'}]);
+function knownClaim(command: string, timeout: number, guest: { files: Map<string, Uint8Array>; operations: string[]; binding?: unknown; target?: string; digest?: string }, canonicalRoot: string): string | undefined {
+  const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
+  const prefix = `python3 -c ${quote(knownWorker)} `;
+  if (!command.startsWith(prefix)) return undefined;
+  const suffix = command.slice(prefix.length);
+  const claim = /^(check|claim) '([A-Za-z0-9+/=]+)'$/u.exec(suffix);
+  if (claim) {
+    expect(timeout).toBe(30_000);
+    const bindings = JSON.parse(Buffer.from(claim[2]!, 'base64').toString());
+    expect(bindings).toEqual([{name:'tank-data',skill_id:'skill-data',version:'1792364806411000',archive_sha256:'c6d0d6c0eb69b355069ca6c954ff5f477e1003cf47fa73257fb5cfc7765cbe20'}]);
+    expect(guest.operations).toEqual(claim[1] === 'check' ? [] : ['check']);
+    guest.binding = bindings[0];
+    guest.operations.push(claim[1]!);
+    return 'exit=0\nTANK_STABLE_SKILL_BINDINGS_OK\n';
+  }
+  const batch = /^(stage|materialize|discard) '(\/tmp\/\.openma-skills-[a-f0-9]{32}\/([a-f0-9]{64})\.zip)' '([a-f0-9]{64})'$/u.exec(suffix);
+  if (!batch) throw new Error('Unexpected skill worker arguments');
+  const [, operation, target, filenameDigest, digest] = batch;
+  expect(filenameDigest).toBe(digest);
+  expect(timeout).toBe(operation === 'materialize' ? 120_000 : 30_000);
+  if (operation === 'stage') {
+    expect(guest.operations).toEqual(['check', 'claim']);
+    guest.target = target; guest.digest = digest; guest.operations.push(operation);
+    return 'exit=0\nTANK_STABLE_SKILL_STAGE_OK\n';
+  }
+  expect(target).toBe(guest.target); expect(digest).toBe(guest.digest);
+  if (operation === 'discard') {
+    guest.files.delete(target!);
+    return 'exit=0\nTANK_STABLE_SKILL_DISCARD_OK\n';
+  }
+  expect(guest.operations).toEqual(['check', 'claim', 'stage']);
+  const archive = guest.files.get(target!);
+  expect(archive).toBeInstanceOf(Uint8Array);
+  expect(createHash('sha256').update(archive!).digest('hex')).toBe(digest);
+  const view = new DataView(archive!.buffer, archive!.byteOffset, archive!.byteLength);
+  let offset = 0, storedEntries = 0;
+  while (view.getUint32(offset, true) === 0x04034b50) {
+    expect(view.getUint16(offset + 6, true) & 9).toBe(0);
+    expect(view.getUint16(offset + 8, true)).toBe(0);
+    const compressed = view.getUint32(offset + 18, true);
+    expect(compressed).toBe(view.getUint32(offset + 22, true));
+    offset += 30 + view.getUint16(offset + 26, true) + view.getUint16(offset + 28, true) + compressed;
+    storedEntries++;
+  }
+  expect(view.getUint32(offset, true)).toBe(0x02014b50);
+  const entries = unzipSync(archive!);
+  expect(Object.keys(entries)).toHaveLength(storedEntries);
+  expect(JSON.parse(Buffer.from(entries['__tank_skill_batch__.json']!).toString())).toEqual({
+    version: 1, scopes: [{ binding: guest.binding, canonical_root: canonicalRoot }],
+  });
+  delete entries['__tank_skill_batch__.json'];
+  const binding = guest.binding as { name: string };
+  const canonicalPrefix = canonicalRoot.slice(1) + binding.name + '/';
+  const aliasPrefix = 'home/user/.skills/' + binding.name + '/';
+  expect(Object.keys(entries).length).toBeGreaterThan(0);
+  for (const [path, content] of Object.entries(entries)) {
+    expect(path.split('/').some(part => part === '.' || part === '..' || part === '')).toBe(false);
+    expect(path.includes('\\')).toBe(false);
+    const fromCanonical = path.startsWith(canonicalPrefix);
+    expect(fromCanonical || path.startsWith(aliasPrefix)).toBe(true);
+    const relative = path.slice((fromCanonical ? canonicalPrefix : aliasPrefix).length);
+    expect(entries[(fromCanonical ? aliasPrefix : canonicalPrefix) + relative]).toEqual(content);
+    guest.files.set('/' + path, content);
+  }
+  guest.files.delete(target!); guest.operations.push(operation!);
+  return 'exit=0\nTANK_STABLE_SKILL_FILES_OK\n';
 }
 function session(skills=[{type:'custom',skillId:'skill-data',version:'1792364806411000'}]) {return {id:'alias-test',agent:{id:'agent',name:'Agent',skills,model:{id:'model'},tools:[],mcpServers:[],multiagent:null,system:null,version:1},metadata:{},resources:[],createdAt:at,updatedAt:at} as any;}
 function source(archive=registered,name='tank-data') {return {retrieveSkillVersion:vi.fn(async({version})=>({type:'found',version:{version,name,description:'Data guide'}})),listSkillVersions:vi.fn(async()=>({type:'page',page:{versions:[{version:'1792364806411000',name,description:'Data guide'}]}})),downloadSkillVersion:vi.fn(async()=>({type:'found',file:{content:archive}}))};}
 function setup(s=session(),versions=source()) {
-  const files=new Map<string,Uint8Array>(),commands:string[]=[];
-  const sandbox={setEnvVars:async()=>{},writeFileBytes:async(p:string,b:Uint8Array)=>{files.set(p,b);return p;},exec:async(c:string,t:number)=>{commands.push(c);if(c.startsWith('python3 -c')){knownClaim(c);expect(t).toBe(30000);return 'exit=0\nTANK_STABLE_SKILL_BINDINGS_OK\n';}return 'exit=0\n';}};
+  const files=new Map<string,Uint8Array>(),commands:string[]=[],operations:string[]=[];
+  const guest={files,operations};
+  const canonicalRoot=`/workspace/.openma/skills/skill-data/${s.agent.skills[0]!.version}/`;
+  const sandbox={setEnvVars:async()=>{},writeFileBytes:async(p:string,b:Uint8Array)=>{files.set(p,b);return p;},exec:async(c:string,t:number)=>{commands.push(c);return knownClaim(c,t,guest,canonicalRoot)??'exit=0\n';}};
   const preparer=new NodeManagedSessionInputPreparer({sharedOutputs:true,files:{} as any,skillVersions:versions as any,repositoryCredentials:{} as any,memorySnapshots:{} as any});
-  return {files,commands,run:()=>preparer.prepare({workspaceId:'default',session:s,sandbox:sandbox as any}),sandbox};
+  return {files,commands,operations,run:()=>preparer.prepare({workspaceId:'default',session:s,sandbox:sandbox as any}),sandbox};
 }
 
 describe('stable TDD skill paths using actual resolver/materializer',()=>{
@@ -37,7 +98,8 @@ describe('stable TDD skill paths using actual resolver/materializer',()=>{
     expect(test.files.has('/home/user/.skills/tank-data/references/DATA_GUIDE.md')).toBe(true);
     const [mount]=await resolveNodeManagedSkillMounts(session(),source() as any);
     expect(mount.mountRoot).toBe('/workspace/.openma/skills/skill-data/1792364806411000/tank-data/');
-    expect(test.commands.filter(c=>c.startsWith('python3 -c'))).toHaveLength(2);
+    expect(test.operations).toEqual(['check','claim','stage','materialize']);
+    expect(test.commands.filter(c=>c.startsWith('python3 -c'))).toHaveLength(4);
   });
   it('uses concrete immutable version for latest binding without changing latest descriptor identity',async()=>{
     const s=session([{type:'custom',skillId:'skill-data',version:'latest'}]);const test=setup(s);await test.run();

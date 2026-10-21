@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Hono } from 'hono';
-import { buildManagedSessionExecutionRoutes } from '../src/routes/session-executions';
-import type { SessionsApplicationPort } from '../src/ports/sessions';
+import { buildManagedSessionExecutionRoutes } from '../../../packages/managed-agents-api/src/routes/session-executions';
+import type { SessionsApplicationPort } from '../../../packages/managed-agents-api/src/ports/sessions';
 
 function fixture(found = true) {
   const retrieveSession = vi.fn(async () => ({ type: found ? 'found' : 'not_found' }));

@@ -6,9 +6,10 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 const { validateReplayAttachment } = await import(new URL('packages/control-plane-node/src/lib/tank-retained/replay-attachment.ts', openmaSource));
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 const { NodeRetainedLifecycle } = await import(new URL('packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts', openmaSource));
 const { pinnedBoxLiteProvider } = await import(new URL('packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts', openmaSource));
+const { GUEST_FILE_WORKER } = await import(new URL('packages/control-plane-node/src/lib/tank-retained/guest-file-worker.ts', openmaSource));
 const { RetainedSessionLifecycle } = await import(new URL('packages/control-plane-node/src/lib/tank-retained/retained-session.ts', openmaSource));
 const root=process.env.TANK_AUDIT_OPENMA_ROOT;
 assert.ok(root,'TANK_AUDIT_OPENMA_ROOT required');
@@ -19,7 +20,7 @@ const {ensureRuntimeResourceFenceSchema,SqlRuntimeResourceFencePort,SqlRuntimeOr
 const directory=process.env.TANK_AUDIT_CRASH_DIR??await mkdtemp(join(tmpdir(),'oma-retained-offline-'));
 const database=join(directory,'canonical-resource-pointer.sqlite');
 const sql=await createBetterSqlite3SqlClient(database);await ensureRuntimeResourceFenceSchema(sql);
-const disks=new Map(),calls=[];
+const disks=new Map(),calls=[],children=[];
 let sequence=0,failWorkspace=0,failRemove=0,failAfterAllocation=0,loseFenceAfterAllocation=false,injectedFenceLost=false;
 function native(disk) {
   let invalid=false;
@@ -30,6 +31,24 @@ function native(disk) {
     async stop(){assert.equal(invalid,false);invalid=true;disk.running=false;calls.push(['stop',disk.id]);},
     async exec(command,args=[],env=[]) {
       assert.equal(invalid,false);assert.equal(disk.running,true);
+      if(command==='python3') {
+        const python=process.env.TANK_FILE_IO_TEST_PYTHON;
+        assert.ok(python,'explicit Python3.12 test interpreter required');
+        assert.equal(args[0],'-c');assert.equal(args[1],GUEST_FILE_WORKER);
+        assert.ok(['read','write'].includes(args[2]));
+        assert.equal(args.length,args[2]==='write'?5:4);
+        assert.ok(args[3].startsWith('/')&&!args[3].split('/').includes('..'));
+        const guestArgs=[...args];guestArgs[3]=join(directory,'guest-'+disk.id,args[3].slice(1));
+        const child=spawn(python,guestArgs,{stdio:['pipe','pipe','pipe'],env:{PATH:'/usr/bin:/bin',...Object.fromEntries(env)}});
+        children.push(child);child.stdout.setEncoding('utf8');child.stderr.setEncoding('utf8');
+        const exited=new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',code=>resolve({exitCode:code}));});
+        const output=stream=>{const iterator=stream[Symbol.asyncIterator]();return {async next(){const row=await iterator.next();return row.done?null:row.value;}};};
+        return {async stdin(){return {
+          async write(data){await new Promise((resolve,reject)=>child.stdin.write(data,error=>error?reject(error):resolve()));},
+          async close(){if(child.stdin.destroyed||child.stdin.writableFinished)return;await new Promise((resolve,reject)=>{child.stdin.once('error',reject);child.stdin.end(resolve);});},
+        };},async stdout(){return output(child.stdout);},async stderr(){return output(child.stderr);},
+          async wait(){return exited;},async kill(){child.kill('SIGKILL');await exited;},async id(){return 'exec_worker_'+child.pid;}};
+      }
       let output='';const script=command==='sh'?args.at(-1):command;
       if(command==='mkdir' && args.join(' ')==='-p /workspace' && failWorkspace>0){failWorkspace--;throw Error('injected workspace initialization failure');}
       if(script==='AUDIT_WRITE') {
@@ -43,8 +62,8 @@ function native(disk) {
         async stdout(){let sent=false;return {async next(){if(sent||!output)return null;sent=true;return output;}};},
         async stderr(){return {async next(){return null;}};},async wait(){return {exitCode:0};},async kill(){},async id(){return 'exec_FAKE';}};
     },
-    async copyIn(host,guest){assert.equal(invalid,false);disk.files.set(guest,await readFile(host));},
-    async copyOut(guest,host){assert.equal(invalid,false);await writeFile(host,disk.files.get(guest));},
+    async copyIn(){assert.fail('native copyIn must not be used');},
+    async copyOut(){assert.fail('native copyOut must not be used');},
   };
 }
 const client={
@@ -190,4 +209,4 @@ try {
   assert.equal([...disks.keys()][0],prefixId);assert.equal(disks.size,1);
   await restartedPrefix.archive({...restartedCtx,reason:'archived'});assert.equal(disks.size,0);
   console.log(JSON.stringify({status:'PASS',actual_pinned_provider:true,actual_patched_adapter:true,actual_sql_fence:true,persistent_sqlite_pointer:true,native_client:'SYNTHETIC_NO_VM',retention_scenario_allocation_count:1,failure_compensation:true,partial_idle_retry:true,initial_publication_ambiguous_commit:true,release_ambiguous_commit:true,real_child_process_exit_before_publication:true,durable_allocation_intent_recovery:true,fence_loss_orphan_receipt:true,warm_replay_prefix_revalidation:true,mutable_prefix_excluded_static_identity:true,interrupted_prefix_fail_closed:true,replay_mount_root_inode_stable:true,controller_restart_same_prefix_scope:true,native_mount_visibility:'NOT_PROVED',retained_rootfs_workspace_profile_binary:true,per_exec_secret_rotation:true,cold_archive_reaped:true,calls}));
-} finally {await rm(directory,{recursive:true,force:true});}
+} finally {for(const child of children){if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');}await Promise.all(children.map(child=>child.exitCode!==null||child.signalCode!==null?undefined:new Promise(resolve=>child.once('exit',resolve))));await rm(directory,{recursive:true,force:true});}

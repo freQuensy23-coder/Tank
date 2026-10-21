@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
-import { zipSync } from "fflate";
+import { createHash } from "node:crypto";
+import { zipSync, unzipSync } from "fflate";
 import { describe, expect, it, vi } from "vitest";
 import type { SandboxExecutor } from "@open-managed-agents/sandbox";
 import type { Session } from "@open-managed-agents/managed-agents-application";
@@ -10,20 +11,75 @@ import * as nodeManagedInputs from "../../../packages/control-plane-node/src/lib
 const bytes = (value: string) => new TextEncoder().encode(value);
 
 const knownClaimWorker = readFileSync(new URL('../../../packages/control-plane-node/src/lib/node-managed-skill-aliases.py', import.meta.url), 'utf8');
-function knownClaimCommand(command: string): boolean {
-  const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
+function knownClaimCommand(command: string, timeout: number, guest: { files: Map<string, Uint8Array>; operations: string[]; binding?: unknown; target?: string; digest?: string }, canonicalRoot: string): string | undefined {
+  const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
   const prefix = `python3 -c ${quote(knownClaimWorker)} `;
-  if (!command.startsWith(prefix)) return false;
+  if (!command.startsWith(prefix)) return undefined;
   const suffix = command.slice(prefix.length);
-  const parsed = /^(check|claim) '([A-Za-z0-9+/=]+)'$/u.exec(suffix);
-  if (!parsed) throw new Error('Unexpected claim command');
-  const bindings = JSON.parse(Buffer.from(parsed[2]!, 'base64').toString());
-  if (!Array.isArray(bindings) || bindings.length !== 1 || bindings[0].name !== 'certification-skill'
-      || bindings[0].skill_id !== 'skill_inputs' || bindings[0].version !== '123'
-      || !/^[a-f0-9]{64}$/u.test(bindings[0].archive_sha256)) throw new Error('Unexpected fixture binding');
-  return true;
+  const claim = /^(check|claim) '([A-Za-z0-9+/=]+)'$/u.exec(suffix);
+  if (claim) {
+    expect(timeout).toBe(30_000);
+    const bindings = JSON.parse(Buffer.from(claim[2]!, 'base64').toString());
+    expect(bindings).toEqual([{
+      name: 'certification-skill', skill_id: 'skill_inputs', version: '123', archive_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+    }]);
+    expect(guest.operations).toEqual(claim[1] === 'check' ? [] : ['check']);
+    guest.binding = bindings[0];
+    guest.operations.push(claim[1]!);
+    return 'exit=0\nTANK_STABLE_SKILL_BINDINGS_OK\n';
+  }
+  const batch = /^(stage|materialize|discard) '(\/tmp\/\.openma-skills-[a-f0-9]{32}\/([a-f0-9]{64})\.zip)' '([a-f0-9]{64})'$/u.exec(suffix);
+  if (!batch) throw new Error('Unexpected skill worker arguments');
+  const [, operation, target, filenameDigest, digest] = batch;
+  expect(filenameDigest).toBe(digest);
+  expect(timeout).toBe(operation === 'materialize' ? 120_000 : 30_000);
+  if (operation === 'stage') {
+    expect(guest.operations).toEqual(['check', 'claim']);
+    guest.target = target; guest.digest = digest; guest.operations.push(operation);
+    return 'exit=0\nTANK_STABLE_SKILL_STAGE_OK\n';
+  }
+  expect(target).toBe(guest.target); expect(digest).toBe(guest.digest);
+  if (operation === 'discard') {
+    guest.files.delete(target!);
+    return 'exit=0\nTANK_STABLE_SKILL_DISCARD_OK\n';
+  }
+  expect(guest.operations).toEqual(['check', 'claim', 'stage']);
+  const archive = guest.files.get(target!);
+  expect(archive).toBeInstanceOf(Uint8Array);
+  expect(createHash('sha256').update(archive!).digest('hex')).toBe(digest);
+  const view = new DataView(archive!.buffer, archive!.byteOffset, archive!.byteLength);
+  let offset = 0, storedEntries = 0;
+  while (view.getUint32(offset, true) === 0x04034b50) {
+    expect(view.getUint16(offset + 6, true) & 9).toBe(0);
+    expect(view.getUint16(offset + 8, true)).toBe(0);
+    const compressed = view.getUint32(offset + 18, true);
+    expect(compressed).toBe(view.getUint32(offset + 22, true));
+    offset += 30 + view.getUint16(offset + 26, true) + view.getUint16(offset + 28, true) + compressed;
+    storedEntries++;
+  }
+  expect(view.getUint32(offset, true)).toBe(0x02014b50);
+  const entries = unzipSync(archive!);
+  expect(Object.keys(entries)).toHaveLength(storedEntries);
+  expect(JSON.parse(Buffer.from(entries['__tank_skill_batch__.json']!).toString())).toEqual({
+    version: 1, scopes: [{ binding: guest.binding, canonical_root: canonicalRoot }],
+  });
+  delete entries['__tank_skill_batch__.json'];
+  const binding = guest.binding as { name: string };
+  const canonicalPrefix = canonicalRoot.slice(1) + binding.name + '/';
+  const aliasPrefix = 'home/user/.skills/' + binding.name + '/';
+  expect(Object.keys(entries).length).toBeGreaterThan(0);
+  for (const [path, content] of Object.entries(entries)) {
+    expect(path.split('/').some(part => part === '.' || part === '..' || part === '')).toBe(false);
+    expect(path.includes('\\')).toBe(false);
+    const fromCanonical = path.startsWith(canonicalPrefix);
+    expect(fromCanonical || path.startsWith(aliasPrefix)).toBe(true);
+    const relative = path.slice((fromCanonical ? canonicalPrefix : aliasPrefix).length);
+    expect(entries[(fromCanonical ? aliasPrefix : canonicalPrefix) + relative]).toEqual(content);
+    guest.files.set('/' + path, content);
+  }
+  guest.files.delete(target!); guest.operations.push(operation!);
+  return 'exit=0\nTANK_STABLE_SKILL_FILES_OK\n';
 }
-
 
 function managedSession(): Session {
   return {
@@ -136,9 +192,10 @@ describe("NodeManagedSessionInputPreparer", () => {
   });
 
   it("materializes file, pinned repository revision, and custom skill before execution", async () => {
-    const writeFileBytes = vi.fn(async () => "written");
+    const guest = { files: new Map<string, Uint8Array>(), operations: [] as string[] };
+    const writeFileBytes = vi.fn(async (path: string, content: Uint8Array) => { guest.files.set(path, content); return "written"; });
     const gitCheckout = vi.fn(async () => undefined);
-    const exec = vi.fn(async (command: string) => knownClaimCommand(command) ? "exit=0\nTANK_STABLE_SKILL_BINDINGS_OK\n" : "");
+    const exec = vi.fn(async (command: string, timeout: number) => knownClaimCommand(command, timeout, guest, "/workspace/.openma/skills/skill_inputs/latest/") ?? "");
     const sandbox = {
       writeFileBytes,
       gitCheckout,
@@ -236,18 +293,16 @@ describe("NodeManagedSessionInputPreparer", () => {
       skillId: "skill_inputs",
       version: "123",
     });
-    expect(writeFileBytes).toHaveBeenCalledWith(
-      "/workspace/.openma/skills/skill_inputs/latest/certification-skill/SKILL.md",
-      expect.any(Uint8Array),
-    );
-    expect(writeFileBytes).toHaveBeenCalledWith(
-      "/workspace/.openma/skills/skill_inputs/latest/certification-skill/reference.txt",
-      expect.any(Uint8Array),
-    );
+    for (const [path, content] of Object.entries(unzipSync(skillArchive))) {
+      expect(guest.files.get("/workspace/.openma/skills/skill_inputs/latest/" + path)).toEqual(content);
+      expect(guest.files.get("/home/user/.skills/" + path)).toEqual(content);
+    }
+    expect(guest.operations).toEqual(["check", "claim", "stage", "materialize"]);
   });
 
   it("mounts durable outputs and memory stores before materializing inputs", async () => {
     const order: string[] = [];
+    const guest = { files: new Map<string, Uint8Array>(), operations: [] as string[] };
     const session = managedSession();
     session.resources.push({
       type: "memory_store",
@@ -260,9 +315,9 @@ describe("NodeManagedSessionInputPreparer", () => {
       sessionOutputMountCapabilities: () => ({ durability: "durable" as const }),
       mountSessionOutputs: async () => { order.push("outputs"); },
       mountMemoryStore: async () => { order.push("memory-mount"); },
-      writeFileBytes: async () => { order.push("file-or-skill"); return "written"; },
+      writeFileBytes: async (path: string, content: Uint8Array) => { order.push("file-or-skill"); guest.files.set(path, content); return "written"; },
       gitCheckout: async () => { order.push("repository"); },
-      exec: async (command: string) => knownClaimCommand(command) ? "exit=0\nTANK_STABLE_SKILL_BINDINGS_OK\n" : "",
+      exec: async (command: string, timeout: number) => knownClaimCommand(command, timeout, guest, "/workspace/.openma/skills/skill_inputs/latest/") ?? "",
       readFile: async () => { throw new Error("missing"); },
       registerCommandSecrets: () => undefined,
     } as unknown as SandboxExecutor;
