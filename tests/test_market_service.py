@@ -2692,3 +2692,24 @@ async def test_window_cache_reads_equal_fresh_reads_through_appends_rewrites_and
     if books:
         assert sum("bids" in r for r in held) <= service_module.BOOK_LEVEL_ROWS + 1
     await service.close()
+
+
+def test_window_cache_is_bounded_by_age_and_rows(monkeypatch):
+    from tank.market import service as service_module
+
+    clock = [1000.0]
+    monkeypatch.setattr(service_module.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(service_module, "WINDOW_ROWS", 100)
+
+    def lane(used, size):
+        return {"used": used, "size": size, "rows": {}}
+
+    windows = {
+        ("old",): [lane(1000.0 - service_module.WINDOW_TTL_S - 1, 10)],
+        ("a",): [lane(990.0, 60), lane(995.0, 30)],
+        ("b",): [lane(999.0, 40)],
+    }
+    service_module._bound_windows(windows)
+    assert ("old",) not in windows  # unused past its TTL
+    # 130 rows > 100: the least recently used lane (a, 990) goes first.
+    assert [w["used"] for w in windows[("a",)]] == [995.0] and windows[("b",)][0]["size"] == 40
