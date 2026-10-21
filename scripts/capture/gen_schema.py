@@ -9,14 +9,23 @@ import json
 import sys
 from pathlib import Path
 
-from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES, MARKET_PARTITIONS, MARKET_REQUIRED
+from tank.market_schema import (
+    MARKET_ALIASES,
+    MARKET_COLUMNS,
+    MARKET_IDENTITIES,
+    MARKET_PARTITIONS,
+    MARKET_REQUIRED,
+)
 
 OUT = Path(__file__).resolve().parents[2] / "capture" / "internal" / "schema" / "market_schema.json"
 
 
 def render():
     payload = {
-        "columns": {name: [[column, kind] for column, kind in columns.items()] for name, columns in MARKET_COLUMNS.items()},
+        "columns": {
+            name: [[column, kind] for column, kind in columns.items()]
+            for name, columns in MARKET_COLUMNS.items()
+        },
         "aliases": MARKET_ALIASES,
         "identities": {name: list(identity) for name, identity in MARKET_IDENTITIES.items()},
         "partitions": MARKET_PARTITIONS,

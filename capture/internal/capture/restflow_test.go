@@ -316,3 +316,28 @@ func TestCompleteStoredBarNeverDowngraded(t *testing.T) {
 		t.Fatalf("a complete stored bar was replaced by an incomplete rebuild: %v", row)
 	}
 }
+
+func TestKrakenQuietWindowProvenByConsecutiveIDs(t *testing.T) {
+	r := newRESTRig(t, "kraken")
+	r.v.trades = []fakeTrade{
+		{id: 10, ts: r.base.Add(-90 * time.Second), buy: true},
+		{id: 11, ts: r.base.Add(12 * time.Minute), buy: false},
+	}
+	r.repair(r.base, r.base.Add(10*time.Minute))
+	for m := 0; m < 10; m++ {
+		row := r.bar(minuteOf(r.base, m))
+		if row == nil || row["complete"] != true || row["zero_trade_minute"] != true {
+			t.Fatalf("quiet Kraken minute %d proven empty: %v", m, row)
+		}
+	}
+	// Without the continuing ID (a print is missing), nothing is proven.
+	r = newRESTRig(t, "kraken")
+	r.v.trades = []fakeTrade{
+		{id: 10, ts: r.base.Add(-90 * time.Second), buy: true},
+		{id: 12, ts: r.base.Add(12 * time.Minute), buy: false},
+	}
+	r.repair(r.base, r.base.Add(10*time.Minute))
+	if bars := r.mem.bars(r.inst.ID); len(bars) != 0 {
+		t.Fatalf("a window behind an ID hole proves nothing: %d bars", len(bars))
+	}
+}

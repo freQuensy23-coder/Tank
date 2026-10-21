@@ -1,6 +1,6 @@
 # Tank operations — Linux Compose / ChatGPT subscription
 
-The deployment runs exactly three Compose services: `tank`, `openma`, and PostgreSQL16 `postgres`. Tank includes its Codex OAuth gateway in the same process on internal port8790; OpenMA port8787 and PostgreSQL port5432 are never published. Model requests use the operator's ChatGPT subscription, not an OpenAI API key. Token and spending caps and budget notices are outside V0; usage remains recorded. No actual sign-in or private browser state is needed for offline builds and synthetic tests.
+The deployment runs three Compose services: `tank`, `openma`, and PostgreSQL16 `postgres`. A fourth, `tank-capture` (the separate exchange capture service, [capture/README.md](../capture/README.md)), is in the opt-in Compose profile `capture` and starts only with `--profile capture`. Tank includes its Codex OAuth gateway in the same process on internal port8790; OpenMA port8787 and PostgreSQL port5432 are never published. Model requests use the operator's ChatGPT subscription, not an OpenAI API key. Token and spending caps and budget notices are outside V0; usage remains recorded. No actual sign-in or private browser state is needed for offline builds and synthetic tests.
 
 ## Host and image preparation
 
@@ -44,7 +44,7 @@ The replay evidence integration uses one dedicated `sealed-replay-evidence` volu
 
 ## Start, checks and recovery
 
-Before the first Tank service startup, run the offline `tank calibrate` workflow below and review/apply both measured Jev cutoffs. Then start `tank serve` using the base Compose file. Production also includes `compose.x.yaml`; local development may omit that file when X is explicitly excluded. Source and BASE market collection run within `serve`; there is no separate public capture service command or capture Compose workflow. Record actual coverage and interruptions for acceptance.
+Before the first Tank service startup, run the offline `tank calibrate` workflow below and review/apply both measured Jev cutoffs. Then start `tank serve` using the base Compose file. Production also includes `compose.x.yaml`; local development may omit that file when X is explicitly excluded. Source and BASE market collection run within `serve` unless `TANK_EXTERNAL_CAPTURE=true`; then `tank-capture` (Compose profile `capture`) holds every exchange stream and REST request and `serve` reads the market tables it writes. Rollout: apply migration 045 (`tank db migrate`), set `TANK_REQUEST_LEDGER=true` for `serve`, run `tank-capture` with `TANK_CAPTURE_MODE=shadow` and compare with `scripts/capture/shadow_compare.py`, then set `TANK_EXTERNAL_CAPTURE=true` and `TANK_CAPTURE_MODE=live` together. Record actual coverage and interruptions for acceptance.
 
 Before starting `tank serve`, complete calibration, validate the configured source and instrument identities, and discover live instrument sizes. Exchange fields are interpreted by `semantics.yaml` immediately; there is no runtime meaning self-test or semantic-confidence gate. Missing data, incomplete coverage and stale observations still limit Data Confidence. Exact DefiLlama project IDs and metric availability are recorded in `config/fundamentals_evidence.json`; parent rollups are consumed once, and World Chain ETH gas is not WLD capture.
 

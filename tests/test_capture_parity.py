@@ -1,8 +1,9 @@
-"""tank-capture parity: the same recorded exchange frames through tank.market and the Go port.
+"""tank-capture parity: the same recorded exchange traffic through tank.market and the Go port.
 
 scripts/capture/parity.py runs every fixture of capture/testdata/frames through the
 Python reference and the capture-parity binary and requires identical normalized trades,
-typed rows, flow bars, fingerprints and watermarks.
+typed rows, flow bars, fingerprints and watermarks. scripts/capture/rest_parity.py does
+the same for the recorded REST poll cycles of capture/testdata/rest.
 """
 
 import importlib.util
@@ -52,15 +53,17 @@ def go_environment(tmp_path):
     )
 
 
-def test_go_port_matches_python_reference_on_recorded_frames(tmp_path):
+@pytest.fixture(scope="module")
+def parity_binary(tmp_path_factory):
     if shutil.which("go") is None:
         pytest.skip("Go toolchain not installed")
-    binary = tmp_path / "capture-parity"
+    directory = tmp_path_factory.mktemp("capture-parity")
+    binary = directory / "capture-parity"
     build = subprocess.run(
         ["go", "build", "-o", str(binary), "./cmd/capture-parity"],
         check=False,
         cwd=CAPTURE,
-        env=go_environment(tmp_path),
+        env=go_environment(directory),
         capture_output=True,
         text=True,
         timeout=600,
@@ -68,8 +71,12 @@ def test_go_port_matches_python_reference_on_recorded_frames(tmp_path):
     if build.returncode and ("lookup disabled" in build.stderr or "requires go >=" in build.stderr):
         pytest.skip("Go toolchain or module cache unavailable offline: " + build.stderr.strip()[-300:])
     assert build.returncode == 0, build.stderr
+    return binary
+
+
+def run_parity(name, binary, fixtures):
     result = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "capture" / "parity.py"), "--check", "--go", str(binary)],
+        [sys.executable, str(ROOT / "scripts" / "capture" / name), "--check", "--go", str(binary)],
         check=False,
         cwd=ROOT,
         capture_output=True,
@@ -77,6 +84,13 @@ def test_go_port_matches_python_reference_on_recorded_frames(tmp_path):
         timeout=600,
     )
     assert result.returncode == 0, result.stderr[-4000:]
-    fixtures = sorted((CAPTURE / "testdata" / "frames").glob("*.jsonl.gz"))
     passed = [line for line in result.stdout.splitlines() if line.endswith(" ok")]
     assert fixtures and len(passed) == len(fixtures)
+
+
+def test_go_port_matches_python_reference_on_recorded_frames(parity_binary):
+    run_parity("parity.py", parity_binary, sorted((CAPTURE / "testdata" / "frames").glob("*.jsonl.gz")))
+
+
+def test_go_rest_polls_match_python_reference_on_recorded_responses(parity_binary):
+    run_parity("rest_parity.py", parity_binary, sorted((CAPTURE / "testdata" / "rest").glob("*.json.gz")))

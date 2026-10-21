@@ -547,7 +547,7 @@ func (s *Service) lateMinute(inst *venue.Instrument, t *normalize.Trade) {
 			row := copyRow(stored)
 			row["complete"], row["gap_reason"] = false, "LATE_PRINT_AFTER_SEAL"
 			delete(row, "semantic_fingerprint")
-			s.writeStored(inst, key, row, stored, "LATE_PRINT", s.clock.Now())
+			s.writeRevised(inst, key, row, stored, "LATE_PRINT", s.clock.Now(), true)
 			return
 		}
 		s.queueRepair(inst, span{minute, minute.Add(time.Minute)}, "LATE_PRINT", nil)

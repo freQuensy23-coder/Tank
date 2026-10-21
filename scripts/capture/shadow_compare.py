@@ -8,12 +8,16 @@ JSON with their numbers as decimals.
 
 The rollout gate is a minute complete in both schemas whose compared fields differ: any
 such minute exits with status 1. Minutes complete in one schema only are reported but do
-not fail the gate (the two writers seal and repair on their own schedules).
+not fail the gate (the two writers seal and repair on their own schedules). The USD
+notionals inside the size buckets are valued with each writer's own stablecoin USD sample,
+fetched on its own schedule, so they agree within --usd-tolerance (relative, default
+0.001); quantities and counts agree exactly.
 
   --since/--until ISO bounds, default the 24 h ending SETTLE_MARGIN before now
   --venue V        only this venue (repeatable)
   --json           machine-readable report
   --show N         print up to N differing minutes (default 20)
+  --usd-tolerance  relative tolerance of size-bucket USD notionals (0: exact)
 
 Run: uv run python scripts/capture/shadow_compare.py [--since ISO] [--until ISO] [--venue binance]
 """
@@ -34,6 +38,8 @@ FIELDS = ("buy_qty", "sell_qty", "n_buy", "n_sell", "sum_sq_qty", "size_buckets"
 # Minutes this close to now may still be open or awaiting a head check in either writer.
 SETTLE_MARGIN = timedelta(minutes=5)
 COLUMNS = ("instrument_id", "minute_start", "venue", "market_type", "gap_reason", *FIELDS)
+USD_FIELDS = ("buy_notional", "sell_notional")
+USD_TOLERANCE = Decimal("0.001")
 
 
 def normalized(value):
@@ -60,14 +66,36 @@ def jsonb(value):
     return json.loads(value, parse_float=Decimal) if isinstance(value, str) else value
 
 
-def differing_fields(live, shadow):
+def buckets_differ(a, b, tolerance):
+    """Size buckets differ: any count or quantity, or a USD notional beyond the tolerance."""
+    a, b = normalized(jsonb(a)), normalized(jsonb(b))
+    if not isinstance(a, dict) or not isinstance(b, dict) or set(a) != set(b):
+        return a != b
+    for name in a:
+        x, y = a[name], b[name]
+        if not isinstance(x, dict) or not isinstance(y, dict):
+            if x != y:
+                return True
+            continue
+        for key in set(x) | set(y):
+            u, v = x.get(key), y.get(key)
+            if key in USD_FIELDS and isinstance(u, Decimal) and isinstance(v, Decimal):
+                if abs(u - v) > tolerance * max(abs(u), abs(v)):
+                    return True
+            elif u != v:
+                return True
+    return False
+
+
+def differing_fields(live, shadow, tolerance=USD_TOLERANCE):
     """Compared fields whose values differ between two rows of the same minute."""
     differ = []
     for field in FIELDS:
         a, b = live.get(field), shadow.get(field)
         if field == "size_buckets":
-            a, b = jsonb(a), jsonb(b)
-        if normalized(a) != normalized(b):
+            if buckets_differ(a, b, tolerance):
+                differ.append(field)
+        elif normalized(a) != normalized(b):
             differ.append(field)
     return differ
 
@@ -138,12 +166,12 @@ def add(summary, live, shadow, differ):
         summary["complete_shadow_only"] += 1
 
 
-def compare(live_rows, shadow_rows, *, show=20):
+def compare(live_rows, shadow_rows, *, show=20, tolerance=USD_TOLERANCE):
     """The report of two (instrument_id, minute_start)-ordered row streams."""
     venues, total, examples = {}, empty_summary(), []
     for live, shadow in pairs(live_rows, shadow_rows):
         row = live or shadow
-        differ = differing_fields(live, shadow) if live is not None and shadow is not None else []
+        differ = differing_fields(live, shadow, tolerance) if live is not None and shadow is not None else []
         for summary in (venues.setdefault(venue_of(row), empty_summary()), total):
             add(summary, live, shadow, differ)
         if differ and len(examples) < show:
@@ -232,6 +260,7 @@ def parse(argv):
     parser.add_argument("--shadow-schema", default="mkt_shadow")
     parser.add_argument("--json", action="store_true")
     parser.add_argument("--show", type=int, default=20)
+    parser.add_argument("--usd-tolerance", type=Decimal, default=USD_TOLERANCE)
     args = parser.parse_args(argv)
     now = utcnow().replace(second=0, microsecond=0)
     args.until = parse_time(args.until) if args.until else now - SETTLE_MARGIN
@@ -254,7 +283,7 @@ def main(argv=None):
                 return 2
         live = read(connection, args.live_schema, args.since, args.until, args.venue, "live_bars")
         shadow = read(connection, args.shadow_schema, args.since, args.until, args.venue, "shadow_bars")
-        report = compare(live, shadow, show=args.show)
+        report = compare(live, shadow, show=args.show, tolerance=args.usd_tolerance)
     report.update(
         since=iso(args.since),
         until=iso(args.until),

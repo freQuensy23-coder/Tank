@@ -192,6 +192,7 @@ func (r *restFlow) finish() {
 type pagingInfo struct {
 	proven      []span
 	firstWindow *normalize.Trade // lowest-ID print of [start, end) (Binance, Kraken)
+	firstAfter  *normalize.Trade // lowest-ID print at or after start (Kraken)
 	reference   *normalize.Trade // newest print before start
 	restLast    int64
 	restLastSet bool
@@ -278,6 +279,9 @@ func (s *Service) page(ctx context.Context, inst *venue.Instrument, v Venue, rf 
 					if info.firstWindow == nil || idLess(t.TradeID, info.firstWindow.TradeID) {
 						info.firstWindow = t
 					}
+				}
+				if kraken && !ts.Before(start) && (info.firstAfter == nil || idLess(t.TradeID, info.firstAfter.TradeID)) {
+					info.firstAfter = t
 				}
 				if ts.Before(end) && (cp == nil || !ts.Before(captureStart)) && (!binance || (!ts.Before(lo) && ts.Before(hi))) {
 					if info.minTime.IsZero() || ts.Before(info.minTime) {
@@ -408,14 +412,20 @@ func (s *Service) backfill(ctx context.Context, inst *venue.Instrument, anchor t
 	if cp == nil && key == "kraken.spot" && s.seal.ReferenceAt(inst.ID, start) == nil {
 		s.krakenReference(ctx, inst, v, rf, start)
 	}
-	if len(info.krakenFwd) > 0 && info.firstWindow != nil {
+	if len(info.krakenFwd) > 0 && (info.firstWindow != nil || info.firstAfter != nil) {
 		previousID := ""
 		if cp != nil {
 			previousID = cp.lastTradeID
 		} else if ref := s.seal.ReferenceAt(inst.ID, start); ref != nil {
 			previousID = text(pyval.Map(ref["last_trade"])["trade_id"])
 		}
-		first, ok1 := intID(info.firstWindow.TradeID)
+		// Consecutive per-pair IDs: the first print of the window (or, in a window without
+		// prints, the first one after it) following the print before it proves the window.
+		next := info.firstWindow
+		if next == nil {
+			next = info.firstAfter
+		}
+		first, ok1 := intID(next.TradeID)
 		prev, ok2 := intID(previousID)
 		if previousID != "" && ok1 && ok2 && first == prev+1 {
 			info.proven = append(info.proven, info.krakenFwd...)
@@ -587,6 +597,12 @@ func (s *Service) recordBuilt(b *minuteBuild, complete bool, now time.Time) map[
 // or provisional row is sealed, a complete row is never replaced by an incomplete one nor
 // rewritten when the rebuild reproduces it, any other change is a revision.
 func (s *Service) writeStored(inst *venue.Instrument, key flow.Key, row, stored map[string]any, reason string, now time.Time) {
+	s.writeRevised(inst, key, row, stored, reason, now, false)
+}
+
+// writeRevised is writeStored; with invalidate a complete stored bar may be revised to
+// incomplete (a print it lacks is known but cannot be rebuilt).
+func (s *Service) writeRevised(inst *venue.Instrument, key flow.Key, row, stored map[string]any, reason string, now time.Time, invalidate bool) {
 	version := int64(0)
 	if stored != nil {
 		if v, err := pyval.Int(stored["bar_version"]); err == nil {
@@ -600,7 +616,7 @@ func (s *Service) writeStored(inst *venue.Instrument, key flow.Key, row, stored 
 	}
 	if stored != nil && version >= 1 {
 		storedComplete := stored["complete"] == true
-		if storedComplete && row["complete"] != true {
+		if storedComplete && row["complete"] != true && !invalidate {
 			return
 		}
 		if SameFlow(stored, row) && (stored["complete"] == true) == (row["complete"] == true) &&

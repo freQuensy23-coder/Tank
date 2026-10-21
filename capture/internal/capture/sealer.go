@@ -67,6 +67,7 @@ type chain struct {
 	last      *normalize.Trade
 	lastConn  int64
 	anchor    *flow.TradePoint // where the next bridge starts: the stored cursor or the last print
+	resume    time.Time        // the first minute a disconnect left unproven
 	repairs   []span           // REST repairs queued or running; an open bridge ends far in the future
 	headNext  time.Time
 	heading   bool
@@ -211,6 +212,9 @@ func (s *Sealer) Connected(inst *venue.Instrument, conn int64, at time.Time, hot
 	switch {
 	case c.anchor != nil:
 		lo = pytime.MinuteFloor(c.anchor.TS)
+		if c.resume.After(lo) {
+			lo = c.resume // minutes a head check proved after the last print stand
+		}
 		s.Gap(inst, "RECONNECT", "REST reconciliation pending", c.anchor.TS, at)
 	case hotSince != nil && hotSince.Before(at):
 		// First connection: the escalation backfills the pre-event windows up to the
@@ -264,6 +268,7 @@ func (s *Sealer) Disconnected(inst *venue.Instrument, conn int64, reason string)
 	if c.anchor.TS.After(c.proved) {
 		c.anchor.TS = c.proved
 	}
+	c.resume = pytime.MinuteFloor(c.proved)
 	c.conn = 0
 	c.repairs = append(dropOpen(c.repairs), span{pytime.MinuteFloor(c.proved), time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)})
 }

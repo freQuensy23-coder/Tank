@@ -8,19 +8,28 @@ import (
 	"os"
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/parity"
+	"github.com/freQuensy23-coder/Tank/capture/internal/restparity"
 )
 
 func main() {
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: capture-parity FIXTURE.jsonl.gz")
+	var out *parity.Output
+	var err error
+	switch {
+	case len(os.Args) == 3 && os.Args[1] == "rest":
+		// A recorded REST poll cycle (scripts/capture/rest_parity.py --go).
+		var p *restparity.Payload
+		if p, err = restparity.Load(os.Args[2]); err == nil {
+			out, err = restparity.Run(p)
+		}
+	case len(os.Args) == 2:
+		var fx *parity.Fixture
+		if fx, err = parity.Load(os.Args[1]); err == nil {
+			out, err = parity.Run(fx)
+		}
+	default:
+		fmt.Fprintln(os.Stderr, "usage: capture-parity FIXTURE.jsonl.gz | capture-parity rest FIXTURE.json.gz")
 		os.Exit(2)
 	}
-	fx, err := parity.Load(os.Args[1])
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
-	out, err := parity.Run(fx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

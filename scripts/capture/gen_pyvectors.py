@@ -33,8 +33,11 @@ def literal(rng):
         digits = "".join(rng.choice("0123456789") for _ in range(rng.randint(1, 40)))
         return sign + digits + "E" + str(rng.randint(-30, 30))
     if kind < 0.3:
-        return sign + "0." + "0" * rng.randint(0, 12) + "".join(
-            rng.choice("123456789") for _ in range(rng.randint(1, 8))
+        return (
+            sign
+            + "0."
+            + "0" * rng.randint(0, 12)
+            + "".join(rng.choice("123456789") for _ in range(rng.randint(1, 8)))
         )
     whole = "".join(rng.choice("0123456789") for _ in range(rng.randint(1, 20))).lstrip("0") or "0"
     frac = "".join(rng.choice("0123456789") for _ in range(rng.randint(0, 20)))
@@ -93,7 +96,7 @@ def decimals(rng):
 
 
 def text(rng):
-    pool = "abcXYZ019 _-:./\"\\\n\t\r\b\f\x01\x1f\x7féü€漢😀 "
+    pool = 'abcXYZ019 _-:./"\\\n\t\r\b\f\x01\x1f\x7féü€漢😀 '
     return "".join(rng.choice(pool) for _ in range(rng.randint(0, 12)))
 
 
@@ -143,7 +146,9 @@ def times(rng):
     numbers += [rng.randint(1_600_000_000_000, 1_900_000_000_000) for _ in range(200)]
     numbers += [rng.randint(1_600_000_000_000_000, 1_900_000_000_000_000) for _ in range(100)]
     decimals_ = ["1790249583.872436", "1790249585.0128748", "1688669448.3138"]
-    decimals_ += [f"{rng.randint(1_600_000_000, 1_900_000_000)}.{rng.randint(0, 9999999):07d}" for _ in range(200)]
+    decimals_ += [
+        f"{rng.randint(1_600_000_000, 1_900_000_000)}.{rng.randint(0, 9999999):07d}" for _ in range(200)
+    ]
     floats = [1781654400.1234567] + [rng.uniform(1.6e9, 1.9e9) for _ in range(100)]
     cases = [{"kind": "str", "input": s, "iso": iso(s)} for s in inputs]
     cases += [{"kind": "int", "input": n, "iso": iso(n)} for n in numbers]
@@ -169,7 +174,9 @@ def times(rng):
         ({"x": "2026-10-21T09:00:00Z", "x_precision": "EXACT"}, "x", []),
     ]:
         stamp = propagate_timestamp(record, field, precision_aliases=aliases)
-        precisions.append({"record": record, "field": field, "aliases": aliases, "fields": stamp.fields(field)})
+        precisions.append(
+            {"record": record, "field": field, "aliases": aliases, "fields": stamp.fields(field)}
+        )
     write("time.json.gz", {"times": cases, "precisions": precisions, "parse_check": iso(parse_time(0))})
 
 

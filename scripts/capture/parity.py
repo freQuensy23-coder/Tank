@@ -122,12 +122,15 @@ async def run(path):
     instruments = instruments_of(meta)
     clock = Clock(meta["recorded_at"])
     out = {"trades": [], "rows": [], "bars": [], "fingerprints": {}, "watermarks": {}, "errors": []}
-    with tempfile.TemporaryDirectory() as directory, mock.patch("tank.util.utcnow", clock.utcnow), mock.patch.object(
-        service_module, "utcnow", clock.utcnow
-    ), mock.patch.object(streams, "utcnow", clock.utcnow), mock.patch.object(
-        service_module, "time", clock
-    ), mock.patch.object(books_module, "time", clock), mock.patch.object(streams, "time", clock), mock.patch.dict(
-        norm.QUOTE_USD_HISTORY, clear=True
+    with (
+        tempfile.TemporaryDirectory() as directory,
+        mock.patch("tank.util.utcnow", clock.utcnow),
+        mock.patch.object(service_module, "utcnow", clock.utcnow),
+        mock.patch.object(streams, "utcnow", clock.utcnow),
+        mock.patch.object(service_module, "time", clock),
+        mock.patch.object(books_module, "time", clock),
+        mock.patch.object(streams, "time", clock),
+        mock.patch.dict(norm.QUOTE_USD_HISTORY, clear=True),
     ):
         norm.remember_quote_usd("USDT", [(meta["recorded_at"], USDT_RATE)])
         settings = Settings(
@@ -158,7 +161,9 @@ async def run(path):
             result = await original_put(collection, key, row, immutable=immutable)
             after = service._pending_market.get(collection, {}).get(str(key))
             if after is not None and after is not before:
-                out["rows"].append({"collection": collection, "key": str(key), "row": jsonable(copy.deepcopy(after))})
+                out["rows"].append(
+                    {"collection": collection, "key": str(key), "row": jsonable(copy.deepcopy(after))}
+                )
             return result
 
         async def no_second_path(instrument, row):
@@ -262,7 +267,7 @@ async def bar_row(service, put, bar):
     return service._pending_market["mkt.flow_bars_1m"].pop(key)
 
 
-def flow_bars(acc, instruments, FlowAccumulator, parse_time, iso, timedelta):  # noqa: N803
+def flow_bars(acc, instruments, FlowAccumulator, parse_time, iso, timedelta):
     """Bars with the same coverage proofs, empty minutes and boundaries on both sides."""
     out = []
     for inst in instruments:
@@ -279,7 +284,9 @@ def flow_bars(acc, instruments, FlowAccumulator, parse_time, iso, timedelta):  #
                 last + timedelta(seconds=12, microseconds=345678),
             ],
         )
-        acc.prove_range(iid, first + timedelta(seconds=15), last + timedelta(minutes=1), complete=True, source="PARITY")
+        acc.prove_range(
+            iid, first + timedelta(seconds=15), last + timedelta(minutes=1), complete=True, source="PARITY"
+        )
         middle = first + timedelta(minutes=(len(minutes) // 2))
         acc.prove_range(
             iid,
@@ -296,7 +303,9 @@ def flow_bars(acc, instruments, FlowAccumulator, parse_time, iso, timedelta):  #
         for key in sorted(k for k in acc.bars if k[0] == iid):
             minute = parse_time(key[1])
             bar = acc.bars[key]
-            complete = FlowAccumulator.covered(minute, minute + timedelta(minutes=1), bar.get("_coverage", []))
+            complete = FlowAccumulator.covered(
+                minute, minute + timedelta(minutes=1), bar.get("_coverage", [])
+            )
             out.append(acc.record(key, complete=complete))
     return out
 
@@ -304,7 +313,9 @@ def flow_bars(acc, instruments, FlowAccumulator, parse_time, iso, timedelta):  #
 def digests(out):
     return {
         "trades": [digest(t) for t in out["trades"]],
-        "rows": [{"collection": r["collection"], "key": r["key"], "sha256": digest(r["row"])} for r in out["rows"]],
+        "rows": [
+            {"collection": r["collection"], "key": r["key"], "sha256": digest(r["row"])} for r in out["rows"]
+        ],
         "bars": [digest(b) for b in out["bars"]],
         "fingerprints": out["fingerprints"],
         "watermarks": out["watermarks"],
