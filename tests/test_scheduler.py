@@ -1590,7 +1590,7 @@ async def test_reaction_measurements_are_limited_and_extra_jobs_requeue():
 @pytest.mark.asyncio
 async def test_eval_conditions_budget_stops_cleanly_and_rotates(monkeypatch):
     """03 §3.8 (20 s): a slow batch stops starting conditions after its budget
-    and completes; invalidations go first, then the least recently evaluated."""
+    and completes; the least recently evaluated go first."""
     import tank.scheduler as scheduler_module
 
     repo = MemoryRepository()
@@ -1631,7 +1631,9 @@ async def test_eval_conditions_budget_stops_cleanly_and_rotates(monkeypatch):
     repo.get = tracking_get
     monkeypatch.setattr(scheduler_module, "EVAL_CONDITIONS_BUDGET_S", 60)
     await scheduler.eval_conditions({"cutoff": iso(now)})
-    assert order == ["exit", "old-upgrade", "new-upgrade"]
+    # Least recently touched first; INVALIDATION wins only ties, so a slow
+    # invalidation cannot hold every batch (r107).
+    assert order == ["old-upgrade", "new-upgrade", "exit"]
 
 
 @pytest.mark.asyncio
@@ -1670,3 +1672,54 @@ async def test_late_data_after_a_window_end_does_not_revise_that_window():
     await Scheduler(repo, SimpleNamespace(), Market(), None).detect_late_data(now)
     jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
     assert [job["payload"]["checkpoint"] for job in jobs] == ["POST_1H"]
+
+
+@pytest.mark.asyncio
+async def test_eval_conditions_progresses_when_one_market_read_outlasts_the_budget(monkeypatch):
+    """r107: a single market read took longer than the whole job, so every batch
+    died in its first condition and restarted there. The read now gets only the
+    remaining budget, the attempt is recorded, cheap conditions go first and
+    the next batch starts with the others."""
+    import asyncio
+
+    import tank.scheduler as scheduler_module
+
+    repo = MemoryRepository()
+    now = utcnow()
+    await repo.put("evt.events", "e", {"event_id": "e"})
+
+    def condition(cond_id, token, expr, role="UPGRADE"):
+        return {
+            "cond_id": cond_id,
+            "event_id": "e",
+            "token_id": token,
+            "role": role,
+            "status": "ARMED",
+            "expires_at": iso(now + timedelta(days=1)),
+            "expr": expr,
+        }
+
+    market = {"metric": "dc.class", "window": "W1H", "op": "==", "value": "HIGH"}
+    for row in (
+        condition("slow", "slow-token", market, role="INVALIDATION"),
+        condition("fast", "fast-token", market),
+        condition("fatal", "slow-token", {"metric": "event.contradiction_fatal", "window": "W1H", "op": "==", "value": True}),
+    ):
+        await repo.put("ana.watch_conditions", row["cond_id"], row)
+    reads = []
+
+    async def condition_values(event_id, token_id, cutoff, requirements):
+        reads.append(token_id)
+        if token_id == "slow-token":
+            await asyncio.sleep(5)
+        return {"data_confidence": {"class": "LOW"}}
+
+    monkeypatch.setattr(scheduler_module, "EVAL_CONDITIONS_BUDGET_S", 0.2)
+    scheduler = Scheduler(repo, SimpleNamespace(), None, SimpleNamespace(condition_values=condition_values))
+    await asyncio.wait_for(scheduler.eval_conditions({"cutoff": iso(now)}), 2)
+    assert (await repo.get("ana.watch_conditions", "fatal")).get("last_evaluated_at")  # cheap one first
+    slow = await repo.get("ana.watch_conditions", "slow")
+    assert slow.get("last_attempted_at") and "counters" not in slow
+    await asyncio.wait_for(scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=1))}), 2)
+    assert (await repo.get("ana.watch_conditions", "fast")).get("last_evaluated_at")
+    assert reads[:2] == ["slow-token", "fast-token"]
