@@ -45,12 +45,17 @@ def test_paths_follow_hld_layout_and_books_share_spot_and_perp(tmp_path):
     trades = TradeArchive(tmp_path, instruments=[SPOT, PERP])
     books = BookArchive(tmp_path, instruments=[SPOT, PERP])
     at = HOUR + timedelta(minutes=5)
-    assert trades.path(SPOT["instrument_id"], at) == tmp_path / "raw/trades/binance/spot/ABCUSDT/2026-10-17/12.parquet"
+    assert (
+        trades.path(SPOT["instrument_id"], at)
+        == tmp_path / "raw/trades/binance/spot/ABCUSDT/2026-10-17/12.parquet"
+    )
     assert trades.path(PERP["instrument_id"], at) == (
         tmp_path / "raw/trades/binance/perp_linear/ABCUSDT/2026-10-17/12.parquet"
     )
-    assert books.path(SPOT["instrument_id"], at) == books.path(PERP["instrument_id"], at) == (
-        tmp_path / "raw/books/binance/ABCUSDT/2026-10-17/12.parquet"
+    assert (
+        books.path(SPOT["instrument_id"], at)
+        == books.path(PERP["instrument_id"], at)
+        == (tmp_path / "raw/books/binance/ABCUSDT/2026-10-17/12.parquet")
     )
 
 
@@ -180,7 +185,9 @@ async def test_failed_raw_write_keeps_rows_and_typed_rows_wait_for_raw(setup, mo
         await service.ingest_trade(inst, {"a": 1, "p": "2", "q": "1", "T": now, "m": False})
         await service._flush_flow()
         original = service.trade_archive.write
-        monkeypatch.setattr(service.trade_archive, "write", lambda *a, **k: (_ for _ in ()).throw(OSError("full")))
+        monkeypatch.setattr(
+            service.trade_archive, "write", lambda *a, **k: (_ for _ in ()).throw(OSError("full"))
+        )
         with pytest.raises(OSError):
             await service.flush_market(raw=True)
         assert not await repo.list("mkt.flow_bars_1m")  # no derived bar without its print on disk
@@ -200,7 +207,9 @@ async def test_restart_dedups_old_hour_prints_and_rebuilds_late_minute(setup):
         minute = utcnow().replace(second=0, microsecond=0) - timedelta(minutes=10)
         base = int(minute.timestamp() * 1000)
         for number in range(1, 11):
-            await service.ingest_trade(inst, {"a": number, "p": "2", "q": "3", "T": base + number, "m": False})
+            await service.ingest_trade(
+                inst, {"a": number, "p": "2", "q": "3", "T": base + number, "m": False}
+            )
         await service._flush_flow()
         await service.flush_market(raw=True)
         restarted = MarketService(repo, settings, http=http)
@@ -294,4 +303,32 @@ def test_book_price_index_stays_in_step_with_levels_and_kraken_depth():
     summary = book.summary()
     assert summary["best_bid"] == str(max(book.bids)) and summary["best_ask"] == str(min(book.asks))
     edge = Decimal(summary["mid"]) * Decimal(".98")
-    assert [row[0] for row in summary["bids"]] == [str(p) for p in sorted(book.bids, reverse=True) if p >= edge]
+    assert [row[0] for row in summary["bids"]] == [
+        str(p) for p in sorted(book.bids, reverse=True) if p >= edge
+    ]
+
+
+def test_corrupt_journal_batch_is_a_torn_tail_and_never_blocks_the_seal(tmp_path):
+    import numpy as np
+    import pyarrow as pa
+
+    archive = TradeArchive(tmp_path, instruments=[SPOT], grace_s=0)
+    archive.append(print_(1, HOUR + timedelta(seconds=1)))
+    archive.write(archive.take(), now=HOUR)
+    canonical = archive.path(SPOT["instrument_id"], HOUR)
+    (journal,) = journals(canonical)
+    with journal.open("rb") as handle:
+        schema = pa.ipc.open_stream(handle).schema
+    # A process killed mid-write left a batch whose offsets point outside its data
+    # (prod 2026-10-21 01:11: "Offset invariant failure"); IPC readers parse it anyway.
+    columns = [pa.array(["a" * 12345 if i == 0 else "x"], pa.string()) for i in range(len(schema))]
+    message = pa.RecordBatch.from_arrays(columns, schema=schema).serialize().to_pybytes()
+    offsets = np.array([0, 12345], dtype=np.int32).tobytes()
+    at = message.rindex(offsets)  # the first column's offsets buffer, in the message body
+    message = message[:at] + np.array([12345, -3], dtype=np.int32).tobytes() + message[at + len(offsets) :]
+    with journal.open("ab") as handle:
+        handle.write(message)
+    restarted = TradeArchive(tmp_path, instruments=[SPOT], grace_s=0)
+    assert [r["trade_id"] for r in restarted.read_hour(canonical)] == ["1"]
+    restarted.write({}, now=HOUR + timedelta(hours=2))
+    assert pq.read_table(canonical).column("trade_id").to_pylist() == ["1"] and not journals(canonical)
