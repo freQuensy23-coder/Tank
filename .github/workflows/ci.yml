@@ -1,0 +1,99 @@
+name: ci
+
+on:
+  push:
+    branches: [main, prod-main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen --extra dev
+      - name: no comments
+        run: uv run python scripts/ci/no_comments.py src tests scripts deploy
+      - name: ruff check
+        run: uv run ruff check .
+      - name: ruff format
+        run: uv run ruff format --check .
+
+  lint-go:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - id: gomod
+        run: echo "dirs=$(find . -name go.mod -not -path './vendor/*' -exec dirname {} \; | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-go@v5
+        if: steps.gomod.outputs.dirs != ''
+        with:
+          go-version: stable
+      - name: no comments
+        if: steps.gomod.outputs.dirs != ''
+        run: python3 scripts/ci/no_comments.py ${{ steps.gomod.outputs.dirs }}
+      - name: golangci-lint
+        if: steps.gomod.outputs.dirs != ''
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+          for d in ${{ steps.gomod.outputs.dirs }}; do (cd "$d" && gofmt -l . | tee /dev/stderr | (! read) && go vet ./... && "$(go env GOPATH)/bin/golangci-lint" run ./...); done
+
+  mypy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen --extra dev
+      - run: uv run mypy
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen --extra dev
+      - name: unit tests (3 min budget)
+        timeout-minutes: 3
+        run: uv run pytest -q -n auto --timeout 120 -p no:cacheprovider
+
+  image:
+    needs: [lint-python, lint-go, mypy, test]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: name
+        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}/tank" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.name.outputs.image }}:${{ github.sha }}
+            ${{ steps.name.outputs.image }}:${{ github.ref_name }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

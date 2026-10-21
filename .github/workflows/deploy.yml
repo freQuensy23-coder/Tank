@@ -1,0 +1,46 @@
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: commit whose image to deploy (default the selected branch head)
+        required: false
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    steps:
+      - id: ref
+        run: |
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}/tank:${{ inputs.sha || github.sha }}" >> "$GITHUB_OUTPUT"
+      - name: ssh setup
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.PROD_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          echo "${{ secrets.PROD_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+      - name: pull and restart tank
+        env:
+          IMAGE: ${{ steps.ref.outputs.image }}
+          TARGET: ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }}
+          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          GHCR_USER: ${{ github.repository_owner }}
+        run: |
+          ssh "$TARGET" "IMAGE='$IMAGE' GHCR_USER='$GHCR_USER' GHCR_TOKEN='$GHCR_TOKEN' bash -s" <<'REMOTE'
+          set -euo pipefail
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+          docker pull "$IMAGE"
+          docker tag "$IMAGE" tank-v0:persistent-no-x
+          cd /srv/tank
+          docker compose up -d --no-build tank
+          sleep 20
+          test "$(docker inspect -f '{{.State.Running}}' tank-tank-1)" = true
+          docker inspect -f '{{.State.StartedAt}} {{.Config.Image}}' tank-tank-1
+          REMOTE
