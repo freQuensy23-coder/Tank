@@ -1532,6 +1532,43 @@ async def test_late_data_revisions_coalesce_to_one_queued_job_per_checkpoint():
 
 
 @pytest.mark.asyncio
+async def test_late_revision_is_deferred_so_following_late_completions_fold_into_it():
+    """r114: each late completion after a restart re-queued every touched checkpoint. A late
+    revision now waits LATE_REVISION_DEFER_S, so completions meanwhile fold into it; once it
+    has run, a newer completion queues a new revision (frozen-once and revision history unchanged)."""
+    import tank.scheduler as scheduler_module
+    from tank.util import parse_time
+
+    repo = MemoryRepository()
+    now = utcnow().replace(microsecond=0)
+    anchor = iso(now - timedelta(hours=2))
+    await repo.put(
+        "out.reaction_checkpoints",
+        "e:t:POST_15M",
+        {"event_id": "e", "token_id": "t", "checkpoint": "POST_15M", "revision": 1,
+         "captured_at": iso(now - timedelta(hours=1)), "anchor": {"ts": anchor}},
+    )
+
+    class Market:
+        round = 0
+
+        async def capture_changes(self, since, end):
+            Market.round += 1
+            yield {"change_id": f"CAP-LIVE-{Market.round}", "event_id": "e", "token_id": "t",
+                   "anchor": anchor, "observed_at": iso(now)}
+
+    scheduler = Scheduler(repo, SimpleNamespace(), Market(), None)
+    for minute in range(10):
+        await scheduler.detect_late_data(now + timedelta(minutes=minute))
+    (job,) = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+    assert parse_time(job["run_after"]) == now + timedelta(seconds=scheduler_module.LATE_REVISION_DEFER_S)
+    await repo.put("ops.jobs", job["job_id"], dict(job, status="DONE"))
+    await scheduler.detect_late_data(now + timedelta(minutes=20))
+    jobs = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
+    assert len(jobs) == 2
+
+
+@pytest.mark.asyncio
 async def test_queued_duplicate_late_revision_is_skipped_at_run_time():
     """03 §8.6: with another automatic revision of the same checkpoint still
     queued, a running one returns at once; the queued one measures all data."""
