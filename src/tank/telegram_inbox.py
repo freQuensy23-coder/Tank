@@ -47,6 +47,7 @@ NO_SESSION_TEXT = (
 HINT_TEXT = "Ответьте на карточку Tank или перешлите её боту вместе с вопросом."
 PROMPT_TEXT = "Какой вопрос по этой карточке? Ответьте на это сообщение."
 FAILED_TEXT = "Не удалось получить ответ агента на этот вопрос."
+ARCHIVED_TEXT = "Сессия этой карточки уже закрыта и архивирована, продолжить её нельзя."
 EMPTY_TEXT = "Агент завершил ход без текстового ответа."
 
 
@@ -73,26 +74,31 @@ def question_id_for(chat_id, message_id):
 
 
 async def record_answer(repo, question_id, text, *, status):
-    """Store the agent's answer (or failure) once and queue its Telegram delivery."""
-    async with repo.lock("question:" + question_id):
+    """Store the agent's answer (or failure) once, together with its Telegram delivery job.
+
+    An already answered question re-queues its idempotent delivery job, so a lost enqueue is
+    reconciled by any later call.
+    """
+    async with repo.lock("question:" + question_id), repo.transaction():
         question = await repo.get("out.user_questions", question_id)
-        if question is None or question.get("answer_status"):
-            return question
-        question.update(
-            status=status,
-            answer_status=status,
-            answer_text=text if status == "ANSWERED" and text else None,
-            **collection_clock(utcnow()).fields("answered_at"),
+        if question is None:
+            return None
+        if not question.get("answer_status"):
+            question.update(
+                status=status,
+                answer_status=status,
+                answer_text=text if status == "ANSWERED" and text else None,
+                **collection_clock(utcnow()).fields("answered_at"),
+            )
+            await repo.put("out.user_questions", question_id, question)
+        await repo.enqueue(
+            "TELEGRAM_ANSWER",
+            {"question_id": question_id},
+            question_id,
+            priority=0,
+            max_attempts=5,
+            expires_at=offset_schedule(collection_clock(utcnow()), timedelta(days=1)),
         )
-        await repo.put("out.user_questions", question_id, question)
-    await repo.enqueue(
-        "TELEGRAM_ANSWER",
-        {"question_id": question_id},
-        question_id,
-        priority=0,
-        max_attempts=5,
-        expires_at=offset_schedule(collection_clock(utcnow()), timedelta(days=1)),
-    )
     return question
 
 
@@ -481,6 +487,8 @@ class TelegramInbox:
             text = question.get("answer_text") or EMPTY_TEXT
         elif question.get("answer_status") == "NO_SESSION":
             text = NO_SESSION_TEXT
+        elif question.get("answer_status") == "ARCHIVED":
+            text = ARCHIVED_TEXT
         else:
             text = FAILED_TEXT
         parts = chunks(text)

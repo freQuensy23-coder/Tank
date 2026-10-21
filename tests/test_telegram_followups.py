@@ -358,3 +358,77 @@ async def test_session_with_delivered_card_is_kept_open_instead_of_archived():
     async with httpx.AsyncClient(transport=httpx.MockTransport(openma([], []))) as http:
         service = SessionService(repo, session_settings(), None, http=http)
         assert await service.followable(await repo.get("ops.agent_sessions", "ses_1"))
+
+
+@pytest.mark.asyncio
+async def test_archived_session_answers_archived_instead_of_posting():
+    repo = MemoryRepository()
+    question_id = await ask(repo, session_status="ENDED")
+    posts = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
+        assert await service.send_message(payload) is None
+    assert posts == []
+    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "ARCHIVED"
+    assert (await repo.get("ops.agent_sessions", "ses_1"))["status"] == "ENDED"
+
+
+@pytest.mark.asyncio
+async def test_retried_question_is_never_retired_by_a_concurrent_failure():
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
+    posts = []
+    healthy = openma(posts, [])
+    outage = {"left": 1}
+
+    def handler(request):
+        if request.method == "POST" and outage["left"]:
+            outage["left"] -= 1
+            return httpx.Response(503, json={})
+        return healthy(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        service.start_stream = lambda sid: None
+        with pytest.raises(httpx.HTTPStatusError):
+            await service.send_message(payload)
+        session = await repo.get("ops.agent_sessions", "ses_1")
+        session["status"] = "FAILED"
+        session["message_log"][0]["turn_status"] = "FAILED"
+        await repo.put("ops.agent_sessions", "ses_1", session)
+        await service.send_message(payload)
+        session = await repo.get("ops.agent_sessions", "ses_1")
+        barrier = await service.execution_barrier(session)
+    assert session["status"] == "OPEN" and session["retired_message_ids"] == ["m0"]
+    assert barrier["accepted_input_ids"] == ["in_q"] and len(posts) == 1
+
+
+@pytest.mark.asyncio
+async def test_answered_question_requeues_its_lost_delivery_job():
+    from tank.telegram_inbox import record_answer
+
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    question = await repo.get("out.user_questions", question_id)
+    question.update(answer_status="ANSWERED", status="ANSWERED", answer_text="x")
+    await repo.put("out.user_questions", question_id, question)
+    await record_answer(repo, question_id, "y", status="ANSWERED")
+    await record_answer(repo, question_id, "z", status="ANSWERED")
+    assert len(await repo.list("ops.jobs", filters={"type": "TELEGRAM_ANSWER"})) == 1
+    assert (await repo.get("out.user_questions", question_id))["answer_text"] == "x"
+
+
+@pytest.mark.asyncio
+async def test_terminal_question_job_records_a_failure_answer():
+    from tank.runtime import Runtime
+
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    runtime = object.__new__(Runtime)
+    runtime.repo = repo
+    job = {"type": "AGENT_MESSAGE", "payload": {"kind": "USER_QUESTION", "question_id": question_id}}
+    await runtime.terminal_delivery_failure(job, "EXPIRED")
+    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "FAILED"
+    assert len(await repo.list("ops.jobs", filters={"type": "TELEGRAM_ANSWER"})) == 1

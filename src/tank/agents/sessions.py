@@ -349,7 +349,7 @@ class SessionService:
         return session
 
     async def continuable(self, payload):
-        """A follow-up question reopens its own session; a natively terminated one cannot continue."""
+        """A follow-up reopens a FAILED session; an archived or natively terminated one cannot continue."""
         question_id = payload["question_id"]
         session = await self.repo.get("ops.agent_sessions", payload.get("session_id") or "")
         if (
@@ -360,11 +360,15 @@ class SessionService:
         ):
             await record_answer(self.repo, question_id, None, status="NO_SESSION")
             return False
-        if session.get("status") in ("FAILED", "ENDED"):
+        if session.get("status") == "ENDED":
+            await record_answer(self.repo, question_id, None, status="ARCHIVED")
+            return False
+        own = sha256(payload)
+        if session.get("status") == "FAILED" or own in session.get("retired_message_ids", []):
             async with self.repo.lock("session:" + session["session_id"]):
                 current = await self.repo.get("ops.agent_sessions", session["session_id"])
-                if current.get("status") in ("FAILED", "ENDED"):
-                    retired = set(current.get("retired_message_ids", []))
+                retired = set(current.get("retired_message_ids", []))
+                if current.get("status") == "FAILED":
                     retired.update(
                         row["message_id"]
                         for row in current.get("message_log", [])
@@ -382,9 +386,10 @@ class SessionService:
                         runtime_status="IDLE",
                         active_message_id=None,
                         pending_retry_event=None,
-                        retired_message_ids=sorted(retired),
                     )
-                    await self.repo.put("ops.agent_sessions", current["session_id"], current)
+                retired.discard(own)
+                current["retired_message_ids"] = sorted(retired)
+                await self.repo.put("ops.agent_sessions", current["session_id"], current)
         return True
 
     async def question_context(self, question_id):
