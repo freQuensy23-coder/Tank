@@ -124,6 +124,13 @@ class Repository(Protocol):
     def iter_range(self, collection, time_field, *, start=None, end=None, filters=None, batch_size=10000): ...
 
 
+# Job types whose RUNNING count is capped at claim time. A REACTION_CAPTURE holds a
+# pooled connection through long reads; a backlog of them took 6 of 8 workers and
+# drained the pool (r110, 03:52Z), so one runs at a time and other types never wait.
+RUNNING_CAPS = {"REACTION_CAPTURE": 1}
+_CLAIM_LOCK = int.from_bytes(hashlib.sha256(b"tank:job_claim").digest()[:8], "big", signed=True)
+
+
 def _table(collection):
     if collection not in TABLE_COLUMNS:
         raise ValueError(f"Unknown collection: {collection}")
@@ -400,6 +407,15 @@ class MemoryRepository(QueueMixin):
                     job.update(collection_clock().fields("finished_at"))
                 elif parse_time(job["run_after"]) <= now:
                     candidates.append(job)
+            running = {}
+            for job in self._data.get("ops.jobs", {}).values():
+                if job["status"] == "RUNNING":
+                    running[job["type"]] = running.get(job["type"], 0) + 1
+            candidates = [
+                job
+                for job in candidates
+                if running.get(job["type"], 0) < RUNNING_CAPS.get(job["type"], 10**9)
+            ]
             if not candidates:
                 return None
             job = min(candidates, key=lambda r: (r["priority"], r["run_after"], r["job_id"]))
@@ -969,6 +985,8 @@ class PostgresRepository(QueueMixin):
     async def claim_job(self):
         async with self.transaction():
             conn = self._conn()
+            # Claims serialize so two workers cannot both see a capped type below its cap.
+            await conn.execute("SELECT pg_advisory_xact_lock(%s)", (_CLAIM_LOCK,))
             await conn.execute(
                 "UPDATE ops.jobs SET status='EXPIRED', document=jsonb_set(document,'{status}','\"EXPIRED\"') WHERE status='QUEUED' AND expires_at <= now()"
             )
@@ -976,14 +994,20 @@ class PostgresRepository(QueueMixin):
                 "UPDATE ops.jobs SET status='FAILED', document=jsonb_set(document,'{status}','\"FAILED\"') WHERE status='QUEUED' AND attempts >= max_attempts AND coalesce((document->>'recovery_reclaim')::boolean,false)=false"
             )
             row = await (
-                await conn.execute("""UPDATE ops.jobs SET status='RUNNING',
+                await conn.execute(
+                    """UPDATE ops.jobs SET status='RUNNING',
               attempts=attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END,
               document=document||jsonb_build_object('status','RUNNING','recovery_reclaim',false,
                 'attempts',attempts+CASE WHEN document->>'recovery_reclaim'='true' THEN 0 ELSE 1 END)
-              WHERE storage_key=(SELECT storage_key FROM ops.jobs WHERE status='QUEUED' AND run_after<=now()
+              WHERE storage_key=(SELECT storage_key FROM ops.jobs j WHERE status='QUEUED' AND run_after<=now()
                 AND (expires_at IS NULL OR expires_at>now())
                 AND (attempts<max_attempts OR document->>'recovery_reclaim'='true')
-                ORDER BY priority,run_after,storage_key FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING document""")
+                AND NOT EXISTS (SELECT 1 FROM unnest(%s::text[], %s::int[]) AS c(type, cap)
+                  WHERE c.type=j.type
+                  AND (SELECT count(*) FROM ops.jobs r WHERE r.status='RUNNING' AND r.type=c.type)>=c.cap)
+                ORDER BY priority,run_after,storage_key FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING document""",
+                    (list(RUNNING_CAPS), list(RUNNING_CAPS.values())),
+                )
             ).fetchone()
             return row["document"] if row else None
 

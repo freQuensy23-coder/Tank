@@ -832,3 +832,34 @@ async def test_lock_waiters_do_not_drain_the_pool(repo):
     release.set()
     await asyncio.wait_for(asyncio.gather(hold, *waiters), timeout=60)
     assert sorted(order) == list(range(40))
+
+
+async def test_one_reaction_capture_runs_at_a_time_and_other_jobs_do_not_wait(repo):
+    if isinstance(repo, PostgresRepository):
+        async with repo.transaction():
+            await repo._conn().execute("DELETE FROM ops.jobs WHERE status IN ('QUEUED','RUNNING')")
+    captures = [
+        await repo.enqueue("REACTION_CAPTURE", {"n": n}, new_id("idem"), priority=0) for n in range(3)
+    ]
+    other = await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
+    first = await repo.claim_job()
+    assert first["job_id"] == captures[0]["job_id"]
+    # The higher-priority captures are still due, but one is running: the next claim
+    # skips them and takes the lower-priority job.
+    assert (await repo.claim_job())["job_id"] == other["job_id"]
+    assert await repo.claim_job() is None
+    await repo.finish_job(first["job_id"])
+    assert (await repo.claim_job())["job_id"] == captures[1]["job_id"]
+
+
+async def test_concurrent_claims_respect_the_capture_cap(repo):
+    if not isinstance(repo, PostgresRepository):
+        pytest.skip("Concurrent claims require PostgreSQL")
+    async with repo.transaction():
+        await repo._conn().execute("DELETE FROM ops.jobs WHERE status IN ('QUEUED','RUNNING')")
+    for n in range(6):
+        await repo.enqueue("REACTION_CAPTURE", {"n": n}, new_id("idem"), priority=0)
+    for _ in range(3):
+        await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
+    claimed = [job for job in await asyncio.gather(*(repo.claim_job() for _ in range(8))) if job]
+    assert sorted(job["type"] for job in claimed) == ["DELIVER"] * 3 + ["REACTION_CAPTURE"]
