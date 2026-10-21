@@ -805,7 +805,9 @@ class MarketService:
                 else None
             )
             if provider:
-                await shared_request_budgets.acquire(provider, 1 if provider == "kraken" else 5, 1)
+                await shared_request_budgets.acquire(
+                    provider, 1 if provider == "kraken" else 5, 1, priority=priority
+                )
             if host in ("api.binance.com", "fapi.binance.com"):
                 path = httpx.URL(url).path
                 weight = binance_request_weight(host, path, kwargs.get("params", {}))
@@ -815,18 +817,23 @@ class MarketService:
                         3000 if host == "api.binance.com" else 1200,
                         60,
                         weight=weight,
+                        priority=priority,
                     )
                 if host == "fapi.binance.com" and path in (
                     "/fapi/v1/fundingRate",
                     "/fapi/v1/fundingInfo",
                 ):
-                    await shared_request_budgets.acquire("binance.usdm.funding", 250, 300)
+                    await shared_request_budgets.acquire("binance.usdm.funding", 250, 300, priority=priority)
                 if host == "fapi.binance.com" and path == "/futures/data/openInterestHist":
-                    await shared_request_budgets.acquire("binance.usdm.statistics", 500, 300)
+                    await shared_request_budgets.acquire(
+                        "binance.usdm.statistics", 500, 300, priority=priority
+                    )
             for budget_key, capacity, window, charge in public_request_constraints(
                 host, httpx.URL(url).path, kwargs.get("params", {}), kwargs.get("json", {})
             ):
-                await shared_request_budgets.acquire(budget_key, capacity, window, weight=charge)
+                await shared_request_budgets.acquire(
+                    budget_key, capacity, window, weight=charge, priority=priority
+                )
 
         for attempt in range(4):
             # Waiting for a weighted repair budget must not own the HTTP slot:
