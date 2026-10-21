@@ -332,3 +332,32 @@ def test_corrupt_journal_batch_is_a_torn_tail_and_never_blocks_the_seal(tmp_path
     assert [r["trade_id"] for r in restarted.read_hour(canonical)] == ["1"]
     restarted.write({}, now=HOUR + timedelta(hours=2))
     assert pq.read_table(canonical).column("trade_id").to_pylist() == ["1"] and not journals(canonical)
+
+
+def test_seal_casts_a_foreign_column_type_and_isolates_a_failing_hour(tmp_path, monkeypatch, caplog):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    archive = TradeArchive(tmp_path, instruments=[SPOT], grace_s=0)
+    archive.append(print_(1, HOUR + timedelta(seconds=1)))
+    archive.write(archive.take(), now=HOUR)
+    canonical = archive.path(SPOT["instrument_id"], HOUR)
+    # An existing hour file written by another writer: one column typed int64, one all-null.
+    rows = pa.table({"trade_id": pa.array([7], pa.int64()), "ts": pa.array([None], pa.null())})
+    pq.write_table(rows, canonical)
+    other = archive.path(SPOT["instrument_id"], HOUR + timedelta(hours=1))
+    archive.append(print_(2, HOUR + timedelta(hours=1, seconds=1)))
+    archive.write(archive.take(), now=HOUR)  # neither hour has finished yet
+    real_seal = archive.seal
+
+    def seal(path):
+        if Path(path) == canonical and not getattr(seal, "failed", False):
+            seal.failed = True
+            raise OSError("disk hiccup")
+        return real_seal(path)
+
+    monkeypatch.setattr(archive, "seal", seal)
+    sealed = archive.seal_due(HOUR + timedelta(hours=3))
+    assert str(other) in sealed and str(canonical) not in sealed and journals(canonical)  # kept, retried
+    assert str(canonical) in archive.seal_due(HOUR + timedelta(hours=3))
+    assert sorted(pq.read_table(canonical).column("trade_id").to_pylist()) == ["1", "7"]
