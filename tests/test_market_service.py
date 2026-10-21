@@ -1968,7 +1968,11 @@ async def test_hot_series_poll_context_on_their_own_schedule(setup):
     service.poll_once = poll_once
     await asyncio.wait_for(asyncio.gather(service._instrument_loop(inst), service._hot_context_loop(inst)), 5)
     assert (True, False, False) in polls  # base: klines only while hot
-    assert (False, True, True) in polls  # hot context: ticker and derivatives
+    assert (False, True, False) in polls and (
+        False,
+        False,
+        True,
+    ) in polls  # hot context: ticker, then derivatives
     await service.close()
 
 
@@ -2142,3 +2146,48 @@ async def test_snapshot_anchors_yield_widest_first_and_equal_single_snapshots(se
         assert sum("asks" in b for b in snapshot["books"]) <= BOOK_LEVEL_ROWS + 1
     assert len(shared[0][1]["books"]) > len(shared[-1][1]["books"])
     await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_never_queues_behind_a_running_flush(setup):
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+    flushes = []
+    real = service.flush_market
+
+    async def counted(**kwargs):
+        flushes.append(kwargs)
+        return await real(**kwargs)
+
+    service.flush_market = counted
+    async with service._market_flush_lock:  # another task is flushing (and may wait for a connection)
+        await asyncio.wait_for(service.snapshot(inst["token_id"], utcnow()), 10)
+    assert flushes == []
+    await service.snapshot(inst["token_id"], utcnow())
+    assert len(flushes) == 1
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_hot_ticker_is_polled_before_and_apart_from_derivatives(setup):
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+    service._stop = asyncio.Event()
+    service._hot_since = {inst["token_id"]: utcnow()}
+    service.thresholds.update(hot_poll_interval_s=0.01)
+    calls = []
+
+    async def poll_once(iid, *, derivatives=True, klines=True, ticker=True):
+        calls.append((ticker, derivatives))
+        if derivatives:
+            raise RuntimeError("derivatives source down")
+        if len(calls) >= 4:
+            service._stop.set()
+
+    service.poll_once = poll_once
+    await asyncio.wait_for(service._hot_context_loop(inst), 5)
+    assert calls[:2] == [
+        (True, False),
+        (False, True),
+    ]  # the ticker first; a derivatives failure never skips it
+    await service.close()

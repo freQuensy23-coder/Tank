@@ -106,6 +106,9 @@ REFERENCE_VENUES = ("binance", "coinbase", "okx", "kraken", "bybit")
 # HOT tickers, OI and funding are polled this often so that their age at any minute cutoff
 # stays within the 60 s HOT cadence of 03 §5.1 despite poll and loop latency.
 HOT_POLL_S = 45
+# Finished raw hours are sealed in their own pass, a few per pass.
+SEAL_PASS_S, SEALS_PER_PASS = 10, 2
+BOOK_SAVE_S = 8
 # A reused dependency head is recomputed at least this often (retention deletes and other
 # processes are not in the write clock).
 HEAD_REUSE_S = 300
@@ -483,8 +486,10 @@ class MarketService:
         started = time.monotonic()
 
         def write():
-            result = self.trade_archive.write(trades)
-            booked = self.book_archive.write(books)
+            # Seals run in _seal_loop: a backlog of finished hours (33 at once on r109 after
+            # repairs) must never hold this flush, and with it every typed write, for minutes.
+            result = self.trade_archive.write(trades, seal_limit=0)
+            booked = self.book_archive.write(books, seal_limit=0)
             return result["rows"] + booked["rows"], len(result["sealed"]) + len(booked["sealed"])
 
         try:
@@ -526,6 +531,22 @@ class MarketService:
             )
             self._raw_logged = time.monotonic()
             self._raw_stats = {"rows": 0, "sealed": 0, "writes": 0, "max_write_s": 0.0, "max_pending": 0}
+
+    async def _seal_loop(self):
+        """Seal finished quiet hours a few at a time, outside the market flush."""
+        while not self._stop.is_set():
+            try:
+                sealed = await asyncio.to_thread(
+                    lambda: [
+                        *self.trade_archive.seal_due(limit=SEALS_PER_PASS),
+                        *self.book_archive.seal_due(limit=SEALS_PER_PASS),
+                    ]
+                )
+                self._raw_stats["sealed"] += len(sealed)
+            except Exception as exc:  # noqa: BLE001 - the next pass retries; journals stay on disk
+                log.warning("seal pass failed: %s", type(exc).__name__)
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), SEAL_PASS_S)
 
     async def close(self):
         try:
@@ -1219,12 +1240,14 @@ class MarketService:
         iid = instrument["instrument_id"]
         if not self.books[iid].verified:
             return  # summarize only a checksum-verified state (the next one is <= 1 s away)
-        # 10 s summaries on a fixed wall-clock grid (:00, :10, ...), from the first
-        # update at or after each grid point, so a cutoff finds one at most 10 s old.
+        # Summaries on a fixed wall-clock grid, from the first update at or after each grid
+        # point, so a cutoff finds one younger than the 10 s cadence.
         now = time.time()
         if self._book_due.get(iid, 0) > now:
             return
-        interval = float(self.thresholds.get("book_interval_s", 10))
+        # The grid is a little finer than the cadence: frame gaps and loop lag (r109:
+        # hyperliquid books 10.28 s old) must not push the age past it.
+        interval = float(self.thresholds.get("book_save_interval_s", BOOK_SAVE_S))
         self._book_due[iid] = (now // interval + 1) * interval
         # Summarize a frozen copy in the thread pool; a crossed book found there is
         # recorded on the live book exactly as an in-place summary would.
@@ -4177,7 +4200,10 @@ class MarketService:
         ids = {r["instrument_id"] for r in instruments}
         self._register_capture_boundaries(ids, cutoff, anchor)
         await self._flush_flow(allow_recovery=False)
-        await self.flush_market()
+        # Callers can hold a DB connection (a job lock) that a running flush is waiting for:
+        # never queue behind it; that flush already carries the pending rows it took.
+        if not self._market_flush_lock.locked():
+            await self.flush_market()
         result["flow_segments"] = []
         result["reference_points"] = []
         snapshot_end = cutoff_dt + timedelta(microseconds=1)
@@ -4741,12 +4767,15 @@ class MarketService:
                     await asyncio.wait_for(self._stop.wait(), 5)
                 continue
             started = time.monotonic()
-            try:
-                await self.poll_once(iid, klines=False)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
-                await self._gap(instrument, "POLL", exc)
+            # The ticker first and on its own: it must not wait behind (or fail with) the
+            # heavier derivative reads (r109: hyperliquid ticker 96.7 s old at a cutoff).
+            for kinds in ({"derivatives": False}, {"ticker": False}):
+                try:
+                    await self.poll_once(iid, klines=False, **kinds)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
+                    await self._gap(instrument, "POLL", exc)
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), max(1, interval - (time.monotonic() - started)))
 
@@ -4899,6 +4928,7 @@ class MarketService:
                 asyncio.create_task(self._hot_context_loop(inst)) for inst in self.instruments.values()
             ]
             workers.append(asyncio.create_task(self._warm_series_counts()))
+            workers.append(asyncio.create_task(self._seal_loop()))
             workers.append(asyncio.create_task(self._supply_loop()))
             workers.append(
                 asyncio.create_task(
