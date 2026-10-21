@@ -3256,14 +3256,18 @@ class MarketService:
                 and previous["assembled_at"] is not None
                 and parse_time(assembled_at) < parse_time(previous["assembled_at"])
             )
+            hidden = set()
             if behind:
                 # An assembly clock older than the cursor's: a reaction capture keeps the
                 # clock it started with while live snapshots advance it, and a rebuild per
-                # switch was most of the loop on r117. The cursor serves it as it stands
-                # when nothing in its range was recorded between the two clocks.
-                reset = upper_open > previous["upper_open"] or await self._klines_recorded_between(
-                    iid, assembled_at, previous["assembled_at"], previous["upper_open"]
-                )
+                # switch was most of the loop on r117. Storage holds one version per bar, so
+                # a read at the older clock is the cursor's window without the bars recorded
+                # after that clock; the cursor itself stays as the live snapshots left it.
+                reset = upper_open > previous["upper_open"]
+                if not reset:
+                    hidden = await self._klines_recorded_between(
+                        iid, assembled_at, previous["assembled_at"], upper_open
+                    )
             if not reset and (heads, start, cutoff) == previous["served"]["request"]:
                 return dict(previous["series"], coverage_count=coverage_count)
             state_start = start - margin if reset else previous["start"]
@@ -3403,7 +3407,15 @@ class MarketService:
                 opens, points = times[low:high], values[low:high]
                 valid, known = complete[low:high], precise[low:high]
                 append_only, changed_from = False, None
-                if served:
+                if hidden:
+                    gone = {microseconds(at) for at in hidden}
+                    keep = [i for i, stamp in enumerate(opens) if stamp not in gone]
+                    opens = array("q", (opens[i] for i in keep))
+                    points = array("d") if kind == "price" else []
+                    points.extend(values[low + i] for i in keep)
+                    valid = bytearray(valid[i] for i in keep)
+                    known = bytearray(known[i] for i in keep)
+                elif served:
                     served_low, served_high = (
                         microseconds(served["start"]),
                         microseconds(served["upper_open"]),
@@ -3437,7 +3449,7 @@ class MarketService:
                 append_only,
                 changed_from,
             ) = await asyncio.to_thread(window)
-            fingerprint = sha256([state_fingerprint, iso(start), iso(upper_open)])
+            fingerprint = sha256([state_fingerprint, iso(start), iso(upper_open), sorted(hidden)])
             series = {
                 "times_us": output_times,
                 "values": output_values,
@@ -3477,15 +3489,17 @@ class MarketService:
                 "series": series,
                 "unknown_availability": unknown_availability,
             }
-            if captured_rows is None:
+            # A read at an older clock leaves the cursor and its served chain to the live reads.
+            if captured_rows is None and not (behind and not reset):
                 cache[key] = state
                 while len(cache) > 256:
                     cache.pop(next(iter(cache)))
             return series
 
     async def _klines_recorded_between(self, iid, after, upto, market_end):
-        """Whether a kline of the instrument opened by `market_end` was recorded in (after, upto]."""
-        async for _ in self.repo.iter_late_arrivals(
+        """Open times of the instrument's klines opened by `market_end` and recorded in (after, upto]."""
+        found = set()
+        async for row in self.repo.iter_late_arrivals(
             "mkt.klines_1m",
             "recorded_at",
             "open_time",
@@ -3493,10 +3507,9 @@ class MarketService:
             end=parse_time(upto) + timedelta(microseconds=1),
             market_end=market_end,
             filters={"instrument_id": iid},
-            batch_size=1,
         ):
-            return True
-        return False
+            found.add(row["open_time"])
+        return found
 
     async def _condition_heads(self, collection, field, start, cutoff, assembled_at, filters):
         """The three dependency heads of a window in one round trip. A head counts only rows

@@ -614,7 +614,7 @@ async def test_rolling_kline_cursor_serves_an_earlier_checkpoint_without_rereadi
 
 
 @pytest.mark.asyncio
-async def test_rolling_kline_cursor_serves_an_older_assembly_clock_unless_a_row_arrived_between(setup):
+async def test_rolling_kline_cursor_serves_an_older_assembly_clock_without_later_rows(setup):
     repo, settings, inst = setup
     start = (utcnow() - timedelta(hours=3)).replace(second=0, microsecond=0)
     early = iso(utcnow() - timedelta(minutes=30))
@@ -673,7 +673,7 @@ async def test_rolling_kline_cursor_serves_an_older_assembly_clock_unless_a_row_
         await series(service, iso(), cutoff=16)
         reads.clear()
         rebuilt = await series(service, older)
-        assert reads  # rebuilt for the older clock
+        assert not reads  # the cursor less the bar recorded after the older clock
         assert 99.0 not in list(rebuilt["values"])
         repo.iter_market_projection = original
         async with httpx.AsyncClient() as other:
