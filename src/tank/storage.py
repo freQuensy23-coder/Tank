@@ -1368,8 +1368,45 @@ async def _prune_market(self, before, *, book_before=None):
             from psycopg import sql
 
             await self.maintain_partitions(include_history=False)
+            # Hypertables (TimescaleDB) lose whole old chunks outside preserved days: the
+            # disk is returned and compressed chunks are not rewritten row by row.
+            installed = await (
+                await self._conn().execute(
+                    "SELECT to_regclass('timescaledb_information.chunks') IS NOT NULL AS installed"
+                )
+            ).fetchone()
+            hypertables = set()
+            if installed["installed"]:
+                rows = await (
+                    await self._conn().execute(
+                        "SELECT hypertable_schema||'.'||hypertable_name AS name, chunk_schema, chunk_name, "
+                        "range_start, range_end FROM timescaledb_information.chunks WHERE range_end <= %s",
+                        (cutoff,),
+                    )
+                ).fetchall()
+                dropped = 0
+                for row in rows:
+                    if row["name"] not in temporal:
+                        continue
+                    if any(row["range_start"] < end and start < row["range_end"] for start, end in spans):
+                        continue
+                    await self._conn().execute(
+                        sql.SQL("DROP TABLE {}").format(
+                            sql.Identifier(row["chunk_schema"], row["chunk_name"])
+                        )
+                    )
+                    dropped += 1
+                counts["hypertable_chunks_dropped"] = dropped
+                rows = await (
+                    await self._conn().execute(
+                        "SELECT hypertable_schema||'.'||hypertable_name AS name FROM timescaledb_information.hypertables"
+                    )
+                ).fetchall()
+                hypertables = {row["name"] for row in rows}
             await self._conn().execute("SELECT set_config('tank.retention_purge','on',true)")
             for collection, ts in temporal.items():
+                if collection in hypertables:
+                    continue
                 age = cutoff
                 args = [age]
                 clauses = []
