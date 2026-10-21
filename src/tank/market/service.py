@@ -109,6 +109,8 @@ HOT_POLL_S = 45
 # Finished raw hours are sealed in their own pass, a few per pass.
 SEAL_PASS_S, SEALS_PER_PASS = 10, 2
 BOOK_SAVE_S = 8
+# The event loop is reported stalled (stacks logged) when its heartbeat is this stale.
+LOOP_STALL_S = 10
 # A reused dependency head is recomputed at least this often (retention deletes and other
 # processes are not in the write clock).
 HEAD_REUSE_S = 300
@@ -531,6 +533,44 @@ class MarketService:
             )
             self._raw_logged = time.monotonic()
             self._raw_stats = {"rows": 0, "sealed": 0, "writes": 0, "max_write_s": 0.0, "max_pending": 0}
+
+    async def _loop_watchdog(self):
+        """Heartbeat for a daemon thread that logs the event loop thread's stack (and every
+        busy worker thread's) when the loop has not run for LOOP_STALL_S: a stall names its
+        culprit (r109: 160 s without a log line, MainThread on CPU)."""
+        import sys
+        import threading
+        import traceback
+
+        beat = [time.monotonic()]
+        loop_thread = threading.get_ident()
+
+        def watch():
+            reported = 0.0
+            while not self._stop.is_set():
+                time.sleep(1)
+                stale = time.monotonic() - beat[0]
+                if stale < LOOP_STALL_S or time.monotonic() - reported < 30:
+                    continue
+                reported = time.monotonic()
+                frames = sys._current_frames()
+                stack = "".join(traceback.format_stack(frames.get(loop_thread), limit=40))
+                others = [
+                    f"thread {ident}: "
+                    + " < ".join(f"{f.name}:{f.lineno}" for f in traceback.extract_stack(frame)[-6:])
+                    for ident, frame in frames.items()
+                    if ident not in (loop_thread, threading.get_ident())
+                    and "tank" in "".join(f.filename for f in traceback.extract_stack(frame))
+                ]
+                log.warning(
+                    "event loop stalled %.0fs; loop thread stack:\n%s\n%s", stale, stack, "\n".join(others)
+                )
+
+        threading.Thread(target=watch, name="loop-watchdog", daemon=True).start()
+        while not self._stop.is_set():
+            beat[0] = time.monotonic()
+            with suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(self._stop.wait(), 1)
 
     async def _seal_loop(self):
         """Seal finished quiet hours a few at a time, outside the market flush."""
@@ -1450,6 +1490,7 @@ class MarketService:
             await self._put("mkt.flow_bars_1m", iid + ":" + iso(minute), row)
             if minute >= utcnow() - timedelta(minutes=3):
                 self.flow.bars[key] = bar
+            await asyncio.sleep(0)  # one minute's bar at a time: a repaired hour never holds the loop
             if minute.minute == 59:
                 await self.flush_market(raw=False)
             minute += timedelta(minutes=1)
@@ -2343,6 +2384,7 @@ class MarketService:
             ("mkt.supply_obs", "ts", 0),
         ]
         for collection, semantic_field, offset in families:
+            checked = 0
             async for row in self.repo.iter_late_arrivals(
                 collection,
                 "recorded_at",
@@ -2352,6 +2394,9 @@ class MarketService:
                 market_end=max_cutoff - timedelta(seconds=offset),
                 batch_size=1000,
             ):
+                checked += 1
+                if checked % 200 == 0:
+                    await asyncio.sleep(0)  # after a restart, every repaired row arrives "late"
                 stamp = parse_time(row[semantic_field]) + timedelta(seconds=offset)
                 arrival = parse_time(row["recorded_at"])
                 source_token = row.get("token_id") or self.instruments.get(row.get("instrument_id"), {}).get(
@@ -4929,6 +4974,7 @@ class MarketService:
             ]
             workers.append(asyncio.create_task(self._warm_series_counts()))
             workers.append(asyncio.create_task(self._seal_loop()))
+            workers.append(asyncio.create_task(self._loop_watchdog()))
             workers.append(asyncio.create_task(self._supply_loop()))
             workers.append(
                 asyncio.create_task(

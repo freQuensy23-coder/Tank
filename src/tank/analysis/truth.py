@@ -185,6 +185,25 @@ def normal(values):
     return [percentile(values, float(qs[0])), percentile(values, float(qs[1]))] if values else None
 
 
+def float_normal(values):
+    """normal() for measures built with float arithmetic (beta-adjusted returns): a zero-width
+    range there ([x, x] up to 1e-12) comes from identical history and float noise alone could
+    exceed it (BTC-adjusted returns of BTC are ~1e-16 around 0), so it is unavailable
+    (DEGENERATE_HISTORY). Exact Decimal measures (OI, funding, volume) keep normal()."""
+    r = normal(values)
+    if r is None or None in r:
+        return r
+    lo, hi = float(r[0]), float(r[1])
+    return None if abs(hi - lo) <= 1e-12 * max(1.0, abs(lo), abs(hi)) else r
+
+
+def range_reason(values):
+    """Why float_normal(values) is unavailable: INCOMPLETE (no history) or DEGENERATE_HISTORY."""
+    if not values:
+        return "INCOMPLETE"
+    return "DEGENERATE_HISTORY" if float_normal(values) is None else None
+
+
 def beyond(v, r):
     return None if v is None or not r or None in r else v < r[0] or v > r[1]
 
@@ -244,7 +263,7 @@ def market_context(r, rv, returns, vols):
 
 
 def repricing(value, event_history, day_history):
-    er, dr = normal(event_history), normal(day_history)
+    er, dr = float_normal(event_history), float_normal(day_history)
     if value is None:
         return None
     if dr and value > dr[1]:
@@ -1545,6 +1564,9 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         pa, pz = fresh_price(p, a), fresh_price(p, z)
         return pz / pa - 1 if pa and pz else None
 
+    # The benchmark itself: beta = 1 makes r_btc_adj identically 0 (03 §5.7 compares the token's
+    # own move with its own history), so BTC is judged by r_raw against its own r_raw history.
+    benchmark = token_symbols.get(token_id) == "BTC"
     historical_times = sorted(t for t in prices if t < start)
     deltas = [(b - a).total_seconds() for a, b in zip(historical_times, historical_times[1:]) if b > a]
     history_resolution_s = int(median(deltas)) if deltas else None
@@ -1574,11 +1596,13 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             if (
                 a < start - timedelta(days=lookback_days())
                 or lag >= history_resolution_s
-                or t not in btc
-                or a not in btc
+                or not benchmark
+                and (t not in btc or a not in btc)
             ):
                 continue
-            out.append(prices[t] / prices[a] - 1 - bb * (btc[t] / btc[a] - 1))
+            out.append(
+                prices[t] / prices[a] - 1 if benchmark else prices[t] / prices[a] - 1 - bb * (btc[t] / btc[a] - 1)
+            )
             durations.append((t - a).total_seconds())
             stalenesses.append(lag)
             ends.append(t)
@@ -1595,7 +1619,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         return out
 
     def hist(length):
-        key = ("relative_hist", scope, ref, series_id(btc), bb, length)
+        key = ("relative_hist", scope, ref, series_id(btc), bb, benchmark, length)
 
         def build():
             values = hist_values(length)
@@ -1630,7 +1654,8 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         )
         rb = bench_ret(btc, a, end)
         re = bench_ret(eth, a, end)
-        adj = r - bb * rb if r is not None and rb is not None else None
+        adj = r - bb * rb if r is not None and rb is not None and not benchmark else None
+        measure = r if benchmark else adj
         h = hist(length)
         windows[name] = dict(
             window=name,
@@ -1643,12 +1668,16 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             coverage={"reference_venue": ref, "complete_24h": bool(ref)},
             r_raw=r,
             r_btc_adj=adj,
+            r_btc_adj_reason="NOT_APPLICABLE_BENCHMARK" if benchmark else None,
+            relative_measure="R_RAW" if benchmark else "R_BTC_ADJ",
+            relative_return=measure,
             r_eth_adj=r - be * re if r is not None and re is not None else None,
             r_sector_adj=None,
             sector_reason="NOT_ESTIMABLE",
-            pctile=ratio(sum(x <= adj for x in h), len(h)) if adj is not None else None,
-            normal_range=normal(h),
-            beyond_normal=beyond(adj, normal(h)),
+            pctile=ratio(sum(x <= measure for x in h), len(h)) if measure is not None and h else None,
+            normal_range=float_normal(h),
+            normal_range_reason=range_reason(h),
+            beyond_normal=beyond(measure, float_normal(h)),
             historical_window_resolution_s=history_resolution_s,
             historical_window_duration_s=length,
             requested_window_duration_s=length,
@@ -1721,7 +1750,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     eh = hist((end - start).total_seconds())
     dh = hist(86400)
     sign = -1 if snapshot.get("expected_direction") in ("BEARISH", "LOSER", -1) else 1
-    eventr = windows["EVENT"]["r_btc_adj"]
+    eventr = windows["EVENT"]["relative_return"]
     br = bench_ret(btc, end - timedelta(days=1), end)
     bh = []
     rvhist = []
@@ -1765,7 +1794,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     context = market_context(br, rv, bh, rvhist)
     pre = ret(prices, start - timedelta(days=1), start)
     preb = bench_ret(btc, start - timedelta(days=1), start)
-    ar = pre - bb * preb if pre is not None and preb is not None else None
+    ar = pre if benchmark else pre - bb * preb if pre is not None and preb is not None else None
     horizon_ranges = {}
     for name, length in (
         [
@@ -1782,7 +1811,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         history = hist(length)
         diagnostic = history_diagnostics.get(length, {})
         horizon_ranges[name] = dict(
-            value=normal(history),
+            value=float_normal(history),
             unit="DECIMAL_RETURN",
             window=name,
             start=iso(start - timedelta(days=lookback_days())),
@@ -1846,7 +1875,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             cutoff=iso(start),
             ar=ar,
             pctile=ratio(sum(x <= ar for x in dh), len(dh)) if ar is not None else None,
-            flag=beyond(ar, normal(dh)),
+            flag=beyond(ar, float_normal(dh)),
         ),
         repricing_band=repricing(
             eventr * sign if eventr is not None else None,
@@ -3721,7 +3750,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
 
 def select_move(spot, deriv, liq, supply, relative, confidence, window):
     p = relative["windows"][window]
-    r = p["r_btc_adj"]
+    r = p.get("relative_return", p["r_btc_adj"])
     rng = p["normal_range"]
     up = r is not None and rng is not None and r > rng[1]
     notdown = r is not None and rng is not None and r >= rng[0]
@@ -4070,13 +4099,17 @@ def decisive_facts(spot, derivatives, liquidity, relative, supply, move_class, w
         oi_instruments,
         dict(venues=sync.get("venues", []), classification_ready=sync.get("classification_ready")),
     )
-    r = relative["windows"][window].get("r_btc_adj")
+    rel = relative["windows"][window]
+    raw_measure = rel.get("relative_measure") == "R_RAW"
+    r = rel.get("relative_return", rel.get("r_btc_adj"))
     ref = relative.get("ref_venue")
+    span = rel.get("normal_range")
     add(
-        "relative.r_btc_adj",
+        "relative.r_raw" if raw_measure else "relative.r_btc_adj",
         r,
         "DECIMAL_RETURN",
-        f"{window} BTC-adjusted price move {r:+.2%}; normal range {relative['windows'][window].get('normal_range')}."
+        f"{window} {'price move (benchmark, raw)' if raw_measure else 'BTC-adjusted price move'} {r:+.2%}; "
+        + (f"normal range {span}." if span else f"normal range unavailable ({rel.get('normal_range_reason') or 'INCOMPLETE'}).")
         if r is not None
         else "",
         "mkt.klines_1m",
