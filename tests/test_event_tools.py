@@ -4903,3 +4903,38 @@ async def test_read_tool_results_are_bounded_and_say_so(service):
     listed = await service.dispatch("list_open_events", {"entity_or_token": "world"}, {})
     event = listed["events"][0]
     assert "claims_blob" not in event and event["sessions"] == [{"session_id": "s1", "status": "OPEN"}]
+
+
+async def test_daily_vesting_unlocks_stay_visible_around_the_cutoff(service):
+    """F-04 (r108): with daily vesting (4 labels x many days) the 40 KB cap
+    kept only the newest rows; the agent must see the tranches within 14 days
+    of the cutoff, per label, at any schedule size."""
+    from tank.util import canonical_json, parse_time
+
+    now = utcnow().replace(hour=12, minute=0, second=0, microsecond=0)
+    for label in ("Team", "Investors", "Ecosystem", "Treasury"):
+        for day in range(-30, 400):
+            await service.repo.put(
+                "mkt.unlocks",
+                f"asset-k:{label}:{day}",
+                {
+                    "token_id": "ethena:ENA",
+                    "label": label,
+                    "kind": "POTENTIAL_SUPPLY",
+                    "date": iso(now + timedelta(days=day, hours=1)),
+                    "qty": "1000",
+                    "observed_at": iso(now - timedelta(days=40)),
+                },
+            )
+    facts = await service.dispatch("get_token_facts", {"token": "ethena:ENA"}, {})
+    assert len(canonical_json(facts).encode()) < 40_000
+    summary = facts["unlock_summary"]
+    assert summary["count"] == 4 * 430 and summary["window_days"] == 14
+    team = next(row for row in summary["by_label"] if row["label"] == "Team")
+    assert team["past_14d"] == {"count": 14, "qty": "14000"}
+    assert team["upcoming_14d"]["count"] == 14
+    assert team["nearest_past"]["date"] == iso(now - timedelta(days=1) + timedelta(hours=1))
+    assert team["nearest_upcoming"]["date"] == iso(now + timedelta(hours=1))
+    dates = [parse_time(row["date"]) for row in facts["unlocks"]]
+    assert len(dates) == 14 and all(abs(d - now) <= timedelta(days=3) for d in dates)
+    assert {row["relative_to_cutoff"] for row in facts["unlocks"]} == {"PAST", "UPCOMING"}
