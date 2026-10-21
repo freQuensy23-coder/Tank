@@ -15,6 +15,12 @@ on:
         required: true
         default: all
         options: [all, tank, capture, sandbox, openma]
+      openma_profile:
+        description: OpenMA measurements; omitted cases are explicitly unmeasured
+        type: choice
+        required: true
+        default: full
+        options: [full, cold-source]
 
 permissions:
   contents: read
@@ -25,7 +31,7 @@ concurrency:
 
 env:
   BEFORE_REF: c9d2ced6cefcfc3e6b26cfccc2b0aa0e634caa81
-  AFTER_REF: fca4e38bee455d22c30dabcd4a758e3fb3261c2e
+  AFTER_REF: 42af88ac13320e1f1da4177d943eb6aca065b421
   BENCHMARK_INPUTS: scripts/ci/docker-benchmark-inputs.json
 
 jobs:
@@ -73,6 +79,7 @@ jobs:
         if: matrix.kind == 'openma'
         run: |
           python3 scripts/ci/openma-build-benchmark.py \
+            --paired-profile "${{ inputs.openma_profile || 'full' }}" \
             --before-ref "$BEFORE_REF" \
             --after-ref "$AFTER_REF" \
             --inputs-file "$BENCHMARK_INPUTS" \

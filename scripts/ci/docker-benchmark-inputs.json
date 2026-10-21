@@ -1,6 +1,6 @@
 {
   "before": "c9d2ced6cefcfc3e6b26cfccc2b0aa0e634caa81",
-  "after": "fca4e38bee455d22c30dabcd4a758e3fb3261c2e",
+  "after": "42af88ac13320e1f1da4177d943eb6aca065b421",
   "digests": {
     "gcr.io/distroless/static-debian12:nonroot": "gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab",
     "ghcr.io/astral-sh/uv:0.9.5": "ghcr.io/astral-sh/uv:0.9.5@sha256:f459f6f73a8c4ef5d69f4e6fbbdb8af751d6fa40ec34b39a1ab469acd6e289b7",

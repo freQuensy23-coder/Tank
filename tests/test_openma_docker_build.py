@@ -160,7 +160,8 @@ def test_dependency_layer_is_independent_of_package_source_and_runtime_assets():
     assert "COPY tank-deploy" not in manifests + dependencies + source
     assert "COPY tank-deploy/openma_entrypoint.mjs /app/tank-deploy/openma_entrypoint.mjs" in runtime
     assert "COPY tank-deploy /app/tank-deploy" not in docker
-    assert docker.count("id=tank-openma-pnpm11,target=/pnpm/store,sharing=locked") == 1
+    assert "--mount=type=cache" not in docker
+    assert "pnpm install --frozen-lockfile --store-dir=/pnpm/store" in dependencies
     assert 'CMD ["pnpm", "start"]' in runtime and "USER node" in runtime
 
 

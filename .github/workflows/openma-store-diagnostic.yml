@@ -2,7 +2,7 @@ name: OpenMA store diagnostic
 
 on:
   pull_request:
-    types: [opened, synchronize]
+    types: [opened]
     paths:
       - .github/workflows/openma-store-diagnostic.yml
       - tools/benchmarks/openma-store-diagnostic.py

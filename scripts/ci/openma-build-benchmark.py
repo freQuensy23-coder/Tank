@@ -336,11 +336,30 @@ def force_install_rebuild(text):
     return "".join(blocks)
 
 
-def benchmark_variant(engine, output, reference, upstream, runtime, node_base, variant, inputs, *, paired):
+def selected_scenarios(*, paired, paired_profile):
+    if not paired:
+        return ("cold",)
+    if paired_profile == "cold-source":
+        return ("cold", "source-edit")
+    if paired_profile != "full":
+        raise ValueError("Unknown paired profile")
+    return ("cold", "no-change", "source-edit", "dependency-text-edit-same-versions")
+
+
+def benchmark_variant(
+    engine, output, reference, upstream, runtime, node_base, variant, inputs, *, paired, paired_profile="full"
+):
     output.mkdir(parents=True)
     prepared = prepare_variant(output, reference, upstream, runtime, node_base, variant)
     context, dockerfile = Path(prepared["context"]), Path(prepared["dockerfile"])
-    result = {"kind": "openma", **prepared, "scenarios": []}
+    result = {
+        "kind": "openma",
+        **prepared,
+        "scenarios": [],
+        "paired_profile": paired_profile if paired else None,
+        "measured_scenarios": [],
+        "omitted_unmeasured_scenarios": list(selected_scenarios(paired=True, paired_profile="full")),
+    }
     write_json(output / "prepared.json", prepared)
     with engine.BuildSession(
         output / "probe-builder", buildkit_image=inputs["digests"]["moby/buildkit:buildx-stable-1"]
@@ -359,11 +378,7 @@ def benchmark_variant(engine, output, reference, upstream, runtime, node_base, v
     with engine.BuildSession(
         output / "image-builder", buildkit_image=inputs["digests"]["moby/buildkit:buildx-stable-1"]
     ) as session:
-        scenarios = (
-            ("cold", "no-change", "source-edit", "dependency-text-edit-same-versions")
-            if paired
-            else ("cold",)
-        )
+        scenarios = selected_scenarios(paired=paired, paired_profile=paired_profile)
         for scenario in scenarios:
             marker = context / "packages/markdown/src/tank-build-benchmark.ts"
             if scenario == "source-edit":
@@ -394,6 +409,12 @@ def benchmark_variant(engine, output, reference, upstream, runtime, node_base, v
             build = session.build(context, dockerfile, scenario, build_args={"SKIP_CONSOLE": "1"})
             build["offline_runtime_smoke"] = smoke_full_image(build["image"], runtime)
             result["scenarios"].append(build)
+            result["measured_scenarios"] = [item["scenario"] for item in result["scenarios"]]
+            result["omitted_unmeasured_scenarios"] = [
+                name
+                for name in selected_scenarios(paired=True, paired_profile="full")
+                if name not in result["measured_scenarios"]
+            ]
             write_json(output / "result.json", result)
     return result
 
@@ -401,6 +422,7 @@ def benchmark_variant(engine, output, reference, upstream, runtime, node_base, v
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--variant", choices=("before", "after"))
+    parser.add_argument("--paired-profile", choices=("full", "cold-source"), default="full")
     parser.add_argument("--before-ref", required=True)
     parser.add_argument("--after-ref", required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -434,6 +456,7 @@ def main():
                 variant,
                 inputs,
                 paired=args.variant is None,
+                paired_profile=args.paired_profile,
             )
         )
     write_json(
@@ -441,6 +464,9 @@ def main():
         {
             "kind": "openma",
             "native_bundle": native,
+            "paired_profile": args.paired_profile if args.variant is None else None,
+            "measured_scenarios": results[0]["measured_scenarios"],
+            "omitted_unmeasured_scenarios": results[0]["omitted_unmeasured_scenarios"],
             "results": results,
             "scope": "Real full image build/cache measurements and offline runtime file checks; no new KVM/system qualification.",
         },
