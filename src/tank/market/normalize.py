@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from datetime import timedelta
 from decimal import Decimal, localcontext
 from functools import wraps
@@ -18,6 +19,46 @@ def timestamp_fields(field, value, precision, *, bucket_size=None):
         field,
         bucket_size=bucket_size,
     ).fields(field)
+
+
+# Quote asset -> ((as_of, rate), ...) ascending: the stablecoin USD samples the service
+# fetched or restored. A print or bucket is valued with the latest sample at or before
+# its time, never a later one; a REST backfill or a late print keeps its USD value
+# (r116 E2E #8: 2463 BTC spot bars lost their notional to a newer live sample).
+QUOTE_USD_HISTORY = {}
+QUOTE_USD_REACH = timedelta(days=4)  # samples kept: beyond every repair window
+QUOTE_USD_MAX_AGE = timedelta(hours=6)  # an older sample values nothing
+
+
+def remember_quote_usd(quote, samples):
+    """Add (as_of, rate) samples; those older than QUOTE_USD_REACH before the newest drop."""
+    merged = dict(QUOTE_USD_HISTORY.get(quote, ()))
+    merged.update((parse_time(as_of), str(rate)) for as_of, rate in samples)
+    if not merged:
+        return
+    newest = max(merged)
+    # A new tuple each time: worker threads may be reading the previous one.
+    QUOTE_USD_HISTORY[quote] = tuple(
+        sorted(item for item in merged.items() if item[0] >= newest - QUOTE_USD_REACH)
+    )
+
+
+def quote_usd_rate(instrument, at):
+    """(rate, as_of) valuing quote units at time `at`, or (None, None)."""
+    quote = instrument.get("quote_asset", "").upper()
+    if quote == "USD":
+        return "1", None
+    at = parse_time(at)
+    history = QUOTE_USD_HISTORY.get(quote)
+    if history:
+        index = bisect_right(history, at, key=lambda sample: sample[0])
+        if index and at - history[index - 1][0] <= QUOTE_USD_MAX_AGE:
+            return history[index - 1][1], iso(history[index - 1][0])
+        return None, None
+    rate, as_of = instrument.get("quote_usd_rate"), instrument.get("quote_usd_rate_as_of")
+    if rate is None or as_of and parse_time(as_of) > at:
+        return None, None
+    return rate, as_of
 
 
 def precise(function):
@@ -141,13 +182,7 @@ def trade(instrument, raw, *, received_ts=None, source="WS"):
         raise SemanticError("nonpositive trade")
     quote = instrument.get("quote_asset", "").upper()
     # Stablecoin quote units are retained as quote units, never silently called USD.
-    fx = instrument.get("quote_usd_rate")
-    if instrument.get("quote_usd_rate_as_of") and parse_time(instrument["quote_usd_rate_as_of"]) > parse_time(
-        ts
-    ):
-        fx = None
-    if quote == "USD":
-        fx = "1"
+    fx, _ = quote_usd_rate(instrument, ts)
     usd = qty * price * decimal(fx) if fx is not None else None
     return jsonable(
         {
@@ -249,11 +284,8 @@ def kline(instrument, row, *, now=None):
     for name in ("quote_volume", "n_trades", "taker_buy_native", "taker_buy_quote"):
         result[name] = extra.get(name)
     quote = result.get("quote_volume")
-    fx = "1" if instrument.get("quote_asset") == "USD" else instrument.get("quote_usd_rate")
-    fx_asof = instrument.get("quote_usd_rate_as_of")
-    # A historical bucket must never be valued with a later live FX sample.
-    if fx_asof and parse_time(fx_asof) > parse_time(ts) + timedelta(minutes=1):
-        fx = None
+    # A historical bucket is valued as of its close, never with a later live FX sample.
+    fx, fx_asof = quote_usd_rate(instrument, parse_time(ts) + timedelta(minutes=1))
     result.update(
         quote_asset=instrument.get("quote_asset"),
         quote_volume_method=extra.get("quote_volume_method", "REPORTED" if quote is not None else None),
@@ -264,9 +296,7 @@ def kline(instrument, row, *, now=None):
         if fx is None
         else None,
         quote_usd_rate=fx,
-        **timestamp_fields(
-            "quote_usd_rate_as_of", fx_asof, instrument.get("quote_usd_rate_as_of_prec") if fx_asof else None
-        ),
+        **timestamp_fields("quote_usd_rate_as_of", fx_asof, "COLLECTION_ONLY" if fx_asof else None),
     )
     return jsonable(result)
 

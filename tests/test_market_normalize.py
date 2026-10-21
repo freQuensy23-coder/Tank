@@ -333,3 +333,36 @@ def test_oi_verified_request_bucket_metadata_is_not_hardcoded(venue, raw):
     for invalid in (0, -300, 0.5, True, 301):
         with pytest.raises(n.SemanticError, match="documented source request period"):
             n.oi(inst, raw, bucket_size_s=invalid)
+
+
+def test_prints_are_valued_with_the_latest_quote_usd_sample_at_or_before_them():
+    from datetime import UTC, datetime, timedelta
+
+    from tank.market import normalize as norm
+    from tank.util import iso
+
+    inst = {
+        "instrument_id": "bybit:spot:BTCUSDT",
+        "token_id": "bitcoin:BTC",
+        "venue": "bybit",
+        "market_type": "SPOT",
+        "venue_symbol": "BTCUSDT",
+        "quote_asset": "USDT",
+    }
+    t0 = datetime(2026, 10, 21, 7, 0, tzinfo=UTC)
+    norm.remember_quote_usd("USDT", [(iso(t0), "0.999"), (iso(t0 + timedelta(minutes=5)), "1.001")])
+    # The live fields carry the newest sample; a print before it must not use it.
+    inst.update(quote_usd_rate="1.001", quote_usd_rate_as_of=iso(t0 + timedelta(minutes=5)))
+
+    def usd(at):
+        raw = {"S": "Buy", "v": "2", "p": "100", "T": int(at.timestamp() * 1000), "i": "1"}
+        return norm.trade(inst, raw)["notional_usd"]
+
+    assert usd(t0 + timedelta(minutes=4, seconds=59)) == "199.800"  # the sample before, not the later one
+    assert usd(t0 + timedelta(minutes=5)) == "200.200"
+    assert usd(t0 - timedelta(seconds=1)) is None  # nothing at or before it
+    assert usd(t0 + timedelta(hours=7)) is None  # the last sample is too old
+    kline = norm.kline(
+        inst, [int((t0 + timedelta(minutes=3)).timestamp() * 1000), "1", "1", "1", "1", "2", "10"]
+    )
+    assert kline["quote_usd_rate"] == "0.999" and kline["quote_usd_rate_as_of"] == iso(t0)
