@@ -103,9 +103,11 @@ final root and workspace package manifests before copying package source. One
 frozen pnpm installation uses that manifest tree; sources are copied afterwards.
 The runtime copies the stable dependency layer separately from the updated
 sources, so source edits retain installed dependencies. Entrypoint/native-asset
-changes enter the runtime stage. Dependency edits use the persistent pnpm cache
-while retaining the frozen lockfile checks. Regenerate through the composer so
-the generated Dockerfile, checked hashes and runtime identity match.
+changes enter the runtime stage. The pnpm store stays on the build-stage
+filesystem so shared package files retain hardlinks; that store is excluded from
+the runtime image. Dependency changes repeat the frozen install. Regenerate
+through the composer so the generated Dockerfile, checked hashes and runtime
+identity match.
 
 ## Cache and verification
 

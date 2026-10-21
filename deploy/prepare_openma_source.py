@@ -33,10 +33,12 @@ def prepare_dockerfile(docker):
         "COPY packages packages",
         "COPY --from=package-manifests /manifests/packages packages",
     )
+    # Keep the store on the build-stage filesystem: pnpm can preserve shared
+    # package hardlinks. The installed dependency layer is cached independently
+    # of source; this build-only store is never copied into the runtime image.
     edit_docker(
         "RUN corepack enable \\\n  && pnpm install --frozen-lockfile",
-        "RUN --mount=type=cache,id=tank-openma-pnpm11,target=/pnpm/store,sharing=locked"
-        " corepack enable && corepack prepare pnpm@11.0.8 --activate"
+        "RUN corepack enable && corepack prepare pnpm@11.0.8 --activate"
         " && pnpm install --frozen-lockfile --store-dir=/pnpm/store",
     )
     edit_docker(
