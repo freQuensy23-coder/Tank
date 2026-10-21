@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -40,6 +41,10 @@ func (m *memStore) Flush(context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, r := range m.queued {
+		// The PostgreSQL writer rejects the whole flush for a row without its identity.
+		if r.Collection == "mkt.flow_bars_1m" && (r.Record["instrument_id"] == nil || r.Record["minute_start"] == nil) {
+			return fmt.Errorf("Missing typed market identity %s: [instrument_id minute_start]", r.Collection)
+		}
 		table := m.rows[r.Collection]
 		if table == nil {
 			table = map[string]map[string]any{}

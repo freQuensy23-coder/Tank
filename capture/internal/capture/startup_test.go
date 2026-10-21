@@ -37,3 +37,22 @@ func TestDowntimeGapIsOnlyTheTrailingRun(t *testing.T) {
 		t.Fatal("complete up to start, yet a gap")
 	}
 }
+
+// A minute a repair could not prove gets its gap reason written on the stored row, identity
+// included (r128 wrote the repair projection back and every market flush failed).
+func TestRepairRecordsReasonOnFullStoredBar(t *testing.T) {
+	r := newRESTRig(t, "hyperliquid") // no REST trade history: nothing can be repaired
+	minute := r.base.Add(5 * time.Minute)
+	key := r.inst.ID + ":" + pytime.ISO(minute)
+	r.mem.rows["mkt.flow_bars_1m"] = map[string]map[string]any{key: {
+		"instrument_id": r.inst.ID, "minute_start": pytime.ISO(minute), "complete": false, "buy_qty": "1",
+	}}
+	r.s.repairInstrument(context.Background(), r.inst, minute, minute.Add(time.Minute), true)
+	if err := r.mem.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	bar := r.bar(minute)
+	if bar["gap_reason"] == nil || bar["instrument_id"] != r.inst.ID || bar["buy_qty"] != "1" {
+		t.Fatalf("bar = %v", bar)
+	}
+}
