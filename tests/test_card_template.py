@@ -838,9 +838,27 @@ def test_falling_native_oi_is_stated_as_positions_closing():
     values = card_inputs()
     values[4]["derivatives"] = {
         "window": "EVENT",
-        "synchronized": {"oi_native_chg_pct": -0.3036, "oi_class": "MIXED"},
+        "synchronized": {"oi_native_chg_pct": -0.3036, "oi_class": "MIXED", "native_oi_vs_normal": "BELOW"},
         "per_venue": [],
     }
     values[4]["relative"]["windows"]["EVENT"]["r_raw"] = "0.54"
     market = render(values).split("MARKET TRUTH:", 1)[1].split("OUTLOOK:", 1)[0]
     assert "event: open positions (synchronized native OI) -30.36% in WLD while price rose +54.00%: positions closing" in market
+
+
+@pytest.mark.parametrize(
+    "vs_normal,ending",
+    [("WITHIN", "; within its normal range"), (None, "; normal range n/a (not available)")],
+)
+def test_native_oi_fall_inside_its_range_is_not_called_positions_closing(vs_normal, ending):
+    """F-09 (r106): a native OI fall within its normal range is printed as a
+    figure, not as positions closing (that wording needs BELOW, F-14)."""
+    values = card_inputs()
+    values[4]["derivatives"] = {
+        "window": "W4H",
+        "synchronized": {"oi_native_chg_pct": -0.0085, "oi_class": "MIXED", "native_oi_vs_normal": vs_normal},
+        "per_venue": [],
+    }
+    market = render(values).split("MARKET TRUTH:", 1)[1].split("OUTLOOK:", 1)[0]
+    line = next(line for line in market.splitlines() if "open positions" in line)
+    assert line.endswith(ending) and "positions closing" not in line
