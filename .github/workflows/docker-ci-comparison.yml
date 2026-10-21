@@ -180,7 +180,7 @@ jobs:
            prefix=python.parent.parent
            envs=["-e","TANK_AUDIT_OPENMA_ROOT=/app","-e","TANK_FILE_IO_TEST_PYTHON=/opt/qa-python/bin/"+python.name,"-e","TANK_SDK_CHECK_ROOT=/app"]
            mounts=["--mount","type=bind,src="+str(root/"tests/openma")+",dst=/tests/openma,readonly","--mount","type=bind,src="+str(prefix)+",dst=/opt/qa-python,readonly"]
-           base=["docker","run","--rm","--network","none",*mounts,*envs,"--entrypoint","env",image,"-u","NODE_PATH","pnpm","--dir","/app/apps/main-node","exec","tsx"]
+           base=["docker","run","--rm","--network","none",*mounts,*envs,"--workdir","/app/apps/main-node","--entrypoint","env",image,"-u","NODE_PATH","node","/app/apps/main-node/node_modules/tsx/dist/cli.mjs"]
            nodefiles=sorted(str(p.relative_to(root)) for folder in ("file-io","lifecycle","replay") for p in (root/"tests/openma"/folder).glob("*.test.mjs"))
            assert len(nodefiles)==7
            result["node_suites"]=appcheck("node-suites",base+["--test","--test-reporter=tap",*("/"+p for p in nodefiles)])
