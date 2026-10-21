@@ -1770,40 +1770,32 @@ async def test_eval_conditions_per_condition_budget_and_explicit_outcomes(monkey
 
 
 @pytest.mark.asyncio
-async def test_pre_windows_share_one_market_read(monkeypatch):
-    """The three PRE windows share their cutoff, so one snapshot_anchors read
-    serves them; each window is measured with its own snapshot."""
+async def test_pre_windows_each_read_only_their_checkpoint_window(monkeypatch):
+    """r110: reaction captures read days of 10 s books; each PRE window now reads its own
+    checkpoint window (snapshot scope REACTION), anchored at its own start."""
     import tank.analysis.truth as truth_module
 
     repo = MemoryRepository()
     now = utcnow().replace(second=0, microsecond=0)
     await repo.put("evt.events", "e", {"event_id": "e"})
-    calls = {"anchors": 0, "single": 0}
-    seen = []
+    calls = []
 
     class Market:
-        async def snapshot(self, token_id, cutoff, *, anchor=None):
-            calls["single"] += 1
+        async def snapshot(self, token_id, cutoff, *, anchor=None, scope=None):
+            calls.append((anchor["ts"], scope))
             return {"token_id": token_id, "anchor": anchor}
 
-        async def snapshot_anchors(self, token_id, cutoff, anchors):
-            calls["anchors"] += 1
-            for anchor in sorted(anchors, key=lambda a: a["ts"]):
-                yield anchor, {"token_id": token_id, "anchor": anchor, "rows": ["shared"]}
-
     def fake_truth(snapshot, config=None):
-        seen.append(snapshot["anchor"]["ts"])
         return {"relative": {"windows": {"EVENT": {"r_raw": 0.01}}}}
 
     monkeypatch.setattr(truth_module, "compute_market_truth", fake_truth)
     scheduler = Scheduler(repo, SimpleNamespace(config_version="c", code_version="c"), Market(), None)
-    payloads = [
-        {"event_id": "e", "token_id": "test:T", "checkpoint": label, "anchor": {"type": "T1", "ts": iso(now)}, "retro": True}
-        for label in ("PRE_24H", "PRE_4H", "PRE_1H")
-    ]
-    assert await scheduler._capture_pre_shared(payloads)
-    assert calls == {"anchors": 1, "single": 0}
-    assert seen == sorted(seen) and len(set(seen)) == 3
+    for label in ("PRE_24H", "PRE_4H", "PRE_1H"):
+        payload = {"event_id": "e", "token_id": "test:T", "checkpoint": label, "anchor": {"type": "T1", "ts": iso(now)}, "retro": True}
+        await scheduler.reaction_capture(payload, wait_for_slot=True)
+    assert sorted(calls) == sorted(
+        (iso(now - timedelta(seconds=s)), "REACTION") for s in (86400, 14400, 3600)
+    )
     rows = await repo.list("out.reaction_checkpoints")
     assert sorted(row["checkpoint"] for row in rows) == ["PRE_1H", "PRE_24H", "PRE_4H"]
 
