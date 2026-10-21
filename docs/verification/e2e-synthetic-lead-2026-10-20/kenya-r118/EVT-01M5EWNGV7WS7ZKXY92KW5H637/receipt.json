@@ -1,0 +1,24 @@
+{
+  "files": {
+    "alerts.jsonl": "bfa791b07f57459d36724fe5c565ec3888103c8ee31393012b97aa51e9b7ae5c",
+    "assessments.jsonl": "974f5ad0d52b8012fa279c3d727c3c7d7f47b65fb71756f35ba40e562d75c581",
+    "beneficiary_edges.jsonl": "2d4daa46ccc0f110d5d46b72cd48e7ccdd1f1732ce1e433c2814a5f2199d2d93",
+    "calls.jsonl": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "claims.jsonl": "c2ac5c2b1b80d84c53f587ca4e64e3c545bce186c5464f5e5e44c42a9809ad6c",
+    "decisions.jsonl": "85c106124fbde1527df74a72c0a94864f494ca582c5b39092b3eb787266cd4fa",
+    "deliveries.jsonl": "22e9ea4b9bda34dbb0a8358e9d3aafb1b9dbf6e02a1ac9840ae6467b79b150c3",
+    "event.jsonl": "c76df870969e051c9e1344a0961b3250e0e884ab6dc3e004ac3b23b799e379dd",
+    "hot_tokens.jsonl": "2269dc62fa1f91dcc307b7105857affec9021f21582b20474d3585bb0d39bd66",
+    "items.jsonl": "c5689c68324b657192e94e82989338199458107156b312f66e0adf16b5d79ef3",
+    "jobs.jsonl": "d761e0913feadec3f926cbbe5d6ea412d2c39a2039bd15a93a48a782d858f61c",
+    "market_truth.jsonl": "d3c2e6145c8c5968cc1bcf151fbef504e88fd85d12fe3de2326e10b874e7f766",
+    "observations.jsonl": "d3511ea5ffc095a8de45b4cb3f3c544089b8c9444d8c882cb46f983173d03d6d",
+    "sessions.jsonl": "4cf627f34a6092cae9640de22a9d8990798b54f56bb6e61aac60d7627bf4e49d",
+    "state_changes.jsonl": "596d4ba1ff76a1cba0ed92003ea0c78bb8482fa15304bd1cdbd47601e4d8e962",
+    "tool_calls.jsonl": "78a6d119f90ad4155b9162d1d5d04e08989a0724138b78e95301a243e63feeff",
+    "trace.json": "027d92926c9ec332993b4669073d5a82367bbe1d10acb4300934161ddebd500b",
+    "trace.md": "a09b52a47dac82817717f9ba10c58847ea7c25feebc11ece61b5bdb520810732",
+    "watch_conditions.jsonl": "65868f896ccfcbb8f881b56a2a6fa867fb0af226d26b6e7a7eea01c252fcf7ed"
+  },
+  "written_at": "2026-10-21T09:35:21.864994Z"
+}
