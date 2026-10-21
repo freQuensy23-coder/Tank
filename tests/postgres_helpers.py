@@ -123,10 +123,13 @@ async def _validate_schema_template(admin_dsn, name):
     _template_name(name)
     admin = await psycopg.AsyncConnection.connect(admin_dsn, autocommit=True)
     try:
+        # PostgreSQL 16 CREATE DATABASE interlocks with autovacuum itself via
+        # CountOtherDBBackends; client and unknown backend types still block us.
         row = await (
             await admin.execute(
                 "SELECT d.datallowconn, shobj_description(d.oid,'pg_database'),"
-                " (SELECT count(*) FROM pg_stat_activity WHERE datid=d.oid)"
+                " (SELECT count(*) FROM pg_stat_activity WHERE datid=d.oid"
+                " AND backend_type IS DISTINCT FROM 'autovacuum worker')"
                 " FROM pg_database d WHERE d.datname=%s",
                 (name,),
             )
