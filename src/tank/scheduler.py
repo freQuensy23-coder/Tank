@@ -1755,7 +1755,8 @@ class Scheduler:
         jobs_cutoff = offset_schedule(
             collection_clock(now), -timedelta(days=self.threshold("jobs_retention_days", 30))
         )
-        await self.repo.prune_market(market_cutoff.value)
+        book_cutoff = parse_time(now) - timedelta(hours=self.threshold("book_summary_retention_hours", 72))
+        await self.repo.prune_market(market_cutoff.value, book_before=book_cutoff)
         await self.repo.prune_jobs(jobs_cutoff.value)
         removed = await self.raw_retention(now)
         marker.with_suffix(".json").write_text(

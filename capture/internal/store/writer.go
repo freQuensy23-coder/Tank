@@ -75,7 +75,18 @@ func (w *Writer) Sink(r points.Row) {
 		w.queue[r.Collection] = p
 		w.order = append(w.order, r.Collection)
 	}
-	p.set(r.Key, r.Record)
+	record := r.Record
+	if r.Collection == "mkt.book_summaries" {
+		// Summary fields only: the order-book levels are not stored (03 §14; Market Truth
+		// never reads them and they were 88% of each row).
+		record = make(map[string]any, len(r.Record))
+		for k, v := range r.Record {
+			if k != "bids" && k != "asks" {
+				record[k] = v
+			}
+		}
+	}
+	p.set(r.Key, record)
 }
 
 // Pending is the number of queued rows not yet taken by a flush.

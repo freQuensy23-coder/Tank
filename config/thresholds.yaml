@@ -55,6 +55,10 @@ hot_raw_retention_days: 30
 jobs_retention_days: 30
 backup_snapshots_kept: 3  # until the backup has its own disk (lead ruling 2026-10-20)
 archive_retention_days: 180
+# Order-book summaries (03 §14): 72 h, no event-window exception.
+book_summary_retention_hours: 72
+# 24h tickers: a 24 h volume needs no 20 s samples.
+hot_ticker_interval_s: 300
 quiet_socket_s: 30
 archive_retry_s: 3600
 routing_window_days: 3
