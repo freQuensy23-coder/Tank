@@ -32,6 +32,11 @@ EVAL_CONDITIONS_BUDGET_S = 15
 # slow condition cannot spend the whole batch.
 EVAL_CONDITION_BUDGET_S = 8
 REACTION_RETRY_S = 30
+# A running capture waits while Market Truth runs for an event (lead ruling 2026-10-21:
+# event analysis before captures). It stops yielding once its checkpoint is within
+# CAPTURE_EXPIRY_SAFETY_S of the capture expiry (checkpoint + 6 h, 03 §3.8).
+CAPTURE_YIELD_POLL_S, CAPTURE_YIELD_MAX_S = 2, 300
+CAPTURE_EXPIRY_S, CAPTURE_EXPIRY_SAFETY_S = 6 * 3600, 1200
 # A late-data revision (03 §8.6) waits this long before it measures, so the late completions
 # that follow a restart's repairs fold into one queued revision per checkpoint (it measures all
 # data present when it runs) instead of re-queuing every checkpoint per repair.
@@ -1060,6 +1065,28 @@ class Scheduler:
             "latest": latest,
         }
 
+    async def _yield_to_market_truth(self, payload, checkpoint):
+        """Wait while any RUN_MARKET_TRUTH is running, unless the capture nears its expiry."""
+        waited = 0
+        while waited < CAPTURE_YIELD_MAX_S:
+            remaining = (checkpoint + timedelta(seconds=CAPTURE_EXPIRY_S) - utcnow()).total_seconds()
+            if remaining <= CAPTURE_EXPIRY_SAFETY_S:
+                break
+            if not await self.repo.list(
+                "ops.jobs", filters={"type": "RUN_MARKET_TRUTH", "status": "RUNNING"}, limit=1
+            ):
+                break
+            await asyncio.sleep(CAPTURE_YIELD_POLL_S)
+            waited += CAPTURE_YIELD_POLL_S
+        if waited:
+            log.info(
+                "REACTION_CAPTURE %s %s %s yielded %d s to RUN_MARKET_TRUTH",
+                payload.get("event_id"),
+                payload.get("token_id"),
+                payload.get("checkpoint"),
+                waited,
+            )
+
     async def _measure_reaction(self, payload):
         payload = dict(payload)
         captured_stamp = collection_clock()
@@ -1072,6 +1099,10 @@ class Scheduler:
         start_stamp, end_stamp = window["start_stamp"], window["end_stamp"]
         if await self._benchmark_only(payload):
             return await self._measure_benchmark(payload, captured_stamp, start, end, start_stamp, end_stamp)
+        await self._yield_to_market_truth(payload, end)
+        # The capture time is when the market is read, after any yield, so late
+        # data already in this read is not taken for a later change (03 §8.6).
+        captured_stamp = collection_clock()
         # Only the checkpoint's own windows are read (FR-R-01 values, 03 §8): days of
         # 10 s books and tickers per capture exhausted the pool on r110.
         snapshot = await self.market.snapshot(
@@ -1087,6 +1118,7 @@ class Scheduler:
             **end_stamp.fields("cutoff"),
         }
         knobs = self.settings.load_config("thresholds") if hasattr(self.settings, "load_config") else {}
+        await self._yield_to_market_truth(payload, end)
         truth = await asyncio.to_thread(
             compute_market_truth,
             snapshot,

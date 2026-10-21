@@ -835,9 +835,7 @@ async def test_lock_waiters_do_not_drain_the_pool(repo):
 
 
 async def test_one_reaction_capture_runs_at_a_time_and_other_jobs_do_not_wait(repo):
-    if isinstance(repo, PostgresRepository):
-        async with repo.transaction():
-            await repo._conn().execute("DELETE FROM ops.jobs WHERE status IN ('QUEUED','RUNNING')")
+    await _clear_queue(repo)
     captures = [
         await repo.enqueue("REACTION_CAPTURE", {"n": n}, new_id("idem"), priority=0) for n in range(3)
     ]
@@ -855,8 +853,7 @@ async def test_one_reaction_capture_runs_at_a_time_and_other_jobs_do_not_wait(re
 async def test_concurrent_claims_respect_the_capture_cap(repo):
     if not isinstance(repo, PostgresRepository):
         pytest.skip("Concurrent claims require PostgreSQL")
-    async with repo.transaction():
-        await repo._conn().execute("DELETE FROM ops.jobs WHERE status IN ('QUEUED','RUNNING')")
+    await _clear_queue(repo)
     for n in range(6):
         await repo.enqueue("REACTION_CAPTURE", {"n": n}, new_id("idem"), priority=0)
     for _ in range(3):
@@ -866,9 +863,7 @@ async def test_concurrent_claims_respect_the_capture_cap(repo):
 
 
 async def test_due_captures_are_claimed_earliest_expiry_first(repo):
-    if isinstance(repo, PostgresRepository):
-        async with repo.transaction():
-            await repo._conn().execute("DELETE FROM ops.jobs WHERE status IN ('QUEUED','RUNNING')")
+    await _clear_queue(repo)
     now = utcnow()
     # Enqueued first and due earlier, but with hours of slack.
     slack = await repo.enqueue(
@@ -898,8 +893,7 @@ async def test_late_deliver_claim_is_logged_with_type_and_wait(repo, caplog):
 
     if not isinstance(repo, PostgresRepository):
         pytest.skip("The claim timing log is the PostgreSQL claim path")
-    async with repo.transaction():
-        await repo._conn().execute("DELETE FROM ops.jobs WHERE status IN ('QUEUED','RUNNING')")
+    await _clear_queue(repo)
     await repo.enqueue(
         "DELIVER", {}, new_id("idem"), priority=0, run_after=iso(utcnow() - timedelta(seconds=7))
     )
@@ -907,3 +901,53 @@ async def test_late_deliver_claim_is_logged_with_type_and_wait(repo, caplog):
         job = await repo.claim_job()
     assert job["type"] == "DELIVER"
     assert "type DELIVER" in caplog.text and "after run_after" in caplog.text
+
+
+async def _clear_queue(repo):
+    if isinstance(repo, PostgresRepository):
+        async with repo.transaction():
+            await repo._conn().execute("DELETE FROM ops.jobs WHERE status IN ('QUEUED','RUNNING')")
+            await repo._conn().execute(
+                "DELETE FROM evt.events WHERE known_to_us_at > now() - interval '1 hour'"
+                " AND NOT EXISTS (SELECT 1 FROM out.alerts a WHERE a.event_id = evt.events.event_id)"
+            )
+
+
+async def test_captures_yield_to_event_analysis_unless_near_expiry(repo):
+    await _clear_queue(repo)
+    now = utcnow()
+    truth = await repo.enqueue("RUN_MARKET_TRUTH", {}, new_id("idem"), priority=1)
+    assert (await repo.claim_job())["job_id"] == truth["job_id"]  # Market Truth is running
+    slack = await repo.enqueue(
+        "REACTION_CAPTURE", {}, new_id("idem"), priority=0, expires_at=iso(now + timedelta(hours=5))
+    )
+    deliver = await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
+    # The capture has the higher priority but waits behind analysis; DELIVER does not.
+    assert (await repo.claim_job())["job_id"] == deliver["job_id"]
+    assert await repo.claim_job() is None
+    urgent = await repo.enqueue(
+        "REACTION_CAPTURE", {}, new_id("idem"), priority=0, expires_at=iso(now + timedelta(minutes=10))
+    )
+    assert (await repo.claim_job())["job_id"] == urgent["job_id"]  # expiry safety
+    await repo.finish_job(urgent["job_id"])
+    await repo.finish_job(truth["job_id"])
+    assert (await repo.claim_job())["job_id"] == slack["job_id"]
+
+
+async def test_captures_wait_for_a_fresh_event_card(repo):
+    await _clear_queue(repo)
+    event = new_id("evt")
+    await repo.put(
+        "evt.events", event, {"event_id": event, "known_to_us_at": iso(utcnow() - timedelta(minutes=2))}
+    )
+    capture = await repo.enqueue(
+        "REACTION_CAPTURE", {}, new_id("idem"), priority=0, expires_at=iso(utcnow() + timedelta(hours=5))
+    )
+    assert await repo.claim_job() is None
+    await repo.put(
+        "out.alerts",
+        f"{event}:1",
+        {"alert_id": new_id("alr"), "version": 1, "event_id": event, "kind": "FULL", "generated_at": iso()},
+        immutable=True,
+    )
+    assert (await repo.claim_job())["job_id"] == capture["job_id"]
