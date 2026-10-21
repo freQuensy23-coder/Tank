@@ -272,7 +272,7 @@ Tank is one service: a single Python 3.12 asyncio process, `tank serve`, built a
 | `scheduler` | — | One loop | Runs each source loop at its cadence (normal or 15 s escalated); creates EVAL_CONDITIONS every minute, MILESTONE_CHECK at a milestone's time and REACTION_CAPTURE at each checkpoint; hot-set demotion; heartbeat notice; retention; nightly backup (`pg_dump` and `bundles/` to an external disk) |
 | CLI | `click` | Short commands of the same program | Review, scout decisions, replay, archive fetch, bundle reproduction, source and handle checks |
 
-Next to the service run only two containers: `postgres` (PostgreSQL 16; database `tank`, plus OpenMA's database `oma`) and `openma`, the OpenMA server (`open-managed-agents` built from a pinned upstream commit with Tank's patches, §8; Node.js), listening on port 8787 of the Compose network. It hosts the agents `tank-event-analyst` and `tank-scout-reviewer` and their sessions, makes the model calls through Tank's `codex_gateway`, which signs them with the operator's ChatGPT subscription (Codex sign-in, §8), inlines the skills and keeps the append-only session logs. Each session gets its own litebox sandbox, a microVM with unrestricted internet access and read-only access to the database `tank` (§8).
+Next to the service run only two containers: `postgres` (PostgreSQL 16 with TimescaleDB; database `tank`, plus OpenMA's database `oma`) and `openma`, the OpenMA server (`open-managed-agents` built from a pinned upstream commit with Tank's patches, §8; Node.js), listening on port 8787 of the Compose network. It hosts the agents `tank-event-analyst` and `tank-scout-reviewer` and their sessions, makes the model calls through Tank's `codex_gateway`, which signs them with the operator's ChatGPT subscription (Codex sign-in, §8), inlines the skills and keeps the append-only session logs. Each session gets its own litebox sandbox, a microVM with unrestricted internet access and read-only access to the database `tank` (§8).
 
 On start, the service returns jobs left RUNNING to the queue, subscribes the tokens in `mkt.hot_tokens`, replays each open session's stream from its last stored event and keeps following the sessions still at work. A tool call left without a result runs again; a write tool that already ran returns its stored result (03 §3.2), so a restart loses nothing and writes nothing twice.
 
@@ -343,14 +343,14 @@ A MAJOR+ class from the agent's `set_assessment` → pre-event windows computed 
 
 ## 7. Storage
 
-### 7.1 PostgreSQL 16 (database `tank`)
+### 7.1 PostgreSQL 16 with TimescaleDB (database `tank`)
 
 | Schema | Tables | Retention |
 |---|---|---|
 | `reg` | `sources`, `entities`, `entity_aliases`, `tokens`, `instruments`, `sector_baskets`, `dependency_map`, `metric_semantics`, `exchange_addresses` | Versioned with config |
 | `ingest` | `source_items` | Permanent |
 | `evt` | `events`, `event_entities`, `event_observations`, `claims`, `state_changes`, `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | Permanent |
-| `mkt` | `klines_1m`, `flow_bars_1m`, `book_summaries`, `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `unlocks`, `hot_tokens` | Daily partitions; base tier 90 days; partitions overlapping a MAJOR+ event window kept permanently. `book_summaries`: 72 hours, no exception (summaries only, no order-book levels) |
+| `mkt` | `klines_1m`, `flow_bars_1m`, `book_summaries`, `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `unlocks`, `hot_tokens` | TimescaleDB hypertables, 1-day chunks, compressed (columnar, by instrument) after 7 days; base tier 90 days; days overlapping a MAJOR+ event window kept permanently. `book_summaries`: 72 hours, no exception (summaries only, no order-book levels) |
 | `ana` | `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | Permanent |
 | `out` | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints` | Permanent, append-only |
 | `ops` | `jobs`, `agent_sessions`, `tool_calls`, `llm_usage` | Jobs 30 days; LLM usage permanent |

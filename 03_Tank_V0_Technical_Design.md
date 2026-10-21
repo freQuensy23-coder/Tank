@@ -557,9 +557,9 @@ Fixture
 | `event_observations`, `claims` | `obs_id`, `claim_id` | FK to events/items. |
 | `state_changes` | serial | Append-only. |
 | `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | id + version | Versioned rows. |
-| `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | Time-partitioned; base tier 90 days ⚙. |
-| `book_summaries` | (`instrument_id`, ts) | Time-partitioned; kept 72 hours ⚙; summary fields only, no order-book levels. |
-| `oi_obs`, `funding_obs`, `liq_obs` | (`instrument_id`, ts) | Time-partitioned. |
+| `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | Hypertable (1-day chunks, compressed after 7 days); base tier 90 days ⚙. |
+| `book_summaries` | (`instrument_id`, ts) | Hypertable (1-day chunks, compressed after 7 days); kept 72 hours ⚙; summary fields only, no order-book levels. |
+| `oi_obs`, `funding_obs`, `liq_obs` | (`instrument_id`, ts) | Hypertable (1-day chunks, compressed after 7 days). |
 | `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`). |
 | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). |
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
@@ -1743,7 +1743,7 @@ Values the operator provides at installation (kept outside the repository):
 
 ---
 
-## 14. Core DDL (PostgreSQL 16)
+## 14. Core DDL (PostgreSQL 16 with TimescaleDB)
 
 Analysis objects of §2.6 are stored as `jsonb` inside the rows below; the columns that queries filter or join on are typed.
 
