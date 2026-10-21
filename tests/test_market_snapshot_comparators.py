@@ -5,7 +5,6 @@ from datetime import timedelta
 
 import pytest
 import yaml
-from test_market_service import setup  # noqa: F401 - shared real producer fixture
 
 from tank.analysis.truth import relative_truth
 from tank.market.service import MarketService
@@ -17,7 +16,7 @@ from tank.util import iso, parse_time
 @pytest.mark.parametrize("long_event", [False, True])
 @pytest.mark.parametrize("invalid_peer_close", [False, True])
 async def test_comparator_projection_matches_dense_reader_with_sparse_boundaries_and_venue_ranking(
-    setup,  # noqa: F811 - imported pytest fixture
+    setup,
     target_gap,
     long_event,
     invalid_peer_close,

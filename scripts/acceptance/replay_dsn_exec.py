@@ -4,6 +4,7 @@ Builds the tank_replay DSN from the mounted tank_db_password secret and substitu
 @REPLAY_DSN@ argument only. TANK_DATABASE_URL is left to the entrypoint (production), because the
 replay CLI refuses a --database-url equal to settings.database_url.
 """
+
 import os
 import sys
 from urllib.parse import quote

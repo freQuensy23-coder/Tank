@@ -232,7 +232,7 @@ async def test_s19_and_x_share_chromium_with_isolated_storage_and_unchanged_inpu
     renderer = BrowserReader(SimpleNamespace(), shared_sensor=sensor)
     try:
         await renderer.open()
-        # Public rendering can start without reading the session export.
+
         assert not (profile / ".tank-x-session-seeded.json").exists()
         await sensor.open()
         assert renderer.browser is sensor.context.browser

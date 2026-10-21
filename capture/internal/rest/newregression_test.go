@@ -12,7 +12,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
 )
 
-// Observe a real ledger's blocked attempts without changing admission or accounting.
 type observedWaitingLedger struct {
 	budget.Ledger
 	waiting chan float64
@@ -63,7 +62,7 @@ func TestBlockedWeightedRequestsLeaveHostSlotsForBaseline(t *testing.T) {
 			t.Fatal(ctx.Err())
 		}
 	}
-	// Four genuinely blocked weight-50 repairs cannot consume all four HTTP slots.
+
 	if _, err := client.Do(ctx, "GET", Binance+"/api/v3/klines", map[string]string{"limit": "3"}, nil, 0); err != nil {
 		t.Fatalf("baseline request blocked by optional budget waits: %v", err)
 	}
@@ -103,7 +102,7 @@ func TestFundingHistoryCacheSeparatesRangesWithinSettlementHour(t *testing.T) {
 		t.Fatal(err)
 	}
 	observedA := pyval.Map(pyval.List(valueA)[0])["_capture_observed_at"]
-	clock = clock.Add(15 * time.Minute) // Still the same 12:00 settlement hour.
+	clock = clock.Add(15 * time.Minute)
 	cachedA, err := client.Do(ctx, "POST", Hyperliquid, nil, first, 0)
 	if err != nil || len(exchange.requests) != 1 || pyval.Map(pyval.List(cachedA)[0])["_capture_observed_at"] != observedA {
 		t.Fatalf("same-range cache changed its observation: %v %v", cachedA, err)

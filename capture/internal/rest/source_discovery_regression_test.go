@@ -8,8 +8,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/budget"
 )
 
-// Source discovery goes through Fetch, so it must charge the same venue ledger
-// as live market capture rather than an independent request-count allowance.
 func TestSourceDiscoveryFetchChargesSharedMarketWeights(t *testing.T) {
 	cases := []struct {
 		name, url, bucket, otherBucket string
@@ -47,9 +45,6 @@ func TestSourceDiscoveryFetchChargesSharedMarketWeights(t *testing.T) {
 	}
 }
 
-// The strict exchange API client retains the previous unknown-weight refusal.
-// Raw HTTP_FETCH additionally supports announcement pages, whose unconfigured
-// paths use the documented conservative venue bucket instead of running free.
 func TestSourceDiscoveryUnknownWeightsRemainBounded(t *testing.T) {
 	t.Run("strict API refusal", func(t *testing.T) {
 		client, exchange, ledger := newClient(t)

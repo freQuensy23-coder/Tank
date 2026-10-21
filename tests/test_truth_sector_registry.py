@@ -28,13 +28,10 @@ def packet_for(token):
 
     packet = rename(source)
     packet["tokens"] = copy.deepcopy(registry["tokens"])
-    # Genuine registry metadata; synthetic prices are explicitly unit-test controls.
-    # relative_truth never reads these domains. Keep its actual target flow
-    # coverage and every target/BTC price row unchanged.
+
     for domain in ("oi", "funding", "books", "semantics"):
         packet.pop(domain, None)
-    # Both synthetic target venues contain identical prices. Peers have only
-    # one synthetic instrument, so copying both merely repeats identical rows.
+
     first_venue = "A:spot:" + token["symbol"]
     peers = [
         row
@@ -49,12 +46,11 @@ def packet_for(token):
             continue
         for original in peers:
             close = parse_time(original["open_time"]) + truth.timedelta(seconds=original["interval_s"])
-            # Only BTC/ETH benchmark regressions need peer history. Sector
-            # baskets consume each other peer's exact window boundary prices.
+
             if peer["symbol"] not in {"BTC", "ETH"} and close not in boundaries:
                 continue
             row = dict(original, token_id=peer["token_id"], instrument_id="peer:spot:" + peer["symbol"])
-            # Distinct peer returns exercise the equal-weight basket/fallback math.
+
             elapsed = (parse_time(row["open_time"]) - parse_time(packet["anchor"]["ts"])).total_seconds()
             row["c"] = str(float(row["c"]) * (1 + (index + 1) * elapsed / 1e9))
             packet["klines"].append(row)
@@ -93,7 +89,7 @@ def test_explicit_captured_basket_controls_measured_peer_returns():
     implicit = truth.relative_truth(packet, start, end)
     packet["sector_baskets"] = copy.deepcopy(registry["sector_baskets"])
     assert truth.relative_truth(packet, start, end) == implicit
-    # Explicit basket membership wins over stale token grouping for its constituents.
+
     basket = next(b for b in packet["sector_baskets"] if b["sector"] == "DEX_EXECUTION")
     basket["constituents"] = [token["token_id"], "aave:AAVE", "morpho:MORPHO"]
     changed = truth.relative_truth(packet, start, end)

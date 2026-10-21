@@ -3,6 +3,7 @@
 Every query runs inside a READ ONLY transaction through psql in the Postgres
 container, so these scripts can never write production data and need no secrets.
 """
+
 import json
 import os
 import statistics
@@ -15,14 +16,26 @@ PG_DATABASE = os.environ.get("TANK_PG_DATABASE", "tank")
 
 def query(sql, params=None):
     """Return rows of `sql` as dicts. `params` are substituted as SQL literals by psql (:'name')."""
-    args = ["docker", "exec", "-i", "-u", "postgres", PG_CONTAINER, "psql", "-d", PG_DATABASE,
-            "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1"]
+    args = [
+        "docker",
+        "exec",
+        "-i",
+        "-u",
+        "postgres",
+        PG_CONTAINER,
+        "psql",
+        "-d",
+        PG_DATABASE,
+        "-X",
+        "-q",
+        "-At",
+        "-v",
+        "ON_ERROR_STOP=1",
+    ]
     for key, value in (params or {}).items():
         args += ["-v", f"{key}={value}"]
     script = (
-        "BEGIN TRANSACTION READ ONLY;\n"
-        f"SELECT coalesce(json_agg(t), '[]'::json) FROM ({sql}) t;\n"
-        "COMMIT;\n"
+        f"BEGIN TRANSACTION READ ONLY;\nSELECT coalesce(json_agg(t), '[]'::json) FROM ({sql}) t;\nCOMMIT;\n"
     )
     out = subprocess.run(args, input=script, capture_output=True, text=True, check=False)
     if out.returncode != 0:
@@ -71,7 +84,7 @@ def summary(values, target=None, stat="p95"):
             value = result["p95"]
         elif stat == "median":
             value = result["median"]
-        else:  # every sample
+        else:
             value = result["max"]
         result["within_target"] = sum(1 for v in known if v <= target)
         if not values:

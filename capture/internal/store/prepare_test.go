@@ -13,9 +13,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
 )
 
-// prepareVectors are records folded by tank.market_storage._prepare_records (encode,
-// identity de-duplication, merge_point, semantic_fingerprint). Regenerate the expected
-// side with TANK_UPDATE_VECTORS=1 go test ./internal/store/ -run TestPrepareRecords.
 const vectorsFile = "testdata/prepare_vectors.json"
 
 type prepareCase struct {
@@ -202,7 +199,7 @@ func TestDecodeLikePsycopg(t *testing.T) {
 	if pyStr(at) != "2026-10-18 00:00:00+00:00" || pyStr(at.Add(1500*time.Microsecond)) != "2026-10-18 00:00:00.001500+00:00" {
 		t.Error("str(datetime)")
 	}
-	// int.from_bytes(sha256(key).digest()[:8], "big", signed=True), as tank.storage.
+
 	if LockID("tank:migrations") != 2453682814151299647 || LockID("tank:capture:writer") != -6613590839062989762 {
 		t.Errorf("lock ids %d %d", LockID("tank:migrations"), LockID("tank:capture:writer"))
 	}

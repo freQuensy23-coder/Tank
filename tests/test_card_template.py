@@ -339,8 +339,7 @@ def test_who_excludes_unjustified_links_and_never_repeats_primary_as_secondary()
     assert who.count("primary Uniswap (UNI)") == 1
     assert "secondary Uniswap (UNI)" not in who and "candidate" not in who
     assert "loser OutsideLoser" in who
-    # A credible secondary is shown with its recorded layer and state, and
-    # removes the no-secondaries explanation instead of listing all candidates.
+
     secondary = dict(
         primary,
         token_id="cow:COW",
@@ -377,7 +376,7 @@ def test_secondary_outside_universe_is_named_without_market_block():
     assert "secondary litentry (LIT) (ISSUER_PRODUCT, unverified BUILT)" in who
     assert "outside the token universe, no market block" in who
     assert "OTH" not in who
-    assert card.count("── ") == 1  # only World has a market block
+    assert card.count("── ") == 1
 
 
 def test_tokens_are_named_by_project_never_ticker_alone():
@@ -559,8 +558,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
             },
         )
         service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
-        # Publication depends on stored structured inputs, not a host-imposed
-        # order of this turn's calls or a second opinion about the prose.
+
         await repo.put("ops.agent_sessions", "card-session", {"session_id": "card-session", "event_id": eid})
         result = await service.dispatch(
             "publish_card",
@@ -580,8 +578,8 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
         assert why[1].removeprefix("Economic effect: ") in text
         lines = text.splitlines()
         assert alert["shown_tokens"] == [token]
-        assert "primary ETH" not in text  # Unselected universe token has no decision.
-        assert "── ethereum:ETH" not in text  # No invented WAIT/token block.
+        assert "primary ETH" not in text
+        assert "── ethereum:ETH" not in text
         assert len([line for line in lines if line.startswith("──")]) == 1
         assert lines[1].startswith("Scores ") and lines[2].startswith("Stage: ")
         assert not any(line.startswith(("IMPACT:", "SECONDARIES:")) for line in lines)
@@ -891,7 +889,7 @@ def test_btc_priced_line_names_the_benchmark_instead_of_a_missing_net_move():
             "SPOT_LED_ACCUMULATION",
             "Event certainty MEDIUM: not confirmed by a HIGH-certainty source",
         ),
-        ("HIGH", "MEDIUM", "UNKNOWN", "Move class unresolved: no class eligible (UNKNOWN)"),  # msg 19
+        ("HIGH", "MEDIUM", "UNKNOWN", "Move class unresolved: no class eligible (UNKNOWN)"),
         ("HIGH", "HIGH", "SPOT_LED_ACCUMULATION", "none recorded"),
     ],
 )

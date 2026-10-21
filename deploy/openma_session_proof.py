@@ -7,7 +7,6 @@ in the inlined tank-event-analyst and tank-data SKILL.md bodies, without reading
 Usage: openma_session_proof.py OUT_DIR OPENMA_BASE_URL PROPOSED_OPENMA_YAML CONFIG_DIR
 """
 
-import hashlib
 import json
 import os
 import sys
@@ -18,10 +17,10 @@ import httpx
 import yaml
 
 sys.path.insert(0, "/srv/tank/src")
-from tank.agents.wire import tool_wire_result  # noqa: E402
-from tank.event_tools import EventToolService  # noqa: E402
-from tank.settings import Settings  # noqa: E402
-from tank.util import canonical_json  # noqa: E402
+from tank.agents.wire import tool_wire_result
+from tank.event_tools import EventToolService
+from tank.settings import Settings
+from tank.util import canonical_json
 
 out, base, proposed_path, config_dir = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4])
 out.mkdir(parents=True, exist_ok=True)
@@ -45,7 +44,6 @@ def get(path, **params):
     return body.get("data", body) if isinstance(body, dict) and "data" in body and len(body) <= 2 else body
 
 
-# Readback of every registered resource.
 agent = get("agents/" + proposed["agent_id"])
 save("agent-readback.json", agent)
 local_tools = json.loads((config_dir / "skills/tank-event-analyst/tools.json").read_text())
@@ -55,7 +53,8 @@ tool_check = {
     "remote_custom_count": len(remote_custom),
     "names_match": sorted(remote_custom) == sorted(t["name"] for t in local_tools),
     "schemas_match": all(
-        canonical_json(remote_custom.get(t["name"], {}).get("input_schema")) == canonical_json(t.get("input_schema"))
+        canonical_json(remote_custom.get(t["name"], {}).get("input_schema"))
+        == canonical_json(t.get("input_schema"))
         for t in local_tools
     ),
 }
@@ -64,36 +63,50 @@ for binding in agent.get("skills", []):
     meta = get(f"skills/{binding['skill_id']}")
     skills.append({"binding": binding, "skill": meta})
 save("skills-readback.json", skills)
-environments = {name: get("environments/" + proposed[key_]) for name, key_ in
-                [("tank-analysis", "environment_id"), ("tank-replay", "replay_environment_id")]}
+environments = {
+    name: get("environments/" + proposed[key_])
+    for name, key_ in [("tank-analysis", "environment_id"), ("tank-replay", "replay_environment_id")]
+}
 save("environments-readback.json", environments)
 save("tool-check.json", tool_check)
-assert tool_check["local_count"] == 18 and tool_check["names_match"] and tool_check["schemas_match"], tool_check
+assert tool_check["local_count"] == 18 and tool_check["names_match"] and tool_check["schemas_match"], (
+    tool_check
+)
 
-# One real session.
+
 marker = "tank-platform-deploy-proof-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-session = client.post("sessions", json={"agent": proposed["agent_id"], "environment_id": proposed["environment_id"],
-                                        "metadata": {"tank_identity": marker}})
+session = client.post(
+    "sessions",
+    json={
+        "agent": proposed["agent_id"],
+        "environment_id": proposed["environment_id"],
+        "metadata": {"tank_identity": marker},
+    },
+)
 session.raise_for_status()
 session = session.json()
 sid = session["id"]
 save("session-created.json", session)
-# Progressive skill exposure lists SKILL.md paths; the agent reads them in its sandbox.
+
 READ_SKILLS = os.environ.get("TANK_PROOF_READ_SKILLS") == "1"
 prompt = (
     "Deployment check by the Tank operator, not a news item and not an event. Do exactly this: "
-    "1) call the tool get_registry once with entity_or_token set to \"ETH\"; "
-    + ("2) then read the SKILL.md files of your tank-event-analyst and tank-data skills at the paths listed in your "
-       "instructions (only those files), and answer in one line from them: "
-       if READ_SKILLS else
-       "2) then, without reading any file or calling any other tool, answer in one line from the skill text already "
-       "in your instructions: ")
+    '1) call the tool get_registry once with entity_or_token set to "ETH"; '
+    + (
+        "2) then read the SKILL.md files of your tank-event-analyst and tank-data skills at the paths listed in your "
+        "instructions (only those files), and answer in one line from them: "
+        if READ_SKILLS
+        else "2) then, without reading any file or calling any other tool, answer in one line from the skill text already "
+        "in your instructions: "
+    )
     + "(a) which claim rule number your tank-event-analyst skill says is not defined, "
     + "(b) which reference file your tank-data skill says to read before queries, "
     + "(c) how many entries the tool returned under tokens. Do not record anything."
 )
-posted = client.post(f"sessions/{sid}/events", json={"events": [
-    {"type": "user.message", "content": [{"type": "text", "text": prompt}]}]})
+posted = client.post(
+    f"sessions/{sid}/events",
+    json={"events": [{"type": "user.message", "content": [{"type": "text", "text": prompt}]}]},
+)
 posted.raise_for_status()
 tools = EventToolService(None, Settings(config_dir=config_dir), None, None)
 seen, events, answered, deadline = set(), [], [], time.monotonic() + 900
@@ -111,16 +124,32 @@ while time.monotonic() < deadline and not finished:
             kind = event.get("type")
             if kind == "agent.custom_tool_use":
                 import asyncio
+
                 result = asyncio.run(getattr(tools, event["name"])(event.get("input") or {}, {}))
                 if event["name"] != "get_registry":
                     result = {"error": "deployment check permits only get_registry"}
-                body = {"type": "user.custom_tool_result", "custom_tool_use_id": event["id"],
-                        "content": [{"type": "text", "text": canonical_json(
-                            tool_wire_result(event["name"], result, session_id=sid, call_id=event["id"]))}]}
+                body = {
+                    "type": "user.custom_tool_result",
+                    "custom_tool_use_id": event["id"],
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": canonical_json(
+                                tool_wire_result(event["name"], result, session_id=sid, call_id=event["id"])
+                            ),
+                        }
+                    ],
+                }
                 if event["name"] != "get_registry":
                     body["is_error"] = True
                 client.post(f"sessions/{sid}/events", json={"events": [body]}).raise_for_status()
-                answered.append({"tool": event["name"], "input": event.get("input"), "tokens": len(result.get("tokens", []))})
+                answered.append(
+                    {
+                        "tool": event["name"],
+                        "input": event.get("input"),
+                        "tokens": len(result.get("tokens", [])),
+                    }
+                )
             if kind == "session.status_idle" and (event.get("stop_reason") or {}).get("type") == "end_turn":
                 finished = event
             if kind in {"session.error", "session.status_terminated", "execution.status_failed"}:
@@ -130,29 +159,62 @@ while time.monotonic() < deadline and not finished:
             break
     time.sleep(3)
 save("session-events.json", events)
-messages = [b.get("text", "") for e in events if e.get("type") == "agent.message" for b in e.get("content", [])]
+messages = [
+    b.get("text", "") for e in events if e.get("type") == "agent.message" for b in e.get("content", [])
+]
 summary = {
     "session_id": sid,
     "marker": marker,
     "tool_check": tool_check,
-    "skills": [{"name": s["skill"].get("name") or s["skill"].get("display_title"), **s["binding"]} for s in skills],
+    "skills": [
+        {"name": s["skill"].get("name") or s["skill"].get("display_title"), **s["binding"]} for s in skills
+    ],
     "tool_calls_answered": answered,
     "final_event": finished,
     "agent_text": messages,
     "analyst_skill_applied": any("V6" in m for m in messages),
     "data_skill_applied": any("DATA_GUIDE.md" in m for m in messages),
-    "other_tools_used": sorted({e.get("name") for e in events if e.get("type") in {"agent.tool_use", "agent.mcp_tool_use"}} - {None}),
+    "other_tools_used": sorted(
+        {e.get("name") for e in events if e.get("type") in {"agent.tool_use", "agent.mcp_tool_use"}} - {None}
+    ),
     "read_skills_mode": READ_SKILLS,
-    # Progressive exposure measured 7,619 input tokens on the first request; the inlined
-    # tank-event-analyst SKILL.md alone is ~37 kB (~9-10k tokens).
-    "first_request_input_tokens": next((e.get("model_usage", {}).get("input_tokens") for e in events
-                                        if e.get("type") == "span.model_request_end"), None),
+    "first_request_input_tokens": next(
+        (
+            e.get("model_usage", {}).get("input_tokens")
+            for e in events
+            if e.get("type") == "span.model_request_end"
+        ),
+        None,
+    ),
     "builtin_tool_inputs": [e.get("input") for e in events if e.get("type") == "agent.tool_use"],
     "real_tool_call": any(a["tool"] == "get_registry" for a in answered),
 }
-summary["status"] = "PASS" if summary["analyst_skill_applied"] and summary["data_skill_applied"] \
-    and summary["real_tool_call"] and (READ_SKILLS or not summary["other_tools_used"]) and finished \
-    and (READ_SKILLS or (summary["first_request_input_tokens"] or 0) >= 15000) \
-    and finished.get("type") == "session.status_idle" else "FAIL"
+summary["status"] = (
+    "PASS"
+    if summary["analyst_skill_applied"]
+    and summary["data_skill_applied"]
+    and summary["real_tool_call"]
+    and (READ_SKILLS or not summary["other_tools_used"])
+    and finished
+    and (READ_SKILLS or (summary["first_request_input_tokens"] or 0) >= 15000)
+    and finished.get("type") == "session.status_idle"
+    else "FAIL"
+)
 save("result.json", summary)
-print(json.dumps({k: summary[k] for k in ("status", "session_id", "analyst_skill_applied", "data_skill_applied", "real_tool_call", "other_tools_used", "first_request_input_tokens", "agent_text")}))
+print(
+    json.dumps(
+        {
+            k: summary[k]
+            for k in (
+                "status",
+                "session_id",
+                "analyst_skill_applied",
+                "data_skill_applied",
+                "real_tool_call",
+                "other_tools_used",
+                "first_request_input_tokens",
+                "agent_text",
+            )
+        }
+    )
+)

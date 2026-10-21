@@ -10,7 +10,6 @@ import pytest
 from tank.agents.sessions import SessionService
 from tank.storage import MemoryRepository
 
-# Retained F03/r46 accepted-input IDs; provider payloads and credentials omitted.
 INITIAL = "sevt_req_2e22f77108bd91574b7c9dc221bc999b7f504c6ef8a4b9ab1e7af3c3445fd864_0"
 CALLBACK = "sevt_req_307a37e6867554883982be7e265843eb3c8a8f4d2244517084ecd68c79da84cf_0"
 RETRY = "sevt_req_81c757631379004a5af5ed4330bff07fc2d423d27d377ad45b45e87df8fc5010_0"
@@ -125,7 +124,7 @@ async def test_retained_old_exhausted_new_retrying_sequence_waits_for_actual_out
         rescheduled = event("new-rescheduled", "session.status_rescheduled", RETRY)
         await service.process_event("s", retrying)
         await service.process_event("s", rescheduled)
-        await service.process_event("s", retrying)  # Durable replay is idempotent.
+        await service.process_event("s", retrying)
         current = await repo.get("ops.agent_sessions", "s")
         assert current["status"] == "OPEN"
         assert current["runtime_status"] == "PENDING"
@@ -135,7 +134,7 @@ async def test_retained_old_exhausted_new_retrying_sequence_waits_for_actual_out
         assert "terminal_failure" not in current and not current.get("pending_retry_event")
         assert len(posts) == 1
         assert not (await service.completed_turn("s"))["complete"]
-        # A late error from the old callback cannot fail the current attempt.
+
         await service.process_event("s", error("late-old-exhausted", CALLBACK, "exhausted"))
         assert (await repo.get("ops.agent_sessions", "s"))["status"] == "OPEN"
         if outcome == "COMPLETED":
@@ -166,7 +165,7 @@ async def test_retained_old_exhausted_new_retrying_sequence_waits_for_actual_out
             current = await repo.get("ops.agent_sessions", "s")
             assert current["status"] == "ENDED" and current["active_message_id"] is None
             assert current["message_log"][0]["turn_status"] == "FAILED"
-        assert len(posts) == 1  # No added attempts, archive requests, or provider calls.
+        assert len(posts) == 1
     finally:
         await service.close()
         await http.aclose()

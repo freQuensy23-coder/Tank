@@ -69,15 +69,15 @@ class HourlyParquet:
         self.root = Path(root)
         self.grace_s = grace_s
         self._buffer = defaultdict(list)
-        self._inflight = {}  # taken by the writer, not yet durable
+        self._inflight = {}
         self._journals = {}
         self._orphans = set()
         self._recovered = False
         self._segment = f"{os.getpid()}-{time.time_ns()}"
         self._sequence = itertools.count()
-        # Held only by worker threads (seal publication vs. readers), never by capture.
+
         self._publish = threading.Lock()
-        # Journal appends and seals of this archive never interleave (worker threads only).
+
         self._io = threading.RLock()
 
     def _identity(self, row):
@@ -221,8 +221,7 @@ class HourlyParquet:
             try:
                 with self._io:
                     self.seal(canonical)
-            except Exception as exc:  # noqa: BLE001 - one bad hour must not stop writes or other seals
-                # Journals stay on disk and the hour is retried on the next write.
+            except Exception as exc:
                 self._orphans.add(Path(canonical))
                 log.warning("seal of %s failed: %s", canonical, type(exc).__name__)
                 continue
@@ -244,17 +243,17 @@ class HourlyParquet:
                     while True:
                         try:
                             batch = reader.read_next_batch()
-                            # A batch cut mid-write can parse yet point outside its buffers.
+
                             batch.validate(full=True)
                         except StopIteration:
                             break
                         except (pa.ArrowInvalid, OSError):
-                            break  # torn tail of a journal cut by a crash: earlier batches stand
+                            break
                         if columns:
                             batch = batch.select([c for c in columns if c in batch.schema.names])
                         yield batch
             except (pa.ArrowInvalid, OSError):
-                continue  # journal created but its schema header never reached disk
+                continue
         yield from self._capture_journal(canonical, columns)
 
     @staticmethod
@@ -275,7 +274,7 @@ class HourlyParquet:
             try:
                 rows.append(json.loads(line))
             except ValueError:
-                continue  # a line torn by a crash or a full disk; later lines still count
+                continue
         for start in range(0, len(rows), 10000):
             chunk = rows[start : start + 10000]
             names = columns or sorted({k for row in chunk for k in row})
@@ -303,8 +302,6 @@ class HourlyParquet:
             count = 0
             with pq.ParquetWriter(temporary, schema, compression="zstd") as writer:
                 for batch in self._batches(canonical, journals):
-                    # Every stored column is text; a journal or file from another writer
-                    # (e.g. an all-null column) is cast, never rejected.
                     columns = [
                         batch.column(name).cast(pa.string())
                         if name in batch.schema.names
@@ -508,10 +505,9 @@ class TradeArchive(HourlyParquet):
         return sorted(rows.values(), key=lambda r: (parse_time(r["ts"]), str(r["trade_id"])))
 
     def take(self):
-        # Identities are kept for the current and previous hour only: live prints of
-        # older hours are rare and are deduplicated again when their hour is sealed.
+
         horizon = utcnow().replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
-        idle = time.monotonic() - 600  # a backfill still writing an old hour keeps its identities
+        idle = time.monotonic() - 600
         for canonical in [
             c for c in self._seen if self.hour_of(c) < horizon and self._touched.get(c, 0) < idle
         ]:
@@ -584,7 +580,6 @@ class TradeArchive(HourlyParquet):
             and all(last.get(k) == point.get(k) for k in ("complete", "reason", "source"))
             and parse_time(last["start"]) <= parse_time(start) <= parse_time(last["end"])
         ):
-            # Contiguous proof of the same kind: extend it (one entry per unbroken span).
             if parse_time(end) > parse_time(last["end"]):
                 last.update(
                     end=point["end"], **{k: v for k, v in point.items() if k.startswith("observed_at")}
@@ -642,7 +637,6 @@ class TradeArchive(HourlyParquet):
             },
         }
 
-    # Replay and audit over explicitly frozen file references (tank.replay).
     @staticmethod
     def read_verified(path, checksum, *, byte_length=None):
         return read_verified(path, checksum, byte_length=byte_length)
@@ -673,7 +667,7 @@ class TradeArchive(HourlyParquet):
         """Explicit replay/audit from frozen refs; never discovers live files/APIs."""
         from datetime import timedelta
 
-        from .flow import FlowAccumulator
+        from tank.market.flow import FlowAccumulator
 
         if purpose not in ("REPLAY", "AUDIT"):
             raise ValueError("Window regeneration is restricted to explicit replay/audit")

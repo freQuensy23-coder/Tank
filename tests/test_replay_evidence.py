@@ -112,7 +112,7 @@ async def test_raw_projection_rebuilds_production_snapshot_without_future_trade(
             )
         )
     raw.coverage(instrument["instrument_id"], minute, minute + timedelta(minutes=2), complete=True)
-    raw.write(raw.take(), now=minute + timedelta(hours=1))  # seals the finished hour
+    raw.write(raw.take(), now=minute + timedelta(hours=1))
     archive = raw.frozen_manifest(instrument["instrument_id"], minute)
     cutoff = "2026-10-17T12:00:17Z"
     inputs = SimpleNamespace(

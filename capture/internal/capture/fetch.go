@@ -18,28 +18,19 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/rest"
 )
 
-// FetchHosts are the exchange hosts an HTTP_FETCH capture request may reach: core's
-// source pollers (exchange announcements, instrument lists) never call them themselves.
 var FetchHosts = map[string]bool{
 	"api.binance.com": true, "fapi.binance.com": true, "www.binance.com": true, "data.binance.vision": true,
 	"api.exchange.coinbase.com": true, "api.kraken.com": true, "www.okx.com": true, "api.bybit.com": true,
 	"api.hyperliquid.xyz": true,
 }
 
-// Fetcher sends one raw budgeted request (internal/rest.Client.Fetch) or streams a file
-// (Download).
 type Fetcher interface {
 	Fetch(ctx context.Context, method, rawURL string, params, headers map[string]string, body any, priority int) (*rest.Fetched, error)
 	Download(ctx context.Context, rawURL string, dst io.Writer, priority int) (int, int64, error)
 }
 
-// fetchPriority makes a source fetch urgent at the host gate (budget.Gate: a negative
-// priority is served before live capture and repairs). It is one request per poll; behind
-// a startup repair burst, or Kraken's serial backfill, it missed its 25 s budget.
 const fetchPriority = -1
 
-// runFetch is an HTTP_FETCH request: request {method, url, params?, headers?, body?,
-// source_id}. The result carries the response as UTF-8 text, or base64 when it is not.
 func (s *Service) runFetch(ctx context.Context, row map[string]any, budgetS time.Duration, finish func(string, any, any)) {
 	req := pyval.Map(row["request"])
 	method := strings.ToUpper(text(req["method"]))

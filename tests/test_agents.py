@@ -380,8 +380,6 @@ async def test_stream_processing_preserves_concurrent_added_message():
     assert record["last_event_seq"] == 9
 
 
-
-
 @pytest.mark.asyncio
 async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch, tmp_path):
     from tank.analysis import cards
@@ -471,8 +469,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
     ) as http:
         service = SessionService(repo, opts, tools.dispatch, http=http)
-        # Create the original FULL through production publication so its pinned
-        # shown_tokens and decision references exactly match real records.
+
         monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Original product card")
         await service.process_event(
             "ses_1",
@@ -529,7 +526,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         )
         invalidated = await repo.get("evt.events", "evt_1")
         assert invalidated["lifecycle"] == "INVALIDATED"
-        # The analyst has not reached its EXIT decision yet.
+
         assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
         await service.process_event(
             "ses_1",
@@ -561,7 +558,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         assert published["published"]
         alert = await repo.get("out.alerts", f"{published['alert_id']}:{published['version']}")
         assert alert["decisions"] == [decision["dec_id"]]
-        # Even an explicit finalized marker cannot bypass an open call or queued delivery.
+
         invalidated = await repo.get("evt.events", "evt_1")
         invalidated["session_finalized_at"] = iso()
         await repo.put("evt.events", "evt_1", invalidated)
@@ -622,7 +619,7 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
     creates, messages = [], []
 
     def handler(request):
-        assert request.url.host != "opencode.ai"  # Pending extraction has no event state to score.
+        assert request.url.host != "opencode.ai"
         if request.method == "GET":
             return httpx.Response(200, json={"data": [], "next_page": None})
         body = json.loads(request.content)
@@ -708,8 +705,6 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
         assert context["code_version"] == "new_code"
         assert context["session_config_version"] == "old_config"
         assert context["session_code_version"] == "old_code"
-
-
 
 
 @pytest.mark.asyncio

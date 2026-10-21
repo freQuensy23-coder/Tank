@@ -1,6 +1,3 @@
-// Package stream is tank.market.streams: public WebSocket endpoints, subscription
-// messages, frame routing by exact product identity, per-venue frame processing and the
-// connection loop.
 package stream
 
 import (
@@ -12,11 +9,8 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// BinanceUSDMDepth is the routed USD-M depth socket (separate from trades and marks).
 const BinanceUSDMDepth = "wss://fstream.binance.com/public/stream"
 
-// Connection is streams.connection: the endpoint URL (with Binance stream names) and
-// the subscribe messages of one instrument.
 func Connection(inst *venue.Instrument, depthOnly bool) (string, []map[string]any) {
 	key := inst.Key()
 	s := inst.Symbol
@@ -73,13 +67,11 @@ func Connection(inst *venue.Instrument, depthOnly bool) (string, []map[string]an
 	return "wss://api.hyperliquid.xyz/ws", subs
 }
 
-// EndpointKey is streams.endpoint_key: the URL without Binance stream names.
 func EndpointKey(inst *venue.Instrument) string {
 	url, _ := Connection(inst, false)
 	return strings.SplitN(url, "?", 2)[0]
 }
 
-// EndpointKeys is streams.endpoint_keys: USD-M depth has its own routed socket.
 func EndpointKeys(inst *venue.Instrument) []string {
 	primary := EndpointKey(inst)
 	if inst.Key() == "binance.usdm" {
@@ -89,7 +81,6 @@ func EndpointKeys(inst *venue.Instrument) []string {
 	return []string{primary}
 }
 
-// SubscriptionMessages is streams.subscription_messages.
 func SubscriptionMessages(instruments []*venue.Instrument, subscribe bool, endpoint string) []map[string]any {
 	if len(instruments) == 0 {
 		return nil
@@ -161,7 +152,7 @@ func SubscriptionMessages(instruments []*venue.Instrument, subscribe bool, endpo
 		}
 		size := len(args)
 		if strings.HasPrefix(v, "bybit") {
-			size = 10 // Bybit spot accepts at most 10 topics per subscribe request
+			size = 10
 		}
 		if size < 1 {
 			size = 1
@@ -199,14 +190,11 @@ func SubscriptionMessages(instruments []*venue.Instrument, subscribe bool, endpo
 	return messages
 }
 
-// Routed is one instrument's part of a frame.
 type Routed struct {
 	Inst    *venue.Instrument
 	Payload any
 }
 
-// RouteIndexed is streams.route_indexed: route only exact product identities and split
-// multi-product data arrays (index: routing symbol -> instrument).
 func RouteIndexed(index map[string]*venue.Instrument, venueName string, raw any) []Routed {
 	m := pyval.Map(raw)
 	if m == nil {
@@ -269,7 +257,7 @@ func RouteIndexed(index map[string]*venue.Instrument, venueName string, raw any)
 			symbol := pyval.GetOr(pyval.Map(row), "instId", def)
 			s, _ := symbol.(string)
 			if arg["channel"] == "index-tickers" {
-				s += "-SWAP" // an index feeds its perpetual
+				s += "-SWAP"
 			} else if symbol == nil {
 				continue
 			}

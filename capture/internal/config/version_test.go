@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// pythonVersion is tank.settings._config_version(root, _digest(_capture_tree(root))).
 func pythonVersion(t *testing.T, root string) string {
 	t.Helper()
 	cmd := exec.Command("uv", "run", "--no-sync", "python", "-c", `import sys
@@ -52,7 +51,7 @@ func TestCaptureTreeAndDigest(t *testing.T) {
 	if strings.Join(sorted(names), ",") != "a.yaml,sub/b.json,sub/notes.md" {
 		t.Fatalf("captured %v", names)
 	}
-	// No manifest and no Git: the content digest, exactly as Python computes it.
+
 	version, err := ConfigVersion(dir)
 	if err != nil {
 		t.Fatal(err)

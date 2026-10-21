@@ -14,9 +14,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// These regressions replace the retired Python producer while exercising the
-// real Go normalizer, point cache and PostgreSQL writer. Core also reads their
-// output in the Python entrypoints.
 func regressionStore(t *testing.T) (*Store, string) {
 	t.Helper()
 	s := open(t, "mkt")
@@ -146,7 +143,7 @@ func TestProducerPrecisionFundingAndMissingUSD(t *testing.T) {
 func TestProducerTickerFundingIdentityAfterRestart(t *testing.T) {
 	s, prefix := regressionStore(t)
 	ctx := context.Background()
-	// Keep fake availability advances before the real reader cutoff.
+
 	now := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
 	clock := &pytime.Fixed{T: now}
 	point := pytime.ISO(now.Add(-10 * time.Second))
@@ -188,7 +185,7 @@ func TestProducerTickerFundingIdentityAfterRestart(t *testing.T) {
 	}
 	flush()
 	regressionEqual(t, regressionRow(t, s, "mkt.tickers_24h", key)["recorded_at"], original["recorded_at"])
-	// Match production startup: read the persisted point and restore a fresh cache.
+
 	clock.T = now.Add(2 * time.Second)
 	restarted := newPoints()
 	restored, err := s.LatestRecords(ctx, "mkt.tickers_24h", []string{"instrument_id"}, "ts", []string{inst.ID})

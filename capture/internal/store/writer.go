@@ -8,10 +8,8 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/points"
 )
 
-// FlushRows is FLUSH_ROWS: typed rows per write; a live flush can run between two.
 const FlushRows = 500
 
-// LiveFirst is LIVE_FIRST: collections flushed ahead of other typed rows.
 var LiveFirst = []string{"mkt.flow_bars_1m", "mkt.tickers_24h"}
 
 func liveFirst(collection string) bool {
@@ -23,8 +21,6 @@ func liveFirst(collection string) bool {
 	return false
 }
 
-// pending is one collection's queued rows: the newest row per key, in first-queued order
-// (a Python dict).
 type pending struct {
 	keys []string
 	rows map[string]map[string]any
@@ -50,22 +46,18 @@ type queued struct {
 	rows       *pending
 }
 
-// Writer queues typed rows and writes them like MarketService.flush_market: one
-// multi-row write per collection and chunk, live bars and tickers first.
 type Writer struct {
 	store *Store
 
 	mu         sync.Mutex
 	queue      map[string]*pending
-	order      []string // collections in first-queued order
+	order      []string
 	lastFlush  time.Time
 	flushMutex sync.Mutex
 }
 
-// NewWriter is an empty queue writing through s.
 func NewWriter(s *Store) *Writer { return &Writer{store: s, queue: map[string]*pending{}} }
 
-// Sink queues a row (points.Sink): the newest row per (collection, key) is written.
 func (w *Writer) Sink(r points.Row) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -77,8 +69,7 @@ func (w *Writer) Sink(r points.Row) {
 	}
 	record := r.Record
 	if r.Collection == "mkt.book_summaries" {
-		// Summary fields only: the order-book levels are not stored (03 §14; Market Truth
-		// never reads them and they were 88% of each row).
+
 		record = make(map[string]any, len(r.Record))
 		for k, v := range r.Record {
 			if k != "bids" && k != "asks" {
@@ -89,7 +80,6 @@ func (w *Writer) Sink(r points.Row) {
 	p.set(r.Key, record)
 }
 
-// Pending is the number of queued rows not yet taken by a flush.
 func (w *Writer) Pending() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -100,14 +90,12 @@ func (w *Writer) Pending() int {
 	return n
 }
 
-// LastFlush is when the last flush completed without error (zero before the first).
 func (w *Writer) LastFlush() time.Time {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.lastFlush
 }
 
-// take empties the queue: its collections, live-first ones first (a stable sort).
 func (w *Writer) take() []queued {
 	var live, rest []queued
 	for _, c := range w.order {
@@ -122,7 +110,6 @@ func (w *Writer) take() []queued {
 	return append(live, rest...)
 }
 
-// takeLive moves the live collections queued during a flush to its front.
 func (w *Writer) takeLive() []queued {
 	var out []queued
 	for _, c := range LiveFirst {
@@ -140,8 +127,6 @@ func (w *Writer) takeLive() []queued {
 	return out
 }
 
-// Flush writes every queued row. On an error the rows not yet written return to the
-// queue, where rows queued meanwhile win, and the error is returned.
 func (w *Writer) Flush(ctx context.Context) error {
 	w.flushMutex.Lock()
 	defer w.flushMutex.Unlock()

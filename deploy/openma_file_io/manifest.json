@@ -4,7 +4,7 @@
   "original_sha256": "ecbbe30d29a7e2c48ff918681d4816a0af57ecda2ece093bcf023f101763fca9",
   "assets_sha256": {
     "prepare_overlay.py": "4b4fdac375f126f62db7fb554a2212e95f126d8aca71d22dd7391a002869378c",
-    "guest-file-io.py": "0398ff6e628096750a8ab8af456e08cc33fb8ba6ad472bb20d2325f8dc4f3523",
+    "guest-file-io.py": "90996f0b67e92ddc3537157ff401d5c277fa33342599ae5aed7b58bd620606e1",
     "guest-file-io.ts": "d149658b6e95b2aae3690a9538f9a52a7123cdab18d77ebf788e36cfcb4360bc",
     "compile-test-workcopy.mjs": "1fa32488eeb6c80d7419aaa25e88267b2d65ee683e0feff72e38ba8b7436b554",
     "file-io.test.mjs": "64a733e2845acfb47fe567409e691e933de4c5fcf902e5d0f97056f0fd81888c",

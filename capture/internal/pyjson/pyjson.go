@@ -1,6 +1,3 @@
-// Package pyjson renders values exactly as Python's json.dumps(value, sort_keys=True,
-// separators=(",", ":")) after tank.util.jsonable, which is what Tank hashes for
-// semantic fingerprints, storage keys and identity digests.
 package pyjson
 
 import (
@@ -20,9 +17,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 )
 
-// Dumps is json.dumps(jsonable(value), sort_keys=True, separators=(",", ":"),
-// ensure_ascii=ensureASCII). NaN and infinities are rejected (canonical_json's
-// allow_nan=False; Tank's fingerprints never contain floats).
 func Dumps(value any, ensureASCII bool) ([]byte, error) {
 	var b bytes.Buffer
 	if err := encode(&b, value, ensureASCII); err != nil {
@@ -31,7 +25,6 @@ func Dumps(value any, ensureASCII bool) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-// MustDumps is Dumps for values built by this program.
 func MustDumps(value any, ensureASCII bool) []byte {
 	out, err := Dumps(value, ensureASCII)
 	if err != nil {
@@ -40,10 +33,8 @@ func MustDumps(value any, ensureASCII bool) []byte {
 	return out
 }
 
-// Canonical is tank.util.canonical_json (ensure_ascii=False).
 func Canonical(value any) string { return string(MustDumps(value, false)) }
 
-// SHA256 is tank.util.sha256 of a non-bytes, non-string value: canonical JSON digest.
 func SHA256(value any) string {
 	sum := sha256.Sum256(MustDumps(value, false))
 	return hex.EncodeToString(sum[:])
@@ -76,8 +67,7 @@ func encode(b *bytes.Buffer, value any, ascii bool) error {
 		}
 		b.WriteString(s)
 	case json.Number:
-		// A raw JSON number from a venue frame: Python parsed integers as int and
-		// everything else as Decimal (parse_float=Decimal), then jsonable made it str.
+
 		if isInteger(string(v)) {
 			b.WriteString(strings.TrimPrefix(string(v), "+"))
 		} else {
@@ -93,7 +83,7 @@ func encode(b *bytes.Buffer, value any, ascii bool) error {
 		writeString(b, pytime.ISO(v), ascii)
 	case []any:
 		if v == nil {
-			b.WriteString("null") // a Go nil slice is Python None
+			b.WriteString("null")
 			break
 		}
 		b.WriteByte('[')
@@ -121,7 +111,7 @@ func encode(b *bytes.Buffer, value any, ascii bool) error {
 		b.WriteByte(']')
 	case map[string]any:
 		if v == nil {
-			b.WriteString("null") // a Go nil map is Python None
+			b.WriteString("null")
 			break
 		}
 		keys := make([]string, 0, len(v))
@@ -210,7 +200,6 @@ func writeU(b *bytes.Buffer, r rune) {
 	b.WriteByte(hexDigits[r&0xf])
 }
 
-// FloatRepr is Python's repr(float) (float_repr_style 'short').
 func FloatRepr(f float64) (string, error) {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return "", fmt.Errorf("pyjson: out of range float %v", f)
@@ -221,7 +210,7 @@ func FloatRepr(f float64) (string, error) {
 		}
 		return "0.0", nil
 	}
-	sci := strconv.FormatFloat(f, 'e', -1, 64) // d.ddde±XX, shortest round trip
+	sci := strconv.FormatFloat(f, 'e', -1, 64)
 	sign := ""
 	if sci[0] == '-' {
 		sign, sci = "-", sci[1:]

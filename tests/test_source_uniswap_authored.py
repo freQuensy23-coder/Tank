@@ -24,7 +24,9 @@ def retained_raw(ref):
 
 def retained():
     if not RAW.exists():
-        pytest.fail("Required supplementary captures missing; run python tests/fixtures/supplementary-sources/stage.py")
+        pytest.fail(
+            "Required supplementary captures missing; run python tests/fixtures/supplementary-sources/stage.py"
+        )
     assert hashlib.sha256(RAW.read_bytes()).hexdigest() == (
         "9ca7e6b7a606b587eada5b2ad8faa9c861a114afa78ee0e4671d912bb59cffca"
     )
@@ -161,7 +163,7 @@ async def test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches
                 assert item["observed_at"] != original["observed_at"]
             assert all("latest-updates" not in url for url in seen)
             jobs, items = await repo.list("ops.jobs"), await repo.list("ingest.source_items")
-            # Issuer and market-structure items go straight to routing (03 §3.1).
+
             assert {j["idem_key"] for j in jobs} == {x["item_id"] for x in items}
             assert {j["type"] for j in jobs} == {"ROUTE_ITEM"}
         finally:

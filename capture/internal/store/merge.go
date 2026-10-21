@@ -13,7 +13,6 @@ import (
 
 var strippedPrefixes = []string{"received_ts", "recorded_at", "updated_at", "observed_at"}
 
-// strip is the inner strip of tank.market_storage.semantic_fingerprint.
 func strip(value any) any {
 	switch v := value.(type) {
 	case map[string]any:
@@ -50,14 +49,11 @@ func strip(value any) any {
 	return value
 }
 
-// fingerprintValue is semantic_fingerprint(value) without a collection, for any value
-// (None included): merge_point compares nested source observations with it.
 func fingerprintValue(value any) string {
 	sum := sha256.Sum256(pyjson.MustDumps(strip(value), true))
 	return hex.EncodeToString(sum[:])
 }
 
-// deepCopy is copy.deepcopy of a record value.
 func deepCopy(value any) any {
 	switch v := value.(type) {
 	case map[string]any:
@@ -90,7 +86,6 @@ func copyRecord(m map[string]any) map[string]any {
 	return out
 }
 
-// orEmpty is `value or {}` for a nested mapping.
 func orEmpty(value any) map[string]any {
 	if m, ok := value.(map[string]any); ok && len(m) > 0 {
 		return m
@@ -114,7 +109,6 @@ func has(m any, key string) bool {
 	return found
 }
 
-// fundingChosen are the fields merge_point takes from the preferred source.
 var fundingChosen = []string{
 	"rate", "interval_h", "rate_8h_eq", "as_of", "as_of_prec", "as_of_prec_reason",
 	"funding_time", "funding_time_prec", "funding_time_prec_reason",
@@ -122,8 +116,6 @@ var fundingChosen = []string{
 	"recorded_at", "recorded_at_prec", "recorded_at_prec_reason", "source_path",
 }
 
-// mergePoint is tank.market_storage.merge_point: two points of one funding or ticker
-// identity folded in a batch, as ops.merge_market_point folds them in PostgreSQL.
 func mergePoint(collection string, old, incoming map[string]any) (map[string]any, error) {
 	merged := copyRecord(old)
 	for k, v := range incoming {

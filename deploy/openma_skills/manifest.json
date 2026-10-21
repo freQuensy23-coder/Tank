@@ -7,7 +7,7 @@
   "assets_sha256": {
     "archive-manifest.ts": "2ff175a9e795ea381ce6625c679c2045ba42aee1f8a905b5bfeba5ab38c9859c",
     "prepare_overlay.py": "ac91fc453f396e8147a722cbf896633ec5ad1af26a40c50ae7a511e8130a74d0",
-    "archive-manifest.test.ts": "56deb46c54ac36a1a89640e235981ee5f47b7b946fa8157acef9714d1b6ab363",
+    "archive-manifest.test.ts": "b95eb8c46d9d3f563a495dbc436451026079f0a3e1bd3d6a4627aa38ecb88744",
     "registered-tank-data.zip": "c6d0d6c0eb69b355069ca6c954ff5f477e1003cf47fa73257fb5cfc7765cbe20",
     "node-managed-session-inputs.patch": "291c261dc828d6c3858d811f09ada357ea3e8d356fe9f9135eab4b22f93b580d"
   },

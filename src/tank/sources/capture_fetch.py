@@ -5,8 +5,6 @@ tank-capture claims it, fetches within the shared venue budget and stores the re
 in the row's result. The caller gets an httpx.Response built from that stored result.
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import time
@@ -18,7 +16,6 @@ import httpx
 from tank.time_precision import Timestamp, collection_clock
 from tank.util import iso, sha256, utcnow
 
-# Hosts only tank-capture may reach (capture/internal/capture/fetch.go FetchHosts).
 EXCHANGE_FETCH_HOSTS = frozenset(
     {
         "api.binance.com",
@@ -33,7 +30,7 @@ EXCHANGE_FETCH_HOSTS = frozenset(
         "api.hyperliquid.xyz",
     }
 )
-# A restart's capture burst holds a venue budget (Hyperliquid) for ~25 s; polls are 60 s apart.
+
 FETCH_BUDGET_S = 45.0
 ARCHIVE_BUDGET_S = 600.0
 FETCH_GRACE_S = 3.0
@@ -91,7 +88,6 @@ async def capture_fetch(
     request_id, row = await _capture_request(repo, "HTTP_FETCH", request, budget_s)
     result = row.get("result") or {}
     if row.get("status") in TERMINAL:
-        # The response is one-shot: the source poller stores what it keeps (raw items).
         await repo.delete("mkt.capture_requests", request_id)
     http_request = httpx.Request(request["method"], url)
     if row.get("status") != "COMPLETE":

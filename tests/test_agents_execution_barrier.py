@@ -33,7 +33,6 @@ async def seeded(repo, initial="accepted-message"):
             {
                 "message_id": "message",
                 "body": {"type": "user.message", "content": []},
-                # This fixture isolates execution protocol, not analyst workflow.
                 "payload": {"kind": "SCOUT_REVIEW", "item_id": "item"},
                 "remote_event_id": initial,
                 "retry_count": 0,
@@ -61,7 +60,7 @@ def idle(identity, execution, reason="end_turn"):
 @pytest.mark.historical
 @pytest.mark.integration
 async def test_actual_r11_intermediate_idle_does_not_complete_tool_result_execution():
-    # Exact redacted r11 input/execution correlations; no provider contents or models.
+
     timeline = json.loads(Path("docs/verification/f01-cli-r11-2026-10-19/native-timeline.json").read_text())
     initial = next(row["id"] for row in timeline if row["type"] == "user.message")
     returned = next(row["id"] for row in timeline if row["type"] == "user.custom_tool_result")
@@ -661,7 +660,7 @@ async def test_legacy_semantic_repair_receipt_is_audited_without_retry_or_failur
             await service.recover_outbound_inputs("s")
         else:
             await service.process_event("s", receipt)
-        await service.process_event("s", receipt)  # Replay remains idempotent.
+        await service.process_event("s", receipt)
         after = await repo.get("ops.agent_sessions", "s")
         assert after["status"] == "OPEN" and not after.get("pending_retry_event")
         assert after["message_log"] == session["message_log"]

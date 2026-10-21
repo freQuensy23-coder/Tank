@@ -48,8 +48,7 @@ def packet_with_explicit_legacy_bybit_buckets():
         )
         for row in packet["oi"]
     ]
-    # Frozen legacy records retain their old uncertain bucket contract. New
-    # producer point-sample semantics must not retroactively rewrite them.
+
     for row in packet["oi"]:
         row.update(
             ts_prec="BUCKET(300s)",

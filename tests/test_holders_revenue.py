@@ -261,7 +261,6 @@ def test_provider_revenue_with_unknown_capture_never_authorizes_token_capture_cl
     assert "DefiLlama reports holders revenue: adapter 123.456 USD/24h" in line
     assert context == before and edges[0]["capture_class"] == "UNKNOWN"
     assert "DIRECT" not in line and "INDIRECT" not in line
-    # Same nonzero frozen provider figure does not evidence a token mechanism.
 
 
 def test_compact_display_prefers_24h_preserving_30d_details_and_default_limit():

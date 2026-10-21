@@ -436,8 +436,6 @@ MARKET_COLUMNS = {
         "result": "jsonb",
         "semantic_fingerprint": "text",
     },
-    # tank-capture (capture/README.md): stream state per instrument and stream, which
-    # Data Confidence reads instead of in-process socket state when capture is external.
     "mkt.capture_streams": {
         "code_version": "text",
         "config_version": "text",
@@ -475,7 +473,6 @@ MARKET_COLUMNS = {
         "recent_polls": "jsonb",
         "semantic_fingerprint": "text",
     },
-    # Bounded repairs Tank asks of tank-capture (03 §5.1 fill order before Market Truth).
     "mkt.capture_requests": {
         "budget_s": "numeric",
         "code_version": "text",

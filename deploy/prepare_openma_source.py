@@ -61,7 +61,6 @@ def prepare(source, destination, boxlite_runtime=None):
         workspace.write_text(workspace.read_text() + sdk_patch["workspace_append"])
         shutil.copyfile(sdk_base / sdk_patch["lockfile_asset"], destination / "pnpm-lock.yaml")
 
-    # Advertise the exact unique SKILL.md directory retained in its compiled ZIP.
     subprocess.run(
         [sys.executable, str(BASE / "openma_skills/prepare_overlay.py"), str(destination)],
         check=True,
@@ -301,9 +300,9 @@ def prepare(source, destination, boxlite_runtime=None):
     )
     docker += f"\nCOPY --chown=node:node tank-deploy/boxlite-runtime /opt/tank-boxlite-runtime\nRUN chmod 755 {executables}\nENV BOXLITE_RUNTIME_DIR=/opt/tank-boxlite-runtime LD_LIBRARY_PATH=/opt/tank-boxlite-runtime\n"
     docker += "COPY --chown=node:node tank-overlay.json /app/tank-overlay.json\n"
-    # OpenMA starts before Tank; initialize the shared named-volume root as UID1000.
+
     docker += "USER root\nRUN install -d -o node -g node /app/replay-evidence\nUSER node\n"
-    # The chosen same-version SDK has a checked-in frozen dependency lock.
+
     (destination / "apps/main-node/Dockerfile.tank").write_text(docker)
     (destination / "tank-overlay.json").write_text(
         json.dumps(

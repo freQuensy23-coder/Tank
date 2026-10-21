@@ -16,6 +16,7 @@ Usage:
   python3 shadow_daily.py metrics --run ... --start 2026-10-21T00:00:00Z --until 2026-10-22T00:00:00Z
 Labels are written with the product CLI (printed by `prepare`): tank review label <alert_id> CATCH|LATE|FALSE_ALARM|NOISE --reviewer NAME
 """
+
 import argparse
 import hashlib
 import json
@@ -25,9 +26,14 @@ import sys
 from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import iso, query, utcnow, write_json  # noqa: E402
+from common import iso, query, utcnow, write_json
 
-ALERT_FIELDS = ["state_overstated", "usd_oi_new_positions", "accumulation_without_checks", "reproducible_verdict"]
+ALERT_FIELDS = [
+    "state_overstated",
+    "usd_oi_new_positions",
+    "accumulation_without_checks",
+    "reproducible_verdict",
+]
 EVENT_FIELDS = ["secondary_exists", "secondary_accepted"]
 WORDING = [
     "L1 no market-wide/broad/unqualified buying-selling unless spot class BROAD with >= 2 complete venues; single venue named",
@@ -83,39 +89,79 @@ def prepare(run, day):
     with open(cards, "w") as fh:
         for r in rows:
             fh.write(json.dumps(r, sort_keys=True, default=str) + "\n")
-    template, sheet, label_cmds, majors = [], [f"# Daily review — cards of {reviewed} (UTC)", "",
-                                             f"Cards/updates: {len(rows)}. MAJOR+ events without a card: {len(silent)}.", "",
-                                             "Checklist per card (03 §7.5, §7.6):", ""] + [f"- {w}" for w in WORDING] + [""], [], {}
+    template, sheet, label_cmds, majors = (
+        [],
+        [
+            f"# Daily review — cards of {reviewed} (UTC)",
+            "",
+            f"Cards/updates: {len(rows)}. MAJOR+ events without a card: {len(silent)}.",
+            "",
+            "Checklist per card (03 §7.5, §7.6):",
+            "",
+        ]
+        + [f"- {w}" for w in WORDING]
+        + [""],
+        [],
+        {},
+    )
     for r in rows:
         a = r["alert"]
         sent = [x for x in r["deliveries"] if x.get("status") == "SENT"]
         failed = [x for x in r["deliveries"] if x.get("status") == "FAILED"]
         labelled = [x.get("label") for x in r["reviews"] if (x.get("version") or 1) == a["version"]]
-        sheet += [f"## {a['alert_id']} v{a['version']} {a['kind']} — {r['class']} — {r['statement']}", "",
-                  f"- event {a['event_id']} state {r['event_state']} freshness {r['freshness']} public_at {r['public_at']} known_to_us_at {r['known_to_us_at']}",
-                  f"- generated {a['generated_at']} · sent {[x.get('at') for x in sent]} message_ref {[x.get('message_ref') for x in sent]} · failed attempts {len(failed)}",
-                  f"- evidence bundle {a.get('evidence_bundle_id')} · model {a.get('model_id')} · prompt {a.get('prompt_version')} · config {a.get('config_version')}",
-                  f"- existing labels: {labelled or 'none'}", "", "```", a.get("card_text") or "", "```", ""]
-        template.append({"alert_id": a["alert_id"], "version": a["version"], "reviewer": None, "reason": None,
-                         **{k: None for k in ALERT_FIELDS}})
+        sheet += [
+            f"## {a['alert_id']} v{a['version']} {a['kind']} — {r['class']} — {r['statement']}",
+            "",
+            f"- event {a['event_id']} state {r['event_state']} freshness {r['freshness']} public_at {r['public_at']} known_to_us_at {r['known_to_us_at']}",
+            f"- generated {a['generated_at']} · sent {[x.get('at') for x in sent]} message_ref {[x.get('message_ref') for x in sent]} · failed attempts {len(failed)}",
+            f"- evidence bundle {a.get('evidence_bundle_id')} · model {a.get('model_id')} · prompt {a.get('prompt_version')} · config {a.get('config_version')}",
+            f"- existing labels: {labelled or 'none'}",
+            "",
+            "```",
+            a.get("card_text") or "",
+            "```",
+            "",
+        ]
+        template.append(
+            {
+                "alert_id": a["alert_id"],
+                "version": a["version"],
+                "reviewer": None,
+                "reason": None,
+                **{k: None for k in ALERT_FIELDS},
+            }
+        )
         if not labelled:
-            label_cmds.append(f"tank review label {a['alert_id']} <CATCH|LATE|FALSE_ALARM|NOISE> --version {a['version']} --reviewer <name> --notes '<why>'")
+            label_cmds.append(
+                f"tank review label {a['alert_id']} <CATCH|LATE|FALSE_ALARM|NOISE> --version {a['version']} --reviewer <name> --notes '<why>'"
+            )
         if r["class"] in ("MAJOR", "STRUCTURAL_SHOCK"):
             majors[a["event_id"]] = r["statement"]
     for event_id in majors:
-        template.append({"event_id": event_id, "reviewer": None, "reason": None, **{k: None for k in EVENT_FIELDS}})
+        template.append(
+            {"event_id": event_id, "reviewer": None, "reason": None, **{k: None for k in EVENT_FIELDS}}
+        )
     if silent:
         sheet += ["## MAJOR+ events with no card (label CORRECT_SILENCE or MISS)", ""]
         for s in silent:
             sheet.append(f"- {s['event_id']} {s['class']} {s['known_to_us_at']} — {s['statement']}")
-            label_cmds.append(f"tank review label {s['event_id']} <CORRECT_SILENCE|MISS> [--miss-reason R] --reviewer <name> --notes '<why>'")
+            label_cmds.append(
+                f"tank review label {s['event_id']} <CORRECT_SILENCE|MISS> [--miss-reason R] --reviewer <name> --notes '<why>'"
+            )
         sheet.append("")
     sheet += ["## Label commands (run in the tank container)", "", "```"] + label_cmds + ["```", ""]
     open(os.path.join(d, "review.md"), "w").write("\n".join(sheet))
     write_json(os.path.join(d, "checks-template.json"), template)
-    receipt = {"day": reviewed.isoformat(), "frozen_at": iso(utcnow()), "cards": len(rows), "silent_major": len(silent),
-               "files": {f: hashlib.sha256(open(os.path.join(d, f), "rb").read()).hexdigest()
-                         for f in ("cards.jsonl", "review.md", "checks-template.json")}}
+    receipt = {
+        "day": reviewed.isoformat(),
+        "frozen_at": iso(utcnow()),
+        "cards": len(rows),
+        "silent_major": len(silent),
+        "files": {
+            f: hashlib.sha256(open(os.path.join(d, f), "rb").read()).hexdigest()
+            for f in ("cards.jsonl", "review.md", "checks-template.json")
+        },
+    }
     write_json(os.path.join(d, "freeze-receipt.json"), receipt)
     print(json.dumps(receipt, indent=2))
 
@@ -141,13 +187,29 @@ def merge(run, day):
         keys.add(key)
         added.append(key)
     write_json(path, cumulative)
-    print(json.dumps({"added": len(added), "skipped_unfilled_or_duplicate": [list(k) for k in skipped]}, indent=2))
+    print(
+        json.dumps(
+            {"added": len(added), "skipped_unfilled_or_duplicate": [list(k) for k in skipped]}, indent=2
+        )
+    )
 
 
 def tank_container():
-    out = subprocess.run(["docker", "ps", "--filter", "label=com.docker.compose.project=tank",
-                          "--filter", "label=com.docker.compose.service=tank", "--format", "{{.Names}}"],
-                         capture_output=True, text=True, check=True).stdout.split()
+    out = subprocess.run(
+        [
+            "docker",
+            "ps",
+            "--filter",
+            "label=com.docker.compose.project=tank",
+            "--filter",
+            "label=com.docker.compose.service=tank",
+            "--format",
+            "{{.Names}}",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.split()
     if len(out) != 1:
         raise SystemExit(f"expected exactly one running tank runtime container, found {out}")
     return out[0]
@@ -166,13 +228,22 @@ def metrics(run, start, until):
     result = json.loads(out.stdout)
     path = os.path.join(run, "metrics", f"S1-S9-until-{until[:10]}.json")
     write_json(path, result)
-    lines = [f"# S1–S9 {start} → {until}", "", "| Metric | value | eligible | coverage | status |", "|---|---:|---:|---:|---|"]
+    lines = [
+        f"# S1–S9 {start} → {until}",
+        "",
+        "| Metric | value | eligible | coverage | status |",
+        "|---|---:|---:|---:|---|",
+    ]
     for name, m in result.get("metrics", {}).items():
         if name == "S1":
             for sub, v in m.items():
-                lines.append(f"| S1 {sub} | {v.get('seconds')} s | {v.get('eligible')} | {v.get('coverage')} | {v.get('status')} |")
+                lines.append(
+                    f"| S1 {sub} | {v.get('seconds')} s | {v.get('eligible')} | {v.get('coverage')} | {v.get('status')} |"
+                )
         else:
-            lines.append(f"| {name} | {m.get('value')} | {m.get('eligible')} | {m.get('coverage')} | {m.get('status')} |")
+            lines.append(
+                f"| {name} | {m.get('value')} | {m.get('eligible')} | {m.get('coverage')} | {m.get('status')} |"
+            )
     open(path.replace(".json", ".md"), "w").write("\n".join(lines) + "\n")
     print("\n".join(lines))
 

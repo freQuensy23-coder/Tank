@@ -19,7 +19,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// Service is the capture runtime.
 type Service struct {
 	opt    Options
 	store  Store
@@ -28,7 +27,7 @@ type Service struct {
 	dial   Dialer
 	clock  Clock
 	log    *slog.Logger
-	// repairGate bounds the instruments repaired at once across tokens (repairParallel).
+
 	repairGate     chan struct{}
 	repairGateOnce sync.Once
 
@@ -45,29 +44,28 @@ type Service struct {
 	slots   chan struct{}
 
 	mu           sync.Mutex
-	hotSince     map[string]time.Time // hot token -> earliest since
+	hotSince     map[string]time.Time
 	groups       map[string]*group
-	members      map[string]*memberState // instrument -> main socket member
-	depth        map[string]*memberState // instrument -> Binance USD-M depth member
+	members      map[string]*memberState
+	depth        map[string]*memberState
 	books        map[string]*books.Book
-	metadata     map[string]map[string]any // discovered instrument metadata
+	metadata     map[string]map[string]any
 	klinesPolled map[string][]string
 	obliged      map[string]bool
 	flowLocks    map[string]*sync.Mutex
 	ctxLocks     map[string]*sync.Mutex
 	late         map[flow.Key]bool
 	repairs      map[string]*repairQueue
-	fxCache      map[string][2]string // quote -> (rate, iso ts)
+	fxCache      map[string][2]string
 	history      map[[2]string]time.Time
 	reads        map[string][2]int
 	frames       map[string]int
 
 	flushMu   sync.Mutex
-	lastFlush atomic.Int64 // unix nanoseconds of the last successful flush
+	lastFlush atomic.Int64
 	flushErr  atomic.Value
 }
 
-// memberState is one instrument on one socket.
 type memberState struct {
 	member    *stream.Member
 	conn      int64
@@ -77,7 +75,6 @@ type memberState struct {
 	message   time.Time
 }
 
-// New is a service; Run starts it.
 func New(opt Options, store Store, writer Writer, venues Venues, dial Dialer, clock Clock) *Service {
 	if opt.Log == nil {
 		opt.Log = slog.Default()
@@ -112,7 +109,6 @@ func New(opt Options, store Store, writer Writer, venues Venues, dial Dialer, cl
 	return s
 }
 
-// leading reports whether this process holds the writer lock (Options.Leading).
 func (s *Service) leading() bool {
 	if s.opt.Leading == nil {
 		return true
@@ -125,7 +121,6 @@ func (s *Service) leading() bool {
 	}
 }
 
-// waitLeading blocks until this process holds the writer lock; false if ctx ends first.
 func (s *Service) waitLeading(ctx context.Context) bool {
 	if s.opt.Leading == nil {
 		return true
@@ -138,7 +133,6 @@ func (s *Service) waitLeading(ctx context.Context) bool {
 	}
 }
 
-// Ready reports that every stream member is connected (a standby can take over).
 func (s *Service) Ready() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -153,7 +147,6 @@ func (s *Service) Ready() bool {
 	return true
 }
 
-// Wake makes the hot set, obligations and requests be read now (a tank_capture notification).
 func (s *Service) Wake() {
 	select {
 	case s.wake <- struct{}{}:
@@ -161,7 +154,6 @@ func (s *Service) Wake() {
 	}
 }
 
-// LastFlush is when typed rows were last written successfully.
 func (s *Service) LastFlush() time.Time {
 	if n := s.lastFlush.Load(); n != 0 {
 		return time.Unix(0, n).UTC()
@@ -169,7 +161,6 @@ func (s *Service) LastFlush() time.Time {
 	return time.Time{}
 }
 
-// Status is the health summary of the runtime.
 func (s *Service) Status() map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -194,7 +185,6 @@ func (s *Service) Status() map[string]any {
 	return status
 }
 
-// Run captures until ctx ends, then writes what it holds.
 func (s *Service) Run(ctx context.Context) error {
 	s.ctx = ctx
 	started := s.clock.Now()
@@ -211,10 +201,9 @@ func (s *Service) Run(ctx context.Context) error {
 		if !s.waitLeading(ctx) {
 			return
 		}
-		// Write what the standby captured first: the gap left to repair is then only what
-		// no process saw.
+
 		s.flush(ctx)
-		// The last hour first, outside the repair slots; then the hot windows' history.
+
 		s.sweep(ctx)
 		s.startupRepairs(ctx, hot, maxTime(started, s.clock.Now()))
 	})
@@ -260,7 +249,6 @@ func (s *Service) Run(ctx context.Context) error {
 	return nil
 }
 
-// fetchPruneEvery and fetchKeep bound finished HTTP_FETCH rows (their bodies are one-shot).
 const fetchPruneEvery, fetchKeep = 10 * time.Minute, time.Hour
 
 func (s *Service) pruneFetches(ctx context.Context) {
@@ -272,15 +260,12 @@ func (s *Service) pruneFetches(ctx context.Context) {
 	}
 }
 
-// raw keeps a print for the hourly trade files.
 func (s *Service) raw(t *normalize.Trade) {
 	if s.opt.Raw != nil {
 		s.opt.Raw.Add(t)
 	}
 }
 
-// flushRaw writes the buffered prints to their hour journals and seals finished hours
-// (only while holding the writer lock: the previous process still appends until then).
 func (s *Service) flushRaw() {
 	if s.opt.Raw == nil || (s.opt.CanWrite != nil && !s.opt.CanWrite()) {
 		return
@@ -290,7 +275,6 @@ func (s *Service) flushRaw() {
 	}
 }
 
-// spawn runs f until the service stops.
 func (s *Service) spawn(f func(ctx context.Context)) {
 	ctx := s.ctx
 	if ctx == nil {
@@ -308,7 +292,6 @@ func (s *Service) spawn(f func(ctx context.Context)) {
 	}()
 }
 
-// after runs f once d has passed, unless the service stops first.
 func (s *Service) after(d time.Duration, f func(ctx context.Context)) {
 	s.spawn(func(ctx context.Context) {
 		select {
@@ -319,7 +302,6 @@ func (s *Service) after(d time.Duration, f func(ctx context.Context)) {
 	})
 }
 
-// loop runs f every interval.
 func (s *Service) loop(ctx context.Context, interval time.Duration, f func(ctx context.Context)) {
 	s.spawn(func(ctx context.Context) {
 		t := time.NewTicker(interval)
@@ -335,7 +317,6 @@ func (s *Service) loop(ctx context.Context, interval time.Duration, f func(ctx c
 	})
 }
 
-// tick seals what can be sealed, runs the head checks due and writes the queued rows.
 func (s *Service) tick(ctx context.Context) {
 	for _, check := range s.seal.Tick(s.clock.Now()) {
 		check := check
@@ -344,8 +325,6 @@ func (s *Service) tick(ctx context.Context) {
 	s.flush(ctx)
 }
 
-// flush writes the queued typed rows (one writer at a time). While the writer lock is
-// being re-acquired the rows stay queued: nothing is written without it, nothing dropped.
 func (s *Service) flush(ctx context.Context) {
 	s.flushMu.Lock()
 	defer s.flushMu.Unlock()
@@ -386,8 +365,6 @@ func (s *Service) contextLock(iid string) func() {
 	return l.Unlock
 }
 
-// repairSlot is one of the shared repair slots (_repair_slots): repair work never takes
-// every REST slot from the reference venue.
 func (s *Service) repairSlot(ctx context.Context) (func(), error) {
 	select {
 	case s.slots <- struct{}{}:
@@ -397,10 +374,6 @@ func (s *Service) repairSlot(ctx context.Context) (func(), error) {
 	}
 }
 
-// restore is _ensure_market_restore without the raw journals: the newest ticker and
-// funding points seed repeat suppression, the stored stablecoin USD samples value the
-// prints of a restart's repairs as of their own time, and the newest stored print of each
-// instrument is the cursor its first connection resumes from (03 §5.2).
 func (s *Service) restore(ctx context.Context) error {
 	ids := make([]string, 0, len(s.opt.Order))
 	for _, iid := range s.opt.Order {
@@ -466,8 +439,6 @@ func (s *Service) restore(ctx context.Context) error {
 	return nil
 }
 
-// hotLoop reads the hot set, the obligations and the requests every few seconds and on
-// every tank_capture notification.
 func (s *Service) hotLoop(ctx context.Context) {
 	refresh := time.NewTicker(5 * time.Second)
 	defer refresh.Stop()
@@ -494,8 +465,6 @@ func (s *Service) hotLoop(ctx context.Context) {
 	}
 }
 
-// syncHot is _sync_streams: one stream group per endpoint for every active instrument
-// of a hot token; groups whose members changed get their new membership.
 func (s *Service) syncHot(ctx context.Context, hot []map[string]any) {
 	since := map[string]time.Time{}
 	for _, row := range hot {
@@ -542,7 +511,6 @@ func (s *Service) syncHot(ctx context.Context, hot []map[string]any) {
 	}
 }
 
-// hot reports whether a token is in the hot set, and its earliest since.
 func (s *Service) hot(token string) (time.Time, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -559,7 +527,6 @@ func (s *Service) mainConn(iid string) int64 {
 	return 0
 }
 
-// streamRows are the current stream states.
 func (s *Service) streamRows() []streamRow {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -593,7 +560,6 @@ func (s *Service) streamRows() []streamRow {
 	return rows
 }
 
-// publishStreamsStopped marks every socket of this writer disconnected at shutdown.
 func (s *Service) publishStreamsStopped() {
 	s.mu.Lock()
 	for _, m := range s.members {
@@ -606,11 +572,6 @@ func (s *Service) publishStreamsStopped() {
 	s.publishStreams()
 }
 
-// latePrintRevision handles a late print for a complete bar of a venue without REST trade
-// history, where the minute cannot be rebuilt. A print at or before the bar's last
-// counted print is a re-delivery (a reconnect replays recent prints) and changes nothing.
-// A newer one revises the bar: bar_version + 1, revised, still complete, with the print
-// recorded in capture_proof.revision.late_print. A complete bar is never downgraded.
 func (s *Service) latePrintRevision(key flow.Key, stored map[string]any, t *normalize.Trade, now time.Time) {
 	if last, err := pytime.Parse(pyval.Map(stored["last_trade"])["ts"]); err == nil && !t.TS.After(last) {
 		return
@@ -638,7 +599,6 @@ func (s *Service) latePrintRevision(key flow.Key, stored map[string]any, t *norm
 	s.points.Put("mkt.flow_bars_1m", key.IID+":"+key.MinuteISO(), row)
 }
 
-// confirm is the second book path (03 §5.9) of a listed venue.
 func (s *Service) confirm(inst *venue.Instrument, row map[string]any) (map[string]any, error) {
 	ctx, cancel := context.WithTimeout(s.context(), 30*time.Second)
 	defer cancel()
@@ -652,10 +612,6 @@ func (s *Service) context() context.Context {
 	return context.Background()
 }
 
-// lateMinute is a print for a minute the sealer no longer holds (or one before this
-// process's first connection): the minute is rebuilt over REST against its stored row,
-// once for a burst of late prints. Without REST trade history (Hyperliquid) a complete
-// bar is never downgraded: see latePrintRevision.
 func (s *Service) lateMinute(inst *venue.Instrument, t *normalize.Trade) {
 	key := flow.KeyOf(inst.ID, t.TS)
 	s.mu.Lock()

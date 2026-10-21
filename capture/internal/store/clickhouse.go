@@ -1,11 +1,5 @@
 package store
 
-// Exchange market series in ClickHouse (HLD §7.1). The tables (created by `tank db
-// migrate`, tank.clickhouse_market.ddl) are ReplacingMergeTree on the collection identity:
-// the row with the newest _version wins, and reads select FINAL. This file gives the Store
-// methods their ClickHouse branch for the collections in ClickHouseTables; PostgreSQL keeps
-// the coordination tables (hot tokens, capture requests, streams, gaps, ledger, locks).
-
 import (
 	"bytes"
 	"context"
@@ -26,20 +20,17 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/schema"
 )
 
-// ClickHouseTables are the collections stored in ClickHouse.
 var ClickHouseTables = map[string]bool{
 	"mkt.klines_1m": true, "mkt.flow_bars_1m": true, "mkt.book_summaries": true, "mkt.oi_obs": true,
 	"mkt.funding_obs": true, "mkt.liq_obs": true, "mkt.tickers_24h": true,
 }
 
-// ClickHouse is a client of the ClickHouse HTTP interface.
 type ClickHouse struct {
 	base, user, password string
 	HTTP                 *http.Client
 	version              atomic.Uint64
 }
 
-// NewClickHouse is a client of rawURL (http://user@host:8123) with password.
 func NewClickHouse(rawURL, password string) (*ClickHouse, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -58,7 +49,6 @@ func NewClickHouse(rawURL, password string) (*ClickHouse, error) {
 	return c, nil
 }
 
-// nextVersion orders the writes of this process (and of any later one: wall-clock based).
 func (c *ClickHouse) nextVersion() uint64 {
 	for {
 		now, last := uint64(time.Now().UnixNano()), c.version.Load()
@@ -92,7 +82,9 @@ func (c *ClickHouse) post(ctx context.Context, query string, params map[string]s
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	out, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -103,7 +95,6 @@ func (c *ClickHouse) post(ctx context.Context, query string, params map[string]s
 	return out, nil
 }
 
-// rows runs a SELECT and returns its JSONEachRow rows (numbers as json.Number).
 func (c *ClickHouse) rows(ctx context.Context, query string, params map[string]string) ([]map[string]any, error) {
 	body, err := c.post(ctx, query+" FORMAT JSONEachRow", params, nil)
 	if err != nil {
@@ -125,18 +116,15 @@ func (c *ClickHouse) rows(ctx context.Context, query string, params map[string]s
 	return out, nil
 }
 
-// Rows runs a SELECT (tests, tools): JSONEachRow rows, numbers as json.Number.
 func (c *ClickHouse) Rows(ctx context.Context, query string, params map[string]string) ([]map[string]any, error) {
 	return c.rows(ctx, query, params)
 }
 
-// Exec runs a statement without a result.
 func (c *ClickHouse) Exec(ctx context.Context, query string) error {
 	_, err := c.post(ctx, query, nil, nil)
 	return err
 }
 
-// Insert writes JSONEachRow lines into table.
 func (c *ClickHouse) Insert(ctx context.Context, table string, lines [][]byte) error {
 	if len(lines) == 0 {
 		return nil
@@ -145,7 +133,6 @@ func (c *ClickHouse) Insert(ctx context.Context, table string, lines [][]byte) e
 	return err
 }
 
-// chQuery collects clauses and server-side parameters.
 type chQuery struct {
 	clauses []string
 	params  map[string]string
@@ -182,7 +169,6 @@ func chArray(values []string) string {
 
 func chColumn(name string) string { return "`" + name + "`" }
 
-// chFilters is exactPredicate on ClickHouse.
 func chFilters(q *chQuery, collection string, filters map[string]any) error {
 	names := make([]string, 0, len(filters))
 	for k := range filters {
@@ -236,7 +222,6 @@ func chBound(q *chQuery, column, op string, t time.Time) {
 	}
 }
 
-// chValue turns a ClickHouse JSON value into what decodeValue takes for kind.
 func chValue(kind string, v any) (any, error) {
 	if v == nil {
 		return nil, nil
@@ -266,7 +251,6 @@ func chValue(kind string, v any) (any, error) {
 	return v, nil
 }
 
-// chDecode is decodeRow for a ClickHouse row: every typed column (aliases too) and the key.
 func chDecode(collection string, row map[string]any) (map[string]any, string, error) {
 	fields := []string{"storage_key"}
 	values := []any{row["storage_key"]}
@@ -432,7 +416,6 @@ func (s *Store) chLatestRecords(ctx context.Context, collection string, groupBy 
 	return out, err
 }
 
-// chLine is one encoded record as a JSONEachRow line.
 func chLine(collection, key string, record map[string]any, version uint64) ([]byte, error) {
 	row := map[string]any{"storage_key": key, "_version": version}
 	for _, c := range schema.Columns[collection] {
@@ -471,10 +454,6 @@ func chLine(collection, key string, record map[string]any, version uint64) ([]by
 	return json.Marshal(row)
 }
 
-// chPutChunk is putChunk on ClickHouse: the stored rows of the batch identities are read
-// first, and a record is written only where PostgreSQL's upsert would change the row
-// (a new fingerprint; never a complete flow bar unproven; funding and ticker points
-// merged with the stored point). It returns the changed rows, decoded.
 func (s *Store) chPutChunk(ctx context.Context, collection string, rows []map[string]any, keys []string) ([]map[string]any, error) {
 	order, unique, err := prepareRecords(collection, rows, keys)
 	if err != nil {
@@ -531,7 +510,6 @@ func (s *Store) chPutChunk(ctx context.Context, collection string, rows []map[st
 	return changed, nil
 }
 
-// recordIdentity is identityKey of an encoded record (the storage key for its identity part).
 func recordIdentity(identity []string, key string, record map[string]any) string {
 	values := make([]any, len(identity))
 	for i, name := range identity {
@@ -544,8 +522,6 @@ func recordIdentity(identity []string, key string, record map[string]any) string
 	return identityKey(values)
 }
 
-// chStored reads the stored rows of the batch identities: a superset by each identity
-// column (primary-key ranges), then matched exactly by identity.
 func (s *Store) chStored(ctx context.Context, collection string, identity, order []string, unique map[string]map[string]any) (map[string]map[string]any, error) {
 	q := newCHQuery()
 	for _, name := range identity {
@@ -587,7 +563,6 @@ func (s *Store) chStored(ctx context.Context, collection string, identity, order
 	return out, nil
 }
 
-// stripAliases drops the alias copies decodeRow adds (Encode rejects a conflicting pair).
 func stripAliases(collection string, row map[string]any) map[string]any {
 	out := make(map[string]any, len(row))
 	for k, v := range row {
@@ -598,7 +573,6 @@ func stripAliases(collection string, row map[string]any) map[string]any {
 	return out
 }
 
-// chDecodeEncoded is decode() of an encoded record (what PostgreSQL's RETURNING gives).
 func chDecodeEncoded(collection, key string, record map[string]any) (map[string]any, string, error) {
 	fields := []string{"storage_key"}
 	values := []any{key}

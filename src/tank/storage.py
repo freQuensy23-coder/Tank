@@ -1,7 +1,5 @@
 """Transactional PostgreSQL storage. MemoryRepository is an explicit test double only."""
 
-from __future__ import annotations
-
 import asyncio
 import copy
 import hashlib
@@ -10,7 +8,7 @@ import logging
 import random
 import time
 import weakref
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import timedelta
 from pathlib import Path
@@ -126,21 +124,15 @@ class Repository(Protocol):
     def iter_range(self, collection, time_field, *, start=None, end=None, filters=None, batch_size=10000): ...
 
 
-# Job types whose RUNNING count is capped at claim time. A REACTION_CAPTURE holds a
-# pooled connection through long reads; a backlog of them took 6 of 8 workers and
-# drained the pool (r110, 03:52Z), so one runs at a time and other types never wait.
 log = logging.getLogger(__name__)
 
 RUNNING_CAPS = {"REACTION_CAPTURE": 1}
-# Due jobs of these types are claimed earliest expiry first within their priority: a
-# capture backlog must not let a checkpoint expire behind ones with hours of slack
-# (FR-R-01; captures expire at checkpoint + 6 h, 03 §3.8).
+
+
 EARLIEST_EXPIRY_FIRST = ("REACTION_CAPTURE",)
 CLAIM_SLOW_S, DELIVER_LATE_S = 0.5, 1.0
-# Event analysis goes before reaction captures (lead ruling 2026-10-21, E2E #9: a card has
-# 480 s, a capture has checkpoint + 6 h). A capture is not claimed while any analysis job
-# is running or due, or while an event known in the last FRESH_EVENT_S has no FULL card,
-# unless it would expire within EXPIRY_SAFETY_S.
+
+
 YIELDS_TO_ANALYSIS = ("REACTION_CAPTURE",)
 ANALYSIS_TYPES = ("RUN_MARKET_TRUTH", "FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE")
 FRESH_EVENT_S, EXPIRY_SAFETY_S = 600, 1200
@@ -326,8 +318,7 @@ class MemoryRepository(QueueMixin):
         if outer:
             await self._mutex.acquire()
             self._owner = asyncio.current_task()
-        # Stored domain documents are copy-on-write; only queue claims mutate rows in place.
-        # Copy mappings rather than every historical market document for each test insert.
+
         saved = {collection: rows.copy() for collection, rows in self._data.items()}
         if "ops.jobs" in saved:
             saved["ops.jobs"] = copy.deepcopy(saved["ops.jobs"])
@@ -624,7 +615,7 @@ def _projection(collection, record):
                 if isinstance(element, dict) and id_field:
                     element = element.get(id_field)
                 if not isinstance(element, str):
-                    raise ValueError(  # noqa: TRY004 - invalid record schema, not a Python argument type
+                    raise ValueError(
                         f"{collection}.{column} requires text values"
                         + (f" or objects carrying {id_field}" if id_field else "")
                     )
@@ -647,7 +638,6 @@ def _projection(collection, record):
             metadata = stamp.fields(field, precision_field=precision_field)
             values.update({key: value for key, value in metadata.items() if key != field})
         else:
-            # Copy only explicit unknown reasons; the repository does not infer source policies.
             for name in names:
                 if record.get(name + "_reason") is not None:
                     values[precision_field + "_reason"] = record[name + "_reason"]
@@ -686,7 +676,7 @@ async def _stable_transaction(conn):
             context.__aexit__(type(error), error, error.__traceback__)
         )
         if exit_cancelled and not isinstance(error, asyncio.CancelledError):
-            raise exit_cancelled
+            raise exit_cancelled from error
         if not suppressed:
             raise
     else:
@@ -708,25 +698,17 @@ class PostgresRepository(QueueMixin):
 
         class CancellationSafeConnection(AsyncConnection):
             async def wait(connection, *args, **kwargs):
-                # Deliver the first cancellation to psycopg so it cancels/drains the
-                # actual server query. Further caller cancels must not interrupt that
-                # protocol recovery and leave ACTIVE results ahead of ROLLBACK.
+
                 operation = asyncio.create_task(super().wait(*args, **kwargs))
                 try:
                     return await asyncio.shield(operation)
                 except asyncio.CancelledError:
                     if not operation.done():
                         operation.cancel()
-                    try:
+                    with suppress(asyncio.CancelledError):
                         await _finish_critical(operation)
-                    except asyncio.CancelledError:
-                        pass
                     raise
 
-        # Each backend caches the catalog of ~3,500 relations (mostly market partitions,
-        # 90-180 MiB per backend), so connections are recycled: idle ones close after
-        # 2 minutes and every one is replaced after 10. max_size stays 16 because
-        # advisory locks hold a connection for their body and waiters hold one each.
         self._pool = AsyncConnectionPool(
             self.database_url,
             open=False,
@@ -750,9 +732,7 @@ class PostgresRepository(QueueMixin):
     async def transaction(self):
         existing = self._connection.get()
         task = asyncio.current_task()
-        # ContextVars are copied into spawned tasks. A child must borrow its own
-        # connection, never use the parent's transaction. Weak bindings also avoid
-        # retaining a completed parent task/borrowed connection in long-lived children.
+
         if existing is not None and existing[1]() is task:
             async with _stable_transaction(existing[0]()):
                 yield self
@@ -782,8 +762,6 @@ class PostgresRepository(QueueMixin):
         digest = int.from_bytes(hashlib.sha256(str(key).encode()).digest()[:8], "big", signed=True)
         existing = self._connection.get()
         if existing is None or existing[1]() is not asyncio.current_task():
-            # Wait without holding a pooled connection: a blocked waiter used to keep one
-            # for the whole wait, so many waiters on one key drained the pool (r109).
             while True:
                 async with self.transaction():
                     row = await (
@@ -793,7 +771,7 @@ class PostgresRepository(QueueMixin):
                         yield self
                         return
                 await asyncio.sleep(random.uniform(0.05, 0.2))
-        # Inside an open transaction the connection cannot be returned; wait on it.
+
         async with self.transaction():
             await self._conn().execute("SELECT pg_advisory_xact_lock(%s)", (digest,))
             yield self
@@ -824,13 +802,9 @@ class PostgresRepository(QueueMixin):
 
             async def release():
                 try:
-                    # A cancelled lock acquisition might have succeeded on the
-                    # server. Always attempt unlock, even if acquire raised.
                     async with _stable_transaction(conn):
                         await conn.execute("SELECT pg_advisory_unlock(%s)", (digest,))
-                except BaseException:  # noqa: BLE001 - cleanup must close even on repeated cancellation
-                    # Closing a bad session also releases any session lock;
-                    # never return a locked or protocol-damaged connection.
+                except BaseException:
                     await conn.close()
                 await pool.putconn(conn)
 
@@ -989,7 +963,7 @@ class PostgresRepository(QueueMixin):
         _table(collection)
         if limit < 0:
             raise ValueError("limit must be nonnegative")
-        # JSONB containment preserves exact structured top-level values and nulls.
+
         clauses, args = [], []
         for k, v in (filters or {}).items():
             clauses.append(sql.SQL("document -> %s = %s"))
@@ -1059,8 +1033,7 @@ class PostgresRepository(QueueMixin):
         started = time.monotonic()
         job = await self._claim_job()
         elapsed = time.monotonic() - started
-        # Timing evidence for the 10 s delivery target (01 §9); the elapsed time includes
-        # the wait for a pooled connection.
+
         late = None
         if job and job.get("type") == "DELIVER" and job.get("attempts") == 1 and job.get("run_after"):
             late = (utcnow() - parse_time(job["run_after"])).total_seconds()
@@ -1076,12 +1049,7 @@ class PostgresRepository(QueueMixin):
     async def _claim_job(self):
         async with self.transaction():
             conn = self._conn()
-            # Capped types: try (never wait) for each type's claim lock. A type whose lock
-            # another claimer holds is skipped this round; every other type is claimable,
-            # so a stalled capture claim can no longer queue DELIVER behind it (r114 E2E #6:
-            # 7.7 s pickup while claimers waited in pg_advisory_xact_lock). The RUNNING
-            # count is read by the next statement, after the lock, so it sees every
-            # capture claimed before the lock was released.
+
             held = (
                 await (
                     await conn.execute(
@@ -1225,7 +1193,7 @@ async def _maintain_partitions(self, *, extra_days=None, include_history=True):
     from psycopg import sql
 
     created = 0
-    # TimescaleDB hypertables make their own daily chunks (deploy/timescale_migrate.py).
+
     async with self.transaction():
         hyper = await (
             await self._conn().execute(
@@ -1283,8 +1251,6 @@ async def _maintain_partitions(self, *, extra_days=None, include_history=True):
                 child = sql.Identifier(schema, partition_name)
                 parent = sql.Identifier(schema, name)
                 if occupied:
-                    # Standalone child accepts pre-existing legacy rows before matching inherited
-                    # constraints are reattached with their original validation state.
                     await self._conn().execute(
                         sql.SQL("CREATE TABLE {} (LIKE {} INCLUDING DEFAULTS INCLUDING STORAGE)").format(
                             child, parent
@@ -1356,14 +1322,11 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
         "mkt.liq_obs": "ts",
         "mkt.tickers_24h": "ts",
         "mkt.supply_obs": "ts",
-        # Gaps describe the series above and share their retention (tank-market, W11).
         "mkt.capture_gaps": "observed_at",
-        # Capture tiers in force at a cutoff (03 §5.10); mutable since migration 042.
         "ops.capture_tier_transitions": "effective_at",
     }
     counts = {}
     async with self.lock("tank:market_retention"):
-        # Retention is by whole UTC partition across all instruments, including benchmarks.
         days = set()
         for _, start, end in await _preserved_windows(self):
             day = start.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1381,8 +1344,7 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
             from psycopg import sql
 
             await self.maintain_partitions(include_history=False)
-            # Hypertables (TimescaleDB) lose whole old chunks outside preserved days: the
-            # disk is returned and compressed chunks are not rewritten row by row.
+
             installed = await (
                 await self._conn().execute(
                     "SELECT to_regclass('timescaledb_information.chunks') IS NOT NULL AS installed"
@@ -1480,7 +1442,6 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
                 counts[collection] = deleted
     ch = getattr(self, "clickhouse", None)
     if ch is not None:
-        # Exchange series live in ClickHouse: whole daily partitions go, MAJOR+ days stay.
         from tank import clickhouse_market as chm
 
         preserved = set()
@@ -1536,7 +1497,6 @@ async def _range_page(
             clauses.extend(extra)
             args.extend(values)
         elif filters:
-            # Containment hits the GIN document index; equality preserves exact top-level objects.
             clauses.append(sql.SQL("document @> %s"))
             args.append(Jsonb(jsonable(filters)))
             for key, value in filters.items():
@@ -1756,8 +1716,7 @@ def _exact_predicate(collection, filters):
             if value is None:
                 clauses.append(sql.SQL("{} IS NULL").format(sql.Identifier(key)))
                 continue
-            # Equality on a known value preserves exact NULL behavior and lets
-            # PostgreSQL seek the typed column's ordinary B-tree index.
+
             clauses.append(sql.SQL("{} = %s").format(sql.Identifier(key)))
             args.append(
                 Jsonb(jsonable(value))

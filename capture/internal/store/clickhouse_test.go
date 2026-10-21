@@ -9,8 +9,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 )
 
-// Runs against a ClickHouse whose mkt tables exist (tank.clickhouse_market.ddl):
-// CLICKHOUSE_TEST_URL=http://user:password@host:8123.
 func chStore(t *testing.T) *Store {
 	t.Helper()
 	raw := os.Getenv("CLICKHOUSE_TEST_URL")
@@ -48,7 +46,7 @@ func TestClickHouseWritesLikeThePostgresUpsert(t *testing.T) {
 	if out, err := s.PutMarketBatch(ctx, "mkt.flow_bars_1m", []map[string]any{flowBar(m0, true, nil)}, []string{key}); err != nil || len(out) != 1 {
 		t.Fatalf("first write: %v %v", out, err)
 	}
-	// The same bar again changes nothing; an unproven incomplete one never replaces it.
+
 	if out, err := s.PutMarketBatch(ctx, "mkt.flow_bars_1m", []map[string]any{flowBar(m0, true, nil)}, []string{key}); err != nil || len(out) != 0 {
 		t.Fatalf("same write changed %v %v", out, err)
 	}
@@ -59,7 +57,7 @@ func TestClickHouseWritesLikeThePostgresUpsert(t *testing.T) {
 	if err != nil || got == nil || got["complete"] != true || got["buy_qty"] != "1.5" {
 		t.Fatalf("get = %v %v", got, err)
 	}
-	// A repair's reason does replace it.
+
 	if out, err := s.PutMarketBatch(ctx, "mkt.flow_bars_1m", []map[string]any{flowBar(m0, false, "REST_REPAIR_INCOMPLETE")}, []string{key}); err != nil || len(out) != 1 {
 		t.Fatalf("reasoned write: %v %v", out, err)
 	}

@@ -95,7 +95,7 @@ try:
     ok("goto", url=url)
     pid = daemon_pid()
     owned = [pid, *tree(pid)]
-    # A request with an expired queued budget must never execute this mutation.
+
     hang = subprocess.Popen(
         command("evaluate", expression="(()=>{while(true){}})()"),
         stdout=subprocess.PIPE,

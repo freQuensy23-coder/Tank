@@ -154,7 +154,7 @@ def flow_case(values, qs):
             sum_sq_qty=q,
             complete=True,
         )
-        for (v, vol, cvd), q in zip(values, qs)
+        for (v, vol, cvd), q in zip(values, qs, strict=False)
     ]
     return spot_truth(rows, [], [], start, end)
 
@@ -288,7 +288,7 @@ def test_real_archive_oi_regressions():
                         if n > 0 and u > 0:
                             ts = parse_time(r["create_time"])
                             rows[ts] = dict(ts=iso(ts), oi_native=n, oi_usd=u)
-        # REST is authoritative for event endpoints; archive supplies distributions only.
+
         for r in rest[f"{fixture}:{symbol}:1h"]:
             t = parse_time(r["timestamp"])
             if t in (parse_time(a), parse_time(z)):
@@ -335,8 +335,7 @@ def test_real_f08_does_not_invent_anchor_trades_or_spot_coverage():
     assert result["ref_venue"] is None
     assert result["anchor"]["ref_price"] is None
     assert result["anchor"]["price_reason"] == "INCOMPLETE"
-    # These saved packets contain price bars, not trades; the measured fixture's heavy value
-    # can validate the band formula but cannot certify an actual last-trade anchor.
+
     measured = json.loads((Path(__file__).resolve().parents[1] / "fixture_check/results.json").read_text())[
         "F-08"
     ]
@@ -532,7 +531,7 @@ def test_confidence_requires_present_fresh_reference_and_books():
     result = data_confidence(snapshot, spot, {"per_venue": []}, end)
     assert result["class_"] == "MEDIUM"
     assert any(f.get("collection") == "books" for f in result["failed"])
-    # Make price more than one cadence stale; semantic verification cannot mask it.
+
     snapshot["klines"][0]["open_time"] = iso(end - timedelta(minutes=3))
     result = data_confidence(snapshot, spot, {"per_venue": []}, end)
     assert any(
@@ -616,7 +615,7 @@ def test_degenerate_float_history_range_is_unavailable():
     assert range_reason(noise) == "DEGENERATE_HISTORY"
     assert range_reason([]) == "INCOMPLETE"
     assert range_reason([-0.01, 0.0, 0.02]) is None
-    # A +0.03% move against identical history is never HEAVY or SUBSTANTIAL.
+
     assert repricing(0.000272, noise, noise) is None
 
 
@@ -752,13 +751,13 @@ def test_same_quote_ten_bp_dislocation_is_fragmentation():
 
 
 def test_cross_quote_gap_must_clear_conversion_uncertainty_and_needs_a_rate():
-    # 1.5 bp after conversion: beyond both 0.1 bp spreads, within the 2 bp conversion uncertainty.
+
     frag = _fragmentation_of({"A": ("100.045", "USDT", "0.9997"), "B": ("100", "USD", None)})
     assert frag["persistent_gap"] is False and frag["quote_conversion_uncertainty_bps"] == 2
-    # 10 bp after conversion is a real cross-quote gap.
+
     frag = _fragmentation_of({"A": ("100.130039", "USDT", "0.9997"), "B": ("100", "USD", None)})
     assert frag["venues"] == [["A", "B"]]
-    # Without a quote rate the pair is recorded as not evaluated, never as a gap.
+
     frag = _fragmentation_of({"A": ("100.5", "USDT", None), "B": ("100", "USD", None)})
     assert frag["persistent_gap"] is False
     assert frag["cross_quote_not_evaluated"] == [["A", "B"]]
@@ -851,7 +850,7 @@ def test_net_flow_is_native_so_a_missing_quote_rate_does_not_null_elasticity():
     result = _e2e8_liquidity(c_notional=False)
     elasticity = result["elasticity"]
     assert elasticity["depth_unit"] == "NATIVE"
-    assert elasticity["net_flow"] == 45  # 3 venues x 15 bars x (2 - 1)
+    assert elasticity["net_flow"] == 45
     assert elasticity["hit_side"] == "ask"
 
 
@@ -863,13 +862,13 @@ def test_partial_band_coverage_gives_a_depth_lower_bound_not_null():
     assert elasticity["hit_side_depth_lower_bound"] == 220
     assert elasticity["hit_side_covered_venues"] == ["A", "B"]
     assert elasticity["hit_side_coverage_complete"] is False
-    assert elasticity["hit_side_depth_p1_usd"] is None  # the full sum stays unknown
+    assert elasticity["hit_side_depth_p1_usd"] is None
     assert elasticity["weak_response"] is False
-    assert elasticity["excess_response"] is True  # beyond normal and net < pre-event lower bound
+    assert elasticity["excess_response"] is True
     assert result["depth_drop_cohort"]["ask"] == ["A", "B"]
     assert result["depth_drop"] == 0 and result["depth_majority_lost"] is False
-    assert result["liquidity_state"] == "NORMAL"  # both sides' lower bounds clear T2
-    # Every venue covered: the bound is the exact depth and a large flow is a weak response.
+    assert result["liquidity_state"] == "NORMAL"
+
     full = _e2e8_liquidity(c_notional=True, covered_c=True)["elasticity"]
     assert full["hit_side_coverage_complete"] is True and full["hit_side_depth_lower_bound"] == 720
 
@@ -1096,10 +1095,10 @@ def test_once_per_interval_oi_is_fresh_within_two_intervals_plus_publish_lag():
     assert fresh["fresh"] is True
     assert fresh["cadence_s"] == 690 and fresh["cadence_source"] == "SOURCE_INTERVAL_PLUS_PUBLISH_LAG"
     assert check(700)["fresh"] is False
-    # Period-end timestamps: the age runs from the bucket start (label - 300 s).
+
     assert check(380, "binance.usdm.openInterestHist", "binance:perp_linear:BTCUSDT")["age_s"] == 680
     assert check(400, "binance.usdm.openInterestHist", "binance:perp_linear:BTCUSDT")["fresh"] is False
-    # Point series keep their capture cadence.
+
     assert check(61, "binance.usdm.openInterest", "binance:perp_linear:BTCUSDT")["fresh"] is False
 
 
@@ -1293,7 +1292,7 @@ def test_synchronized_composite_keeps_native_range_and_endpoint_usd_with_endpoin
     assert sync["venues"] == ["binance", "bybit"]
     assert sync["native_normal_range"] is not None
     assert sync["oi_usd_chg_pct"] == pytest.approx(0.08)
-    # The composite USD history sums the venues with stored USD at both bounds (binance here).
+
     assert sync["usd_normal_range"] is not None
 
 
@@ -1478,7 +1477,7 @@ def test_derivative_windows_keep_one_hour_watch_separate_from_four_hour_crowding
         assert windows[name]["start"] == iso(end - timedelta(seconds=seconds))
         assert result["liquidity"]["windows"][name]["elasticity"]["window"] == name
         assert result["liquidity"]["windows"][name]["replenishment"]["window"] == name
-        # Lead-lag and compression retain their specified scopes even inside a rolling pack.
+
         assert windows[name]["lead_lag"]["window"] == "EVENT"
         assert result["liquidity"]["windows"][name]["vol_compression"]["window"] == "W24H"
     assert (
@@ -1507,7 +1506,7 @@ def test_reference_requires_complete_24h_flow_and_last_actual_trade():
     assert result["anchor"]["ref_price"] == 99
     assert result["anchor"]["price_source"] == "LAST_TRADE"
     assert result["windows"]["EVENT"]["r_raw"] == pytest.approx(101.1 / 99 - 1)
-    # A was the largest venue by tie ordering; one missing minute makes B the only eligible ref.
+
     snapshot["flow_bars"][0]["complete"] = False
     result = relative_truth(snapshot, start, end)
     assert result["ref_venue"] == "B:spot:T"
@@ -1773,7 +1772,7 @@ def test_closed_bar_collection_latency_is_not_future_market_data():
     assert measured["spot"]["W24H"]["coverage"]["n_complete"] == 2
     assert measured["relative"]["ref_venue"] is not None
     assert measured["time_policy"] == "SEMANTIC_MARKET_TIME_WITH_ASSEMBLY_AVAILABILITY"
-    # An unavailable tool/result row cannot enter a snapshot assembled before it arrived.
+
     snapshot["assembled_at"] = iso(end)
     unavailable = compute_market_truth(snapshot)
     assert unavailable["spot"]["W24H"]["coverage"]["n_complete"] == 0
@@ -1793,7 +1792,7 @@ def test_canonical_text_facts_print_units_windows_and_preserve_audit_companion()
     truth = compute_market_truth(snapshot)
     assert all(isinstance(f, str) for f in truth["decisive_facts"])
     assert len(truth["decisive_facts"]) == len(truth["decisive_fact_details"])
-    for text, detail in zip(truth["decisive_facts"], truth["decisive_fact_details"]):
+    for text, detail in zip(truth["decisive_facts"], truth["decisive_fact_details"], strict=False):
         assert detail["unit"] in text and detail["window"] in text
         assert "coverage" in text or "covered" in text or "complete" in text
     event = {"event_id": "E", "event_state": "APPROVED", "state_verified": True, "freshness": "FRESH"}
@@ -1887,7 +1886,9 @@ def test_klines_poll_watermark_keeps_quiet_spot_venue_fresh_without_inventing_ca
         snapshot["klines"] = [row for row in snapshot["klines"] if row["instrument_id"] != iid]
     if watermark_offset_s is not None:
         snapshot["capture_metadata"] = {
-            "collections": {"klines": {"observed_through": {iid: iso(end + timedelta(seconds=watermark_offset_s))}}}
+            "collections": {
+                "klines": {"observed_through": {iid: iso(end + timedelta(seconds=watermark_offset_s))}}
+            }
         }
     original = deepcopy(snapshot)
     spot = spot_truth(snapshot["flow_bars"], [], snapshot["instruments"], end - timedelta(minutes=1), end)
@@ -1920,7 +1921,9 @@ def test_market_truth_propagates_quiet_spot_poll_watermark(watermark_offset_s, e
     iid = "A:spot:T"
     snapshot["klines"][0]["open_time"] = iso(end - timedelta(minutes=6))
     snapshot["capture_metadata"] = {
-        "collections": {"klines": {"observed_through": {iid: iso(end + timedelta(seconds=watermark_offset_s))}}}
+        "collections": {
+            "klines": {"observed_through": {iid: iso(end + timedelta(seconds=watermark_offset_s))}}
+        }
     }
     original = deepcopy(snapshot)
     result = compute_market_truth(snapshot)
@@ -1928,7 +1931,8 @@ def test_market_truth_propagates_quiet_spot_poll_watermark(watermark_offset_s, e
     assert result["spot"]["EVENT"]["coverage"]["n_complete"] == 2
     assert result["data_confidence"]["class"] == expected_class
     (check,) = [
-        f for f in result["data_confidence"]["freshness"]
+        f
+        for f in result["data_confidence"]["freshness"]
         if f["collection"] == "klines" and f["instrument_id"] == iid
     ]
     assert check["age_s"] == (0 if watermark_offset_s == 0 else 300)
@@ -1986,13 +1990,13 @@ def test_benchmark_reaction_return_uses_largest_spot_venue_base_klines():
         klines.append(bar("binance:perp_linear:BTCUSDT", minute, 1, 10**9))
     result = benchmark_reaction_values({"token_id": "bitcoin:BTC", "klines": klines}, start, end)
     assert result["r_raw_venue"] == "binance:spot:BTCUSDT"
-    # Last closes at or before each bound: bar i=59 closes at start, i=119 closes at end.
+
     assert result["price_start"] == 159 and result["price_end"] == 219
     assert abs(result["r_raw"] - (219 / 159 - 1)) < 1e-12
     assert result["reason"] == "NOT_APPLICABLE" and "spot_cvd" in result["not_applicable"]
     empty = benchmark_reaction_values({"token_id": "bitcoin:BTC", "klines": []}, start, end)
     assert empty["r_raw"] is None and empty["r_raw_reason"] == "INCOMPLETE"
-    # Prod 20 Oct: no base klines inside the window; both bounds must not reuse one old close.
+
     gap = [k for k in klines if parse_time(k["open_time"]) < start - timedelta(minutes=30)]
     assert gap
     stale = benchmark_reaction_values({"token_id": "bitcoin:BTC", "klines": gap}, start, end)
@@ -2169,16 +2173,13 @@ def test_hot_90_second_derivative_points_are_medium_without_weakening_sync_rule(
     derivatives = derivatives_truth(snapshot, start, end)
     hot = data_confidence(snapshot, spot, derivatives, end)
     assert hot["class_"] == "MEDIUM"
-    assert {"oi", "funding"} <= {
-        f.get("collection") for f in hot["failed"] if f["condition"] == "freshness"
-    }
+    assert {"oi", "funding"} <= {f.get("collection") for f in hot["failed"] if f["condition"] == "freshness"}
     snapshot["capture_metadata"]["tier"] = "BASE"
     base = data_confidence(snapshot, spot, derivatives, end)
     assert not any(
-        f["condition"] == "freshness" and f.get("collection") in ("oi", "funding")
-        for f in base["failed"]
+        f["condition"] == "freshness" and f.get("collection") in ("oi", "funding") for f in base["failed"]
     )
-    # Base cadence permits the age; endpoint synchronization still has a separate <=60s bound.
+
     assert derivatives["synchronized"] is None
 
 
@@ -2227,7 +2228,7 @@ def test_outcome_btc_reference_and_horizon_ranges_are_frozen_from_entry_history(
         assert measured["coverage"]["sample_count"] > 0
         assert measured["value"] is not None and measured["reason"] is None
         assert parse_time(measured["cutoff"]) == parse_time(snapshot["anchor"]["ts"])
-    # Post-entry market points cannot refit the frozen own-history distribution.
+
     snapshot["klines"].append(
         {
             "instrument_id": "A:spot:T",
@@ -2464,8 +2465,7 @@ def test_exact_capital_majority_drives_distribution_without_rounded_display_rule
     relative = {"windows": {"W1H": {"r_btc_adj": 0.01, "normal_range": [-0.1, 0.1]}}}
     yes = select_move(tiny, deriv, liq, {"supply_in_evidence": "TRUE"}, relative, "HIGH", "W1H")
     no = select_move(half, deriv, liq, {"supply_in_evidence": "TRUE"}, relative, "HIGH", "W1H")
-    # The divergence discriminator retains its precedence; this checks eligibility,
-    # not a new override of the existing price-flow rule.
+
     assert "DISTRIBUTION" in yes["eligible_before_divergence"]
     assert "DISTRIBUTION" not in no["eligible_before_divergence"]
 
@@ -2647,7 +2647,7 @@ def _sync_cohort(end, spans_days, levels, usd_days=None):
     """Synchronized cohort rows on a 5 min grid; venue i starts spans_days[i] before end and
     carries USD for its last usd_days[venue] days (all of them by default)."""
     cohort = []
-    for (venue, span), level in zip(spans_days.items(), levels):
+    for (venue, span), level in zip(spans_days.items(), levels, strict=False):
         iid = f"{venue}:perp_linear:BTCUSDT"
         rows = [
             {
@@ -2671,12 +2671,12 @@ def test_synchronized_oi_history_counts_each_past_window_over_venues_seen_at_bot
     start = end - timedelta(minutes=15)
     spans = {"binance": 10, "bybit": 10, "okx": 2.5}
     levels = [lambda m: 100 + (m // 5) % 4, lambda m: 50 + (m // 5) % 3, lambda m: 30 + (m // 5) % 2]
-    usd_days = {"binance": 10, "bybit": 2.5, "okx": 2.5}  # Bybit rows gain a mark with ticker capture
+    usd_days = {"binance": 10, "bybit": 2.5, "okx": 2.5}
     sync = _sync_cohort(end, spans, levels, usd_days)
     result = synchronized_oi(sync, start, end)
     assert result["venues"] == ["binance", "bybit", "okx"]
     native, usd = [], []
-    # Past windows end m minutes before end (before the window), each with its start stored.
+
     for m in range(20, 10 * 1440 - 15 + 1, 5):
         for days, out in ((spans, native), (usd_days, usd)):
             present = [i for i, span in enumerate(days.values()) if m + 15 <= span * 1440]
@@ -2686,7 +2686,6 @@ def test_synchronized_oi_history_counts_each_past_window_over_venues_seen_at_bot
     assert result["usd_normal_range"] == pytest.approx(normal(usd))
     assert result["native_oi_vs_normal"] is not None
 
-    # A venue joining the cohort is never an OI change: flat venues give flat history.
     flat = _sync_cohort(end, spans, [lambda m: 100, lambda m: 50, lambda m: 1000])
     stored = [[r for r in rows if parse_time(r["ts"]) < start] for _, rows, _ in flat]
     hn, hu = _composite_history([([parse_time(r["ts"]) for r in rows], rows) for rows in stored], end - start)

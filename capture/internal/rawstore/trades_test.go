@@ -22,7 +22,6 @@ func print(id string, ts time.Time) *normalize.Trade {
 	}
 }
 
-// A print captured twice reads once; the stored price keeps its exact digits.
 func TestTradesInsertAndDeduplicate(t *testing.T) {
 	raw := os.Getenv("CLICKHOUSE_TEST_URL")
 	if raw == "" {

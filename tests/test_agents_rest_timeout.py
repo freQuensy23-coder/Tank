@@ -26,7 +26,7 @@ async def stalled_http_peer():
             try:
                 await reader.readuntil(b"\r\n\r\n")
             except asyncio.IncompleteReadError:
-                return  # A peer may disconnect before sending complete headers.
+                return
             requests.append(asyncio.get_running_loop().time())
             await release.wait()
         finally:
@@ -58,7 +58,7 @@ async def test_stalled_rest_read_times_out_without_changing_sse(monkeypatch, inj
                 assert service.http is not service.stream_http
             else:
                 assert injected.timeout.read is None
-            # Shorten only the stalled read; connection/write/pool setup retains headroom.
+
             read_timeout = 0.05
             monkeypatch.setattr(session_module, "REST_TIMEOUT_S", httpx.Timeout(5.0, read=read_timeout))
             with pytest.raises(httpx.ReadTimeout):
@@ -66,7 +66,7 @@ async def test_stalled_rest_read_times_out_without_changing_sse(monkeypatch, inj
             assert len(accepted) == 1
             read_elapsed = asyncio.get_running_loop().time() - accepted[0]
             assert read_timeout * 0.8 <= read_elapsed < 1.0
-            # Request-level REST settings must not alter the client's SSE defaults.
+
             assert service.stream_http.timeout.read is None
         finally:
             await service.close()

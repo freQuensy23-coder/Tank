@@ -16,13 +16,10 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// quote is sql.Identifier(name).
 func quote(name string) string { return pgx.Identifier{name}.Sanitize() }
 
-// pgTime is a timestamp as PostgreSQL text input (exact microseconds, UTC).
 func pgTime(t time.Time) string { return t.UTC().Format("2006-01-02T15:04:05.000000Z") }
 
-// isNone is Python None for a record value: nil, or a nil map or slice.
 func isNone(v any) bool {
 	switch x := v.(type) {
 	case nil:
@@ -35,8 +32,6 @@ func isNone(v any) bool {
 	return false
 }
 
-// pgText renders one encoded column value as the text PostgreSQL casts to the column
-// type: the value psycopg would send for the same Python object.
 func pgText(collection, name, kind string, value any) (*string, error) {
 	if isNone(value) {
 		return nil, nil
@@ -88,7 +83,6 @@ func pgText(collection, name, kind string, value any) (*string, error) {
 	return &s, nil
 }
 
-// pyStr is Python str() of an encoded identity value (the default storage key).
 func pyStr(v any) string {
 	switch x := v.(type) {
 	case nil:
@@ -107,7 +101,7 @@ func pyStr(v any) string {
 	case pydec.Dec:
 		return x.String()
 	case time.Time:
-		// datetime.__str__: isoformat with a space, an aware UTC offset.
+
 		t := x.UTC()
 		s := t.Format("2006-01-02 15:04:05")
 		if us := t.Nanosecond() / 1000; us != 0 {
@@ -118,7 +112,6 @@ func pyStr(v any) string {
 	return fmt.Sprint(v)
 }
 
-// identityKey is the comparable form of an identity tuple: times by instant.
 func identityKey(values []any) string {
 	var b strings.Builder
 	for _, v := range values {
@@ -137,8 +130,6 @@ func identityKey(values []any) string {
 	return b.String()
 }
 
-// selectExpression reads column name of kind so that decode gets the values psycopg
-// would: numerics and JSON as text (parsed here), arrays as JSON text.
 func selectExpression(alias, name, kind string) string {
 	ref := quote(name)
 	if alias != "" {
@@ -153,7 +144,6 @@ func selectExpression(alias, name, kind string) string {
 	return ref + " AS " + quote(name)
 }
 
-// selectList reads every typed column of a collection (and the storage key).
 func selectList(collection, alias string) string {
 	columns := schema.Columns[collection]
 	parts := make([]string, 0, len(columns)+1)
@@ -164,8 +154,6 @@ func selectList(collection, alias string) string {
 	return strings.Join(parts, ",")
 }
 
-// loadJSON is json.loads: integers are int (int64, or json.Number beyond it), other
-// numbers float.
 func loadJSON(text string) (any, error) {
 	dec := json.NewDecoder(bytes.NewReader([]byte(text)))
 	dec.UseNumber()
@@ -195,7 +183,7 @@ func pythonNumbers(v any) any {
 				return i
 			}
 			if _, ok := new(big.Int).SetString(s, 10); ok {
-				return x // a Python int beyond int64 keeps its digits
+				return x
 			}
 		}
 		f, err := strconv.ParseFloat(s, 64)
@@ -207,16 +195,14 @@ func pythonNumbers(v any) any {
 	return v
 }
 
-// decodeNumeric is str(Decimal(text)) for a PostgreSQL numeric.
 func decodeNumeric(text string) string {
 	d, err := pydec.Parse(text)
 	if err != nil {
-		return text // NaN and infinities keep PostgreSQL's spelling, as str(Decimal) does
+		return text
 	}
 	return d.String()
 }
 
-// decodeValue is tank.market_storage.decode for one column read by selectExpression.
 func decodeValue(kind string, value any) (any, error) {
 	if value == nil {
 		return nil, nil
@@ -252,8 +238,6 @@ func decodeValue(kind string, value any) (any, error) {
 	return value, nil
 }
 
-// decodeRow is tank.market_storage.decode of a row read with selectList: every typed
-// column (None when null) plus the aliases; the storage key is returned separately.
 func decodeRow(collection string, fields []string, values []any) (map[string]any, string, error) {
 	kinds := map[string]string{}
 	for _, c := range schema.Columns[collection] {
@@ -289,7 +273,6 @@ func decodeRow(collection string, fields []string, values []any) (map[string]any
 	return result, key, nil
 }
 
-// collectRows decodes every row of a selectList query.
 func collectRows(collection string, rows pgx.Rows) ([]map[string]any, []string, error) {
 	defer rows.Close()
 	fields := make([]string, 0, len(rows.FieldDescriptions()))

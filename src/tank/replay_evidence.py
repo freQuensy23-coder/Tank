@@ -1,7 +1,5 @@
 """Seal cutoff-bounded, run-only raw market evidence; never restore raw rows to SQL."""
 
-from __future__ import annotations
-
 import hashlib
 import os
 import re
@@ -69,8 +67,7 @@ def seal_replay_evidence(inputs, run_id, destination, *, input_sha256, cutoff=No
             iid = row["instrument_id"]
             if source not in provenance[iid]:
                 provenance[iid].append(source)
-            # This is a derived view. Original input SHA/file provenance remains
-            # intact outside the guest; no post-cutoff count/value is disclosed.
+
             if parse_time(row["ts"]) >= end:
                 continue
             receipts = [
@@ -99,7 +96,7 @@ def seal_replay_evidence(inputs, run_id, destination, *, input_sha256, cutoff=No
         for proof in proofs:
             proof_receipt = proof.get("observed_at") or source.get("available_at")
             if not proof_receipt:
-                continue  # Unknown collection provenance cannot prove an as-of prefix.
+                continue
             received = parse_time(proof_receipt)
             assembled = getattr(inputs, "assembled_at", None)
             historical = (
@@ -113,8 +110,7 @@ def seal_replay_evidence(inputs, run_id, destination, *, input_sha256, cutoff=No
             if lo >= hi:
                 continue
             clipped = dict(proof)
-            # A selected boundary carries the selected source precision. It is
-            # not promoted to an exact source observation by ISO formatting.
+
             if parse_time(proof["end"]) > end:
                 clipped.update(cutoff.fields("end"))
             coverage[source["instrument_id"]].append(clipped)
@@ -198,7 +194,7 @@ def seal_replay_evidence(inputs, run_id, destination, *, input_sha256, cutoff=No
         relative = digest + ".parquet"
         path = root / relative
         temporary.replace(path)
-        # Exercise the producer's checksum reader before publishing a reference.
+
         verified = TradeArchive.read_verified(path, digest)
         if canonical_json(verified) != canonical_json(rows):
             raise ReplayEvidenceError("Parquet projection changed normalized source values")
@@ -251,8 +247,7 @@ def seal_replay_evidence(inputs, run_id, destination, *, input_sha256, cutoff=No
         os.fsync(folder)
     finally:
         os.close(folder)
-    # Host-only receipt may describe the complete original files. It is outside
-    # the only directory permitted to be mounted in the analyst sandbox.
+
     _durable_file(root.parent / (run_id + ".source-audit.json"), (canonical_json(host_audit) + "\n").encode())
     return {
         "manifest": manifest,

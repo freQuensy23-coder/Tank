@@ -18,20 +18,17 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// Socket constants of tank.market.streams.
 const (
 	StreamPingInterval = 20 * time.Second
-	// The client closes when a pong is later than this.
+
 	StreamPingTimeout = 60 * time.Second
-	// Frames read but not yet processed: a backlog this deep resets the connection with
-	// a recorded gap rather than letting the reader stop draining the socket.
+
 	StreamBacklogFrames = 20000
 	pendingFrameLimit   = 1024
 	textMessage         = 1
 	pingMessage         = 9
 )
 
-// group is one stream group: one connection per endpoint carrying its members.
 type group struct {
 	s        *Service
 	endpoint string
@@ -72,7 +69,6 @@ func (s *Service) startGroup(ctx context.Context, endpoint string, members map[s
 	return g
 }
 
-// update hands the group its new membership (the newest one wins).
 func (g *group) update(members map[string]bool) {
 	select {
 	case <-g.control:
@@ -90,8 +86,6 @@ func (g *group) finished() bool {
 	}
 }
 
-// run is stream_group_loop: connect, keep membership, process frames, and on any failure
-// record the members' gaps and reconnect with exponential backoff.
 func (g *group) run(ctx context.Context) {
 	desired := <-g.control
 	retry := time.Second
@@ -126,7 +120,6 @@ type prepared struct {
 	err    error
 }
 
-// session is one connection of a group.
 type session struct {
 	g            *group
 	s            *Service
@@ -191,7 +184,7 @@ func (g *group) session(ctx context.Context, desired *map[string]bool) (connecte
 			case <-t.C:
 				now := time.Now()
 				if ping := lastPing.Load(); ping > lastPong.Load() && now.Sub(time.Unix(0, ping)) > StreamPingTimeout {
-					conn.Close()
+					_ = conn.Close()
 					return
 				}
 				if lastPing.Load() <= lastPong.Load() {
@@ -204,7 +197,7 @@ func (g *group) session(ctx context.Context, desired *map[string]bool) (connecte
 		}
 	}()
 	defer func() {
-		conn.Close()
+		_ = conn.Close()
 		for _, cancelPrepare := range sess.preparing {
 			cancelPrepare()
 		}
@@ -247,8 +240,6 @@ func (g *group) session(ctx context.Context, desired *map[string]bool) (connecte
 	return connected, nil
 }
 
-// send writes a control message; Binance closes a connection that receives more than
-// five messages a second, so its control messages are spaced 250 ms apart.
 func (ss *session) send(ctx context.Context, message map[string]any) error {
 	if ss.venueName == "binance" {
 		if wait := time.Until(ss.sentAt.Add(250 * time.Millisecond)); wait > 0 {
@@ -277,7 +268,6 @@ func (ss *session) instruments(ids map[string]bool) []*venue.Instrument {
 	return out
 }
 
-// membership subscribes added members and unsubscribes removed ones.
 func (ss *session) membership(ctx context.Context, desired map[string]bool) error {
 	s := ss.s
 	removed, added := map[string]bool{}, map[string]bool{}
@@ -399,9 +389,6 @@ func (ss *session) startPrepare(ctx context.Context, iid string, delay time.Dura
 	}()
 }
 
-// prepareMember is prepare_member: listed metadata first; a Binance member (other than
-// USD-M's main socket) gets its REST book snapshot after subscribing, and its first depth
-// event must bridge it.
 func (s *Service) prepareMember(ctx context.Context, iid string, depth bool) (*stream.Member, error) {
 	if !s.discovered(iid) {
 		if err := s.discover(ctx, s.opt.Instruments[iid]); err != nil {
@@ -435,7 +422,6 @@ func (s *Service) prepareMember(ctx context.Context, iid string, depth bool) (*s
 	return member, nil
 }
 
-// prepared registers a prepared member and processes the frames buffered meanwhile.
 func (ss *session) prepared(ctx context.Context, p prepared) {
 	s := ss.s
 	if _, ok := ss.preparing[p.iid]; !ok || !ss.active[p.iid] {
@@ -479,8 +465,6 @@ func (ss *session) prepared(ctx context.Context, p prepared) {
 	}
 }
 
-// reset is reset_member: one instrument's failure (a bad book, a rejected snapshot)
-// records its gap and resubscribes it without disconnecting the others.
 func (ss *session) reset(ctx context.Context, iid, reason string) {
 	s := ss.s
 	inst := s.opt.Instruments[iid]
@@ -522,7 +506,6 @@ func (ss *session) reset(ctx context.Context, iid, reason string) {
 	ss.startPrepare(ctx, iid, time.Second)
 }
 
-// frame routes one received frame to its members by exact product identity.
 func (ss *session) frame(ctx context.Context, text string) error {
 	s := ss.s
 	s.mu.Lock()
@@ -548,14 +531,13 @@ func (ss *session) frame(ctx context.Context, text string) error {
 			continue
 		}
 		if err := ss.process(iid, routed.Payload); err != nil {
-			// A bad product book must not disconnect unrelated products.
+
 			ss.reset(ctx, iid, err.Error())
 		}
 	}
 	return nil
 }
 
-// process is process_frame plus record_stream_watermark for one routed payload.
 func (ss *session) process(iid string, payload any) error {
 	s := ss.s
 	s.mu.Lock()
@@ -589,8 +571,6 @@ func (ss *session) process(iid string, payload any) error {
 	return nil
 }
 
-// ended records every active member's gap after the connection failed; a stop records
-// nothing (the next writer's bridge repairs from the stored cursor).
 func (ss *session) ended(ctx context.Context, cause error) {
 	s := ss.s
 	now := s.clock.Now()
@@ -625,5 +605,4 @@ func (ss *session) ended(ctx context.Context, cause error) {
 	}
 }
 
-// String is the session's description for logs.
 func (ss *session) String() string { return fmt.Sprintf("%s#%d", ss.g.endpoint, ss.id) }

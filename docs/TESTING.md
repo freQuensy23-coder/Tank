@@ -1,10 +1,10 @@
 # Tests
 
-Run commands in an isolated server-side development checkout with Python 3.12. Never use production credentials, production databases, or a personal browser profile.
+Run commands in an isolated server-side development checkout with Python 3.13.13. Never use production credentials, production databases, or a personal browser profile.
 
 ## Commands
 
-    uv sync --python 3.12 --frozen --extra dev
+    uv sync --python 3.13.13 --frozen --extra dev
     uv run python scripts/ci/stage_retained_fixtures.py
     uv run pytest -q -n auto --dist loadfile
 
@@ -43,7 +43,7 @@ For portable parallel integration, the operator first provisions distinct dispos
     export TANK_TEST_DATABASE_URL='dbname=tank_test_integration_{worker} host=/path/to/isolated-pg/socket user=postgres'
     export TANK_E2E_DATABASE_URL='dbname=tank_test_e2e_{worker} host=/path/to/isolated-pg/socket user=postgres'
     export TANK_SOURCE_TEST_DATABASE_URL='dbname=tank_test_source_{worker} host=/path/to/isolated-pg/socket user=postgres'
-    PYTHONPATH=tests uv run pytest -p parallel_postgres -n auto --dist worksteal -m integration --timeout=300
+    PYTHONPATH=tests uv run pytest -p parallel_postgres -n auto --dist loadfile -m integration --timeout=300
 
 The opt-in parallel_postgres plugin runs before conftest. The controller preserves the exact templates for worker inheritance; each gwN worker replaces exactly one literal {worker} in dbname only. Every configured route is validated before any environment update. Shared DSNs, non-test database names, nested placeholders and placeholders in host/user/password/options are refused. Missing database variables are allowed for non-PostgreSQL integrations. The plugin never connects, creates or deletes databases, or loads dotenv/credential files. Supply enough precreated worker databases for the requested count. Use the ordinary serial command without this plugin for -n 0; a shared DSN is never a parallel recipe.
 
@@ -79,7 +79,7 @@ Run staged targets serially. The audit configuration uses absolute paths for its
 
 ## Go assets
 
-The active exchange collector is the Go module in capture/ (Go 1.25 or later in that release line). .github/workflows/capture.yml is its authoritative CI: go vet, go test -race with a migrated disposable PostgreSQL 16 database, recorded-frame/REST parity, generated-schema drift checks, and the selected Python reader suites. Its path filters include capture/, migrations, market code/tests and uv.lock; these checks remain separate from the three general test-suite jobs.
+The active exchange collector is the Go module in capture/ (Go 1.25 or later in that release line). .github/workflows/capture.yml is its authoritative CI: go vet, go test -race with a migrated disposable PostgreSQL 16 database, recorded-frame/REST parity, generated-schema drift checks, and the selected Python reader suites. The ci.yml orchestrator calls capture.yml and test-suite.yml on every pull request and main/prod-main push; the reusable workflows have no duplicate direct triggers. All Python, Node and Go lanes, source lint, format and mypy must pass before either SHA-tagged image is published.
 
 The Python integration job also prepares Go and an offline module/build cache for the actual parity and PostgreSQL wrapper tests. Before a local full integration run, install the Go version required by capture/go.mod and prepare those caches once:
 
@@ -117,8 +117,11 @@ Run this lane with no external network and the normal available CPU and memory. 
 
 Ruff owns Python formatting and imports:
 
-    uv run ruff check --select E4,E7,E9,F,I src tests deploy scripts/check-unit-timings.py
-    uv run ruff format --check tests scripts/check-unit-timings.py
+    uv run --frozen --extra dev python scripts/ci/no_comments.py src tests scripts deploy capture
+    uv run --frozen --extra dev ruff check src tests scripts deploy
+    uv run --frozen --extra dev ruff format --check src tests scripts deploy
+    uv run --frozen --extra dev mypy
+    (cd capture && golangci-lint run ./...)
 
 Retained verification trees also contain historical unittest.TestCase checks and before/after test copies. They are immutable QA evidence outside the active default suite; do not relabel them as fresh runs or rewrite those artifacts for style consistency.
 
@@ -131,3 +134,17 @@ Retained verification trees also contain historical unittest.TestCase checks and
 5. Standardize current standalone JavaScript tests on node:test and node:assert/strict; retain Vitest where upstream package composition requires it. Migrate real-timer cancellation cases to injected clocks while preserving their cleanup and failure behavior.
 
 The cleanup establishes commands and conventions. A green result from the current CI qualifies its collected Python, Go and Node checks. Historical upstream checks, native VM verification and production acceptance are separate qualifications; historical assets may retain different styles.
+
+## CI images and manual deployment
+
+The pinned CI environment uses uv 0.11.7, Python 3.13.13, Node 24.22.0 and Go 1.25.14. Ruff, mypy and test tools are pinned in pyproject.toml and uv.lock; golangci-lint 2.5.0 is verified against its release archive SHA256. The source comment scanner checks Python tokens and Go lexical comments while preserving semantic directives. It excludes immutable history, upstream/vendor trees and retained fixture assets.
+
+Only successful pushes to main or prod-main publish ghcr.io/<owner>/<repository>/tank and tank-capture, tagged by the full commit SHA and branch. deploy.yml is workflow_dispatch only and uses the production environment. It accepts a full lowercase SHA belonging to the selected main/prod-main branch. Configure PROD_SSH_USER, PROD_SSH_HOST, PROD_SSH_KEY and PROD_SSH_KNOWN_HOSTS as production environment secrets. The production checkout must already be clean and at that exact commit; the workflow never resets or updates it.
+
+The deployment helper sends structured input over SSH stdin and uses the existing production `tank` Compose project with `/srv/tank/compose.yaml`, `/etc/tank/compose.server.yaml`, the retained recovery PostgreSQL resource override, and `/etc/tank/compose.env` for every config/up/ps/rollback command. It verifies the parsed project identity and both image revision labels, updates only the existing Tank and Go capture image tags, and waits for both services. If the update fails, it restores both prior image tags and recreates those two services. CI work does not execute deployment.
+
+## ClickHouse integration contracts
+
+The full Python integration job and the Go race job each receive a separate dedicated ClickHouse 25.8 service. Set CLICKHOUSE_TEST_URL to that caller-owned loopback HTTP service and initialize its eight market/trade tables with `uv run --frozen --extra dev python scripts/ci/prepare_clickhouse.py`. Never supply a production ClickHouse endpoint. The bootstrap rejects non-loopback URLs and other server release lines.
+
+Python integration uses `-n auto --dist loadfile`; the two ClickHouse cases share one file and reset the mkt database, so the file stays on one worker while other integration files use the available workers. Both cases must pass the exact-collection zero-skip gate. Go emits its race report as JSON and scripts/ci/check_go_results.py requires every started case to pass with zero skips. The Go store and raw-trade tests use disjoint tables in their own job's ClickHouse instance.

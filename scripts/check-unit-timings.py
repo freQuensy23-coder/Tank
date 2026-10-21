@@ -1,7 +1,5 @@
 """Check the unit budget from pytest's standard total-duration JUnit report."""
 
-from __future__ import annotations
-
 import argparse
 import sys
 import xml.etree.ElementTree as ET

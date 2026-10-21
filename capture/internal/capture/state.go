@@ -12,7 +12,6 @@ import (
 
 const ulidAlphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
-// NewID is tank.util.new_id: prefix + "-" + a ULID of the time and 80 random bits.
 func NewID(prefix string, at time.Time) string {
 	prefix = strings.ToUpper(strings.TrimRight(prefix, "-"))
 	ms := big.NewInt(at.UnixMilli())
@@ -27,8 +26,6 @@ func NewID(prefix string, at time.Time) string {
 	return prefix + "-" + string(chars)
 }
 
-// gap is MarketService._gap: one immutable capture gap row. Absent bounds are the
-// collection clock.
 func (s *Service) gap(inst *venue.Instrument, kind, reason string, start, end *time.Time) {
 	now := s.clock.Now()
 	row := map[string]any{
@@ -50,12 +47,11 @@ func (s *Service) gap(inst *venue.Instrument, kind, reason string, start, end *t
 	s.points.Put("mkt.capture_gaps", row["gap_id"].(string), row)
 }
 
-// streamRow is one mkt.capture_streams row.
 type streamRow struct {
 	inst      *venue.Instrument
-	stream    string // WS, DEPTH, KLINES_POLL
+	stream    string
 	endpoint  string
-	state     string // CONNECTED, PREPARING, DISCONNECTED, POLLING
+	state     string
 	connected time.Time
 	message   time.Time
 	watermark time.Time
@@ -73,9 +69,6 @@ func tsFields(row map[string]any, field string, t time.Time, precision string) {
 	}
 }
 
-// publishStreams writes the stream state Data Confidence reads instead of in-process
-// socket state: per instrument the main socket (WS), Binance USD-M's routed depth socket
-// (DEPTH) and the klines poller (KLINES_POLL).
 func (s *Service) publishStreams() {
 	now := s.clock.Now()
 	for _, r := range s.streamRows() {
@@ -84,8 +77,7 @@ func (s *Service) publishStreams() {
 			"market_type": r.inst.MarketType, "stream": r.stream, "endpoint": nilIfEmpty(r.endpoint),
 			"state": r.state, "writer": s.opt.Writer,
 		}
-		// The fingerprint leaves updated_at out: the heartbeat makes every publish a write,
-		// so a reader can tell a live writer from a stale row.
+
 		detail := map[string]any{"heartbeat": pytime.ISO(now)}
 		for k, v := range r.detail {
 			detail[k] = v

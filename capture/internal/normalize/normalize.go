@@ -1,6 +1,3 @@
-// Package normalize is tank.market.normalize: strict exchange normalization where a
-// missing semantic field is an error, never an estimate. Records are the jsonable
-// dicts the Python functions return, so they encode and fingerprint identically.
 package normalize
 
 import (
@@ -16,7 +13,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// P is the precision of normalize.precise.
 const P = pydec.Precise
 
 var (
@@ -32,7 +28,6 @@ var (
 	asList = pyval.List
 )
 
-// none is a record value: "" stands for None.
 func none(s string) any {
 	if s == "" {
 		return nil
@@ -40,7 +35,6 @@ func none(s string) any {
 	return s
 }
 
-// Trade is one normalized print (normalize.trade), typed for the flow accumulator.
 type Trade struct {
 	InstrumentID      string
 	TokenID           string
@@ -51,7 +45,7 @@ type Trade struct {
 	TS                time.Time
 	TSPrec            string
 	Received          pytime.Timestamp
-	Side              string // BUY or SELL
+	Side              string
 	Qty               pydec.Dec
 	Price             pydec.Dec
 	QuoteNotional     pydec.Dec
@@ -64,13 +58,11 @@ type Trade struct {
 	Sequence          any
 	SequenceSemantics string
 	CaptureSource     string
-	SourcePayload     any // the raw item, for source_payload_json
+	SourcePayload     any
 }
 
-// TSISO is the trade time as iso().
 func (t *Trade) TSISO() string { return pytime.ISO(t.TS) }
 
-// Record is the dict normalize.trade returns.
 func (t *Trade) Record() map[string]any {
 	var usd any
 	usdReason := any("QUOTE_USD_RATE_UNAVAILABLE")
@@ -107,7 +99,6 @@ func (t *Trade) Record() map[string]any {
 	return r
 }
 
-// jsonable is tank.util.jsonable for frame scalars: Decimals become strings.
 func jsonable(v any) any {
 	if n, ok := v.(json.Number); ok {
 		if pyval.IsInt(n) {
@@ -121,14 +112,11 @@ func jsonable(v any) any {
 	return v
 }
 
-// TradeAggregations are the per-venue semantics the parser implements; the semantics
-// registry must agree (CheckSemantics).
 var TradeAggregations = map[string]string{
 	"binance": "PER_TAKER_ORDER_SAME_PRICE",
 	"okx":     "PER_TAKER_ORDER_SAME_PRICE",
 }
 
-// NormalizeTrade is normalize.trade(instrument, raw, received_ts=..., source=...).
 func NormalizeTrade(inst *venue.Instrument, raw any, received time.Time, source string, fx *FX) (*Trade, error) {
 	key := inst.Key()
 	venueName := strings.SplitN(key, ".", 2)[0]
@@ -136,7 +124,7 @@ func NormalizeTrade(inst *venue.Instrument, raw any, received time.Time, source 
 	var side string
 	var qtyRaw, priceRaw, tsRaw, tid any
 	var qty pydec.Dec
-	qtyDone := false // OKX swap sizes are contracts: qty is sz x ctVal already
+	qtyDone := false
 	m := asMap(raw)
 	need := func(k string) (any, error) {
 		if m == nil {
@@ -357,7 +345,6 @@ func NormalizeTrade(inst *venue.Instrument, raw any, received time.Time, source 
 	return t, nil
 }
 
-// KlineRecord is normalize.kline(instrument, row, now=now).
 func KlineRecord(inst *venue.Instrument, row any, now time.Time, fx *FX) (map[string]any, error) {
 	key := inst.Key()
 	extra := map[string]any{}
@@ -559,7 +546,6 @@ func KlineRecord(inst *venue.Instrument, row any, now time.Time, fx *FX) (map[st
 	return result, nil
 }
 
-// jsonValue is jsonable for record values (Decimals and JSON numbers to Python types).
 func jsonValue(v any) any {
 	switch x := v.(type) {
 	case pydec.Dec:
@@ -570,13 +556,12 @@ func jsonValue(v any) any {
 	return v
 }
 
-// OIOptions are the keyword arguments of normalize.oi.
 type OIOptions struct {
-	Mark       any // nil when absent
+	Mark       any
 	MarkTS     any
 	MarkTSPrec string
 	Received   *time.Time
-	BucketS    any // default 300
+	BucketS    any
 }
 
 var (
@@ -584,7 +569,6 @@ var (
 	binanceBuckets = []int64{300, 900, 1800, 3600, 7200, 14400, 21600, 43200, 86400}
 )
 
-// OIRecord is normalize.oi(instrument, raw, ...).
 func OIRecord(inst *venue.Instrument, raw map[string]any, opt OIOptions, now time.Time) (map[string]any, error) {
 	var received any
 	if opt.Received != nil {
@@ -776,7 +760,6 @@ func OIRecord(inst *venue.Instrument, raw map[string]any, opt OIOptions, now tim
 	return r, nil
 }
 
-// FundingRecord is normalize.funding(instrument, raw, kind=kind, interval_h=interval).
 func FundingRecord(inst *venue.Instrument, raw map[string]any, kind string, intervalH any, received *time.Time, now time.Time) (map[string]any, error) {
 	var receivedValue any
 	if received != nil {
@@ -897,7 +880,6 @@ func FundingRecord(inst *venue.Instrument, raw map[string]any, kind string, inte
 	return out, nil
 }
 
-// LiquidationRecord is normalize.liquidation(instrument, raw, received_ts=...).
 func LiquidationRecord(inst *venue.Instrument, raw map[string]any, received time.Time) (map[string]any, error) {
 	key := inst.Key()
 	var side, coverage string

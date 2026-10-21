@@ -1,18 +1,10 @@
 name: Test suite
 
 on:
-  pull_request:
-    branches: [prod-main]
-  push:
-    branches: ["codex/**"]
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
-
-concurrency:
-  group: test-suite-${{ github.ref }}
-  cancel-in-progress: true
 
 defaults:
   run:
@@ -24,17 +16,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+          python-version: "3.13.13"
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
         with:
-          version: "0.13.3"
+          version: "0.11.7"
           enable-cache: true
-      - run: uv sync --python 3.12 --frozen --extra dev
+      - run: uv sync --python 3.13.13 --frozen --extra dev
       - name: Stage exact retained capture inputs
         run: uv run --frozen --extra dev python scripts/ci/stage_retained_fixtures.py
       - name: Check CI helper style
@@ -43,7 +35,7 @@ jobs:
         run: uv run --frozen --extra dev pytest -q -n auto --dist loadfile --junitxml=.test-results/unit.xml
       - name: Enforce unit duration and zero skips
         run: uv run --frozen --extra dev python scripts/check-unit-timings.py .test-results/unit.xml
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
           name: python-unit-results
@@ -55,26 +47,44 @@ jobs:
     name: Python integration
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    env:
+      CLICKHOUSE_TEST_URL: http://tank_ci:tank-ci-disposable@127.0.0.1:8123
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_USER: tank_ci
+          CLICKHOUSE_PASSWORD: tank-ci-disposable
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --user=tank_ci --password=tank-ci-disposable --query='SELECT 1'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
         with:
-          python-version: "3.12"
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+          python-version: "3.13.13"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: "24.22.0"
           package-manager-cache: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
         with:
-          version: "0.13.3"
+          version: "0.11.7"
           enable-cache: true
-      - run: uv sync --python 3.12 --frozen --extra dev
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - run: uv sync --python 3.13.13 --frozen --extra dev
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
         with:
-          go-version-file: capture/go.mod
+          go-version: "1.25.14"
           cache-dependency-path: capture/go.sum
+      - name: Prepare the isolated ClickHouse schema
+        run: uv run --frozen --extra dev python scripts/ci/prepare_clickhouse.py
       - name: Prepare the pinned Go modules and offline build cache
         working-directory: capture
         run: |
@@ -130,12 +140,19 @@ jobs:
           PYTHONPATH: scripts/ci:tests
           TANK_BROWSER_TESTS: "1"
       - name: Run all integration cases
-        run: uv run --frozen --extra dev pytest -p parallel_postgres -q -n auto --dist worksteal -m integration --postgres-schema-template "$TANK_CI_SCHEMA_TEMPLATE" --timeout=300 --junitxml=.test-results/integration.xml
+        run: uv run --frozen --extra dev pytest -p parallel_postgres -q -n auto --dist loadfile -m integration --postgres-schema-template "$TANK_CI_SCHEMA_TEMPLATE" --timeout=300 --junitxml=.test-results/integration.xml
         env:
           PYTHONPATH: tests
           TANK_BROWSER_TESTS: "1"
       - name: Require the complete integration collection with zero skips
         run: uv run --frozen --extra dev python scripts/ci/check_integration_results.py .test-results/integration.xml --collection .test-results/integration-collection.json
+      - name: Collect the owned ClickHouse logs
+        if: always()
+        env:
+          CLICKHOUSE_CONTAINER_ID: ${{ job.services.clickhouse.id }}
+        run: |
+          mkdir -p .test-results
+          docker logs "$CLICKHOUSE_CONTAINER_ID" > .test-results/clickhouse.log 2>&1
       - name: Collect logs and remove only the owned PostgreSQL container
         if: always()
         run: |
@@ -151,7 +168,7 @@ jobs:
             docker rm --force "$container_id"
             exit "$log_status"
           fi
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
           name: python-integration-results
@@ -164,10 +181,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
           node-version: "24.22.0"
           package-manager-cache: false

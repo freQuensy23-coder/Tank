@@ -1,12 +1,9 @@
 """Process-shared rolling HTTP budgets; only configured capacities are enforced."""
 
-from __future__ import annotations
-
 import asyncio
 import time
 from collections import deque
 
-# A shared admission answers with the wait until capacity frees; re-ask at least this often.
 LEDGER_MAX_WAIT_S = 5.0
 
 
@@ -38,7 +35,7 @@ class RequestLedger:
                         raise
 
     async def call(self, query, args):
-        # A cancelled caller leaves the statement to finish: the connection stays usable.
+
         return await asyncio.shield(self._execute(query, args))
 
     async def wait_s(self, bucket, capacity, window_s, weight, host):
@@ -66,7 +63,7 @@ class SharedRequestBudgets:
     def __init__(self):
         self.windows = {}
         self.locks = {}
-        self.urgent = {}  # bucket -> requests with a negative priority waiting for it
+        self.urgent = {}
         self.ledger = None
 
     def configure(self, repo, settings, *, owner="tank-core"):
@@ -101,7 +98,7 @@ class SharedRequestBudgets:
         weight = float(weight)
         if capacity <= 0 or weight <= 0 or weight > capacity:
             raise ValueError("Invalid configured request budget")
-        # Different limits for one provider are separate constraints over the same traffic.
+
         bucket = (key, float(window_s), capacity)
         ledger = self.ledger
         if ledger is not None:
@@ -126,8 +123,7 @@ class SharedRequestBudgets:
                         if yielding or not history
                         else max(0.001, window_s - (now - history[0][0]))
                     )
-                # Admission and accounting stay atomic. A request that cannot fit
-                # must release the bucket so smaller requests can use free capacity.
+
                 await asyncio.sleep(delay)
         finally:
             if urgent:
@@ -135,7 +131,7 @@ class SharedRequestBudgets:
 
     async def _acquire_shared(self, ledger, bucket, weight, priority, host):
         key, window_s, capacity = bucket
-        # tank-capture names buckets the same way: "<key>|<window_s>|<capacity>" as floats.
+
         name = f"{key}|{window_s!r}|{capacity!r}"
         urgent = priority < 0
         if urgent:

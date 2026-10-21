@@ -6,21 +6,14 @@ import (
 	"time"
 )
 
-// Ledger is the shared admission ledger: ops.request_budget_acquire and
-// ops.request_budget_block (migration 046). internal/store implements it on
-// PostgreSQL; MemoryLedger keeps the same semantics in one process.
 type Ledger interface {
-	// Acquire admits weight into the rolling window of bucket and records it (0), or
-	// returns how long to wait before asking again; a blocked host waits for its block.
 	Acquire(ctx context.Context, bucket string, capacity, windowS, weight float64, owner, host string) (time.Duration, error)
-	// Block closes host for every process until until; a later existing block stays.
+
 	Block(ctx context.Context, host string, until time.Time, reason, owner string) error
 }
 
-// minWait is the SQL function's greatest(0.001, ...).
 const minWait = time.Millisecond
 
-// seconds is a float number of seconds as a duration.
 func seconds(s float64) time.Duration { return time.Duration(s * float64(time.Second)) }
 
 type spend struct {
@@ -28,8 +21,6 @@ type spend struct {
 	weight float64
 }
 
-// MemoryLedger is the ledger in memory: SharedRequestBudgets' rolling windows and the
-// host blocks of ops.request_budget_blocks.
 type MemoryLedger struct {
 	mu      sync.Mutex
 	now     func() time.Time
@@ -37,7 +28,6 @@ type MemoryLedger struct {
 	blocks  map[string]time.Time
 }
 
-// NewMemoryLedger is an empty ledger on the clock now (time.Now when nil).
 func NewMemoryLedger(now func() time.Time) *MemoryLedger {
 	if now == nil {
 		now = time.Now
@@ -45,7 +35,6 @@ func NewMemoryLedger(now func() time.Time) *MemoryLedger {
 	return &MemoryLedger{now: now, windows: map[string][]spend{}, blocks: map[string]time.Time{}}
 }
 
-// Acquire is ops.request_budget_acquire.
 func (m *MemoryLedger) Acquire(_ context.Context, bucket string, capacity, windowS, weight float64, _, host string) (time.Duration, error) {
 	if err := valid(capacity, weight); err != nil {
 		return 0, err
@@ -73,7 +62,6 @@ func (m *MemoryLedger) Acquire(_ context.Context, bucket string, capacity, windo
 	return max(minWait, history[0].at.Add(window).Sub(now)), nil
 }
 
-// Block is ops.request_budget_block.
 func (m *MemoryLedger) Block(_ context.Context, host string, until time.Time, _, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -83,7 +71,6 @@ func (m *MemoryLedger) Block(_ context.Context, host string, until time.Time, _,
 	return nil
 }
 
-// Blocked is the block of host, if any.
 func (m *MemoryLedger) Blocked(host string) (time.Time, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -91,7 +78,6 @@ func (m *MemoryLedger) Blocked(host string) (time.Time, bool) {
 	return until, ok
 }
 
-// Used is the weight recorded in bucket's current window.
 func (m *MemoryLedger) Used(bucket string, windowS float64) float64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()

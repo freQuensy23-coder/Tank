@@ -64,7 +64,7 @@ async def test_raw_singleflight_and_once_per_utc_day_survives_restart():
         return []
 
     scheduler.prune_raw_files = AsyncMock(side_effect=blocked)
-    now = parse_time("2026-10-19T00:30:00+03:00")  # UTC day is still October18.
+    now = parse_time("2026-10-19T00:30:00+03:00")
     first = asyncio.create_task(scheduler.raw_retention(now))
     await entered.wait()
     second = asyncio.create_task(scheduler.raw_retention(now))
@@ -173,7 +173,7 @@ async def test_missing_backup_still_prunes_expired_temporary_raw_file(tmp_path):
     scheduler = quiet_scheduler(
         SimpleNamespace(backup_dir=None, data_dir=data, load_config=lambda name: {"instruments": []})
     )
-    # Use the production pruner, retaining mocks only for unrelated database pruning.
+
     scheduler.prune_raw_files = Scheduler.prune_raw_files.__get__(scheduler, Scheduler)
     try:
         await scheduler.tick(NOW)

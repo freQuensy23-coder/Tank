@@ -11,8 +11,7 @@ from tank.util import parse_time
 
 def packet():
     value = synthetic_start_snapshot()
-    # Precision propagation needs concrete source endpoints, not eight days
-    # of observations for unrelated confidence/normal-range classification.
+
     keep = {"A:spot:T", "binance:perp:T"}
     value["instruments"] = [r for r in value["instruments"] if r["instrument_id"] in keep]
     value["semantics"] = [r for r in value["semantics"] if r["venue"] in {"A", "binance"}]

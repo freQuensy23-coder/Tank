@@ -258,9 +258,7 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
-async def test_ignored_item_keeps_event_and_call_for_next_native_update(
-    tmp_path, backend, postgres_template
-):
+async def test_ignored_item_keeps_event_and_call_for_next_native_update(tmp_path, backend, postgres_template):
     from tank.event_tools import EventToolService
     from tank.settings import Settings
 
@@ -329,7 +327,7 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
             service = SessionService(repo, config(), domain.dispatch, http=http)
-            # Drive the native receipt stream explicitly in this protocol test.
+
             service.start_stream = lambda sid: None
             await service.process_event("s", idle("ignored-end", "input"))
             assert await service.finish_if_idle("s")
@@ -388,4 +386,4 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(
             assert len(observations) == 1 and observations[0]["event_id"] == eid
             assert (await repo.get("evt.events", eid))["event_state"] == "LIVE"
             assert await repo.get("ana.calls", "active-call") == call
-            assert len(accepted) == 2  # One new source input and its actual tool result.
+            assert len(accepted) == 2

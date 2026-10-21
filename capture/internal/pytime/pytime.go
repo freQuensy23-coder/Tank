@@ -1,6 +1,3 @@
-// Package pytime reproduces tank.util.parse_time/iso and tank.time_precision for the
-// values Tank's market records carry, so timestamps and their precision declarations
-// render exactly as the Python service writes them.
 package pytime
 
 import (
@@ -18,23 +15,18 @@ import (
 
 var ErrTime = errors.New("unparseable timestamp")
 
-// Clock is the source of collection times. Production uses the wall clock; replays
-// and the parity harness drive it from recorded receive times.
 type Clock interface {
 	Now() time.Time
 }
 
-// Wall is the system UTC clock at microsecond resolution (Python datetime).
 type Wall struct{}
 
 func (Wall) Now() time.Time { return time.Now().UTC().Truncate(time.Microsecond) }
 
-// Fixed is a settable clock.
 type Fixed struct{ T time.Time }
 
 func (f *Fixed) Now() time.Time { return f.T }
 
-// ISO is tank.util.iso: isoformat with "Z", microseconds only when nonzero.
 func ISO(t time.Time) string {
 	t = t.UTC()
 	if t.Nanosecond()/1000 == 0 {
@@ -43,8 +35,6 @@ func ISO(t time.Time) string {
 	return t.Format("2006-01-02T15:04:05.000000Z")
 }
 
-// FromTimestamp is datetime.fromtimestamp(x, UTC): microseconds rounded half-even the
-// way CPython's _PyTime_DoubleToDenominator does it.
 func FromTimestamp(x float64) time.Time {
 	intpart, frac := math.Modf(x)
 	frac *= 1e6
@@ -67,8 +57,6 @@ func roundHalfEven(x float64) float64 {
 	return r
 }
 
-// fromNumber is parse_time for an int/float/Decimal: seconds, milliseconds or
-// microseconds by magnitude.
 func fromNumber(number float64) time.Time {
 	if math.Abs(number) > 1e14 {
 		number /= 1e6
@@ -78,7 +66,6 @@ func fromNumber(number float64) time.Time {
 	return FromTimestamp(number)
 }
 
-// isNumericText is Python's value.replace(".", "", 1).isdigit() for ASCII text.
 func isNumericText(s string) bool {
 	s = strings.Replace(s, ".", "", 1)
 	if s == "" {
@@ -95,8 +82,6 @@ func isNumericText(s string) bool {
 var isoPattern = regexp.MustCompile(
 	`^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2})(?::(\d{2})(?::(\d{2})(?:[.,](\d+))?)?)?)?(?:([+-])(\d{2}):?(\d{2})(?::?(\d{2}))?)?$`)
 
-// parseISO is datetime.fromisoformat(text.replace("Z", "+00:00")) for the forms
-// exchanges and Tank emit; naive values are UTC (parse_time).
 func parseISO(text string) (time.Time, error) {
 	s := strings.ReplaceAll(text, "Z", "+00:00")
 	m := isoPattern.FindStringSubmatch(s)
@@ -114,7 +99,7 @@ func parseISO(text string) (time.Time, error) {
 	if m[7] != "" {
 		frac := m[7]
 		if len(frac) > 6 {
-			frac = frac[:6] // CPython truncates digits beyond microseconds
+			frac = frac[:6]
 		}
 		for len(frac) < 6 {
 			frac += "0"
@@ -139,8 +124,6 @@ func parseISO(text string) (time.Time, error) {
 	return t, nil
 }
 
-// Parse is tank.util.parse_time for strings, JSON numbers, integers, floats, decimals
-// and times.
 func Parse(value any) (time.Time, error) {
 	switch v := value.(type) {
 	case time.Time:
@@ -174,7 +157,6 @@ func Parse(value any) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("%w: %T", ErrTime, value)
 }
 
-// MustParse is Parse for values produced by this program.
 func MustParse(value any) time.Time {
 	t, err := Parse(value)
 	if err != nil {
@@ -183,7 +165,6 @@ func MustParse(value any) time.Time {
 	return t
 }
 
-// ISOOf is iso(value) for any parseable value.
 func ISOOf(value any) (string, error) {
 	t, err := Parse(value)
 	if err != nil {
@@ -192,10 +173,8 @@ func ISOOf(value any) (string, error) {
 	return ISO(t), nil
 }
 
-// MinuteFloor is value.replace(second=0, microsecond=0).
 func MinuteFloor(t time.Time) time.Time { return t.UTC().Truncate(time.Minute) }
 
-// Precision constants of tank.time_precision.
 const (
 	Exact          = "EXACT"
 	CollectionOnly = "COLLECTION_ONLY"
@@ -213,7 +192,6 @@ var (
 	}
 )
 
-// BucketSize is an explicit bucket duration such as "300s" (time_precision._size).
 type BucketSize string
 
 func checkSize(value string) (string, error) {
@@ -230,7 +208,6 @@ func duration(value string) pydec.Dec {
 	return pydec.Mul(pydec.MustParse(m[1]), factors[m[2]], pydec.DefaultPrec)
 }
 
-// NormalizePrecision is time_precision.normalize_precision ("" is None).
 func NormalizePrecision(precision string, bucket BucketSize) (string, error) {
 	if precision == "" || precision == "UNKNOWN" {
 		return "", nil
@@ -283,7 +260,6 @@ func equivalent(a, b string) bool {
 	return false
 }
 
-// Timestamp is time_precision.Timestamp; empty strings stand for None.
 type Timestamp struct {
 	Value, Precision, Reason, BucketAnchor string
 }
@@ -295,7 +271,6 @@ func none(s string) any {
 	return s
 }
 
-// Fields is Timestamp.fields(field): the field, its _prec sibling and _prec_reason.
 func (t Timestamp) Fields(field string) map[string]any {
 	out := map[string]any{field: none(t.Value), field + "_prec": none(t.Precision), field + "_prec_reason": none(t.Reason)}
 	if t.BucketAnchor != "" {
@@ -304,14 +279,12 @@ func (t Timestamp) Fields(field string) map[string]any {
 	return out
 }
 
-// Into copies Fields(field) into record.
 func (t Timestamp) Into(record map[string]any, field string) {
 	for k, v := range t.Fields(field) {
 		record[k] = v
 	}
 }
 
-// CollectionClock is time_precision.collection_clock(value).
 func CollectionClock(t time.Time) Timestamp {
 	return Timestamp{Value: ISO(t), Precision: CollectionOnly}
 }
@@ -321,8 +294,6 @@ func str(v any) (string, bool) {
 	return s, ok && s != ""
 }
 
-// Propagate is time_precision.propagate_timestamp for flat records whose timestamp
-// fields are strings, times or numbers (market records never nest them).
 func Propagate(record map[string]any, field string, aliases []string, bucket BucketSize, missingReason string) (Timestamp, error) {
 	if missingReason == "" {
 		missingReason = Incomplete
@@ -407,12 +378,10 @@ func Propagate(record map[string]any, field string, aliases []string, bucket Buc
 	return Timestamp{Value: value, Precision: precision, Reason: reason, BucketAnchor: anchor}, nil
 }
 
-// Fields is normalize.timestamp_fields(field, value, precision): value may be nil.
 func Fields(field string, value any, precision string) map[string]any {
 	return FieldsBucket(field, value, precision, "")
 }
 
-// FieldsBucket is normalize.timestamp_fields with an explicit bucket size.
 func FieldsBucket(field string, value any, precision string, bucket BucketSize) map[string]any {
 	record := map[string]any{field: nil, field + "_prec": none(precision)}
 	if value != nil {

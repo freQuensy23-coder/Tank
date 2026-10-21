@@ -104,7 +104,6 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
                 return await tools.dispatch("record_event", dict(args, item_id=name), system_context)
 
             if case == "corroboration":
-                # An earlier origin is setup, not a fabricated receipt of this turn.
                 prior = await tools.dispatch("record_event", args, system_context)
                 eid = prior["event_id"]
                 item = await repo.get("ingest.source_items", "i")
@@ -151,8 +150,6 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
                         },
                     )
                     if case in {"wrong_event", "bad_class"}:
-                        # Corrupt the actual producing receipt, not a legitimately
-                        # replaceable latest-EMS pointer used by later messages.
                         corrupted = copy.deepcopy(assessment)
                         if case == "wrong_event":
                             other = await seed_other("other")
@@ -161,7 +158,7 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
                             corrupted["result"]["class"] = "NOT_A_CLASS"
                         await repo.put("ops.tool_calls", "s:" + assessment["call_id"], corrupted)
             await service.process_event("s", idle("end-initial", accepted[-1]))
-            # Legacy semantic proof versions do not impose class or publication requirements.
+
             legacy = await repo.get("ops.agent_sessions", "s")
             legacy["message_log"][0]["turn_status"] = "DONE"
             legacy["verified_native_completion"] = await service.execution_barrier(legacy)

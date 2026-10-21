@@ -12,12 +12,10 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/testutil"
 )
 
-// repoConfig is the repository's versioned configuration directory.
 func repoConfig() string { return filepath.Join(testutil.Root(), "..", "config") }
 
 func repoRoot() string { return filepath.Join(testutil.Root(), "..") }
 
-// python runs a CPython snippet (PyYAML is required); the test skips without it.
 func python(t *testing.T, script string, args ...string) string {
 	t.Helper()
 	out, err := exec.Command("python3", append([]string{"-c", script}, args...)...).Output()
@@ -73,7 +71,6 @@ print(json.dumps(yaml.safe_load(sys.argv[1]), sort_keys=True, separators=(",", "
 	}
 }
 
-// withoutInf replaces infinities by their str(), which pyjson cannot render.
 func withoutInf(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
@@ -143,7 +140,7 @@ func toAny(s []string) []any {
 }
 
 func canonical(t *testing.T, text string) string {
-	value, err := SafeLoad([]byte(text)) // JSON is YAML
+	value, err := SafeLoad([]byte(text))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +209,7 @@ func TestSettingsFromEnvironmentAndSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// urllib.parse.quote(password, safe="")
+
 	if s.DatabaseURL != "postgresql://tank:p%40ss%3Aw%2Frd%20%2B%25%C3%A9~_.-@postgres:5432/tank" {
 		t.Fatalf("secret URL %q", s.DatabaseURL)
 	}

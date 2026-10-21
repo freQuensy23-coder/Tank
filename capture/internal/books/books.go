@@ -1,6 +1,3 @@
-// Package books is tank.market.books.OrderBook: stateful level-2 books with venue
-// continuity rules (Binance and OKX sequence chains, OKX and Kraken CRC32 checksums)
-// and the 10 s summary row.
 package books
 
 import (
@@ -19,32 +16,29 @@ import (
 
 const prec = pydec.Precise
 
-// VerifyInterval is OrderBook.VERIFY_S.
 const VerifyInterval = time.Second
 
-// DeprecatedChecksum is the integrity method once OKX publishes checksum 0.
 const DeprecatedChecksum = "SEQ_ID_PREV_SEQ_ID_CHECKSUM_DEPRECATED_20260623"
 
-// Monotonic is the clock of checksum verification (time.monotonic()).
 type Monotonic interface {
 	Monotonic() time.Duration
 }
 
 type level struct {
-	price      pydec.Dec // the key as first inserted (Python keeps the original key object)
+	price      pydec.Dec
 	size       pydec.Dec
-	text, qtxt string // the venue's original strings, for checksums
+	text, qtxt string
 }
 
 type side struct {
-	levels map[string]*level // normalized price -> level
-	prices []pydec.Dec       // ascending, the stored keys
+	levels map[string]*level
+	prices []pydec.Dec
 }
 
 func newSide() *side { return &side{levels: map[string]*level{}} }
 
 func canon(d pydec.Dec) string {
-	// Equal decimals are one dict key in Python: key by the value, not the text.
+
 	s := d.FormatF()
 	if strings.Contains(s, ".") {
 		s = strings.TrimRight(strings.TrimRight(s, "0"), ".")
@@ -64,24 +58,22 @@ func (s *side) clear() {
 	s.prices = s.prices[:0]
 }
 
-// Book is OrderBook.
 type Book struct {
 	Inst            *venue.Instrument
 	key             string
 	bids, asks      *side
-	Sequence        any // the venue's raw value (int or string), nil before a snapshot
+	Sequence        any
 	IntegrityOK     bool
 	GapReason       string
 	ExchangeTS      string
 	ExchangeTSPrec  string
 	Verified        bool
-	nextVerify      float64 // monotonic float seconds, as Python's time.monotonic()
+	nextVerify      float64
 	IntegrityMethod string
 	clock           Monotonic
-	Now             func() time.Time // collection clock for iso() of missing venue clocks
+	Now             func() time.Time
 }
 
-// New is OrderBook(instrument).
 func New(inst *venue.Instrument, clock Monotonic, now func() time.Time) *Book {
 	key := inst.Key()
 	method := "DOCUMENTED_LEVEL2_DELIVERY"
@@ -104,8 +96,6 @@ func (b *Book) sideOf(name string) *side {
 	return b.asks
 }
 
-// levelStrings is the (price, qty) text of one venue level: dict levels format JSON
-// decimals with format(d, "f") (integers and strings with str()), list levels use str().
 func levelStrings(lv any) (string, string, error) {
 	if m := pyval.Map(lv); m != nil {
 		var out [2]string
@@ -194,7 +184,6 @@ func (b *Book) levels(name string, levels []any, snapshot bool) error {
 	return nil
 }
 
-// ApplyLevels applies levels without a snapshot or sequence (the Binance bridge event).
 func (b *Book) ApplyLevels(bids, asks []any) error {
 	if err := b.levels("bid", bids, false); err != nil {
 		return err
@@ -209,7 +198,6 @@ func (b *Book) isoOf(ts any) (string, error) {
 	return pytime.ISOOf(ts)
 }
 
-// Snapshot is OrderBook.snapshot. tsPrec "" means EXACT.
 func (b *Book) Snapshot(bids, asks []any, sequence, ts, checksum any, tsPrec string) error {
 	if tsPrec == "" {
 		tsPrec = pytime.Exact
@@ -254,7 +242,6 @@ func isZero(v any) bool {
 
 func intOf(v any) (int64, error) { return pyval.Int(v) }
 
-// Update is OrderBook.update; false means a stale, already applied event.
 func (b *Book) Update(bids, asks []any, sequence, previous, first, ts, checksum any, verify bool) (bool, error) {
 	if b.Sequence == nil || !b.IntegrityOK {
 		return false, pyval.Semantic("book requires fresh snapshot")
@@ -373,16 +360,13 @@ func (b *Book) Update(bids, asks []any, sequence, previous, first, ts, checksum 
 			b.Verified = true
 			b.nextVerify = seconds(b.clock.Monotonic()) + VerifyInterval.Seconds()
 		} else {
-			// A wrong state persists, so the next verification still catches it;
-			// nothing is summarized from an unverified state.
+
 			b.Verified = false
 		}
 	}
 	return true, nil
 }
 
-// Verify is OrderBook.verify: OKX (top 25 interleaved, signed CRC32) or Kraken (top 10
-// asks then bids, decimal points and leading zeros removed).
 func (b *Book) Verify(expected any) error {
 	bids := b.bids.prices
 	if len(bids) > 25 {
@@ -445,13 +429,10 @@ func (b *Book) Verify(expected any) error {
 	return nil
 }
 
-// Levels is the number of levels held per side.
 func (b *Book) Levels() (int, int) { return len(b.bids.levels), len(b.asks.levels) }
 
-// Empty reports a book without levels on a side.
 func (b *Book) Empty() bool { return len(b.bids.levels) == 0 || len(b.asks.levels) == 0 }
 
-// Frozen is a private copy of the current state (OrderBook.frozen).
 func (b *Book) Frozen() *Book {
 	c := *b
 	for _, pair := range []struct {
@@ -479,8 +460,6 @@ var (
 	nearUpper = pydec.Add(pydec.FromInt(1), pydec.MustParse(".02"), prec)
 )
 
-// Summary is OrderBook.summary(received_ts=received). A crossed book clears
-// IntegrityOK on this (frozen) copy, as in Python.
 func (b *Book) Summary(received time.Time) (map[string]any, error) {
 	if len(b.bids.levels) == 0 || len(b.asks.levels) == 0 {
 		return nil, pyval.Semantic("empty order book")

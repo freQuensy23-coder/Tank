@@ -8,8 +8,6 @@ start of the window with --save, and at the end with --baseline to get the windo
     python -m tank.sources.read_report --baseline start.json --save end.json
 """
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import json

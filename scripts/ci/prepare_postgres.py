@@ -1,7 +1,5 @@
 """Provision only the disposable PostgreSQL 16 service used by this CI job."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 import os
@@ -20,7 +18,7 @@ def main() -> None:
     fields = conninfo_to_dict(os.environ["CI_POSTGRES_DSN"])
     if fields.get("dbname") != "tank_test_ci_admin" or fields.get("host") != "127.0.0.1":
         raise ValueError("CI setup requires the loopback tank_test_ci_admin database")
-    # Use the actual pinned xdist hook, so -n auto and precreated routes agree.
+
     workers = pytest_xdist_auto_num_workers(SimpleNamespace(option=SimpleNamespace(numprocesses="auto")))
     if workers < 1:
         raise ValueError("xdist must have at least one worker")

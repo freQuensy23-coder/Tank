@@ -23,8 +23,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import parity  # noqa: E402
-import rest_parity  # noqa: E402
+import parity
+import rest_parity
 
 GOLDENS = HERE / "goldens"
 

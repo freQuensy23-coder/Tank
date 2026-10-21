@@ -28,7 +28,7 @@ def test_claim_is_durable_before_files_and_same_binding_restarts(tmp_path):
     partial.write_text("partial prior preparation")
     claims.apply([plan], "check", tmp_path)
     claims.apply([plan], "claim", tmp_path)
-    assert partial.read_text() == "partial prior preparation"  # no alias deletion
+    assert partial.read_text() == "partial prior preparation"
 
 
 @pytest.mark.parametrize(

@@ -59,7 +59,7 @@ def fractional_packet():
                         ),
                     )
                 )
-        # The enclosing minute remains unfinished. Its exact requested prefix is complete.
+
         snapshot["flow_bars"].append(
             dict(
                 instrument_id=iid,

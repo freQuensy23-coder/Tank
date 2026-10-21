@@ -101,8 +101,6 @@ async def test_invalid_external_seed_is_refused_before_any_clone_ddl(state):
     factory = PostgresTemplate(schema_template=seed)
     try:
         async with await psycopg.AsyncConnection.connect(admin_dsn, autocommit=True) as admin:
-            # A real NOCREATEDB login makes accidental clone DDL fail differently.
-            # The expected validation error must be reached before CREATE DATABASE.
             await admin.execute(
                 sql.SQL("CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD {}").format(
                     sql.Identifier(role), sql.Literal("synthetic-test-only")

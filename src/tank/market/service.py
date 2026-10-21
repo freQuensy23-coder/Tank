@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import json
@@ -8,6 +6,7 @@ import time
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from contextlib import suppress
+from contextvars import ContextVar
 from copy import deepcopy
 from datetime import timedelta
 from decimal import Decimal
@@ -15,6 +14,9 @@ from types import SimpleNamespace
 
 import httpx
 
+from tank.market import normalize as norm
+from tank.market.capture import event_anchor
+from tank.market.rate_gate import PriorityGate
 from tank.market_storage import (
     market_dependency_head,
     market_kline_days_recorded_since,
@@ -27,15 +29,10 @@ from tank.sources.capture_fetch import is_exchange_url
 from tank.time_precision import Timestamp, chosen_boundary, collection_clock, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time, sha256, utcnow
 
-from . import normalize as norm
-from .capture import event_anchor
-from .rate_gate import PriorityGate
-
-# Reaction snapshots read books and tickers only this close to the window bounds.
 REACTION_BOUND_MARGIN = timedelta(minutes=5)
 REACTION_NEWEST_MARGIN = timedelta(minutes=15)
-# Market Truth snapshots read tickers this far before each window bound (the latest ticker at
-# or before it) and after it (marks within the sync tolerance of the OI points at the bound).
+
+
 TICKER_ASOF_MARGIN = timedelta(minutes=15)
 TICKER_MARK_MARGIN = timedelta(minutes=2)
 
@@ -125,13 +122,10 @@ def book_level_keeper():
     return keep
 
 
-# Reads shared by the per-anchor snapshots of one snapshot_anchors() call.
-from contextvars import ContextVar
-
 _SHARED_READS = ContextVar("market_shared_snapshot_reads", default=None)
 
 log = logging.getLogger(__name__)
-# Typed exchange series tank-capture writes; this process only reads them.
+
 TANK_CAPTURE_TABLES = frozenset(
     {
         "mkt.flow_bars_1m",
@@ -145,38 +139,38 @@ TANK_CAPTURE_TABLES = frozenset(
         "mkt.capture_streams",
     }
 )
-# The hot set, its expiry and queued supply rows are synced this often (seconds).
+
 HOT_SET_SYNC_S = 5
-# tank-capture's shared-socket health interval: the liquidation feed's freshness basis.
+
 STREAM_PING_INTERVAL_S = 20
-FLUSH_ROWS = 500  # typed rows per write; a live flush can run between two of them
-# OI metrics that sources publish only as 5-min buckets (02 §4.2, §4.6).
+FLUSH_ROWS = 500
+
 SOURCE_BUCKETED_OI, SOURCE_BUCKET_S = ("bybit.linear.open-interest", "binance.usdm.openInterestHist"), 300.0
-# Requests in flight per venue host (Kraken: 1).
+
 HOST_IN_FLIGHT = 4
 EXCHANGE_REST_OWNER = "exchange REST belongs to tank-capture (capture/README.md)"
-# tank-capture rewrites its stream state every few seconds; an older row is a stopped writer.
+
 STREAM_STATE_STALE_S = 30
-# A repair request without a budget is bounded by this; its result may land just after.
+
 CAPTURE_REQUEST_DEFAULT_S, CAPTURE_REQUEST_GRACE_S = 30, 2
 CAPTURE_REQUEST_TERMINAL = ("COMPLETE", "PARTIAL", "FAILED", "EXPIRED")
-# The event loop is reported stalled (stacks logged) when its heartbeat is this stale.
+
 LOOP_STALL_S = 10
-# A reused dependency head is recomputed at least this often (retention deletes and other
-# processes are not in the write clock).
+
+
 HEAD_REUSE_S = 300
-# Past-day kline counts survive a restart in the data dir; a saved count is dropped when a
-# kline of its day was recorded after the save, less this margin for queued writes.
+
+
 DAY_COUNTS_SAVE_S = 60
 DAY_COUNTS_MARGIN = timedelta(minutes=30)
-SERIES_MARGIN = timedelta(hours=2)  # history a shared kline cursor holds before its window
-SERIES_TRIM = timedelta(days=1)  # a cursor sheds history once its windows moved this far past it
-SERIES_APPLY_ROWS = 20000  # kline rows a rebuild applies per worker-thread call
+SERIES_MARGIN = timedelta(hours=2)
+SERIES_TRIM = timedelta(days=1)
+SERIES_APPLY_ROWS = 20000
 
-WIDE_PAGE_ROWS = 500  # rows per fetch for wide rows: one fetchall stays well under a second
-BOOK_LEVEL_ROWS = 30  # newest book rows per instrument that keep their levels in a snapshot
-# Window collections a snapshot reads again each minute: the next read of the same window
-# fetches only rows past it and rows recorded since the last read (less WINDOW_MARGIN).
+WIDE_PAGE_ROWS = 500
+BOOK_LEVEL_ROWS = 30
+
+
 WINDOW_CACHED = frozenset(
     {"mkt.flow_bars_1m", "mkt.klines_1m", "mkt.oi_obs", "mkt.funding_obs", "mkt.book_summaries"}
 )
@@ -184,12 +178,11 @@ WINDOW_MARGIN = timedelta(seconds=5)
 WINDOW_ENTRIES = 32
 WINDOW_LANES = 4
 WINDOW_KEEP_S = 600
-# The window cache is bounded by age and size: r119 grew ~400 MiB/h with only a count cap.
-# A window unused for WINDOW_TTL_S is dropped; beyond WINDOW_ROWS cached rows in all, the
-# least recently used windows go first.
+
+
 WINDOW_TTL_S = 300
 WINDOW_ROWS = 300_000
-# Kline cursors unused this long are dropped (each holds up to 90 days of minutes).
+
 SERIES_TTL_S = 1800
 COLLECTIONS = {
     "flow_bars": ("mkt.flow_bars_1m", "minute_start"),
@@ -263,11 +256,11 @@ class MarketService:
             r["instrument_id"]: dict(r) for r in registry["instruments"] if r.get("active", True)
         }
         self.semantics = settings.load_config("semantics")["metrics"]
-        self._reads = {}  # host -> [succeeded, failed] REST reads since the last minute log
-        self._hot_since = {}  # hot token -> earliest anchor of its events
-        # (instrument, UTC day) -> complete 1m closes, for whole past days (snapshot coverage).
+        self._reads = {}
+        self._hot_since = {}
+
         self._kline_day_counts = {}
-        self._kline_day_counts_saved = ({}, 0.0)  # the counts last saved, and when
+        self._kline_day_counts_saved = ({}, 0.0)
         self._pending_market = {}
         self._market_flush_lock = asyncio.Lock()
         self._condition_heads_memo = {}
@@ -330,8 +323,6 @@ class MarketService:
                     ).fields(field)
                 )
         if collection.startswith("mkt."):
-            # tank-capture (capture/) writes every exchange series; this process writes only
-            # escalations, capture obligations, repair requests, capture tiers and supply.
             if collection in TANK_CAPTURE_TABLES:
                 raise ValueError(collection + " is written by tank-capture only")
             row = self.provenance(jsonable(row))
@@ -377,7 +368,6 @@ class MarketService:
                         queue.pop(0)
                     await asyncio.sleep(0)
             except Exception:
-                # Rows queued since the take are newer and win over the retried ones.
                 for collection, values in queue:
                     target = self._pending_market.setdefault(collection, {})
                     for key, row in values.items():
@@ -451,10 +441,8 @@ class MarketService:
             raise RuntimeError(EXCHANGE_REST_OWNER)
         interval = 0.35 if host == "api.etherscan.io" else 0.08
         lock = self._request_locks.setdefault(host, PriorityGate(HOST_IN_FLIGHT))
-        for attempt in range(4):
+        for _attempt in range(4):
             async with lock.enter(priority):
-                # Pace actual fundamentals HTTP starts, not future reservations.
-                # Exchange REST remains owned by tank-capture, rejected above.
                 async with self._request_pace_locks.setdefault(host, asyncio.Lock()):
                     while True:
                         now = time.monotonic()
@@ -473,8 +461,7 @@ class MarketService:
                     self._last_request[host] = max(
                         self._last_request[host], time.monotonic() + min(max(delay, 1), 60)
                     )
-                    # Every process sharing the request ledger waits too; a ban (418) grows
-                    # with each request, so none asks again before it ends.
+
                     banned = response.status_code == 418
                     await shared_request_budgets.block(
                         host,
@@ -486,7 +473,7 @@ class MarketService:
                     continue
                 if response.is_error:
                     raise RuntimeError(f"{host}: HTTP {response.status_code} {response.text[:200]}")
-                # JSON floats must never enter native quantity or monetary arithmetic.
+
                 return json.loads(response.content, parse_float=Decimal)
         raise RuntimeError(f"{host}: rate limited after bounded retries")
 
@@ -495,7 +482,7 @@ class MarketService:
         [start, end) for a token's instruments within budget_s (03 §5.1 fill order, §5.2
         step 2). Returns {instrument_id: {"incomplete_before", "incomplete_after"}}."""
         if getattr(self.settings, "replay", False):
-            return {}  # a replay reads frozen evidence; it never fetches live market data
+            return {}
         return await self._request_repair(token_id, start, end, budget_s)
 
     async def _request_repair(self, token_id, start, end, budget_s):
@@ -649,7 +636,7 @@ class MarketService:
             return
         backfill_id = "BF-" + sha256({"event_id": event_id, "token_id": token_id, "anchor": iso(anchor)})
         old = await self.repo.get("mkt.backfill_runs", backfill_id)
-        # tank-capture resumes the obligations it holds; a failed one is asked again.
+
         if old and old.get("status") in ("COMPLETE", "PARTIAL", "PENDING", "RUNNING"):
             self._backfills.add(marker)
             return
@@ -669,7 +656,7 @@ class MarketService:
         precision = selected.get("ts_prec") if selected and selected["ts"] == iso(anchor) else None
         row.update(norm.timestamp_fields("anchor", anchor, precision))
         await self._put("mkt.backfill_runs", backfill_id, row)
-        self._backfills.add(marker)  # tank-capture runs PENDING obligations and records them
+        self._backfills.add(marker)
 
     async def capture_changes(self, since=None, end=None):
         """Durable historical completions and coalesced actual late normalized data."""
@@ -698,7 +685,7 @@ class MarketService:
         latest = {}
         async for row in self.repo.iter_metadata("out.reaction_checkpoints", fields, batch_size=1000):
             if not row.get("anchor") or not row.get("window_end") or not row.get("captured_at"):
-                continue  # Legacy unknown availability/window metadata is not invented.
+                continue
             key = (row["event_id"], row["token_id"], row["checkpoint"])
             if key not in latest or int(row.get("revision") or 1) > int(latest[key].get("revision") or 1):
                 latest[key] = row
@@ -754,7 +741,7 @@ class MarketService:
             ):
                 checked += 1
                 if checked % 200 == 0:
-                    await asyncio.sleep(0)  # after a restart, every repaired row arrives "late"
+                    await asyncio.sleep(0)
                 stamp = parse_time(row[semantic_field]) + timedelta(seconds=offset)
                 arrival = parse_time(row["recorded_at"])
                 source_token = row.get("token_id") or self.instruments.get(row.get("instrument_id"), {}).get(
@@ -783,7 +770,7 @@ class MarketService:
                     target["highwater"] = (
                         max(target["highwater"], arrival) if target["highwater"] else arrival
                     )
-                    # Earliest market time touched: windows ending before it are unchanged.
+
                     target["market_from"] = (
                         min(target["market_from"], stamp) if target["market_from"] else stamp
                     )
@@ -815,8 +802,6 @@ class MarketService:
 
     async def capture_readiness(self, event_id, token_id, *, anchor=None):
         if anchor is not None:
-            # Same deterministic primary key as schedule: exact anchor cannot inherit
-            # a completed obligation for a previous version of the event time.
             backfill_id = "BF-" + sha256({"event_id": event_id, "token_id": token_id, "anchor": iso(anchor)})
             row = await self.repo.get("mkt.backfill_runs", backfill_id)
             if (
@@ -882,7 +867,7 @@ class MarketService:
         await self._sync_hot_set()
 
     async def _record_capture_tier(self, token_id, tier, reason):
-        from .supply import supply_cadences
+        from tank.market.supply import supply_cadences
 
         cadences = {
             "oi_funding_s": float(
@@ -993,7 +978,7 @@ class MarketService:
         ]
 
     async def _capture_metadata(self, token_id, cutoff):
-        from .supply import supply_cadences
+        from tank.market.supply import supply_cadences
 
         end = parse_time(cutoff)
         history = [
@@ -1070,7 +1055,6 @@ class MarketService:
                 "flow_bars": {"cadence_s": 60, "basis": "ONE_MINUTE_CLOSED_FLOW_BAR"},
                 "klines": {
                     "cadence_s": base,
-                    # End of the last successful poll at or before the cutoff, per instrument.
                     "observed_through": {
                         iid: max(at for at in polls if parse_time(at) <= end)
                         for iid, polls in stream.polls.items()
@@ -1085,8 +1069,6 @@ class MarketService:
                 "oi": {
                     "cadence_s": oi if tier != "UNKNOWN" else None,
                     "reason": "CAPTURE_TIER_HISTORY_UNAVAILABLE" if tier == "UNKNOWN" else None,
-                    # Series a source publishes only in 5-min buckets cannot be faster than
-                    # the bucket (03 §5.4: Bybit singleOpenInterest, never openInterest).
                     "cadence_s_by_metric": {
                         metric: max(oi, SOURCE_BUCKET_S) if oi is not None and tier != "UNKNOWN" else None
                         for metric in SOURCE_BUCKETED_OI
@@ -1284,8 +1266,7 @@ class MarketService:
             "interval_s",
             "c" if kind == "price" else "volume_native",
         ]
-        # One round trip, reused while nothing was written to the series since: 52
-        # conditions a minute each asked for the same three heads (r117 E2E #9).
+
         heads = (
             []
             if captured_rows is not None
@@ -1295,14 +1276,9 @@ class MarketService:
         )
         cache = self.__dict__.setdefault("_condition_series", {})
         locks = self.__dict__.setdefault("_condition_series_locks", {})
-        # Concurrent historical checkpoints must not evict each other's rolling
-        # cursor and repeatedly reload the same history. Live conditions retain
-        # their incremental cursor; fixed snapshots have their own bounded keys.
+
         key = (iid, kind, rolling) if rolling else (iid, kind, start, cutoff) if fixed_window else (iid, kind)
-        # A shared cursor holds SERIES_MARGIN of history before the window it was read
-        # for, and keeps every bar it has read up to its latest cutoff: a reaction
-        # checkpoint a few minutes behind the live snapshots is served from the same
-        # cursor instead of rebuilding 90 days of minutes (r113 E2E #5).
+
         margin = SERIES_MARGIN if rolling or not fixed_window else timedelta(0)
         async with locks.setdefault(key, asyncio.Lock()):
             previous = cache.get(key)
@@ -1320,11 +1296,6 @@ class MarketService:
             )
             hidden = set()
             if behind:
-                # An assembly clock older than the cursor's: a reaction capture keeps the
-                # clock it started with while live snapshots advance it, and a rebuild per
-                # switch was most of the loop on r117. Storage holds one version per bar, so
-                # a read at the older clock is the cursor's window without the bars recorded
-                # after that clock; the cursor itself stays as the live snapshots left it.
                 reset = upper_open > previous["upper_open"]
                 if not reset:
                     hidden = await self._klines_recorded_between(
@@ -1392,7 +1363,6 @@ class MarketService:
                     if row.get("recorded_at") is None or parse_time(row["recorded_at"]) <= availability:
                         apply(row)
             elif reset:
-                # Decoded pages are applied in a worker thread: the loop only awaits SQL.
                 page = []
                 async for row in self.repo.iter_market_projection(
                     "mkt.klines_1m",
@@ -1402,7 +1372,6 @@ class MarketService:
                     end=upper_open + timedelta(microseconds=1),
                     instrument_ids=[iid],
                     assembled_at=assembled_at,
-                    # One page: every keyset page re-sorts the rest of the range.
                     batch_size=200000,
                 ):
                     page.append(row)
@@ -1437,7 +1406,6 @@ class MarketService:
                 ):
                     apply(row)
             if margin and start - margin > state_start + SERIES_TRIM:
-                # The window moved a day past the cursor: drop what no later window reads.
                 drop = bisect_left(times, microseconds(start - margin))
                 state_start = start - margin
                 times, values = times[drop:], values[drop:]
@@ -1445,9 +1413,6 @@ class MarketService:
 
             def state_digest():
                 if reset:
-                    # The whole content of a freshly read cursor, hashed without
-                    # per-point JSON (canonical JSON of 90 days of minutes took
-                    # ~4% of the loop on r113).
                     digest = hashlib.sha256(repr((kind, iid, state_start, state_upper)).encode())
                     digest.update(times.tobytes())
                     digest.update(values.tobytes() if kind == "price" else json.dumps(values).encode())
@@ -1552,7 +1517,7 @@ class MarketService:
                 "series": series,
                 "unknown_availability": unknown_availability,
             }
-            # A read at an older clock leaves the cursor and its served chain to the live reads.
+
             if captured_rows is None and not (behind and not reset):
                 state["used"] = time.monotonic()
                 cache.pop(key, None)
@@ -1786,8 +1751,7 @@ class MarketService:
         result["tickers"] = await self.repo.latest_market_records(
             "mkt.tickers_24h", cutoff=end, assembled_at=assembled, filters={"token_id": token_id}
         )
-        # Only the recent target OHLC/volume fields are materialized. Historical
-        # statistical prices and native quantities are compact typed vectors.
+
         result["klines"] = []
         recent_fields = [
             "instrument_id",
@@ -1909,8 +1873,7 @@ class MarketService:
                 self.settings.code_version,
             ]
         )
-        # Runtime confidence still needs actual target registry identities;
-        # comparator identities are added only for statistical source lookup.
+
         result["instruments"] = target + [i for i in selected if i not in target]
         heads["relative"] = sha256(
             [
@@ -2131,8 +2094,6 @@ class MarketService:
             if duration and duration > 0:
                 durations.append(duration)
         if any(r["metric"] in ("mt.move_class", "mt.divergence_state") for r in requirements):
-            # The complete graph subsumes primitive inputs; do not issue a second
-            # independent history load for a mixed condition requirement batch.
             domains = {"composite"}
         instruments = [i for i in self.instruments.values() if i["token_id"] == token_id]
         spot = [i for i in instruments if i["market_type"] == "SPOT"]
@@ -2414,7 +2375,7 @@ class MarketService:
                             order=order,
                         )
                     )
-            # Benchmark and sector comparator klines are actual full-assessment dependencies.
+
             peers = [
                 i["instrument_id"]
                 for i in self.instruments.values()
@@ -2472,7 +2433,7 @@ class MarketService:
             return await self.repo.market_series_counts(instrument_ids, start, cutoff, assembled)
         cache = self._kline_day_counts
         days = [first + timedelta(days=n) for n in range((last - first).days)]
-        # Read the cache before any await: an archive import evicts a recounted day meanwhile.
+
         counts = {
             (iid, day): cache[iid, day] for day in days for iid in instrument_ids if (iid, day) in cache
         }
@@ -2515,7 +2476,7 @@ class MarketService:
             self.repo, parse_time(saved["saved_at"]) - DAY_COUNTS_MARGIN, today
         )
         loaded = 0
-        # No await from the query to here: a write landing after it evicts what is set now.
+
         for iid, day, count in saved["counts"]:
             key = (iid, parse_time(day))
             if key[1] < today and key not in changed and key not in self._kline_day_counts:
@@ -2550,7 +2511,7 @@ class MarketService:
         a previous process saved are reused first."""
         try:
             log.info("series counts restored: %d past days", await self._load_day_counts())
-        except Exception as exc:  # noqa: BLE001 - the warm-up below counts what is missing
+        except Exception as exc:
             log.warning("series count restore failed: %s", type(exc).__name__)
         spot = [iid for iid, inst in self.instruments.items() if norm.venue_key(inst).endswith(".spot")]
         end = utcnow()
@@ -2559,7 +2520,7 @@ class MarketService:
                 return
             try:
                 await self._series_counts(spot[offset : offset + 4], end - timedelta(days=90), end, iso())
-            except Exception as exc:  # noqa: BLE001 - a later snapshot counts what is missing
+            except Exception as exc:
                 log.warning("series count warm-up failed: %s", type(exc).__name__)
                 return
             await asyncio.sleep(1)
@@ -2597,8 +2558,6 @@ class MarketService:
         self, collection, field, ids, start, end, filters=None, *, books=False, keys_out=None
     ):
         if books:
-            # Levels only for the newest BOOK_LEVEL_ROWS rows and the newest checked one: in
-            # the query on PostgreSQL, by stripping after decode in memory.
             return await market_range_by_instrument(
                 self.repo,
                 collection,
@@ -2612,7 +2571,7 @@ class MarketService:
                 level_rows=BOOK_LEVEL_ROWS if hasattr(self.repo, "_conn") else None,
                 keys_out=keys_out,
             )
-        # Wide rows (ticker field_sources) in small pages: one fetchall decodes a page.
+
         page = WIDE_PAGE_ROWS if collection == "mkt.tickers_24h" else 1000
         return await market_range_by_instrument(
             self.repo, collection, field, ids, start, end, filters, batch_size=page, keys_out=keys_out
@@ -2627,8 +2586,6 @@ class MarketService:
         windows = self.__dict__.setdefault("_windows", {})
         locks = self.__dict__.setdefault("_window_locks", {})
         async with locks.setdefault(key, asyncio.Lock()):
-            # Several windows per key (a reaction reads one around its anchor and one before
-            # its cutoff); a read extends the cached window it starts inside.
             lanes = windows.pop(key, [])
             entry = next(
                 (
@@ -2671,8 +2628,7 @@ class MarketService:
                         collection, field, ids, entry["end"], end, filters, books=books, keys_out=(keys := {})
                     )
                 rows = entry["rows"]
-                # The lane keeps the earliest start read from it in the last WINDOW_KEEP: a
-                # narrower read (a reaction inside a Market Truth window) never trims it.
+
                 now = time.monotonic()
                 entry["starts"] = [(at, s) for at, s in entry["starts"] if now - at < WINDOW_KEEP_S]
                 entry["starts"].append((now, start))
@@ -2703,7 +2659,7 @@ class MarketService:
                         )
                 entry.update(start=floor, end=max(end, entry["end"]), clock=clock)
                 if books:
-                    for iid, held in rows.items():
+                    for held in rows.values():
                         _place_levels(held)
             entry["used"] = time.monotonic()
             entry["size"] = sum(len(held) for held in entry["rows"].values())
@@ -2796,8 +2752,7 @@ class MarketService:
         bars, klines, OI, funding and liquidations from 2 x the event window before the cutoff
         (previous-window comparisons), books over the last 24 h and the hour before the anchor,
         and tickers only around the window bounds (see the scope branches below)."""
-        # Strings passed to this API select an analysis boundary. Timestamp
-        # callers preserve the uncertainty of an event-derived schedule.
+
         requested = cutoff if isinstance(cutoff, Timestamp) else chosen_boundary(cutoff, precision="EXACT")
         if requested.value is None:
             raise ValueError("Snapshot requires a cutoff value")
@@ -2826,11 +2781,6 @@ class MarketService:
             )
             bounded = {"books": bounds, "tickers": bounds}
         elif scope is None:
-            # Market Truth reads books over the last 24 h (W24H liquidity: hit-side depth,
-            # bursts and replenishment around every flow bar) and the hour before the anchor
-            # (pre-event depth); the latest ticker at or before each window bound and previous-
-            # window bound (spot coverage estimate) and the marks next to the OI points at the
-            # window bounds (03 §5.4 USD endpoints). Nothing else of two days of books/tickers.
             from tank.analysis.truth import WINDOWS
 
             lower = cutoff_dt - timedelta(days=1)
@@ -2875,8 +2825,7 @@ class MarketService:
         result["reference_points"] = []
         for name, (collection, field) in COLLECTIONS.items():
             values = []
-            # One query per series family for all of the token's instruments (BTC: 9),
-            # split per instrument in the same order as one range read per instrument.
+
             if name in bounded:
                 window_rows = {iid: [] for iid in ids}
                 for low, high in bounded[name]:
@@ -2917,10 +2866,6 @@ class MarketService:
                     collection, "funding_time", ids, history_start, snapshot_end
                 )
             for iid in ids if name != "supply" else [None]:
-                # Event windows (03 §5.3-§5.5) are read in full from recent_start. Only
-                # the normal ranges reach back 90 days (03 §0): OI at the base-tier
-                # cadence (300 s, 03 §5.1), funding as its settled history; book,
-                # ticker, flow and liquidation history beyond the windows is unused.
                 if iid is None:
                     rows = await self._range(
                         collection,
@@ -2970,8 +2915,7 @@ class MarketService:
             result[name] = sorted(
                 values, key=lambda r: r.get(field) or r.get("funding_time") or r.get("settlement_time")
             )
-        # Benchmarks plus the peers Market Truth can compare against (03 §5.7): the
-        # token's sector, or the DeFi sectors when its sector has fewer than two peers.
+
         members = {}
         for t in self.tokens.values():
             if t.get("sector"):
@@ -2984,7 +2928,7 @@ class MarketService:
             self.tokens.get(token_id, {}).get("sector"),
         )
         same_sector = members.get(sector, set()) - {token_id} if sector != "BENCHMARK" else set()
-        # IDENTITY_PAYMENTS has no sector adjustment at all (Market Truth: not applicable).
+
         if len(same_sector) < 2 and sector != "IDENTITY_PAYMENTS":
             same_sector |= {
                 identity
@@ -3005,14 +2949,10 @@ class MarketService:
         } - {token_id}
         shared = _SHARED_READS.get()
         assembled = shared.setdefault("assembled", iso()) if shared is not None else iso()
-        # A live snapshot (cutoff within the last hour) extends one cursor per series;
-        # a historical cutoff reads its own fixed window.
+
         rolling = "LIVE_SNAPSHOT" if cutoff_dt >= utcnow() - timedelta(hours=1) else None
         captured_klines = None
         if recent_start == history_start:
-            # Long event windows already loaded every target candle used by the
-            # statistical histories. Project those same observations once more
-            # in memory instead of reading the entire history twice from SQL.
             captured_klines = {iid: [] for iid in ids}
             for row in result["klines"]:
                 captured_klines[row["instrument_id"]].append(row)
@@ -3075,8 +3015,7 @@ class MarketService:
                 rolling=rolling,
             )
             result["stat_price_series"][iid] = series
-            # Exact reference prices remain original decimal observations, not
-            # values converted back from statistical floats, even across gaps.
+
             wanted = set(series["times_us"][-1:])
             hourly = next((v for v in reversed(series["times_us"]) if v % 3600000000 == 0), None)
             if hourly is not None:
@@ -3120,10 +3059,7 @@ class MarketService:
             current = chosen.get(inst["token_id"])
             if current is None or counts[inst["instrument_id"]] > counts[current["instrument_id"]]:
                 chosen[inst["token_id"]] = inst
-        # Sector adjustment uses returns at the requested bounds, not a dense
-        # 90-day history for every peer. Preserve the original 90-day venue
-        # ranking, then retain the same as-of prices at those bounds. BTC/ETH
-        # keep their full histories for beta, normal ranges and market context.
+
         from math import isfinite
 
         boundaries = [cutoff_dt - timedelta(seconds=n) for n in (0, 900, 3600, 14400, 86400)]
@@ -3140,8 +3076,7 @@ class MarketService:
             upper_open = boundary - timedelta(minutes=1)
             if upper_open < history_start or not sector_ids:
                 continue
-            # One indexed query serves every chosen sector peer at this bound.
-            # Only an invalid observed close needs a narrower backward seek.
+
             pending = await self.repo.latest_market_records(
                 "mkt.klines_1m",
                 time_field="open_time",
@@ -3181,8 +3116,6 @@ class MarketService:
                 continue
             instruments.append(inst)
             if self.tokens[inst["token_id"]].get("symbol") not in {"BTC", "ETH"}:
-                # Freshness is assessed per venue, including venues not chosen
-                # for the sector return. Keep its original last observation.
                 if inst["instrument_id"] in latest_closes:
                     await retain_close(latest_closes[inst["instrument_id"]])
                 if chosen[inst["token_id"]]["instrument_id"] != inst["instrument_id"]:
@@ -3369,7 +3302,7 @@ class MarketService:
         return result
 
     async def _supply_loop(self):
-        from .supply import SUPPLY_LOOP_SLEEP_S, SupplyCapture
+        from tank.market.supply import SUPPLY_LOOP_SLEEP_S, SupplyCapture
 
         capture = SupplyCapture(self)
         while not self._stop.is_set():
@@ -3378,7 +3311,7 @@ class MarketService:
                 await capture.poll(hot)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
+            except Exception as exc:
                 log.warning("supply capture failed: %s", type(exc).__name__)
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), SUPPLY_LOOP_SLEEP_S)

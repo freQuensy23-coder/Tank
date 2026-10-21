@@ -21,7 +21,9 @@ func TestObligationRunsCoreRowToTerminalResult(t *testing.T) {
 	}}
 	r.s.obligations(context.Background())
 	r.s.wg.Wait()
-	r.mem.Flush(context.Background())
+	if err := r.mem.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	row := r.mem.rows["mkt.backfill_runs"]["BF-test"]
 	if row == nil || (row["status"] != "COMPLETE" && row["status"] != "PARTIAL") || row["finished_at"] == nil {
 		t.Fatalf("the obligation ends COMPLETE or PARTIAL with its finish time: %v", row)
@@ -35,7 +37,7 @@ func TestObligationRunsCoreRowToTerminalResult(t *testing.T) {
 	if flow["complete"] != true {
 		t.Fatalf("the last hour before the anchor is complete from REST: %v", flow)
 	}
-	// A second pass does not start it again.
+
 	r.s.obligations(context.Background())
 	r.s.wg.Wait()
 }

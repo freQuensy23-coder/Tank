@@ -1,7 +1,3 @@
-// Package pyval gives Go code Python's view of a decoded exchange frame: Tank parses
-// frames with json.loads(parse_float=Decimal), so integers are int, other numbers are
-// Decimal and str() renders them the Python way. Frames here are decoded with
-// json.Decoder.UseNumber, which keeps every number's text.
 package pyval
 
 import (
@@ -17,23 +13,18 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
 )
 
-// ErrSemantic matches every normalize.SemanticError (errors.Is).
 var ErrSemantic = errors.New("semantic error")
 
-// SemanticError is normalize.SemanticError: its text is the Python message.
 type SemanticError struct{ Msg string }
 
 func (e *SemanticError) Error() string { return e.Msg }
 
-// Is makes errors.Is(err, ErrSemantic) true.
 func (e *SemanticError) Is(target error) bool { return target == ErrSemantic }
 
-// Semantic is a SemanticError with a formatted message.
 func Semantic(format string, args ...any) error {
 	return &SemanticError{Msg: fmt.Sprintf(format, args...)}
 }
 
-// Decode parses a frame as Python would see it.
 func Decode(data []byte) (any, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.UseNumber()
@@ -44,7 +35,6 @@ func Decode(data []byte) (any, error) {
 	return v, nil
 }
 
-// IsInt reports whether a JSON number is a Python int (no fraction or exponent).
 func IsInt(n json.Number) bool {
 	s := strings.TrimPrefix(string(n), "-")
 	if s == "" {
@@ -58,7 +48,6 @@ func IsInt(n json.Number) bool {
 	return true
 }
 
-// Str is Python str(value) for scalar frame values.
 func Str(v any) string {
 	switch x := v.(type) {
 	case nil:
@@ -90,7 +79,7 @@ func Str(v any) string {
 	case int64:
 		return strconv.FormatInt(x, 10)
 	case float64:
-		// A YAML float (configuration values): repr(float).
+
 		switch {
 		case math.IsNaN(x):
 			return "nan"
@@ -105,8 +94,6 @@ func Str(v any) string {
 	return fmt.Sprint(v)
 }
 
-// Decimal is tank.market.normalize.decimal: None and booleans are missing, the value
-// goes through str() and must be finite.
 func Decimal(v any) (pydec.Dec, error) {
 	switch x := v.(type) {
 	case nil, bool:
@@ -126,7 +113,6 @@ func Decimal(v any) (pydec.Dec, error) {
 	return d, nil
 }
 
-// Int is Python int(value) for ints, numeric strings and decimals (truncating).
 func Int(v any) (int64, error) {
 	switch x := v.(type) {
 	case int:
@@ -161,7 +147,7 @@ func Int(v any) (int64, error) {
 		s := strings.TrimSpace(strings.ReplaceAll(x, "_", ""))
 		return strconv.ParseInt(s, 10, 64)
 	case float64:
-		// int(float) truncates toward zero; infinities and NaN cannot convert.
+
 		if math.IsNaN(x) || math.IsInf(x, 0) || math.Abs(x) >= 9.223372036854775807e18 {
 			return 0, fmt.Errorf("cannot convert float %v to integer", x)
 		}
@@ -170,22 +156,18 @@ func Int(v any) (int64, error) {
 	return 0, fmt.Errorf("invalid literal for int(): %v", v)
 }
 
-// Map is v as a JSON object, nil otherwise.
 func Map(v any) map[string]any {
 	m, _ := v.(map[string]any)
 	return m
 }
 
-// List is v as a JSON array, nil otherwise.
 func List(v any) []any {
 	l, _ := v.([]any)
 	return l
 }
 
-// Get is m.get(key) (nil when absent).
 func Get(m map[string]any, key string) any { return m[key] }
 
-// GetOr is m.get(key, fallback): the fallback only when the key is absent.
 func GetOr(m map[string]any, key string, fallback any) any {
 	if v, ok := m[key]; ok {
 		return v
@@ -193,10 +175,8 @@ func GetOr(m map[string]any, key string, fallback any) any {
 	return fallback
 }
 
-// Has reports key in m.
 func Has(m map[string]any, key string) bool { _, ok := m[key]; return ok }
 
-// Need is m[key] with Python's KeyError as an error.
 func Need(m map[string]any, key string) (any, error) {
 	v, ok := m[key]
 	if !ok {
@@ -205,7 +185,6 @@ func Need(m map[string]any, key string) (any, error) {
 	return v, nil
 }
 
-// Truthy is Python truthiness of a frame value.
 func Truthy(v any) bool {
 	switch x := v.(type) {
 	case nil:
@@ -233,7 +212,6 @@ func Truthy(v any) bool {
 	return true
 }
 
-// Equal is Python == for frame scalars (ints, numbers and strings compare by kind).
 func Equal(a, b any) bool {
 	an, aNum := a.(json.Number)
 	bn, bNum := b.(json.Number)

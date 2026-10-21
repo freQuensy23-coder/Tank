@@ -1,7 +1,5 @@
 """Record the full selected collection for the integration JUnit completeness gate."""
 
-from __future__ import annotations
-
 import json
 from pathlib import Path
 
@@ -13,7 +11,6 @@ def pytest_collection_finish(session) -> None:
         raise ValueError("collect_integration is for --collect-only")
     cases = []
     for item in session.items:
-        # Match the JUnit writer in the project's frozen pytest version.
         parts = mangle_test_address(item.nodeid)
         cases.append({"classname": ".".join(parts[:-1]), "name": bin_xml_escape(parts[-1])})
     target = Path(".test-results/integration-collection.json")

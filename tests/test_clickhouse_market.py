@@ -18,7 +18,7 @@ from tank.storage import MemoryRepository, PostgresRepository
 from tank.util import iso
 
 URL = os.environ.get("CLICKHOUSE_TEST_URL")
-pytestmark = pytest.mark.skipif(not URL, reason="CLICKHOUSE_TEST_URL not set")
+pytestmark = pytest.mark.integration
 T0 = datetime(2026, 10, 21, 12, 0, tzinfo=UTC)
 IIDS = ["binance:spot:BTCUSDT", "okx:spot:BTC-USDT"]
 
@@ -79,6 +79,8 @@ def ch_row(collection, record, key):
 
 @pytest.fixture
 async def both():
+    if not URL:
+        pytest.fail("CLICKHOUSE_TEST_URL must point to an isolated ClickHouse test server")
     ch = chm.ClickHouse(URL)
     await ch.execute("DROP DATABASE IF EXISTS mkt")
     for statement in chm.ddl():
@@ -112,7 +114,7 @@ async def collect(gen):
 async def test_routed_reads_match_memory(both):
     memory, routed, put = both
     klines = [kline(iid, m, str(100 + m)) for iid in IIDS for m in range(6)]
-    klines.append(kline(IIDS[0], 6, "0", complete=True))  # not a positive close
+    klines.append(kline(IIDS[0], 6, "0", complete=True))
     await put("mkt.klines_1m", klines)
     await put("mkt.flow_bars_1m", [bar(iid, m, last=str(m)) for iid in IIDS for m in range(4)])
     cutoff = T0 + timedelta(minutes=10)
@@ -195,7 +197,6 @@ async def test_routed_reads_match_memory(both):
     trades = await same(lambda r: ms.latest_market_trades(r, IIDS, start=T0))
     assert {t["last_trade"]["trade_id"] for t in trades} == {"3"}
 
-    # The memory double keys rows by identity, the databases by storage key (market_storage._identity_key).
     async def recorded(r):
         return [
             (iid, rec)

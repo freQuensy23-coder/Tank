@@ -1,6 +1,3 @@
-// Command tank-capture is Tank's exchange capture service: the only process that talks
-// to the exchanges for market data. It writes the typed market tables Tank core reads
-// (capture/README.md).
 package main
 
 import (
@@ -32,10 +29,8 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/store"
 )
 
-// healthStale is how old the last successful flush may be for the service to be healthy.
 const healthStale = 30 * time.Second
 
-// shutdownLimit bounds a stop: the final flush has 20 s of it.
 const shutdownLimit = 45 * time.Second
 
 func main() {
@@ -52,8 +47,6 @@ func main() {
 	}
 }
 
-// healthcheck is the container healthcheck (GET /healthz on the local health address);
-// readycheck (/readyz) tells a roll that a standby process has every stream connected.
 func healthcheck(path string) int {
 	addr := os.Getenv("TANK_CAPTURE_HEALTH_ADDR")
 	if addr == "" {
@@ -68,7 +61,9 @@ func healthcheck(path string) int {
 	if err != nil {
 		return 1
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return 1
 	}
@@ -93,8 +88,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer st.Close()
-	// Exchange market series and prints live in ClickHouse (HLD §7.1): same password as the
-	// tank database role.
+
 	chURL := os.Getenv("TANK_CLICKHOUSE_URL")
 	if chURL == "" {
 		return errors.New("TANK_CLICKHOUSE_URL is not set")
@@ -111,10 +105,10 @@ func run(log *slog.Logger) error {
 	st.CH = ch
 	health := &healthState{}
 	server := serveHealth(cfg.HealthAddr, health, log)
-	defer server.Close()
-	// Make-before-break: streams connect now and their rows wait in memory while the
-	// previous process still holds the writer lock; nothing is written, claimed or repaired
-	// until this process takes the lock, so a roll leaves no capture hole.
+	defer func() {
+		_ = server.Close()
+	}()
+
 	owner := config.Writer
 	clock := capture.NewSystemClock()
 	gate := budget.NewGate(st.Ledger(), owner)
@@ -145,7 +139,7 @@ func run(log *slog.Logger) error {
 	}()
 	go logReads(runCtx, client, log)
 	go func() {
-		// A stop that does not finish must not hold the writer lock: exit with the stacks.
+
 		<-runCtx.Done()
 		time.Sleep(shutdownLimit)
 		buf := make([]byte, 1<<20)
@@ -189,7 +183,6 @@ func run(log *slog.Logger) error {
 	return err
 }
 
-// dial opens public WebSocket connections (websockets.connect: 32 MiB frames).
 func dial(userAgent string) capture.Dialer {
 	dialer := websocket.Dialer{
 		Proxy: http.ProxyFromEnvironment, HandshakeTimeout: 30 * time.Second,
@@ -199,7 +192,7 @@ func dial(userAgent string) capture.Dialer {
 		header := http.Header{"User-Agent": []string{userAgent}}
 		conn, resp, err := dialer.DialContext(ctx, url, header)
 		if resp != nil && resp.Body != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		if err != nil {
 			if resp != nil {
@@ -212,7 +205,6 @@ func dial(userAgent string) capture.Dialer {
 	}
 }
 
-// logReads logs the REST reads per host once a minute (MarketService's minute log).
 func logReads(ctx context.Context, client *rest.Client, log *slog.Logger) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
@@ -251,7 +243,6 @@ func (h *healthState) get() (*capture.Service, *store.Lock) {
 	return h.svc, h.lock
 }
 
-// healthy: the writer lock is held and typed rows were written recently.
 func (h *healthState) healthy() (bool, string) {
 	svc, lock := h.get()
 	if svc == nil || lock == nil {
@@ -280,12 +271,12 @@ func serveHealth(addr string, h *healthState, log *slog.Logger) *http.Server {
 			http.Error(w, reason, http.StatusServiceUnavailable)
 			return
 		}
-		fmt.Fprintln(w, reason)
+		_, _ = fmt.Fprintln(w, reason)
 	})
-	// /readyz: every stream member connected (a standby process is ready to take over).
+
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		if svc, _ := h.get(); svc != nil && svc.Ready() {
-			fmt.Fprintln(w, "ready")
+			_, _ = fmt.Fprintln(w, "ready")
 			return
 		}
 		http.Error(w, "streams connecting", http.StatusServiceUnavailable)
@@ -299,7 +290,7 @@ func serveHealth(addr string, h *healthState, log *slog.Logger) *http.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(status)
 	})
-	// Heap and goroutine profiles (go tool pprof http://<container>:8791/debug/pprof/heap).
+
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}

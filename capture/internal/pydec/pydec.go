@@ -1,12 +1,3 @@
-// Package pydec reproduces the part of CPython's decimal.Decimal that Tank's market
-// normalization uses, with identical results: exact construction from text, add,
-// subtract, multiply and true division rounded ROUND_HALF_EVEN to a context precision,
-// comparisons, str() and format(d, "f").
-//
-// The Python reference computes at the default context precision (28) or at 100 inside
-// tank.market.normalize.precise; every arithmetic call takes that precision explicitly.
-// Results are bit-for-bit the coefficients and exponents CPython produces, so rendered
-// strings (and the semantic fingerprints built from them) match.
 package pydec
 
 import (
@@ -15,10 +6,9 @@ import (
 	"strings"
 )
 
-// Context precisions of the Python reference.
 const (
-	DefaultPrec = 28  // decimal.DefaultContext
-	Precise     = 100 // tank.market.normalize.precise
+	DefaultPrec = 28
+	Precise     = 100
 )
 
 var (
@@ -27,8 +17,6 @@ var (
 	ErrDivisionByZero = errors.New("decimal division by zero")
 )
 
-// Dec is an immutable finite decimal: (-1)^neg * c * 10^exp. A nil coefficient is zero.
-// The zero value is Decimal("0").
 type Dec struct {
 	neg bool
 	c   *big.Int
@@ -38,7 +26,7 @@ type Dec struct {
 var (
 	bigTen  = big.NewInt(10)
 	bigFive = big.NewInt(5)
-	// Read-only after init: shared by concurrent goroutines.
+
 	pow10 = func() []*big.Int {
 		table := make([]*big.Int, 512)
 		table[0] = big.NewInt(1)
@@ -49,7 +37,6 @@ var (
 	}()
 )
 
-// powTen is 10**n; the result must not be modified.
 func powTen(n int) *big.Int {
 	if n < len(pow10) {
 		return pow10[n]
@@ -57,7 +44,6 @@ func powTen(n int) *big.Int {
 	return new(big.Int).Exp(bigTen, big.NewInt(int64(n)), nil)
 }
 
-// numDigits is len(str(c)) of a non-negative coefficient (1 for zero).
 func numDigits(c *big.Int) int {
 	if c == nil || c.Sign() == 0 {
 		return 1
@@ -71,7 +57,7 @@ func numDigits(c *big.Int) int {
 		}
 		return n
 	}
-	// log10(2) ~ 0.30103: the estimate is exact or one too small.
+
 	n := int(float64(c.BitLen())*0.30102999566398120) + 1
 	if n < 1 {
 		n = 1
@@ -85,13 +71,6 @@ func numDigits(c *big.Int) int {
 	return n
 }
 
-func coef(d Dec) *big.Int {
-	if d.c == nil {
-		return new(big.Int)
-	}
-	return d.c
-}
-
 func mk(neg bool, c *big.Int, exp int) Dec {
 	if c != nil && c.Sign() == 0 {
 		c = nil
@@ -99,7 +78,6 @@ func mk(neg bool, c *big.Int, exp int) Dec {
 	return Dec{neg: neg, c: c, exp: exp}
 }
 
-// FromInt is Decimal(int).
 func FromInt(v int64) Dec {
 	if v < 0 {
 		return mk(true, new(big.Int).Neg(big.NewInt(v)), 0)
@@ -107,15 +85,12 @@ func FromInt(v int64) Dec {
 	return mk(false, big.NewInt(v), 0)
 }
 
-// Zero is Decimal(0).
 var Zero = Dec{}
 
-// Parse is Decimal(text) for a finite literal: surrounding whitespace and underscores
-// between digits are accepted as in Python; infinities and NaNs are ErrNonFinite.
 func Parse(text string) (Dec, error) {
 	s := strings.TrimSpace(text)
 	if strings.Contains(s, "_") {
-		// Python accepts single underscores between digits only.
+
 		if strings.HasPrefix(s, "_") || strings.HasSuffix(s, "_") || strings.Contains(s, "__") {
 			return Dec{}, ErrInvalid
 		}
@@ -186,7 +161,6 @@ func Parse(text string) (Dec, error) {
 	return mk(neg, c, exp), nil
 }
 
-// MustParse is Parse for literals known to be valid.
 func MustParse(text string) Dec {
 	d, err := Parse(text)
 	if err != nil {
@@ -195,10 +169,8 @@ func MustParse(text string) Dec {
 	return d
 }
 
-// IsZero reports d == 0.
 func (d Dec) IsZero() bool { return d.c == nil || d.c.Sign() == 0 }
 
-// Sign is -1, 0 or 1 by value.
 func (d Dec) Sign() int {
 	if d.IsZero() {
 		return 0
@@ -209,7 +181,6 @@ func (d Dec) Sign() int {
 	return 1
 }
 
-// Exp is the decimal exponent (Decimal.as_tuple().exponent).
 func (d Dec) Exp() int { return d.exp }
 
 func (d Dec) digitString() string {
@@ -219,7 +190,6 @@ func (d Dec) digitString() string {
 	return d.c.String()
 }
 
-// String is str(Decimal): to_sci_string with capital E.
 func (d Dec) String() string {
 	sign := ""
 	if d.neg {
@@ -256,7 +226,6 @@ func (d Dec) String() string {
 	return sign + intpart + fracpart + exp
 }
 
-// FormatF is format(Decimal, "f"): fixed point, no exponent, no precision change.
 func (d Dec) FormatF() string {
 	sign := ""
 	if d.neg {
@@ -291,8 +260,6 @@ func itoa(v int) string {
 	return big.NewInt(int64(v)).String()
 }
 
-// fix is Decimal._fix for finite values under the default exponent limits: round the
-// coefficient to prec digits, ROUND_HALF_EVEN.
 func fix(d Dec, prec int) Dec {
 	if d.IsZero() {
 		return mk(d.neg, nil, d.exp)
@@ -320,7 +287,6 @@ func fix(d Dec, prec int) Dec {
 	return mk(d.neg, q, expMin)
 }
 
-// rescale is Decimal._rescale(exp, ROUND_HALF_EVEN).
 func rescale(d Dec, exp int) Dec {
 	if d.IsZero() {
 		return mk(d.neg, nil, exp)
@@ -350,7 +316,6 @@ func rescale(d Dec, exp int) Dec {
 	return mk(d.neg, q, exp)
 }
 
-// Add is a + b in a context of precision prec.
 func Add(a, b Dec, prec int) Dec {
 	exp := a.exp
 	if b.exp < exp {
@@ -373,8 +338,7 @@ func Add(a, b Dec, prec int) Dec {
 		}
 		return fix(rescale(a, e), prec)
 	}
-	// _normalize: align both operands on one exponent, replacing a negligible operand by
-	// the smallest quantity that rounds the same way.
+
 	type work struct {
 		neg bool
 		c   *big.Int
@@ -420,14 +384,12 @@ func Add(a, b Dec, prec int) Dec {
 	return fix(mk(resultNeg, c, op1.exp), prec)
 }
 
-// Sub is a - b in a context of precision prec.
 func Sub(a, b Dec, prec int) Dec {
 	return Add(a, b.copyNegate(), prec)
 }
 
 func (d Dec) copyNegate() Dec { return Dec{neg: !d.neg, c: d.c, exp: d.exp} }
 
-// Mul is a * b in a context of precision prec.
 func Mul(a, b Dec, prec int) Dec {
 	neg := a.neg != b.neg
 	exp := a.exp + b.exp
@@ -437,7 +399,6 @@ func Mul(a, b Dec, prec int) Dec {
 	return fix(mk(neg, new(big.Int).Mul(a.c, b.c), exp), prec)
 }
 
-// Div is a / b (true division) in a context of precision prec.
 func Div(a, b Dec, prec int) (Dec, error) {
 	if b.IsZero() {
 		return Dec{}, ErrDivisionByZero
@@ -472,7 +433,6 @@ func Div(a, b Dec, prec int) (Dec, error) {
 	return fix(mk(neg, q, exp), prec), nil
 }
 
-// MustDiv is Div for divisors known to be nonzero.
 func MustDiv(a, b Dec, prec int) Dec {
 	d, err := Div(a, b, prec)
 	if err != nil {
@@ -481,12 +441,10 @@ func MustDiv(a, b Dec, prec int) Dec {
 	return d
 }
 
-// Abs is abs(d) in a context of precision prec.
 func (d Dec) Abs(prec int) Dec {
 	return fix(mk(false, d.c, d.exp), prec)
 }
 
-// Neg is -d in a context of precision prec (a zero loses its sign, as in Python).
 func (d Dec) Neg(prec int) Dec {
 	if d.IsZero() {
 		return fix(mk(false, nil, d.exp), prec)
@@ -494,7 +452,6 @@ func (d Dec) Neg(prec int) Dec {
 	return fix(mk(!d.neg, d.c, d.exp), prec)
 }
 
-// Cmp compares values: -1, 0 or 1.
 func Cmp(a, b Dec) int {
 	sa, sb := a.Sign(), b.Sign()
 	if sa != sb {
@@ -519,13 +476,10 @@ func Cmp(a, b Dec) int {
 	return c
 }
 
-// Cmp is Cmp(d, o).
 func (d Dec) Cmp(o Dec) int { return Cmp(d, o) }
 
-// Equal reports value equality (Python ==).
 func (d Dec) Equal(o Dec) bool { return Cmp(d, o) == 0 }
 
-// Max is Python max(a, b): b only when strictly greater, so equal values keep a.
 func Max(a, b Dec) Dec {
 	if Cmp(b, a) > 0 {
 		return b
@@ -533,7 +487,6 @@ func Max(a, b Dec) Dec {
 	return a
 }
 
-// Min is Python min(a, b): b only when strictly smaller.
 func Min(a, b Dec) Dec {
 	if Cmp(b, a) < 0 {
 		return b
@@ -541,7 +494,6 @@ func Min(a, b Dec) Dec {
 	return a
 }
 
-// IsInteger reports whether d has no fractional part (d == d.to_integral_value()).
 func (d Dec) IsInteger() bool {
 	if d.IsZero() || d.exp >= 0 {
 		return true
@@ -549,7 +501,6 @@ func (d Dec) IsInteger() bool {
 	return new(big.Int).Mod(d.c, powTen(-d.exp)).Sign() == 0
 }
 
-// Int64 is int(d) truncated toward zero; ok is false when it does not fit.
 func (d Dec) Int64() (int64, bool) {
 	if d.IsZero() {
 		return 0, true
@@ -569,7 +520,6 @@ func (d Dec) Int64() (int64, bool) {
 	return v.Int64(), true
 }
 
-// Float64 is float(Decimal): the correctly rounded binary64 value.
 func (d Dec) Float64() float64 {
 	r := new(big.Rat)
 	if d.IsZero() {
