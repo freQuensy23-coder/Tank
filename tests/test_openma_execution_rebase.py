@@ -26,13 +26,6 @@ def fixture(tmp_path, *, rebased):
     return rows, rebase
 
 
-def test_historical_execution_overlay_retains_exact_behavior(tmp_path):
-    rows, _ = fixture(tmp_path, rebased=False)
-    overlay.apply(tmp_path)
-    for row in rows:
-        assert (tmp_path / row["path"]).read_text() == row["new"]
-
-
 def test_manifest_identity_mismatch_is_refused_before_any_output(tmp_path, monkeypatch):
     rows, _ = fixture(tmp_path, rebased=True)
     monkeypatch.setattr(

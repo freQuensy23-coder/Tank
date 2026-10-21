@@ -4,6 +4,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from tank.settings import Settings, resolve_versions
 
 
@@ -25,6 +27,8 @@ def repository(tmp_path):
     return root, config, git(root, "rev-parse", "HEAD")
 
 
+@pytest.mark.integration
+@pytest.mark.process
 def test_ignored_snapshot_root_has_content_identity_and_no_clean_commit_alias(tmp_path):
     root, config, commit = repository(tmp_path)
     snapshot = root / "data/snapshot/config"
@@ -40,6 +44,8 @@ def test_ignored_snapshot_root_has_content_identity_and_no_clean_commit_alias(tm
     assert len(list((settings.data_dir / "config_versions").glob("*.json"))) == 2
 
 
+@pytest.mark.integration
+@pytest.mark.process
 def test_ignored_extra_payload_is_not_hidden_by_clean_status(tmp_path):
     root, config, commit = repository(tmp_path)
     settings = Settings(config_dir=config, data_dir=tmp_path / "runtime", _env_file=None)
@@ -49,6 +55,8 @@ def test_ignored_extra_payload_is_not_hidden_by_clean_status(tmp_path):
     assert resolve_versions(settings).config_version.startswith(commit + "-dirty.")
 
 
+@pytest.mark.integration
+@pytest.mark.process
 def test_assume_unchanged_cannot_hide_modified_loaded_bytes(tmp_path):
     root, config, commit = repository(tmp_path)
     git(root, "update-index", "--assume-unchanged", "config/rules.yaml")
@@ -59,6 +67,8 @@ def test_assume_unchanged_cannot_hide_modified_loaded_bytes(tmp_path):
     ).config_version.startswith(commit + "-dirty.")
 
 
+@pytest.mark.integration
+@pytest.mark.process
 def test_prepare_config_uses_same_exact_head_proof_for_ignored_snapshot(tmp_path):
     import runpy
     from pathlib import Path
@@ -80,6 +90,8 @@ def test_prepare_config_uses_same_exact_head_proof_for_ignored_snapshot(tmp_path
     assert version == commit + "-dirty." + manifest["content_sha256"]
 
 
+@pytest.mark.integration
+@pytest.mark.process
 def test_exact_git_payload_handles_nested_root_and_unusual_filename(tmp_path):
     root, config, _ = repository(tmp_path)
     (config / "rules [1]\t.json").write_text('{"literal":true}')
@@ -100,6 +112,8 @@ def test_exact_git_payload_handles_nested_root_and_unusual_filename(tmp_path):
     assert resolve_versions(settings).config_version == commit
 
 
+@pytest.mark.integration
+@pytest.mark.process
 def test_packaged_json_resource_changes_code_version_in_cold_process(tmp_path):
     package_root = tmp_path / "package"
     copied_package = package_root / "tank"

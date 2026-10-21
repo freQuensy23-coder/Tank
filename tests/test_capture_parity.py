@@ -48,6 +48,9 @@ def go_environment(tmp_path):
         GOMODCACHE=module_cache,
         GOCACHE=build_cache,
         GOPROXY="off",
+        GOSUMDB="off",
+        GOTOOLCHAIN="local",
+        GOENV="off",
         GOFLAGS="-mod=readonly",
         CGO_ENABLED="0",
     )
@@ -56,7 +59,7 @@ def go_environment(tmp_path):
 @pytest.fixture(scope="module")
 def parity_binary(tmp_path_factory):
     if shutil.which("go") is None:
-        pytest.skip("Go toolchain not installed")
+        pytest.fail("Go 1.25 and its prefilled module cache are required; see docs/TESTING.md")
     directory = tmp_path_factory.mktemp("capture-parity")
     binary = directory / "capture-parity"
     build = subprocess.run(
@@ -68,8 +71,6 @@ def parity_binary(tmp_path_factory):
         text=True,
         timeout=600,
     )
-    if build.returncode and ("lookup disabled" in build.stderr or "requires go >=" in build.stderr):
-        pytest.skip("Go toolchain or module cache unavailable offline: " + build.stderr.strip()[-300:])
     assert build.returncode == 0, build.stderr
     return binary
 
@@ -88,6 +89,8 @@ def run_parity(binary, fixtures):
     assert fixtures and len(passed) == len(fixtures)
 
 
+@pytest.mark.integration
+@pytest.mark.process
 def test_go_port_matches_the_goldens_on_recorded_frames_and_rest_polls(parity_binary):
     testdata = CAPTURE / "testdata"
     run_parity(parity_binary, [*testdata.glob("frames/*.jsonl.gz"), *testdata.glob("rest/*.json.gz")])

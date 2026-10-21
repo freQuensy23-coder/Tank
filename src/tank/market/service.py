@@ -274,6 +274,7 @@ class MarketService:
         self._stop = None
         self._last_request = {}
         self._request_locks = {}
+        self._request_pace_locks = {}
         self._backfills = set()
         self._capture_waits = {}
         self._last_hot_expiry_refresh = 0
@@ -452,17 +453,21 @@ class MarketService:
         lock = self._request_locks.setdefault(host, PriorityGate(HOST_IN_FLIGHT))
         for attempt in range(4):
             async with lock.enter(priority):
-                # Reserve the next start slot before sleeping: concurrent holders never burst.
-                now = time.monotonic()
-                start = max(now, self._last_request.get(host, 0) + interval)
-                self._last_request[host] = start
-                if start > now:
-                    await asyncio.sleep(start - now)
+                # Pace actual fundamentals HTTP starts, not future reservations.
+                # Exchange REST remains owned by tank-capture, rejected above.
+                async with self._request_pace_locks.setdefault(host, asyncio.Lock()):
+                    while True:
+                        now = time.monotonic()
+                        previous = self._last_request.get(host)
+                        delay = 0 if previous is None else previous + interval - now
+                        if delay <= 0:
+                            self._last_request[host] = now
+                            break
+                        await asyncio.sleep(delay)
                 try:
                     response = await self.http.request(method, url, **kwargs)
                 except httpx.HTTPError as exc:
                     raise RuntimeError(f"{host}: {type(exc).__name__}") from None
-                self._last_request[host] = max(self._last_request[host], time.monotonic())
                 if response.status_code in (418, 429):
                     delay = float(response.headers.get("Retry-After", "60"))
                     self._last_request[host] = max(

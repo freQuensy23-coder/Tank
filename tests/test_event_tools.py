@@ -16,6 +16,33 @@ async def service(tmp_path):
     return EventToolService(repo, settings, None, None)
 
 
+@pytest.fixture
+async def repository_lifetime():
+    """Register lazy PostgreSQL contexts only after each test's backend/DSN guard."""
+    from contextlib import AsyncExitStack
+
+    async with AsyncExitStack() as resources:
+        yield resources
+
+
+@pytest.fixture
+def truth_job_enqueued(service, monkeypatch):
+    """Signal actual RUN_MARKET_TRUTH admission without wall-clock polling."""
+    import asyncio
+
+    ready = asyncio.Event()
+    enqueue = service.repo.enqueue
+
+    async def observed_enqueue(kind, *args, **kwargs):
+        job = await enqueue(kind, *args, **kwargs)
+        if kind == "RUN_MARKET_TRUTH":
+            ready.set()
+        return job
+
+    monkeypatch.setattr(service.repo, "enqueue", observed_enqueue)
+    return ready
+
+
 def extraction():
     now = iso()
     return dict(
@@ -216,20 +243,19 @@ def test_nullable_scores_skip_numeric_constraints():
     validate_schema(None, {"type": ["number", "null"], "minimum": 0, "maximum": 10})
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_numeric_map_version_ten_removes_old_token(service, backend):
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_numeric_map_version_ten_removes_old_token(service, backend, postgres_template, repository_lifetime):
     import os
 
-    from tank.storage import PostgresRepository
     from tank.util import new_id
 
     if backend == "postgres":
         url = os.getenv("TANK_TEST_DATABASE_URL")
         if not url:
             pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
-        repo = PostgresRepository(url)
-        await repo.open()
-        await repo.migrate()
+        repo = await repository_lifetime.enter_async_context(postgres_template.repository(url))
         service.repo = repo
     eid = new_id("evt")
     try:
@@ -911,6 +937,7 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(serv
     assert {"P1", "S1", "S2"} <= await service.managed_tokens(eid)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("freshness", ["FRESH", "STALE"])
 async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkeypatch, freshness):
     import httpx
@@ -1059,6 +1086,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkey
     assert (await service.repo.get("ana.decisions", first_decision["dec_id"]))["action"] == "HOLD"
 
 
+@pytest.mark.integration
 async def test_material_update_is_queued_once_and_delivered_after_window(service, monkeypatch):
     import httpx
 
@@ -1296,7 +1324,7 @@ async def test_tool_schema_uses_frozen_runtime_snapshot_after_disk_edit(service,
         await service.dispatch("get_item", {"item_id": "i", "injected": True}, {})
 
 
-async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata(service):
+async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata(service, truth_job_enqueued):
     import asyncio
 
     from tank.analysis.truth import compute_market_truth
@@ -1336,20 +1364,22 @@ async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata
         )
     )
     try:
-        while not task.done():
-            job = await service.repo.claim_job()
-            if job:
-                if job["type"] == "RUN_MARKET_TRUTH":
+        async with asyncio.timeout(2):
+            await truth_job_enqueued.wait()
+            for kind in ("ESCALATE_TOKENS", "RUN_MARKET_TRUTH"):
+                job = await service.repo.claim_job()
+                assert job is not None and job["type"] == kind
+                if kind == "RUN_MARKET_TRUTH":
                     await service.repo.put("ana.market_truth", "metadata-mta", expected)
                     stored = await service.repo.get("ops.jobs", job["job_id"])
                     stored["result"] = expected
                     await service.repo.put("ops.jobs", job["job_id"], stored)
                 await service.repo.finish_job(job["job_id"])
-            await asyncio.sleep(0.01)
-        full = (await task)["market_truth"][0]
+            full = (await task)["market_truth"][0]
     finally:
         if not task.done():
             task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
     assert full == expected and full["measurement_metadata"]
     assert full["spot"]["W1H"]["coverage"]["n_complete"] == 0
     published = await service.dispatch(
@@ -1361,12 +1391,14 @@ async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata
     assert (await service.repo.get("ana.market_truth", "metadata-mta")) == expected
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(service, backend):
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(service, backend, postgres_template, repository_lifetime):
     import os
 
     from tank.analysis.decisions import DecisionEngine
-    from tank.storage import PostgresRepository
+    from tank.storage import TABLE_COLUMNS
     from tank.util import new_id
 
     base = service.repo
@@ -1374,9 +1406,7 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(servic
         url = os.getenv("TANK_TEST_DATABASE_URL")
         if not url:
             pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
-        base = PostgresRepository(url)
-        await base.open()
-        await base.migrate()
+        base = await repository_lifetime.enter_async_context(postgres_template.repository(url))
 
     class Guarded:
         def __init__(self, repo):
@@ -1441,6 +1471,17 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(servic
         historic_decision = complete_decision_fixture(
             eid + "-history", eid, token, iso(now - timedelta(days=2)), eid + "-history"
         )
+        # Keep the >1000-row selector regression, but old records need only
+        # their real typed columns. The current/future truth below retains its
+        # complete quantitative graph for exact-reference bundle assertions.
+        historic_truth = {
+            key: value for key, value in historic_truth.items() if key in TABLE_COLUMNS["ana.market_truth"]
+        }
+        historic_decision = {
+            key: value
+            for key, value in historic_decision.items()
+            if key in TABLE_COLUMNS["ana.decisions"] or key == "market_truth_id"
+        }
         async with base.transaction():
             for index in range(1001):
                 key = eid + f"-historic-{index}"
@@ -1944,21 +1985,20 @@ def complete_decision_fixture(dec_id, event_id, token_id, cutoff, mta_id):
     return row
 
 
-async def test_real_event_tool_producers_satisfy_postgres_typed_contract(service, tmp_path):
+@pytest.mark.integration
+@pytest.mark.postgres
+async def test_real_event_tool_producers_satisfy_postgres_typed_contract(service, tmp_path, postgres_template, repository_lifetime):
     import os
 
     from tank.analysis.decisions import DecisionEngine
     from tank.analysis.truth import compute_market_truth
     from tank.event_tools import LAYERS
-    from tank.storage import PostgresRepository
     from tank.util import new_id, sha256
 
     url = os.getenv("TANK_TEST_DATABASE_URL")
     if not url:
         pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
-    repo = PostgresRepository(url)
-    await repo.open()
-    await repo.migrate()
+    repo = await repository_lifetime.enter_async_context(postgres_template.repository(url))
     service.repo = repo
     service.engine = DecisionEngine()
     item_id = new_id("item")
@@ -2142,13 +2182,13 @@ async def test_search_and_fetched_evidence_keep_agent_certainty(service, media_t
     assert verified["certainty"] == "HIGH" and verified["state_verified"]
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(service, backend):
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(service, backend, monkeypatch, postgres_template, repository_lifetime):
     import asyncio
     import os
 
-    from tank.analysis.truth import compute_market_truth
-    from tank.storage import PostgresRepository
     from tank.util import canonical_json, new_id, parse_time
 
     base = service.repo
@@ -2156,15 +2196,50 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(s
         url = os.getenv("TANK_TEST_DATABASE_URL")
         if not url:
             pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
-        base = PostgresRepository(url)
-        await base.open()
-        await base.migrate()
+        base = await repository_lifetime.enter_async_context(postgres_template.repository(url))
         service.repo = base
     eid = new_id("event")
     ems = eid + "-ems"
     tokens = ["world:WLD", "uniswap:UNI"]
     cutoff = "2026-10-16T12:00:00Z"
     tasks = []
+    from contextlib import asynccontextmanager
+
+    jobs_changed = asyncio.Event()
+    enqueue = base.enqueue
+    transaction = base.transaction
+    transaction_depth = {}
+    pending_notification = set()
+
+    @asynccontextmanager
+    async def observed_transaction():
+        task = asyncio.current_task()
+        transaction_depth[task] = transaction_depth.get(task, 0) + 1
+        try:
+            async with transaction() as repository:
+                yield repository
+        finally:
+            transaction_depth[task] -= 1
+            if transaction_depth[task] == 0:
+                del transaction_depth[task]
+                if task in pending_notification:
+                    pending_notification.remove(task)
+                    # PostgreSQL readers cannot see enqueues until outer commit.
+                    # Waking earlier can consume every signal before rows exist.
+                    jobs_changed.set()
+
+    async def observed_enqueue(kind, payload, *args, **kwargs):
+        job = await enqueue(kind, payload, *args, **kwargs)
+        if kind in {"ESCALATE_TOKENS", "RUN_MARKET_TRUTH"} and payload.get("event_id") == eid:
+            task = asyncio.current_task()
+            if transaction_depth.get(task, 0):
+                pending_notification.add(task)
+            else:
+                jobs_changed.set()
+        return job
+
+    monkeypatch.setattr(base, "transaction", observed_transaction)
+    monkeypatch.setattr(base, "enqueue", observed_enqueue)
 
     async def jobs(kind):
         return [
@@ -2175,16 +2250,19 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(s
 
     async def wait_jobs(kind, count):
         async with asyncio.timeout(5):
-            while len(found := await jobs(kind)) < count:
-                await asyncio.sleep(0.01)
-        return found
+            while True:
+                jobs_changed.clear()
+                found = await jobs(kind)
+                if len(found) >= count:
+                    return found
+                await jobs_changed.wait()
 
     async def finish_truth(job):
         payload = job["payload"]
-        truth = compute_market_truth(
-            {"event_id": eid, "token_id": payload["token_id"], "cutoff": payload["cutoff"]}
-        )
-        truth["mta_id"] = new_id("mta")
+        # The shared canonical builder keeps real formula values but omits
+        # optional measurement annotations. This unit tests durable job/result
+        # round-trips; full metadata serialization is covered separately above.
+        truth = complete_truth_fixture(new_id("mta"), eid, payload["token_id"], payload["cutoff"])
         await base.put("ana.market_truth", truth["mta_id"], truth)
         current = await base.get("ops.jobs", job["job_id"])
         current.update(status="RUNNING", attempts=current["attempts"] + 1, result=truth)
@@ -2199,100 +2277,107 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(s
         await base.finish_job(job["job_id"])
 
     try:
-        await base.put("evt.events", eid, complete_event_fixture(eid, current_ems_id=ems))
-        await base.put("evt.ems_assessments", ems, complete_assessment_fixture(ems, eid))
-        await base.put(
-            "evt.beneficiary_maps",
-            eid + ":1",
-            {"event_id": eid, "map_version": 1, "analysis_set": tokens, "cutoff": iso()},
-        )
-        started = utcnow()
-        for call in ["model-call-one"]:
-            tasks.append(
-                asyncio.create_task(
-                    service.dispatch(
-                        "get_market_truth",
-                        {"event_id": eid, "tokens": [tokens[0]], "cutoff": cutoff},
-                        {"call_id": call},
+        async with asyncio.timeout(5):
+            await base.put("evt.events", eid, complete_event_fixture(eid, current_ems_id=ems))
+            await base.put("evt.ems_assessments", ems, complete_assessment_fixture(ems, eid))
+            await base.put(
+                "evt.beneficiary_maps",
+                eid + ":1",
+                {"event_id": eid, "map_version": 1, "analysis_set": tokens, "cutoff": iso()},
+            )
+            started = utcnow()
+            for call in ["model-call-one"]:
+                tasks.append(
+                    asyncio.create_task(
+                        service.dispatch(
+                            "get_market_truth",
+                            {"event_id": eid, "tokens": [tokens[0]], "cutoff": cutoff},
+                            {"call_id": call},
+                        )
                     )
                 )
+            runs = await wait_jobs("RUN_MARKET_TRUTH", 1)
+            escalation = (await wait_jobs("ESCALATE_TOKENS", 1))[0]
+            queued_at = utcnow()
+            assert escalation["idem_key"] == tokens[0] + ":" + eid
+            assert escalation["priority"] == 0 and escalation["expires_at"] is None
+            run = runs[0]
+            assert run["idem_key"] == eid + ":" + tokens[0] + ":" + cutoff
+            assert run["priority"] == 1 and run["max_attempts"] == 2
+            assert (
+                started + timedelta(minutes=30)
+                <= parse_time(run["expires_at"])
+                <= queued_at + timedelta(minutes=30)
             )
-        runs = await wait_jobs("RUN_MARKET_TRUTH", 1)
-        escalation = (await wait_jobs("ESCALATE_TOKENS", 1))[0]
-        queued_at = utcnow()
-        assert escalation["idem_key"] == tokens[0] + ":" + eid
-        assert escalation["priority"] == 0 and escalation["expires_at"] is None
-        run = runs[0]
-        assert run["idem_key"] == eid + ":" + tokens[0] + ":" + cutoff
-        assert run["priority"] == 1 and run["max_attempts"] == 2
-        assert (
-            started + timedelta(minutes=30)
-            <= parse_time(run["expires_at"])
-            <= queued_at + timedelta(minutes=30)
-        )
-        assert run["payload"]["_depends_on"] == [escalation["job_id"]]
-        await finish_escalation(escalation)
-        actual = await finish_truth(run)
-        results = await asyncio.wait_for(asyncio.gather(*tasks), 5)
-        assert all(result["market_truth"][0] == actual for result in results)
-        second = await asyncio.wait_for(
-            service.dispatch(
+            assert run["payload"]["_depends_on"] == [escalation["job_id"]]
+            await finish_escalation(escalation)
+            actual = await finish_truth(run)
+            results = await asyncio.wait_for(asyncio.gather(*tasks), 5)
+            assert all(result["market_truth"][0] == actual for result in results)
+            second = await asyncio.wait_for(
+                service.dispatch(
+                    "get_market_truth",
+                    {"event_id": eid, "tokens": [tokens[0]], "cutoff": cutoff},
+                    {"call_id": "model-call-two"},
+                ),
+                5,
+            )
+            assert second["market_truth"][0] == actual
+            assert len(await jobs("RUN_MARKET_TRUTH")) == 1
+            completed = await base.get("ops.jobs", escalation["job_id"])
+            frozen = canonical_json(completed)
+            hot_key = eid + ":" + tokens[0]
+            await base.put(
+                "mkt.hot_tokens",
+                hot_key,
+                {"token_id": tokens[0], "event_id": eid, "priority": 1, "since": iso()},
+            )
+            await base.delete("mkt.hot_tokens", hot_key)
+            reused = await service.dispatch(
                 "get_market_truth",
                 {"event_id": eid, "tokens": [tokens[0]], "cutoff": cutoff},
-                {"call_id": "model-call-two"},
-            ),
-            5,
-        )
-        assert second["market_truth"][0] == actual
-        assert len(await jobs("RUN_MARKET_TRUTH")) == 1
-        completed = await base.get("ops.jobs", escalation["job_id"])
-        frozen = canonical_json(completed)
-        hot_key = eid + ":" + tokens[0]
-        await base.put(
-            "mkt.hot_tokens", hot_key, {"token_id": tokens[0], "event_id": eid, "priority": 1, "since": iso()}
-        )
-        await base.delete("mkt.hot_tokens", hot_key)
-        reused = await service.dispatch(
-            "get_market_truth",
-            {"event_id": eid, "tokens": [tokens[0]], "cutoff": cutoff},
-            {"call_id": "third-call-after-demotion"},
-        )
-        assert reused["market_truth"][0] == actual
-        assert await base.get("mkt.hot_tokens", hot_key) is None
-        assert canonical_json(await base.get("ops.jobs", escalation["job_id"])) == frozen
-        later = iso(parse_time(cutoff) + timedelta(minutes=1))
-        later_task = asyncio.create_task(
-            service.dispatch(
-                "get_market_truth",
-                {"event_id": eid, "tokens": [tokens[0]], "cutoff": later},
-                {"call_id": "later-model-call"},
+                {"call_id": "third-call-after-demotion"},
             )
-        )
-        tasks.append(later_task)
-        later_runs = await wait_jobs("RUN_MARKET_TRUTH", 2)
-        new_run = next(row for row in later_runs if row["payload"]["cutoff"] == later)
-        assert new_run["idem_key"] == eid + ":" + tokens[0] + ":" + later
-        assert new_run["payload"]["_depends_on"] == [escalation["job_id"]]
-        later_truth = await finish_truth(new_run)
-        assert (await later_task)["market_truth"][0] == later_truth
-        token_task = asyncio.create_task(
-            service.dispatch(
-                "get_market_truth",
-                {"event_id": eid, "tokens": [tokens[1]], "cutoff": cutoff},
-                {"call_id": "other-token-call"},
+            assert reused["market_truth"][0] == actual
+            assert await base.get("mkt.hot_tokens", hot_key) is None
+            assert canonical_json(await base.get("ops.jobs", escalation["job_id"])) == frozen
+            later = iso(parse_time(cutoff) + timedelta(minutes=1))
+            later_task = asyncio.create_task(
+                service.dispatch(
+                    "get_market_truth",
+                    {"event_id": eid, "tokens": [tokens[0]], "cutoff": later},
+                    {"call_id": "later-model-call"},
+                )
             )
-        )
-        tasks.append(token_task)
-        other_escalations = await wait_jobs("ESCALATE_TOKENS", 2)
-        other_escalation = next(row for row in other_escalations if row["payload"]["token_id"] == tokens[1])
-        await finish_escalation(other_escalation)
-        other_run = next(
-            row for row in await wait_jobs("RUN_MARKET_TRUTH", 3) if row["payload"]["token_id"] == tokens[1]
-        )
-        assert other_run["payload"]["_depends_on"] == [other_escalation["job_id"]]
-        other_truth = await finish_truth(other_run)
-        assert (await token_task)["market_truth"][0] == other_truth
-        assert len(await jobs("ESCALATE_TOKENS")) == 2 and len(await jobs("RUN_MARKET_TRUTH")) == 3
+            tasks.append(later_task)
+            later_runs = await wait_jobs("RUN_MARKET_TRUTH", 2)
+            new_run = next(row for row in later_runs if row["payload"]["cutoff"] == later)
+            assert new_run["idem_key"] == eid + ":" + tokens[0] + ":" + later
+            assert new_run["payload"]["_depends_on"] == [escalation["job_id"]]
+            later_truth = await finish_truth(new_run)
+            assert (await later_task)["market_truth"][0] == later_truth
+            token_task = asyncio.create_task(
+                service.dispatch(
+                    "get_market_truth",
+                    {"event_id": eid, "tokens": [tokens[1]], "cutoff": cutoff},
+                    {"call_id": "other-token-call"},
+                )
+            )
+            tasks.append(token_task)
+            other_escalations = await wait_jobs("ESCALATE_TOKENS", 2)
+            other_escalation = next(
+                row for row in other_escalations if row["payload"]["token_id"] == tokens[1]
+            )
+            await finish_escalation(other_escalation)
+            other_run = next(
+                row
+                for row in await wait_jobs("RUN_MARKET_TRUTH", 3)
+                if row["payload"]["token_id"] == tokens[1]
+            )
+            assert other_run["payload"]["_depends_on"] == [other_escalation["job_id"]]
+            other_truth = await finish_truth(other_run)
+            assert (await token_task)["market_truth"][0] == other_truth
+            assert len(await jobs("ESCALATE_TOKENS")) == 2 and len(await jobs("RUN_MARKET_TRUTH")) == 3
     finally:
         for task in tasks:
             if not task.done():
@@ -2302,6 +2387,7 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(s
             await base.close()
 
 
+@pytest.mark.integration
 async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(service, monkeypatch):
     """Use real publication gate, frozen snapshots and delivery; isolate card layout."""
     import httpx
@@ -3133,7 +3219,7 @@ async def test_market_analysis_boundary_rejects_collection_clock_precision(servi
             },
             {},
         )
-    assert not await service.repo.list("ops.jobs", filters={"kind": "RUN_MARKET_TRUTH"})
+    assert not await service.repo.list("ops.jobs", filters={"type": "RUN_MARKET_TRUTH"})
 
 
 async def test_assessment_defers_reaction_ownership_to_scheduler_after_commit(service):
@@ -3292,17 +3378,18 @@ async def test_bundle_directory_sync_failure_never_creates_database_reference(se
     assert not await service.repo.list("ops.jobs")
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
 @pytest.mark.parametrize("resolved_snapshot", [True, False])
 async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
-    service, backend, resolved_snapshot
+    service, backend, resolved_snapshot, postgres_template, repository_lifetime
 ):
     import os
 
     import httpx
 
     from tank.agents import SessionService
-    from tank.storage import PostgresRepository
     from tank.util import new_id
 
     original_repo = service.repo
@@ -3310,9 +3397,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
         url = os.getenv("TANK_TEST_DATABASE_URL")
         if not url:
             pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
-        service.repo = PostgresRepository(url)
-        await service.repo.open()
-        await service.repo.migrate()
+        service.repo = await repository_lifetime.enter_async_context(postgres_template.repository(url))
     repo = service.repo
     sid = new_id("native-session")
     stamp = iso()
@@ -3434,10 +3519,11 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             service.repo = original_repo
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("http_status", [404, 503])
 @pytest.mark.parametrize("outcome", ["continue_to_card", "native_error_failed"])
 async def test_actual_fetch_http_error_returns_durably_then_card_or_native_failed(
-    service, http_status, outcome
+    service, http_status, outcome, truth_job_enqueued
 ):
     import asyncio
     import json
@@ -3606,7 +3692,9 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             await resumed.process_event(sid, failed_call)
             session = await service.repo.get("ops.agent_sessions", sid)
             event = await service.repo.get("evt.events", eid)
-            assert session["status"] == "FAILED" and session["terminal_failure"]["event_type"] == "session.error"
+            assert (
+                session["status"] == "FAILED" and session["terminal_failure"]["event_type"] == "session.error"
+            )
             assert event["lifecycle"] != "FAILED" and "failure_reason" not in event
             messages = [p["events"][0] for p in native_posts if p["events"][0].get("type") == "user.message"]
             assert len(messages) == 2 and messages[0] == messages[1]
@@ -3671,42 +3759,36 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
                 # This declared fixture has no retained market observations.
                 # Complete only this tool's durable rendezvous with the real
                 # empty-input formula (UNKNOWN), never a fabricated tool result.
-                deadline = asyncio.get_running_loop().time() + 5
-                while asyncio.get_running_loop().time() < deadline:
+                await truth_job_enqueued.wait()
+                for kind in ("ESCALATE_TOKENS", "RUN_MARKET_TRUTH"):
                     jobs = [
                         job
                         for job in await service.repo.list("ops.jobs")
-                        if job["type"] in {"ESCALATE_TOKENS", "RUN_MARKET_TRUTH"}
+                        if job["type"] == kind
                         and job["payload"].get("event_id") == eid
                         and job["payload"].get("token_id") == "world:WLD"
                     ]
-                    for job in sorted(jobs, key=lambda row: row["priority"]):
-                        if job["status"] != "QUEUED":
-                            continue
-                        dependencies = [
-                            await service.repo.get("ops.jobs", ref)
-                            for ref in job["payload"].get("_depends_on", [])
-                        ]
-                        if any(not row or row["status"] != "DONE" for row in dependencies):
-                            continue
-                        job.update(status="RUNNING", attempts=job["attempts"] + 1)
-                        if job["type"] == "RUN_MARKET_TRUTH":
-                            truth = compute_market_truth(
-                                {
-                                    "event_id": eid,
-                                    "token_id": "world:WLD",
-                                    "cutoff": job["payload"]["cutoff"],
-                                }
-                            )
-                            truth["mta_id"] = new_id("mta")
-                            await service.repo.put("ana.market_truth", truth["mta_id"], truth)
-                            job["result"] = truth
-                        await service.repo.put("ops.jobs", job["job_id"], job)
-                        await service.repo.finish_job(job["job_id"])
-                        if job["type"] == "RUN_MARKET_TRUTH":
-                            return
-                    await asyncio.sleep(0)
-                raise AssertionError("Owned market-truth job was not created or dependency did not settle")
+                    assert len(jobs) == 1 and jobs[0]["status"] == "QUEUED"
+                    job = jobs[0]
+                    dependencies = [
+                        await service.repo.get("ops.jobs", ref)
+                        for ref in job["payload"].get("_depends_on", [])
+                    ]
+                    assert all(row and row["status"] == "DONE" for row in dependencies)
+                    job.update(status="RUNNING", attempts=job["attempts"] + 1)
+                    if kind == "RUN_MARKET_TRUTH":
+                        truth = compute_market_truth(
+                            {
+                                "event_id": eid,
+                                "token_id": "world:WLD",
+                                "cutoff": job["payload"]["cutoff"],
+                            }
+                        )
+                        truth["mta_id"] = new_id("mta")
+                        await service.repo.put("ana.market_truth", truth["mta_id"], truth)
+                        job["result"] = truth
+                    await service.repo.put("ops.jobs", job["job_id"], job)
+                    await service.repo.finish_job(job["job_id"])
 
             market_call = asyncio.create_task(
                 tool(
@@ -3717,7 +3799,8 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             )
             market_worker = asyncio.create_task(settle_owned_missing_input_jobs())
             try:
-                truth_result, _ = await asyncio.gather(market_call, market_worker)
+                async with asyncio.timeout(5):
+                    truth_result, _ = await asyncio.gather(market_call, market_worker)
             finally:
                 for task in (market_call, market_worker):
                     if not task.done():
@@ -4333,41 +4416,24 @@ async def test_secondary_default_summary_does_not_duplicate_layer_notes(service)
 
 
 @pytest.fixture
-async def live_update_database(service, backend):
-    """The queue consumer must never see jobs owned by another PostgreSQL test."""
+async def live_update_database(service, backend, postgres_template):
+    """Keep the reconnect test on one child database owned by the lazy template."""
     if backend == "memory":
         yield None
         return
     import os
-    import uuid
-
-    from psycopg import AsyncConnection, sql
-    from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
     source = os.getenv("TANK_TEST_DATABASE_URL")
     if not source:
         pytest.skip("Requires isolated PostgreSQL with CREATE DATABASE permission")
-    admin = await AsyncConnection.connect(source, autocommit=True)
-    name = "tank_publication_" + uuid.uuid4().hex
-    created = False
-    try:
-        await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-        created = True
-        parameters = conninfo_to_dict(source)
-        parameters["dbname"] = name
-        yield make_conninfo(**parameters)
-    finally:
-        try:
-            await service.repo.close()
-        finally:
-            try:
-                if created:
-                    await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
-            finally:
-                await admin.close()
+    async with postgres_template.repository(source) as repository:
+        yield repository
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
 async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
     service, monkeypatch, backend, live_update_database
 ):
@@ -4381,11 +4447,10 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
     from tank.storage import PostgresRepository
     from tank.util import new_id, parse_time
 
-    database_url = live_update_database
+    database_url = None
     if backend == "postgres":
-        service.repo = PostgresRepository(database_url)
-        await service.repo.open()
-        await service.repo.migrate()
+        service.repo = live_update_database
+        database_url = service.repo.database_url
     repo = service.repo
     # PostgreSQL's queue uses its actual clock. The simulated due boundary is
     # just before that clock so the due worker can claim without changing jobs.
@@ -4690,7 +4755,7 @@ async def test_tokens_and_entities_resolve_to_registry_ids(service):
     assert event["entities"] == [{"entity_id": "uniswap", "role": "ACTOR"}]
 
 
-async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(service):
+async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(service, truth_job_enqueued):
     """W6 (03 §4.7 step 9): refreshing one token's truth keeps ranking every
     credible beneficiary from its latest stored truth."""
     import asyncio
@@ -4735,19 +4800,21 @@ async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(servi
     fresh = truth("A", "HEAVY", 0.9, iso())
     task = asyncio.create_task(service.dispatch("get_market_truth", {"event_id": eid, "tokens": ["A"]}, {}))
     try:
-        while not task.done():
-            job = await service.repo.claim_job()
-            if job:
-                if job["type"] == "RUN_MARKET_TRUTH":
+        async with asyncio.timeout(2):
+            await truth_job_enqueued.wait()
+            for kind in ("ESCALATE_TOKENS", "RUN_MARKET_TRUTH"):
+                job = await service.repo.claim_job()
+                assert job is not None and job["type"] == kind
+                if kind == "RUN_MARKET_TRUTH":
                     stored = await service.repo.get("ops.jobs", job["job_id"])
                     stored["result"] = fresh
                     await service.repo.put("ops.jobs", job["job_id"], stored)
                 await service.repo.finish_job(job["job_id"])
-            await asyncio.sleep(0.01)
-        await task
+            await task
     finally:
         if not task.done():
             task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
     mapping = await service.repo.get("evt.beneficiary_maps", f"{eid}:1")
     assert mapping["least_repriced_edge"] == "edge-B"
 
@@ -4760,7 +4827,9 @@ async def test_list_open_events_skips_events_whose_session_failed(service):
             "evt.events", eid, {"event_id": eid, "lifecycle": "ANALYZING", "statement": "World news"}
         )
         await service.repo.put(
-            "ops.agent_sessions", "session-" + eid, {"session_id": "session-" + eid, "event_id": eid, "status": status}
+            "ops.agent_sessions",
+            "session-" + eid,
+            {"session_id": "session-" + eid, "event_id": eid, "status": status},
         )
     listed = await service.dispatch("list_open_events", {"entity_or_token": "world"}, {})
     assert [row["event_id"] for row in listed["events"]] == ["live-event"]
@@ -4773,14 +4842,20 @@ async def test_token_facts_show_unlocks_before_the_cutoff_and_nothing_after(serv
     rows = {
         "past": {"date": iso(now - timedelta(days=3)), "observed_at": iso(now - timedelta(days=10))},
         "next": {"date": iso(now + timedelta(days=5)), "observed_at": iso(now - timedelta(days=1))},
-        "future-capture": {"date": iso(now + timedelta(days=6)), "observed_at": iso(now + timedelta(hours=1))},
+        "future-capture": {
+            "date": iso(now + timedelta(days=6)),
+            "observed_at": iso(now + timedelta(hours=1)),
+        },
     }
     for label, row in rows.items():
         await service.repo.put(
             "mkt.unlocks", "layerzero:ZRO:" + label, {"token_id": "layerzero:ZRO", "label": label, **row}
         )
     facts = await service.dispatch("get_token_facts", {"token": "layerzero:ZRO"}, {})
-    assert [(u["label"], u["relative_to_cutoff"]) for u in facts["unlocks"]] == [("past", "PAST"), ("next", "UPCOMING")]
+    assert [(u["label"], u["relative_to_cutoff"]) for u in facts["unlocks"]] == [
+        ("past", "PAST"),
+        ("next", "UPCOMING"),
+    ]
     # A late-receipt reconstruction is known from the end of its schedule_as_of
     # bucket, as replay admits it (lead rulings F-02, F-04).
     from tank.event_tools import known_at
@@ -4804,14 +4879,21 @@ def test_schema_refusal_names_allowed_cutoff_precisions():
     from pathlib import Path
 
     schema = json.loads(
-        (Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/get_market_truth.schema.json").read_text()
+        (
+            Path(__file__).resolve().parents[1]
+            / "config/skills/tank-event-analyst/get_market_truth.schema.json"
+        ).read_text()
     )
     args = {"event_id": "e", "tokens": ["T"], "cutoff": "2026-10-20T19:07:00Z"}
     validate_schema(dict(args, cutoff_prec="BUCKET(1m)"), schema)
     validate_schema(dict(args, cutoff_prec="EXACT"), schema)
     with pytest.raises(ValueError) as refused:
         validate_schema(dict(args, cutoff_prec="FORTNIGHT"), schema)
-    assert "$.cutoff_prec" in str(refused.value) and "EXACT" in str(refused.value) and "BUCKET" in str(refused.value)
+    assert (
+        "$.cutoff_prec" in str(refused.value)
+        and "EXACT" in str(refused.value)
+        and "BUCKET" in str(refused.value)
+    )
 
 
 async def test_token_tools_resolve_tickers_and_refuse_unknown_names_explicitly(service):
@@ -4819,7 +4901,9 @@ async def test_token_tools_resolve_tickers_and_refuse_unknown_names_explicitly(s
     unknown name gets an error that states the expected form."""
     resolved = service.resolve_token_arguments("get_decision", {"event_id": "e", "token": "BTC"})
     assert resolved["token"] == "bitcoin:BTC"
-    many = service.resolve_token_arguments("get_market_truth", {"event_id": "e", "tokens": ["$WLD", "uniswap:UNI"]})
+    many = service.resolve_token_arguments(
+        "get_market_truth", {"event_id": "e", "tokens": ["$WLD", "uniswap:UNI"]}
+    )
     assert many["tokens"] == ["world:WLD", "uniswap:UNI"]
     assert service.resolve_token_arguments("get_token_facts", {"token": "Bitcoinz"}) == {"token": "Bitcoinz"}
     assert service.resolve_token_arguments("get_event", {"event_id": "e"}) == {"event_id": "e"}
@@ -4838,7 +4922,9 @@ def test_publish_card_schema_bounds_agent_text():
     from pathlib import Path
 
     schema = json.loads(
-        (Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/publish_card.schema.json").read_text()
+        (
+            Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/publish_card.schema.json"
+        ).read_text()
     )
     ok = {"event_id": "e", "kind": "FULL", "verdict": "v" * 160, "why": ["w" * 220, "x"]}
     validate_schema(ok, schema)
@@ -4867,10 +4953,20 @@ async def test_token_facts_for_btc_fit_the_context(service):
             "available": True,
         }
         if kind == "FUNDAMENTALS":
-            daily = {"complete": True, "total24h": str(200000 + n), "total30d": "7277898", "available": True,
-                     "totalDataChart": chart}
-            row.update(metrics={"dailyFees": daily, "dailyRevenue": daily},
-                       protocols={"bitcoin": {"dailyFees": dict(daily, source_url="https://api.llama.fi/x")}})
+            daily = {
+                "complete": True,
+                "total24h": str(200000 + n),
+                "total30d": "7277898",
+                "available": True,
+                # Only the latest FUNDAMENTALS row needs the large chart:
+                # retain all143 timestamps/kinds and the real5500-point payload
+                # without re-serializing that same graph into obsolete rows.
+                "totalDataChart": chart if n == 140 else [[1296432000, str(n)]],
+            }
+            row.update(
+                metrics={"dailyFees": daily, "dailyRevenue": daily},
+                protocols={"bitcoin": {"dailyFees": dict(daily, source_url="https://api.llama.fi/x")}},
+            )
         await service.repo.put("mkt.supply_obs", f"btc:{n}", row)
     facts = await service.dispatch("get_token_facts", {"token": "BTC"}, {})
     size = len(canonical_json(facts).encode())
@@ -4897,21 +4993,29 @@ async def test_read_tool_results_are_bounded_and_say_so(service):
     await service.repo.put(
         "evt.events",
         "open",
-        {"event_id": "open", "lifecycle": "ANALYZING", "statement": "World news", "claims_blob": "z" * 50_000},
+        {
+            "event_id": "open",
+            "lifecycle": "ANALYZING",
+            "statement": "World news",
+            "claims_blob": "z" * 50_000,
+        },
     )
-    await service.repo.put("ops.agent_sessions", "s1", {"session_id": "s1", "event_id": "open", "status": "OPEN"})
+    await service.repo.put(
+        "ops.agent_sessions", "s1", {"session_id": "s1", "event_id": "open", "status": "OPEN"}
+    )
     listed = await service.dispatch("list_open_events", {"entity_or_token": "world"}, {})
     event = listed["events"][0]
     assert "claims_blob" not in event and event["sessions"] == [{"session_id": "s1", "status": "OPEN"}]
 
 
-async def test_daily_vesting_unlocks_stay_visible_around_the_cutoff(service):
+async def test_daily_vesting_unlocks_stay_visible_around_the_cutoff(service, monkeypatch):
     """F-04 (r108): with daily vesting (4 labels x many days) the 40 KB cap
     kept only the newest rows; the agent must see the tranches within 14 days
     of the cutoff, per label, at any schedule size."""
     from tank.util import canonical_json, parse_time
 
     now = utcnow().replace(hour=12, minute=0, second=0, microsecond=0)
+    monkeypatch.setattr("tank.event_tools.utcnow", lambda: now)
     for label in ("Team", "Investors", "Ecosystem", "Treasury"):
         for day in range(-30, 400):
             await service.repo.put(
@@ -4945,23 +5049,47 @@ async def test_token_facts_give_the_covered_daily_volume(service):
     volume per spot venue and in total, native and USD, with exclusions."""
     now = utcnow()
     rows = {
-        "binance:spot:BTCUSDT": {"volume_native": "12000.5", "volume_usd": "900000000", "ts": iso(now - timedelta(minutes=2))},
-        "coinbase:spot:BTC-USD": {"volume_native": "8000", "volume_usd": "600000000", "ts": iso(now - timedelta(minutes=1))},
-        "kraken:spot:XBT/USD": {"volume_native": "100", "volume_usd": "7500000", "ts": iso(now - timedelta(hours=3))},
-        "okx:spot:BTC-USDT": {"volume_native": "500", "volume_usd": None, "usd_reason": "NO_USD_RATE", "ts": iso(now)},
+        "binance:spot:BTCUSDT": {
+            "volume_native": "12000.5",
+            "volume_usd": "900000000",
+            "ts": iso(now - timedelta(minutes=2)),
+        },
+        "coinbase:spot:BTC-USD": {
+            "volume_native": "8000",
+            "volume_usd": "600000000",
+            "ts": iso(now - timedelta(minutes=1)),
+        },
+        "kraken:spot:XBT/USD": {
+            "volume_native": "100",
+            "volume_usd": "7500000",
+            "ts": iso(now - timedelta(hours=3)),
+        },
+        "okx:spot:BTC-USDT": {
+            "volume_native": "500",
+            "volume_usd": None,
+            "usd_reason": "NO_USD_RATE",
+            "ts": iso(now),
+        },
     }
     for iid, row in rows.items():
-        await service.repo.put("mkt.tickers_24h", iid + ":t", {"instrument_id": iid, "token_id": "bitcoin:BTC", **row})
+        await service.repo.put(
+            "mkt.tickers_24h", iid + ":t", {"instrument_id": iid, "token_id": "bitcoin:BTC", **row}
+        )
     facts = await service.dispatch("get_token_facts", {"token": "BTC"}, {})
     volume = facts["covered_daily_volume"]
     # Native over every fresh venue; USD only where the venue reports it.
     assert volume["total_native"] == "20500.5" and volume["total_usd"] == "1500000000"
     assert {v["instrument_id"] for v in volume["venues"]} == {
-        "binance:spot:BTCUSDT", "coinbase:spot:BTC-USD", "okx:spot:BTC-USDT"
+        "binance:spot:BTCUSDT",
+        "coinbase:spot:BTC-USD",
+        "okx:spot:BTC-USDT",
     }
     assert volume["total_usd_excludes"] == [{"instrument_id": "okx:spot:BTC-USDT", "reason": "NO_USD_RATE"}]
     reasons = {e["instrument_id"]: e["reason"] for e in volume["excluded"]}
-    assert reasons["kraken:spot:XBT/USD"] == "TICKER_STALE" and reasons["bybit:spot:BTCUSDT"] == "NO_STORED_24H_TICKER"
+    assert (
+        reasons["kraken:spot:XBT/USD"] == "TICKER_STALE"
+        and reasons["bybit:spot:BTCUSDT"] == "NO_STORED_24H_TICKER"
+    )
     assert volume["market_cap"] is None and volume["market_cap_reason"].startswith("NOT_STORED")
 
 
@@ -5004,7 +5132,7 @@ async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_th
     assert alert["delivery_not_before"] == alert["generated_at"]
 
 
-async def test_named_cutoff_precisions_are_accepted_as_buckets(service):
+async def test_named_cutoff_precisions_are_accepted_as_buckets(service, truth_job_enqueued):
     """Live (22:51, 23:45, 05:05): cutoff_prec "MINUTE" was refused each time;
     named units now validate and normalize to their bucket, recorded in the result."""
     import asyncio
@@ -5012,14 +5140,23 @@ async def test_named_cutoff_precisions_are_accepted_as_buckets(service):
     from pathlib import Path
 
     schema = json.loads(
-        (Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/get_market_truth.schema.json").read_text()
+        (
+            Path(__file__).resolve().parents[1]
+            / "config/skills/tank-event-analyst/get_market_truth.schema.json"
+        ).read_text()
     )
     for name in ("SECOND", "MINUTE", "HOUR"):
-        validate_schema({"event_id": "e", "tokens": ["T"], "cutoff": "2026-10-21T05:05:00Z", "cutoff_prec": name}, schema)
+        validate_schema(
+            {"event_id": "e", "tokens": ["T"], "cutoff": "2026-10-21T05:05:00Z", "cutoff_prec": name}, schema
+        )
     eid = "named-prec"
-    await service.repo.put("evt.events", eid, {"event_id": eid, "current_ems_id": "ems", "tokens_mentioned": ["T"]})
+    await service.repo.put(
+        "evt.events", eid, {"event_id": eid, "current_ems_id": "ems", "tokens_mentioned": ["T"]}
+    )
     await service.repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": eid, "class": "MAJOR"})
-    await service.repo.put("evt.beneficiary_maps", f"{eid}:1", {"event_id": eid, "map_version": 1, "analysis_set": ["T"]})
+    await service.repo.put(
+        "evt.beneficiary_maps", f"{eid}:1", {"event_id": eid, "map_version": 1, "analysis_set": ["T"]}
+    )
     task = asyncio.create_task(
         service.dispatch(
             "get_market_truth",
@@ -5028,20 +5165,22 @@ async def test_named_cutoff_precisions_are_accepted_as_buckets(service):
         )
     )
     try:
-        while not task.done():
-            job = await service.repo.claim_job()
-            if job:
-                if job["type"] == "RUN_MARKET_TRUTH":
+        async with asyncio.timeout(2):
+            await truth_job_enqueued.wait()
+            for kind in ("ESCALATE_TOKENS", "RUN_MARKET_TRUTH"):
+                job = await service.repo.claim_job()
+                assert job is not None and job["type"] == kind
+                if kind == "RUN_MARKET_TRUTH":
                     assert job["payload"]["cutoff_prec"] == "BUCKET(1m)"
                     stored = await service.repo.get("ops.jobs", job["job_id"])
                     stored["result"] = {"token_id": "T", "mta_id": "m"}
                     await service.repo.put("ops.jobs", job["job_id"], stored)
                 await service.repo.finish_job(job["job_id"])
-            await asyncio.sleep(0.01)
-        result = await task
+            result = await task
     finally:
         if not task.done():
             task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
     assert result["cutoff_prec_normalized"] == {"from": "MINUTE", "to": "BUCKET(1m)"}
 
 
@@ -5056,11 +5195,18 @@ async def test_publish_card_keeps_market_truth_once_and_reads_each_collection_on
 
     truth = {"mta_id": "mta-1", "token_id": "T", "big": "x" * 10_000}
     calls = [
-        {"tool": "get_market_truth", "call_id": "c1", "result": {"market_truth": [truth, {"mta_id": "other", "v": 1}]}},
+        {
+            "tool": "get_market_truth",
+            "call_id": "c1",
+            "result": {"market_truth": [truth, {"mta_id": "other", "v": 1}]},
+        },
         {"tool": "get_decision", "call_id": "c2", "result": {"action": "WAIT"}},
     ]
     deduped = dedupe_request_log(calls, [sha256(truth)])
-    assert deduped[0]["result"]["market_truth"][0] == {"same_as_bundle_market_truth": "mta-1", "sha256": sha256(truth)}
+    assert deduped[0]["result"]["market_truth"][0] == {
+        "same_as_bundle_market_truth": "mta-1",
+        "sha256": sha256(truth),
+    }
     assert deduped[0]["result"]["market_truth"][1] == {"mta_id": "other", "v": 1}  # not identical: kept
     assert deduped[1] == calls[1] and calls[0]["result"]["market_truth"][0] is truth  # input untouched
 
@@ -5088,5 +5234,11 @@ async def test_publish_card_keeps_market_truth_once_and_reads_each_collection_on
         {"event_id": eid, "call_id": "c", "role": "system"},
     )
     assert result["published"]
-    for collection in ("evt.beneficiary_maps", "evt.beneficiary_edges", "evt.claims", "evt.event_observations", "ana.contradictions"):
+    for collection in (
+        "evt.beneficiary_maps",
+        "evt.beneficiary_edges",
+        "evt.claims",
+        "evt.event_observations",
+        "ana.contradictions",
+    ):
         assert reads.count(collection) == 1, (collection, reads.count(collection))

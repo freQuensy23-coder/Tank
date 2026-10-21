@@ -100,6 +100,7 @@ def test_routing_cutoff_is_highest_meeting_both_targets_or_none():
     assert routing_cutoff([routing_metrics(rows, 0.95)]) is None
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_path):
     items = [

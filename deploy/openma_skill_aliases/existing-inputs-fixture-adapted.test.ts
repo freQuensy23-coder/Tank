@@ -1,5 +1,6 @@
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { zipSync } from "fflate";
+import { unzipSync, zipSync } from "fflate";
 import { describe, expect, it, vi } from "vitest";
 import type { SandboxExecutor } from "@open-managed-agents/sandbox";
 import type { Session } from "@open-managed-agents/managed-agents-application";
@@ -10,18 +11,83 @@ import * as nodeManagedInputs from "../../../packages/control-plane-node/src/lib
 const bytes = (value: string) => new TextEncoder().encode(value);
 
 const knownClaimWorker = readFileSync(new URL('../../../packages/control-plane-node/src/lib/node-managed-skill-aliases.py', import.meta.url), 'utf8');
-function knownClaimCommand(command: string): boolean {
+function skillSandbox(onWrite = () => {}) {
   const quote = (s: string) => "'" + s.replaceAll("'", "'\\''") + "'";
   const prefix = `python3 -c ${quote(knownClaimWorker)} `;
-  if (!command.startsWith(prefix)) return false;
-  const suffix = command.slice(prefix.length);
-  const parsed = /^(check|claim) '([A-Za-z0-9+/=]+)'$/u.exec(suffix);
-  if (!parsed) throw new Error('Unexpected claim command');
-  const bindings = JSON.parse(Buffer.from(parsed[2]!, 'base64').toString());
-  if (!Array.isArray(bindings) || bindings.length !== 1 || bindings[0].name !== 'certification-skill'
-      || bindings[0].skill_id !== 'skill_inputs' || bindings[0].version !== '123'
-      || !/^[a-f0-9]{64}$/u.test(bindings[0].archive_sha256)) throw new Error('Unexpected fixture binding');
-  return true;
+  const staged = new Map<string, { digest: string; archive?: Uint8Array }>();
+  const files = new Map<string, Uint8Array>();
+  let checked: unknown;
+  let claimed: unknown;
+  const writeFileBytes = vi.fn(async (path: string, content: Uint8Array) => {
+    onWrite();
+    if (path === "/workspace/inputs/attached.txt") return "written";
+    const batch = staged.get(path);
+    if (!batch || createHash("sha256").update(content).digest("hex") !== batch.digest)
+      throw new Error("Unexpected or unbound fixture binary write");
+    batch.archive = content;
+    return "written";
+  });
+  const exec = vi.fn(async (command: string) => {
+    if (!command.startsWith(prefix)) {
+      if (command === "git -C 'repository' checkout --detach 'abcdef0123456789'") return "";
+      throw new Error("Unexpected fixture sandbox command");
+    }
+    const suffix = command.slice(prefix.length);
+    const claim = /^(check|claim) '([A-Za-z0-9+/=]+)'$/u.exec(suffix);
+    if (claim) {
+      const bindings = JSON.parse(Buffer.from(claim[2]!, "base64").toString());
+      if (!Array.isArray(bindings) || bindings.length !== 1
+          || Object.keys(bindings[0]).sort().join(",") !== "archive_sha256,name,skill_id,version"
+          || bindings[0].name !== "certification-skill" || bindings[0].skill_id !== "skill_inputs"
+          || bindings[0].version !== "123" || !/^[a-f0-9]{64}$/u.test(bindings[0].archive_sha256))
+        throw new Error("Unexpected fixture binding");
+      if (claim[1] === "check") checked = bindings[0];
+      else {
+        expect(bindings[0]).toEqual(checked);
+        claimed = bindings[0];
+      }
+      return "exit=0\nTANK_STABLE_SKILL_BINDINGS_OK\n";
+    }
+    const batch = /^(stage|materialize|discard) '(\/tmp\/\.openma-skills-[a-f0-9]{32}\/([a-f0-9]{64})\.zip)' '([a-f0-9]{64})'$/u.exec(suffix);
+    if (!batch || batch[3] !== batch[4] || !claimed) throw new Error("Unexpected skill batch command");
+    const [, operation, target, digest] = batch;
+    if (operation === "stage") {
+      if (staged.has(target!)) throw new Error("Duplicate fixture stage");
+      staged.set(target!, { digest: digest! });
+      return "exit=0\nTANK_STABLE_SKILL_STAGE_OK\n";
+    }
+    const state = staged.get(target!);
+    if (!state || state.digest !== digest) throw new Error("Unstaged fixture batch");
+    if (operation === "discard") {
+      staged.delete(target!);
+      return "exit=0\nTANK_STABLE_SKILL_DISCARD_OK\n";
+    }
+    if (!state.archive) throw new Error("Materialization before binary transfer");
+    const archive = unzipSync(state.archive);
+    const manifest = JSON.parse(new TextDecoder().decode(archive["__tank_skill_batch__.json"]));
+    expect(manifest).toEqual({
+      version: 1,
+      scopes: [{ binding: claimed, canonical_root: "/workspace/.openma/skills/skill_inputs/latest/" }],
+    });
+    const allowed = new Set(["SKILL.md", "reference.txt"].flatMap(name => [
+      "/workspace/.openma/skills/skill_inputs/latest/certification-skill/" + name,
+      "/home/user/.skills/certification-skill/" + name,
+    ]));
+    for (const [path, content] of Object.entries(archive)) {
+      if (path === "__tank_skill_batch__.json") continue;
+      if (!allowed.has("/" + path)) throw new Error("Unexpected fixture skill target");
+      files.set("/" + path, content);
+    }
+    for (const name of ["SKILL.md", "reference.txt"]) {
+      const canonical = files.get("/workspace/.openma/skills/skill_inputs/latest/certification-skill/" + name);
+      const alias = files.get("/home/user/.skills/certification-skill/" + name);
+      expect(alias).toEqual(canonical);
+    }
+    expect(files.has("/home/user/.skills/certification-skill/SKILL.md")).toBe(true);
+    staged.delete(target!);
+    return "exit=0\nTANK_STABLE_SKILL_FILES_OK\n";
+  });
+  return { writeFileBytes, exec, files };
 }
 
 
@@ -136,9 +202,9 @@ describe("NodeManagedSessionInputPreparer", () => {
   });
 
   it("materializes file, pinned repository revision, and custom skill before execution", async () => {
-    const writeFileBytes = vi.fn(async () => "written");
+    const materializer = skillSandbox();
+    const { writeFileBytes, exec } = materializer;
     const gitCheckout = vi.fn(async () => undefined);
-    const exec = vi.fn(async (command: string) => knownClaimCommand(command) ? "exit=0\nTANK_STABLE_SKILL_BINDINGS_OK\n" : "");
     const sandbox = {
       writeFileBytes,
       gitCheckout,
@@ -236,18 +302,20 @@ describe("NodeManagedSessionInputPreparer", () => {
       skillId: "skill_inputs",
       version: "123",
     });
-    expect(writeFileBytes).toHaveBeenCalledWith(
+    expect(materializer.files.get(
       "/workspace/.openma/skills/skill_inputs/latest/certification-skill/SKILL.md",
-      expect.any(Uint8Array),
-    );
-    expect(writeFileBytes).toHaveBeenCalledWith(
+    )).toEqual(bytes("---\nname: certification-skill\ndescription: Verify mounted inputs\n---\nSKILL_INPUT_OK\n"));
+    expect(materializer.files.get(
       "/workspace/.openma/skills/skill_inputs/latest/certification-skill/reference.txt",
-      expect.any(Uint8Array),
-    );
+    )).toEqual(bytes("REFERENCE_OK"));
+    expect(materializer.files.get(
+      "/home/user/.skills/certification-skill/reference.txt",
+    )).toEqual(bytes("REFERENCE_OK"));
   });
 
   it("mounts durable outputs and memory stores before materializing inputs", async () => {
     const order: string[] = [];
+    const materializer = skillSandbox(() => { order.push("file-or-skill"); });
     const session = managedSession();
     session.resources.push({
       type: "memory_store",
@@ -260,9 +328,9 @@ describe("NodeManagedSessionInputPreparer", () => {
       sessionOutputMountCapabilities: () => ({ durability: "durable" as const }),
       mountSessionOutputs: async () => { order.push("outputs"); },
       mountMemoryStore: async () => { order.push("memory-mount"); },
-      writeFileBytes: async () => { order.push("file-or-skill"); return "written"; },
+      writeFileBytes: materializer.writeFileBytes,
       gitCheckout: async () => { order.push("repository"); },
-      exec: async (command: string) => knownClaimCommand(command) ? "exit=0\nTANK_STABLE_SKILL_BINDINGS_OK\n" : "",
+      exec: materializer.exec,
       readFile: async () => { throw new Error("missing"); },
       registerCommandSecrets: () => undefined,
     } as unknown as SandboxExecutor;

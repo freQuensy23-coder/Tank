@@ -3,38 +3,23 @@
 import asyncio
 import logging
 import os
-import uuid
 
 import pytest
 
-from tank.storage import PostgresRepository
+pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
 @pytest.fixture
-async def lifecycle_repo():
+async def lifecycle_repo(postgres_template):
     dsn = os.getenv("TANK_TEST_DATABASE_URL")
     if not dsn:
         pytest.skip("Requires isolated PostgreSQL CREATE DATABASE for owned lifecycle QA")
-    import psycopg
-    from psycopg import sql
-    from psycopg.conninfo import conninfo_to_dict, make_conninfo
-
-    admin = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
-    name = "tank_storage_lifecycle_" + uuid.uuid4().hex[:12]
-    await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-    args = conninfo_to_dict(dsn)
-    args["dbname"] = name
-    repo = await PostgresRepository(make_conninfo(**args)).open()
-    try:
+    async with postgres_template.repository(dsn, migrated=False) as repo:
         async with repo.transaction():
             await repo._conn().execute(
                 "CREATE SCHEMA reg; CREATE TABLE reg.tokens(storage_key text PRIMARY KEY,document jsonb NOT NULL); INSERT INTO reg.tokens VALUES ('one','{\"token_id\":\"one\"}'),('two','{\"token_id\":\"two\"}')"
             )
         yield repo
-    finally:
-        await repo.close()
-        await admin.execute(sql.SQL("DROP DATABASE {} WITH(FORCE)").format(sql.Identifier(name)))
-        await admin.close()
 
 
 async def test_pg_early_iterator_exit_releases_transaction(lifecycle_repo, caplog):

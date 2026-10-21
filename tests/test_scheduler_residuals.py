@@ -188,10 +188,16 @@ async def test_conditions_share_truth_for_identical_event_token_cutoff():
     truth.assess.assert_awaited_once()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "relative",
-    ["raw/trades/v/spot/T/{day}", "raw/books/v/T/{day}", "raw/market_frames/{day}", "archive/binance/spot/klines"],
+    [
+        "raw/trades/v/spot/T/{day}",
+        "raw/books/v/T/{day}",
+        "raw/market_frames/{day}",
+        "archive/binance/spot/klines",
+    ],
 )
 async def test_raw_retention_by_path_with_verified_backup(tmp_path, relative):
     import hashlib
@@ -226,7 +232,10 @@ async def test_raw_retention_by_path_with_verified_backup(tmp_path, relative):
     (backup / "COMPLETE").write_text(iso(NOW))
     verify_backup(backup)
     scheduler = Scheduler(
-        MemoryRepository(), SimpleNamespace(data_dir=data, load_config=lambda name: {"instruments": []}), None, None
+        MemoryRepository(),
+        SimpleNamespace(data_dir=data, load_config=lambda name: {"instruments": []}),
+        None,
+        None,
     )
     removed = await scheduler.prune_raw_files(NOW, backup)
     assert [row["path"] for row in removed] == [str(path if archive else directory)]
@@ -255,6 +264,7 @@ async def test_backup_cache_reverifies_replaced_manifest_identity(monkeypatch, t
     assert len(calls) == 2
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_bundles_only_backup_allows_raw_ttl_and_preserves_permanent_evidence(tmp_path):
     import hashlib

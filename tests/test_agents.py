@@ -7,7 +7,7 @@ import pytest
 
 from tank.agents import ConfigurationError, Pipeline, SessionService
 from tank.storage import MemoryRepository
-from tank.util import iso, utcnow
+from tank.util import iso, sha256, utcnow
 
 
 def settings(**overrides):
@@ -345,7 +345,11 @@ async def test_new_scout_session_wire_protocol_and_isolation():
         )
     assert len(posted) == 3
     assert posted[2]["events"][0]["is_error"] is True
-    assert posted[0] == {"agent": "agt_s", "environment_id": "env_1", "metadata": posted[0]["metadata"]}
+    assert posted[0] == {
+        "agent": "agt_s",
+        "environment_id": "env_1",
+        "metadata": {"tank_identity": sha256({"identity": "p", "scout": True})},
+    }
     content = json.loads(posted[1]["events"][0]["content"][0]["text"])
     assert content["proposal"]["prp_id"] == "p"
 
@@ -525,10 +529,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         )
         invalidated = await repo.get("evt.events", "evt_1")
         assert invalidated["lifecycle"] == "INVALIDATED"
-        # Repeat the archive check over many nominal 10-second polling cycles;
-        # the analyst has not reached its EXIT decision yet.
-        for _ in range(30):
-            assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
+        # The analyst has not reached its EXIT decision yet.
+        assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
         await service.process_event(
             "ses_1",
             {

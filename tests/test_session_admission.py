@@ -11,39 +11,28 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import timedelta
 from types import SimpleNamespace
-from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import pytest
 
 from tank.agents import SessionService
 from tank.runtime import Runtime
-from tank.storage import MemoryRepository, PostgresRepository
+from tank.storage import MemoryRepository
+from tank.time_precision import collection_clock
 from tank.util import iso, parse_time, sha256, utcnow
 
 
 @asynccontextmanager
-async def fixture_repo(backend):
+async def fixture_repo(backend, postgres_template):
     if backend == "memory":
         yield MemoryRepository()
         return
-    import psycopg
-    from psycopg import sql
-
     url = os.getenv("TANK_TEST_DATABASE_URL")
     if not url:
         pytest.skip("Disposable administrator PostgreSQL DSN required")
-    database = "tank_test_admission_" + uuid.uuid4().hex[:10]
-    admin = await psycopg.AsyncConnection.connect(url, autocommit=True)
-    await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
-    repo = await PostgresRepository(urlunsplit(urlsplit(url)._replace(path="/" + database))).open()
-    try:
+    async with postgres_template.repository(url) as repo:
         await repo.migrate()
         yield repo
-    finally:
-        await repo.close()
-        await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database)))
-        await admin.close()
 
 
 def settings(cap=2):
@@ -141,7 +130,7 @@ async def seed(repo):
         )
 
 
-async def until(predicate, timeout=20):
+async def until(predicate, timeout=3):
     async with asyncio.timeout(timeout):
         while not await predicate():
             await asyncio.sleep(0.05)
@@ -154,10 +143,15 @@ async def release(repo, sid):
     )
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasses(backend):
-    async with fixture_repo(backend) as repo:
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasses(
+    backend, monkeypatch, postgres_template
+):
+    async with fixture_repo(backend, postgres_template) as repo:
         await seed(repo)
         before_items = {row["item_id"]: row["observed_at"] for row in await repo.list("ingest.source_items")}
         before_known = {row["event_id"]: row["known_to_us_at"] for row in await repo.list("evt.events")}
@@ -175,13 +169,20 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
             return httpx.Response(200, json={"data": [{"id": "in_" + uuid.uuid4().hex[:6]}]})
 
         jobs = {}
-        for name, payload in (
-            ("new", {"kind": "NEW_ITEM", "item_id": "i_new"}),
-            ("idle", {"kind": "ITEM_ADDED", "item_id": "i_idle", "event_id": "e3"}),
-            ("busy", {"kind": "ITEM_ADDED", "item_id": "i_busy", "event_id": "e1"}),
+        enqueued_at = utcnow() - timedelta(seconds=1)
+        for index, (name, payload) in enumerate(
+            (
+                ("new", {"kind": "NEW_ITEM", "item_id": "i_new"}),
+                ("idle", {"kind": "ITEM_ADDED", "item_id": "i_idle", "event_id": "e3"}),
+                ("busy", {"kind": "ITEM_ADDED", "item_id": "i_busy", "event_id": "e1"}),
+            )
         ):
-            jobs[name] = (await repo.enqueue("AGENT_MESSAGE", payload, name, priority=1))["job_id"]
-            await asyncio.sleep(0.01)
+            queued_at = enqueued_at + timedelta(milliseconds=index)
+            with monkeypatch.context() as clock:
+                clock.setattr(
+                    "tank.storage.collection_clock", lambda queued_at=queued_at: collection_clock(queued_at)
+                )
+                jobs[name] = (await repo.enqueue("AGENT_MESSAGE", payload, name, priority=1))["job_id"]
         expiries = {name: (await repo.get("ops.jobs", job))["expires_at"] for name, job in jobs.items()}
 
         async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
@@ -191,8 +192,12 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
             runtime.repo, runtime.sessions, runtime.active_jobs = repo, sessions, set()
             runtime.handlers = {"AGENT_MESSAGE": sessions.send_message}
 
+            inspected_after_new = asyncio.Event()
+
             async def no_delivery():
-                return None
+                # worker calls this only after an actual claim finds no due work.
+                if (await repo.get("ops.jobs", jobs["new"]))["status"] == "DONE":
+                    inspected_after_new.set()
 
             runtime.reconcile_delivery_failures = no_delivery
             stop = asyncio.Event()
@@ -216,7 +221,7 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
                 await release(repo, "s1")
                 await sessions.wake_waiting()
                 await until(lambda: _done(status, "new"))
-                await asyncio.sleep(1.5)
+                await asyncio.wait_for(inspected_after_new.wait(), timeout=1)
                 assert await status("idle") == "QUEUED"
                 assert posted[1] == ("s_new", "i_new")
                 # Another slot frees: the remaining turn goes.
@@ -226,7 +231,7 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
                 assert posted == [("s1", "i_busy"), ("s_new", "i_new"), ("s3", "i_idle")]
             finally:
                 stop.set()
-                await worker
+                await asyncio.wait_for(worker, timeout=1)
         assert all(row["status"] == "DONE" for row in await repo.list("ops.jobs"))
         after_items = {row["item_id"]: row["observed_at"] for row in await repo.list("ingest.source_items")}
         assert after_items == before_items
@@ -244,6 +249,7 @@ async def _waiting(repo, jobs, *names):
     return all(row["status"] == "QUEUED" and row.get("slot_waiting_since") for row in rows)
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_slow_admission_check_waits_without_spending_an_attempt(monkeypatch):
     repo = MemoryRepository()
@@ -254,7 +260,7 @@ async def test_slow_admission_check_waits_without_spending_an_attempt(monkeypatc
 
     class SlowSessions:
         async def admit(self, job):
-            await asyncio.sleep(1)
+            await asyncio.Event().wait()
 
     async def handler(payload):
         handled.append(payload)
@@ -273,7 +279,7 @@ async def test_slow_admission_check_waits_without_spending_an_attempt(monkeypatc
         await until(lambda: _waiting(repo, {"slow": job["job_id"]}, "slow"))
     finally:
         stop.set()
-        await worker
+        await asyncio.wait_for(worker, timeout=1)
     row = await repo.get("ops.jobs", job["job_id"])
     assert row["status"] == "QUEUED" and row["attempts"] == 0 and row["last_error"] is None
     assert row["expires_at"] == expiry and handled == []

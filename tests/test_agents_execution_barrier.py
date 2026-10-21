@@ -58,6 +58,8 @@ def idle(identity, execution, reason="end_turn"):
     }
 
 
+@pytest.mark.historical
+@pytest.mark.integration
 async def test_actual_r11_intermediate_idle_does_not_complete_tool_result_execution():
     # Exact redacted r11 input/execution correlations; no provider contents or models.
     timeline = json.loads(Path("docs/verification/f01-cli-r11-2026-10-19/native-timeline.json").read_text())

@@ -58,7 +58,8 @@ func (e *BannedError) Error() string {
 
 type hostGate struct {
 	slots *priorityGate
-	last  time.Time // _last_request[host]: the latest reserved start or response
+	pace  *priorityGate // one priority-ordered admission waiter, never the HTTP request
+	last  time.Time     // latest actual admission or provider cooldown
 }
 
 // Gate is the per-process admission in front of the shared ledger: one PriorityGate per
@@ -108,7 +109,7 @@ func (g *Gate) host(host string) *hostGate {
 	defer g.mu.Unlock()
 	h := g.hosts[host]
 	if h == nil {
-		h = &hostGate{slots: newPriorityGate(g.InFlight(host))}
+		h = &hostGate{slots: newPriorityGate(g.InFlight(host)), pace: newPriorityGate(1)}
 		g.hosts[host] = h
 	}
 	return h
@@ -182,24 +183,34 @@ func (g *Gate) acquire(ctx context.Context, host string, b Bucket, priority int)
 	}
 }
 
-// Enter takes a slot of host (lowest priority number first) and waits for the host's next
-// start: each start is reserved before sleeping, so concurrent holders never burst.
-// release records the response time and frees the slot.
+// Enter takes a host slot and serializes only start admission, in priority order.
+// An overdue timer spaces the next request from its actual start; cancelled waits
+// never reserve a future start. release frees only the HTTP slot.
 func (g *Gate) Enter(ctx context.Context, host string, priority int) (release func(), err error) {
 	h := g.host(host)
 	if err := h.slots.enter(ctx, priority); err != nil {
 		return nil, err
 	}
-	g.mu.Lock()
-	now := g.now()
-	start := now
-	if next := h.last.Add(g.Interval(host)); !h.last.IsZero() && next.After(start) {
-		start = next
+	if err := h.pace.enter(ctx, priority); err != nil {
+		h.slots.release()
+		return nil, err
 	}
-	h.last = start
-	g.mu.Unlock()
-	if start.After(now) {
-		if err := g.sleep(ctx, start.Sub(now)); err != nil {
+	defer h.pace.release() // Enter returns before the caller begins network I/O.
+	for {
+		if err := ctx.Err(); err != nil {
+			h.slots.release()
+			return nil, err
+		}
+		g.mu.Lock()
+		now := g.now()
+		next := h.last.Add(g.Interval(host))
+		if h.last.IsZero() || !next.After(now) {
+			h.last = now
+			g.mu.Unlock()
+			break
+		}
+		g.mu.Unlock()
+		if err := g.sleep(ctx, next.Sub(now)); err != nil {
 			h.slots.release()
 			return nil, err
 		}
@@ -207,11 +218,6 @@ func (g *Gate) Enter(ctx context.Context, host string, priority int) (release fu
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			g.mu.Lock()
-			if t := g.now(); t.After(h.last) {
-				h.last = t
-			}
-			g.mu.Unlock()
 			h.slots.release()
 		})
 	}, nil

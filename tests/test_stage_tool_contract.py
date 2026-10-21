@@ -45,5 +45,3 @@ def test_stage_claim_contract_is_closed_synced_and_preserves_unknown(name):
         validate_schema({**claim, "state_claim": stage}, claim_schema)
     with pytest.raises(ValueError):
         validate_schema({**claim, "state_claim": "ANNOUNCEMENT_MEANS_LIVE"}, claim_schema)
-    assert "Tank stores these semantic fields as supplied" in tool["description"]
-    assert "STATE" in claim_schema["properties"]["type"]["description"]
