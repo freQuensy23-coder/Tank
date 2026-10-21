@@ -109,7 +109,9 @@ type Options struct {
 	// CanWrite reports whether the writer lock is held; while it is not, flushes keep the
 	// queued rows in memory (nil: always).
 	CanWrite func() bool
-	Log      *slog.Logger
+	// Fetcher serves HTTP_FETCH capture requests (nil: they fail).
+	Fetcher Fetcher
+	Log     *slog.Logger
 }
 
 // Threshold is thresholds.get(name, default) as a float.
