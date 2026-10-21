@@ -157,22 +157,22 @@
           "status": "R38_SEALED_ACCEPTANCE_FAILED"
         }
       ],
-      "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
       "missing": [
-        "required manual clause failed: Move class not SPOT_LED_ACCUMULATION or ORGANIC_MIXED; unlock recorded as potential supply, not a sale; action ≠ START."
+        "Fresh native tank-replay session on r119 (main 268e155, code 4ca55568); re-run if session/skill/decision/card code changes before V0-C sign-off."
       ],
       "known_conflict": null,
       "acceptance_input": {
-        "path": "data/replay/acceptance-r38-code-prepared/F-02/inputs/input.json.zst",
-        "sha256": "8411b6a5590fc22cac8121d74d331b7d939c26109dbb2c7a37a8b99a810fd04d"
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-02/inputs/input.json.zst",
+        "sha256": "cf0a107986832375f37869cee28d081bc159c9a04e1c62fa0b0a12d313914c10"
       },
       "private_name_map": {
-        "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-02/private/map.json",
-        "sha256": "20bdd594f77337cab900a91308a78cd498a4bceb3420040686fc3d20b93396c7"
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-02/private/map.json",
+        "sha256": "2515c97d00d3fac46b9557466dadf77cdf17bd596df107664b051fb539451762"
       },
       "sealed_outcomes": {
-        "path": "data/replay/acceptance-r38-code-prepared/F-02/sealed/outcomes.json",
-        "sha256": "d0de8bddc5f75e2807cfab45987f68d799e193dec4af67cf536cd78a1925e4da"
+        "path": "data/replay/acceptance-r90-tank-acceptance/F-02/sealed/outcomes.json",
+        "sha256": "e47d51af763c3b3ae2836184c570314225e2d45b859fd4988bc5cb814a52ff65"
       },
       "acceptance_history": [
         {
@@ -211,11 +211,34 @@
           "missing": [
             "Completed current-context native outcome with all sealed automated and manual clauses."
           ]
+        },
+        {
+          "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+          "missing": [
+            "required manual clause failed: Move class not SPOT_LED_ACCUMULATION or ORGANIC_MIXED; unlock recorded as potential supply, not a sale; action ≠ START."
+          ],
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r38-code-prepared/F-02/inputs/input.json.zst",
+            "sha256": "8411b6a5590fc22cac8121d74d331b7d939c26109dbb2c7a37a8b99a810fd04d"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-additional-source-prepared-v3/F-02/private/map.json",
+            "sha256": "20bdd594f77337cab900a91308a78cd498a4bceb3420040686fc3d20b93396c7"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r38-code-prepared/F-02/sealed/outcomes.json",
+            "sha256": "d0de8bddc5f75e2807cfab45987f68d799e193dec4af67cf536cd78a1925e4da"
+          },
+          "acceptance_run": {
+            "path": "docs/verification/masked-f02-r38-2026-10-19/F-02/acceptance-run-with-manual.json",
+            "sha256": "db9c2721283ce8659be53f1f45cb338f3a2eafd307943e7239c93ff212ef77bf"
+          },
+          "superseded_reason": "Superseded by the fresh native tank-replay run on r119 (main 268e155, code 4ca55568)."
         }
       ],
       "acceptance_run": {
-        "path": "docs/verification/masked-f02-r38-2026-10-19/F-02/acceptance-run-with-manual.json",
-        "sha256": "db9c2721283ce8659be53f1f45cb338f3a2eafd307943e7239c93ff212ef77bf"
+        "path": "docs/verification/native-fixtures-2026-10-20/F-02/acceptance-run-with-manual.json",
+        "sha256": "0fa70a64d520f3c03c75ef546a0df013ab4fbbcd98ec8f340a7796bf6bdebf1f"
       }
     },
     {
@@ -850,20 +873,20 @@
       ],
       "readiness": "EXECUTED_ACCEPTANCE_PASSED",
       "missing": [
-        "Fresh native tank-replay session on r106 (main 4f9559d, code 17da9b4d); re-run if session/skill/decision/card code changes before V0-C sign-off."
+        "Fresh native tank-replay session on r119 (main 268e155, code 4ca55568); re-run if session/skill/decision/card code changes before V0-C sign-off."
       ],
       "known_conflict": null,
       "acceptance_input": {
-        "path": "data/replay/acceptance-r106/F-09/inputs/input.json.zst",
-        "sha256": "3a12690fb262b7557387ccfe9a6ec70c826fa938593a06cfe20960490c779483"
+        "path": "data/replay/acceptance-r119/F-09/inputs/input.json.zst",
+        "sha256": "cecb1cb36c01ec67267291e63dd03da7d6cc2982946b6807c69102c24c3fd27e"
       },
       "private_name_map": {
-        "path": "data/replay/acceptance-r106/F-09/private/map.json",
-        "sha256": "50249ef683a02d212832c6b3ad84db3e6ad290d78f8e18f15cc6009950e720d6"
+        "path": "data/replay/acceptance-r119/F-09/private/map.json",
+        "sha256": "c97cdfb95238025c6296d830fe2d259926cba757acc5b40cd021f1e8ff80623a"
       },
       "sealed_outcomes": {
-        "path": "data/replay/acceptance-r106/F-09/sealed/outcomes.json",
-        "sha256": "76e231d608745b3b078f5c31ff9ebdfdc3fa92e6c9a27452dd1a97286f033a5d"
+        "path": "data/replay/acceptance-r119/F-09/sealed/outcomes.json",
+        "sha256": "e73270e8ee3ff76f8204f5f7f294e9c34e058f76c12d356e2fbd3a4dcc8c3bee"
       },
       "acceptance_history": [
         {
@@ -929,11 +952,34 @@
             "sha256": "cf403968a100f9d40abb61b4223275c570c83016d1abcc651e4b498133616c8e"
           },
           "superseded_reason": "Superseded by the fresh native tank-replay run on r106 (main 4f9559d, code 17da9b4d)."
+        },
+        {
+          "readiness": "EXECUTED_ACCEPTANCE_PASSED",
+          "missing": [
+            "Fresh native tank-replay session on r106 (main 4f9559d, code 17da9b4d); re-run if session/skill/decision/card code changes before V0-C sign-off."
+          ],
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r106/F-09/inputs/input.json.zst",
+            "sha256": "3a12690fb262b7557387ccfe9a6ec70c826fa938593a06cfe20960490c779483"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r106/F-09/private/map.json",
+            "sha256": "50249ef683a02d212832c6b3ad84db3e6ad290d78f8e18f15cc6009950e720d6"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r106/F-09/sealed/outcomes.json",
+            "sha256": "76e231d608745b3b078f5c31ff9ebdfdc3fa92e6c9a27452dd1a97286f033a5d"
+          },
+          "acceptance_run": {
+            "path": "docs/verification/native-fixtures-2026-10-20/F-09/acceptance-run-with-manual.json",
+            "sha256": "aa6e21c18d1979b5c42b34d85d6193d69648898c7b410090043e3dc5381f5362"
+          },
+          "superseded_reason": "Superseded by the fresh native tank-replay run on r119 (main 268e155, code 4ca55568)."
         }
       ],
       "acceptance_run": {
         "path": "docs/verification/native-fixtures-2026-10-20/F-09/acceptance-run-with-manual.json",
-        "sha256": "aa6e21c18d1979b5c42b34d85d6193d69648898c7b410090043e3dc5381f5362"
+        "sha256": "bdefe09efa71719fbdf3e2ec6e763eb46069eb5d929e2036a3d17bc33806d185"
       }
     },
     {
