@@ -564,7 +564,13 @@ def compose_card(
             if relative.get("repricing_band") is not None or any(
                 event_return.get(k) is not None for k in ("r_raw", "r_btc_adj")
             ):
-                market += f"\nPriced: {_na(relative.get('repricing_band'))} · EVENT {_percent(event_return.get('r_raw'))} raw; {_percent(event_return.get('r_btc_adj'))} net BTC"
+                # BTC is the benchmark: its net-of-BTC move does not exist (NOT_APPLICABLE_BENCHMARK).
+                net = (
+                    " (BTC is the benchmark)"
+                    if event_return.get("r_btc_adj_reason") == "NOT_APPLICABLE_BENCHMARK"
+                    else f"; {_percent(event_return.get('r_btc_adj'))} net BTC"
+                )
+                market += f"\nPriced: {_na(relative.get('repricing_band'))} · EVENT {_percent(event_return.get('r_raw'))} raw{net}"
             market += "".join("\n• " + line for line in _market_breadth(truth, token))
             alternatives = (truth.get("divergence") or {}).get("unresolved", []) + truth.get(
                 "alternatives", []
