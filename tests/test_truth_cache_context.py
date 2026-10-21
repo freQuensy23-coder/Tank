@@ -1,6 +1,7 @@
 """Full assessments isolate caches; selective evaluation explicitly owns reusable caches."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from contextvars import copy_context
 from copy import deepcopy
 from pathlib import Path
@@ -46,6 +47,9 @@ def test_concurrent_actual_assessments_isolate_inherited_cache_and_restore_conte
         return original(snapshot, config=config)
 
     monkeypatch.setattr(module, "_compute_market_truth", inspect)
+    # Production runs one full assessment at a time (_COMPUTE_SLOT); the isolation must hold
+    # without it too, so both assessments overlap here.
+    monkeypatch.setattr(module, "_COMPUTE_SLOT", nullcontext())
     try:
         contexts = [copy_context(), copy_context()]
         with ThreadPoolExecutor(max_workers=2) as pool:
