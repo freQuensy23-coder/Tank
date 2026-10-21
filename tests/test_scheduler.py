@@ -1723,3 +1723,47 @@ async def test_eval_conditions_progresses_when_one_market_read_outlasts_the_budg
     await asyncio.wait_for(scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=1))}), 2)
     assert (await repo.get("ana.watch_conditions", "fast")).get("last_evaluated_at")
     assert reads[:2] == ["slow-token", "fast-token"]
+
+
+@pytest.mark.asyncio
+async def test_eval_conditions_per_condition_budget_and_explicit_outcomes(monkeypatch):
+    """Lead ruling r108: one slow condition cannot spend the batch; the job
+    completes with an outcome per condition."""
+    import asyncio
+
+    import tank.scheduler as scheduler_module
+
+    repo = MemoryRepository()
+    now = utcnow()
+    await repo.put("evt.events", "e", {"event_id": "e"})
+    market = {"metric": "dc.class", "window": "W1H", "op": "==", "value": "HIGH"}
+    for cond_id, token in (("slow", "slow-token"), ("fast", "fast-token")):
+        await repo.put(
+            "ana.watch_conditions",
+            cond_id,
+            {
+                "cond_id": cond_id,
+                "event_id": "e",
+                "token_id": token,
+                "role": "UPGRADE",
+                "status": "ARMED",
+                "last_evaluated_at": iso(now - timedelta(minutes=5 if cond_id == "slow" else 1)),
+                "expires_at": iso(now + timedelta(days=1)),
+                "expr": market,
+            },
+        )
+
+    async def condition_values(event_id, token_id, cutoff, requirements):
+        if token_id == "slow-token":
+            await asyncio.sleep(5)
+        return {"data_confidence": {"class": "HIGH"}}
+
+    monkeypatch.setattr(scheduler_module, "EVAL_CONDITIONS_BUDGET_S", 2)
+    monkeypatch.setattr(scheduler_module, "EVAL_CONDITION_BUDGET_S", 0.1)
+    scheduler = Scheduler(repo, SimpleNamespace(), None, SimpleNamespace(condition_values=condition_values))
+    outcomes = await asyncio.wait_for(scheduler.eval_conditions({"cutoff": iso(now)}), 3)
+    assert outcomes["deferred"] == [{"cond_id": "slow", "reason": "READ_TIMEOUT"}]
+    assert outcomes["fired"] == ["fast"]
+    slow = await repo.get("ana.watch_conditions", "slow")
+    assert slow["last_attempt_outcome"] == "READ_TIMEOUT" and slow["status"] == "ARMED"
+    assert (await repo.get("ana.watch_conditions", "fast"))["status"] == "FIRED"
