@@ -1251,3 +1251,24 @@ async def test_sampled_history_decodes_json_rows_off_the_loop_on_postgres(typed_
     ]
     assert [r["minute_start"] for r in sampled] == ["2026-10-18T00:01:00Z", "2026-10-18T00:06:00Z"]
     assert sampled[0]["first_trade"] == {"price": "123.456789012345678901"}
+
+
+async def test_rows_recorded_since_match_memory_on_postgres(typed_repo):
+    from tank.market_storage import market_rows_recorded_since
+    from tank.storage import MemoryRepository
+
+    await typed_repo.migrate()
+    rows = [flow(at) for at in ("2026-10-18T00:00:00Z", "2026-10-18T00:01:00Z", "2026-10-18T00:02:00Z")]
+    rows[1]["recorded_at"] = "2026-10-18T00:09:00Z"
+    rows[2]["recorded_at"] = "2026-10-18T00:09:30Z"
+    memory = MemoryRepository()
+    for repo in (typed_repo, memory):
+        await repo.put_market_batch("mkt.flow_bars_1m", rows, keys=[str(i) for i in range(len(rows))])
+    args = ("mkt.flow_bars_1m", "minute_start", ["test:BTC"], "2026-10-18T00:05:00Z")
+    window = ("2026-10-18T00:00:00Z", "2026-10-18T00:02:00Z")
+    found = await market_rows_recorded_since(typed_repo, *args, *window)
+    expected = await market_rows_recorded_since(memory, *args, *window)
+    assert [(i, r["minute_start"], r["first_trade"]) for i, r, _ in found] == [
+        (i, r["minute_start"], r["first_trade"]) for i, r, _ in expected
+    ]
+    assert [r["minute_start"] for _, r, _ in found] == ["2026-10-18T00:01:00Z"]

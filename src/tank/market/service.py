@@ -19,6 +19,7 @@ from tank.market_storage import (
     market_dependency_head,
     market_kline_days_recorded_since,
     market_range_by_instrument,
+    market_rows_recorded_since,
     market_series_day_counts,
     sampled_market_history,
 )
@@ -60,6 +61,18 @@ def _cut(rows_by_instrument, field, start, end):
         times = [parse_time(row[field]) for row in rows]
         out[iid] = rows[bisect_left(times, start) : bisect_left(times, end)]
     return out
+
+
+def _place_levels(points):
+    """Book levels on the newest BOOK_LEVEL_ROWS rows and the newest integrity-checked row
+    only, as a fresh read places them; other rows are replaced by copies without them."""
+    newest_ok = next(
+        (n for n in range(len(points) - 1, -1, -1) if points[n][2].get("integrity_ok") is True), None
+    )
+    for n in range(len(points) - BOOK_LEVEL_ROWS):
+        when, key, row = points[n]
+        if n != newest_ok and ("bids" in row or "asks" in row):
+            points[n] = (when, key, {k: v for k, v in row.items() if k not in ("bids", "asks")})
 
 
 def book_level_keeper():
@@ -167,6 +180,15 @@ PUBLIC_MARKET = frozenset(
 
 WIDE_PAGE_ROWS = 500  # rows per fetch for wide rows: one fetchall stays well under a second
 BOOK_LEVEL_ROWS = 30  # newest book rows per instrument that keep their levels in a snapshot
+# Window collections a snapshot reads again each minute: the next read of the same window
+# fetches only rows past it and rows recorded since the last read (less WINDOW_MARGIN).
+WINDOW_CACHED = frozenset(
+    {"mkt.flow_bars_1m", "mkt.klines_1m", "mkt.oi_obs", "mkt.funding_obs", "mkt.book_summaries"}
+)
+WINDOW_MARGIN = timedelta(seconds=5)
+WINDOW_ENTRIES = 32
+WINDOW_LANES = 4
+WINDOW_KEEP_S = 600
 COLLECTIONS = {
     "flow_bars": ("mkt.flow_bars_1m", "minute_start"),
     "klines": ("mkt.klines_1m", "open_time"),
@@ -4520,6 +4542,13 @@ class MarketService:
         sliced = self._shared_slice(collection, field, filters, ids, start, end)
         if sliced is not None:
             return sliced
+        if collection not in WINDOW_CACHED:
+            return await self._ranged_read(collection, field, ids, start, end, filters, books=books)
+        return await self._ranged_cached(collection, field, ids, start, end, filters, books=books)
+
+    async def _ranged_read(
+        self, collection, field, ids, start, end, filters=None, *, books=False, keys_out=None
+    ):
         if books:
             # Levels only for the newest BOOK_LEVEL_ROWS rows and the newest checked one: in
             # the query on PostgreSQL, by stripping after decode in memory.
@@ -4534,12 +4563,112 @@ class MarketService:
                 batch_size=WIDE_PAGE_ROWS,
                 keep=None if hasattr(self.repo, "_conn") else book_level_keeper(),
                 level_rows=BOOK_LEVEL_ROWS if hasattr(self.repo, "_conn") else None,
+                keys_out=keys_out,
             )
         # Wide rows (ticker field_sources) in small pages: one fetchall decodes a page.
         page = WIDE_PAGE_ROWS if collection == "mkt.tickers_24h" else 1000
         return await market_range_by_instrument(
-            self.repo, collection, field, ids, start, end, filters, batch_size=page
+            self.repo, collection, field, ids, start, end, filters, batch_size=page, keys_out=keys_out
         )
+
+    async def _ranged_cached(self, collection, field, ids, start, end, filters, *, books):
+        """A window read that equals a fresh `_ranged_read` but, once the window was read,
+        fetches only rows past its end and rows recorded since that read: a warm BTC
+        snapshot re-read two days of five collections (~100k rows, ~10 s) every minute."""
+        start, end = parse_time(start), parse_time(end)
+        key = (collection, field, tuple(sorted(set(ids))), tuple(sorted((filters or {}).items())), books)
+        windows = self.__dict__.setdefault("_windows", {})
+        locks = self.__dict__.setdefault("_window_locks", {})
+        async with locks.setdefault(key, asyncio.Lock()):
+            # Several windows per key (a reaction reads one around its anchor and one before
+            # its cutoff); a read extends the cached window it starts inside.
+            lanes = windows.pop(key, [])
+            entry = next(
+                (
+                    lane
+                    for lane in lanes
+                    if lane["start"] <= start <= lane["end"] and not (books and end < lane["end"])
+                ),
+                None,
+            )
+            if entry is not None:
+                lanes.remove(entry)
+            clock = utcnow()
+            if entry is None:
+                keys = {}
+                out = await self._ranged_read(
+                    collection, field, ids, start, end, filters, books=books, keys_out=keys
+                )
+                rows = {
+                    iid: [
+                        (parse_time(row[field]), k, row)
+                        for k, row in zip(keys.get(iid, []), out[iid], strict=True)
+                    ]
+                    for iid in out
+                }
+                entry = {"start": start, "end": end, "clock": clock, "rows": rows, "starts": []}
+            else:
+                late = await market_rows_recorded_since(
+                    self.repo,
+                    collection,
+                    field,
+                    ids,
+                    entry["clock"] - WINDOW_MARGIN,
+                    start,
+                    entry["end"],
+                    filters,
+                )
+                fresh = {}
+                if end > entry["end"]:
+                    fresh = await self._ranged_read(
+                        collection, field, ids, entry["end"], end, filters, books=books, keys_out=(keys := {})
+                    )
+                rows = entry["rows"]
+                # The lane keeps the earliest start read from it in the last WINDOW_KEEP: a
+                # narrower read (a reaction inside a Market Truth window) never trims it.
+                now = time.monotonic()
+                entry["starts"] = [(at, s) for at, s in entry["starts"] if now - at < WINDOW_KEEP_S]
+                entry["starts"].append((now, start))
+                floor = min(s for _, s in entry["starts"])
+                for iid in rows:
+                    held = rows[iid]
+                    first = bisect_left(held, floor, key=lambda point: point[0])
+                    held = rows[iid] = held[first:]
+                    changed = [(k, row) for i, row, k in late if i == iid]
+                    if changed:
+                        index = {point[1]: n for n, point in enumerate(held)}
+                        for k, row in changed:
+                            point = (parse_time(row[field]), k, row)
+                            if k in index:
+                                old = held[index[k]][2]
+                                if books and "bids" not in row and "bids" in old:
+                                    row = dict(row, bids=old["bids"], asks=old.get("asks"))
+                                    point = (point[0], k, row)
+                                held[index[k]] = point
+                            else:
+                                held.insert(
+                                    bisect_right(held, (point[0], k), key=lambda p: (p[0], p[1])), point
+                                )
+                    if fresh.get(iid):
+                        held.extend(
+                            (parse_time(row[field]), k, row)
+                            for k, row in zip(keys[iid], fresh[iid], strict=True)
+                        )
+                entry.update(start=floor, end=max(end, entry["end"]), clock=clock)
+                if books:
+                    for iid, held in rows.items():
+                        _place_levels(held)
+            windows[key] = [entry, *lanes][:WINDOW_LANES]
+            while len(windows) > WINDOW_ENTRIES:
+                windows.pop(next(iter(windows)))
+            return {
+                iid: [
+                    point[2]
+                    for point in held[bisect_left(held, start, key=lambda point: point[0]) :]
+                    if point[0] < end
+                ]
+                for iid, held in entry["rows"].items()
+            }
 
     async def snapshot_anchors(self, token_id, cutoff, anchors):
         """Snapshots of one token and cutoff for several anchors (e.g. PRE_24H/4H/1H) with
