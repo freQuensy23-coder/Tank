@@ -98,7 +98,7 @@ class Repository(Protocol):
     async def finish_job(self, job_id): ...
     async def fail_job(self, job_id, error, *, retry_after=1): ...
     async def recover_jobs(self): ...
-    async def prune_market(self, before, *, book_before=None): ...
+    async def prune_market(self, before, *, book_before=None, trades_before=None): ...
     async def maintain_partitions(self, *, extra_days=None, include_history=True): ...
     async def prune_jobs(self, before): ...
     async def preserved_market_windows(self): ...
@@ -931,7 +931,11 @@ class PostgresRepository(QueueMixin):
     async def get(self, collection, key):
         from psycopg import sql
 
+        from tank import clickhouse_market as chm
+
         _table(collection)
+        if (ch := chm.client(self, collection)) is not None:
+            return await chm.get(ch, collection, key)
         async with self.transaction():
             row = await (
                 await self._conn().execute(
@@ -1300,7 +1304,7 @@ MemoryRepository.maintain_partitions = _maintain_partitions
 PostgresRepository.maintain_partitions = _maintain_partitions
 
 
-async def _prune_market(self, before, *, book_before=None):
+async def _prune_market(self, before, *, book_before=None, trades_before=None):
     """Prune capture after backup, preserving whole UTC partitions overlapping MAJOR+ windows.
 
     Normalized series use the caller's cutoff (normally90days). Book summaries go at
@@ -1436,6 +1440,23 @@ async def _prune_market(self, before, *, book_before=None):
                         self._immutable.discard((collection, key))
                         deleted += 1
                 counts[collection] = deleted
+    ch = getattr(self, "clickhouse", None)
+    if ch is not None:
+        from tank import clickhouse_market as chm
+
+        preserved = set()
+        for start, end in spans:
+            day = start
+            while day < end:
+                preserved.add(day)
+                day += timedelta(days=1)
+        counts["clickhouse_partitions_dropped"] = await chm.prune(
+            ch,
+            cutoff,
+            preserved,
+            book_cutoff=parse_time(book_before) if book_before is not None else None,
+            trades_cutoff=parse_time(trades_before) if trades_before is not None else None,
+        )
     return counts
 
 
@@ -1453,6 +1474,12 @@ async def _range_page(
     if limit < 1:
         raise ValueError("limit must be positive")
     start_dt, end_dt = parse_time(start) if start else None, parse_time(end) if end else None
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(self, collection)) is not None:
+        return await chm.range_page(
+            ch, collection, time_field, start=start_dt, end=end_dt, filters=filters, limit=limit, after=after
+        )
     if isinstance(self, PostgresRepository):
         from psycopg import sql
         from psycopg.types.json import Jsonb
@@ -1621,6 +1648,10 @@ async def _latest_before(self, collection, time_field, cutoff, *, filters=None):
     if TABLE_COLUMNS[collection].get(time_field) != "timestamptz":
         raise ValueError(f"{collection}.{time_field} is not a typed timestamp column")
     cutoff = parse_time(cutoff)
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(self, collection)) is not None:
+        return await chm.latest_before(ch, collection, time_field, cutoff, filters=filters)
     if isinstance(self, PostgresRepository):
         from psycopg import sql
         from psycopg.types.json import Jsonb
@@ -1718,8 +1749,13 @@ async def _iter_all(self, collection, *, filters=None, batch_size=1000):
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
     after = None
+    from tank import clickhouse_market as chm
+
+    ch = chm.client(self, collection)
     while True:
-        if isinstance(self, PostgresRepository):
+        if ch is not None:
+            page = await chm.all_page(ch, collection, filters=filters, after=after, limit=batch_size)
+        elif isinstance(self, PostgresRepository):
             from psycopg import sql
 
             clauses, args = _exact_predicate(collection, filters)
@@ -1763,6 +1799,12 @@ async def _list_latest(self, collection, time_field, *, filters=None, limit=100,
         raise ValueError("limit must be nonnegative")
     if limit == 0:
         return []
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(self, collection)) is not None:
+        return await chm.list_latest(
+            ch, collection, time_field, filters=filters, limit=limit, start=start, end=end
+        )
     if isinstance(self, PostgresRepository):
         from psycopg import sql
 
@@ -1834,8 +1876,24 @@ async def _iter_late_arrivals(
     end = parse_time(end) if end is not None else None
     market_end = parse_time(market_end)
     after = None
+    from tank import clickhouse_market as chm
+
+    ch = chm.client(self, collection)
     while True:
-        if isinstance(self, PostgresRepository):
+        if ch is not None:
+            page = await chm.late_page(
+                ch,
+                collection,
+                arrival_field,
+                market_field,
+                since=since,
+                end=end,
+                market_end=market_end,
+                filters=filters,
+                after=after,
+                limit=batch_size,
+            )
+        elif isinstance(self, PostgresRepository):
             from psycopg import sql
 
             clauses, args = _exact_predicate(collection, filters)

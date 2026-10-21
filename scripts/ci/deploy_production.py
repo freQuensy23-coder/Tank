@@ -19,13 +19,49 @@ def command(*args, capture=True):
     return subprocess.run(args, check=True, text=True, capture_output=capture).stdout.strip() if capture else subprocess.run(args, check=True)
 
 
+COMPOSE = (
+    "docker", "compose", "-p", "tank", "--project-directory", "/srv/tank",
+    "-f", "/srv/tank/compose.yaml",
+    "-f", "/etc/tank/compose.server.yaml",
+    "-f", "/srv/tank/docs/verification/server-recovery-bootstrap-2026-10-20/pg.resources.yaml",
+    "--env-file", "/etc/tank/compose.env",
+)
+
+
+def compose_images(configuration):
+    if configuration.get("name") != "tank":
+        raise ValueError("Refusing a Compose project other than the existing production project tank")
+    result = {}
+    for service in ("tank", "tank-capture"):
+        image = configuration.get("services", {}).get(service, {}).get("image")
+        if not isinstance(image, str) or not image:
+            raise ValueError(f"Production Compose service lacks its existing image: {service}")
+        result[service] = image
+    return result
+
+
+def containers_healthy(states, images):
+    for service in ("tank", "tank-capture"):
+        container = states.get(service, {})
+        state = container.get("State", {})
+        if container.get("Image") != images[service][2] or not state.get("Running", False):
+            return False
+        health = state.get("Health", {}).get("Status")
+        if service == "tank-capture" and health != "healthy":
+            return False
+        if service == "tank" and health not in (None, "healthy"):
+            return False
+    return True
+
+
 os.chdir("/srv/tank")
 sha = request["sha"]
 if command("git", "rev-parse", "HEAD") != sha:
     raise SystemExit("Production checkout must already match the qualified commit; synchronize it before deployment")
 if command("git", "status", "--porcelain", "--untracked-files=no"):
     raise SystemExit("Production checkout has tracked changes; refusing deployment")
-configuration = json.loads(command("docker", "compose", "config", "--format", "json"))
+configuration = json.loads(command(*COMPOSE, "config", "--format", "json"))
+existing_images = compose_images(configuration)
 services = ("tank", "tank-capture")
 images = {}
 previous = {}
@@ -34,7 +70,7 @@ with tempfile.TemporaryDirectory(prefix="tank-registry-") as registry:
     try:
         subprocess.run(["docker", "login", "ghcr.io", "--username", request["user"], "--password-stdin"], input=request["token"], text=True, check=True, stdout=subprocess.DEVNULL)
         for service in services:
-            tag = configuration["services"][service]["image"]
+            tag = existing_images[service]
             image = f"ghcr.io/{request['repository']}/{service}:{sha}"
             command("docker", "pull", image)
             description = json.loads(command("docker", "image", "inspect", image))[0]
@@ -45,21 +81,16 @@ with tempfile.TemporaryDirectory(prefix="tank-registry-") as registry:
         for image, tag, _ in images.values():
             command("docker", "tag", image, tag)
         try:
-            command("docker", "compose", "up", "--detach", "--no-build", "--no-deps", *services)
+            command(*COMPOSE, "up", "--detach", "--no-build", "--no-deps", *services)
             deadline = time.monotonic() + 180
             while True:
-                healthy = True
+                states = {}
                 for service in services:
-                    container = command("docker", "compose", "ps", "--all", "--quiet", service)
+                    container = command(*COMPOSE, "ps", "--all", "--quiet", service)
                     if not container or "\n" in container:
-                        healthy = False
                         continue
-                    state = json.loads(command("docker", "inspect", container))[0]
-                    expected = images[service][2]
-                    health = state["State"].get("Health", {}).get("Status")
-                    healthy &= state["Image"] == expected and state["State"].get("Running", False)
-                    healthy &= health == "healthy" if service == "tank-capture" else health in (None, "healthy")
-                if healthy:
+                    states[service] = json.loads(command("docker", "inspect", container))[0]
+                if containers_healthy(states, images):
                     print(json.dumps({"deployed_sha": sha, "services": list(services)}))
                     break
                 if time.monotonic() >= deadline:
@@ -68,7 +99,7 @@ with tempfile.TemporaryDirectory(prefix="tank-registry-") as registry:
         except BaseException:
             for service, old_image in previous.items():
                 command("docker", "tag", old_image, images[service][1])
-            command("docker", "compose", "up", "--detach", "--no-build", "--no-deps", *services)
+            command(*COMPOSE, "up", "--detach", "--no-build", "--no-deps", *services)
             raise
     finally:
         command("docker", "logout", "ghcr.io")

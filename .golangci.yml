@@ -98,3 +98,9 @@ linters:
       text: 'ST1005: error strings should not be capitalized'
       source: 'return nil, nil, fmt\.Errorf\("Missing typed market identity %s: %v",
         collection, identity\)'
+    - path: (^|/)internal/store/clickhouse\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return fmt\.Errorf\("Unknown typed market filter %s\.%s", collection,
+        name\)

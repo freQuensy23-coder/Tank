@@ -498,9 +498,9 @@ Fixture
 | `event_observations`, `claims` | `obs_id`, `claim_id` | FK to events/items. |
 | `state_changes` | serial | Append-only. |
 | `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | id + version | Versioned rows. |
-| `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | TimescaleDB hypertable (1-day chunks, compressed after 2 days); base tier 90 days ⚙. |
-| `book_summaries` | (`instrument_id`, ts) | Hypertable; kept 72 hours; summary fields only (no order-book levels). |
-| `oi_obs`, `funding_obs`, `liq_obs` | (`instrument_id`, ts) | Hypertable (1-day chunks, compressed after 2 days). |
+| `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | ClickHouse `mkt.*` (ReplacingMergeTree, daily partitions); base tier 90 days ⚙. |
+| `book_summaries` | (`instrument_id`, ts) | ClickHouse; kept 72 hours; summary fields only (no order-book levels). |
+| `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `trades` | (`instrument_id`, ts) | ClickHouse (daily partitions); `trades` (every print) 30 days. |
 | `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`). |
 | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). |
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
@@ -746,7 +746,7 @@ All RSS; item key `guid` (else `link`); fields title, link, pubDate, description
 
 ## 4. Market data catalog
 
-**The sandbox never connects to an exchange.** tank-capture is the only client of the exchange hosts below; it records trades, books, klines, OI and funding into the `mkt.*` tables, which the agent reads with `psql "$TANK_DB_URL"`. The endpoints are listed so the agent knows what each column came from, not to call them.
+**The sandbox never connects to an exchange.** tank-capture is the only client of the exchange hosts below; it records every print, trades, books, klines, OI, funding, liquidations and tickers into ClickHouse database `mkt` (see Executable sandbox access), which the agent reads. The endpoints are listed so the agent knows what each column came from, not to call them.
 
 Tank-side request budgets are set at ≤ 50% of each venue's documented limit. Binance limits below were read from `exchangeInfo.rateLimits`. Instrument symbols per venue are listed in 03 §2.11.
 
@@ -1222,6 +1222,25 @@ Metric meaning and units come from the authoritative field registry, without run
 
 # Executable sandbox access
 
+Two read-only databases:
+- **ClickHouse, the market data** (HLD §7.1): database `mkt` at `http://clickhouse:8123`, user `tank_agent`, the same password as in `TANK_DB_URL` (never print it). Tables `klines_1m`, `flow_bars_1m`, `oi_obs`, `funding_obs`, `liq_obs`, `tickers_24h`, `book_summaries` (columns below) and `trades` (every print: `instrument_id`, `trade_id`, `ts`, `side`, `price`, `qty_native`, `quote_notional`, `notional_usd`, …).
+  - Always `SELECT … FROM mkt.<table> FINAL`: a row can have been rewritten (a repair, a late print) and FINAL returns its last version.
+  - Always filter on the time column and `instrument_id`: only the partitions needed are read.
+  - Numbers are stored as their exact decimal text: compute with `toDecimal256(c, 18)` or `toFloat64(c)`. JSON columns are text: `JSONExtractString(last_trade, 'trade_id')`.
+  - Queries run read-only, at most 120 s and 1.5 GB each.
+- **PostgreSQL, everything else** (events, items, cards, decisions, jobs, sessions): `TANK_DB_URL` as below.
+
+```python
+import os, json, urllib.parse, httpx
+password = urllib.parse.urlsplit(os.environ["TANK_DB_URL"]).password
+def ch(query, **params):
+    r = httpx.post("http://clickhouse:8123/", params={"query": query + " FORMAT JSONEachRow", **{"param_" + k: v for k, v in params.items()}},
+                   headers={"X-ClickHouse-User": "tank_agent", "X-ClickHouse-Key": urllib.parse.unquote(password)}, timeout=130)
+    r.raise_for_status()
+    return [json.loads(line) for line in r.text.splitlines()]
+bars = ch("SELECT minute_start, buy_qty, sell_qty FROM mkt.flow_bars_1m FINAL WHERE instrument_id = {i:String} AND minute_start >= now() - INTERVAL 1 HOUR ORDER BY minute_start", i="binance:spot:BTCUSDT")
+```
+
 Connect only through the injected read-only `TANK_DB_URL`; never print that URL. PostgreSQL access is read-only as `tank_agent`. The following examples perform reads; results from own scripts inform analysis and are not card numbers. Facts still require quotes stored through Tank tools.
 
 ```python
@@ -1263,7 +1282,7 @@ The sandbox does not call exchange APIs or WebSockets. Exchange data is in the `
 
 This column inventory is generated from the frozen `MARKET_COLUMNS` producer/storage contract, not an executable schema creation script. Inspect `information_schema` on the selected database to verify migration status and nullability. Numeric values remain Decimal/numeric; never turn unavailable USD into zero. Migration 027 has not been applied to the persistent local database at this guide revision. Existing local tables are not evidence that this new physical layout is deployed.
 
-There is no `mkt.trades` SQL table, and the sandbox cannot read the hourly trade files (`/data/raw/trades`, tank-capture's per-trade archive for replay and audit). Per-trade questions are answered from `mkt.flow_bars_1m`: per-minute taker buy/sell quantity and USD, sum of squared sizes, and the first and last trade of each minute. The market tables are TimescaleDB hypertables: always filter on the time column (`minute_start`, `open_time`, `ts`, `as_of`, `exchange_ts`), which reads only the chunks needed; older chunks are compressed and read the same way.
+Every print is in ClickHouse `mkt.trades` (30 days; days of MAJOR+ events kept): per-trade questions (sizes, bursts, who traded first) read it directly, minute aggregates come from `mkt.flow_bars_1m`. The column lists below are the ClickHouse columns of each table (PostgreSQL types as declared; `numeric` and `jsonb` are text in ClickHouse).
 
 ```sql
 SELECT minute_start, minute_start_prec, buy_qty, sell_qty, sum_sq_qty,

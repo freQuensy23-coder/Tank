@@ -43,7 +43,7 @@ For portable parallel integration, the operator first provisions distinct dispos
     export TANK_TEST_DATABASE_URL='dbname=tank_test_integration_{worker} host=/path/to/isolated-pg/socket user=postgres'
     export TANK_E2E_DATABASE_URL='dbname=tank_test_e2e_{worker} host=/path/to/isolated-pg/socket user=postgres'
     export TANK_SOURCE_TEST_DATABASE_URL='dbname=tank_test_source_{worker} host=/path/to/isolated-pg/socket user=postgres'
-    PYTHONPATH=tests uv run pytest -p parallel_postgres -n auto --dist worksteal -m integration --timeout=300
+    PYTHONPATH=tests uv run pytest -p parallel_postgres -n auto --dist loadfile -m integration --timeout=300
 
 The opt-in parallel_postgres plugin runs before conftest. The controller preserves the exact templates for worker inheritance; each gwN worker replaces exactly one literal {worker} in dbname only. Every configured route is validated before any environment update. Shared DSNs, non-test database names, nested placeholders and placeholders in host/user/password/options are refused. Missing database variables are allowed for non-PostgreSQL integrations. The plugin never connects, creates or deletes databases, or loads dotenv/credential files. Supply enough precreated worker databases for the requested count. Use the ordinary serial command without this plugin for -n 0; a shared DSN is never a parallel recipe.
 
@@ -141,4 +141,10 @@ The pinned CI environment uses uv 0.11.7, Python 3.13.13, Node 24.22.0 and Go 1.
 
 Only successful pushes to main or prod-main publish ghcr.io/<owner>/<repository>/tank and tank-capture, tagged by the full commit SHA and branch. deploy.yml is workflow_dispatch only and uses the production environment. It accepts a full lowercase SHA belonging to the selected main/prod-main branch. Configure PROD_SSH_USER, PROD_SSH_HOST, PROD_SSH_KEY and PROD_SSH_KNOWN_HOSTS as production environment secrets. The production checkout must already be clean and at that exact commit; the workflow never resets or updates it.
 
-The deployment helper sends structured input over SSH stdin, verifies both image revision labels, updates only the existing Tank and Go capture Compose image tags, and waits for both services. If the update fails, it restores both prior image tags and recreates those two services. CI work does not execute deployment.
+The deployment helper sends structured input over SSH stdin and uses the existing production `tank` Compose project with `/srv/tank/compose.yaml`, `/etc/tank/compose.server.yaml`, the retained recovery PostgreSQL resource override, and `/etc/tank/compose.env` for every config/up/ps/rollback command. It verifies the parsed project identity and both image revision labels, updates only the existing Tank and Go capture image tags, and waits for both services. If the update fails, it restores both prior image tags and recreates those two services. CI work does not execute deployment.
+
+## ClickHouse integration contracts
+
+The full Python integration job and the Go race job each receive a separate dedicated ClickHouse 25.8 service. Set CLICKHOUSE_TEST_URL to that caller-owned loopback HTTP service and initialize its eight market/trade tables with `uv run --frozen --extra dev python scripts/ci/prepare_clickhouse.py`. Never supply a production ClickHouse endpoint. The bootstrap rejects non-loopback URLs and other server release lines.
+
+Python integration uses `-n auto --dist loadfile`; the two ClickHouse cases share one file and reset the mkt database, so the file stays on one worker while other integration files use the available workers. Both cases must pass the exact-collection zero-skip gate. Go emits its race report as JSON and scripts/ci/check_go_results.py requires every started case to pass with zero skips. The Go store and raw-trade tests use disjoint tables in their own job's ClickHouse instance.

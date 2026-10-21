@@ -41,6 +41,8 @@ type Store struct {
 	Pool   *pgxpool.Pool
 	Schema string
 
+	CH *ClickHouse
+
 	url        string
 	statements sync.Map
 }

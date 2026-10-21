@@ -130,6 +130,8 @@ class Settings(BaseSettings):
     config_dir: Path = Path("config")
     replay_private_mask_path: Path | None = Field(default=None, repr=False, exclude=True)
     database_url: str = "postgresql:///tank"
+
+    clickhouse_url: str | None = None
     openma_url: str = "http://127.0.0.1:8787"
     openma_database_url: str = "postgresql:///oma"
     openma_api_key: str | None = None

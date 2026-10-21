@@ -1,3 +1,5 @@
+import ast
+import copy
 import runpy
 from pathlib import Path
 
@@ -75,3 +77,59 @@ def test_deployment_uses_full_default_sha_and_safe_target() -> None:
     for user, host in (("-oProxyCommand=id", "example.org"), ("tank", "example.org; id"), ("tank", "$(id)")):
         with pytest.raises(ValueError, match="Invalid production SSH"):
             target(user, host)
+
+
+def deployment_decisions() -> dict:
+    tree = ast.parse(DEPLOY_POLICY["REMOTE"])
+    functions = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name in {"compose_images", "containers_healthy"}
+    ]
+    namespace = {}
+    exec(compile(ast.Module(body=functions, type_ignores=[]), "remote-decisions", "exec"), namespace)
+    return namespace
+
+
+def test_deployment_requires_existing_production_project_and_service_images() -> None:
+    images = deployment_decisions()["compose_images"]
+    configuration = {
+        "name": "tank",
+        "services": {
+            "tank": {"image": "tank-v0:persistent-no-x"},
+            "tank-capture": {"image": "tank-capture:local"},
+        },
+    }
+    assert images(configuration) == {"tank": "tank-v0:persistent-no-x", "tank-capture": "tank-capture:local"}
+    wrong_project = copy.deepcopy(configuration)
+    wrong_project["name"] = "tank-v0"
+    with pytest.raises(ValueError, match="production project tank"):
+        images(wrong_project)
+    missing_capture = copy.deepcopy(configuration)
+    del missing_capture["services"]["tank-capture"]
+    with pytest.raises(ValueError, match="tank-capture"):
+        images(missing_capture)
+
+
+def test_deployment_waits_for_expected_image_and_capture_health() -> None:
+    healthy = deployment_decisions()["containers_healthy"]
+    images = {"tank": ("source", "tag", "sha256:core"), "tank-capture": ("source", "tag", "sha256:capture")}
+    states = {
+        "tank": {"Image": "sha256:core", "State": {"Running": True}},
+        "tank-capture": {
+            "Image": "sha256:capture",
+            "State": {"Running": True, "Health": {"Status": "healthy"}},
+        },
+    }
+    assert healthy(states, images)
+    for service, section, key, value in [
+        ("tank", None, "Image", "sha256:old"),
+        ("tank", "State", "Running", False),
+        ("tank-capture", "State", "Health", {"Status": "starting"}),
+        ("tank-capture", None, "Image", "sha256:old"),
+    ]:
+        changed = copy.deepcopy(states)
+        state = changed[service][section] if section else changed[service]
+        state[key] = value
+        assert not healthy(changed, images)
+    assert not healthy({"tank": states["tank"]}, images)
