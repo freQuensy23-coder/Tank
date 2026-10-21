@@ -28,6 +28,50 @@ def count_read(state, name, *, ok, n=1):
     counters["ok" if ok else "failed"] += n
 
 
+def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
+    """S14 diff rows against the previous snapshot and the snapshot digest (CPU-bound, runs in a thread)."""
+    if previous is not None and str(feed.get("venue", "")).lower() == "coinbase":
+        # Pre-v2 snapshots did not observe these flags. Establish their
+        # baseline now; missing historical fields are not false statuses.
+        previous = deepcopy(previous)
+        for symbol, old in previous.items():
+            if symbol in snapshot and "status_flags" not in old:
+                old["status_flags"] = snapshot[symbol].get("status_flags", {})
+    rows = []
+    if previous is not None:
+        for symbol in sorted(set(snapshot) | set(previous)):
+            if snapshot.get(symbol) != previous.get(symbol):
+                current, old = snapshot.get(symbol), previous.get(symbol)
+                rows.append(
+                    {
+                        "external_id": f"{feed.get('venue')}|{feed.get('market_type')}|{symbol}|{sha256(current)}",
+                        "title": f"{symbol} instrument change",
+                        "text": json.dumps({"before": old, "after": current}, sort_keys=True),
+                        "url": feed["url"],
+                        "published_at": None,
+                        # A removal is proven by the absence from every page.
+                        **(
+                            {
+                                "observed_at": pages[found_on[symbol]][1],
+                                "_payload": pages[found_on[symbol]][0],
+                            }
+                            if symbol in found_on
+                            else {
+                                "observed_at": completed_at,
+                                "_payload": b"\n".join(p for p, _ in pages),
+                            }
+                        ),
+                        "change": "REMOVED"
+                        if current is None
+                        else "ADDED"
+                        if old is None
+                        else "STATE_UPDATE",
+                    }
+                )
+    digest = sha256(snapshot)
+    return rows, digest
+
+
 class SourcePoller:
     def __init__(self, service):
         self.service = service
@@ -251,47 +295,10 @@ class SourcePoller:
                 for batch in state.get("pending_batches", []):
                     if "instruments" in batch["coverage"]:
                         previous = batch["coverage"]["instruments"]
-            if previous is not None and str(feed.get("venue", "")).lower() == "coinbase":
-                # Pre-v2 snapshots did not observe these flags. Establish their
-                # baseline now; missing historical fields are not false statuses.
-                previous = deepcopy(previous)
-                for symbol, old in previous.items():
-                    if symbol in snapshot and "status_flags" not in old:
-                        old["status_flags"] = snapshot[symbol].get("status_flags", {})
             state["instrument_snapshot_schema_version"] = 2
-            completed_at = self.stamp()
-            rows = []
-            if previous is not None:
-                for symbol in sorted(set(snapshot) | set(previous)):
-                    if snapshot.get(symbol) != previous.get(symbol):
-                        current, old = snapshot.get(symbol), previous.get(symbol)
-                        rows.append(
-                            {
-                                "external_id": f"{feed.get('venue')}|{feed.get('market_type')}|{symbol}|{sha256(current)}",
-                                "title": f"{symbol} instrument change",
-                                "text": json.dumps({"before": old, "after": current}, sort_keys=True),
-                                "url": feed["url"],
-                                "published_at": None,
-                                # A removal is proven by the absence from every page.
-                                **(
-                                    {
-                                        "observed_at": pages[found_on[symbol]][1],
-                                        "_payload": pages[found_on[symbol]][0],
-                                    }
-                                    if symbol in found_on
-                                    else {
-                                        "observed_at": completed_at,
-                                        "_payload": b"\n".join(p for p, _ in pages),
-                                    }
-                                ),
-                                "change": "REMOVED"
-                                if current is None
-                                else "ADDED"
-                                if old is None
-                                else "STATE_UPDATE",
-                            }
-                        )
-            digest = sha256(snapshot)
+            rows, digest = await asyncio.to_thread(
+                instrument_changes, snapshot, previous, feed, pages, found_on, self.stamp()
+            )
             if stored.get("sha256") != digest:
                 await self.save(snapshot_key, {"sha256": digest, "instruments": snapshot})
         elif kind in {"rss", "atom", "feed"}:
