@@ -18,4 +18,5 @@ config/.tank-config-version.json
 .tools/
 docs/verification/current-jev-quality-audit-2026-10-20/raw/scored-dataset.provenance-corrected.frozen.v1.json
 docs/verification/masked-f24-r45-candidate-2026-10-19/F-24/actual/qa-r45-candidate-masked-f24-driver/framework-bundles/d0b1c4f3c2af1fc1e135a1770a5f2849c5034e05086dd533177ed61c7acc522e/outputs.json
+capture/bin/
 .test-results/

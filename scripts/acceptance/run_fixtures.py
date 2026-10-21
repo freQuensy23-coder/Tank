@@ -125,6 +125,26 @@ def mark_window(record):
         fh.write(json.dumps(record) + "\n")
 
 
+REPLAY_DB_EVIDENCE = {
+    # Durable replay state that manual clauses cite (job ledger, capture chains, tool calls); the
+    # replay database is reset before the next fixture, so it is copied out right after the run.
+    "ops.jobs": "SELECT job_id, type, status, payload, run_after, created_at, finished_at FROM ops.jobs ORDER BY created_at",
+    "evt.capture_chains": "SELECT document FROM evt.capture_chains",
+    "ops.tool_calls": "SELECT call_id, tool, status, requested_at, answered_at FROM ops.tool_calls ORDER BY requested_at",
+}
+
+
+def dump_replay_db(d):
+    evidence = {}
+    for name, sql in REPLAY_DB_EVIDENCE.items():
+        out = sh(["docker", "exec", "-i", "-u", "postgres", "tank-postgres-1", "psql", "-d", "tank_replay", "-X", "-q",
+                  "-At", "-v", "ON_ERROR_STOP=1"],
+                 input=f"BEGIN TRANSACTION READ ONLY;\nSELECT coalesce(json_agg(t), '[]'::json) FROM ({sql}) t;\nCOMMIT;\n",
+                 check=False)
+        evidence[name] = json.loads(out.stdout) if out.returncode == 0 and out.stdout.strip() else {"error": out.stderr[-300:]}
+    write_json(d / "replay-db-evidence.json", {"captured_at": iso(utcnow()), "database": "tank_replay", **evidence})
+
+
 def run_one(fid, entry, out_dir, timeout):
     """One fresh native replay in its own process (`compose run`), never inside the live runtime.
 
@@ -178,6 +198,7 @@ def run_one(fid, entry, out_dir, timeout):
              check=False, timeout=timeout)
     finished = iso(utcnow())
     mark_window({"fixture_id": fid, "event": "END", "at": finished, "exit_code": res.returncode})
+    dump_replay_db(d)
     (d / "replay-stdout.json").write_text(res.stdout)
     (d / "replay-stderr.log").write_text(res.stderr[-20000:])
     # replay_fixture freezes under bundles/<digest of the packet JSON> (src/tank/replay.py replay_fixture).

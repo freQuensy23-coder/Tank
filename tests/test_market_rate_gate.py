@@ -49,7 +49,7 @@ async def test_concurrent_requests_overlap_but_start_one_interval_apart(setup): 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = MarketService(repo, settings, http=http)
         await asyncio.gather(
-            *(service._request("GET", "https://api.bybit.com/v5/market/time") for _ in range(4))
+            *(service._request("GET", "https://api.llama.fi/summary/fees/abc") for _ in range(4))
         )
     gaps = [b - a for a, b in zip(sorted(starts), sorted(starts)[1:], strict=False)]
     assert peak[0] > 1  # several in flight
@@ -136,7 +136,7 @@ async def test_overdue_request_starts_are_spaced_from_actual_admission(setup, mo
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = MarketService(repo, settings, http=http)
         requests = [
-            asyncio.create_task(service._request("GET", "https://api.bybit.com/v5/market/time"))
+            asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
             for _ in range(4)
         ]
         try:
@@ -170,16 +170,16 @@ async def test_cancelled_pacing_wait_does_not_reserve_a_future_start(setup, monk
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = MarketService(repo, settings, http=http)
-        first = asyncio.create_task(service._request("GET", "https://api.bybit.com/v5/market/time"))
+        first = asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
         waiting = following = None
         try:
             await entered.get()
-            waiting = asyncio.create_task(service._request("GET", "https://api.bybit.com/v5/market/time"))
+            waiting = asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
             assert await clock.sleeping.get() == pytest.approx(0.08)
             waiting.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await waiting
-            following = asyncio.create_task(service._request("GET", "https://api.bybit.com/v5/market/time"))
+            following = asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
             delay = await clock.sleeping.get()
             assert delay == pytest.approx(0.08)
             clock.advance(delay)

@@ -557,8 +557,9 @@ Fixture
 | `event_observations`, `claims` | `obs_id`, `claim_id` | FK to events/items. |
 | `state_changes` | serial | Append-only. |
 | `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | id + version | Versioned rows. |
-| `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | Time-partitioned; base tier 90 days ⚙. |
-| `book_summaries`, `oi_obs`, `funding_obs`, `liq_obs` | (`instrument_id`, ts) | Time-partitioned. |
+| `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | Hypertable (1-day chunks, compressed after 2 days); base tier 90 days ⚙. |
+| `book_summaries` | (`instrument_id`, ts) | Hypertable (1-day chunks, compressed after 2 days); kept 72 hours ⚙; summary fields only, no order-book levels. |
+| `oi_obs`, `funding_obs`, `liq_obs` | (`instrument_id`, ts) | Hypertable (1-day chunks, compressed after 2 days). |
 | `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`). |
 | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). |
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
@@ -1700,7 +1701,7 @@ Every number the rules use, with its basis. A number without a basis is not used
 | Capture & polling | Per-source intervals; escalated interval; escalation expiry | 01 §4.2 max delays (02 §3); 15 s; 2 h | 01 §4.2, FR-D-02 |
 | | Hot-set cap | 15 | 01 FR-B-03 |
 | | Base klines; base OI/funding poll; hot OI/funding poll | 60 s; 300 s; 60 s | The kline resolution, so the latest minute of every token, the BTC and ETH benchmarks included, is stored at any cutoff, checkpoint or escalation; the venues' OI history resolution (5 min); one 1-minute bar |
-| Retention | Base-tier 1m series; hot raw | 90 d; 30 d (event windows permanent) | 01 §9 |
+| Retention | Base-tier 1m series; hot raw; book summaries | 90 d; 30 d (event windows permanent); 72 h | 01 §9 |
 | Validation | Test cases for V0-C | F-01–F-27 | §11.3 |
 | Agents | Model | `gpt-6.1-sol` | Operator's decision |
 | | Model access | ChatGPT subscription (Codex sign-in), no API key | Operator's decision |
@@ -1742,7 +1743,7 @@ Values the operator provides at installation (kept outside the repository):
 
 ---
 
-## 14. Core DDL (PostgreSQL 16)
+## 14. Core DDL (PostgreSQL 16 with TimescaleDB)
 
 Analysis objects of §2.6 are stored as `jsonb` inside the rows below; the columns that queries filter or join on are typed.
 

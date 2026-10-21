@@ -14,6 +14,7 @@ from urllib.parse import parse_qsl, unquote, urlparse
 import httpx
 import zstandard
 
+from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.time_precision import (
     Timestamp,
     chosen_boundary,
@@ -182,9 +183,16 @@ def summarize_unlocks(rows, cutoff):
     for row in rows:
         label = labels.setdefault(
             str(row.get("label") or "unlabelled"),
-            {"label": str(row.get("label") or "unlabelled"), "kind": row.get("kind"), "count": 0,
-             "past_14d": {"count": 0, "qty": Decimal(0)}, "upcoming_14d": {"count": 0, "qty": Decimal(0)},
-             "nearest_past": None, "nearest_upcoming": None, "qty_missing": 0},
+            {
+                "label": str(row.get("label") or "unlabelled"),
+                "kind": row.get("kind"),
+                "count": 0,
+                "past_14d": {"count": 0, "qty": Decimal(0)},
+                "upcoming_14d": {"count": 0, "qty": Decimal(0)},
+                "nearest_past": None,
+                "nearest_upcoming": None,
+                "qty_missing": 0,
+            },
         )
         label["count"] += 1
         if not row.get("date"):
@@ -223,7 +231,11 @@ def dedupe_request_log(calls, truth_hashes):
     out = []
     for call in calls:
         result = call.get("result")
-        if call.get("tool") == "get_market_truth" and isinstance(result, dict) and isinstance(result.get("market_truth"), list):
+        if (
+            call.get("tool") == "get_market_truth"
+            and isinstance(result, dict)
+            and isinstance(result.get("market_truth"), list)
+        ):
             entries = []
             for entry in result["market_truth"]:
                 digest = sha256(entry)
@@ -715,7 +727,10 @@ class EventToolService:
         for instrument in instruments:
             iid = instrument["instrument_id"]
             row = await self.repo.latest_before(
-                "mkt.tickers_24h", "ts", iso(cutoff + timedelta(microseconds=1)), filters={"instrument_id": iid}
+                "mkt.tickers_24h",
+                "ts",
+                iso(cutoff + timedelta(microseconds=1)),
+                filters={"instrument_id": iid},
             )
             if row is None:
                 excluded.append({"instrument_id": iid, "reason": "NO_STORED_24H_TICKER"})
@@ -731,13 +746,21 @@ class EventToolService:
             usd = None if row.get("volume_usd") is None else Decimal(str(row["volume_usd"]))
             total_native += native
             if usd is None:
-                usd_missing.append({"instrument_id": iid, "reason": row.get("usd_reason") or "USD_UNAVAILABLE"})
+                usd_missing.append(
+                    {"instrument_id": iid, "reason": row.get("usd_reason") or "USD_UNAVAILABLE"}
+                )
             else:
                 total_usd += usd
             venues.append(
-                {"instrument_id": iid, "venue": instrument.get("venue"), "volume_native": str(native),
-                 "volume_usd": None if usd is None else str(usd), "usd_reason": None if usd is not None
-                 else row.get("usd_reason") or "USD_UNAVAILABLE", "ticker_ts": row["ts"], "age_s": round(age, 1)}
+                {
+                    "instrument_id": iid,
+                    "venue": instrument.get("venue"),
+                    "volume_native": str(native),
+                    "volume_usd": None if usd is None else str(usd),
+                    "usd_reason": None if usd is not None else row.get("usd_reason") or "USD_UNAVAILABLE",
+                    "ticker_ts": row["ts"],
+                    "age_s": round(age, 1),
+                }
             )
         return {
             "window": "trailing 24 h at the venue's latest 24 h ticker up to the analysis cutoff",
@@ -788,7 +811,10 @@ class EventToolService:
         dated = [row for row in unlocks if row.get("date")]
         dated.sort(key=lambda row: abs((parse_time(row["date"]) - cutoff).total_seconds()))
         nearest = sorted(dated[:UNLOCK_ROWS_SHOWN], key=lambda row: str(row["date"]))
-        unlocks = nearest + [row for row in unlocks if not row.get("date")][: max(0, UNLOCK_ROWS_SHOWN - len(nearest))]
+        unlocks = (
+            nearest
+            + [row for row in unlocks if not row.get("date")][: max(0, UNLOCK_ROWS_SHOWN - len(nearest))]
+        )
         # 03 §5.6: the latest known observation of each kind (per chain,
         # instrument and fee scope), not the raw history.
         latest = {}
@@ -1008,15 +1034,27 @@ class EventToolService:
         if urlparse(a["url"]).scheme != "https":
             raise ValueError("Only HTTPS evidence fetches are allowed")
         limit = min(20, float(a.get("timeout_s") or 20))  # 03 §3.2: at most 20 s
+        if is_exchange_url(a["url"]):
+            # Exchange hosts are reached only by tank-capture; it stores the response for us.
+            response = await capture_fetch(self.repo, "GET", a["url"], budget_s=limit)
+            response.raise_for_status()
+            if len(response.content) > 2 * 1024 * 1024:
+                raise ValueError("Page exceeds 2 MB")
+            chunks, media_type = [response.content], response.headers.get("content-type")
+        else:
+            chunks, media_type = await self._direct_page(a["url"], limit)
+        original = b"".join(chunks)
+        self.validate_evidence_bytes(original)
+        return await self._store_page(a, c, original, media_type or "application/octet-stream")
+
+    async def _direct_page(self, url, limit):
         async with asyncio.timeout(limit):
             async with (
                 httpx.AsyncClient(timeout=limit, follow_redirects=False)
                 if self.http is None
                 else _borrow(self.http) as client
             ):
-                async with client.stream(
-                    "GET", a["url"], headers={"User-Agent": self.settings.user_agent}
-                ) as r:
+                async with client.stream("GET", url, headers={"User-Agent": self.settings.user_agent}) as r:
                     r.raise_for_status()
                     chunks = []
                     size = 0
@@ -1025,10 +1063,10 @@ class EventToolService:
                         if size > 2 * 1024 * 1024:
                             raise ValueError("Page exceeds 2 MB")
                         chunks.append(chunk)
-        original = b"".join(chunks)
-        self.validate_evidence_bytes(original)
+                    return chunks, r.headers.get("content-type")
+
+    async def _store_page(self, a, c, original, media_type):
         # Persist the exact response before parsing; extraction failures retain the source bytes.
-        media_type = r.headers.get("content-type", "application/octet-stream")
         capture = self.persist_web_raw(a["url"], original, media_type, c)
         from selectolax.parser import HTMLParser
 

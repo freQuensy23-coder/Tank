@@ -100,7 +100,7 @@ class Repository(Protocol):
     async def finish_job(self, job_id): ...
     async def fail_job(self, job_id, error, *, retry_after=1): ...
     async def recover_jobs(self): ...
-    async def prune_market(self, before): ...
+    async def prune_market(self, before, *, book_before=None): ...
     async def maintain_partitions(self, *, extra_days=None, include_history=True): ...
     async def prune_jobs(self, before): ...
     async def preserved_market_windows(self): ...
@@ -1221,7 +1221,24 @@ async def _maintain_partitions(self, *, extra_days=None, include_history=True):
     from psycopg import sql
 
     created = 0
+    # TimescaleDB hypertables make their own daily chunks (deploy/timescale_migrate.py).
+    async with self.transaction():
+        hyper = await (
+            await self._conn().execute(
+                "SELECT to_regclass('timescaledb_information.hypertables') IS NOT NULL AS installed"
+            )
+        ).fetchone()
+        hypertables = set()
+        if hyper["installed"]:
+            rows = await (
+                await self._conn().execute(
+                    "SELECT hypertable_schema || '.' || hypertable_name AS name FROM timescaledb_information.hypertables"
+                )
+            ).fetchall()
+            hypertables = {row["name"] for row in rows}
     for collection, ts in PARTITIONED.items():
+        if collection in hypertables:
+            continue
         schema, name = collection.split(".")
         historical = sql.Identifier(schema, name + "_historical")
         days = {(utcnow() + timedelta(days=offset)).date() for offset in range(15)}
@@ -1317,10 +1334,12 @@ MemoryRepository.maintain_partitions = _maintain_partitions
 PostgresRepository.maintain_partitions = _maintain_partitions
 
 
-async def _prune_market(self, before):
+async def _prune_market(self, before, *, book_before=None):
     """Prune capture after backup, preserving whole UTC partitions overlapping MAJOR+ windows.
 
-    Normalized series use the caller's cutoff (normally90days). Raw Parquet file
+    Normalized series use the caller's cutoff (normally90days). Book summaries go at
+    `book_before` (72 h, 03 §14) with no event-window exception: their daily partitions
+    ending by then are dropped whole, so the disk space is returned. Raw Parquet file
     retention is handled separately; sealed archive manifests remain immutable.
     """
     cutoff = parse_time(before)
@@ -1358,8 +1377,45 @@ async def _prune_market(self, before):
             from psycopg import sql
 
             await self.maintain_partitions(include_history=False)
+            # Hypertables (TimescaleDB) lose whole old chunks outside preserved days: the
+            # disk is returned and compressed chunks are not rewritten row by row.
+            installed = await (
+                await self._conn().execute(
+                    "SELECT to_regclass('timescaledb_information.chunks') IS NOT NULL AS installed"
+                )
+            ).fetchone()
+            hypertables = set()
+            if installed["installed"]:
+                rows = await (
+                    await self._conn().execute(
+                        "SELECT hypertable_schema||'.'||hypertable_name AS name, chunk_schema, chunk_name, "
+                        "range_start, range_end FROM timescaledb_information.chunks WHERE range_end <= %s",
+                        (cutoff,),
+                    )
+                ).fetchall()
+                dropped = 0
+                for row in rows:
+                    if row["name"] not in temporal:
+                        continue
+                    if any(row["range_start"] < end and start < row["range_end"] for start, end in spans):
+                        continue
+                    await self._conn().execute(
+                        sql.SQL("DROP TABLE {}").format(
+                            sql.Identifier(row["chunk_schema"], row["chunk_name"])
+                        )
+                    )
+                    dropped += 1
+                counts["hypertable_chunks_dropped"] = dropped
+                rows = await (
+                    await self._conn().execute(
+                        "SELECT hypertable_schema||'.'||hypertable_name AS name FROM timescaledb_information.hypertables"
+                    )
+                ).fetchall()
+                hypertables = {row["name"] for row in rows}
             await self._conn().execute("SELECT set_config('tank.retention_purge','on',true)")
             for collection, ts in temporal.items():
+                if collection in hypertables:
+                    continue
                 age = cutoff
                 args = [age]
                 clauses = []
@@ -1378,7 +1434,33 @@ async def _prune_market(self, before):
                 )
                 counts[collection] = cursor.rowcount
             await self._conn().execute("SELECT set_config('tank.retention_purge','off',true)")
+            if book_before is not None:
+                book_cutoff = parse_time(book_before)
+                cursor = await self._conn().execute(
+                    "SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
+                    "WHERE i.inhparent = 'mkt.book_summaries'::regclass"
+                )
+                dropped = 0
+                for (name,) in await cursor.fetchall():
+                    digits = name.rsplit("_", 1)[-1].lstrip("p")
+                    if not (len(digits) == 8 and digits.isdigit()):
+                        continue
+                    day_end = parse_time(f"{digits[:4]}-{digits[4:6]}-{digits[6:]}T00:00:00Z") + timedelta(
+                        days=1
+                    )
+                    if day_end <= book_cutoff:
+                        await self._conn().execute(
+                            sql.SQL("DROP TABLE {}").format(sql.Identifier("mkt", name))
+                        )
+                        dropped += 1
+                counts["mkt.book_summaries_partitions_dropped"] = dropped
         else:
+            if book_before is not None:
+                book_cutoff = parse_time(book_before)
+                for key, row in list(self._data.get("mkt.book_summaries", {}).items()):
+                    if row.get("exchange_ts") and parse_time(row["exchange_ts"]) < book_cutoff:
+                        del self._data["mkt.book_summaries"][key]
+                        self._immutable.discard(("mkt.book_summaries", key))
             for collection, ts in temporal.items():
                 age = cutoff
                 deleted = 0

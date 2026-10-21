@@ -363,23 +363,6 @@ def coverage():
     run_db(command)
 
 
-@main.group()
-def archive():
-    """Verified Binance archive retrieval."""
-
-
-@archive.command("fetch")
-@click.argument("symbol")
-@click.argument("date", type=click.DateTime(formats=["%Y-%m-%d"]))
-def archive_fetch(symbol, date):
-    async def command(repo, settings):
-        from tank.market.archive import fetch_archive
-
-        return await fetch_archive(repo, settings, symbol, date.date().isoformat())
-
-    run_db(command)
-
-
 @main.command()
 @click.argument("fixture_id")
 @click.option(

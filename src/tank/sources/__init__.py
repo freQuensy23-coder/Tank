@@ -12,7 +12,7 @@ import re
 import ssl
 from copy import deepcopy
 from pathlib import Path
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import urlsplit
 
 import certifi
 import httpx
@@ -21,6 +21,7 @@ from tank.util import iso, parse_time, sha256, utcnow
 
 from . import parsers
 from .browser import BrowserReader
+from .capture_fetch import capture_fetch, is_exchange_url
 from .rate_limits import shared_request_budgets
 from .xsensor import XSensor
 
@@ -90,33 +91,18 @@ class SourceService:
 
     async def acquire_budget(self, feed):
         host = urlsplit(feed["url"]).hostname or ""
-        provider = (
-            "sec.gov"
-            if host == "sec.gov" or host.endswith(".sec.gov")
-            else "binance.spot"
-            if host == "api.binance.com"
-            else "binance.usdm"
-            if host == "fapi.binance.com"
-            else "coinbase"
-            if host.endswith("coinbase.com")
-            else "kraken"
-            if host.endswith("kraken.com")
-            else host
-        )
+        # Exchange hosts are budgeted by tank-capture, which makes those requests.
+        provider = "sec.gov" if host == "sec.gov" or host.endswith(".sec.gov") else host
         weight = feed.get("request_weight", 1)
-        if provider in {"binance.spot", "binance.usdm"}:
-            from tank.market.rate_gate import binance_request_weight
-
-            parts = urlsplit(feed["url"])
-            weight = binance_request_weight(host, parts.path, dict(parse_qsl(parts.query)))
         for rule in self.api_limits:
-            if rule.get("provider") != provider:
+            # Exchange hosts are budgeted by tank-capture, which makes the request.
+            if rule.get("provider") != provider or is_exchange_url(feed["url"]):
                 continue
             if rule.get("tank_max_requests_per_s") is not None:
-                await shared_request_budgets.acquire(provider, rule["tank_max_requests_per_s"], 1)
+                await shared_request_budgets.acquire(provider, rule["tank_max_requests_per_s"], 1, host=host)
             if rule.get("tank_max_weight_per_min") is not None:
                 await shared_request_budgets.acquire(
-                    provider, rule["tank_max_weight_per_min"], 60, weight=weight
+                    provider, rule["tank_max_weight_per_min"], 60, weight=weight, host=host
                 )
         capacities = [
             value
@@ -129,7 +115,7 @@ class SourceService:
         ]
         per_min = min(capacities) if capacities else None
         if per_min is not None:
-            await shared_request_budgets.acquire(host, per_min, 60)
+            await shared_request_budgets.acquire(host, per_min, 60, host=host)
 
     async def fetch(self, feed, key, *, on_start=None):
         state = deepcopy(await self.repo.get("ops.source_checkpoints", key) or {})
@@ -144,12 +130,23 @@ class SourceService:
                 await self.acquire_budget(feed)
                 if on_start is not None:
                     await on_start()
-                response = await self.http.request(
-                    feed.get("method", "GET"),
-                    feed["url"],
-                    headers=headers,
-                    json=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
-                )
+                if is_exchange_url(feed["url"]):
+                    # Exchange hosts belong to tank-capture: it fetches, core reads the stored response.
+                    response = await capture_fetch(
+                        self.repo,
+                        feed.get("method", "GET"),
+                        feed["url"],
+                        headers=headers,
+                        body=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
+                        source_id=key.split(":", 1)[0],
+                    )
+                else:
+                    response = await self.http.request(
+                        feed.get("method", "GET"),
+                        feed["url"],
+                        headers=headers,
+                        json=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
+                    )
                 if response.status_code == 304:
                     return None, state
                 payload = response.content

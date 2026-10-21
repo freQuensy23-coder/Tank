@@ -72,6 +72,20 @@ Run staged targets serially. The audit configuration uses absolute paths for its
 
 ## Go assets
 
+The active exchange collector is the Go module in capture/ (Go 1.25 or later in that release line). .github/workflows/capture.yml is its authoritative CI: go vet, go test -race with a migrated disposable PostgreSQL 16 database, recorded-frame/REST parity, generated-schema drift checks, and the selected Python reader suites. Its path filters include capture/, migrations, market code/tests and uv.lock; these checks remain separate from the three general test-suite jobs.
+
+The Python integration job also prepares Go and an offline module/build cache for the actual parity and PostgreSQL wrapper tests. Before a local full integration run, install the Go version required by capture/go.mod and prepare those caches once:
+
+    export GOENV=off GOTOOLCHAIN=local
+    export GOMODCACHE="$(go env GOMODCACHE)" GOCACHE="$(go env GOCACHE)" GOPATH="$(go env GOPATH)"
+    mkdir -p capture/bin
+    (cd capture && go mod download && CGO_ENABLED=0 go build -mod=readonly -o bin/capture-parity ./cmd/capture-parity)
+    export GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly
+
+Explicit cache paths survive pytest's synthetic HOME/XDG settings. The Go child tests run without module or toolchain downloads. The parity subprocess is marked integration/process; the pure generated-schema comparison stays a unit. Missing Go/cache prerequisites fail the selected integration run.
+
+Historical bridge audit:
+
 The Go lane uses the standard testing package. All five top-level tests and ten table subtests passed offline with Go 1.25.14 and pinned gvisor-tap-vsock 0.8.7; every individual test took less than one second. The two package commands took 75.81s and 42.18s including initial compilation, separate from individual test timing. The reproducible receipt is evidence/go-lane-review.json. Running again requires an isolated prepared bridge, its pinned dependency tree, that Go toolchain, and a complete offline module cache.
 
 In the prepared bridge:

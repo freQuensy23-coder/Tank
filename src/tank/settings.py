@@ -164,7 +164,7 @@ class Settings(BaseSettings):
     logs_dir: Path | None = None
     backup_hour_utc: int = 2
     market_retention_days: int = 90
-    shutdown_grace_s: int = 30
+    shutdown_grace_s: int = 10
     _config_snapshot: Any = PrivateAttr(default=None)
     # Parsed files of the frozen snapshot, filled on first use; one dict per resolve_versions.
     _parsed_config: Any = PrivateAttr(default=None)

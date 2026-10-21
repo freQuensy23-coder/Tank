@@ -11,6 +11,7 @@ from tank.time_precision import collection_clock
 from tank.util import iso, sha256
 
 from . import parsers
+from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 
 
 async def probe_feeds(service, *, include_browser=False):
@@ -52,12 +53,22 @@ async def probe_feeds(service, *, include_browser=False):
                     payload = await service.browser.html(feed["url"])
                 else:
                     await service.acquire_budget(dict(feed, source_limits=source.get("limits", {})))
-                    response = await service.http.request(
-                        feed.get("method", "GET"),
-                        feed["url"],
-                        json=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
-                        timeout=20,
-                    )
+                    if is_exchange_url(feed["url"]):
+                        # Exchange hosts belong to tank-capture (sources/capture_fetch.py).
+                        response = await capture_fetch(
+                            service.repo,
+                            feed.get("method", "GET"),
+                            feed["url"],
+                            body=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
+                            source_id=sid,
+                        )
+                    else:
+                        response = await service.http.request(
+                            feed.get("method", "GET"),
+                            feed["url"],
+                            json=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
+                            timeout=20,
+                        )
                     result["http_status"] = response.status_code
                     result["response_content_type"] = response.headers.get("content-type")
                     payload = response.content

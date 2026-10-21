@@ -56,6 +56,50 @@ services:
     logging: *id001
     networks:
     - tank-net
+  tank-capture:
+    image: tank-capture:local
+    build:
+      context: ./capture
+      dockerfile: Dockerfile
+      args:
+        GIT_SHA: ${TANK_CAPTURE_GIT_SHA:-dev}
+    restart: unless-stopped
+    init: true
+    environment:
+      TANK_CONFIG_DIR: /config
+      TANK_CAPTURE_HEALTH_ADDR: ':8791'
+      GOMEMLIMIT: 1400MiB
+    secrets:
+    - tank_db_password
+    volumes:
+    - type: bind
+      source: ${TANK_CONFIG_PATH:-./config}
+      target: /config
+      read_only: true
+    # Hourly raw trade files (HLD §7.2), next to the rest of tank's data.
+    - tank-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+      - CMD
+      - /tank-capture
+      - healthcheck
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '3.0'
+          memory: 1536M
+        reservations:
+          memory: 256M
+    logging: *id001
+    networks:
+    - tank-net
   openma:
     image: tank-openma:85d5361f535c7221de975838dc48444e468cc02e-tank5-startup
     build:
@@ -116,7 +160,11 @@ services:
     networks:
     - tank-net
   postgres:
-    image: postgres:16
+    # PostgreSQL 16 + TimescaleDB (deploy/postgres.Dockerfile): mkt.* series are hypertables.
+    image: tank-postgres:local
+    build:
+      context: ./deploy
+      dockerfile: postgres.Dockerfile
     shm_size: 512m
     restart: unless-stopped
     environment:
@@ -145,6 +193,10 @@ services:
     - effective_cache_size=1GB
     - -c
     - max_parallel_workers_per_gather=0
+    - -c
+    - shared_preload_libraries=timescaledb
+    - -c
+    - timescaledb.telemetry_level=off
     secrets:
     - postgres_password
     - tank_db_password

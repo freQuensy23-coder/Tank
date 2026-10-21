@@ -1,0 +1,100 @@
+package capture
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"testing"
+	"time"
+
+	"github.com/freQuensy23-coder/Tank/capture/internal/normalize"
+	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
+)
+
+// After a restart every hole nobody tried yet is repaired, old or trailing; a minute a
+// repair already gave a reason for (REST could not serve it) is not paged again.
+func TestUnrepairedSkipsOnlyTriedMinutes(t *testing.T) {
+	st := newMemStore()
+	iid := "binance:spot:BTCUSDT"
+	lo := time.Date(2026, 10, 21, 10, 0, 0, 0, time.UTC)
+	hi := lo.Add(60 * time.Minute)
+	st.rows["mkt.flow_bars_1m"] = map[string]map[string]any{}
+	for m := 0; m < 60; m++ {
+		at := lo.Add(time.Duration(m) * time.Minute)
+		row := map[string]any{"instrument_id": iid, "minute_start": pytime.ISO(at), "complete": true}
+		switch {
+		case m >= 20 && m < 25: // an earlier restart's hole: no rows
+			continue
+		case m == 40: // the venue cannot serve it
+			row["complete"], row["gap_reason"] = false, BybitLimit
+		case m == 41: // a repair failed (disk full): tried again
+			row["complete"], row["gap_reason"] = false, "REST_REPAIR_INCOMPLETE"
+		case m >= 57: // this restart's downtime
+			continue
+		}
+		st.rows["mkt.flow_bars_1m"][iid+":"+pytime.ISO(at)] = row
+	}
+	s := &Service{store: st, log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	got := s.unrepaired(context.Background(), iid, lo, hi)
+	want := []span{{lo.Add(20 * time.Minute), lo.Add(25 * time.Minute)}, {lo.Add(41 * time.Minute), lo.Add(42 * time.Minute)}, {lo.Add(57 * time.Minute), hi}}
+	if len(got) != len(want) {
+		t.Fatalf("got %v", got)
+	}
+	for i := range want {
+		if !got[i].start.Equal(want[i].start) || !got[i].end.Equal(want[i].end) {
+			t.Fatalf("run %d = %v, want %v", i, got[i], want[i])
+		}
+	}
+}
+
+// A minute a repair could not prove gets its gap reason written on the stored row, identity
+// included (r128 wrote the repair projection back and every market flush failed).
+func TestRepairRecordsReasonOnFullStoredBar(t *testing.T) {
+	r := newRESTRig(t, "hyperliquid") // no REST trade history: nothing can be repaired
+	minute := r.base.Add(5 * time.Minute)
+	key := r.inst.ID + ":" + pytime.ISO(minute)
+	r.mem.rows["mkt.flow_bars_1m"] = map[string]map[string]any{key: {
+		"instrument_id": r.inst.ID, "minute_start": pytime.ISO(minute), "complete": false, "buy_qty": "1",
+	}}
+	r.s.repairInstrument(context.Background(), r.inst, minute, minute.Add(time.Minute), true)
+	if err := r.mem.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	bar := r.bar(minute)
+	if bar["gap_reason"] == nil || bar["instrument_id"] != r.inst.ID || bar["buy_qty"] != "1" {
+		t.Fatalf("bar = %v", bar)
+	}
+}
+
+type countingRaw struct{ adds, flushes int }
+
+func (c *countingRaw) Add(*normalize.Trade)  { c.adds++ }
+func (c *countingRaw) Flush(time.Time) error { c.flushes++; return nil }
+
+// A standby process (before the writer lock) captures but writes, claims and files nothing.
+func TestStandbyWritesNothingUntilLeading(t *testing.T) {
+	r := newRESTRig(t, "binance")
+	leading := make(chan struct{})
+	holding := false
+	raw := &countingRaw{}
+	r.s.opt.Leading, r.s.opt.CanWrite, r.s.opt.Raw = leading, func() bool { return holding }, raw
+	r.mem.requests = []map[string]any{{"request_id": "R1", "kind": "HTTP_FETCH", "status": "PENDING"}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if r.s.leading() || r.s.waitLeading(ctx) {
+		t.Fatal("leading before the lock")
+	}
+	r.s.flushRaw()
+	if raw.flushes != 0 {
+		t.Fatal("standby wrote trade files")
+	}
+	holding = true
+	close(leading)
+	if !r.s.leading() {
+		t.Fatal("not leading after the lock")
+	}
+	r.s.flushRaw()
+	if raw.flushes != 1 {
+		t.Fatal("leader did not write trade files")
+	}
+}
