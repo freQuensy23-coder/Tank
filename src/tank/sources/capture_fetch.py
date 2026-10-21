@@ -34,6 +34,7 @@ EXCHANGE_FETCH_HOSTS = frozenset(
     }
 )
 FETCH_BUDGET_S = 25.0
+ARCHIVE_BUDGET_S = 600.0
 FETCH_GRACE_S = 3.0
 TERMINAL = ("COMPLETE", "FAILED", "EXPIRED")
 CONDITIONAL_HEADERS = ("if-none-match", "if-modified-since")
@@ -43,22 +44,19 @@ def is_exchange_url(url):
     return (urlsplit(url).hostname or "") in EXCHANGE_FETCH_HOSTS
 
 
-async def capture_fetch(repo, method, url, *, headers=None, body=None, source_id=None, budget_s=FETCH_BUDGET_S):
-    """Ask tank-capture to fetch url; return its response, or raise httpx.TransportError."""
+async def _capture_request(repo, kind, request, budget_s):
+    """Queue a request for tank-capture and wait for its terminal row."""
     requested = utcnow()
-    request = {"method": (method or "GET").upper(), "url": url, "source_id": source_id}
-    if headers:
-        request["headers"] = {k: v for k, v in headers.items() if k.lower() not in CONDITIONAL_HEADERS}
-    if body is not None:
-        request["body"] = body
-    request_id = "CF-" + sha256({"url": url, "method": request["method"], "requested_at": iso(requested)})
+    request_id = ("CF-" if kind == "HTTP_FETCH" else "CA-") + sha256(
+        {"url": request["url"], "method": request.get("method"), "requested_at": iso(requested)}
+    )
     pending = Timestamp(None, None, "PENDING")
     await repo.put(
         "mkt.capture_requests",
         request_id,
         {
             "request_id": request_id,
-            "kind": "HTTP_FETCH",
+            "kind": kind,
             "request": request,
             "budget_s": budget_s,
             **collection_clock(requested).fields("requested_at"),
@@ -77,6 +75,19 @@ async def capture_fetch(repo, method, url, *, headers=None, body=None, source_id
         if row.get("status") in TERMINAL:
             break
         await asyncio.sleep(0.2)
+    return request_id, row
+
+
+async def capture_fetch(
+    repo, method, url, *, headers=None, body=None, source_id=None, budget_s=FETCH_BUDGET_S
+):
+    """Ask tank-capture to fetch url; return its response, or raise httpx.TransportError."""
+    request = {"method": (method or "GET").upper(), "url": url, "source_id": source_id}
+    if headers:
+        request["headers"] = {k: v for k, v in headers.items() if k.lower() not in CONDITIONAL_HEADERS}
+    if body is not None:
+        request["body"] = body
+    request_id, row = await _capture_request(repo, "HTTP_FETCH", request, budget_s)
     result = row.get("result") or {}
     http_request = httpx.Request(request["method"], url)
     if row.get("status") != "COMPLETE":
@@ -87,4 +98,19 @@ async def capture_fetch(repo, method, url, *, headers=None, body=None, source_id
     else:
         content = (result.get("body") or "").encode()
     response_headers = {"content-type": result["content_type"]} if result.get("content_type") else {}
-    return httpx.Response(int(result["status_code"]), content=content, headers=response_headers, request=http_request)
+    return httpx.Response(
+        int(result["status_code"]), content=content, headers=response_headers, request=http_request
+    )
+
+
+async def capture_archive(repo, url, *, budget_s=ARCHIVE_BUDGET_S):
+    """Ask tank-capture to store one Binance public-data archive file (data.binance.vision zip).
+
+    tank-capture checks it against the published .CHECKSUM and stores it on the shared data
+    volume; this returns {path, sha256, bytes, checksum_text}. Core reads the file, never the site.
+    """
+    request_id, row = await _capture_request(repo, "ARCHIVE_FETCH", {"url": url}, budget_s)
+    if row.get("status") != "COMPLETE":
+        reason = row.get("reason") or row.get("status") or "NO_ANSWER"
+        raise RuntimeError(f"tank-capture archive {request_id}: {reason}")
+    return row["result"]

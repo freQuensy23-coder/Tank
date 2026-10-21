@@ -169,7 +169,8 @@ func (s *Service) tokenInstruments(token string) []*venue.Instrument {
 	return out
 }
 
-// requests runs what core asks for (mkt.capture_requests): REPAIR_WINDOWS and HTTP_FETCH.
+// requests runs what core asks for (mkt.capture_requests): REPAIR_WINDOWS, HTTP_FETCH and
+// ARCHIVE_FETCH.
 func (s *Service) requests(ctx context.Context) {
 	for ctx.Err() == nil {
 		row, err := s.store.ClaimRequest(ctx, s.opt.Writer, s.clock.Now())
@@ -209,8 +210,12 @@ func (s *Service) runRequest(ctx context.Context, row map[string]any) {
 			budget = limit
 		}
 	}
-	if text(row["kind"]) == "HTTP_FETCH" {
+	switch text(row["kind"]) {
+	case "HTTP_FETCH":
 		s.runFetch(ctx, row, budget, finish)
+		return
+	case "ARCHIVE_FETCH":
+		s.runArchive(ctx, row, budget, finish)
 		return
 	}
 	start, err1 := pytime.Parse(row["start"])

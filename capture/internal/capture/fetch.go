@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"io"
 	"net/url"
 	"strings"
 	"time"
@@ -25,9 +26,11 @@ var FetchHosts = map[string]bool{
 	"api.hyperliquid.xyz": true,
 }
 
-// Fetcher sends one raw budgeted request (internal/rest.Client.Fetch).
+// Fetcher sends one raw budgeted request (internal/rest.Client.Fetch) or streams a file
+// (Download).
 type Fetcher interface {
 	Fetch(ctx context.Context, method, rawURL string, params, headers map[string]string, body any, priority int) (*rest.Fetched, error)
+	Download(ctx context.Context, rawURL string, dst io.Writer, priority int) (int, int64, error)
 }
 
 // fetchPriority admits a source fetch with live capture, ahead of backfill paging: it is one

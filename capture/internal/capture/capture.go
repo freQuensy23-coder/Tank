@@ -114,7 +114,9 @@ type Options struct {
 	Fetcher Fetcher
 	// Raw stores every print in the hourly trade files (nil: none are stored).
 	Raw RawTrades
-	Log *slog.Logger
+	// DataDir is tank's data volume: ARCHIVE_FETCH stores under DataDir/archive.
+	DataDir string
+	Log     *slog.Logger
 }
 
 // RawTrades is the hourly raw trade store (internal/rawstore).
