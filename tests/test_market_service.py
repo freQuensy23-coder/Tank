@@ -1869,3 +1869,29 @@ async def test_bybit_oi_history_fills_only_before_the_first_live_sample(setup):
     ]
     assert (await repo.get("mkt.oi_obs", "live"))["oi_native"] == "7"  # the live sample is untouched
     await service.close()
+
+
+@pytest.mark.asyncio
+async def test_instrument_loop_fetches_back_klines_lost_while_down(setup, monkeypatch):
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+    service._stop = asyncio.Event()
+    service.thresholds["base_kline_interval_s"] = 0.01
+    audits = []
+
+    async def poll_once(iid, *, derivatives=True):
+        pass
+
+    async def backfill_klines(instrument, start, end, *, include_reference=True, kind="PRE_EVENT_KLINES"):
+        audits.append((parse_time(end) - parse_time(start), include_reference, kind))
+        service._stop.set()
+
+    service.poll_once = poll_once
+    service._backfill_klines = backfill_klines
+    clock = [1000.0]
+    monkeypatch.setattr(
+        "tank.market.service.time.monotonic", lambda: clock.__setitem__(0, clock[0] + 30) or clock[0]
+    )
+    await asyncio.wait_for(service._instrument_loop(inst), 5)
+    assert audits == [(timedelta(hours=25), False, "KLINES_GAP")]
+    await service.close()

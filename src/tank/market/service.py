@@ -1779,7 +1779,9 @@ class MarketService:
                 return {"last_trade_id": point["trade_id"], "last_trade": self.flow.trade_point(point)}
         return {}
 
-    async def _backfill_klines(self, instrument, start, end, *, include_reference=True):
+    async def _backfill_klines(
+        self, instrument, start, end, *, include_reference=True, kind="PRE_EVENT_KLINES"
+    ):
         """Actual closed candles, including the close at/before a return anchor."""
         start, end = parse_time(start), parse_time(end)
         first = start.replace(second=0, microsecond=0) - timedelta(minutes=1) if include_reference else start
@@ -1813,7 +1815,7 @@ class MarketService:
                     if first <= parse_time(row["open_time"]) < last:
                         await self._store_kline(instrument, row)
             except Exception as exc:  # noqa: BLE001 - actual source failure remains explicit
-                await self._gap(instrument, "PRE_EVENT_KLINES", exc, start=lo, end=hi)
+                await self._gap(instrument, kind, exc, start=lo, end=hi)
         await self.flush_market()
         points = await observed()
         return {
@@ -2065,6 +2067,9 @@ class MarketService:
                     self._register_capture_boundaries(
                         {i["instrument_id"] for i in instruments}, cutoff, {"ts": begin}
                     )
+                # Benchmark closes first: two cheap kline reads that market context needs,
+                # which a long trade enumeration (or a restart during it) must not hold back.
+                benchmarks = await self._backfill_benchmark_klines(anchor)
                 await asyncio.gather(*(self.backfill(inst, anchor) for inst in instruments))
                 # Whatever REST enumeration left unproven, and the post-anchor windows so far.
                 try:
@@ -2078,7 +2083,6 @@ class MarketService:
                 coverage = await asyncio.gather(
                     *(self._capture_window_coverage(inst, anchor) for inst in instruments)
                 )
-                benchmarks = await self._backfill_benchmark_klines(anchor)
                 ready = bool(coverage) and all(r["complete"] for r in [*coverage, *benchmarks])
                 row.update(
                     status="COMPLETE" if ready else "PARTIAL",
@@ -4349,6 +4353,7 @@ class MarketService:
     async def _instrument_loop(self, instrument):
         iid = instrument["instrument_id"]
         deriv_due = 0
+        audit_due = time.monotonic() + 60  # after the first poll of every series
         previous_hot = False
         while not self._stop.is_set():
             started = time.monotonic()
@@ -4363,6 +4368,19 @@ class MarketService:
                 raise
             except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
                 await self._gap(instrument, "POLL", exc)
+            if time.monotonic() >= audit_due:
+                # A poll returns only the newest candles: minutes lost while this process
+                # was down or stalled are fetched back over REST (1m klines, trailing 25 h).
+                audit_due = time.monotonic() + float(self.thresholds.get("kline_audit_interval_s", 3600))
+                now = utcnow().replace(second=0, microsecond=0)
+                try:
+                    await self._backfill_klines(
+                        instrument, now - timedelta(hours=25), now, include_reference=False, kind="KLINES_GAP"
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - the next audit retries; the gap stays visible
+                    await self._gap(instrument, "KLINES_GAP", exc)
             if do_deriv:
                 deriv_due = time.monotonic() + float(
                     self.thresholds.get(
