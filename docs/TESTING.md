@@ -31,6 +31,13 @@ Resource markers allow narrower integration runs:
 
 The postgres marker requires caller-owned disposable PostgreSQL 16 databases and explicit TANK_TEST_DATABASE_URL, TANK_E2E_DATABASE_URL, or TANK_SOURCE_TEST_DATABASE_URL as used by the selected fixtures. Each database name must start with tank_test. The shared lazy PostgresTemplate helper migrates a template once per worker and opens a fresh cloned database for each non-migration repository context. Migration regressions request a blank database explicitly. Pools close before clone cleanup; the descriptor holds no live pool across event loops. Keep the credential/database safety checks intact. CI additionally prepares one immutable, UUID-named schema seed through prepare_schema_template and passes --postgres-schema-template to collection and execution. The helper verifies the tank_test_ prefix, disabled connections, zero active sessions and the exact SQL/Python fingerprint before cloning. Every case still gets a fresh database; migrated=False remains blank, and tests never drop the caller-owned seed. Without the option, the lazy per-worker migration behavior is unchanged.
 
+Before running migrations or preparing a schema seed, provision the actual tank_agent role on that caller-owned disposable cluster:
+
+    CREATE ROLE tank_agent LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE;
+    ALTER ROLE tank_agent SET default_transaction_read_only = on;
+
+These statements belong only to the isolated test cluster. The CI bootstrap in scripts/ci/prepare_postgres.py provisions this role before migrating its seed; the fixtures do not create or alter a pre-existing cluster role. A full manual integration run requires all three guarded PostgreSQL routes and the data/browser/Node/Go/Docker prerequisites below, with zero skips and zero failures. A missing prerequisite is not a completed qualification.
+
 For portable parallel integration, the operator first provisions distinct disposable databases for every worker: for example, tank_test_integration_gw0 through tank_test_integration_gwN, and matching E2E/source administration databases if those routes are used. Use the same schema/template helper as the serial tests. No database may contain production data.
 
     export TANK_TEST_DATABASE_URL='dbname=tank_test_integration_{worker} host=/path/to/isolated-pg/socket user=postgres'
@@ -123,4 +130,4 @@ Retained verification trees also contain historical unittest.TestCase checks and
 4. Finish a separate mechanical import/formatter pass and normalize remaining redundant async decorators and legacy class style. `.github/workflows/test-suite.yml` now runs three separate jobs: Python units with the JUnit timing budget, Python integration, and Node local units/contracts. The integration checker requires the exact collected case set and rejects every skip, failure or error.
 5. Standardize current standalone JavaScript tests on node:test and node:assert/strict; retain Vitest where upstream package composition requires it. Migrate real-timer cancellation cases to injected clocks while preserving their cleanup and failure behavior.
 
-The cleanup establishes commands and conventions. It does not claim every historical test now has identical style, every integration ran, or production acceptance is complete.
+The cleanup establishes commands and conventions. A green result from the current CI qualifies its collected Python, Go and Node checks. Historical upstream checks, native VM verification and production acceptance are separate qualifications; historical assets may retain different styles.

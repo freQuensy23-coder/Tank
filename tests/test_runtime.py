@@ -745,7 +745,7 @@ async def test_terminal_delivery_reconciliation_covers_expiry_restart_and_valida
 @pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_status", ["PARTIAL", "FAILED"])
-async def test_real_capture_first_truth_uses_bounded_incomplete_then_terminal_history(
+async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_history(
     tmp_path, terminal_status, monkeypatch
 ):
     from datetime import timedelta
@@ -759,23 +759,59 @@ async def test_real_capture_first_truth_uses_bounded_incomplete_then_terminal_hi
 
     monkeypatch.setattr(runtime_module, "CAPTURE_WAIT_S", 0.02)
 
-    class CaptureRepository(MemoryRepository):
-        def __init__(self):
-            super().__init__()
-            self.started = asyncio.Event()
-            self.release = asyncio.Event()
+    # The Go process owns acquisition; this worker exercises its durable boundary.
+    repo = MemoryRepository()
+    capture_started, release_capture, stop_capture = (asyncio.Event() for _ in range(3))
+    requests = []
 
-        async def put_market_batch(self, collection, rows, **kwargs):
-            rows = list(rows)
-            result = await super().put_market_batch(collection, rows, **kwargs)
-            if collection == "mkt.backfill_runs" and any(row["status"] == "RUNNING" for row in rows):
-                self.started.set()
-                await self.release.wait()
-                if terminal_status == "FAILED":
-                    raise RuntimeError("Synthetic capture persistence failure")
-            return result
+    async def external_capture_worker():
+        claimed = None
+        while not stop_capture.is_set():
+            if claimed is None:
+                pending = await repo.list("mkt.backfill_runs", filters={"status": "PENDING"})
+                if pending:
+                    (claimed,) = pending
+                    assert claimed["event_id"] == "e" and claimed["token_id"] == "T"
+                    assert claimed["anchor"] == anchor
+                    await repo.put_market_batch(
+                        "mkt.backfill_runs",
+                        [{**claimed, "status": "RUNNING"}],
+                        keys=[claimed["backfill_id"]],
+                    )
+                    capture_started.set()
+            if claimed is not None and release_capture.is_set():
+                await repo.put_market_batch(
+                    "mkt.backfill_runs",
+                    [
+                        {
+                            **claimed,
+                            "status": terminal_status,
+                            "reason": "SYNTHETIC_EXTERNAL_CAPTURE_TERMINAL",
+                            "finished_at": iso(),
+                            "finished_at_prec": "COLLECTION_ONLY",
+                        }
+                    ],
+                    keys=[claimed["backfill_id"]],
+                )
+                claimed = None
+            for request in await repo.list("mkt.capture_requests", filters={"status": "PENDING"}):
+                assert request["kind"] == "REPAIR_WINDOWS" and request["token_id"] == "T"
+                requests.append(request)
+                await repo.put_market_batch(
+                    "mkt.capture_requests",
+                    [
+                        {
+                            **request,
+                            "status": "COMPLETE",
+                            "result": {"instruments": {}},
+                            "finished_at": iso(),
+                            "finished_at_prec": "COLLECTION_ONLY",
+                        }
+                    ],
+                    keys=[request["request_id"]],
+                )
+            await asyncio.sleep(0.001)
 
-    repo = CaptureRepository()
     now = utcnow()
     anchor = iso(now - timedelta(hours=1))
     await repo.put("evt.events", "e", {"event_id": "e", "known_to_us_at": anchor, "public_at": anchor})
@@ -810,9 +846,8 @@ async def test_real_capture_first_truth_uses_bounded_incomplete_then_terminal_hi
             .eval_conditions,
         }
         runtime.active_jobs = set()
-        # Actual durable producer, held at persisted RUNNING before acquisition.
         await market._schedule_event_backfill("e", "T", anchor)
-        await asyncio.wait_for(repo.started.wait(), 1)
+        capture_task = asyncio.create_task(external_capture_worker())
         job = await repo.enqueue(
             "RUN_MARKET_TRUTH",
             {"event_id": "e", "token_id": "T", "cutoff": iso(now - timedelta(minutes=1))},
@@ -822,6 +857,7 @@ async def test_real_capture_first_truth_uses_bounded_incomplete_then_terminal_hi
         stop = asyncio.Event()
         worker = asyncio.create_task(runtime.worker(stop))
         try:
+            await asyncio.wait_for(capture_started.wait(), 1)
             async with asyncio.timeout(3):
                 while (await repo.get("ops.jobs", job["job_id"]))["status"] != "DONE":
                     await asyncio.sleep(0.01)
@@ -833,7 +869,7 @@ async def test_real_capture_first_truth_uses_bounded_incomplete_then_terminal_hi
                 first["result"]["detail"]["capture_status"]["reason"] == "BOUNDED_PREREQUISITE_WAIT_EXPIRED"
             )
             assert first["result"]["detail"]["capture_status"]["bounded_wait_s"] >= 0.02
-            assert not repo.release.is_set()
+            assert not release_capture.is_set()
             truth.assess.assert_awaited_once()
             # Another anchor must not change this event's actual pending status.
             await repo.put(
@@ -849,7 +885,7 @@ async def test_real_capture_first_truth_uses_bounded_incomplete_then_terminal_hi
                 },
             )
             assert (await market.capture_readiness("e", "T", anchor=anchor))["status"] == "RUNNING"
-            repo.release.set()
+            release_capture.set()
             async with asyncio.timeout(3):
                 while (await market.capture_readiness("e", "T", anchor=anchor))["status"] != terminal_status:
                     await asyncio.sleep(0.01)
@@ -866,10 +902,23 @@ async def test_real_capture_first_truth_uses_bounded_incomplete_then_terminal_hi
             assert done["result"]["data_confidence"]["class"] == "LOW"
             assert done["result"]["detail"]["capture_status"]["status"] == terminal_status
             assert (await repo.get("ops.jobs", job["job_id"]))["result"] == first["result"]
+            assert len(requests) == 2
+            for request, cutoff in zip(requests, (iso(now - timedelta(minutes=1)), iso(now))):
+                assert request["end"] == cutoff
+                assert request["start"] == iso(
+                    (now - timedelta(hours=1) - runtime_module.REPAIR_LOOKBACK).replace(
+                        second=0, microsecond=0
+                    )
+                )
+                assert float(request["budget_s"]) == runtime_module.REPAIR_BUDGET_S
+                assert (await repo.get("mkt.capture_requests", request["request_id"]))["status"] == "COMPLETE"
+            assert requests[0]["request_id"] != requests[1]["request_id"]
         finally:
             stop.set()
-            repo.release.set()
+            release_capture.set()
             await worker
+            stop_capture.set()
+            await capture_task
             await market.close()
 
 

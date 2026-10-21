@@ -10,6 +10,30 @@ from tank.sources import SourceService, parsers
 from tank.util import new_id, sha256
 
 
+@pytest.fixture
+def collector_http(monkeypatch):
+    """Use each test's HTTP fixture as the external collector response boundary.
+
+    SourceService still chooses capture_fetch, parses responses and persists its
+    checkpoints/items/raw evidence. Durable capture RPC is tested separately in
+    test_external_capture.py and test_fetch_page_deadline.py.
+    """
+    from tank.sources.capture_fetch import CONDITIONAL_HEADERS, is_exchange_url
+
+    def bind(http):
+        async def fetch(repo, method, url, *, headers=None, body=None, source_id=None, budget_s=None):
+            assert is_exchange_url(url)
+            headers = {
+                key: value for key, value in (headers or {}).items()
+                if key.lower() not in CONDITIONAL_HEADERS
+            }
+            return await http.request(method, url, headers=headers, json=body)
+
+        monkeypatch.setattr("tank.sources.capture_fetch", fetch)
+
+    return bind
+
+
 def captured(svc, sid, item, payload=b"<html>source evidence</html>", observed_at="2026-10-16T12:00:00Z"):
     """An item as the poller hands it to ingest: raw payload already stored under its item_id."""
     item_id = new_id("item")
@@ -238,7 +262,7 @@ async def test_raw_first_dedup_and_conditional_get(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_raw_stored_only_for_captured_items_across_repeated_polls(tmp_path):
+async def test_raw_stored_only_for_captured_items_across_repeated_polls(tmp_path, collector_http):
     """02 §7.2: an unchanged feed or instrument snapshot leaves no raw file behind."""
     phase = [0]
 
@@ -256,6 +280,7 @@ async def test_raw_stored_only_for_captured_items_across_repeated_polls(tmp_path
         return httpx.Response(200, content=RSS)
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    collector_http(http)
     repo = Repo()
     sources = [
         {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]},
@@ -350,7 +375,7 @@ def test_binance_rich_document():
 
 
 @pytest.mark.asyncio
-async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path):
+async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path, collector_http):
     phase = [0]
     calls = []
 
@@ -375,6 +400,7 @@ async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path):
         )
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    collector_http(http)
     repo = Repo()
     source = {
         "source_id": "S14",
@@ -1201,7 +1227,7 @@ def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_s09_seen_articles_do_not_refetch_detail(tmp_path):
+async def test_s09_seen_articles_do_not_refetch_detail(tmp_path, collector_http):
     calls = []
 
     def handle(request):
@@ -1222,6 +1248,7 @@ async def test_s09_seen_articles_do_not_refetch_detail(tmp_path):
         )
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    collector_http(http)
     repo = Repo()
     svc = SourceService(
         repo,
@@ -1353,7 +1380,7 @@ async def test_disabled_x_never_reads_network_profile_or_account_list(tmp_path, 
 
 
 @pytest.mark.asyncio
-async def test_binance_source_discovery_charges_verified_shared_market_weights(tmp_path, monkeypatch):
+async def test_binance_source_discovery_leaves_shared_market_weights_to_capture(tmp_path, monkeypatch):
     import tank.sources as module
     from tank.settings import Settings
 
@@ -1365,12 +1392,15 @@ async def test_binance_source_discovery_charges_verified_shared_market_weights(t
     monkeypatch.setattr(module.shared_request_budgets, "acquire", acquire)
     service = SourceService(Repo(), Settings(data_dir=tmp_path))
     try:
-        await service.acquire_budget({"url": "https://api.binance.com/api/v3/exchangeInfo"})
-        await service.acquire_budget({"url": "https://fapi.binance.com/fapi/v1/exchangeInfo"})
-        assert ("binance.spot", 3000, 60, 20) in acquired
-        assert ("binance.usdm", 1200, 60, 1) in acquired
-        with pytest.raises(ValueError, match="Unconfigured Binance request weight"):
-            await service.acquire_budget({"url": "https://api.binance.com/unconfigured-api-path"})
+        # Actual Fetch weights and strict API refusal are exercised at their Go
+        # owner in capture/internal/rest/source_discovery_regression_test.go.
+        for url in (
+            "https://api.binance.com/api/v3/exchangeInfo",
+            "https://fapi.binance.com/fapi/v1/exchangeInfo",
+            "https://api.binance.com/unconfigured-api-path",
+        ):
+            await service.acquire_budget({"url": url})
+        assert acquired == []  # Core cannot double-spend the collector's ledger.
     finally:
         await service.close()
 
@@ -1653,7 +1683,7 @@ def test_wire_timestamp_precision_survives_normalization():
 
 
 @pytest.mark.asyncio
-async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path):
+async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path, collector_http):
     phase = ["Trading"]
     requests = []
 
@@ -1686,6 +1716,7 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path):
         ],
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        collector_http(http)
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         await svc.poll_once("S14")
         phase[0] = "Settling"
@@ -1842,7 +1873,7 @@ async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_fi
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source_id", ["S03", "S09", "S24"])
-async def test_json_discovery_burst_reads_every_page_until_durable_boundary(tmp_path, source_id):
+async def test_json_discovery_burst_reads_every_page_until_durable_boundary(tmp_path, source_id, collector_http):
     import re
 
     phase = [0]
@@ -1933,6 +1964,7 @@ async def test_json_discovery_burst_reads_every_page_until_durable_boundary(tmp_
     source = {"source_id": source_id, "feeds": [feed]}
     repo = Repo()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        collector_http(http)
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         assert (await svc.poll_once(source_id))["status"] == "HEALTHY"
         assert (await repo.get("ops.source_checkpoints", source_id + ":0"))["discovery_checkpoint"] == "1"
@@ -2289,7 +2321,7 @@ async def test_malformed_index_entry_does_not_starve_valid_sibling_or_advance_va
 
 
 @pytest.mark.asyncio
-async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidence(tmp_path, monkeypatch):
+async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidence(tmp_path, monkeypatch, collector_http):
     from datetime import timedelta
     from pathlib import Path
 
@@ -2334,6 +2366,7 @@ async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidenc
     }
     repo = Repo()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        collector_http(http)
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         await svc.poll_once("S14")
         phase[0] = 1
@@ -2411,7 +2444,7 @@ async def test_long_history_catchup_refreshes_current_head_at_feed_cadence(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_coinbase_trading_restriction_change_emits_item_without_status_enum_change(tmp_path):
+async def test_coinbase_trading_restriction_change_emits_item_without_status_enum_change(tmp_path, collector_http):
     restricted = [False]
     source = {
         "source_id": "S14",
@@ -2445,6 +2478,7 @@ async def test_coinbase_trading_restriction_change_emits_item_without_status_enu
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        collector_http(http)
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         assert (await svc.poll_once("S14"))["items"] == 0
         restricted[0] = True
@@ -2457,7 +2491,7 @@ async def test_coinbase_trading_restriction_change_emits_item_without_status_enu
 
 
 @pytest.mark.asyncio
-async def test_new_coinbase_flag_observation_does_not_fabricate_historical_status_change(tmp_path):
+async def test_new_coinbase_flag_observation_does_not_fabricate_historical_status_change(tmp_path, collector_http):
     flag = [True]
     source = {
         "source_id": "S14",
@@ -2486,6 +2520,7 @@ async def test_new_coinbase_flag_observation_does_not_fabricate_historical_statu
             lambda request: httpx.Response(200, json=[dict(original, cancel_only=flag[0])])
         )
     ) as http:
+        collector_http(http)
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         assert (await svc.poll_once("S14"))["items"] == 0
         assert (await repo.get("ops.source_checkpoints", "S14:0"))["instrument_snapshot_schema_version"] == 2
@@ -2688,7 +2723,7 @@ def test_binance_observed_child_tree_preserves_text_not_metadata():
 
 
 @pytest.mark.asyncio
-async def test_binance_empty_body_pending_recovers_after_restart(tmp_path, monkeypatch):
+async def test_binance_empty_body_pending_recovers_after_restart(tmp_path, monkeypatch, collector_http):
     from copy import deepcopy
     from pathlib import Path
 
@@ -2725,6 +2760,7 @@ async def test_binance_empty_body_pending_recovers_after_restart(tmp_path, monke
     parser = parsers.binance_body
     monkeypatch.setattr(parsers, "binance_body", lambda _: "")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        collector_http(http)
         first = SourceService(repo, cfg, http=http)
         assert (await first.poll_once("S09"))["status"] == "DEGRADED"
         before = deepcopy(await repo.get("ops.source_checkpoints", "S09:0"))
@@ -2919,7 +2955,7 @@ async def test_poll_clears_stale_article_errors(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_instrument_snapshot_written_only_when_it_changes(tmp_path):
+async def test_instrument_snapshot_written_only_when_it_changes(tmp_path, collector_http):
     status = ["TRADING"]
 
     def handle(request):
@@ -2948,6 +2984,7 @@ async def test_instrument_snapshot_written_only_when_it_changes(tmp_path):
         ],
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        collector_http(http)
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         for _ in range(3):
             await svc.poll_once("S14")

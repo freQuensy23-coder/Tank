@@ -244,7 +244,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
         async with httpx.AsyncClient() as http:
             market = MarketService(repo, settings, http=http)
             monkeypatch.setattr(market, "snapshot", forbidden)
-            monkeypatch.setattr(market, "_flush_flow", forbidden)
+            monkeypatch.setattr(market, "_put", forbidden)
             monkeypatch.setattr(market, "flush_market", forbidden)
             truth = MarketTruthService(repo, settings, market)
             ordinary = [

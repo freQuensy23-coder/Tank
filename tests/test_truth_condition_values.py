@@ -298,7 +298,7 @@ async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_wr
     async with httpx.AsyncClient() as http:
         market = MarketService(repo, settings, http=http)
         monkeypatch.setattr(market, "snapshot", forbidden)
-        monkeypatch.setattr(market, "_flush_flow", forbidden)
+        monkeypatch.setattr(market, "_put", forbidden)
         monkeypatch.setattr(market, "flush_market", forbidden)
         truth = module.MarketTruthService(repo, settings, market)
         req = [

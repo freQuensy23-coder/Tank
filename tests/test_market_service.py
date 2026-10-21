@@ -171,7 +171,7 @@ async def test_fundamentals_use_registered_slugs_only_and_partial_holders_revenu
 async def test_market_transport_and_recursive_metadata_never_persist_api_key(setup, secret_name):
     from tank.market.supply import SupplyCapture
 
-    repo, settings, inst = setup
+    repo, settings, _inst = setup
     secret = "secret-test-provider-key"
     setattr(settings, secret_name, secret)
 
@@ -195,9 +195,13 @@ async def test_market_transport_and_recursive_metadata_never_persist_api_key(set
             }
         ],
     )
-    assert secret not in str(await repo.list("mkt.supply_obs"))
-    await service._raw(inst, "sensitive_response", {"nested": [{"error": secret}]})
     await service.flush_market()
+    persisted = await repo.list("mkt.supply_obs")
+    assert len(persisted) == 1
+    assert secret not in str(persisted)
+    assert persisted[0]["coverage_errors"] == [
+        {"reason": "nested url?apikey=[REDACTED]", "context": {"key": "[REDACTED]"}}
+    ]
     assert not (settings.data_dir / "raw/market_frames").exists()
     await http.aclose()
 
@@ -837,11 +841,14 @@ async def test_snapshot_never_queues_behind_a_running_flush(setup):
         return await real(**kwargs)
 
     service.flush_market = counted
-    async with service._market_flush_lock:  # another task is flushing (and may wait for a connection)
-        await asyncio.wait_for(service.snapshot(inst["token_id"], utcnow()), 10)
+    # Capture owns exchange writes; this reader must never flush, with or without
+    # a concurrent Python fundamentals flush.
+    async with service._market_flush_lock:
+        locked = await asyncio.wait_for(service.snapshot(inst["token_id"], utcnow()), 1)
     assert flushes == []
-    await service.snapshot(inst["token_id"], utcnow())
-    assert len(flushes) == 1
+    unlocked = await service.snapshot(inst["token_id"], utcnow())
+    assert flushes == []
+    assert locked["token_id"] == unlocked["token_id"] == inst["token_id"]
     await service.close()
 
 
@@ -935,43 +942,6 @@ async def test_reaction_snapshot_reads_books_and_tickers_only_at_the_window_boun
     assert snapshot["tickers"] and all(inside(parse_time(t["ts"])) for t in snapshot["tickers"])
     full = await service.snapshot(inst["token_id"], iso(cutoff), anchor={"type": "T1", "ts": iso(anchor)})
     assert len(full["books"]) > 10 * len(snapshot["books"])
-    await http.aclose()
-
-
-@pytest.mark.asyncio
-async def test_live_bars_flush_ahead_of_a_large_backfill_batch(setup):
-    from tank.market import service as service_module
-
-    repo, settings, _inst = setup
-    http = httpx.AsyncClient()
-    service = MarketService(repo, settings, http=http)
-    service._pending_market = {
-        "mkt.klines_1m": {f"k{i}": {"i": i} for i in range(service_module.FLUSH_ROWS * 2 + 1)},
-        "mkt.tickers_24h": {"t0": {"t": 0}},
-    }
-    writes = []
-
-    async def put(collection, records, keys=None):
-        writes.append((collection, len(records)))
-        if len(writes) == 2:  # a live bar closes while the first kline chunk is written
-            service._pending_market.setdefault("mkt.flow_bars_1m", {})["f0"] = {"f": 0}
-        if collection == "mkt.klines_1m" and len(writes) == 5:
-            raise RuntimeError("pool timeout")
-        return records
-
-    service.repo = type("Repo", (), {"put_market_batch": staticmethod(put)})()
-    with pytest.raises(RuntimeError):
-        await service.flush_market(raw=False)
-    rows = service_module.FLUSH_ROWS
-    assert writes == [
-        ("mkt.tickers_24h", 1),
-        ("mkt.klines_1m", rows),
-        ("mkt.flow_bars_1m", 1),
-        ("mkt.klines_1m", rows),
-        ("mkt.klines_1m", 1),
-    ]
-    assert list(service._pending_market) == ["mkt.klines_1m"]
-    assert list(service._pending_market["mkt.klines_1m"]) == [f"k{rows * 2}"]
     await http.aclose()
 
 
@@ -1091,10 +1061,14 @@ async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewr
     counted.clear()
     assert (await restarted._series_counts([iid], start, utcnow(), iso()))[iid] == 16
     assert counted == [(today - timedelta(days=2), today - timedelta(days=1))]
-    # A kline write that lands evicts its day again.
-    restarted._pending_market = {"mkt.klines_1m": {"k": kline(today - timedelta(days=1), iso())}}
-    await restarted.flush_market(raw=False)
+    # A newly recorded capture row is detected by the reader's external-write
+    # poll, rather than by a retired in-process exchange flush.
+    checked = utcnow()
+    appended = today - timedelta(days=1) + timedelta(minutes=10)
+    await repo.put_market_batch("mkt.klines_1m", [kline(appended, iso())], keys=[iid + ":" + iso(appended)])
+    await restarted._evict_recorded_days(checked)
     assert (iid, today - timedelta(days=1)) not in restarted._kline_day_counts
+    assert (await restarted._series_counts([iid], start, utcnow(), iso()))[iid] == 17
 
 
 @pytest.mark.asyncio

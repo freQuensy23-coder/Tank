@@ -292,3 +292,16 @@ async def test_real_postgres_loader_to_condition_compute_selective_read_footprin
     assert result["spot"]["W15M"]["direction"] == "BUY"
     assert {collection for collection, _ in calls} == {"mkt.flow_bars_1m"}
     assert calls[0][1]["start"] == start
+
+
+@pytest.mark.process
+@pytest.mark.asyncio
+async def test_real_go_writer_live_chunks_preempt_backfill_and_retry_only_failed_tail(
+    postgres_repo, capture_store_binary
+):
+    await run_go_producer(
+        capture_store_binary,
+        postgres_repo,
+        "TestWriterLiveChunksAndFailureRetry",
+        new_id("PG-LIVE-WRITER"),
+    )
