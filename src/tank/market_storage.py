@@ -784,18 +784,24 @@ async def iter_market_projection(
             )
             async with self.transaction():
                 raw = await (await self._conn().execute(query, [*args, batch_size])).fetchall()
-            page = []
-            for row in raw:
-                result = {}
-                for requested, field in selected.items():
-                    value = row[requested]
-                    kind = columns.get(field)
-                    if value is not None and kind == "timestamptz":
-                        value = iso(value)
-                    elif value is not None and kind == "numeric":
-                        value = str(value)
-                    result[requested] = value
-                page.append((row["_cursor_time"], row["_cursor_key"], result))
+
+            def convert(raw=raw):
+                page = []
+                for row in raw:
+                    result = {}
+                    for requested, field in selected.items():
+                        value = row[requested]
+                        kind = columns.get(field)
+                        if value is not None and kind == "timestamptz":
+                            value = iso(value)
+                        elif value is not None and kind == "numeric":
+                            value = str(value)
+                        result[requested] = value
+                    page.append((row["_cursor_time"], row["_cursor_key"], result))
+                return page
+
+            # A long page is converted in a worker thread (r117: 90 days of minutes on the loop).
+            page = await asyncio.to_thread(convert) if len(raw) > YIELD_ROWS else convert()
         else:
             page = []
             async with self.transaction():
@@ -1020,8 +1026,15 @@ async def sampled_market_history(
     )
     args = [instrument_ids, start, end]
     async with repo.transaction():
-        rows = await (await repo._conn().execute(query, args)).fetchall()
-    return sorted((decode(collection, row) for row in rows), key=lambda r: r[time_field])
+        cursor = _json_as_text(repo._conn().cursor())
+        await cursor.execute(query, args)
+        rows = await cursor.fetchall()
+    # JSON and typed decode in a worker thread (r117: 4.4% of the loop in reaction snapshots).
+    return await asyncio.to_thread(
+        lambda: sorted(
+            (decode(collection, _load_json(collection, row)) for row in rows), key=lambda r: r[time_field]
+        )
+    )
 
 
 async def market_range_by_instrument(
