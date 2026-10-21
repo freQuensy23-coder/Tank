@@ -1,0 +1,330 @@
+name: Docker CI comparison
+
+# Benchmark only: same source and checks, different recipes. The registration PR
+# runs before; workflow_dispatch selects the second after run.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/docker-ci-comparison.yml
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: Recipe variant; source and verification remain fixed
+        type: choice
+        required: true
+        default: after
+        options: [before, after]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-ci-comparison-${{ github.ref }}-${{ inputs.variant || 'before' }}
+  cancel-in-progress: false
+
+env:
+  UV_FROZEN: "1"
+  UV_CACHE_DIR: /tmp/tank-uv-comparison-${{ github.run_id }}-${{ github.run_attempt }}
+  BEFORE_REF: c9d2ced6cefcfc3e6b26cfccc2b0aa0e634caa81
+  AFTER_REF: fdddf452f21d6e4871b32aa7b3809426730929b1
+  BENCHMARK_VARIANT: ${{ inputs.variant || 'before' }}
+  BENCHMARK_INPUTS: scripts/ci/docker-benchmark-inputs.json
+  TANK_BENCHMARK_CACHE_SCOPE: comparison-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.variant || 'before' }}-${{ github.job }}
+
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    env:
+      TANK_TEST_DATABASE_URL: postgresql://postgres@localhost:5432/tank_test
+      GOCACHE: /tmp/tank-go-build-${{ github.run_id }}-${{ github.run_attempt }}
+      GOMODCACHE: /tmp/tank-go-mod-${{ github.run_id }}-${{ github.run_attempt }}
+    services:
+      postgres:
+        image: postgres:16-bookworm@sha256:d81f7b51697014367236d07ec58b54153fc28f828b72bf247fe5c7487520bcb0
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fdddf452f21d6e4871b32aa7b3809426730929b1
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: capture/go.mod
+          cache-dependency-path: capture/go.sum
+          cache: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.5"
+          python-version: "3.12"
+          enable-cache: false
+      - name: Migrated test database
+        run: |
+          uv sync
+          uv run python -c "import psycopg; psycopg.connect('postgresql://postgres@localhost:5432/postgres', autocommit=True).execute('CREATE DATABASE tank_test')"
+          TANK_DATABASE_URL="$TANK_TEST_DATABASE_URL" TANK_DATA_DIR="$RUNNER_TEMP/tank-data" uv run tank db migrate
+      - name: go vet
+        working-directory: capture
+        run: go vet ./...
+      - name: go test
+        working-directory: capture
+        run: go test ./...
+      - name: Record verification identity
+        if: always()
+        env:
+          VERIFICATION_KIND: go
+          VERIFICATION_STATUS: ${{ job.status }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/verification-results"
+          python3 - <<'PYTHON'
+          import json
+          import os
+          from pathlib import Path
+          result = {
+              "kind": os.environ["VERIFICATION_KIND"],
+              "status": os.environ["VERIFICATION_STATUS"],
+              "variant": os.environ["BENCHMARK_VARIANT"],
+              "source_ref": os.environ["AFTER_REF"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "timing_source": "GitHub Actions run and job started_at/completed_at",
+          }
+          Path(os.environ["RUNNER_TEMP"], "verification-results", "identity.json").write_text(
+              json.dumps(result, indent=2) + "\n"
+          )
+          PYTHON
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: comparison-capture-go-${{ env.BENCHMARK_VARIANT }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/verification-results/
+          if-no-files-found: error
+          retention-days: 14
+
+  parity:
+    runs-on: ubuntu-24.04
+    env:
+      TANK_TEST_DATABASE_URL: postgresql://postgres@localhost:5432/tank_test
+      GOCACHE: /tmp/tank-go-build-${{ github.run_id }}-${{ github.run_attempt }}
+      GOMODCACHE: /tmp/tank-go-mod-${{ github.run_id }}-${{ github.run_attempt }}
+    services:
+      postgres:
+        image: postgres:16-bookworm@sha256:d81f7b51697014367236d07ec58b54153fc28f828b72bf247fe5c7487520bcb0
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fdddf452f21d6e4871b32aa7b3809426730929b1
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: capture/go.mod
+          cache-dependency-path: capture/go.sum
+          cache: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.9.5"
+          python-version: "3.12"
+          enable-cache: false
+      - run: uv sync --extra dev
+      - name: Build capture-parity
+        working-directory: capture
+        run: go build -o bin/capture-parity ./cmd/capture-parity
+      - name: Parity with the Python reference
+        run: uv run python scripts/capture/parity.py --check --go capture/bin/capture-parity
+      - name: REST poll parity with the Python reference
+        run: uv run python scripts/capture/rest_parity.py --check --go capture/bin/capture-parity
+      - name: Go schema copy matches tank.market_schema
+        run: uv run python scripts/capture/gen_schema.py --check
+      - name: Test database
+        run: uv run python -c "import psycopg; psycopg.connect('postgresql://postgres@localhost:5432/postgres', autocommit=True).execute('CREATE DATABASE tank_test')"
+      - name: Capture tests
+        run: uv run pytest -q tests/test_capture_parity.py tests/test_capture_shadow_compare.py
+      - name: Record verification identity
+        if: always()
+        env:
+          VERIFICATION_KIND: parity
+          VERIFICATION_STATUS: ${{ job.status }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/verification-results"
+          python3 - <<'PYTHON'
+          import json
+          import os
+          from pathlib import Path
+          result = {
+              "kind": os.environ["VERIFICATION_KIND"],
+              "status": os.environ["VERIFICATION_STATUS"],
+              "variant": os.environ["BENCHMARK_VARIANT"],
+              "source_ref": os.environ["AFTER_REF"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "timing_source": "GitHub Actions run and job started_at/completed_at",
+          }
+          Path(os.environ["RUNNER_TEMP"], "verification-results", "identity.json").write_text(
+              json.dumps(result, indent=2) + "\n"
+          )
+          PYTHON
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: comparison-capture-parity-${{ env.BENCHMARK_VARIANT }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/verification-results/
+          if-no-files-found: error
+          retention-days: 14
+
+  images:
+    name: Full image (${{ matrix.kind }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [tank, capture, sandbox]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check cold-build disk capacity
+        run: |
+          task_docker_root=$(docker info --format '{{.DockerRootDir}}')
+          python3 - "$task_docker_root" "$RUNNER_TEMP" <<'PYTHON'
+          import shutil
+          import sys
+          for path in sys.argv[1:]:
+              available = shutil.disk_usage(path).free
+              print(f"{path}: {available:,} bytes available")
+              assert available >= 12_000_000_000, "Cold comparison requires 12 GB free"
+          PYTHON
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build and smoke full image from isolated archived context
+        run: |
+          python3 scripts/ci/docker-benchmark.py \
+            --kind "${{ matrix.kind }}" \
+            --variant "$BENCHMARK_VARIANT" \
+            --before-ref "$BEFORE_REF" \
+            --after-ref "$AFTER_REF" \
+            --inputs-file "$BENCHMARK_INPUTS" \
+            --output "$RUNNER_TEMP/comparison-results"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: comparison-${{ matrix.kind }}-${{ env.BENCHMARK_VARIANT }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/comparison-results/*.json
+            ${{ runner.temp }}/comparison-results/before/*.json
+            ${{ runner.temp }}/comparison-results/after/*.json
+            ${{ runner.temp }}/comparison-results/**/*.stdout
+            ${{ runner.temp }}/comparison-results/**/*.stderr
+            ${{ runner.temp }}/comparison-results/**/*.command.json
+            ${{ runner.temp }}/comparison-results/**/result.json
+            ${{ runner.temp }}/comparison-results/**/metadata.json
+            !${{ runner.temp }}/comparison-results/**/tree/**
+            !${{ runner.temp }}/comparison-results/**/context/**
+            !${{ runner.temp }}/comparison-results/**/tank-source/**
+            !${{ runner.temp }}/comparison-results/**/runtime/**
+            !${{ runner.temp }}/comparison-results/**/upstream/**
+            !${{ runner.temp }}/comparison-results/**/frozen-inputs/**
+            !${{ runner.temp }}/comparison-results/**/context-probe/export/**
+          if-no-files-found: error
+          retention-days: 14
+
+  focused:
+    name: Focused deployment tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.5"
+          python-version: "3.12"
+          enable-cache: false
+      - name: Run the same 53 focused deployment and recipe tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/focused-results"
+          uv run --frozen --extra dev pytest -q \
+            tests/test_deploy.py tests/test_openma_deployment_composer.py \
+            tests/test_openma_browser_worker.py tests/test_openma_docker_build.py \
+            --junitxml="$RUNNER_TEMP/focused-results/junit.xml"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: comparison-focused-${{ env.BENCHMARK_VARIANT }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/focused-results/
+          if-no-files-found: error
+          retention-days: 14
+
+  openma:
+    name: Full OpenMA image
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check cold-build disk capacity
+        run: |
+          task_docker_root=$(docker info --format '{{.DockerRootDir}}')
+          python3 - "$task_docker_root" "$RUNNER_TEMP" <<'PYTHON'
+          import shutil
+          import sys
+          for path in sys.argv[1:]:
+              available = shutil.disk_usage(path).free
+              print(f"{path}: {available:,} bytes available")
+              assert available >= 12_000_000_000, "Cold comparison requires 12 GB free"
+          PYTHON
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Download exact official native runtime
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/boxlite-ai/boxlite/releases/download/v0.10.6/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz \
+            --output "$RUNNER_TEMP/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz"
+          echo "241171320f008c86d2f4af95ed6690edf93417ade956a196b2c3e366e4857e1b  $RUNNER_TEMP/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz" | sha256sum --check -
+      - name: Build and smoke full generated OpenMA image
+        run: |
+          python3 scripts/ci/openma-build-benchmark.py \
+            --variant "$BENCHMARK_VARIANT" \
+            --before-ref "$BEFORE_REF" \
+            --after-ref "$AFTER_REF" \
+            --inputs-file "$BENCHMARK_INPUTS" \
+            --official-archive "$RUNNER_TEMP/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz" \
+            --shim-archive scripts/ci/benchmark-assets/qualified-shim-amd64.tar.gz \
+            --output "$RUNNER_TEMP/comparison-results"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: comparison-openma-${{ env.BENCHMARK_VARIANT }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/comparison-results/*.json
+            ${{ runner.temp }}/comparison-results/before/*.json
+            ${{ runner.temp }}/comparison-results/after/*.json
+            ${{ runner.temp }}/comparison-results/**/*.stdout
+            ${{ runner.temp }}/comparison-results/**/*.stderr
+            ${{ runner.temp }}/comparison-results/**/*.command.json
+            ${{ runner.temp }}/comparison-results/**/result.json
+            ${{ runner.temp }}/comparison-results/**/metadata.json
+            !${{ runner.temp }}/comparison-results/**/tree/**
+            !${{ runner.temp }}/comparison-results/**/context/**
+            !${{ runner.temp }}/comparison-results/**/tank-source/**
+            !${{ runner.temp }}/comparison-results/**/runtime/**
+            !${{ runner.temp }}/comparison-results/**/upstream/**
+            !${{ runner.temp }}/comparison-results/**/frozen-inputs/**
+            !${{ runner.temp }}/comparison-results/**/context-probe/export/**
+          if-no-files-found: error
+          retention-days: 14

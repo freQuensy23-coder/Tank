@@ -1,0 +1,96 @@
+name: Docker build benchmarks
+
+# Per-image paired experiments are separate from whole-CI wall-time comparisons.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/docker-build-benchmarks.yml
+      - scripts/ci/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-build-benchmarks-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BEFORE_REF: c9d2ced6cefcfc3e6b26cfccc2b0aa0e634caa81
+  AFTER_REF: fdddf452f21d6e4871b32aa7b3809426730929b1
+  BENCHMARK_INPUTS: scripts/ci/docker-benchmark-inputs.json
+
+jobs:
+  paired:
+    name: Paired image (${{ matrix.kind }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [tank, capture, sandbox, openma]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check cold-build disk capacity
+        run: |
+          task_docker_root=$(docker info --format '{{.DockerRootDir}}')
+          python3 - "$task_docker_root" "$RUNNER_TEMP" <<'PYTHON'
+          import shutil
+          import sys
+          for path in sys.argv[1:]:
+              available = shutil.disk_usage(path).free
+              print(f"{path}: {available:,} bytes available")
+              assert available >= 12_000_000_000, "Cold comparison requires 12 GB free"
+          PYTHON
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Paired actual image builds and identical offline smokes
+        if: matrix.kind != 'openma'
+        run: |
+          python3 scripts/ci/docker-benchmark.py \
+            --kind "${{ matrix.kind }}" \
+            --before-ref "$BEFORE_REF" \
+            --after-ref "$AFTER_REF" \
+            --inputs-file "$BENCHMARK_INPUTS" \
+            --output "$RUNNER_TEMP/paired-results"
+      - name: Download exact official native runtime
+        if: matrix.kind == 'openma'
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/boxlite-ai/boxlite/releases/download/v0.10.6/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz \
+            --output "$RUNNER_TEMP/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz"
+          echo "241171320f008c86d2f4af95ed6690edf93417ade956a196b2c3e366e4857e1b  $RUNNER_TEMP/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz" | sha256sum --check -
+      - name: Paired full generated OpenMA images and identical offline smokes
+        if: matrix.kind == 'openma'
+        run: |
+          python3 scripts/ci/openma-build-benchmark.py \
+            --before-ref "$BEFORE_REF" \
+            --after-ref "$AFTER_REF" \
+            --inputs-file "$BENCHMARK_INPUTS" \
+            --official-archive "$RUNNER_TEMP/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz" \
+            --shim-archive scripts/ci/benchmark-assets/qualified-shim-amd64.tar.gz \
+            --output "$RUNNER_TEMP/paired-results"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: paired-${{ matrix.kind }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/paired-results/*.json
+            ${{ runner.temp }}/paired-results/before/*.json
+            ${{ runner.temp }}/paired-results/after/*.json
+            ${{ runner.temp }}/paired-results/**/*.stdout
+            ${{ runner.temp }}/paired-results/**/*.stderr
+            ${{ runner.temp }}/paired-results/**/*.command.json
+            ${{ runner.temp }}/paired-results/**/result.json
+            ${{ runner.temp }}/paired-results/**/metadata.json
+            !${{ runner.temp }}/paired-results/**/tree/**
+            !${{ runner.temp }}/paired-results/**/context/**
+            !${{ runner.temp }}/paired-results/**/tank-source/**
+            !${{ runner.temp }}/paired-results/**/runtime/**
+            !${{ runner.temp }}/paired-results/**/upstream/**
+            !${{ runner.temp }}/paired-results/**/frozen-inputs/**
+            !${{ runner.temp }}/paired-results/**/context-probe/export/**
+          if-no-files-found: error
+          retention-days: 14
+
