@@ -24,6 +24,8 @@ from pathlib import Path
 
 MAX_MESSAGE = 32 * 1024 * 1024
 REQUEST_TIMEOUT = 75.0
+
+
 RESPONSE_GRACE = 5.0
 REPLY_PREFIX = "__TANK_BROWSER_RPC_V1__ "
 
@@ -41,6 +43,7 @@ def paths(state):
 
 
 def supervise_descendants():
+
     if sys.platform == "linux":
         libc = ctypes.CDLL(None, use_errno=True)
         if libc.prctl(36, 1, 0, 0, 0) != 0:
@@ -113,6 +116,7 @@ def terminate_owned_descendants(startup_pid=None):
         if first:
             startup_pid = None
             first = False
+
         time.sleep(0.001)
 
 
@@ -211,6 +215,7 @@ async def serve(state):
                     raise ValueError("Browser request exceeds size limit")
                 request = json.loads(raw)
                 deadline = request_deadline(request)
+
                 try:
                     await asyncio.wait_for(lock.acquire(), remaining(deadline, "action queue"))
                 except TimeoutError as error:
@@ -218,6 +223,7 @@ async def serve(state):
                 acquired = True
                 seconds = remaining(deadline, "browser action")
                 task = asyncio.create_task(operation(request, deadline))
+
                 done, _ = await asyncio.wait({task}, timeout=seconds)
                 if not done:
                     fatal = True
@@ -248,6 +254,7 @@ async def serve(state):
                         }
                 if acquired and not fatal:
                     lock.release()
+
             try:
                 encoded = json.dumps(response, ensure_ascii=True, allow_nan=False).encode() + b"\n"
                 if len(encoded) > MAX_MESSAGE:
@@ -285,6 +292,7 @@ def connect(sock_path, deadline):
 
 
 def request(state, encoded):
+
     deadline = time.monotonic() + REQUEST_TIMEOUT
     data = base64.b64decode(encoded, validate=True)
     if len(data) > MAX_MESSAGE:
@@ -292,11 +300,13 @@ def request(state, encoded):
     request_data = json.loads(data)
     if not isinstance(request_data, dict):
         raise TypeError("Browser request must be an object")
+
     request_data["deadline"] = deadline
     data = json.dumps(request_data, ensure_ascii=True, allow_nan=False).encode()
     if len(data) > MAX_MESSAGE:
         raise ValueError("Browser request exceeds size limit")
     sock_path, lock_path = paths(state)
+
     with lock_path.open("a") as lock:
         while True:
             try:
@@ -320,13 +330,13 @@ def request(state, encoded):
                     try:
                         client = connect(sock_path, deadline)
                         break
-                    except (FileNotFoundError, ConnectionRefusedError):
+                    except (FileNotFoundError, ConnectionRefusedError) as error:
                         exit_code = process.poll()
                         if exit_code is not None:
                             raise RuntimeError(
                                 f"Browser worker exited during startup (exit {exit_code}); "
                                 "verify Python Playwright in the sandbox image"
-                            ) from None
+                            ) from error
                         time.sleep(min(0.05, remaining(deadline, "worker startup")))
             except BaseException:
                 startup_pid = getattr(process, "pid", None)
@@ -337,6 +347,7 @@ def request(state, encoded):
         client.settimeout(remaining(deadline, "request write"))
         client.sendall(data + b"\n")
         chunks, size = [], 0
+
         response_deadline = deadline + RESPONSE_GRACE
         while True:
             seconds = response_deadline - time.monotonic()

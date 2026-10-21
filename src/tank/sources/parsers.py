@@ -34,6 +34,7 @@ def published(value):
             instant = value if isinstance(value, datetime) else datetime.fromisoformat(str(value))
         except ValueError:
             instant = parsedate_to_datetime(str(value))
+
         return iso(instant) if instant.tzinfo is not None else None
     except (ValueError, TypeError, OverflowError):
         return None
@@ -54,6 +55,7 @@ def timestamp_fields(value, name="published_at", *, date_only=False):
     )
     reason = None if normalized else "INCOMPLETE" if value is None else "UNVERIFIED_SEMANTICS"
     fields = Timestamp(normalized, precision, reason).fields(name)
+
     fields[name + "_precision"] = precision
     return fields
 
@@ -168,6 +170,7 @@ def article_links(payload, feed):
         target = url if pattern.startswith("http") else urlsplit(url).path
         if re.search(pattern, target):
             result[url] = text(a.text())
+
     fields = feed.get("embedded_json_fields", [])
     if fields:
         script = tree.css_first('script#__NEXT_DATA__[type="application/json"]')
@@ -299,6 +302,7 @@ def article(payload, *, source_id=None):
                 value.get("datePublished")
             ):
                 yield value
+
             if "@graph" in value:
                 yield from publication_nodes(value["@graph"])
 

@@ -67,9 +67,7 @@ async def main():
     report = {"actions": {}}
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--headless=new"])
-        context = await browser.new_context(
-            storage_state=SECRET, locale="en-US", viewport={"width": 1280, "height": 1000}
-        )
+        context = await browser.new_context(storage_state=SECRET, locale="en-US", viewport={"width": 1280, "height": 1000})
         page = await context.new_page()
         lid = await list_id(page)
         report["list_id"] = lid
@@ -80,9 +78,7 @@ async def main():
             await page.goto(f"https://x.com/i/lists/{lid}", wait_until="domcontentloaded", timeout=30000)
             await page.get_by_text("Edit List", exact=True).first.click(timeout=45000)
             dialog = page.locator("[role=dialog]")
-            report["private_checked"] = await dialog.locator('input[type="checkbox"]').first.is_checked(
-                timeout=20000
-            )
+            report["private_checked"] = await dialog.locator('input[type="checkbox"]').first.is_checked(timeout=20000)
             await dialog.get_by_text("Manage members", exact=True).first.click(timeout=20000)
             search = page.locator('[role=dialog] input[placeholder="Search people"]').first
             if not await search.count():
@@ -99,20 +95,14 @@ async def main():
                         break
                     if "--debug" in sys.argv:
                         await page.screenshot(path="debug-search.png")
-                        print(
-                            await page.evaluate(
-                                "() => [...document.querySelectorAll('[role=dialog] [data-testid]')].map(n => n.getAttribute('data-testid')).slice(0, 40)"
-                            )
-                        )
+                        print(await page.evaluate("() => [...document.querySelectorAll('[role=dialog] [data-testid]')].map(n => n.getAttribute('data-testid')).slice(0, 40)"))
                 if state == "Add":
                     await page.locator("[data-tank-target='1']").first.click()
                     await page.wait_for_timeout(1500)
                     state = "ADDED"
                 elif state == "Remove":
                     state = "ALREADY_MEMBER"
-                await page.evaluate(
-                    "() => document.querySelectorAll('[data-tank-target]').forEach(n => n.removeAttribute('data-tank-target'))"
-                )
+                await page.evaluate("() => document.querySelectorAll('[data-tank-target]').forEach(n => n.removeAttribute('data-tank-target'))")
                 report["actions"][handle] = state
                 print(handle, state, flush=True)
         found = await members(page, lid, report)
@@ -127,14 +117,7 @@ async def main():
         exact=have == wanted,
     )
     json.dump(report, open(OUT, "w"), indent=1)
-    print(
-        json.dumps(
-            {
-                k: report[k]
-                for k in ("list_id", "members_counter", "member_count", "missing", "unexpected", "exact")
-            }
-        )
-    )
+    print(json.dumps({k: report[k] for k in ("list_id", "members_counter", "member_count", "missing", "unexpected", "exact")}))
 
 
 asyncio.run(main())

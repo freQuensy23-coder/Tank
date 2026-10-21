@@ -498,8 +498,9 @@ Fixture
 | `event_observations`, `claims` | `obs_id`, `claim_id` | FK to events/items. |
 | `state_changes` | serial | Append-only. |
 | `ems_assessments`, `capture_chains`, `beneficiary_maps`, `beneficiary_edges` | id + version | Versioned rows. |
-| `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | Time-partitioned; base tier 90 days ⚙. |
-| `book_summaries`, `oi_obs`, `funding_obs`, `liq_obs` | (`instrument_id`, ts) | Time-partitioned. |
+| `klines_1m`, `flow_bars_1m` | (`instrument_id`, minute) | TimescaleDB hypertable (1-day chunks, compressed after 2 days); base tier 90 days ⚙. |
+| `book_summaries` | (`instrument_id`, ts) | Hypertable; kept 72 hours; summary fields only (no order-book levels). |
+| `oi_obs`, `funding_obs`, `liq_obs` | (`instrument_id`, ts) | Hypertable (1-day chunks, compressed after 2 days). |
 | `market_truth`, `outlooks`, `decisions`, `contradictions`, `watch_conditions`, `calls` | ids | `market_truth` indexed by (`token_id`, `cutoff`). |
 | `alerts`, `deliveries`, `ops_notices`, `evidence_bundles`, `reaction_checkpoints`, `reviews` | ids | Append-only (UPDATE/DELETE rejected by trigger). |
 | `hot_tokens` | (`token_id`, `event_id`) | Hot set (§9); read on start to subscribe the hot tokens again. |
@@ -745,6 +746,8 @@ All RSS; item key `guid` (else `link`); fields title, link, pubDate, description
 
 ## 4. Market data catalog
 
+**The sandbox never connects to an exchange.** tank-capture is the only client of the exchange hosts below; it records trades, books, klines, OI and funding into the `mkt.*` tables, which the agent reads with `psql "$TANK_DB_URL"`. The endpoints are listed so the agent knows what each column came from, not to call them.
+
 Tank-side request budgets are set at ≤ 50% of each venue's documented limit. Binance limits below were read from `exchangeInfo.rateLimits`. Instrument symbols per venue are listed in 03 §2.11.
 
 ### 4.1 Binance Spot
@@ -838,7 +841,7 @@ The separate futures depth route follows Binance's [WebSocket change notice](htt
 
 | Source | Endpoint | Use |
 |---|---|---|
-| Binance public data archive | `https://data.binance.vision/data/spot/daily/klines/{S}/1m/{S}-1m-{YYYY-MM-DD}.zip`, `…/spot/daily/aggTrades/{S}/{S}-aggTrades-{date}.zip`, `…/futures/um/daily/klines/{S}/1m/…`, `…/futures/um/daily/metrics/{S}/{S}-metrics-{date}.zip` (5m OI), `…/futures/um/monthly/fundingRate/{S}/{S}-fundingRate-{YYYY-MM}.zip`; each with `.CHECKSUM` = `"<sha256>  <file name>"` | Pre-event windows older than REST retention, retro reaction checkpoints, fixture replay (03 §5.2) |
+| Binance public data archive | `https://data.binance.vision/data/spot/daily/klines/{S}/1m/{S}-1m-{YYYY-MM-DD}.zip`, `…/spot/daily/aggTrades/{S}/{S}-aggTrades-{date}.zip`, `…/futures/um/daily/klines/{S}/1m/…`, `…/futures/um/daily/metrics/{S}/{S}-metrics-{date}.zip` (5m OI), `…/futures/um/monthly/fundingRate/{S}/{S}-fundingRate-{YYYY-MM}.zip`; each with `.CHECKSUM` = `"<sha256>  <file name>"` — downloaded only by tank-capture (`ARCHIVE_FETCH` capture request), checksum-verified and stored at `/data/archive/binance/<path after /data/>`; read the stored file | Pre-event windows older than REST retention, retro reaction checkpoints, fixture replay (03 §5.2) |
 | DefiLlama API | `https://api.llama.fi/summary/fees/{protocol}?dataType=dailyFees` / `dailyRevenue` / `dailyHoldersRevenue` (`total24h`, `total30d`, `totalDataChart`); `https://stablecoins.llama.fi/stablecoincharts/{chain}`; `https://yields.llama.fi/lendBorrow` (DefiLlama shuts down the free yield endpoints `/pools` and `/chart/{pool}` on 13 Nov 2026, moving them to the paid API; Tank uses only `/lendBorrow`, which the notice does not name and which still answered on 19 Oct 2026) | Capture chain, stablecoin supply of the settlement chain, lending utilization |
 | DefiLlama unlock datasets | `https://defillama-datasets.llama.fi/emissions/{slug}` (list: `…/emissionsProtocolsList`, 371 protocols on 16 Oct 2026); slugs per token in 03 §2.11; none published for 1INCH, ZRX, QNT | `unlocks` for supply context, refreshed daily |
 | Exchange wallets | DefiLlama-Adapters `projects/binance/index.js` at commit `4a6ef31a4eed4f24882a7d82bff50306b40b6d6c` (17 EVM addresses) and `projects/okex/index.js` at commit `b70f0fb4dc9ff463866d676c14d21b0ed0930d76` (323 EVM addresses) → `exchange_addresses.yaml` | Exchange inventory and wallet flows (Bybit, Coinbase, Kraken: no public list → n/a) |
@@ -1217,7 +1220,7 @@ RETURNING *;
 Metric meaning and units come from the authoritative field registry, without runtime semantic-confidence or self-test gates. Any `semantic_confidence` columns retained in the physical schema are legacy storage and do not gate interpretation, Data Confidence or decisions.
 
 
-# Executable sandbox access and shared API limits
+# Executable sandbox access
 
 Connect only through the injected read-only `TANK_DB_URL`; never print that URL. PostgreSQL access is read-only as `tank_agent`. The following examples perform reads; results from own scripts inform analysis and are not card numbers. Facts still require quotes stored through Tank tools.
 
@@ -1225,12 +1228,8 @@ Connect only through the injected read-only `TANK_DB_URL`; never print that URL.
 import os
 import psycopg
 import pandas as pd
-
 with psycopg.connect(os.environ["TANK_DB_URL"]) as connection:
-    recent = pd.read_sql_query(
-        "SELECT item_id,source_id,observed_at FROM ingest.source_items ORDER BY observed_at DESC LIMIT 20",
-        connection,
-    )
+    recent = pd.read_sql_query("SELECT item_id,source_id,observed_at FROM ingest.source_items ORDER BY observed_at DESC LIMIT 20", connection)
 ```
 
 The current deployment explicitly routes Jev through OpenRouter: `POST https://openrouter.ai/api/v1/systemone`, `Authorization: Bearer` with `OPENROUTER_API_KEY`, and pinned request model `typesafe/jev-1.13`. `TANK_JEV_PROVIDER=openrouter` selects this route; the production adapter uses plain `httpx` with the unchanged typed state/questions body. The current primary design specifies this System One endpoint. An earlier chat/completions specification was corrected after its typed-body HTTP400 failure; that is historical evidence, not an outstanding endpoint deviation. No chat wrapping is used. This does not route the analyst through OpenRouter: analyst/scout models continue through the Codex subscription gateway. Calibration must use Pipeline's exact versioned filter/routing questions and state, not a paraphrase. A read-only research call can use HTTP directly without printing the key:
@@ -1238,24 +1237,13 @@ The current deployment explicitly routes Jev through OpenRouter: `POST https://o
 ```python
 import os
 import httpx
-
 payload = {
     "model": "typesafe/jev-1.13",
     "state": {"text": "the source text being assessed"},
-    "questions": {
-        "relevant": {
-            "type": "noul",
-            "instructions": "Is this text about crypto?",
-            "criteria": {"true": "About crypto", "false": "Not about crypto"},
-        }
-    },
+    "questions": {"relevant": {"type": "noul", "instructions": "Is this text about crypto?", "criteria": {"true": "About crypto", "false": "Not about crypto"}}}
 }
 with httpx.Client(timeout=20, trust_env=False) as client:
-    response = client.post(
-        "https://openrouter.ai/api/v1/systemone",
-        headers={"Authorization": "Bearer " + os.environ["OPENROUTER_API_KEY"]},
-        json=payload,
-    )
+    response = client.post("https://openrouter.ai/api/v1/systemone", headers={"Authorization": "Bearer " + os.environ["OPENROUTER_API_KEY"]}, json=payload)
     response.raise_for_status()
     result = response.json()
     if result.get("model") != "typesafe/jev-1.13-20260917":
@@ -1268,14 +1256,14 @@ DuckDuckGo search needs **no API key** and costs zero. Use Tank's custom `web_se
 
 Etherscan reads use `GET https://api.etherscan.io/v2/api` with `chainid`, `module=account`, `action=tokenbalance` or `tokentx`, token contract/wallet and `apikey=os.environ["ETHERSCAN_API_KEY"]`. Use the verified token contract and chain ID; no ticker guessing. Do not print a request URL containing its API key. DefiLlama uses key-free `https://api.llama.fi/summary/fees/{verified_slug}?dataType=dailyFees|dailyRevenue|dailyHoldersRevenue`, `https://api.llama.fi/protocols`, `https://api.llama.fi/v2/chains`, `https://defillama-datasets.llama.fi/emissions/{unlock_slug}`, `https://stablecoins.llama.fi/stablecoincharts/{chain}`, and `https://yields.llama.fi/lendBorrow`. Fee protocol slugs and unlock slugs are different namespaces. Do not sum parent rollups and children twice. Missing provider metrics remain unavailable, never zero. Lending utilization fetches only `/lendBorrow`; its UUIDs are resolved using versioned `registry.yaml` `lending_pool_catalog` entries (`pool_id`, `project`, `chain`, `underlying_tokens`) with retained source hash/capture time. Runtime never fetches `/pools` for identity enrichment, and unknown UUIDs stay explicitly unmapped rather than guessing chain/protocol.
 
-The sandbox and Tank service **share the same venue/IP limits**. The service reserves at most one half of each documented limit; sandbox scripts share the other half across all active sessions. The combined service plus sandbox traffic must remain within the full documented venue/IP quota. Do not spend the service half again or assume every sandbox has its own quota. If you cannot establish remaining capacity in the sandbox half, use cached database data or Tank custom tools and defer direct provider calls; a separate local sleep loop does not establish global capacity. Consult cached Tank data first. Known baseline ceilings for the service are Binance spot 3,000 request-weight/minute (documented 6,000), Binance USD-M 1,200/minute (documented 2,400), Coinbase 5 requests/second, Kraken 1 request/second, and SEC 5 requests/second (half of documented 10). Respect endpoint weights and independent endpoint buckets, not just request counts. Read Binance used-weight headers. For endpoint-specific undocumented quotas, record UNKNOWN and honor actual Retry-After rather than fabricate a universal cap. Agents must never print keys, persist them to files, or send them to endpoints other than their own API. Replay receives only its read-only database URL and no external API credentials.
+The sandbox does not call exchange APIs or WebSockets. Exchange data is in the `mkt.*` tables below, written only by tank-capture; read it there.
 
 
 # Actual typed market tables after migration 027
 
 This column inventory is generated from the frozen `MARKET_COLUMNS` producer/storage contract, not an executable schema creation script. Inspect `information_schema` on the selected database to verify migration status and nullability. Numeric values remain Decimal/numeric; never turn unavailable USD into zero. Migration 027 has not been applied to the persistent local database at this guide revision. Existing local tables are not evidence that this new physical layout is deployed.
 
-There is no `mkt.trades` SQL table. Native trades live in immutable, verified hourly Parquet, indexed by `mkt.raw_archives`; journals and checksums are explicit references. Read only manifests selected for the instrument/hour/cutoff through the verified archive reader. Never glob the live data tree. Replay guests use only the selected run's sealed evidence mapping under `/replay/evidence`, not original live paths or evaluator outcomes. Legacy SQL trade export requires an explicitly authorized migration export directory and verified manifest; a raw reference alone does not grant sandbox file access.
+There is no `mkt.trades` SQL table, and the sandbox cannot read the hourly trade files (`/data/raw/trades`, tank-capture's per-trade archive for replay and audit). Per-trade questions are answered from `mkt.flow_bars_1m`: per-minute taker buy/sell quantity and USD, sum of squared sizes, and the first and last trade of each minute. The market tables are TimescaleDB hypertables: always filter on the time column (`minute_start`, `open_time`, `ts`, `as_of`, `exchange_ts`), which reads only the chunks needed; older chunks are compressed and read the same way.
 
 ```sql
 SELECT minute_start, minute_start_prec, buy_qty, sell_qty, sum_sq_qty,
@@ -1289,12 +1277,6 @@ SELECT instrument_id, kind, as_of, as_of_prec, rate, rate_8h_eq,
 FROM mkt.funding_obs
 WHERE instrument_id = %s AND as_of <= %s
 ORDER BY as_of DESC LIMIT 20;
-
-SELECT instrument_id, hour_start, kind, path, parquet_path, sha256,
-       byte_length, checksum_scope, row_count, integrity
-FROM mkt.raw_archives
-WHERE instrument_id = %s AND hour_start >= %s AND hour_start < %s
-ORDER BY hour_start;
 ```
 
 Ticker natural identity is instrument plus timestamp; funding identity is instrument plus kind plus as-of. Preserve component clocks and source observations when combining a mark/index/ticker point. Named structures such as `first_trade`, `boundary_segments`, `reference_points`, `source_observations`, `integrity`, `capture_proof` and `null_reasons` are evidence/provenance, not arbitrary row copies. Point/receipt/recording precision remains explicit; legacy unknown is null with its reason.
@@ -1534,8 +1516,8 @@ Ticker natural identity is instrument plus timestamp; funding identity is instru
 | `spread_bps` | `numeric` |
 | `token_id` | `text` |
 | `depth` | `jsonb` |
-| `bids` | `jsonb` |
-| `asks` | `jsonb` |
+| `bids` | `jsonb` (always null: levels are not stored) |
+| `asks` | `jsonb` (always null: levels are not stored) |
 | `range_covered_pct` | `jsonb` |
 | `independent_rest` | `jsonb` |
 | `semantic_fingerprint` | `text` |
@@ -1914,9 +1896,9 @@ This manifest is generated from current `sources.yaml` and takes precedence for 
 
 Binance spot/futures weights depend on endpoint and limit; see config/api_limits.yaml and the documented used-weight headers. USD-M fundingRate/fundingInfo have a shared500requests/5minutes cap (Tank≤250), and openInterestHist has a separate1000requests/5minutes cap (Tank≤500). The native archive endpoints remain read-only and checksum verified.
 
-Bybit official HTTP IP quota is600requests/5seconds, so the service budget is at most300/5seconds; all sandbox sessions share the other300/5seconds. Hyperliquid official aggregate HTTP quota is1200weight/minute, Tank≤600: l2Book/allMids cost2; the ordinary info requests Tank uses cost20; userRole costs60. fundingHistory/recentTrades add weight per20returned items and candleSnapshot per60. Preserve these response-size weights. Etherscan free tier documents3calls/second and100000/day on selected chains; the service half-budget is1.5/second and50000/day; all sandbox sessions share the remaining half. An unsupported free-tier chain remains n/a.
+Bybit official HTTP IP quota is600requests/5seconds, so tank-capture budgets at most300/5seconds. Hyperliquid official aggregate HTTP quota is1200weight/minute, Tank≤600: l2Book/allMids cost2; the ordinary info requests Tank uses cost20; userRole costs60. fundingHistory/recentTrades add weight per20returned items and candleSnapshot per60. Preserve these response-size weights. Etherscan free tier documents3calls/second and100000/day on selected chains; the service half-budget is1.5/second and50000/day; all sandbox sessions share the remaining half. An unsupported free-tier chain remains n/a.
 
-OKX official endpoint limits are per2seconds; the service may reserve at most half, while all sandbox sessions share the other half:
+OKX official endpoint limits are per2seconds; tank-capture reserves at most half:
 
 | Endpoint | Documented requests/2s | Service budget/2s | Scope |
 |---|---|---|---|

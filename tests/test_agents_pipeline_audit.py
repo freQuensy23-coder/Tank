@@ -23,6 +23,7 @@ def options():
 
 def test_filter_question_asks_the_03_3_1_condition_about_the_named_item():
     design = Path("03_Tank_V0_Technical_Design.md").read_text()
+
     projects = FILTER.split("one of these projects: ")[1].rstrip("?")
     assert f"one of these projects: {projects}?" in design and FILTER.startswith("Is `item` about crypto")
     state = Pipeline.state({"source_name": "Outlet", "title": "Aave approved", "body": "Details"})
@@ -120,6 +121,7 @@ async def test_new_item_routes_without_reservation_state():
     assert routed["route"] == {"decision": "NEW_SESSION", "event_id": None, "p_same": None}
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("same,decision", [(0.95, "ADDED"), (0.1, "NEW_SESSION")])
 async def test_pending_extraction_is_not_a_candidate_then_real_event_is_scored(same, decision):
@@ -204,6 +206,7 @@ def test_explicit_token_identity_expands_to_its_entity():
     )
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_official_repost_promotion_during_filter_request_preserves_latest_item():
     opts, _ = options()
@@ -223,6 +226,7 @@ async def test_official_repost_promotion_during_filter_request_preserves_latest_
     )
 
     async def handler(request):
+
         async with repo.lock("ingest-dedup"):
             item = await repo.get("ingest.source_items", "i")
             item.update(
@@ -288,6 +292,7 @@ async def test_failed_event_is_not_a_routing_candidate():
             "status": "FAILED",
         },
     )
+
     routed = await Pipeline(repo, opts, http=object()).route_item({"item_id": "i"})
     assert routed["route"]["decision"] == "NEW_SESSION"
     assert routed["routing_scores"] == {}
@@ -418,6 +423,7 @@ def test_routing_state_names_item_and_event_with_readable_identities():
 
 @pytest.mark.parametrize("text", ["Uniswap governance passes fee switch", "$UNI fee switch passes"])
 async def test_event_with_resolved_token_id_is_a_candidate_for_alias_or_ticker(text):
+
     from tank.util import utcnow
 
     opts, _ = options()

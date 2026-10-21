@@ -64,6 +64,7 @@ class SearchLimiter:
         self._last_started: float | None = None
 
     def mark_started(self) -> None:
+
         self._last_started = self.clock()
 
     async def run(self, attempt: Callable[[], list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -138,18 +139,21 @@ class _DuckDuckGoHTTP:
 
 class _DuckDuckGoEngine(Duckduckgo):
     def __init__(self, transport: _DuckDuckGoHTTP):
+
         self.http_client = transport
         self.results = []
 
 
 class _DuckDuckGoOnly(DDGS):
     def __init__(self, engine: _DuckDuckGoEngine):
+
         self._timeout = 20
         self.engine = engine
 
     def _get_engines(self, category: str, backend: str) -> list[_DuckDuckGoEngine]:
         if category != "text" or backend != "duckduckgo":
             raise SearchError("POLICY", "Only DuckDuckGo text search is allowed")
+
         return [self.engine]
 
 

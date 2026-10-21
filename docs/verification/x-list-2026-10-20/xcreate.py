@@ -24,9 +24,7 @@ async def main():
     result = {}
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True, args=["--headless=new"])
-        context = await browser.new_context(
-            storage_state=SECRET, locale="en-US", viewport={"width": 1280, "height": 900}
-        )
+        context = await browser.new_context(storage_state=SECRET, locale="en-US", viewport={"width": 1280, "height": 900})
         page = await context.new_page()
         await page.goto("https://x.com/MargaretAlxgav/lists", wait_until="domcontentloaded", timeout=30000)
         await page.wait_for_timeout(6000)

@@ -441,6 +441,7 @@ TABLE_COLUMNS["mkt.backfill_runs"] = {
     "reason": "text",
     "result": "jsonb",
 }
+
 TABLE_COLUMNS.pop("ops.budget_state", None)
 TABLE_COLUMNS["ops.scheduler_checkpoints"] = {"checkpoint_id": "text", "at": "timestamptz", "state": "jsonb"}
 
@@ -625,6 +626,7 @@ REQUIRED_FIELDS = {
     "ops.tool_calls": ["session_id", "tool", "input", "status", "requested_at"],
 }
 SERIAL_TABLES = frozenset(["evt.state_changes", "mkt.liq_obs", "out.deliveries", "ops.llm_usage"])
+
 MARKET_TIME_FIELDS = {
     "mkt.trades": "ts",
     "mkt.flow_bars_1m": "minute_start",
@@ -650,6 +652,7 @@ TABLE_COLUMNS["ops.capture_tier_transitions"] = {
     "config_version": "text",
     "code_version": "text",
 }
+
 
 TIMESTAMP_PRECISION_FIELDS = {
     "ingest.source_items": {"published_at": "published_prec", "observed_at": "observed_at_prec"},

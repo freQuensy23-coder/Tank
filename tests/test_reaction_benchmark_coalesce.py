@@ -84,6 +84,7 @@ async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(
         assert data["spot_method"] == "NOT_APPLICABLE" and data["spot_cvd"] is None
         assert market.snapshots == 0
         assert data["benchmark"]["r_raw_venue"] == "binance:spot:BTCUSDT"
+
         assert data["r_raw"] == pytest.approx((100 + 119) / (100 + 59) - 1)
     assert await scheduler.analysis_tokens(await repo.get("evt.events", "e")) >= {
         "bitcoin:BTC",
@@ -125,6 +126,7 @@ async def test_late_changes_keep_one_queued_revision_per_checkpoint(tmp_path):
         await scheduler.detect_late_data(end + timedelta(minutes=n))
     jobs = [j async for j in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})]
     assert sorted(j["payload"]["checkpoint"] for j in jobs) == ["POST_1H", "PRE_1H"]
+
     for job in jobs:
         await repo.put("ops.jobs", job["job_id"], {**job, "status": "DONE"})
     market.changes = [dict(market.changes[0], change_id="CAP-LIVE-9", observed_at=iso(end))]

@@ -162,6 +162,7 @@ def prepare(config, output, *, apply=False, client=None):
             response.raise_for_status()
             body = response.json()
             settings[key] = body.get("data", body)["id"]
+
         (output / "openma.proposed.yaml").write_text(yaml.safe_dump(settings, sort_keys=False))
     finally:
         if owns:

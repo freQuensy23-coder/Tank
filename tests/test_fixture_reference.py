@@ -502,9 +502,11 @@ def test_insufficient_catalog_refuses_before_configuration_or_session(tmp_path):
 
 
 def test_declared_empty_synthetic_lookup_is_not_a_fabricated_source(reference_packet):
+
     from tank.fixture_reference import validate
 
     _path, packet = reference_packet
+
     packet["tool_results"] = [
         {"origin": "DECLARED_SYNTHETIC_TOOL_RESPONSE", "tool": "fetch_page", "result": {"items": []}}
     ]
@@ -801,6 +803,7 @@ def test_uniform_minute_reference_convention_preserves_all_original_literals(ref
         )
         p["cutoff"] = boundary
         p["config"]["replay_messages"][0]["replay_at"] = boundary
+
         p["records"][0]["simulated_available_at"] = (
             (start + timedelta(seconds=8.368)).isoformat().replace("+00:00", "Z")
         )
@@ -826,7 +829,7 @@ def test_uniform_minute_reference_convention_preserves_all_original_literals(ref
         assert inputs.record_visible(bar, parse_time(boundary))
 
 
-@pytest.mark.slow
+@pytest.mark.integration
 @pytest.mark.parametrize("publication", [False, True])
 async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoints(
     reference_packet, tmp_path, publication, repository=None, fail_later=False, missing_lookup=None
@@ -1365,7 +1368,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
         assert next(a["kind"] for a in await repo.list("out.alerts")) == "FULL"
 
 
-@pytest.mark.slow
+@pytest.mark.integration
 @pytest.mark.parametrize("tool", ["web_search", "fetch_page"])
 async def test_reference_session_reports_missing_lookup_without_network_or_abort(
     reference_packet, tmp_path, monkeypatch, tool, repository=None
@@ -1382,10 +1385,12 @@ async def test_reference_session_reports_missing_lookup_without_network_or_abort
     )
 
 
-async def test_reference_missing_lookup_postgres(reference_packet, tmp_path, monkeypatch):
+@pytest.mark.postgres
+@pytest.mark.integration
+async def test_reference_missing_lookup_postgres(reference_packet, tmp_path, monkeypatch, postgres_template):
     from test_session_binding_concurrency import fixture_repo
 
-    async with fixture_repo("postgres") as repo:
+    async with fixture_repo("postgres", postgres_template) as repo:
         await test_reference_session_reports_missing_lookup_without_network_or_abort(
             reference_packet, tmp_path, monkeypatch, "web_search", repository=repo
         )
@@ -1420,16 +1425,19 @@ def test_ambiguous_reference_capture_still_aborts(reference_packet):
     )
 
 
+@pytest.mark.postgres
+@pytest.mark.integration
 @pytest.mark.parametrize("publication", [False, True])
-async def test_actual_f24_phases_postgres(reference_packet, tmp_path, publication):
+async def test_actual_f24_phases_postgres(reference_packet, tmp_path, publication, postgres_template):
     from test_session_binding_concurrency import fixture_repo
 
-    async with fixture_repo("postgres") as repo:
+    async with fixture_repo("postgres", postgres_template) as repo:
         await test_actual_f24_phased_producers_keep_session_and_immutable_checkpoints(
             reference_packet, tmp_path, publication, repository=repo
         )
 
 
+@pytest.mark.integration
 async def test_failed_second_phase_preserves_committed_first_checkpoint(reference_packet, tmp_path):
     await test_actual_f24_phased_producers_keep_session_and_immutable_checkpoints(
         reference_packet, tmp_path, False, fail_later=True

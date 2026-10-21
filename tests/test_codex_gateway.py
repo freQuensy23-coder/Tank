@@ -66,6 +66,7 @@ def body(**extra):
     return {"model": "gpt-6.1-sol", "input": [{"role": "user", "content": "test"}], "stream": True, **extra}
 
 
+@pytest.mark.integration
 async def test_internal_key_required_before_auth_or_provider(gateway_factory):
     def forbidden(request):
         pytest.fail("unauthorized request reached provider")
@@ -80,6 +81,7 @@ async def test_internal_key_required_before_auth_or_provider(gateway_factory):
             assert response.json()["error"]["code"] == "unauthorized"
 
 
+@pytest.mark.integration
 async def test_signing_translation_and_header_isolation(gateway_factory):
     seen = []
 
@@ -120,6 +122,7 @@ async def test_signing_translation_and_header_isolation(gateway_factory):
         assert len(seen) == 1
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("status", [400, 403, 429, 500, 503])
 async def test_provider_errors_and_reset_headers_preserved(gateway_factory, status):
     error = {"error": {"code": "usage_limit_reached", "message": "Try later", "resets_at": 1800000000}}
@@ -146,6 +149,7 @@ async def test_provider_errors_and_reset_headers_preserved(gateway_factory, stat
         assert response.headers["x-ratelimit-reset-tokens"] == "120s"
 
 
+@pytest.mark.integration
 async def test_expired_refresh_singleflight_atomic_preservation_and_no_cookie(gateway_factory):
     calls = []
     new = jwt(exp=4102444801)
@@ -184,6 +188,7 @@ async def test_expired_refresh_singleflight_atomic_preservation_and_no_cookie(ga
         assert list(path.parent.glob(".auth-*")) == []
 
 
+@pytest.mark.integration
 async def test_401_refresh_once_then_forward_provider_auth_failure(gateway_factory):
     calls = []
 
@@ -201,6 +206,7 @@ async def test_401_refresh_once_then_forward_provider_auth_failure(gateway_facto
         assert json.loads(path.read_text())["tokens"]["refresh_token"] == "FAKE-refresh"
 
 
+@pytest.mark.integration
 async def test_external_auth_replacement_during_refresh_wins(gateway_factory):
     path_holder = []
     replacement = auth_document(jwt(exp=4102444802), refresh="FAKE-external-refresh")
@@ -220,6 +226,7 @@ async def test_external_auth_replacement_during_refresh_wins(gateway_factory):
         assert json.loads(path.read_text()) == replacement
 
 
+@pytest.mark.integration
 async def test_reload_new_auth_without_refresh(gateway_factory):
     wanted = []
 
@@ -234,6 +241,7 @@ async def test_reload_new_auth_without_refresh(gateway_factory):
         assert (await client.post("/v1/responses", json=body())).status_code == 200
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "response",
     [
@@ -272,6 +280,7 @@ async def test_preflight_rejects_invalid_or_unrefreshable_auth_offline(tmp_path,
     assert gateway._client is None and gateway._runner is None
 
 
+@pytest.mark.integration
 async def test_no_refresh_token_valid_access_but_401_requires_login(gateway_factory):
     calls = []
 
@@ -285,6 +294,7 @@ async def test_no_refresh_token_valid_access_but_401_requires_login(gateway_fact
         assert len(calls) == 1
 
 
+@pytest.mark.integration
 async def test_atomic_write_failure_keeps_old_auth(gateway_factory, monkeypatch):
     document = auth_document(jwt(exp=1))
 
@@ -304,6 +314,7 @@ async def test_atomic_write_failure_keeps_old_auth(gateway_factory, monkeypatch)
         assert not list(path.parent.glob(".auth-*"))
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("location", ["https://evil.invalid/steal", "https://auth.openai.com/oauth/token"])
 async def test_provider_redirect_never_followed_or_exposed(gateway_factory, location):
     calls = []
@@ -332,6 +343,7 @@ class Chunks(httpx.AsyncByteStream):
         self.closed = True
 
 
+@pytest.mark.integration
 async def test_sse_failure_and_usage_reset_preserved(gateway_factory):
     frame = b'event: response.failed\ndata: {"type":"response.failed","response":{"error":{"code":"usage_limit_reached","resets_at":1800000000}}}\n\n'
     stream = Chunks([frame[:39], frame[39:]])
@@ -345,6 +357,7 @@ async def test_sse_failure_and_usage_reset_preserved(gateway_factory):
         assert stream.closed
 
 
+@pytest.mark.integration
 async def test_sse_redacts_secrets_split_at_every_byte_and_rotated_tokens(gateway_factory):
     new = jwt(exp=4102444801)
 
@@ -366,6 +379,7 @@ async def test_sse_redacts_secrets_split_at_every_byte_and_rotated_tokens(gatewa
         assert new not in response.text and response.text.count("[REDACTED]") == 3
 
 
+@pytest.mark.integration
 async def test_stream_interruption_visible_and_closed(gateway_factory):
     stream = Chunks([b'event: response.created\ndata: {"type":"response.created"}\n\n'], failure=True)
 
@@ -378,6 +392,7 @@ async def test_stream_interruption_visible_and_closed(gateway_factory):
         assert stream.closed
 
 
+@pytest.mark.integration
 async def test_stream_is_incremental_and_downstream_disconnect_closes_upstream(gateway_factory):
     released = asyncio.Event()
     closed = asyncio.Event()
@@ -402,6 +417,7 @@ async def test_stream_is_incremental_and_downstream_disconnect_closes_upstream(g
         await asyncio.wait_for(closed.wait(), timeout=1)
 
 
+@pytest.mark.integration
 async def test_nonstream_collects_terminal_response(gateway_factory):
     result = {
         "id": "resp_FAKE",
@@ -425,6 +441,7 @@ async def test_nonstream_collects_terminal_response(gateway_factory):
         assert response.json() == result
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "payload",
     [
@@ -444,6 +461,7 @@ async def test_invalid_request_never_reaches_provider(gateway_factory, payload):
         assert (await client.post("/v1/responses", json=payload)).status_code == 400
 
 
+@pytest.mark.integration
 async def test_concurrent_401_refreshes_once(gateway_factory):
     calls = []
     new = jwt(exp=4102444801)
@@ -463,6 +481,7 @@ async def test_concurrent_401_refreshes_once(gateway_factory):
         assert sum(str(request.url) == TOKEN_URL for request in calls) == 1
 
 
+@pytest.mark.integration
 async def test_refresh_redirect_refused_no_provider_call(gateway_factory):
     seen = []
 
@@ -476,6 +495,7 @@ async def test_refresh_redirect_refused_no_provider_call(gateway_factory):
         assert len(seen) == 1 and str(seen[0].url) == TOKEN_URL
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "expired", [jwt(exp=1), jwt(exp="not-a-number"), jwt(exp=True), jwt(exp=float("inf"))]
 )
@@ -490,6 +510,7 @@ async def test_invalid_refresh_expiry_never_replaces_auth(gateway_factory, expir
         assert json.loads(path.read_text()) == document
 
 
+@pytest.mark.integration
 async def test_account_from_id_token_when_explicit_account_absent(gateway_factory):
     document = auth_document()
     document["tokens"].pop("account_id")
@@ -505,6 +526,7 @@ async def test_account_from_id_token_when_explicit_account_absent(gateway_factor
         assert (await client.post("/v1/responses", json=body())).status_code == 200
 
 
+@pytest.mark.integration
 async def test_unknown_provider_exception_never_logs_credential(gateway_factory, caplog):
     def provider(request):
         raise RuntimeError("FAKE-refresh FAKE-internal FAKE-secret-exception")
@@ -516,6 +538,7 @@ async def test_unknown_provider_exception_never_logs_credential(gateway_factory,
         assert "FAKE-refresh" not in response.text + caplog.text
 
 
+@pytest.mark.integration
 async def test_nonstream_truncated_response_is_failure(gateway_factory):
     def provider(request):
         return httpx.Response(
@@ -530,6 +553,7 @@ async def test_nonstream_truncated_response_is_failure(gateway_factory):
         assert response.json()["error"]["code"] == "codex_stream_incomplete"
 
 
+@pytest.mark.integration
 async def test_run_start_close_without_provider_traffic(tmp_path):
     path = tmp_path / "FAKE-auth.json"
     path.write_text(json.dumps(auth_document()))
@@ -556,6 +580,7 @@ async def test_run_start_close_without_provider_traffic(tmp_path):
     assert not gateway.ready.is_set() and gateway.bound_port is None
 
 
+@pytest.mark.integration
 async def test_external_unrelated_token_metadata_edit_preserved_during_refresh(gateway_factory):
     paths = []
     new = jwt(exp=4102444801)
@@ -579,6 +604,7 @@ async def test_external_unrelated_token_metadata_edit_preserved_during_refresh(g
         assert stored["tokens"]["refresh_token"] == "FAKE-rotated"
 
 
+@pytest.mark.integration
 async def test_connection_nominated_headers_not_forwarded(gateway_factory):
     def provider(request):
         return httpx.Response(
@@ -599,6 +625,7 @@ async def test_connection_nominated_headers_not_forwarded(gateway_factory):
         assert response.headers["x-codex-primary-reset-at"] == "1800000000"
 
 
+@pytest.mark.integration
 async def test_gateway_shutdown_transport_error_is_static(tmp_path):
     path = tmp_path / "FAKE-auth.json"
     path.write_text(json.dumps(auth_document()))
@@ -624,6 +651,7 @@ async def test_gateway_shutdown_transport_error_is_static(tmp_path):
     await gateway.close()
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("content_type", [None, "application/json", "text/plain; charset=utf-8"])
 async def test_nonstream_recognizes_sse_body_despite_content_type(gateway_factory, content_type):
     result = {"id": "resp_FAKE", "status": "completed", "output": []}
@@ -643,6 +671,7 @@ async def test_nonstream_recognizes_sse_body_despite_content_type(gateway_factor
         assert response.headers["content-type"].startswith("application/json")
 
 
+@pytest.mark.integration
 async def test_nonstream_preserves_actual_json_success_response(gateway_factory):
     result = {"id": "resp_FAKE", "status": "completed", "output": [], "text": "שלום"}
 

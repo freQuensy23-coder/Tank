@@ -300,7 +300,9 @@ def prepare(source, destination, boxlite_runtime=None):
     )
     docker += f"\nCOPY --chown=node:node tank-deploy/boxlite-runtime /opt/tank-boxlite-runtime\nRUN chmod 755 {executables}\nENV BOXLITE_RUNTIME_DIR=/opt/tank-boxlite-runtime LD_LIBRARY_PATH=/opt/tank-boxlite-runtime\n"
     docker += "COPY --chown=node:node tank-overlay.json /app/tank-overlay.json\n"
+
     docker += "USER root\nRUN install -d -o node -g node /app/replay-evidence\nUSER node\n"
+
     (destination / "apps/main-node/Dockerfile.tank").write_text(docker)
     (destination / "tank-overlay.json").write_text(
         json.dumps(

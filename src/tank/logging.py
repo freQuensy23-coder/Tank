@@ -59,6 +59,7 @@ def configure_logging(settings=None) -> None:
                 password = urlsplit(str(value)).password
                 if password:
                     values.extend((password, unquote(password)))
+
     _KNOWN_SECRETS.update(values)
     safe_filter = CredentialFilter(tuple(_KNOWN_SECRETS))
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -67,6 +68,7 @@ def configure_logging(settings=None) -> None:
             if isinstance(old, CredentialFilter):
                 handler.removeFilter(old)
         handler.addFilter(safe_filter)
+
     for name in ("httpx", "httpcore", "tank"):
         logger = logging.getLogger(name)
         for old in list(logger.filters):

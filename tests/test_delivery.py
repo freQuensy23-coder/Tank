@@ -54,6 +54,47 @@ async def test_delivery_sent_opens_once_and_escapes_html():
 
 
 @pytest.mark.asyncio
+async def test_receipt_beyond_first_ledger_page_prevents_duplicate_delivery():
+    repo = await setup_repo()
+    subject = {"alert_id": "a", "version": 1, "channel": "telegram:alerts"}
+    for index in range(1000):
+        await repo.put(
+            "out.deliveries",
+            f"history-{index:04}",
+            {**subject, "status": "GENERATED", "attempt": 1, "at": "2026-10-17T00:00:00Z"},
+            immutable=True,
+        )
+    receipt = {
+        **subject,
+        "status": "SENT",
+        "attempt": 2,
+        "message_ref": "42",
+        "at": "2026-10-17T00:00:01Z",
+    }
+    await repo.put("out.deliveries", "zz-sent", receipt, immutable=True)
+    ledger = await repo.list("out.deliveries", filters=subject, limit=2000)
+    frozen_alert = await repo.get("out.alerts", "a:1")
+    assert len(ledger) == 1001
+    requests = []
+
+    def send(request):
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 99}})
+
+    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+        service = DeliveryService(repo, settings, http=http)
+        await service.deliver({"alert_id": "a", "version": 1})
+    assert requests == []
+    assert await repo.list("out.deliveries", filters=subject, limit=2000) == ledger
+    assert await repo.get("out.deliveries", "zz-sent") == receipt
+    assert await repo.get("out.alerts", "a:1") == frozen_alert
+    assert await repo.list("ana.calls") == []
+    assert await repo.list("out.ops_notices") == []
+    assert await repo.list("ops.jobs") == []
+
+
+@pytest.mark.asyncio
 async def test_failure_never_opens_call_and_honors_retry_after():
     repo = await setup_repo()
     async with httpx.AsyncClient(
@@ -533,35 +574,6 @@ async def test_fifth_http_failure_records_terminal_and_single_notice():
 
 
 @pytest.mark.asyncio
-async def test_delivery_uses_unbounded_iterator_for_exact_sent_idempotence(monkeypatch):
-    repo = await setup_repo()
-    await repo.put(
-        "out.deliveries",
-        "sent",
-        {
-            "alert_id": "a",
-            "version": 1,
-            "channel": "telegram:alerts",
-            "status": "SENT",
-            "message_ref": "42",
-            "attempt": 1,
-            "at": "2026-10-17T00:00:00+00:00",
-        },
-        immutable=True,
-    )
-
-    async def capped_list(*args, **kwargs):
-        pytest.fail("Delivery lookup used capped list instead of repository iterator")
-
-    monkeypatch.setattr(repo, "list", capped_list)
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda r: pytest.fail("Duplicate send"))
-    ) as http:
-        await DeliveryService(repo, settings, http=http).deliver({"alert_id": "a", "version": 1})
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize("current_resolution", ["resolution-1", "resolution-2"])
 async def test_milestone_resolution_consumed_only_on_matching_sent_snapshot(current_resolution):
     repo = MemoryRepository()
@@ -610,6 +622,7 @@ async def test_milestone_resolution_consumed_only_on_matching_sent_snapshot(curr
     assert event["next_milestone"] is None
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_first_sent_persists_alerted_until_subsequent_scheduler_transition():
     from tank.scheduler import Scheduler
@@ -691,6 +704,7 @@ async def test_explicit_ordinary_update_flag_preserves_rate_with_persistent_safe
 @pytest.mark.parametrize("precision", ["BUCKET(1m)", None])
 async def test_delivery_ledger_and_calls_keep_source_precision_and_actual_clocks(precision):
     repo = await setup_repo()
+
     alert = {
         "alert_id": "precision",
         "version": 1,
@@ -852,125 +866,132 @@ async def test_historical_suppression_is_preserved_without_censoring_explicit_re
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_newer_held_update_supersedes_older_and_keeps_spacing_through_restart(monkeypatch, backend):
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_newer_held_update_supersedes_older_and_keeps_spacing_through_restart(
+    monkeypatch, backend, postgres_template
+):
     """W2 (03 §7.4, FR-A-04): every version carries the whole card, so an older
     held update is never sent once a newer version exists; the newest one waits
     for its own slot and survives a restart."""
     import copy
     import json
     import os
+    from contextlib import AsyncExitStack
     from datetime import timedelta
 
     from tank.storage import PostgresRepository
     from tank.util import iso, new_id, sha256, utcnow
 
-    database_url = os.getenv("TANK_TEST_DATABASE_URL")
-    if backend == "postgres" and not database_url:
-        pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
-    repo = PostgresRepository(database_url) if backend == "postgres" else MemoryRepository()
-    await repo.open()
-    if backend == "postgres":
-        await repo.migrate()
-    base = utcnow() - timedelta(hours=1)
-    clock = [base + timedelta(minutes=25)]
-    monkeypatch.setattr("tank.delivery.utcnow", lambda: clock[0])
-    aid = new_id("alert")
-    event_id = new_id("event")
-    settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
-    requests = []
+    async with AsyncExitStack() as repository_lifetime:
+        if backend == "postgres":
+            database_url = os.getenv("TANK_TEST_DATABASE_URL")
+            if not database_url:
+                pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
+            repo = await repository_lifetime.enter_async_context(postgres_template.repository(database_url))
+            database_url = repo.database_url
+        else:
+            repo = await MemoryRepository().open()
+        base = utcnow() - timedelta(hours=1)
+        clock = [base + timedelta(minutes=25)]
+        monkeypatch.setattr("tank.delivery.utcnow", lambda: clock[0])
+        aid = new_id("alert")
+        event_id = new_id("event")
+        settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
+        requests = []
 
-    def send(request):
-        requests.append(json.loads(request.content))
-        return httpx.Response(200, json={"ok": True, "result": {"message_id": 42 + len(requests)}})
+        def send(request):
+            requests.append(json.loads(request.content))
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": 42 + len(requests)}})
 
-    try:
-        await repo.put(
-            "evt.events",
-            event_id,
-            {
-                "event_id": event_id,
-                "statement": "Synthetic accepted event",
-                "theme_tags": [],
-                "tokens_mentioned": [],
-                "public_at": iso(base),
-                "public_at_prec": "EXACT",
-                "public_at_basis": "Synthetic fixture timestamp",
-                "known_to_us_at": iso(base),
-                "freshness": "FRESH",
-                "event_state": "APPROVED",
-                "state_verified": True,
-                "certainty": "HIGH",
-                "timing_confidence": "HIGH",
-                "best_source_class": "PRIMARY",
-                "lifecycle": "MONITORING",
-            },
-        )
-        digest = sha256({"fixture": aid})
-        await repo.put(
-            "out.evidence_bundles",
-            digest,
-            {"bundle_id": "EVB-" + digest, "sha256": digest, "payload": {"fixture": aid}},
-            immutable=True,
-        )
-        for version, due in [(1, 0), (2, 15), (3, 30)]:
+        try:
             await repo.put(
-                "out.alerts",
-                f"{aid}:{version}",
+                "evt.events",
+                event_id,
+                {
+                    "event_id": event_id,
+                    "statement": "Synthetic accepted event",
+                    "theme_tags": [],
+                    "tokens_mentioned": [],
+                    "public_at": iso(base),
+                    "public_at_prec": "EXACT",
+                    "public_at_basis": "Synthetic fixture timestamp",
+                    "known_to_us_at": iso(base),
+                    "freshness": "FRESH",
+                    "event_state": "APPROVED",
+                    "state_verified": True,
+                    "certainty": "HIGH",
+                    "timing_confidence": "HIGH",
+                    "best_source_class": "PRIMARY",
+                    "lifecycle": "MONITORING",
+                },
+            )
+            digest = sha256({"fixture": aid})
+            await repo.put(
+                "out.evidence_bundles",
+                digest,
+                {"bundle_id": "EVB-" + digest, "sha256": digest, "payload": {"fixture": aid}},
+                immutable=True,
+            )
+            for version, due in [(1, 0), (2, 15), (3, 30)]:
+                await repo.put(
+                    "out.alerts",
+                    f"{aid}:{version}",
+                    {
+                        "alert_id": aid,
+                        "version": version,
+                        "event_id": event_id,
+                        "kind": "FULL" if version == 1 else "UPDATE",
+                        "card_text": f"Accepted immutable version {version}",
+                        "decisions": [],
+                        "card_struct": {"event": {"thresholds": {"update_rate_limit_s": 900}}},
+                        "evidence_bundle_id": digest,
+                        "config_version": "fixture",
+                        "code_version": "fixture",
+                        "delivery_immediate": False,
+                        "generated_at": iso(base + timedelta(minutes=version)),
+                        "delivery_not_before": iso(base + timedelta(minutes=due)),
+                    },
+                    immutable=True,
+                )
+            await repo.put(
+                "out.deliveries",
+                new_id("delivery"),
                 {
                     "alert_id": aid,
-                    "version": version,
-                    "event_id": event_id,
-                    "kind": "FULL" if version == 1 else "UPDATE",
-                    "card_text": f"Accepted immutable version {version}",
-                    "decisions": [],
-                    "card_struct": {"event": {"thresholds": {"update_rate_limit_s": 900}}},
-                    "evidence_bundle_id": digest,
-                    "config_version": "fixture",
-                    "code_version": "fixture",
-                    "delivery_immediate": False,
-                    "generated_at": iso(base + timedelta(minutes=version)),
-                    "delivery_not_before": iso(base + timedelta(minutes=due)),
+                    "version": 1,
+                    "channel": "telegram:alerts",
+                    "status": "SENT",
+                    "message_ref": "42",
+                    "attempt": 1,
+                    "at": iso(base),
+                    "at_prec": "COLLECTION_ONLY",
                 },
                 immutable=True,
             )
-        await repo.put(
-            "out.deliveries",
-            new_id("delivery"),
-            {
-                "alert_id": aid,
-                "version": 1,
-                "channel": "telegram:alerts",
-                "status": "SENT",
-                "message_ref": "42",
-                "attempt": 1,
-                "at": iso(base),
-                "at_prec": "COLLECTION_ONLY",
-            },
-            immutable=True,
-        )
-        frozen = copy.deepcopy(await repo.get("out.alerts", f"{aid}:3"))
-        async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
-            await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 2})
-            assert requests == []
-            assert not await repo.list("out.deliveries", filters={"alert_id": aid, "version": 2})
-            with pytest.raises(DeliveryError) as deferred:
+            frozen = copy.deepcopy(await repo.get("out.alerts", f"{aid}:3"))
+            async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+                await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 2})
+                assert requests == []
+                assert not await repo.list("out.deliveries", filters={"alert_id": aid, "version": 2})
+                with pytest.raises(DeliveryError) as deferred:
+                    await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 3})
+                assert deferred.value.retry_after == 5 * 60
+                assert requests == []
+                if backend == "postgres":
+                    await repo.close()
+                    repo = PostgresRepository(database_url)
+                    await repo.open()
+                clock[0] = base + timedelta(minutes=30)
                 await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 3})
-            assert deferred.value.retry_after == 5 * 60
-            assert requests == []
-            if backend == "postgres":
-                await repo.close()
-                repo = PostgresRepository(database_url)
-                await repo.open()
-            clock[0] = base + timedelta(minutes=30)
-            await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 3})
-            await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 3})
-            await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 2})
-            assert len(requests) == 1
-            assert requests[0]["text"] == "<b>Accepted immutable version 3</b>"
-            assert requests[0]["reply_parameters"] == {"message_id": 42}
-            sent = await repo.list("out.deliveries", filters={"alert_id": aid, "status": "SENT"})
-            assert [row["version"] for row in sorted(sent, key=lambda row: row["at"])] == [1, 3]
-            assert await repo.get("out.alerts", f"{aid}:3") == frozen
-    finally:
-        await repo.close()
+                await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 3})
+                await DeliveryService(repo, settings, http=http).deliver({"alert_id": aid, "version": 2})
+                assert len(requests) == 1
+                assert requests[0]["text"] == "<b>Accepted immutable version 3</b>"
+                assert requests[0]["reply_parameters"] == {"message_id": 42}
+                sent = await repo.list("out.deliveries", filters={"alert_id": aid, "status": "SENT"})
+                assert [row["version"] for row in sorted(sent, key=lambda row: row["at"])] == [1, 3]
+                assert await repo.get("out.alerts", f"{aid}:3") == frozen
+        finally:
+            await repo.close()

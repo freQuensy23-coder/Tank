@@ -65,6 +65,7 @@ async def test_lifecycle_cannot_overwrite_update_between_predicate_read_and_writ
     await asyncio.wait_for(read_started.wait(), 1)
     update = asyncio.create_task(accepted_update())
     await asyncio.wait_for(update_attempted.wait(), 1)
+
     release_read.set()
     await asyncio.wait_for(asyncio.gather(upkeep, update), 1)
     event = await repo.get("evt.events", "e")

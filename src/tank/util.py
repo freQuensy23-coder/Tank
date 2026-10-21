@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 UTC = UTC
 
@@ -73,8 +73,8 @@ def new_id(prefix: str, *, timestamp: Any = None, entropy: int | None = None) ->
 
 
 def jsonable(value: Any) -> Any:
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return jsonable(dataclasses.asdict(value))
+    if dataclasses.is_dataclass(value):
+        return jsonable(dataclasses.asdict(cast(Any, value)))
     if hasattr(value, "model_dump"):
         return jsonable(value.model_dump(mode="python"))
     if isinstance(value, dict):

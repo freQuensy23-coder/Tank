@@ -31,6 +31,7 @@ def remember_quote_usd(quote, samples):
     if not merged:
         return
     newest = max(merged)
+
     QUOTE_USD_HISTORY[quote] = tuple(
         sorted(item for item in merged.items() if item[0] >= newest - QUOTE_USD_REACH)
     )
@@ -174,6 +175,7 @@ def trade(instrument, raw, *, received_ts=None, source="WS"):
     if qty <= 0 or price <= 0:
         raise SemanticError("nonpositive trade")
     quote = instrument.get("quote_asset", "").upper()
+
     fx, _ = quote_usd_rate(instrument, ts)
     usd = qty * price * decimal(fx) if fx is not None else None
     return jsonable(
@@ -276,6 +278,7 @@ def kline(instrument, row, *, now=None):
     for name in ("quote_volume", "n_trades", "taker_buy_native", "taker_buy_quote"):
         result[name] = extra.get(name)
     quote = result.get("quote_volume")
+
     fx, fx_asof = quote_usd_rate(instrument, parse_time(ts) + timedelta(minutes=1))
     result.update(
         quote_asset=instrument.get("quote_asset"),
@@ -324,6 +327,7 @@ def oi(instrument, raw, *, mark=None, mark_ts=None, mark_ts_prec=None, received_
     if ts is None:
         raise SemanticError("OI source timestamp absent")
     bucketed = "Hist" in metric
+
     if bucketed or key == "bybit.linear":
         allowed = (
             {300, 900, 1800, 3600, 14400, 86400}

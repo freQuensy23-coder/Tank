@@ -17,13 +17,13 @@ async def _keeping_execute(self, query, params=None, **kwargs):
     match = re.match(r"DROP DATABASE \"?(tank_sse_[0-9a-f]+)\"?", text)
     target = os.environ.get("KEEP_E2E_DATABASE")
     if match and target and target.startswith("tank_test_"):
-        await _execute(self, f'DROP DATABASE IF EXISTS "{target}"')
+        await _execute(self, f"DROP DATABASE IF EXISTS \"{target}\"")
         await _execute(
             self,
             "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=%s AND pid<>pg_backend_pid()",
             (match.group(1),),
         )
-        await _execute(self, f'CREATE DATABASE "{target}" TEMPLATE "{match.group(1)}"')
+        await _execute(self, f"CREATE DATABASE \"{target}\" TEMPLATE \"{match.group(1)}\"")
         os.environ.pop("KEEP_E2E_DATABASE")
     return await _execute(self, query, params, **kwargs)
 

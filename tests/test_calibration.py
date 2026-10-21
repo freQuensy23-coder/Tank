@@ -100,6 +100,7 @@ def test_routing_cutoff_is_highest_meeting_both_targets_or_none():
     assert routing_cutoff([routing_metrics(rows, 0.95)]) is None
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_path):
     items = [
@@ -146,11 +147,13 @@ async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_pat
     async with httpx.AsyncClient(transport=httpx.MockTransport(jev)) as http:
         report = await acquire(path, tmp_path / "out", settings=settings, http=http)
         routing_calls = [c for c in calls if "same_event" in c["questions"]]
+
         assert len(routing_calls) == 1 and routing_calls[0]["state"]["event"]["statement"] == "Statement e1"
         first = len(calls)
         await acquire(path, tmp_path / "out", settings=settings, http=http)
         assert len(calls) == first
     assert report["counts"]["repeats"] == 1 and report["selected"]["routing_cutoff"] == 0.92
     assert report["filter"]["crypto_reaching_full_analysis"] == 3
+
     assert report["status"] == "FAIL" and report["rejection_reasons"] == ["sample_minimums"]
     assert "routing_cutoff" not in (tmp_path / "out" / "thresholds.proposed.yaml").read_text()

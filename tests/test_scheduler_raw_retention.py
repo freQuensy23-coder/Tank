@@ -173,6 +173,7 @@ async def test_missing_backup_still_prunes_expired_temporary_raw_file(tmp_path):
     scheduler = quiet_scheduler(
         SimpleNamespace(backup_dir=None, data_dir=data, load_config=lambda name: {"instruments": []})
     )
+
     scheduler.prune_raw_files = Scheduler.prune_raw_files.__get__(scheduler, Scheduler)
     try:
         await scheduler.tick(NOW)

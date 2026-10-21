@@ -8,7 +8,6 @@ nothing the operator is told changes.
 import json
 import os
 import uuid
-from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import pytest
@@ -16,8 +15,9 @@ import pytest
 from tank.agents import SessionService
 from tank.event_tools import EventToolService
 from tank.settings import Settings
-from tank.storage import PostgresRepository
 from tank.util import iso, sha256
+
+pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 SCHEMAS = ("reg", "ingest", "evt", "mkt", "ana", "out", "ops", "scout", "qa")
 OWN_LOGS = {"ops.agent_sessions", "ops.tool_calls", "ops.llm_usage"}
@@ -25,24 +25,12 @@ OPERATOR_FACING = ("out.alerts", "out.deliveries", "out.ops_notices", "out.evide
 
 
 @pytest.fixture
-async def repo():
-    import psycopg
-    from psycopg import sql
-
+async def repo(postgres_template):
     url = os.getenv("TANK_TEST_DATABASE_URL")
     if not url:
         pytest.skip("Disposable administrator PostgreSQL DSN required")
-    database = "tank_scout_" + uuid.uuid4().hex[:12]
-    admin = await psycopg.AsyncConnection.connect(url, autocommit=True)
-    await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
-    repository = await PostgresRepository(urlunsplit(urlsplit(url)._replace(path="/" + database))).open()
-    try:
-        await repository.migrate()
-        yield repository, urlunsplit(urlsplit(url)._replace(path="/" + database))
-    finally:
-        await repository.close()
-        await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database)))
-        await admin.close()
+    async with postgres_template.repository(url) as repository:
+        yield repository, repository.database_url
 
 
 async def snapshot(dsn):
@@ -290,6 +278,7 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
     assert "scout.expansion_proposals" in changed
     for name in OPERATOR_FACING:
         assert before[name] == after[name]
+
     assert (await repository.get("ops.agent_sessions", "ses_analyst"))["session_id"] == "ses_analyst"
     assert all(
         row["session_id"] == scout["session_id"]

@@ -134,6 +134,7 @@ class DeliveryService:
             )
             if not rows:
                 raise ValueError("Delivery subject does not exist")
+
             async with AsyncExitStack() as locks:
                 await self._enter_delivery_lock(locks, "event:" + rows[0]["event_id"])
                 error = await self._deliver(payload)

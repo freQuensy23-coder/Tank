@@ -20,6 +20,7 @@ class OrderBook:
         self.gap_reason = "NO_SNAPSHOT"
         self.exchange_ts = None
         self.exchange_ts_prec = None
+
         self.verified = True
         self._next_verify = 0.0
         self.integrity_method = (
@@ -30,6 +31,7 @@ class OrderBook:
             else "DOCUMENTED_LEVEL2_DELIVERY"
         )
         self._strings = {"bid": {}, "ask": {}}
+
         self._prices = {"bid": [], "ask": []}
 
     def _levels(self, side, levels, *, snapshot=False):
@@ -71,6 +73,7 @@ class OrderBook:
         self.exchange_ts_prec = ts_prec if ts is not None else "COLLECTION_ONLY"
         self.integrity_ok = bool(self.bids and self.asks)
         self.gap_reason = None if self.integrity_ok else "EMPTY_BOOK"
+
         self.pending_snapshot = {
             "instrument_id": self.instrument["instrument_id"],
             "market_type": self.instrument["market_type"],
@@ -129,6 +132,7 @@ class OrderBook:
                 excess = len(book) - 1000
                 if excess <= 0:
                     continue
+
                 prices = self._prices[side]
                 far = prices[:excess] if side == "bid" else prices[-excess:]
                 for price in far:
@@ -220,6 +224,7 @@ class OrderBook:
             far = prices[0] if side == "bid" else prices[-1]
             covered = abs(far / mid - 1) * 100
             ranges[side] = covered
+
             if side == "bid":
                 near = prices[bisect_left(prices, mid * (1 - Decimal(".02"))) :][::-1]
             else:

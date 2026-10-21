@@ -1,9 +1,9 @@
 """Dedicated read-only X sensor: operator session and bounded list capture (02 §3.7)."""
 
 import asyncio
-import contextlib
 import json
 import re
+from contextlib import suppress
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -108,6 +108,7 @@ class XSensor:
             ):
                 raise TypeError("Invalid local storage")
             validated_origins.append((url, entries))
+
         await self.context.add_cookies(cookies)
         for url, entries in validated_origins:
             page = await self.context.new_page()
@@ -185,6 +186,7 @@ class XSensor:
                     articles = page.locator("article")
                     for idx in range(await articles.count()):
                         node = articles.nth(idx)
+
                         times = node.locator("time[datetime]")
                         if not await times.count():
                             continue
@@ -221,6 +223,7 @@ class XSensor:
                             ):
                                 related.append({"author": m.group(1), "status_id": m.group(2)})
                         social = await node.locator('[data-testid="socialContext"]').all_text_contents()
+
                         reposter_links = await node.locator('[data-testid="socialContext"]').evaluate_all(
                             '(nodes)=>nodes.map(n=>(n.closest("a[href]")||n.querySelector("a[href]")||{getAttribute:()=>null}).getAttribute("href"))'
                         )
@@ -272,6 +275,7 @@ class XSensor:
                 else:
                     if checkpoint:
                         self.scan_status = "GAP_LIMIT"
+
                 detail = await self.context.new_page()
                 try:
                     for item in result.values():
@@ -294,6 +298,7 @@ class XSensor:
                             found = False
                             for index in range(await candidates.count()):
                                 candidate = candidates.nth(index)
+
                                 permalink = candidate.locator("time").first.locator("xpath=ancestor::a[1]")
                                 if not await permalink.count():
                                     continue
@@ -344,5 +349,5 @@ class XSensor:
             started = asyncio.get_running_loop().time()
             await poll()
             remaining = max(0, 15 - (asyncio.get_running_loop().time() - started))
-            with contextlib.suppress(TimeoutError):
+            with suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=remaining)

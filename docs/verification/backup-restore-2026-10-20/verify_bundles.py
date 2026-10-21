@@ -1,5 +1,4 @@
 """Verify bundles restored from a backup into a separate volume against its manifest."""
-
 import hashlib
 import json
 import sys

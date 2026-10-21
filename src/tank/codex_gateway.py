@@ -221,10 +221,7 @@ class CodexGateway:
                 self._runner, self.settings.codex_gateway_host, self.settings.codex_gateway_port
             )
             await site.start()
-            server = site._server
-            if server is None or not isinstance(server, asyncio.Server):
-                raise RuntimeError("Codex gateway did not bind a socket")
-            self.bound_port = server.sockets[0].getsockname()[1]
+            self.bound_port = self._runner.addresses[0][1]
             self.ready.set()
         except BaseException:
             await self.close()
@@ -316,6 +313,7 @@ class CodexGateway:
                     raise error
             try:
                 assert self._client is not None
+
                 request = httpx.Request(
                     "POST",
                     TOKEN_URL,
@@ -406,6 +404,7 @@ class CodexGateway:
             else:
                 messages.append(item)
         result = dict(body, input=messages, instructions=instructions, store=False, stream=True)
+
         for name in ("max_output_tokens", "temperature", "prompt_cache_retention", "prompt_cache_options"):
             result.pop(name, None)
         return result
@@ -484,6 +483,7 @@ class CodexGateway:
         except httpx.HTTPError:
             if downstream is None:
                 return self._error(GatewayError("codex_upstream_unavailable", 502))
+
             await downstream.write(
                 b'event: error\ndata: {"type":"error","code":"codex_stream_interrupted","message":"Codex stream interrupted"}\n\n'
             )
@@ -508,6 +508,7 @@ class CodexGateway:
         pending = ""
         encoding = None
         redactor = _Redactor(self._secrets)
+
         import codecs
 
         decoder = codecs.getincrementaldecoder("utf-8")()

@@ -438,6 +438,7 @@ def compose_card(
         lines.append("Market analysis pending — token actions and outlook unavailable.")
     else:
         mapping = event.get("beneficiary_map") or {}
+
         named_edges = beneficiaries + [
             edge
             for edge in event.get("beneficiary_edges", [])
@@ -445,6 +446,7 @@ def compose_card(
         ]
 
         def outside_universe(edge):
+
             return bool(
                 universe
                 and edge.get("token_id")
@@ -708,6 +710,7 @@ def _market_breadth(truth, token):
                 + "% of the OI value change; price-markup component present)"
             )
         venues.append(text)
+
     covered = any("by venue:" in str(fact) for fact in truth.get("decisive_facts") or [])
     if venues and window and not covered:
         lines.append(window + ": open interest by venue: " + "; ".join(venues))
@@ -724,6 +727,7 @@ def _market_breadth(truth, token):
             during = " while price rose " + format(Decimal(str(move)) * 100, "+.2f") + "%"
         else:
             during = "; price " + format(Decimal(str(move)) * 100, "+.2f") + "%"
+
         verdict = {
             "BELOW": ": positions closing",
             "WITHIN": "; within its normal range",

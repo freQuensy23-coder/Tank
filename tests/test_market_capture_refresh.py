@@ -3,8 +3,11 @@
 import asyncio
 import copy
 import json
+import os
 import re
+from contextlib import asynccontextmanager
 from datetime import timedelta
+from functools import lru_cache
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -14,7 +17,7 @@ from test_agents_session_audit import settings as session_settings
 from test_event_tools import complete_assessment_fixture, complete_event_fixture
 from test_session_binding_concurrency import fixture_repo
 from test_session_binding_concurrency import seed as seed_typed_session
-from test_truth_start_fixture import synthetic_start_snapshot
+from test_truth_start_fixture import compact_start_snapshot
 
 from tank.agents import SessionService
 from tank.analysis.decisions import DecisionEngine
@@ -28,16 +31,48 @@ from tank.time_precision import chosen_boundary
 from tank.util import iso, parse_time, utcnow
 
 
-def shifted_snapshot(end):
-    source = synthetic_start_snapshot()
+@lru_cache(maxsize=2)
+def _canonical_snapshot(full_flow_history):
+    """Private immutable seed; decoded output is owned by one caller only."""
+    source = compact_start_snapshot()
+
+    end_value = parse_time(source["cutoff"])
+
+    if not full_flow_history:
+        source["flow_bars"] = [
+            r
+            for r in source["flow_bars"]
+            if parse_time(r["minute_start"]) >= end_value - timedelta(hours=4, minutes=1)
+        ]
+    source["oi"] = [
+        r
+        for r in source["oi"]
+        if (parse_time(r["ts"]).hour in {8, 12} and parse_time(r["ts"]).minute == 0)
+        or parse_time(r["ts"])
+        in {end_value - timedelta(hours=1), end_value - timedelta(minutes=15), end_value}
+    ]
+    source["funding"] = [
+        r
+        for r in source["funding"]
+        if parse_time(r["settlement_time"]).hour % 8 == 0
+        and parse_time(r["settlement_time"]).minute == 0
+        or parse_time(r["settlement_time"]) == end_value
+    ]
+    return json.dumps(source).encode()
+
+
+def shifted_snapshot(end, *, full_flow_history=True):
+    source = json.loads(_canonical_snapshot(full_flow_history))
     delta = end - parse_time(source["cutoff"])
 
     def shift(value):
         if isinstance(value, dict):
-            return {key: shift(item) for key, item in value.items()}
-        if isinstance(value, list):
-            return [shift(item) for item in value]
-        if isinstance(value, str) and re.match(r"^\d{4}-\d{2}-\d{2}T", value):
+            for key, item in value.items():
+                value[key] = shift(item)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                value[index] = shift(item)
+        elif isinstance(value, str) and re.match(r"^\d{4}-\d{2}-\d{2}T", value):
             return iso(parse_time(value) + delta)
         return value
 
@@ -53,12 +88,14 @@ class ReleasedMarket:
         self.reads = []
 
     async def snapshot(self, token, cutoff, *, anchor=None):
-        result = copy.deepcopy(self.source)
+
+        unavailable = {"flow_bars", "books", "oi", "klines", "funding"} if not self.released else set()
+        result = {
+            key: [] if key in unavailable else copy.deepcopy(value) for key, value in self.source.items()
+        }
         cutoff_value = getattr(cutoff, "value", cutoff)
         result["cutoff"] = iso(cutoff_value)
         self.reads.append((token, iso(cutoff_value), self.released))
-        if not self.released:
-            result.update(flow_bars=[], books=[], oi=[])
         return result
 
     async def condition_snapshot(self, token, cutoff, *, anchor=None, requirements=None):
@@ -72,6 +109,32 @@ class ReleasedMarket:
 
     async def wait_capture(self, *args, **kwargs):
         raise AssertionError("Terminal capture must not wait")
+
+
+async def persisted_ids(repo):
+    """Compare exact identities without requesting full numerical documents."""
+    result = {}
+    for table, field in (
+        ("ops.jobs", "job_id"),
+        ("ana.market_truth", "mta_id"),
+        ("ana.decisions", "dec_id"),
+        ("ana.watch_conditions", "cond_id"),
+    ):
+        result[table] = tuple(sorted([row[field] async for row in repo.iter_metadata(table, [field])]))
+    return result
+
+
+@asynccontextmanager
+async def _refresh_repository(backend, postgres_template):
+    if backend == "postgres":
+        url = os.getenv("TANK_TEST_DATABASE_URL")
+        if not url:
+            pytest.skip("Disposable administrator PostgreSQL DSN required")
+        async with postgres_template.repository(url) as repo:
+            yield repo
+    else:
+        async with fixture_repo(backend) as repo:
+            yield repo
 
 
 async def seed_bound_session(repo):
@@ -116,12 +179,17 @@ async def seed_domain(repo, settings, end):
         await repo.put(table, key, row)
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_ack(tmp_path, backend):
-    async with fixture_repo(backend) as repo:
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_ack(
+    tmp_path, backend, postgres_template
+):
+    async with _refresh_repository(backend, postgres_template) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
-        market = ReleasedMarket(shifted_snapshot(end))
+        market = ReleasedMarket(shifted_snapshot(end, full_flow_history=True))
         truth = MarketTruthService(repo, settings, market)
         tools = EventToolService(repo, settings, truth, DecisionEngine())
         scheduler = Scheduler(repo, settings, market, truth)
@@ -142,6 +210,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
         assert fired["status"] == "FIRED" and not fired.get("consumed_by")
         messages = [row async for row in repo.iter_all("ops.jobs", filters={"type": "AGENT_MESSAGE"})]
         assert any(row["payload"].get("kind") == "CONDITION_FIRED" for row in messages)
+
         assert len(await repo.list("ana.market_truth")) == 1
         await seed_bound_session(repo)
         sent = []
@@ -189,15 +258,12 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
                 assert (await repo.get("ana.watch_conditions", watch["cond_id"]))["consumed_by"] == decision[
                     "dec_id"
                 ]
-                before = {
-                    table: len(await repo.list(table))
-                    for table in ("ops.jobs", "ana.market_truth", "ana.decisions", "ana.watch_conditions")
-                }
+                before = await persisted_ids(repo)
                 await sessions.process_event("s", event, 7)
                 assert sent[0] == sent[1]
                 assert (await repo.get("ops.tool_calls", "s:decision"))["returned_at"]
                 assert (await repo.get("ops.agent_sessions", "s"))["next_tool_call_ordinal"] == 1
-                assert before == {table: len(await repo.list(table)) for table in before}
+                assert before == await persisted_ids(repo)
                 assert await repo.get("ana.market_truth", first["mta_id"]) == first
         finally:
             stop.set()
@@ -229,12 +295,17 @@ async def test_runtime_waits_for_capture_release_before_numerical_assessment():
     runtime.truth.assess.assert_awaited_once()
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(tmp_path, backend):
-    async with fixture_repo(backend) as repo:
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+@pytest.mark.integration
+async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
+    tmp_path, backend, postgres_template
+):
+    async with _refresh_repository(backend, postgres_template) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
-        market = ReleasedMarket(shifted_snapshot(end))
+        market = ReleasedMarket(shifted_snapshot(end, full_flow_history=False))
         truth = MarketTruthService(repo, settings, market)
         tools = EventToolService(repo, settings, truth, DecisionEngine())
         await seed_domain(repo, settings, end)
@@ -297,12 +368,30 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(tmp_pat
                 await worker
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_refresh(tmp_path, backend):
-    async with fixture_repo(backend) as repo:
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+@pytest.mark.integration
+async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_refresh(
+    tmp_path, backend, postgres_template
+):
+    async with _refresh_repository(backend, postgres_template) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
-        market = ReleasedMarket(shifted_snapshot(end))
+
+        market = ReleasedMarket(
+            {
+                "cutoff": iso(end),
+                "anchor": {"type": "T0", "ts": iso(end - timedelta(hours=4))},
+                "instruments": [],
+                "flow_bars": [],
+                "klines": [],
+                "books": [],
+                "oi": [],
+                "funding": [],
+                "semantics": [],
+            }
+        )
         truth = MarketTruthService(repo, settings, market)
         engine = DecisionEngine()
         tools = EventToolService(repo, settings, truth, engine)
@@ -352,6 +441,7 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
             pending = asyncio.create_task(sessions.process_event("s", event, 8))
             try:
                 await asyncio.wait_for(entering.wait(), 5)
+
                 second.update(status="FIRED", fired_at=iso())
                 await repo.put("ana.watch_conditions", second["cond_id"], second)
                 release.set()
@@ -382,11 +472,12 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
         ("DOWNGRADE", "milestone.outcome", "FAILED", "REDUCE"),
     ],
 )
+@pytest.mark.integration
 async def test_event_only_risk_watch_never_waits_for_market_refresh(tmp_path, role, metric, value, expected):
     repo = MemoryRepository()
     settings = Settings(data_dir=tmp_path, _env_file=None)
     end = utcnow().replace(second=0, microsecond=0)
-    market = ReleasedMarket(shifted_snapshot(end))
+    market = ReleasedMarket(shifted_snapshot(end, full_flow_history=False))
     truth = MarketTruthService(repo, settings, market)
     tools = EventToolService(repo, settings, truth, DecisionEngine())
     await seed_domain(repo, settings, end)

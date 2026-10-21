@@ -6,38 +6,27 @@ from datetime import timedelta
 import pytest
 import pytest_asyncio
 
-from tank.storage import MemoryRepository, PostgresRepository, _projection
+from tank.storage import MemoryRepository, _projection
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule
-from tank.util import iso, new_id, parse_time, utcnow
+from tank.util import iso, parse_time, utcnow
 
 
 @pytest_asyncio.fixture
-async def disposable_pg():
-    import psycopg
-    from psycopg import sql
-    from psycopg.conninfo import conninfo_to_dict, make_conninfo
-
+async def disposable_pg(postgres_template):
     url = os.getenv("TANK_TEST_DATABASE_URL")
     if not url:
         pytest.skip("Requires isolated PostgreSQL16 TANK_TEST_DATABASE_URL with CREATE DATABASE")
-    name = "tank_precision_conformance_" + new_id("test").replace("-", "").lower()
-    admin = await psycopg.AsyncConnection.connect(url, autocommit=True)
-    repository = None
-    created = False
-    try:
-        await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-        created = True
-        parameters = conninfo_to_dict(url)
-        parameters["dbname"] = name
-        repository = PostgresRepository(make_conninfo(**parameters))
-        await repository.open()
+    async with postgres_template.repository(url) as repository:
         yield repository
-    finally:
-        if repository is not None:
-            await repository.close()
-        if created:
-            await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
-        await admin.close()
+
+
+@pytest_asyncio.fixture
+async def upgrade_pg(postgres_template):
+    url = os.getenv("TANK_TEST_DATABASE_URL")
+    if not url:
+        pytest.skip("Requires isolated PostgreSQL16 TANK_TEST_DATABASE_URL with CREATE DATABASE")
+    async with postgres_template.repository(url, migrated=False) as repository:
+        yield repository
 
 
 async def test_enqueue_explicit_anchors_and_unknown_legacy_iso():
@@ -104,6 +93,8 @@ async def _sql_job(repo, key, *, created_at=None):
     return await repo.get("ops.jobs", key)
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
 async def test_fresh_sql_lifecycle_clock_and_retry_precision(disposable_pg):
     repo = disposable_pg
     await repo.migrate()
@@ -155,10 +146,12 @@ async def test_fresh_sql_lifecycle_clock_and_retry_precision(disposable_pg):
     assert direct_row["finished_at_prec_reason"] is None
 
 
-async def test_upgrade_nullable_metadata_preserves_immutable_history(disposable_pg):
+@pytest.mark.integration
+@pytest.mark.postgres
+async def test_upgrade_nullable_metadata_preserves_immutable_history(upgrade_pg):
     from psycopg.types.json import Jsonb
 
-    repo = disposable_pg
+    repo = upgrade_pg
     await repo.migrate(target="025_capture_tier_transitions.sql")
     legacy = {
         "notice_id": "legacy-notice",

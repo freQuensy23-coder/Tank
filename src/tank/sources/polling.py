@@ -72,6 +72,7 @@ class SourcePoller:
         self.acquisition_locks = {}
         self.state_locks = {}
         self.processing_locks = {}
+
         self.details = asyncio.Semaphore(4)
         self.active_acquisitions = {}
         self.active_details = {}
@@ -100,6 +101,7 @@ class SourcePoller:
         )
 
     async def state(self, key):
+
         return await self.service.repo.get("ops.source_checkpoints", key) or {}
 
     async def save(self, key, state):
@@ -195,6 +197,7 @@ class SourcePoller:
         )
 
     async def retain_page(self, key, source, feed, rows, page_state, *, kind="json"):
+
         async with self.lock(self.state_locks, key):
             current = await self.state(key)
             await self.queue_rows(
@@ -272,6 +275,7 @@ class SourcePoller:
                     found_on.update(dict.fromkeys(page_snapshot, len(pages)))
                     pages.append((page, page_state.get("fetched_at") or self.stamp()))
                     cursor = json.loads(page).get("result", {}).get("nextPageCursor")
+
             snapshot_key = key + ":instruments"
             stored = await self.state(snapshot_key)
             previous = stored.get("instruments")
@@ -334,6 +338,7 @@ class SourcePoller:
                 row["_payload"] = page
                 if identity(row) == checkpoint:
                     found = True
+
                     rows.append(row)
                     retained.append(row)
                     break
@@ -393,6 +398,7 @@ class SourcePoller:
                 query = re.sub(r"\bskip\s*:\s*\d+\s*,?", "", query)
                 query = re.sub(r"proposals\s*\(", f"proposals(skip: {offset}, ", query, count=1)
                 page_feed = dict(feed, body=dict(feed["body"], query=query))
+
             escalated = await svc.is_escalated(sid)
             if (self.now() - last_head_check).total_seconds() >= self.interval(source, feed, escalated):
                 head, head_state = await svc.fetch(feed, key, on_start=lambda: self.mark_request_start(key))
@@ -432,6 +438,7 @@ class SourcePoller:
             pending = state.get("pending_proposals", [])
             returned_ids = {row["proposal_id"] for row in rows}
             pending_evidence = {}
+
             for start in range(0, len(pending), 1000):
                 ids = pending[start : start + 1000]
                 query = (
@@ -672,6 +679,7 @@ class SourcePoller:
                 detail = await asyncio.to_thread(parsers.article, payload, source_id=sid)
                 if not detail["text"].strip():
                     return self._empty_body(item["url"], detail_state)
+
                 item.update(
                     {
                         k: v
@@ -688,6 +696,7 @@ class SourcePoller:
                 payload, source_id=sid, item_id=item["item_id"], observed_at=item["observed_at"]
             )
         stored = await svc.ingest(source, item)
+
         return "DUPLICATE" if stored["item_id"] != item["item_id"] else None
 
     async def drain(self, source, index, *, force=False, escalated=False):
@@ -776,6 +785,7 @@ class SourcePoller:
                     if batch["batch_id"] in completed:
                         done = completed[batch["batch_id"]]
                         batch["rows"] = [row for row in batch["rows"] if row["item_id"] not in done]
+
                 while current.get("pending_batches") and not current["pending_batches"][0]["rows"]:
                     batch = current["pending_batches"].pop(0)
                     current.update(batch["coverage"])
@@ -871,6 +881,7 @@ class SourcePoller:
                     self.active_details[key] = asyncio.create_task(
                         self.drain(source, index, escalated=escalated)
                     )
+
             active = [
                 task
                 for key, task in self.active_acquisitions.items()

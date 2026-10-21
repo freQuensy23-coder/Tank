@@ -1,5 +1,4 @@
 """One-off read-only PostgreSQL16 restore proof. No runtime or schema mutation."""
-
 import argparse
 import hashlib
 import json
@@ -28,7 +27,7 @@ def finish(state):
     return {
         "rows": state["rows"],
         "fingerprint": hashlib.sha256(
-            f"{state['rows']}:{state['sum']:064x}:{state['xor']:064x}".encode()
+            f'{state["rows"]}:{state["sum"]:064x}:{state["xor"]:064x}'.encode()
         ).hexdigest(),
     }
 
@@ -36,17 +35,14 @@ def finish(state):
 def read_dump(path, oma=False):
     process = subprocess.Popen(
         ["pg_restore", "--data-only", "--file", "-", str(path)],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     tables = {}
     sequences = {}
     active = None
     for line in process.stdout:
         if active is None:
-            sequence = re.fullmatch(
-                rb"SELECT pg_catalog.setval\('([^\']+)', (-?[0-9]+), (true|false)\);\n", line
-            )
+            sequence = re.fullmatch(rb"SELECT pg_catalog.setval\('([^\']+)', (-?[0-9]+), (true|false)\);\n", line)
             if sequence:
                 name = sequence[1].decode().replace('"', "")
                 assert all(IDENTIFIER.fullmatch(x) for x in name.split(".")), "Unsupported sequence"
@@ -56,13 +52,9 @@ def read_dump(path, oma=False):
             raw_table, raw_columns = line[5:].split(b" (", 1)
             table = raw_table.decode().replace('"', "")
             assert all(IDENTIFIER.fullmatch(x) for x in table.split(".")), "Unsupported table identifier"
-            columns = [
-                x.strip().strip(b'"').decode() for x in raw_columns.split(b") FROM stdin;", 1)[0].split(b",")
-            ]
+            columns = [x.strip().strip(b'"').decode() for x in raw_columns.split(b") FROM stdin;", 1)[0].split(b",")]
             assert all(IDENTIFIER.fullmatch(x) for x in columns), "Unsupported column identifier"
-            selected = (
-                [index for index, name in enumerate(columns) if name in SAFE_OMA_COLUMNS] if oma else None
-            )
+            selected = [index for index, name in enumerate(columns) if name in SAFE_OMA_COLUMNS] if oma else None
             active = {"table": table, "columns": columns, "indices": selected, "rows": 0, "sum": 0, "xor": 0}
             continue
         if line.rstrip(b"\r\n") == b"\\.":
@@ -70,9 +62,7 @@ def read_dump(path, oma=False):
             assert table not in tables, "Duplicate COPY table"
             tables[table] = {
                 "columns": active["columns"],
-                "hash_columns": [active["columns"][index] for index in active["indices"]]
-                if oma
-                else active["columns"],
+                "hash_columns": [active["columns"][index] for index in active["indices"]] if oma else active["columns"],
                 **finish(active),
             }
             active = None
@@ -87,9 +77,7 @@ def read_dump(path, oma=False):
 def verify_live(tables, sequences, oma=False):
     import psycopg
     from psycopg import sql
-
     from tank.settings import Settings
-
     settings = Settings()
     url = settings.openma_database_url if oma else settings.database_url
     mismatches = []
@@ -104,38 +92,34 @@ def verify_live(tables, sequences, oma=False):
             columns = expected["hash_columns"] if oma else expected["columns"]
             state = {"rows": 0, "sum": 0, "xor": 0}
             if not columns:
-                count = connection.execute(
-                    sql.SQL("SELECT count(*) FROM ONLY {}.{}").format(
-                        sql.Identifier(schema), sql.Identifier(name)
-                    )
-                ).fetchone()[0]
+                count = connection.execute(sql.SQL("SELECT count(*) FROM ONLY {}.{}").format(
+                    sql.Identifier(schema), sql.Identifier(name)
+                )).fetchone()[0]
                 actual = {"rows": count}
                 matched = count == expected["rows"]
             else:
                 query = sql.SQL("COPY (SELECT {} FROM ONLY {}.{}) TO STDOUT").format(
                     sql.SQL(",").join(map(sql.Identifier, columns)),
-                    sql.Identifier(schema),
-                    sql.Identifier(name),
+                    sql.Identifier(schema), sql.Identifier(name),
                 )
-                with connection.cursor() as cursor, cursor.copy(query) as copy:
-                    pending = b""
-                    for block in copy:
-                        pending += bytes(block)
-                        while b"\n" in pending:
-                            row, pending = pending.split(b"\n", 1)
-                            add(state, row + b"\n", None)
-                    assert not pending, "Incomplete COPY row"
+                with connection.cursor() as cursor:
+                    with cursor.copy(query) as copy:
+                        pending = b""
+                        for block in copy:
+                            pending += bytes(block)
+                            while b"\n" in pending:
+                                row, pending = pending.split(b"\n", 1)
+                                add(state, row + b"\n", None)
+                        assert not pending, "Incomplete COPY row"
                 actual = finish(state)
                 matched = actual == {"rows": expected["rows"], "fingerprint": expected["fingerprint"]}
             if not matched:
                 mismatches.append({"table": table, "row_count_matches": actual["rows"] == expected["rows"]})
         for sequence, expected in sequences.items():
             schema, name = sequence.split(".")
-            actual = connection.execute(
-                sql.SQL("SELECT last_value,is_called FROM {}.{}").format(
-                    sql.Identifier(schema), sql.Identifier(name)
-                )
-            ).fetchone()
+            actual = connection.execute(sql.SQL("SELECT last_value,is_called FROM {}.{}").format(
+                sql.Identifier(schema), sql.Identifier(name)
+            )).fetchone()
             if list(actual) != expected:
                 mismatches.append({"sequence": sequence, "state_matches": False})
     return mismatches
@@ -152,9 +136,7 @@ def main():
     mismatches = verify_live(tables, sequences, args.oma) if args.verify else None
     report = {
         "mode": "READ_ONLY_PG16_COPY_MULTISET_PROOF",
-        "scope": "OMA: all table counts, id/created_ms/updated_ms only; no credential/payload fingerprints"
-        if args.oma
-        else "Tank: full original COPY rows",
+        "scope": "OMA: all table counts, id/created_ms/updated_ms only; no credential/payload fingerprints" if args.oma else "Tank: full original COPY rows",
         "tables": tables,
         "sequences": sequences,
         "verified_against_live": args.verify,

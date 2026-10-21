@@ -296,6 +296,7 @@ def test_structured_signed_token_identity(tmp_path, bad, symbol):
         "chain": "Ethereum",
         "contract_address": address,
     }
+
     row["record"]["item_id"] = "original-item"
     private["source_token_identity"]["item_id"] = "original-item"
     op.write_text(json.dumps(original))

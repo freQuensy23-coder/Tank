@@ -6,7 +6,7 @@
   "fixed_pre_final_runtime_identity": "2f935050d6ffaa76e9118d7e5a3a6abb48b74953c5d0b5c28ce692b8f1087b6a",
   "assets_sha256": {
     "README.md": "6fe7d7668e041536131ed92bc8d0b798363047ed5e8894c5646de3fe1c4c0787",
-    "prepare_overlay.py": "ca62527170a79ae6a6d3c545da14a8bf934c18387f7dae05bfac79265fbd809a",
+    "prepare_overlay.py": "f1bccda0c86a5005ee955695399b57b1da94bac00002eadb4bc7f66c9374dc5b",
     "source/docs/adr/0006-session-execution-authority.md": "30bc3d297b56e295975e8d13d29b9c946bf6cf180cfb425ddc22325e2a85cf69",
     "source/packages/control-plane-node/src/lib/node-managed-harness-runtime.ts": "42df88fbb28b07b137df2a61ff0aa76fe686bb792998bd231d95e91972b2ab79",
     "source/packages/control-plane-node/src/lib/node-managed-session-runner.ts": "3a56b0977b8f5c1a6512b64c039f64ee4eff9c2de84693157a5e12e2eac15172",

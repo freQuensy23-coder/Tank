@@ -4,22 +4,85 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from contextvars import copy_context
 from copy import deepcopy
-from pathlib import Path
-from runpy import run_path
+from datetime import timedelta
+from decimal import Decimal
 from threading import Barrier
 
 import pytest
 
 import tank.analysis.truth as module
+from tank.util import iso, parse_time
+
+
+def _spot_packet():
+    """A complete fifteen-minute event, with current source prices and books."""
+    end = parse_time("2026-10-16T12:00:00Z")
+    packet = {
+        "token_id": "T",
+        "cutoff": iso(end),
+        "anchor": {"type": "T0", "ts": iso(end - timedelta(minutes=15))},
+        "instruments": [],
+        "flow_bars": [],
+        "klines": [],
+        "books": [],
+        "tickers": [],
+        "oi": [],
+        "funding": [],
+        "semantics": [],
+    }
+    for venue in ("A", "B"):
+        iid = f"{venue}:spot:T"
+        packet["instruments"].append(
+            {"instrument_id": iid, "token_id": "T", "venue": venue, "market_type": "SPOT"}
+        )
+        for minute in range(1, 16):
+            packet["flow_bars"].append(
+                {
+                    "instrument_id": iid,
+                    "token_id": "T",
+                    "minute_start": iso(end - timedelta(minutes=minute)),
+                    "buy_qty": 100,
+                    "sell_qty": 50,
+                    "sum_sq_qty": 1,
+                    "buy_notional": 10000,
+                    "sell_notional": 5000,
+                    "complete": True,
+                }
+            )
+        packet["klines"].append(
+            {
+                "instrument_id": iid,
+                "token_id": "T",
+                "open_time": iso(end - timedelta(minutes=1)),
+                "interval_s": 60,
+                "c": 100,
+                "complete": True,
+            }
+        )
+        packet["books"].append(
+            {
+                "instrument_id": iid,
+                "token_id": "T",
+                "exchange_ts": iso(end),
+                "integrity_ok": True,
+                "mid": 100,
+                "range_covered_pct": {"bid": 2, "ask": 2},
+                "depth": {"bid": {"p1": {"usd": 100000}}, "ask": {"p1": {"usd": 100000}}},
+                "bids": [[99, 1000]],
+                "asks": [[101, 1000]],
+            }
+        )
+    return packet
 
 
 def test_concurrent_actual_assessments_isolate_inherited_cache_and_restore_context(monkeypatch):
-    packet = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
-        "synthetic_start_snapshot"
-    ]()
+    packet = _spot_packet()
     first, second = deepcopy(packet), deepcopy(packet)
     first["event_id"], second["event_id"] = "FIRST", "SECOND"
     first["expected_direction"], second["expected_direction"] = "BULLISH", "LOSER"
+    for row in second["flow_bars"]:
+        row["buy_qty"], row["sell_qty"] = row["sell_qty"], row["buy_qty"]
+        row["buy_notional"], row["sell_notional"] = row["sell_notional"], row["buy_notional"]
     outer_cache = {"caller": "untouched"}
     outer_parameters = {"history_min_days": 999}
     outer_inputs = {"caller": "untouched"}
@@ -47,6 +110,7 @@ def test_concurrent_actual_assessments_isolate_inherited_cache_and_restore_conte
         return original(snapshot, config=config)
 
     monkeypatch.setattr(module, "_compute_market_truth", inspect)
+
     monkeypatch.setattr(module, "_COMPUTE_SLOT", nullcontext())
     try:
         contexts = [copy_context(), copy_context()]
@@ -61,6 +125,17 @@ def test_concurrent_actual_assessments_isolate_inherited_cache_and_restore_conte
         assert observed["FIRST"] is not observed["SECOND"]
         assert {r["event_id"] for r in results} == {"FIRST", "SECOND"}
         assert {r["relative"]["expected_direction"] for r in results} == {"BULLISH", "LOSER"}
+        by_event = {result["event_id"]: result for result in results}
+        for event_id, direction, cvd, sign in [
+            ("FIRST", "BUY", Decimal(1500), 1),
+            ("SECOND", "SELL", Decimal(-1500), -1),
+        ]:
+            actual = by_event[event_id]
+            assert actual["primary_window"] == "EVENT"
+            assert actual["data_confidence"]["class"] == "HIGH"
+            assert actual["spot"]["EVENT"]["direction"] == direction
+            assert Decimal(actual["spot"]["EVENT"]["composite_max"]["cvd"]) == cvd
+            assert actual["relative"]["repricing_sign"] == sign
         assert outer_cache == {"caller": "untouched"}
         for context in contexts:
             assert context.get(module._BASELINE_CACHE) is outer_cache

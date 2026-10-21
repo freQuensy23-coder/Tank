@@ -53,6 +53,7 @@ def main():
             size = int(sys.argv[3])
             if not 0 <= size <= LIMIT:
                 raise OSError(errno.EFBIG, "file_too_large")
+
             Path(path).parent.mkdir(parents=True, exist_ok=True)
             with os.fdopen(
                 os.open(path, os.O_WRONLY | os.O_CREAT | os.O_NONBLOCK, 0o666), "wb", buffering=0

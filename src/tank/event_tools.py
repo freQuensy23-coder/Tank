@@ -12,6 +12,7 @@ from urllib.parse import parse_qsl, unquote, urlparse
 import httpx
 import zstandard
 
+from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.time_precision import (
     Timestamp,
     chosen_boundary,
@@ -61,14 +62,16 @@ def resolve_entity(registry, name, entity_id=None, context=""):
     name = str(name or "").strip()
     for row in rows:
         qualified = {str(rule["alias"]).casefold() for rule in row.get("qualified_aliases") or []}
+
         known = [row.get("name") or "", *row.get("names", []), *row.get("aliases", [])]
         if name and any(
             name.casefold() == str(v).casefold() and str(v).casefold() not in qualified for v in known
         ):
             return row["entity_id"]
         for rule in row.get("qualified_aliases") or []:
-            matched = name.casefold() == str(rule["alias"]).casefold() or _word(rule["alias"], name)
-            if matched and any(_word(q, name + " " + context) for q in rule.get("requires_any", [])):
+            if (name.casefold() == str(rule["alias"]).casefold() or _word(rule["alias"], name)) and any(
+                _word(q, name + " " + context) for q in rule.get("requires_any", [])
+            ):
                 return row["entity_id"]
     return "UNRESOLVED:" + name
 
@@ -264,6 +267,7 @@ def write_evidence_bundle(bundle, data_dir):
             temporary.unlink(missing_ok=True)
     if sha256(zstandard.ZstdDecompressor().decompress(bundle_path.read_bytes())) != digest:
         raise ValueError("Immutable evidence bundle file hash mismatch")
+
     with bundle_path.open("rb") as published:
         os.fsync(published.fileno())
     directory = bundle_path.parent
@@ -523,6 +527,7 @@ class EventToolService:
                                 "error": "Use add_observation for the session event",
                             }
                     result = await getattr(self, tool)(arguments, ctx)
+
             if tool == "set_assessment" and self.scheduler is not None:
                 await self.scheduler.ensure_reactions(await self.require("evt.events", event_id))
             return fit_result(result) if tool in READ_TOOLS else result
@@ -587,6 +592,7 @@ class EventToolService:
         terms = a["query"].casefold().split()
         if self.reference_clock is not None:
             rows = []
+
             for item_id in self.reference_clock.item_ids:
                 item = await self.repo.get("ingest.source_items", item_id)
                 if item is None:
@@ -623,6 +629,7 @@ class EventToolService:
 
     async def list_open_events(self, a, c):
         q = a.get("entity_or_token", "").casefold()
+
         statuses = {}
         for session in await self.rows("ops.agent_sessions"):
             if session.get("event_id"):
@@ -783,6 +790,7 @@ class EventToolService:
                 )
             )
         unlock_summary = summarize_unlocks(unlocks, cutoff)
+
         dated = [row for row in unlocks if row.get("date")]
         dated.sort(key=lambda row: abs((parse_time(row["date"]) - cutoff).total_seconds()))
         nearest = sorted(dated[:UNLOCK_ROWS_SHOWN], key=lambda row: str(row["date"]))
@@ -790,6 +798,7 @@ class EventToolService:
             nearest
             + [row for row in unlocks if not row.get("date")][: max(0, UNLOCK_ROWS_SHOWN - len(nearest))]
         )
+
         latest = {}
         for row in await self.rows("mkt.supply_obs", filters={"token_id": token}):
             if not known(row):
@@ -1007,24 +1016,40 @@ class EventToolService:
         if urlparse(a["url"]).scheme != "https":
             raise ValueError("Only HTTPS evidence fetches are allowed")
         limit = min(20, float(a.get("timeout_s") or 20))
-        async with asyncio.timeout(limit):
-            async with (
-                httpx.AsyncClient(timeout=limit, follow_redirects=False)
-                if self.http is None
-                else _borrow(self.http) as client,
-                client.stream("GET", a["url"], headers={"User-Agent": self.settings.user_agent}) as r,
-            ):
-                r.raise_for_status()
-                chunks = []
-                size = 0
-                async for chunk in r.aiter_bytes():
-                    size += len(chunk)
-                    if size > 2 * 1024 * 1024:
-                        raise ValueError("Page exceeds 2 MB")
-                    chunks.append(chunk)
+        if is_exchange_url(a["url"]):
+            response = await capture_fetch(self.repo, "GET", a["url"], budget_s=limit)
+            response.raise_for_status()
+            if len(response.content) > 2 * 1024 * 1024:
+                raise ValueError("Page exceeds 2 MB")
+            chunks, media_type = [response.content], response.headers.get("content-type")
+        else:
+            chunks, media_type = await self._direct_page(a["url"], limit)
         original = b"".join(chunks)
         self.validate_evidence_bytes(original)
-        media_type = r.headers.get("content-type", "application/octet-stream")
+        return await self._store_page(a, c, original, media_type or "application/octet-stream")
+
+    async def _direct_page(self, url, limit):
+        async with (
+            asyncio.timeout(limit),
+            (
+                httpx.AsyncClient(timeout=limit, follow_redirects=False)
+                if self.http is None
+                else _borrow(self.http)
+            ) as client,
+            client.stream("GET", url, headers={"User-Agent": self.settings.user_agent}) as r,
+        ):
+            r.raise_for_status()
+            chunks = []
+            size = 0
+            async for chunk in r.aiter_bytes():
+                size += len(chunk)
+                if size > 2 * 1024 * 1024:
+                    raise ValueError("Page exceeds 2 MB")
+                chunks.append(chunk)
+            return chunks, r.headers.get("content-type")
+
+    async def _store_page(self, a, c, original, media_type):
+
         capture = self.persist_web_raw(a["url"], original, media_type, c)
         from selectolax.parser import HTMLParser
 
@@ -1043,6 +1068,7 @@ class EventToolService:
         )
 
     def validate_time(self, x, item):
+
         if self.reference_clock is not None:
             self.item_known_at(item)
         public = x["public_at"]
@@ -1122,6 +1148,7 @@ class EventToolService:
         obs = new_id("obs")
         entities = []
         registry = self.settings.load_config("registry")
+
         context = " ".join(
             [x["statement"], *[str(t) for t in x["tokens"]], *[str(e.get("name")) for e in x["entities"]]]
         )
@@ -1252,6 +1279,7 @@ class EventToolService:
                     "Thesis dependency must cite accepted causal relation claims from this event"
                 )
             claims.append(claim)
+
         evidence = [claim["claim_id"] for claim in claims]
         return (
             [(token_id, evidence) for token_id in token_ids]
@@ -1485,6 +1513,7 @@ class EventToolService:
         return target
 
     async def validate_impact_horizon(self, horizon, event, accepted):
+
         dated = []
         for proof in horizon.get("timing_evidence", []):
             claim = accepted.get(proof["claim_id"], {})
@@ -1568,6 +1597,7 @@ class EventToolService:
                 raise ValueError("Structural gate references unaccepted evidence")
             if gate.get("satisfied") and not gate.get("evidence"):
                 raise ValueError("Satisfied structural gate requires accepted evidence")
+
         evidence_ok = any(
             gate.get("gate") == criterion
             and gate.get("satisfied") is True
@@ -1822,6 +1852,7 @@ class EventToolService:
                 stage_support.append((supported_state, claim["claim_id"]))
             state = max((stage for stage, _ in stage_support), key=INTEGRATION.index, default="COMPATIBLE")
             stage_evidence = [claim_id for stage, claim_id in stage_support if stage == state]
+
             exposure = e["exposure_score"]
             if 6 <= exposure < 8:
                 likely = (
@@ -1846,6 +1877,7 @@ class EventToolService:
                 raise ValueError(
                     "Exposure 10 requires accepted counterparty evidence for the sole-rail basis"
                 )
+
             e["tradable"] = e.get("token_id") in tokens and any(
                 i["token_id"] == e.get("token_id") for i in registry["instruments"]
             )
@@ -1926,6 +1958,7 @@ class EventToolService:
             key=lambda e: e["exposure_score"],
             reverse=True,
         )[:2]
+
         context_entities = {e["entity_id"] for e in event["entities"]}
         dependency = self.settings.load_config("dependency_map")
         for dep in dependency.get("edges", []):
@@ -2039,6 +2072,7 @@ class EventToolService:
         return prepared_ids
 
     async def get_market_truth(self, a, c, *, refresh_key=None):
+
         named = {"SECOND": "BUCKET(1s)", "MINUTE": "BUCKET(1m)", "HOUR": "BUCKET(1h)"}
         normalized_prec = None
         if a.get("cutoff_prec") in named:
@@ -2118,6 +2152,7 @@ class EventToolService:
             ]
             ranks = {"NEGATIVE": 0, "UNPRICED": 1, "EARLY": 2, "SUBSTANTIAL": 3, "HEAVY": 4}
             candidates = []
+
             latest = {truth["token_id"]: truth for truth in truths}
             for edge in edges:
                 token = edge.get("token_id")
@@ -2312,6 +2347,7 @@ class EventToolService:
         used = set()
         for proposed in result.get("conditions", []):
             signature = canonical_json({"role": proposed["role"], "expr": proposed["expr"]})
+
             matches = [
                 old
                 for old in existing
@@ -2561,6 +2597,7 @@ class EventToolService:
             raise ValueError("UPDATE requires a published original")
         if kind == "PARTIAL" and assessment["class"] != "STRUCTURAL_SHOCK":
             raise ValueError("PARTIAL requires STRUCTURAL_SHOCK")
+
         fetched_edges = await self.rows("evt.beneficiary_edges", eid)
         beneficiaries = list(fetched_edges)
         current_maps = active_maps
@@ -2638,6 +2675,7 @@ class EventToolService:
                         "missing_decisions": sorted(missing_decision),
                     }
                 )
+
         truth_hashes = await asyncio.to_thread(lambda: [sha256(truth) for truth in truths])
         ctx = {
             "event": event,
@@ -2667,6 +2705,7 @@ class EventToolService:
                     source = await self.repo.get("reg.sources", source_id) if source_id else None
                     evidence_labels[item_id] = (source or {}).get("name") or source_id or "source"
         event["evidence_labels"] = evidence_labels
+
         event["token_labels"] = {
             row["token_id"]: str(row.get("project") or row.get("name") or row["token_id"])
             + " ("
@@ -2707,8 +2746,10 @@ class EventToolService:
                     "delivery_not_before": previous.get("delivery_not_before"),
                 }
             )
+
         delivery_not_before = delivery_stamp.value
         cutoff = iso()
+
         claims = list(event["claims"])
         observations = list(observations)
         ids = {o["item_id"] for o in observations} | {e["item_id"] for r in claims for e in r["evidence"]}
@@ -2757,6 +2798,7 @@ class EventToolService:
         if c.get("session_id"):
             for row in await self.rows("ops.tool_calls", filters={"session_id": c["session_id"]}):
                 calls_by_key[(row.get("session_id"), row.get("call_id"))] = row
+
         async for meta in self.repo.iter_metadata(
             "ops.tool_calls", ["session_id", "call_id"], filters={"event_id": eid}
         ):
@@ -2828,6 +2870,7 @@ class EventToolService:
         bundle["tool_call_ids"] = sorted(
             set([r["call_id"] for r in calls if r.get("call_id")] + bundle["tool_call_ids"])
         )
+
         digest, bundle_path = await asyncio.to_thread(write_evidence_bundle, bundle, self.settings.data_dir)
         await self.repo.put(
             "out.evidence_bundles",
@@ -2837,6 +2880,7 @@ class EventToolService:
         )
         aid = previous["alert_id"] if previous else new_id("alert")
         version = previous["version"] + 1 if previous else 1
+
         generated = collection_clock()
         if not rate_limited:
             delivery_stamp = generated

@@ -46,6 +46,7 @@ def all_processes(root):
 
 
 def role(root, pid, worker, state):
+
     try:
         args = (root / str(pid) / "cmdline").read_bytes().split(b"\0")
         if len(args) < 4 or args[1] != str(worker).encode() or b"--state-dir" not in args:

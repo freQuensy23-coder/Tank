@@ -197,6 +197,7 @@ def test_start_blocker_combinations_and_secondary_requirements():
     assert engine.evaluate(e, a, b, m)["action_rule"] == "A1"
     e["contradictions"] = [{"type": "FATAL"}]
     m["data_confidence"]["class"] = "HIGH"
+
     assert engine.evaluate(e, a, b, m)["action_rule"] == "A0"
 
 
@@ -468,6 +469,7 @@ def test_stale_expiry_never_bypasses_publication_gate():
 
 def test_exact_majority_flag_preserves_tiny_sell_boundary():
     e, a, b, m = inputs()
+
     m["spot"] = {
         "W4H": {
             "direction": "SELL",
@@ -477,8 +479,10 @@ def test_exact_majority_flag_preserves_tiny_sell_boundary():
         }
     }
     assert DecisionEngine().evaluate(e, a, b, m)["trade_grade"] == "D"
+
     m["spot"]["W4H"]["exact_majority"]["sell"] = False
     assert DecisionEngine().evaluate(e, a, b, m)["trade_grade"] == "A"
+
     m["spot"]["W4H"].pop("exact_majority")
     m["spot"]["W4H"]["cw_breadth"]["sell"] = "0.50000000000000000000000000001"
     assert DecisionEngine().evaluate(e, a, b, m)["trade_grade"] == "D"

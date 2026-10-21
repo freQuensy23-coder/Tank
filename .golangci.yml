@@ -1,0 +1,100 @@
+version: '2'
+linters:
+  default: standard
+  exclusions:
+    rules:
+    - path: (^|/)internal/budget/budget\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: var ErrInvalidBudget = errors\.New\("Invalid configured request budget"\)
+    - path: (^|/)internal/config/config\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return "", errors\.New\("Docker secret tank_db_password is empty"\)
+    - path: (^|/)internal/config/config\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: 'return nil, fmt\.Errorf\("Configuration must be a mapping: %s", name\)'
+    - path: (^|/)internal/config/version\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: 'return fmt\.Errorf\("Versioned input must not be a symlink: %s", path\)'
+    - path: (^|/)internal/config/version\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return nil, fmt\.Errorf\("No versioned inputs in %s", root\)
+    - path: (^|/)internal/config/version\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return "", errors\.New\("Configuration manifest requires a full Git
+        commit"\)
+    - path: (^|/)internal/rest/adapter\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return nil, fmt\.Errorf\("Bybit response is not an object"\)
+    - path: (^|/)internal/rest/adapter\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return nil, fmt\.Errorf\("Bybit result is not an object"\)
+    - path: (^|/)internal/rest/adapter\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return nil, fmt\.Errorf\("Kraken response is not an object"\)
+    - path: (^|/)internal/rest/adapter\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return nil, fmt\.Errorf\("Kraken result holds no pair"\)
+    - path: (^|/)internal/store/read\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return nil, nil, fmt\.Errorf\("Unknown typed market filter %s\.%s",
+        collection, name\)
+    - path: (^|/)internal/store/read\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return nil, fmt\.Errorf\("Market projection requires a typed market
+        time field"\)
+    - path: (^|/)internal/store/read\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return nil, fmt\.Errorf\("Unknown typed market projection field"\)
+    - path: (^|/)internal/store/read\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return nil, fmt\.Errorf\("Collection lacks instrument_id"\)
+    - path: (^|/)internal/store/read\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return nil, fmt\.Errorf\("Latest market records require a market collection
+        and typed grouping"\)
+    - path: (^|/)internal/store/read\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return nil, fmt\.Errorf\("Unknown market column %s", f\)
+    - path: (^|/)internal/store/read\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: return nil, fmt\.Errorf\("Latest market time_field must be a typed timestamp"\)
+    - path: (^|/)internal/store/write\.go$
+      linters:
+      - staticcheck
+      text: 'ST1005: error strings should not be capitalized'
+      source: 'return nil, nil, fmt\.Errorf\("Missing typed market identity %s: %v",
+        collection, identity\)'

@@ -59,6 +59,7 @@ def fractional_packet():
                         ),
                     )
                 )
+
         snapshot["flow_bars"].append(
             dict(
                 instrument_id=iid,

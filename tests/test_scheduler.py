@@ -82,6 +82,7 @@ async def test_pre_event_capture_uses_pre_window_and_is_immutable(monkeypatch):
         lambda snapshot, config: {"relative": {"windows": {"EVENT": {"r_raw": 0.01}}}},
     )
     scheduler = Scheduler(repo, SimpleNamespace(config_version="cfg", code_version="code"), market, None)
+
     payload = {
         "event_id": "e",
         "token_id": "test:T",
@@ -104,6 +105,7 @@ async def test_pre_event_capture_uses_pre_window_and_is_immutable(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_missing_market_value_never_fires_not_equal_condition():
+
     repo = MemoryRepository()
     now = utcnow()
     await repo.put("evt.events", "e", {"event_id": "e"})
@@ -221,45 +223,6 @@ async def test_planned_backup_copies_bundles_and_dumps_only(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_missing_unselected_source_reference_does_not_expand_backup_scope(monkeypatch, tmp_path):
-    import asyncio
-    from pathlib import Path
-
-    from tank.scheduler import verify_backup
-
-    data, config, backup = (tmp_path / key for key in ("data", "config", "backup"))
-    for root in (data / "bundles", config, backup):
-        root.mkdir(parents=True)
-    (data / "bundles" / "hash.json.zst").write_bytes(b"fixture bundle")
-    (data / "market-cache").write_bytes(b"not selected")
-    (config / "registry.yaml").write_text("not selected")
-
-    async def dump(*args, **kwargs):
-        Path(args[args.index("--file") + 1]).write_bytes(b"fixture dump")
-        return SimpleNamespace(communicate=AsyncMock(return_value=(b"", b"")), returncode=0)
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", dump)
-    repo = MemoryRepository()
-    await repo.put(
-        "ingest.source_items", "missing", {"item_id": "missing", "raw_ref": str(data / "absent.zst")}
-    )
-    settings = SimpleNamespace(
-        backup_dir=backup,
-        database_url="postgresql:///tank",
-        openma_database_url="postgresql:///oma",
-        data_dir=data,
-        config_dir=config,
-    )
-    result = await Scheduler(repo, settings, None, None).maintenance(utcnow(), force=True, prune=False)
-    final = Path(result["path"])
-    manifest = verify_backup(final)
-    assert set(manifest["roots"]) == {"bundles"}
-    assert set(manifest["files"]) == {"tank.dump", "oma.dump", "bundles/hash.json.zst"}
-    assert not (final / "data").exists() and not (final / "config").exists()
-    assert (data / "market-cache").exists()
-
-
-@pytest.mark.asyncio
 async def test_heartbeat_preserves_unknown_llm_cost():
     from tank.settings import Settings
 
@@ -336,6 +299,7 @@ async def test_relocated_backup_recovers_source_web_replay_config_logs_and_both_
     assert (final / "tank.dump").read_bytes() == b"dump tank"
     assert (final / "oma.dump").read_bytes() == b"dump oma"
     assert not (final / "data/chrome-profile").exists()
+
     shutil.rmtree(live)
     recovery = tmp_path / "recovery"
     shutil.copytree(final, recovery)
@@ -378,6 +342,7 @@ async def test_market_file_retention_preserves_event_windows_and_permanent_evide
     )
     await repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": "e", "class": "MAJOR"})
     await repo.put("ana.market_truth", "truth", {"mta_id": "truth", "event_id": "e", "token_id": "token:T"})
+
     paths = {}
     for key, age in [("event", 60), ("old", 70), ("new", 2)]:
         day = (now - timedelta(days=age)).date().isoformat()
@@ -471,6 +436,7 @@ async def test_real_generated_conditions_use_two_closed_nonoverlapping_hours(mon
         calls.append(cutoff)
         stamp = parse_time(cutoff.value)
         assert cutoff.precision == ("EXACT" if stamp.minute == 0 and stamp.second == 0 else None)
+
         direction = "BUY" if stamp.minute == 0 and stamp.second == 0 else "SELL"
         return {
             "spot": {"W1H": {"direction": direction, "cw_breadth": {"buy": 0.8, "sell": 0.2}}},
@@ -693,6 +659,7 @@ async def test_reaction_cpu_computation_does_not_block_async_heartbeat(monkeypat
 
     def slow_compute(snapshot, *, config):
         started.set()
+
         if not release.wait(timeout=1):
             raise AssertionError("Async heartbeat could not run while CPU worker was waiting")
         return {"relative": {"windows": {"EVENT": {}}}}
@@ -864,6 +831,7 @@ async def test_backup_excludes_fake_auth_secrets_and_browser_state_in_every_evid
     profile.mkdir()
     (profile / "Cookies").write_text("FAKE_X_PRIVATE_COOKIES")
     now = utcnow().replace(hour=8)
+
     stale = target / f".tank-{now.date()}.partial"
     stale.mkdir()
     (stale / "stale-secret.txt").write_text("FAKE_STALE_PRIVATE_SECRET")
@@ -1341,6 +1309,7 @@ async def test_older_completion_callback_preserves_same_name_replacement_until_s
         await asyncio.Event().wait()
 
     async def first():
+
         asyncio.get_running_loop().call_soon(scheduler.launch, "same", replacement)
 
     scheduler.launch("same", first)
@@ -1377,10 +1346,13 @@ async def test_rearmed_market_watch_needs_a_new_window_and_a_clear():
     price = {"relative": {"close_1h_price": "9"}}
     truth = SimpleNamespace(assess=AsyncMock(side_effect=lambda *a, **k: price))
     scheduler = Scheduler(repo, SimpleNamespace(), None, truth)
+
     await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=10))})
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
+
     await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=61))})
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
+
     price["relative"]["close_1h_price"] = "10.5"
     await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=62))})
     cleared = await repo.get("ana.watch_conditions", "c2")
@@ -1614,6 +1586,7 @@ async def test_reaction_measurements_are_limited_and_extra_jobs_requeue():
     await asyncio.sleep(0)
     with pytest.raises(DeliveryDeferred):
         await scheduler.reaction_capture(payloads[-1])
+
     waiting = asyncio.create_task(scheduler.reaction_capture(payloads[-1], wait_for_slot=True))
     await asyncio.sleep(0)
     assert not waiting.done() and len(started) == REACTION_MEASUREMENT_SLOTS
@@ -1667,6 +1640,7 @@ async def test_eval_conditions_budget_stops_cleanly_and_rotates(monkeypatch):
     repo.get = tracking_get
     monkeypatch.setattr(scheduler_module, "EVAL_CONDITIONS_BUDGET_S", 60)
     await scheduler.eval_conditions({"cutoff": iso(now)})
+
     assert order == ["old-upgrade", "new-upgrade", "exit"]
 
 

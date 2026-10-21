@@ -18,6 +18,7 @@ def _config_timestamp_metadata(value):
     result = {key: _config_timestamp_metadata(item) for key, item in value.items()}
     for field in CONFIG_TIMESTAMP_FIELDS.intersection(value):
         metadata = propagate_timestamp(value, field).fields(field)
+
         metadata.pop(field)
         result.update(metadata)
     return result
@@ -89,6 +90,7 @@ def validate_registry(settings):
             if section == "entities" and "name" not in record:
                 record["name"] = next(iter(record.get("names", [])), record[identifier])
             add("reg." + section, row[identifier], record, "registry.yaml", registry)
+
     for entity in registry.get("entities", []):
         for alias in _routing_aliases(entity):
             add(
@@ -126,6 +128,7 @@ def validate_registry(settings):
                 "exchange_addresses.yaml",
                 addresses,
             )
+
     for table in (
         "sources",
         "tokens",

@@ -131,6 +131,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
         async def aclose(self):
             if failure_kind not in {"native_terminal", "native_terminated", "lost_acceptance"}:
                 current = await repo.get("ops.agent_sessions", "owned-session")
+
                 assert current["status"] == "OPEN"
             retired.set()
 

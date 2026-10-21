@@ -158,6 +158,7 @@ def finalize(export, destination, architecture=None):
             "inherited_hardware_results": False,
         },
     )
+
     destination.mkdir(parents=False, exist_ok=False)
     for name in sorted(names):
         shutil.copy2(runtime / name, destination / name)

@@ -98,7 +98,7 @@ class Repository(Protocol):
     async def finish_job(self, job_id): ...
     async def fail_job(self, job_id, error, *, retry_after=1): ...
     async def recover_jobs(self): ...
-    async def prune_market(self, before): ...
+    async def prune_market(self, before, *, book_before=None): ...
     async def maintain_partitions(self, *, extra_days=None, include_history=True): ...
     async def prune_jobs(self, before): ...
     async def preserved_market_windows(self): ...
@@ -127,8 +127,12 @@ class Repository(Protocol):
 log = logging.getLogger(__name__)
 
 RUNNING_CAPS = {"REACTION_CAPTURE": 1}
+
+
 EARLIEST_EXPIRY_FIRST = ("REACTION_CAPTURE",)
 CLAIM_SLOW_S, DELIVER_LATE_S = 0.5, 1.0
+
+
 YIELDS_TO_ANALYSIS = ("REACTION_CAPTURE",)
 ANALYSIS_TYPES = ("RUN_MARKET_TRUTH", "FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE")
 FRESH_EVENT_S, EXPIRY_SAFETY_S = 600, 1200
@@ -314,6 +318,7 @@ class MemoryRepository(QueueMixin):
         if outer:
             await self._mutex.acquire()
             self._owner = asyncio.current_task()
+
         saved = {collection: rows.copy() for collection, rows in self._data.items()}
         if "ops.jobs" in saved:
             saved["ops.jobs"] = copy.deepcopy(saved["ops.jobs"])
@@ -327,6 +332,15 @@ class MemoryRepository(QueueMixin):
             if outer:
                 self._owner = None
                 self._mutex.release()
+
+    @asynccontextmanager
+    async def _read(self):
+        """Read consistent state without a write transaction's rollback snapshot."""
+        if self._owner is asyncio.current_task():
+            yield self
+        else:
+            async with self._mutex:
+                yield self
 
     @asynccontextmanager
     async def lock(self, key):
@@ -395,14 +409,14 @@ class MemoryRepository(QueueMixin):
 
     async def get(self, collection, key):
         _table(collection)
-        async with self.transaction():
+        async with self._read():
             return copy.deepcopy(self._data.get(collection, {}).get(str(key)))
 
     async def list(self, collection, *, filters=None, limit=1000):
         _table(collection)
         if limit < 0:
             raise ValueError("limit must be nonnegative")
-        async with self.transaction():
+        async with self._read():
             return copy.deepcopy(
                 [
                     r
@@ -684,6 +698,7 @@ class PostgresRepository(QueueMixin):
 
         class CancellationSafeConnection(AsyncConnection):
             async def wait(connection, *args, **kwargs):
+
                 operation = asyncio.create_task(super().wait(*args, **kwargs))
                 try:
                     return await asyncio.shield(operation)
@@ -717,6 +732,7 @@ class PostgresRepository(QueueMixin):
     async def transaction(self):
         existing = self._connection.get()
         task = asyncio.current_task()
+
         if existing is not None and existing[1]() is task:
             async with _stable_transaction(existing[0]()):
                 yield self
@@ -755,6 +771,7 @@ class PostgresRepository(QueueMixin):
                         yield self
                         return
                 await asyncio.sleep(random.uniform(0.05, 0.2))
+
         async with self.transaction():
             await self._conn().execute("SELECT pg_advisory_xact_lock(%s)", (digest,))
             yield self
@@ -942,6 +959,7 @@ class PostgresRepository(QueueMixin):
         _table(collection)
         if limit < 0:
             raise ValueError("limit must be nonnegative")
+
         clauses, args = [], []
         for k, v in (filters or {}).items():
             clauses.append(sql.SQL("document -> %s = %s"))
@@ -1011,6 +1029,7 @@ class PostgresRepository(QueueMixin):
         started = time.monotonic()
         job = await self._claim_job()
         elapsed = time.monotonic() - started
+
         late = None
         if job and job.get("type") == "DELIVER" and job.get("attempts") == 1 and job.get("run_after"):
             late = (utcnow() - parse_time(job["run_after"])).total_seconds()
@@ -1026,6 +1045,7 @@ class PostgresRepository(QueueMixin):
     async def _claim_job(self):
         async with self.transaction():
             conn = self._conn()
+
             held = (
                 await (
                     await conn.execute(
@@ -1169,7 +1189,24 @@ async def _maintain_partitions(self, *, extra_days=None, include_history=True):
     from psycopg import sql
 
     created = 0
+
+    async with self.transaction():
+        hyper = await (
+            await self._conn().execute(
+                "SELECT to_regclass('timescaledb_information.hypertables') IS NOT NULL AS installed"
+            )
+        ).fetchone()
+        hypertables = set()
+        if hyper["installed"]:
+            rows = await (
+                await self._conn().execute(
+                    "SELECT hypertable_schema || '.' || hypertable_name AS name FROM timescaledb_information.hypertables"
+                )
+            ).fetchall()
+            hypertables = {row["name"] for row in rows}
     for collection, ts in PARTITIONED.items():
+        if collection in hypertables:
+            continue
         schema, name = collection.split(".")
         historical = sql.Identifier(schema, name + "_historical")
         days = {(utcnow() + timedelta(days=offset)).date() for offset in range(15)}
@@ -1263,10 +1300,12 @@ MemoryRepository.maintain_partitions = _maintain_partitions
 PostgresRepository.maintain_partitions = _maintain_partitions
 
 
-async def _prune_market(self, before):
+async def _prune_market(self, before, *, book_before=None):
     """Prune capture after backup, preserving whole UTC partitions overlapping MAJOR+ windows.
 
-    Normalized series use the caller's cutoff (normally90days). Raw Parquet file
+    Normalized series use the caller's cutoff (normally90days). Book summaries go at
+    `book_before` (72 h, 03 §14) with no event-window exception: their daily partitions
+    ending by then are dropped whole, so the disk space is returned. Raw Parquet file
     retention is handled separately; sealed archive manifests remain immutable.
     """
     cutoff = parse_time(before)
@@ -1301,8 +1340,44 @@ async def _prune_market(self, before):
             from psycopg import sql
 
             await self.maintain_partitions(include_history=False)
+
+            installed = await (
+                await self._conn().execute(
+                    "SELECT to_regclass('timescaledb_information.chunks') IS NOT NULL AS installed"
+                )
+            ).fetchone()
+            hypertables = set()
+            if installed["installed"]:
+                rows = await (
+                    await self._conn().execute(
+                        "SELECT hypertable_schema||'.'||hypertable_name AS name, chunk_schema, chunk_name, "
+                        "range_start, range_end FROM timescaledb_information.chunks WHERE range_end <= %s",
+                        (cutoff,),
+                    )
+                ).fetchall()
+                dropped = 0
+                for row in rows:
+                    if row["name"] not in temporal:
+                        continue
+                    if any(row["range_start"] < end and start < row["range_end"] for start, end in spans):
+                        continue
+                    await self._conn().execute(
+                        sql.SQL("DROP TABLE {}").format(
+                            sql.Identifier(row["chunk_schema"], row["chunk_name"])
+                        )
+                    )
+                    dropped += 1
+                counts["hypertable_chunks_dropped"] = dropped
+                rows = await (
+                    await self._conn().execute(
+                        "SELECT hypertable_schema||'.'||hypertable_name AS name FROM timescaledb_information.hypertables"
+                    )
+                ).fetchall()
+                hypertables = {row["name"] for row in rows}
             await self._conn().execute("SELECT set_config('tank.retention_purge','on',true)")
             for collection, ts in temporal.items():
+                if collection in hypertables:
+                    continue
                 age = cutoff
                 args = [age]
                 clauses = []
@@ -1321,7 +1396,33 @@ async def _prune_market(self, before):
                 )
                 counts[collection] = cursor.rowcount
             await self._conn().execute("SELECT set_config('tank.retention_purge','off',true)")
+            if book_before is not None:
+                book_cutoff = parse_time(book_before)
+                cursor = await self._conn().execute(
+                    "SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
+                    "WHERE i.inhparent = 'mkt.book_summaries'::regclass"
+                )
+                dropped = 0
+                for (name,) in await cursor.fetchall():
+                    digits = name.rsplit("_", 1)[-1].lstrip("p")
+                    if not (len(digits) == 8 and digits.isdigit()):
+                        continue
+                    day_end = parse_time(f"{digits[:4]}-{digits[4:6]}-{digits[6:]}T00:00:00Z") + timedelta(
+                        days=1
+                    )
+                    if day_end <= book_cutoff:
+                        await self._conn().execute(
+                            sql.SQL("DROP TABLE {}").format(sql.Identifier("mkt", name))
+                        )
+                        dropped += 1
+                counts["mkt.book_summaries_partitions_dropped"] = dropped
         else:
+            if book_before is not None:
+                book_cutoff = parse_time(book_before)
+                for key, row in list(self._data.get("mkt.book_summaries", {}).items()):
+                    if row.get("exchange_ts") and parse_time(row["exchange_ts"]) < book_cutoff:
+                        del self._data["mkt.book_summaries"][key]
+                        self._immutable.discard(("mkt.book_summaries", key))
             for collection, ts in temporal.items():
                 age = cutoff
                 deleted = 0
@@ -1584,6 +1685,7 @@ def _exact_predicate(collection, filters):
             if value is None:
                 clauses.append(sql.SQL("{} IS NULL").format(sql.Identifier(key)))
                 continue
+
             clauses.append(sql.SQL("{} = %s").format(sql.Identifier(key)))
             args.append(
                 Jsonb(jsonable(value))
@@ -1632,7 +1734,7 @@ async def _iter_all(self, collection, *, filters=None, batch_size=1000):
                 rows = await (await self._conn().execute(query, [*args, batch_size])).fetchall()
             page = [(r["storage_key"], _read_record(collection, r)) for r in rows]
         else:
-            async with self.transaction():
+            async with self._read():
                 page = []
                 for key, row in sorted(self._data.get(collection, {}).items()):
                     if after is not None and key <= after:

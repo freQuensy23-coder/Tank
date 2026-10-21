@@ -46,6 +46,7 @@ COMPOSE = shlex.split(
         " -f /srv/tank/docs/verification/server-recovery-bootstrap-2026-10-20/pg.resources.yaml --env-file /etc/tank/compose.env",
     )
 )
+
 RESET = os.environ.get("TANK_REPLAY_RESET", "/srv/tank-work/ts/reset_tank_replay.sh")
 DSN_HELPER = os.environ.get(
     "TANK_REPLAY_DSN_HELPER", str(Path(__file__).resolve().parent / "replay_dsn_exec.py")
@@ -133,6 +134,46 @@ def mark_window(record):
         fh.write(json.dumps(record) + "\n")
 
 
+REPLAY_DB_EVIDENCE = {
+    "ops.jobs": "SELECT job_id, type, status, payload, run_after, created_at, finished_at FROM ops.jobs ORDER BY created_at",
+    "evt.capture_chains": "SELECT document FROM evt.capture_chains",
+    "ops.tool_calls": "SELECT call_id, tool, status, requested_at, answered_at FROM ops.tool_calls ORDER BY requested_at",
+}
+
+
+def dump_replay_db(d):
+    evidence = {}
+    for name, sql in REPLAY_DB_EVIDENCE.items():
+        out = sh(
+            [
+                "docker",
+                "exec",
+                "-i",
+                "-u",
+                "postgres",
+                "tank-postgres-1",
+                "psql",
+                "-d",
+                "tank_replay",
+                "-X",
+                "-q",
+                "-At",
+                "-v",
+                "ON_ERROR_STOP=1",
+            ],
+            input=f"BEGIN TRANSACTION READ ONLY;\nSELECT coalesce(json_agg(t), '[]'::json) FROM ({sql}) t;\nCOMMIT;\n",
+            check=False,
+        )
+        evidence[name] = (
+            json.loads(out.stdout)
+            if out.returncode == 0 and out.stdout.strip()
+            else {"error": out.stderr[-300:]}
+        )
+    write_json(
+        d / "replay-db-evidence.json", {"captured_at": iso(utcnow()), "database": "tank_replay", **evidence}
+    )
+
+
 def run_one(fid, entry, out_dir, timeout):
     """One fresh native replay in its own process (`compose run`), never inside the live runtime.
 
@@ -146,6 +187,7 @@ def run_one(fid, entry, out_dir, timeout):
     raw = sh(["zstd", "-dc", str(resolve(entry["acceptance_input"]["path"]))]).stdout
     packet = json.loads(raw)
     tank = container("tank")
+
     deployed = sh(COMPOSE + ["exec", "-T", "tank", "cat", "/config/openma.yaml"]).stdout
     if (config_dir / "openma.yaml").read_text() != deployed:
         raise SystemExit(f"{fid}: fixture config openma.yaml differs from the deployed /config/openma.yaml")
@@ -187,6 +229,7 @@ def run_one(fid, entry, out_dir, timeout):
     if mask_path.startswith("/data/"):
         raise SystemExit("private map must stay outside /data")
     started = iso(utcnow())
+
     res = sh(
         COMPOSE
         + [
@@ -213,8 +256,10 @@ def run_one(fid, entry, out_dir, timeout):
     )
     finished = iso(utcnow())
     mark_window({"fixture_id": fid, "event": "END", "at": finished, "exit_code": res.returncode})
+    dump_replay_db(d)
     (d / "replay-stdout.json").write_text(res.stdout)
     (d / "replay-stderr.log").write_text(res.stderr[-20000:])
+
     sys.path.insert(0, str(ROOT / "src"))
     from tank.replay import digest
 

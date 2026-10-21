@@ -33,6 +33,7 @@ def _sync_directory(path):
 
 
 def _sync_hierarchy(directory, data_dir):
+
     boundary = Path(data_dir).resolve().parent
     while True:
         _sync_directory(directory)
@@ -67,6 +68,7 @@ def write_raw_item(data_dir, source_id, item_id, observed_at, payload):
             compressed_file.write(zstandard.ZstdCompressor(level=3).compress(payload))
             compressed_file.flush()
             os.fsync(compressed_file.fileno())
+
         try:
             path.hardlink_to(temporary)
         except FileExistsError:

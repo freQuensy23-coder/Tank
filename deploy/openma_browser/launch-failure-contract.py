@@ -122,6 +122,7 @@ def async_playwright():return Startup()
                 "3i", next_socket.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)
             )[0]
         assert new_daemon != old_daemon
+
         os.kill(new_daemon, 15)
         time.sleep(0.05)
         survivors = [

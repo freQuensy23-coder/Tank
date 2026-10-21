@@ -23,6 +23,7 @@ def test_actual_truth_keeps_liquidation_sides_independent_when_fx_missing(missin
             }
         }
     }
+
     for row in snapshot["oi"]:
         row["liq_coverage"] = "COMPLETE"
     snapshot["liquidations"] = [

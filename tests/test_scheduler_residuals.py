@@ -33,6 +33,7 @@ async def test_verified_backup_is_cached_per_process_day_but_force_and_restart_r
     final = tmp_path / f"tank-{NOW.date()}"
     final.mkdir()
     (final / "COMPLETE").write_text(iso(NOW))
+
     calls = []
     monkeypatch.setattr("tank.scheduler.verify_backup", lambda path, **kwargs: calls.append(path))
     settings = SimpleNamespace(backup_dir=tmp_path)
@@ -126,6 +127,7 @@ async def test_terminal_capture_is_recorded_as_gap_and_not_resurrected_or_claime
     await repo.delete("ops.jobs", job["job_id"])
     await scheduler.tick(NOW)
     assert not await repo.list("ops.jobs", filters={"idem_key": "e:T:POST_72H"})
+
     real_scheduler = Scheduler(repo, SimpleNamespace(), None, None)
     real_scheduler.analysis_tokens = AsyncMock(return_value={"T"})
     await real_scheduler.lifecycle(NOW)
@@ -186,6 +188,7 @@ async def test_conditions_share_truth_for_identical_event_token_cutoff():
     truth.assess.assert_awaited_once()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "relative",
@@ -261,6 +264,7 @@ async def test_backup_cache_reverifies_replaced_manifest_identity(monkeypatch, t
     assert len(calls) == 2
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_bundles_only_backup_allows_raw_ttl_and_preserves_permanent_evidence(tmp_path):
     import hashlib

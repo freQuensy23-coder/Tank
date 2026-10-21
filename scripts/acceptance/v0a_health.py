@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import iso, parse, query, seconds, utcnow, write_json
 
 LIMIT = 0.01
+
 HOT_GAP_PREFIXES = ("STREAM", "RECONNECT", "TRADE_INTEGRITY", "ORDER_BOOK_STREAM")
 
 KLINES = """
@@ -135,6 +136,7 @@ def sources(start, end, intervals, window_s):
             failed_ratio=failed / reads if reads else None,
             poll_coverage=polls / row["polls_expected"] if row["polls_expected"] else None,
         )
+
         continuous = row["poll_coverage"] is not None and row["poll_coverage"] >= 0.95
         row["status"] = "PASS" if reads and failed / reads < LIMIT and continuous else "FAIL"
         out.append(row)

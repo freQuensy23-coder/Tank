@@ -10,6 +10,29 @@ from tank.sources import SourceService, parsers
 from tank.util import new_id, sha256
 
 
+@pytest.fixture
+def collector_http(monkeypatch):
+    """Use each test's HTTP fixture as the external collector response boundary.
+
+    SourceService still chooses capture_fetch, parses responses and persists its
+    checkpoints/items/raw evidence. Durable capture RPC is tested separately in
+    test_external_capture.py and test_fetch_page_deadline.py.
+    """
+    from tank.sources.capture_fetch import CONDITIONAL_HEADERS, is_exchange_url
+
+    def bind(http):
+        async def fetch(repo, method, url, *, headers=None, body=None, source_id=None, budget_s=None):
+            assert is_exchange_url(url)
+            headers = {
+                key: value for key, value in (headers or {}).items() if key.lower() not in CONDITIONAL_HEADERS
+            }
+            return await http.request(method, url, headers=headers, json=body)
+
+        monkeypatch.setattr("tank.sources.capture_fetch", fetch)
+
+    return bind
+
+
 def captured(svc, sid, item, payload=b"<html>source evidence</html>", observed_at="2026-10-16T12:00:00Z"):
     """An item as the poller hands it to ingest: raw payload already stored under its item_id."""
     item_id = new_id("item")
@@ -229,6 +252,7 @@ async def test_raw_first_dedup_and_conditional_get(tmp_path):
         == RSS
     )
     assert repo.jobs[0][0][0] == "FILTER_ITEM"
+
     assert (await svc.poll_once("S30"))["items"] == 0
     assert len(repo.jobs) == 1
     assert (await repo.get("ingest.source_items", record["item_id"]))["observation_count"] == 1
@@ -237,7 +261,7 @@ async def test_raw_first_dedup_and_conditional_get(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_raw_stored_only_for_captured_items_across_repeated_polls(tmp_path):
+async def test_raw_stored_only_for_captured_items_across_repeated_polls(tmp_path, collector_http):
     """02 §7.2: an unchanged feed or instrument snapshot leaves no raw file behind."""
     phase = [0]
 
@@ -255,6 +279,7 @@ async def test_raw_stored_only_for_captured_items_across_repeated_polls(tmp_path
         return httpx.Response(200, content=RSS)
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    collector_http(http)
     repo = Repo()
     sources = [
         {"source_id": "S30", "feeds": [{"url": "https://example.org/rss", "kind": "rss"}]},
@@ -349,7 +374,7 @@ def test_binance_rich_document():
 
 
 @pytest.mark.asyncio
-async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path):
+async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path, collector_http):
     phase = [0]
     calls = []
 
@@ -374,6 +399,7 @@ async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path):
         )
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    collector_http(http)
     repo = Repo()
     source = {
         "source_id": "S14",
@@ -436,97 +462,98 @@ async def test_snapshot_closed_proposal_checked_after_leaving_latest(tmp_path):
     phase[0] = 1
     assert (await svc.poll_once("S24"))["items"] == 1
     rows = [v for (c, k), v in repo.rows.items() if c == "ingest.source_items"]
+
     assert any(r["external_id"] == "0xold|closed" for r in rows)
     await http.aclose()
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
 @pytest.mark.asyncio
-async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path):
+async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path, postgres_template):
     """Exercise the actual schema, not a permissive in-memory record store."""
     import os
     from pathlib import Path
 
-    from tank.storage import PostgresRepository
     from tank.util import new_id, sha256
 
     database_url = os.getenv("TANK_SOURCE_TEST_DATABASE_URL")
     if not database_url:
         pytest.skip("Requires isolated PostgreSQL source test database")
-    repo = PostgresRepository(database_url)
-    await repo.open()
-    await repo.migrate()
-    http = httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS)))
-    try:
-        official = {
-            "source_id": "S01",
-            "name": "SEC",
-            "feeds": [{"kind": "rss", "url": "https://example.org/rss"}],
-        }
-        filtered = {
-            "source_id": "S30",
-            "name": "BBC",
-            "feeds": [{"kind": "rss", "url": "https://example.org/rss"}],
-        }
-        svc = SourceService(repo, settings(tmp_path, [official, filtered]), http=http)
-        for source, expected, job_kind in [
-            (official, "ALWAYS", "ROUTE_ITEM"),
-            (filtered, None, "FILTER_ITEM"),
-        ]:
-            key = new_id("test-source")
-            item_id = new_id("item")
-            raw_ref, digest = svc.raw(
-                key.encode(),
-                source_id=source["source_id"],
-                item_id=item_id,
-                observed_at="2026-10-16T12:00:01Z",
-            )
-            item = {
-                "item_id": item_id,
-                "raw_ref": raw_ref,
-                "raw_sha256": digest,
-                "observed_at": "2026-10-16T12:00:01Z",
-                "external_id": key,
-                "title": key,
-                "text": "Actual source content",
-                "url": "https://example.org/item",
-                "published_at": "2026-10-16T12:00:00Z",
-                "published_at_precision": "EXACT",
+    async with postgres_template.repository(database_url) as repo:
+        http = httpx.AsyncClient(
+            transport=httpx.MockTransport(lambda request: httpx.Response(200, content=RSS))
+        )
+        try:
+            official = {
+                "source_id": "S01",
+                "name": "SEC",
+                "feeds": [{"kind": "rss", "url": "https://example.org/rss"}],
             }
-            record = await svc.ingest(source, item)
-            assert record["relevance"]["decision"] == expected
-            await svc.ingest(source, item)
-            async with repo.transaction():
-                row = await (
-                    await repo._conn().execute(
-                        "SELECT relevance_decision,published_prec,body,raw_path,raw_sha256 FROM ingest.source_items WHERE item_id=%s",
-                        (record["item_id"],),
-                    )
-                ).fetchone()
-                jobs = await (
-                    await repo._conn().execute(
-                        "SELECT count(*) AS n FROM ops.jobs WHERE payload->>'item_id'=%s AND type=%s",
-                        (record["item_id"], job_kind),
-                    )
-                ).fetchone()
-            assert row["relevance_decision"] == expected
-            assert row["published_prec"] == "EXACT" and row["body"] == item["text"]
-            expected_raw_path = (
-                tmp_path.resolve()
-                / "raw"
-                / "items"
-                / source["source_id"]
-                / record["observed_at"][:10].replace("-", "/")
-                / (record["item_id"] + ".json.zst")
-            )
-            assert Path(row["raw_path"]) == expected_raw_path
-            assert row["raw_path"] == record["raw_ref"] == raw_ref
-            assert zstandard.ZstdDecompressor().decompress(expected_raw_path.read_bytes()) == key.encode()
-            assert row["raw_sha256"] == record["raw_sha256"] == digest == sha256(key.encode())
-            assert jobs["n"] == 1
-            assert (await repo.get("ingest.source_items", record["item_id"]))["observation_count"] == 1
-    finally:
-        await http.aclose()
-        await repo.close()
+            filtered = {
+                "source_id": "S30",
+                "name": "BBC",
+                "feeds": [{"kind": "rss", "url": "https://example.org/rss"}],
+            }
+            svc = SourceService(repo, settings(tmp_path, [official, filtered]), http=http)
+            for source, expected, job_kind in [
+                (official, "ALWAYS", "ROUTE_ITEM"),
+                (filtered, None, "FILTER_ITEM"),
+            ]:
+                key = new_id("test-source")
+                item_id = new_id("item")
+                raw_ref, digest = svc.raw(
+                    key.encode(),
+                    source_id=source["source_id"],
+                    item_id=item_id,
+                    observed_at="2026-10-16T12:00:01Z",
+                )
+                item = {
+                    "item_id": item_id,
+                    "raw_ref": raw_ref,
+                    "raw_sha256": digest,
+                    "observed_at": "2026-10-16T12:00:01Z",
+                    "external_id": key,
+                    "title": key,
+                    "text": "Actual source content",
+                    "url": "https://example.org/item",
+                    "published_at": "2026-10-16T12:00:00Z",
+                    "published_at_precision": "EXACT",
+                }
+                record = await svc.ingest(source, item)
+                assert record["relevance"]["decision"] == expected
+                await svc.ingest(source, item)
+                async with repo.transaction():
+                    row = await (
+                        await repo._conn().execute(
+                            "SELECT relevance_decision,published_prec,body,raw_path,raw_sha256 FROM ingest.source_items WHERE item_id=%s",
+                            (record["item_id"],),
+                        )
+                    ).fetchone()
+                    jobs = await (
+                        await repo._conn().execute(
+                            "SELECT count(*) AS n FROM ops.jobs WHERE payload->>'item_id'=%s AND type=%s",
+                            (record["item_id"], job_kind),
+                        )
+                    ).fetchone()
+                assert row["relevance_decision"] == expected
+                assert row["published_prec"] == "EXACT" and row["body"] == item["text"]
+                expected_raw_path = (
+                    tmp_path.resolve()
+                    / "raw"
+                    / "items"
+                    / source["source_id"]
+                    / record["observed_at"][:10].replace("-", "/")
+                    / (record["item_id"] + ".json.zst")
+                )
+                assert Path(row["raw_path"]) == expected_raw_path
+                assert row["raw_path"] == record["raw_ref"] == raw_ref
+                assert zstandard.ZstdDecompressor().decompress(expected_raw_path.read_bytes()) == key.encode()
+                assert row["raw_sha256"] == record["raw_sha256"] == digest == sha256(key.encode())
+                assert jobs["n"] == 1
+                assert (await repo.get("ingest.source_items", record["item_id"]))["observation_count"] == 1
+        finally:
+            await http.aclose()
 
 
 @pytest.mark.asyncio
@@ -569,6 +596,7 @@ async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path):
     assert len(calls) == 2 and not repo.jobs and not repo.rows
     assert "PRIVATE" not in json.dumps(results)
     assert results[0]["payload_sha256"] == sha256(RSS) and not list(tmp_path.rglob("*.zst"))
+
     await svc.check()
     assert len(calls) == 2
     await http.aclose()
@@ -623,6 +651,8 @@ def test_robinhood_canonical_article_metadata_same_origin_only():
     assert rows[0]["url"] == "https://robinhood.com/us/en/newsroom/protocol-release"
 
 
+@pytest.mark.browser
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_x_real_browser_local_dom_full_quote_repost_and_checkpoint(tmp_path):
     """Synthetic X DOM executed in Chromium; no real X request/profile is used."""
@@ -677,6 +707,7 @@ async def test_x_real_browser_local_dom_full_quote_repost_and_checkpoint(tmp_pat
         await reader.close()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_milestone_producer_drives_source_cadence_and_cancellation(tmp_path, monkeypatch):
     from datetime import timedelta
@@ -799,6 +830,7 @@ async def test_run_controls_wake_within_15s_for_600s_source_without_extra_reads(
     await http.aclose()
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_major_assessment_producer_activates_15s_source_reads(tmp_path, monkeypatch):
     from datetime import timedelta
@@ -936,6 +968,8 @@ async def test_control_ticks_do_not_overpoll_failed_normal_cadence(tmp_path, mon
     await http.aclose()
 
 
+@pytest.mark.browser
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_x_storage_state_seeds_persistent_profile_once_without_remote_reads(tmp_path):
     import os
@@ -1003,6 +1037,7 @@ async def test_x_storage_state_seeds_persistent_profile_once_without_remote_read
         assert profile.stat().st_mode & 0o777 == 0o700
     finally:
         await reader.close()
+
     secret.write_text("INVALID SECRET MUST NOT BE READ AFTER INITIALIZATION")
     reader = BrowserReader(config)
     try:
@@ -1022,6 +1057,8 @@ async def test_x_storage_state_seeds_persistent_profile_once_without_remote_read
         await reader.close()
 
 
+@pytest.mark.browser
+@pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "state",
@@ -1069,6 +1106,8 @@ async def test_invalid_expired_x_bootstrap_fails_without_secret_leak(tmp_path, s
     assert reader.context is None and reader.driver is None
 
 
+@pytest.mark.browser
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_x_media_empty_quotes_repost_priority_raw_html_and_deleted_checkpoint(tmp_path):
     import os
@@ -1076,6 +1115,8 @@ async def test_x_media_empty_quotes_repost_priority_raw_html_and_deleted_checkpo
     if os.getenv("TANK_BROWSER_TESTS") != "1":
         pytest.skip("Requires TANK_BROWSER_TESTS=1")
     from pathlib import Path
+
+    from selectolax.parser import HTMLParser
 
     from tank.sources.xsensor import XSensor as BrowserReader
 
@@ -1103,7 +1144,7 @@ async def test_x_media_empty_quotes_repost_priority_raw_html_and_deleted_checkpo
     )
     html = """<html><body><article><div data-testid="socialContext"><a href="/official_org">Official reposted</a></div><a href="/media_original/status/100"><time datetime="2026-10-17T12:00:00Z"></time></a><div data-testid="tweetPhoto"><img alt="Protocol diagram" src="/synthetic.png"></div><div role="link"><a href="/quoted_q/status/51">Quoted author</a><div data-testid="tweetText">Shown quote text</div></div></article><article><div data-testid="socialContext"><a href="/other_account">Other reposted</a></div><a href="/original_poster/status/99"><time datetime="2026-10-17T11:00:00Z"></time></a><div data-testid="tweetText">Actual original text</div><a href="/empty_quote/status/50">Quoted media</a></article><article><a href="/old/status/98"><time datetime="2026-10-17T10:00:00Z"></time></a><div data-testid="tweetText">Old known post</div></article></body></html>"""
     quote = '<article><a href="/empty_quote/status/50"><time datetime="2026-10-16T12:00:00Z"></time></a><div data-testid="tweetPhoto"><img alt="Quote diagram"></div></article>'
-    svc.xsensor = BrowserReader(config, raw_capture=svc.raw)
+    svc.xsensor = BrowserReader(config)
     try:
         await svc.xsensor.open()
 
@@ -1139,7 +1180,12 @@ async def test_x_media_empty_quotes_repost_priority_raw_html_and_deleted_checkpo
         assert other["author_role"] == "OTHER" and other["deferrable"]
         assert other["quoted_unavailable"] == [{"status_id": "50", "reason": "MEDIA_ONLY_OR_EMPTY"}]
         raw = zstandard.ZstdDecompressor().decompress(Path(media["raw_ref"]).read_bytes())
-        assert raw.startswith(b"<html>") and b"Protocol diagram" in raw
+
+        articles = HTMLParser(raw).css("article")
+        assert len(articles) == 1
+        assert articles[0].css_first('a[href="/media_original/status/100"]') is not None
+        assert b"Protocol diagram" in raw
+        assert b"/original_poster/status/99" not in raw and b"Old known post" not in raw
         assert (await repo.get("ops.source_checkpoints", "S29:0"))["status_id"] == "100"
         assert [(args[0], kw["priority"]) for args, kw in repo.jobs] == [
             ("ROUTE_ITEM", 1),
@@ -1178,7 +1224,7 @@ def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_s09_seen_articles_do_not_refetch_detail(tmp_path):
+async def test_s09_seen_articles_do_not_refetch_detail(tmp_path, collector_http):
     calls = []
 
     def handle(request):
@@ -1199,6 +1245,7 @@ async def test_s09_seen_articles_do_not_refetch_detail(tmp_path):
         )
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+    collector_http(http)
     repo = Repo()
     svc = SourceService(
         repo,
@@ -1222,7 +1269,7 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(tmp_path, m
 
     calls = []
 
-    async def acquire(key, capacity, window_s, *, weight=1):
+    async def acquire(key, capacity, window_s, *, weight=1, host=None):
         calls.append((key, capacity, window_s, weight))
 
     monkeypatch.setattr(module.shared_request_budgets, "acquire", acquire)
@@ -1238,6 +1285,8 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(tmp_path, m
         await service.close()
 
 
+@pytest.mark.browser
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_public_renderer_is_isolated_from_x_profile_and_secret(tmp_path):
     import os
@@ -1328,24 +1377,25 @@ async def test_disabled_x_never_reads_network_profile_or_account_list(tmp_path, 
 
 
 @pytest.mark.asyncio
-async def test_binance_source_discovery_charges_verified_shared_market_weights(tmp_path, monkeypatch):
+async def test_binance_source_discovery_leaves_shared_market_weights_to_capture(tmp_path, monkeypatch):
     import tank.sources as module
     from tank.settings import Settings
 
     acquired = []
 
-    async def acquire(key, capacity, window_s, *, weight=1):
+    async def acquire(key, capacity, window_s, *, weight=1, host=None):
         acquired.append((key, capacity, window_s, weight))
 
     monkeypatch.setattr(module.shared_request_budgets, "acquire", acquire)
     service = SourceService(Repo(), Settings(data_dir=tmp_path))
     try:
-        await service.acquire_budget({"url": "https://api.binance.com/api/v3/exchangeInfo"})
-        await service.acquire_budget({"url": "https://fapi.binance.com/fapi/v1/exchangeInfo"})
-        assert ("binance.spot", 3000, 60, 20) in acquired
-        assert ("binance.usdm", 1200, 60, 1) in acquired
-        with pytest.raises(ValueError, match="Unconfigured Binance request weight"):
-            await service.acquire_budget({"url": "https://api.binance.com/unconfigured-api-path"})
+        for url in (
+            "https://api.binance.com/api/v3/exchangeInfo",
+            "https://fapi.binance.com/fapi/v1/exchangeInfo",
+            "https://api.binance.com/unconfigured-api-path",
+        ):
+            await service.acquire_budget({"url": url})
+        assert acquired == []
     finally:
         await service.close()
 
@@ -1628,7 +1678,7 @@ def test_wire_timestamp_precision_survives_normalization():
 
 
 @pytest.mark.asyncio
-async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path):
+async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path, collector_http):
     phase = ["Trading"]
     requests = []
 
@@ -1661,6 +1711,7 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path):
         ],
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        collector_http(http)
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         await svc.poll_once("S14")
         phase[0] = "Settling"
@@ -1672,6 +1723,7 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path):
         svc.ingest = fail
         assert (await svc.poll_once("S14"))["status"] == "DEGRADED"
         checkpoint = repo.rows["ops.source_checkpoints", "S14:0"]
+
         pending = [row for batch in checkpoint["pending_batches"] for row in batch["rows"]]
         assert [row["change"] for row in pending] == ["STATE_UPDATE"] and "Settling" in pending[0]["text"]
         assert "etag" not in checkpoint and "instruments" not in checkpoint
@@ -1694,6 +1746,7 @@ async def test_content_duplicate_counts_once_and_is_remembered_by_the_feed(tmp_p
     )
     assert first["item_id"] == duplicate["item_id"] and duplicate["observation_count"] == 2
     assert len([key for key in repo.rows if key[0] == "ingest.source_items"]) == 1
+
     assert [p.name for p in tmp_path.rglob("*.zst")] == [first["item_id"] + ".json.zst"]
     await svc.close()
 
@@ -1807,13 +1860,16 @@ async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_fi
         await restarted.poll_once("S20")
         row = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
         assert row["observed_at"] == first_seen
+
         assert row["observation_count"] == 1
         assert not (await repo.get("ops.source_checkpoints", "S20:0"))["pending_batches"]
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("source_id", ["S03", "S09", "S24"])
-async def test_json_discovery_burst_reads_every_page_until_durable_boundary(tmp_path, source_id):
+async def test_json_discovery_burst_reads_every_page_until_durable_boundary(
+    tmp_path, source_id, collector_http
+):
     import re
 
     phase = [0]
@@ -1904,6 +1960,7 @@ async def test_json_discovery_burst_reads_every_page_until_durable_boundary(tmp_
     source = {"source_id": source_id, "feeds": [feed]}
     repo = Repo()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        collector_http(http)
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         assert (await svc.poll_once(source_id))["status"] == "HEALTHY"
         assert (await repo.get("ops.source_checkpoints", source_id + ":0"))["discovery_checkpoint"] == "1"
@@ -2260,7 +2317,9 @@ async def test_malformed_index_entry_does_not_starve_valid_sibling_or_advance_va
 
 
 @pytest.mark.asyncio
-async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidence(tmp_path, monkeypatch):
+async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidence(
+    tmp_path, monkeypatch, collector_http
+):
     from datetime import timedelta
     from pathlib import Path
 
@@ -2305,6 +2364,7 @@ async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidenc
     }
     repo = Repo()
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        collector_http(http)
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         await svc.poll_once("S14")
         phase[0] = 1
@@ -2382,7 +2442,9 @@ async def test_long_history_catchup_refreshes_current_head_at_feed_cadence(tmp_p
 
 
 @pytest.mark.asyncio
-async def test_coinbase_trading_restriction_change_emits_item_without_status_enum_change(tmp_path):
+async def test_coinbase_trading_restriction_change_emits_item_without_status_enum_change(
+    tmp_path, collector_http
+):
     restricted = [False]
     source = {
         "source_id": "S14",
@@ -2416,6 +2478,7 @@ async def test_coinbase_trading_restriction_change_emits_item_without_status_enu
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        collector_http(http)
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         assert (await svc.poll_once("S14"))["items"] == 0
         restricted[0] = True
@@ -2428,7 +2491,9 @@ async def test_coinbase_trading_restriction_change_emits_item_without_status_enu
 
 
 @pytest.mark.asyncio
-async def test_new_coinbase_flag_observation_does_not_fabricate_historical_status_change(tmp_path):
+async def test_new_coinbase_flag_observation_does_not_fabricate_historical_status_change(
+    tmp_path, collector_http
+):
     flag = [True]
     source = {
         "source_id": "S14",
@@ -2457,6 +2522,7 @@ async def test_new_coinbase_flag_observation_does_not_fabricate_historical_statu
             lambda request: httpx.Response(200, json=[dict(original, cancel_only=flag[0])])
         )
     ) as http:
+        collector_http(http)
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         assert (await svc.poll_once("S14"))["items"] == 0
         assert (await repo.get("ops.source_checkpoints", "S14:0"))["instrument_snapshot_schema_version"] == 2
@@ -2659,7 +2725,7 @@ def test_binance_observed_child_tree_preserves_text_not_metadata():
 
 
 @pytest.mark.asyncio
-async def test_binance_empty_body_pending_recovers_after_restart(tmp_path, monkeypatch):
+async def test_binance_empty_body_pending_recovers_after_restart(tmp_path, monkeypatch, collector_http):
     from copy import deepcopy
     from pathlib import Path
 
@@ -2696,6 +2762,7 @@ async def test_binance_empty_body_pending_recovers_after_restart(tmp_path, monke
     parser = parsers.binance_body
     monkeypatch.setattr(parsers, "binance_body", lambda _: "")
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        collector_http(http)
         first = SourceService(repo, cfg, http=http)
         assert (await first.poll_once("S09"))["status"] == "DEGRADED"
         before = deepcopy(await repo.get("ops.source_checkpoints", "S09:0"))
@@ -2890,7 +2957,7 @@ async def test_poll_clears_stale_article_errors(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_instrument_snapshot_written_only_when_it_changes(tmp_path):
+async def test_instrument_snapshot_written_only_when_it_changes(tmp_path, collector_http):
     status = ["TRADING"]
 
     def handle(request):
@@ -2919,6 +2986,7 @@ async def test_instrument_snapshot_written_only_when_it_changes(tmp_path):
         ],
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+        collector_http(http)
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
         for _ in range(3):
             await svc.poll_once("S14")

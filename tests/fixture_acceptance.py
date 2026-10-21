@@ -318,6 +318,7 @@ def check_ready(root, case):
     input_hash = digest({k: v for k, v in packet.items() if k != "input_sha256"})
     if packet.get("input_sha256") != input_hash:
         errors.append("missing or incorrect input digest")
+
     input_identity = digest(packet)
     sources = [r.get("record", {}) for r in records if r.get("collection") == "ingest.source_items"]
     if name not in MARKET_CASES and not sources:

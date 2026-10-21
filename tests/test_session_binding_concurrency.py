@@ -18,7 +18,15 @@ from tank.util import iso, sha256
 
 
 @asynccontextmanager
-async def fixture_repo(backend):
+async def fixture_repo(backend, postgres_template=None):
+    if backend == "postgres" and postgres_template is not None:
+        url = os.getenv("TANK_TEST_DATABASE_URL")
+        if not url:
+            pytest.skip("Disposable administrator PostgreSQL DSN required")
+        async with postgres_template.repository(url) as repo:
+            await repo.migrate()
+            yield repo
+        return
     admin = None
     if backend == "postgres":
         import psycopg
@@ -113,10 +121,15 @@ async def seed(repo):
     return session, args
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
 @pytest.mark.parametrize("simulate_old_boundary", [False, True])
-async def test_controller_snapshot_cannot_erase_domain_binding(tmp_path, backend, simulate_old_boundary):
-    async with fixture_repo(backend) as repo:
+async def test_controller_snapshot_cannot_erase_domain_binding(
+    tmp_path, backend, simulate_old_boundary, postgres_template
+):
+    async with fixture_repo(backend, postgres_template) as repo:
         session, args = await seed(repo)
         tools = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
         writer_ready, binding_waiting, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
@@ -157,6 +170,7 @@ async def test_controller_snapshot_cannot_erase_domain_binding(tmp_path, backend
                 tools.dispatch("record_event", args, {"session_id": "s", "role": "analyst"})
             )
             waiting = asyncio.create_task(binding_waiting.wait())
+
             await asyncio.wait([domain_task, waiting], return_when=asyncio.FIRST_COMPLETED)
             if simulate_old_boundary:
                 await domain_task
@@ -174,9 +188,14 @@ async def test_controller_snapshot_cannot_erase_domain_binding(tmp_path, backend
             assert len(await repo.list("evt.events")) == 1
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_origin_scope_rechecked_after_two_unbound_preflight_snapshots(tmp_path, backend):
-    async with fixture_repo(backend) as repo:
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_origin_scope_rechecked_after_two_unbound_preflight_snapshots(
+    tmp_path, backend, postgres_template
+):
+    async with fixture_repo(backend, postgres_template) as repo:
         _, args = await seed(repo)
         tools = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
         original_get = repo.get

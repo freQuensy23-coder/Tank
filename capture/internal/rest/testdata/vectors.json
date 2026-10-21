@@ -1,0 +1,3901 @@
+{
+ "cases": [
+  {
+   "args": {},
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.spot",
+   "name": "binance.spot klines latest",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "interval": "1m",
+      "limit": "3",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.binance.com/api/v3/klines"
+    }
+   ],
+   "responses": [
+    "[[1792578000000,\"83200.10\",\"83210.00\",\"83190.50\",\"83205.20\",\"12.345\",1792578059999,\"1027000.12\",123,\"6.1\",\"507000.1\",\"0\"]]"
+   ],
+   "result": [
+    [
+     1792578000000,
+     "83200.10",
+     "83210.00",
+     "83190.50",
+     "83205.20",
+     "12.345",
+     1792578059999,
+     "1027000.12",
+     123,
+     "6.1",
+     "507000.1",
+     "0"
+    ]
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.spot",
+   "name": "binance.spot klines range",
+   "priority": 1,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "endTime": "1792584000000",
+      "interval": "1m",
+      "limit": "1000",
+      "startTime": "1792576800123",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 1,
+     "url": "https://api.binance.com/api/v3/klines"
+    }
+   ],
+   "responses": [
+    "[[1792578000000,\"83200.10\",\"83210.00\",\"83190.50\",\"83205.20\",\"12.345\",1792578059999,\"1027000.12\",123,\"6.1\",\"507000.1\",\"0\"]]"
+   ],
+   "result": [
+    [
+     1792578000000,
+     "83200.10",
+     "83210.00",
+     "83190.50",
+     "83205.20",
+     "12.345",
+     1792578059999,
+     "1027000.12",
+     123,
+     "6.1",
+     "507000.1",
+     "0"
+    ]
+   ]
+  },
+  {
+   "args": {},
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.usdm",
+   "name": "binance.usdm klines latest",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "interval": "1m",
+      "limit": "3",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://fapi.binance.com/fapi/v1/klines"
+    }
+   ],
+   "responses": [
+    "[[1792578000000,\"83200.10\",\"83210.00\",\"83190.50\",\"83205.20\",\"12.345\",1792578059999,\"1027000.12\",123,\"6.1\",\"507000.1\",\"0\"]]"
+   ],
+   "result": [
+    [
+     1792578000000,
+     "83200.10",
+     "83210.00",
+     "83190.50",
+     "83205.20",
+     "12.345",
+     1792578059999,
+     "1027000.12",
+     123,
+     "6.1",
+     "507000.1",
+     "0"
+    ]
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.usdm",
+   "name": "binance.usdm klines range",
+   "priority": 1,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "endTime": "1792584000000",
+      "interval": "1m",
+      "limit": "1000",
+      "startTime": "1792576800123",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 1,
+     "url": "https://fapi.binance.com/fapi/v1/klines"
+    }
+   ],
+   "responses": [
+    "[[1792578000000,\"83200.10\",\"83210.00\",\"83190.50\",\"83205.20\",\"12.345\",1792578059999,\"1027000.12\",123,\"6.1\",\"507000.1\",\"0\"]]"
+   ],
+   "result": [
+    [
+     1792578000000,
+     "83200.10",
+     "83210.00",
+     "83190.50",
+     "83205.20",
+     "12.345",
+     1792578059999,
+     "1027000.12",
+     123,
+     "6.1",
+     "507000.1",
+     "0"
+    ]
+   ]
+  },
+  {
+   "args": {},
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "okx:spot:BTC-USDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT"
+   },
+   "key": "okx.spot",
+   "name": "okx.spot klines latest",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "bar": "1m",
+      "instId": "BTC-USDT",
+      "limit": "3"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/market/candles"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[[\"1792578000000\",\"83200.1\",\"83210\",\"83190.5\",\"83205.2\",\"12.3\",\"1020000\",\"1020000\",\"1\"],[\"1792577940000\",\"83190.1\",\"83200\",\"83180.5\",\"83200.1\",\"10.3\",\"850000\",\"850000\",\"1\"]]}"
+   ],
+   "result": [
+    [
+     "1792578000000",
+     "83200.1",
+     "83210",
+     "83190.5",
+     "83205.2",
+     "12.3",
+     "1020000",
+     "1020000",
+     "1"
+    ],
+    [
+     "1792577940000",
+     "83190.1",
+     "83200",
+     "83180.5",
+     "83200.1",
+     "10.3",
+     "850000",
+     "850000",
+     "1"
+    ]
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "okx:spot:BTC-USDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT"
+   },
+   "key": "okx.spot",
+   "name": "okx.spot klines range",
+   "priority": 1,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "after": "1792584000000",
+      "bar": "1m",
+      "before": "1792576800123",
+      "instId": "BTC-USDT",
+      "limit": "300"
+     },
+     "priority": 1,
+     "url": "https://www.okx.com/api/v5/market/history-candles"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[[\"1792578000000\",\"83200.1\",\"83210\",\"83190.5\",\"83205.2\",\"12.3\",\"1020000\",\"1020000\",\"1\"],[\"1792577940000\",\"83190.1\",\"83200\",\"83180.5\",\"83200.1\",\"10.3\",\"850000\",\"850000\",\"1\"]]}"
+   ],
+   "result": [
+    [
+     "1792578000000",
+     "83200.1",
+     "83210",
+     "83190.5",
+     "83205.2",
+     "12.3",
+     "1020000",
+     "1020000",
+     "1"
+    ],
+    [
+     "1792577940000",
+     "83190.1",
+     "83200",
+     "83180.5",
+     "83200.1",
+     "10.3",
+     "850000",
+     "850000",
+     "1"
+    ]
+   ]
+  },
+  {
+   "args": {},
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": null,
+    "instrument_id": "okx:perp_linear:BTC-USDT-SWAP",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT-SWAP"
+   },
+   "key": "okx.swap",
+   "name": "okx.swap klines latest",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "bar": "1m",
+      "instId": "BTC-USDT-SWAP",
+      "limit": "3"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/market/candles"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[[\"1792578000000\",\"83200.1\",\"83210\",\"83190.5\",\"83205.2\",\"12.3\",\"1020000\",\"1020000\",\"1\"],[\"1792577940000\",\"83190.1\",\"83200\",\"83180.5\",\"83200.1\",\"10.3\",\"850000\",\"850000\",\"1\"]]}"
+   ],
+   "result": [
+    [
+     "1792578000000",
+     "83200.1",
+     "83210",
+     "83190.5",
+     "83205.2",
+     "12.3",
+     "1020000",
+     "1020000",
+     "1"
+    ],
+    [
+     "1792577940000",
+     "83190.1",
+     "83200",
+     "83180.5",
+     "83200.1",
+     "10.3",
+     "850000",
+     "850000",
+     "1"
+    ]
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": null,
+    "instrument_id": "okx:perp_linear:BTC-USDT-SWAP",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT-SWAP"
+   },
+   "key": "okx.swap",
+   "name": "okx.swap klines range",
+   "priority": 1,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "after": "1792584000000",
+      "bar": "1m",
+      "before": "1792576800123",
+      "instId": "BTC-USDT-SWAP",
+      "limit": "300"
+     },
+     "priority": 1,
+     "url": "https://www.okx.com/api/v5/market/history-candles"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[[\"1792578000000\",\"83200.1\",\"83210\",\"83190.5\",\"83205.2\",\"12.3\",\"1020000\",\"1020000\",\"1\"],[\"1792577940000\",\"83190.1\",\"83200\",\"83180.5\",\"83200.1\",\"10.3\",\"850000\",\"850000\",\"1\"]]}"
+   ],
+   "result": [
+    [
+     "1792578000000",
+     "83200.1",
+     "83210",
+     "83190.5",
+     "83205.2",
+     "12.3",
+     "1020000",
+     "1020000",
+     "1"
+    ],
+    [
+     "1792577940000",
+     "83190.1",
+     "83200",
+     "83180.5",
+     "83200.1",
+     "10.3",
+     "850000",
+     "850000",
+     "1"
+    ]
+   ]
+  },
+  {
+   "args": {},
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "bybit:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "bybit",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "bybit.spot",
+   "name": "bybit.spot klines latest",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "spot",
+      "interval": "1",
+      "limit": "3",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/kline"
+    }
+   ],
+   "responses": [
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"category\":\"spot\",\"symbol\":\"BTCUSDT\",\"list\":[[\"1792578000000\",\"83200.1\",\"83210\",\"83190.5\",\"83205.2\",\"12.3\",\"1020000\"]]},\"time\":1792578000999}"
+   ],
+   "result": [
+    [
+     "1792578000000",
+     "83200.1",
+     "83210",
+     "83190.5",
+     "83205.2",
+     "12.3",
+     "1020000"
+    ]
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "bybit:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "bybit",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "bybit.spot",
+   "name": "bybit.spot klines range",
+   "priority": 1,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "spot",
+      "end": "1792584000000",
+      "interval": "1",
+      "limit": "1000",
+      "start": "1792576800123",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 1,
+     "url": "https://api.bybit.com/v5/market/kline"
+    }
+   ],
+   "responses": [
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"category\":\"spot\",\"symbol\":\"BTCUSDT\",\"list\":[[\"1792578000000\",\"83200.1\",\"83210\",\"83190.5\",\"83205.2\",\"12.3\",\"1020000\"]]},\"time\":1792578000999}"
+   ],
+   "result": [
+    [
+     "1792578000000",
+     "83200.1",
+     "83210",
+     "83190.5",
+     "83205.2",
+     "12.3",
+     "1020000"
+    ]
+   ]
+  },
+  {
+   "args": {},
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "bybit:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "bybit",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "bybit.linear",
+   "name": "bybit.linear klines latest",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "linear",
+      "interval": "1",
+      "limit": "3",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/kline"
+    }
+   ],
+   "responses": [
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"category\":\"spot\",\"symbol\":\"BTCUSDT\",\"list\":[[\"1792578000000\",\"83200.1\",\"83210\",\"83190.5\",\"83205.2\",\"12.3\",\"1020000\"]]},\"time\":1792578000999}"
+   ],
+   "result": [
+    [
+     "1792578000000",
+     "83200.1",
+     "83210",
+     "83190.5",
+     "83205.2",
+     "12.3",
+     "1020000"
+    ]
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "bybit:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "bybit",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "bybit.linear",
+   "name": "bybit.linear klines range",
+   "priority": 1,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "linear",
+      "end": "1792584000000",
+      "interval": "1",
+      "limit": "1000",
+      "start": "1792576800123",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 1,
+     "url": "https://api.bybit.com/v5/market/kline"
+    }
+   ],
+   "responses": [
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"category\":\"spot\",\"symbol\":\"BTCUSDT\",\"list\":[[\"1792578000000\",\"83200.1\",\"83210\",\"83190.5\",\"83205.2\",\"12.3\",\"1020000\"]]},\"time\":1792578000999}"
+   ],
+   "result": [
+    [
+     "1792578000000",
+     "83200.1",
+     "83210",
+     "83190.5",
+     "83205.2",
+     "12.3",
+     "1020000"
+    ]
+   ]
+  },
+  {
+   "args": {},
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "coinbase:spot:BTC-USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "tick_size": "0.01",
+    "token_id": "bitcoin",
+    "venue": "coinbase",
+    "venue_symbol": "BTC-USD"
+   },
+   "key": "coinbase.spot",
+   "name": "coinbase.spot klines latest",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "granularity": "60",
+      "start": "2026-10-21T12:31:56.789012Z"
+     },
+     "priority": 0,
+     "url": "https://api.exchange.coinbase.com/products/BTC-USD/candles"
+    }
+   ],
+   "responses": [
+    "[[1792578000,83190.5,83210,83200.1,83205.2,12.3456789],[1792577940,83180.5,83200,83190.1,83200.1,10.3]]"
+   ],
+   "result": [
+    [
+     1792578000,
+     "83190.5",
+     83210,
+     "83200.1",
+     "83205.2",
+     "12.3456789"
+    ],
+    [
+     1792577940,
+     "83180.5",
+     83200,
+     "83190.1",
+     "83200.1",
+     "10.3"
+    ]
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "coinbase:spot:BTC-USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "tick_size": "0.01",
+    "token_id": "bitcoin",
+    "venue": "coinbase",
+    "venue_symbol": "BTC-USD"
+   },
+   "key": "coinbase.spot",
+   "name": "coinbase.spot klines range",
+   "priority": 1,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "end": "2026-10-21T12:00:00Z",
+      "granularity": "60",
+      "start": "2026-10-21T10:00:00.123456Z"
+     },
+     "priority": 1,
+     "url": "https://api.exchange.coinbase.com/products/BTC-USD/candles"
+    }
+   ],
+   "responses": [
+    "[[1792578000,83190.5,83210,83200.1,83205.2,12.3456789],[1792577940,83180.5,83200,83190.1,83200.1,10.3]]"
+   ],
+   "result": [
+    [
+     1792578000,
+     "83190.5",
+     83210,
+     "83200.1",
+     "83205.2",
+     "12.3456789"
+    ],
+    [
+     1792577940,
+     "83180.5",
+     83200,
+     "83190.1",
+     "83200.1",
+     "10.3"
+    ]
+   ]
+  },
+  {
+   "args": {},
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "kraken:spot:XBT/USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "kraken",
+    "venue_symbol": "XBT/USD"
+   },
+   "key": "kraken.spot",
+   "name": "kraken.spot klines latest",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "interval": "1",
+      "pair": "XBTUSD",
+      "since": "1792585916"
+     },
+     "priority": 0,
+     "url": "https://api.kraken.com/0/public/OHLC"
+    }
+   ],
+   "responses": [
+    "{\"error\":[],\"result\":{\"XXBTZUSD\":[[1792578000,\"83200.1\",\"83210.0\",\"83190.5\",\"83205.2\",\"83201.0\",\"12.30000000\",123]],\"last\":1792578000}}"
+   ],
+   "result": [
+    [
+     1792578000,
+     "83200.1",
+     "83210.0",
+     "83190.5",
+     "83205.2",
+     "83201.0",
+     "12.30000000",
+     123
+    ]
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "kraken:spot:XBT/USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "kraken",
+    "venue_symbol": "XBT/USD"
+   },
+   "key": "kraken.spot",
+   "name": "kraken.spot klines range",
+   "priority": 1,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "interval": "1",
+      "pair": "XBTUSD",
+      "since": "1792576800"
+     },
+     "priority": 1,
+     "url": "https://api.kraken.com/0/public/OHLC"
+    }
+   ],
+   "responses": [
+    "{\"error\":[],\"result\":{\"XXBTZUSD\":[[1792578000,\"83200.1\",\"83210.0\",\"83190.5\",\"83205.2\",\"83201.0\",\"12.30000000\",123]],\"last\":1792578000}}"
+   ],
+   "result": [
+    [
+     1792578000,
+     "83200.1",
+     "83210.0",
+     "83190.5",
+     "83205.2",
+     "83201.0",
+     "12.30000000",
+     123
+    ]
+   ]
+  },
+  {
+   "args": {},
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "funding_interval_h": 1,
+    "instrument_id": "hyperliquid:perp_linear:BTC",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "hyperliquid",
+    "venue_symbol": "BTC"
+   },
+   "key": "hyperliquid.perp",
+   "name": "hyperliquid.perp klines latest",
+   "priority": 0,
+   "requests": [
+    {
+     "json": {
+      "req": {
+       "coin": "BTC",
+       "endTime": 1792586096789,
+       "interval": "1m",
+       "startTime": 1792585916789
+      },
+      "type": "candleSnapshot"
+     },
+     "method": "POST",
+     "params": {},
+     "priority": 0,
+     "url": "https://api.hyperliquid.xyz/info"
+    }
+   ],
+   "responses": [
+    "[{\"t\":1792578000000,\"T\":1792578059999,\"s\":\"BTC\",\"i\":\"1m\",\"o\":\"83200.1\",\"c\":\"83205.2\",\"h\":\"83210\",\"l\":\"83190.5\",\"v\":\"12.3\",\"n\":123}]"
+   ],
+   "result": [
+    {
+     "T": 1792578059999,
+     "c": "83205.2",
+     "h": "83210",
+     "i": "1m",
+     "l": "83190.5",
+     "n": 123,
+     "o": "83200.1",
+     "s": "BTC",
+     "t": 1792578000000,
+     "v": "12.3"
+    }
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "funding_interval_h": 1,
+    "instrument_id": "hyperliquid:perp_linear:BTC",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "hyperliquid",
+    "venue_symbol": "BTC"
+   },
+   "key": "hyperliquid.perp",
+   "name": "hyperliquid.perp klines range",
+   "priority": 1,
+   "requests": [
+    {
+     "json": {
+      "req": {
+       "coin": "BTC",
+       "endTime": 1792584000000,
+       "interval": "1m",
+       "startTime": 1792576800123
+      },
+      "type": "candleSnapshot"
+     },
+     "method": "POST",
+     "params": {},
+     "priority": 1,
+     "url": "https://api.hyperliquid.xyz/info"
+    }
+   ],
+   "responses": [
+    "[{\"t\":1792578000000,\"T\":1792578059999,\"s\":\"BTC\",\"i\":\"1m\",\"o\":\"83200.1\",\"c\":\"83205.2\",\"h\":\"83210\",\"l\":\"83190.5\",\"v\":\"12.3\",\"n\":123}]"
+   ],
+   "result": [
+    {
+     "T": 1792578059999,
+     "c": "83205.2",
+     "h": "83210",
+     "i": "1m",
+     "l": "83190.5",
+     "n": 123,
+     "o": "83200.1",
+     "s": "BTC",
+     "t": 1792578000000,
+     "v": "12.3"
+    }
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": null,
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "coinbase:spot:BTC-USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "tick_size": "0.01",
+    "token_id": "bitcoin",
+    "venue": "coinbase",
+    "venue_symbol": "BTC-USD"
+   },
+   "key": "coinbase.spot",
+   "name": "coinbase.spot klines start only",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "granularity": "60",
+      "start": "2026-10-21T10:00:00.123456Z"
+     },
+     "priority": 0,
+     "url": "https://api.exchange.coinbase.com/products/BTC-USD/candles"
+    }
+   ],
+   "responses": [
+    "[[1792578000,83190.5,83210,83200.1,83205.2,12.3456789],[1792577940,83180.5,83200,83190.1,83200.1,10.3]]"
+   ],
+   "result": [
+    [
+     1792578000,
+     "83190.5",
+     83210,
+     "83200.1",
+     "83205.2",
+     "12.3456789"
+    ],
+    [
+     1792577940,
+     "83180.5",
+     83200,
+     "83190.1",
+     "83200.1",
+     "10.3"
+    ]
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": null
+   },
+   "call": "klines",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "kraken:spot:XBT/USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "kraken",
+    "venue_symbol": "XBT/USD"
+   },
+   "key": "kraken.spot",
+   "name": "kraken.spot klines end only",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "interval": "1",
+      "pair": "XBTUSD",
+      "since": "1792585916"
+     },
+     "priority": 0,
+     "url": "https://api.kraken.com/0/public/OHLC"
+    }
+   ],
+   "responses": [
+    "{\"error\":[],\"result\":{\"XXBTZUSD\":[[1792578000,\"83200.1\",\"83210.0\",\"83190.5\",\"83205.2\",\"83201.0\",\"12.30000000\",123]],\"last\":1792578000}}"
+   ],
+   "result": [
+    [
+     1792578000,
+     "83200.1",
+     "83210.0",
+     "83190.5",
+     "83205.2",
+     "83201.0",
+     "12.30000000",
+     123
+    ]
+   ]
+  },
+  {
+   "args": {},
+   "call": "klines",
+   "error": "SemanticError: OKX response error Too Many Requests",
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "okx:spot:BTC-USDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT"
+   },
+   "key": "okx.spot",
+   "name": "okx.spot klines error",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "bar": "1m",
+      "instId": "BTC-USDT",
+      "limit": "3"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/market/candles"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"50011\",\"msg\":\"Too Many Requests\",\"data\":[]}"
+   ],
+   "result": null
+  },
+  {
+   "args": {},
+   "call": "klines",
+   "error": "SemanticError: Bybit response error Too many visits!",
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "bybit:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "bybit",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "bybit.spot",
+   "name": "bybit.spot klines error",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "spot",
+      "interval": "1",
+      "limit": "3",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/kline"
+    }
+   ],
+   "responses": [
+    "{\"retCode\":10006,\"retMsg\":\"Too many visits!\",\"result\":{},\"time\":1792578000999}"
+   ],
+   "result": null
+  },
+  {
+   "args": {},
+   "call": "klines",
+   "error": "SemanticError: Kraken response error ['EGeneral:Invalid arguments', 'EQuery:Unknown asset pair']",
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "kraken:spot:XBT/USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "kraken",
+    "venue_symbol": "XBT/USD"
+   },
+   "key": "kraken.spot",
+   "name": "kraken.spot klines error",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "interval": "1",
+      "pair": "XBTUSD",
+      "since": "1792585916"
+     },
+     "priority": 0,
+     "url": "https://api.kraken.com/0/public/OHLC"
+    }
+   ],
+   "responses": [
+    "{\"error\":[\"EGeneral:Invalid arguments\",\"EQuery:Unknown asset pair\"]}"
+   ],
+   "result": null
+  },
+  {
+   "args": {},
+   "call": "ticker",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.spot",
+   "name": "binance.spot ticker",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.binance.com/api/v3/ticker/24hr"
+    }
+   ],
+   "responses": [
+    "{\"symbol\":\"BTCUSDT\",\"lastPrice\":\"83205.20\",\"volume\":\"1234.5\",\"quoteVolume\":\"102700000.1\",\"openTime\":1792491296789,\"closeTime\":1792577696789,\"count\":100}"
+   ],
+   "result": {
+    "closeTime": 1792577696789,
+    "count": 100,
+    "lastPrice": "83205.20",
+    "openTime": 1792491296789,
+    "quoteVolume": "102700000.1",
+    "symbol": "BTCUSDT",
+    "volume": "1234.5"
+   }
+  },
+  {
+   "args": {},
+   "call": "ticker",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.usdm",
+   "name": "binance.usdm ticker",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://fapi.binance.com/fapi/v1/ticker/24hr"
+    }
+   ],
+   "responses": [
+    "{\"symbol\":\"BTCUSDT\",\"lastPrice\":\"83205.20\",\"volume\":\"1234.5\",\"quoteVolume\":\"102700000.1\",\"openTime\":1792491296789,\"closeTime\":1792577696789,\"count\":100}"
+   ],
+   "result": {
+    "closeTime": 1792577696789,
+    "count": 100,
+    "lastPrice": "83205.20",
+    "openTime": 1792491296789,
+    "quoteVolume": "102700000.1",
+    "symbol": "BTCUSDT",
+    "volume": "1234.5"
+   }
+  },
+  {
+   "args": {},
+   "call": "ticker",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "okx:spot:BTC-USDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT"
+   },
+   "key": "okx.spot",
+   "name": "okx.spot ticker",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "instId": "BTC-USDT"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/market/ticker"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[{\"instType\":\"SPOT\",\"instId\":\"BTC-USDT\",\"last\":\"83205.2\",\"vol24h\":\"1234.5\",\"volCcy24h\":\"102700000.1\",\"ts\":\"1792578000123\"}]}"
+   ],
+   "result": {
+    "instId": "BTC-USDT",
+    "instType": "SPOT",
+    "last": "83205.2",
+    "ts": "1792578000123",
+    "vol24h": "1234.5",
+    "volCcy24h": "102700000.1"
+   }
+  },
+  {
+   "args": {},
+   "call": "ticker",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "bybit:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "bybit",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "bybit.linear",
+   "name": "bybit.linear ticker",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "linear",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/tickers"
+    }
+   ],
+   "responses": [
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"category\":\"linear\",\"list\":[{\"symbol\":\"BTCUSDT\",\"lastPrice\":\"83205.2\",\"markPrice\":\"83210.1\",\"indexPrice\":\"83205.0\",\"fundingRate\":\"0.0001\",\"nextFundingTime\":\"1792598400000\",\"fundingIntervalHour\":\"8\",\"openInterest\":\"12345.6\",\"volume24h\":\"1234.5\",\"turnover24h\":\"102700000.1\"}]},\"time\":1792578000999}"
+   ],
+   "result": {
+    "fundingIntervalHour": "8",
+    "fundingRate": "0.0001",
+    "indexPrice": "83205.0",
+    "lastPrice": "83205.2",
+    "markPrice": "83210.1",
+    "nextFundingTime": "1792598400000",
+    "openInterest": "12345.6",
+    "symbol": "BTCUSDT",
+    "turnover24h": "102700000.1",
+    "volume24h": "1234.5"
+   }
+  },
+  {
+   "args": {},
+   "call": "ticker",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "coinbase:spot:BTC-USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "tick_size": "0.01",
+    "token_id": "bitcoin",
+    "venue": "coinbase",
+    "venue_symbol": "BTC-USD"
+   },
+   "key": "coinbase.spot",
+   "name": "coinbase.spot ticker",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {},
+     "priority": 0,
+     "url": "https://api.exchange.coinbase.com/products/BTC-USD/stats"
+    }
+   ],
+   "responses": [
+    "{\"open\":\"82000.00\",\"high\":\"84000.00\",\"low\":\"81000.00\",\"last\":\"83205.20\",\"volume\":\"1234.5\",\"volume_30day\":\"40000\"}"
+   ],
+   "result": {
+    "high": "84000.00",
+    "last": "83205.20",
+    "low": "81000.00",
+    "open": "82000.00",
+    "volume": "1234.5",
+    "volume_30day": "40000"
+   }
+  },
+  {
+   "args": {},
+   "call": "ticker",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "kraken:spot:XBT/USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "kraken",
+    "venue_symbol": "XBT/USD"
+   },
+   "key": "kraken.spot",
+   "name": "kraken.spot ticker",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "pair": "XBTUSD"
+     },
+     "priority": 0,
+     "url": "https://api.kraken.com/0/public/Ticker"
+    }
+   ],
+   "responses": [
+    "{\"error\":[],\"result\":{\"XXBTZUSD\":{\"a\":[\"83205.30000\",\"1\",\"1.000\"],\"b\":[\"83205.20000\",\"2\",\"2.000\"],\"c\":[\"83205.20000\",\"0.00100000\"],\"v\":[\"100.1\",\"1234.5\"],\"p\":[\"83100.1\",\"83000.2\"],\"t\":[1000,20000],\"l\":[\"81000.0\",\"81000.0\"],\"h\":[\"84000.0\",\"84000.0\"],\"o\":\"82000.0\"}}}"
+   ],
+   "result": {
+    "a": [
+     "83205.30000",
+     "1",
+     "1.000"
+    ],
+    "b": [
+     "83205.20000",
+     "2",
+     "2.000"
+    ],
+    "c": [
+     "83205.20000",
+     "0.00100000"
+    ],
+    "h": [
+     "84000.0",
+     "84000.0"
+    ],
+    "l": [
+     "81000.0",
+     "81000.0"
+    ],
+    "o": "82000.0",
+    "p": [
+     "83100.1",
+     "83000.2"
+    ],
+    "t": [
+     1000,
+     20000
+    ],
+    "v": [
+     "100.1",
+     "1234.5"
+    ]
+   }
+  },
+  {
+   "args": {},
+   "call": "ticker",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "funding_interval_h": 1,
+    "instrument_id": "hyperliquid:perp_linear:BTC",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "hyperliquid",
+    "venue_symbol": "BTC"
+   },
+   "key": "hyperliquid.perp",
+   "name": "hyperliquid.perp ticker",
+   "priority": 0,
+   "requests": [
+    {
+     "json": {
+      "type": "metaAndAssetCtxs"
+     },
+     "method": "POST",
+     "params": {},
+     "priority": 0,
+     "url": "https://api.hyperliquid.xyz/info"
+    }
+   ],
+   "responses": [
+    "[{\"universe\":[{\"name\":\"ETH\",\"szDecimals\":4,\"maxLeverage\":25},{\"name\":\"BTC\",\"szDecimals\":5,\"maxLeverage\":40},{\"name\":\"OLD\",\"szDecimals\":0,\"isDelisted\":true}]},[{\"funding\":\"0.0000100\",\"openInterest\":\"20000.1\",\"markPx\":\"3100.1\",\"oraclePx\":\"3100.0\",\"dayNtlVlm\":\"1000\"},{\"funding\":\"0.0000125\",\"openInterest\":\"1000.12345\",\"markPx\":\"83210.0\",\"oraclePx\":\"83205.0\",\"midPx\":\"83209.5\",\"premium\":\"0.0001\",\"dayNtlVlm\":\"100000000.0\"},{\"funding\":\"0.0\",\"openInterest\":\"0\",\"markPx\":\"1.0\",\"oraclePx\":\"1.0\"}]]"
+   ],
+   "result": {
+    "_capture_observed_at": "2026-10-21T12:34:56.789012Z",
+    "dayNtlVlm": "100000000.0",
+    "funding": "0.0000125",
+    "markPx": "83210.0",
+    "midPx": "83209.5",
+    "openInterest": "1000.12345",
+    "oraclePx": "83205.0",
+    "premium": "0.0001"
+   }
+  },
+  {
+   "args": {},
+   "call": "ticker",
+   "error": "IndexError: list index out of range",
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "okx:spot:BTC-USDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT"
+   },
+   "key": "okx.spot",
+   "name": "okx.spot ticker empty",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "instId": "BTC-USDT"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/market/ticker"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[]}"
+   ],
+   "result": null
+  },
+  {
+   "args": {},
+   "call": "derivatives",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.usdm",
+   "name": "binance.usdm derivatives",
+   "priority": -1,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "symbol": "BTCUSDT"
+     },
+     "priority": -1,
+     "url": "https://fapi.binance.com/fapi/v1/openInterest"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "limit": "2",
+      "period": "5m",
+      "symbol": "BTCUSDT"
+     },
+     "priority": -1,
+     "url": "https://fapi.binance.com/futures/data/openInterestHist"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "symbol": "BTCUSDT"
+     },
+     "priority": -1,
+     "url": "https://fapi.binance.com/fapi/v1/premiumIndex"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "limit": "1000",
+      "symbol": "BTCUSDT"
+     },
+     "priority": -1,
+     "url": "https://fapi.binance.com/fapi/v1/fundingRate"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {},
+     "priority": -1,
+     "url": "https://fapi.binance.com/fapi/v1/fundingInfo"
+    }
+   ],
+   "responses": [
+    "{\"openInterest\":\"81234.567\",\"symbol\":\"BTCUSDT\",\"time\":1792578000123}",
+    "[{\"symbol\":\"BTCUSDT\",\"sumOpenInterest\":\"81000.1\",\"sumOpenInterestValue\":\"6739000000.5\",\"CMCCirculatingSupply\":\"1\",\"timestamp\":1792577400000},{\"symbol\":\"BTCUSDT\",\"sumOpenInterest\":\"81100.2\",\"sumOpenInterestValue\":\"6748000000.5\",\"CMCCirculatingSupply\":\"1\",\"timestamp\":1792577700000}]",
+    "{\"symbol\":\"BTCUSDT\",\"markPrice\":\"83210.10000000\",\"indexPrice\":\"83205.00000000\",\"estimatedSettlePrice\":\"83190.0\",\"lastFundingRate\":\"0.00010000\",\"interestRate\":\"0.00010000\",\"nextFundingTime\":1792598400000,\"time\":1792578000000}",
+    "[{\"symbol\":\"BTCUSDT\",\"fundingTime\":1792540800000,\"fundingRate\":\"0.00010000\",\"markPrice\":\"83000.0\"},{\"symbol\":\"BTCUSDT\",\"fundingTime\":1792569600000,\"fundingRate\":\"0.00009000\",\"markPrice\":\"83100.0\"}]",
+    "[{\"symbol\":\"ETHUSDT\",\"adjustedFundingRateCap\":\"0.02\",\"fundingIntervalHours\":4},{\"symbol\":\"BTCUSDT\",\"adjustedFundingRateCap\":\"0.02\",\"fundingIntervalHours\":8}]"
+   ],
+   "result": [
+    [
+     {
+      "openInterest": "81234.567",
+      "symbol": "BTCUSDT",
+      "time": 1792578000123
+     },
+     {
+      "CMCCirculatingSupply": "1",
+      "sumOpenInterest": "81000.1",
+      "sumOpenInterestValue": "6739000000.5",
+      "symbol": "BTCUSDT",
+      "timestamp": 1792577400000
+     },
+     {
+      "CMCCirculatingSupply": "1",
+      "sumOpenInterest": "81100.2",
+      "sumOpenInterestValue": "6748000000.5",
+      "symbol": "BTCUSDT",
+      "timestamp": 1792577700000
+     }
+    ],
+    {
+     "estimatedSettlePrice": "83190.0",
+     "indexPrice": "83205.00000000",
+     "interestRate": "0.00010000",
+     "lastFundingRate": "0.00010000",
+     "markPrice": "83210.10000000",
+     "nextFundingTime": 1792598400000,
+     "symbol": "BTCUSDT",
+     "time": 1792578000000
+    },
+    [
+     {
+      "fundingRate": "0.00010000",
+      "fundingTime": 1792540800000,
+      "markPrice": "83000.0",
+      "symbol": "BTCUSDT"
+     },
+     {
+      "fundingRate": "0.00009000",
+      "fundingTime": 1792569600000,
+      "markPrice": "83100.0",
+      "symbol": "BTCUSDT"
+     }
+    ],
+    "8",
+    "83210.10000000"
+   ]
+  },
+  {
+   "args": {},
+   "call": "derivatives",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.usdm",
+   "name": "binance.usdm derivatives default interval",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://fapi.binance.com/fapi/v1/openInterest"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "limit": "2",
+      "period": "5m",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://fapi.binance.com/futures/data/openInterestHist"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://fapi.binance.com/fapi/v1/premiumIndex"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "limit": "1000",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://fapi.binance.com/fapi/v1/fundingRate"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {},
+     "priority": 0,
+     "url": "https://fapi.binance.com/fapi/v1/fundingInfo"
+    }
+   ],
+   "responses": [
+    "{\"openInterest\":\"81234.567\",\"symbol\":\"BTCUSDT\",\"time\":1792578000123}",
+    "[{\"symbol\":\"BTCUSDT\",\"sumOpenInterest\":\"81000.1\",\"sumOpenInterestValue\":\"6739000000.5\",\"CMCCirculatingSupply\":\"1\",\"timestamp\":1792577400000},{\"symbol\":\"BTCUSDT\",\"sumOpenInterest\":\"81100.2\",\"sumOpenInterestValue\":\"6748000000.5\",\"CMCCirculatingSupply\":\"1\",\"timestamp\":1792577700000}]",
+    "{\"symbol\":\"BTCUSDT\",\"markPrice\":\"83210.10000000\",\"indexPrice\":\"83205.00000000\",\"estimatedSettlePrice\":\"83190.0\",\"lastFundingRate\":\"0.00010000\",\"interestRate\":\"0.00010000\",\"nextFundingTime\":1792598400000,\"time\":1792578000000}",
+    "[{\"symbol\":\"BTCUSDT\",\"fundingTime\":1792540800000,\"fundingRate\":\"0.00010000\",\"markPrice\":\"83000.0\"},{\"symbol\":\"BTCUSDT\",\"fundingTime\":1792569600000,\"fundingRate\":\"0.00009000\",\"markPrice\":\"83100.0\"}]",
+    "[{\"symbol\":\"ETHUSDT\",\"fundingIntervalHours\":4}]"
+   ],
+   "result": [
+    [
+     {
+      "openInterest": "81234.567",
+      "symbol": "BTCUSDT",
+      "time": 1792578000123
+     },
+     {
+      "CMCCirculatingSupply": "1",
+      "sumOpenInterest": "81000.1",
+      "sumOpenInterestValue": "6739000000.5",
+      "symbol": "BTCUSDT",
+      "timestamp": 1792577400000
+     },
+     {
+      "CMCCirculatingSupply": "1",
+      "sumOpenInterest": "81100.2",
+      "sumOpenInterestValue": "6748000000.5",
+      "symbol": "BTCUSDT",
+      "timestamp": 1792577700000
+     }
+    ],
+    {
+     "estimatedSettlePrice": "83190.0",
+     "indexPrice": "83205.00000000",
+     "interestRate": "0.00010000",
+     "lastFundingRate": "0.00010000",
+     "markPrice": "83210.10000000",
+     "nextFundingTime": 1792598400000,
+     "symbol": "BTCUSDT",
+     "time": 1792578000000
+    },
+    [
+     {
+      "fundingRate": "0.00010000",
+      "fundingTime": 1792540800000,
+      "markPrice": "83000.0",
+      "symbol": "BTCUSDT"
+     },
+     {
+      "fundingRate": "0.00009000",
+      "fundingTime": 1792569600000,
+      "markPrice": "83100.0",
+      "symbol": "BTCUSDT"
+     }
+    ],
+    "8",
+    "83210.10000000"
+   ]
+  },
+  {
+   "args": {},
+   "call": "derivatives",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": null,
+    "instrument_id": "okx:perp_linear:BTC-USDT-SWAP",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT-SWAP"
+   },
+   "key": "okx.swap",
+   "name": "okx.swap derivatives",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "instId": "BTC-USDT-SWAP",
+      "instType": "SWAP"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/public/open-interest"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "instId": "BTC-USDT-SWAP"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/public/funding-rate"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "instId": "BTC-USDT-SWAP",
+      "limit": "100"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/public/funding-rate-history"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[{\"instType\":\"SWAP\",\"instId\":\"BTC-USDT-SWAP\",\"oi\":\"2500000\",\"oiCcy\":\"25000\",\"oiUsd\":\"2080000000\",\"ts\":\"1792578000123\"}]}",
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[{\"instType\":\"SWAP\",\"instId\":\"BTC-USDT-SWAP\",\"fundingRate\":\"0.0001\",\"nextFundingRate\":\"\",\"fundingTime\":\"1792598400000\",\"prevFundingTime\":\"1792569600000\",\"ts\":\"1792578000123\"}]}",
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[{\"instType\":\"SWAP\",\"instId\":\"BTC-USDT-SWAP\",\"fundingRate\":\"0.0001\",\"realizedRate\":\"0.0001\",\"fundingTime\":\"1792569600000\",\"method\":\"current_period\"}]}"
+   ],
+   "result": [
+    [
+     {
+      "instId": "BTC-USDT-SWAP",
+      "instType": "SWAP",
+      "oi": "2500000",
+      "oiCcy": "25000",
+      "oiUsd": "2080000000",
+      "ts": "1792578000123"
+     }
+    ],
+    {
+     "fundingRate": "0.0001",
+     "fundingTime": "1792598400000",
+     "instId": "BTC-USDT-SWAP",
+     "instType": "SWAP",
+     "nextFundingRate": "",
+     "prevFundingTime": "1792569600000",
+     "ts": "1792578000123"
+    },
+    [
+     {
+      "fundingRate": "0.0001",
+      "fundingTime": "1792569600000",
+      "instId": "BTC-USDT-SWAP",
+      "instType": "SWAP",
+      "method": "current_period",
+      "realizedRate": "0.0001"
+     }
+    ],
+    "8",
+    null
+   ]
+  },
+  {
+   "args": {},
+   "call": "derivatives",
+   "error": "SemanticError: OKX funding interval timestamps absent",
+   "instrument": {
+    "contract_multiplier": null,
+    "instrument_id": "okx:perp_linear:BTC-USDT-SWAP",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT-SWAP"
+   },
+   "key": "okx.swap",
+   "name": "okx.swap derivatives no prev",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "instId": "BTC-USDT-SWAP",
+      "instType": "SWAP"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/public/open-interest"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "instId": "BTC-USDT-SWAP"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/public/funding-rate"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "instId": "BTC-USDT-SWAP",
+      "limit": "100"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/public/funding-rate-history"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[{\"instType\":\"SWAP\",\"instId\":\"BTC-USDT-SWAP\",\"oi\":\"2500000\",\"oiCcy\":\"25000\",\"oiUsd\":\"2080000000\",\"ts\":\"1792578000123\"}]}",
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[{\"instType\":\"SWAP\",\"instId\":\"BTC-USDT-SWAP\",\"fundingRate\":\"0.0001\",\"fundingTime\":\"1792598400000\",\"ts\":\"1792578000123\"}]}",
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[{\"instType\":\"SWAP\",\"instId\":\"BTC-USDT-SWAP\",\"fundingRate\":\"0.0001\",\"realizedRate\":\"0.0001\",\"fundingTime\":\"1792569600000\",\"method\":\"current_period\"}]}"
+   ],
+   "result": null
+  },
+  {
+   "args": {},
+   "call": "derivatives",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "bybit:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "bybit",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "bybit.linear",
+   "name": "bybit.linear derivatives",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "linear",
+      "intervalTime": "5min",
+      "limit": "200",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/open-interest"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "linear",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/tickers"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "linear",
+      "limit": "200",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/funding/history"
+    }
+   ],
+   "responses": [
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"symbol\":\"BTCUSDT\",\"category\":\"linear\",\"list\":[{\"openInterest\":\"12345.6\",\"timestamp\":\"1792577700000\"},{\"openInterest\":\"12340.1\",\"timestamp\":\"1792577400000\"}],\"nextPageCursor\":\"lastid%3D123\"},\"time\":1792578000999}",
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"category\":\"linear\",\"list\":[{\"symbol\":\"BTCUSDT\",\"lastPrice\":\"83205.2\",\"markPrice\":\"83210.1\",\"indexPrice\":\"83205.0\",\"fundingRate\":\"0.0001\",\"nextFundingTime\":\"1792598400000\",\"fundingIntervalHour\":\"8\",\"openInterest\":\"12345.6\",\"volume24h\":\"1234.5\",\"turnover24h\":\"102700000.1\"}]},\"time\":1792578000999}",
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"category\":\"linear\",\"list\":[{\"symbol\":\"BTCUSDT\",\"fundingRate\":\"0.0001\",\"fundingRateTimestamp\":\"1792569600000\"}]},\"time\":1792578000999}"
+   ],
+   "result": [
+    [
+     {
+      "openInterest": "12345.6",
+      "timestamp": "1792577700000"
+     },
+     {
+      "openInterest": "12340.1",
+      "timestamp": "1792577400000"
+     }
+    ],
+    {
+     "fundingIntervalHour": "8",
+     "fundingRate": "0.0001",
+     "indexPrice": "83205.0",
+     "lastPrice": "83205.2",
+     "markPrice": "83210.1",
+     "nextFundingTime": "1792598400000",
+     "openInterest": "12345.6",
+     "symbol": "BTCUSDT",
+     "turnover24h": "102700000.1",
+     "volume24h": "1234.5"
+    },
+    [
+     {
+      "fundingRate": "0.0001",
+      "fundingRateTimestamp": "1792569600000",
+      "symbol": "BTCUSDT"
+     }
+    ],
+    "8",
+    "83210.1"
+   ]
+  },
+  {
+   "args": {},
+   "call": "derivatives",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "funding_interval_h": "8",
+    "instrument_id": "bybit:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "bybit",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "bybit.linear",
+   "name": "bybit.linear derivatives registry interval",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "linear",
+      "intervalTime": "5min",
+      "limit": "200",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/open-interest"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "linear",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/tickers"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "linear",
+      "limit": "200",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/funding/history"
+    }
+   ],
+   "responses": [
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"symbol\":\"BTCUSDT\",\"category\":\"linear\",\"list\":[{\"openInterest\":\"12345.6\",\"timestamp\":\"1792577700000\"},{\"openInterest\":\"12340.1\",\"timestamp\":\"1792577400000\"}],\"nextPageCursor\":\"lastid%3D123\"},\"time\":1792578000999}",
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"category\":\"linear\",\"list\":[{\"symbol\":\"BTCUSDT\",\"lastPrice\":\"83205.2\",\"markPrice\":\"83210.1\",\"indexPrice\":\"83205.0\",\"fundingRate\":\"0.0001\",\"fundingIntervalHour\":\"\"}]},\"time\":1792578000999}",
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"category\":\"linear\",\"list\":[{\"symbol\":\"BTCUSDT\",\"fundingRate\":\"0.0001\",\"fundingRateTimestamp\":\"1792569600000\"}]},\"time\":1792578000999}"
+   ],
+   "result": [
+    [
+     {
+      "openInterest": "12345.6",
+      "timestamp": "1792577700000"
+     },
+     {
+      "openInterest": "12340.1",
+      "timestamp": "1792577400000"
+     }
+    ],
+    {
+     "fundingIntervalHour": "",
+     "fundingRate": "0.0001",
+     "indexPrice": "83205.0",
+     "lastPrice": "83205.2",
+     "markPrice": "83210.1",
+     "symbol": "BTCUSDT"
+    },
+    [
+     {
+      "fundingRate": "0.0001",
+      "fundingRateTimestamp": "1792569600000",
+      "symbol": "BTCUSDT"
+     }
+    ],
+    "8",
+    "83210.1"
+   ]
+  },
+  {
+   "args": {},
+   "call": "derivatives",
+   "error": "SemanticError: Bybit funding interval absent",
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "bybit:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "bybit",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "bybit.linear",
+   "name": "bybit.linear derivatives no interval",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "linear",
+      "intervalTime": "5min",
+      "limit": "200",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/open-interest"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "linear",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/tickers"
+    },
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "linear",
+      "limit": "200",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/funding/history"
+    }
+   ],
+   "responses": [
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"symbol\":\"BTCUSDT\",\"category\":\"linear\",\"list\":[{\"openInterest\":\"12345.6\",\"timestamp\":\"1792577700000\"},{\"openInterest\":\"12340.1\",\"timestamp\":\"1792577400000\"}],\"nextPageCursor\":\"lastid%3D123\"},\"time\":1792578000999}",
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"category\":\"linear\",\"list\":[{\"symbol\":\"BTCUSDT\",\"lastPrice\":\"83205.2\",\"markPrice\":\"83210.1\",\"indexPrice\":\"83205.0\",\"fundingRate\":\"0.0001\",\"fundingIntervalHour\":\"\"}]},\"time\":1792578000999}",
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"category\":\"linear\",\"list\":[{\"symbol\":\"BTCUSDT\",\"fundingRate\":\"0.0001\",\"fundingRateTimestamp\":\"1792569600000\"}]},\"time\":1792578000999}"
+   ],
+   "result": null
+  },
+  {
+   "args": {},
+   "call": "derivatives",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "funding_interval_h": 1,
+    "instrument_id": "hyperliquid:perp_linear:BTC",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "hyperliquid",
+    "venue_symbol": "BTC"
+   },
+   "key": "hyperliquid.perp",
+   "name": "hyperliquid.perp derivatives",
+   "priority": 0,
+   "requests": [
+    {
+     "json": {
+      "type": "metaAndAssetCtxs"
+     },
+     "method": "POST",
+     "params": {},
+     "priority": 0,
+     "url": "https://api.hyperliquid.xyz/info"
+    },
+    {
+     "json": {
+      "coin": "BTC",
+      "startTime": 1791979200000,
+      "type": "fundingHistory"
+     },
+     "method": "POST",
+     "params": {},
+     "priority": 0,
+     "url": "https://api.hyperliquid.xyz/info"
+    }
+   ],
+   "responses": [
+    "[{\"universe\":[{\"name\":\"ETH\",\"szDecimals\":4,\"maxLeverage\":25},{\"name\":\"BTC\",\"szDecimals\":5,\"maxLeverage\":40},{\"name\":\"OLD\",\"szDecimals\":0,\"isDelisted\":true}]},[{\"funding\":\"0.0000100\",\"openInterest\":\"20000.1\",\"markPx\":\"3100.1\",\"oraclePx\":\"3100.0\",\"dayNtlVlm\":\"1000\"},{\"funding\":\"0.0000125\",\"openInterest\":\"1000.12345\",\"markPx\":\"83210.0\",\"oraclePx\":\"83205.0\",\"midPx\":\"83209.5\",\"premium\":\"0.0001\",\"dayNtlVlm\":\"100000000.0\"},{\"funding\":\"0.0\",\"openInterest\":\"0\",\"markPx\":\"1.0\",\"oraclePx\":\"1.0\"}]]",
+    "[{\"coin\":\"BTC\",\"fundingRate\":\"0.0000125\",\"premium\":\"0.0001\",\"time\":1792574400000},{\"coin\":\"BTC\",\"fundingRate\":\"0.0000100\",\"premium\":\"0.00008\",\"time\":1792578000000}]"
+   ],
+   "result": [
+    [
+     {
+      "_capture_observed_at": "2026-10-21T12:34:56.789012Z",
+      "dayNtlVlm": "100000000.0",
+      "funding": "0.0000125",
+      "markPx": "83210.0",
+      "midPx": "83209.5",
+      "openInterest": "1000.12345",
+      "oraclePx": "83205.0",
+      "premium": "0.0001"
+     }
+    ],
+    {
+     "_capture_observed_at": "2026-10-21T12:34:56.789012Z",
+     "dayNtlVlm": "100000000.0",
+     "funding": "0.0000125",
+     "markPx": "83210.0",
+     "midPx": "83209.5",
+     "openInterest": "1000.12345",
+     "oraclePx": "83205.0",
+     "premium": "0.0001"
+    },
+    [
+     {
+      "_capture_observed_at": "2026-10-21T12:34:56.789012Z",
+      "coin": "BTC",
+      "fundingRate": "0.0000125",
+      "premium": "0.0001",
+      "time": 1792574400000
+     },
+     {
+      "_capture_observed_at": "2026-10-21T12:34:56.789012Z",
+      "coin": "BTC",
+      "fundingRate": "0.0000100",
+      "premium": "0.00008",
+      "time": 1792578000000
+     }
+    ],
+    "1",
+    "83210.0"
+   ]
+  },
+  {
+   "args": {},
+   "call": "derivatives",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.spot",
+   "name": "binance.spot derivatives",
+   "priority": 0,
+   "requests": [],
+   "responses": [],
+   "result": [
+    [],
+    null,
+    [],
+    null,
+    null
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T11:59:59.999000Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "trades",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.spot",
+   "name": "binance.spot trades range",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "endTime": "1792583999999",
+      "limit": "1000",
+      "startTime": "1792576800123",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.binance.com/api/v3/aggTrades"
+    }
+   ],
+   "responses": [
+    "[{\"a\":1001,\"p\":\"83200.10\",\"q\":\"0.500\",\"f\":2001,\"l\":2002,\"T\":1792578000123,\"m\":true},{\"a\":1002,\"p\":\"83200.20\",\"q\":\"0.001\",\"f\":2003,\"l\":2003,\"T\":1792578000456,\"m\":false}]"
+   ],
+   "result": [
+    [
+     {
+      "T": 1792578000123,
+      "a": 1001,
+      "f": 2001,
+      "l": 2002,
+      "m": true,
+      "p": "83200.10",
+      "q": "0.500"
+     },
+     {
+      "T": 1792578000456,
+      "a": 1002,
+      "f": 2003,
+      "l": 2003,
+      "m": false,
+      "p": "83200.20",
+      "q": "0.001"
+     }
+    ],
+    null
+   ]
+  },
+  {
+   "args": {
+    "cursor": 1003,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "trades",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.spot",
+   "name": "binance.spot trades cursor",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "fromId": "1003",
+      "limit": "1000",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.binance.com/api/v3/aggTrades"
+    }
+   ],
+   "responses": [
+    "[{\"a\":1001,\"p\":\"83200.10\",\"q\":\"0.500\",\"f\":2001,\"l\":2002,\"T\":1792578000123,\"m\":true},{\"a\":1002,\"p\":\"83200.20\",\"q\":\"0.001\",\"f\":2003,\"l\":2003,\"T\":1792578000456,\"m\":false}]"
+   ],
+   "result": [
+    [
+     {
+      "T": 1792578000123,
+      "a": 1001,
+      "f": 2001,
+      "l": 2002,
+      "m": true,
+      "p": "83200.10",
+      "q": "0.500"
+     },
+     {
+      "T": 1792578000456,
+      "a": 1002,
+      "f": 2003,
+      "l": 2003,
+      "m": false,
+      "p": "83200.20",
+      "q": "0.001"
+     }
+    ],
+    null
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T10:00:00.122456Z",
+    "start": null
+   },
+   "call": "trades",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.spot",
+   "name": "binance.spot trades end bound",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "endTime": "1792576800122",
+      "limit": "1000",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.binance.com/api/v3/aggTrades"
+    }
+   ],
+   "responses": [
+    "[{\"a\":1001,\"p\":\"83200.10\",\"q\":\"0.500\",\"f\":2001,\"l\":2002,\"T\":1792578000123,\"m\":true},{\"a\":1002,\"p\":\"83200.20\",\"q\":\"0.001\",\"f\":2003,\"l\":2003,\"T\":1792578000456,\"m\":false}]"
+   ],
+   "result": [
+    [
+     {
+      "T": 1792578000123,
+      "a": 1001,
+      "f": 2001,
+      "l": 2002,
+      "m": true,
+      "p": "83200.10",
+      "q": "0.500"
+     },
+     {
+      "T": 1792578000456,
+      "a": 1002,
+      "f": 2003,
+      "l": 2003,
+      "m": false,
+      "p": "83200.20",
+      "q": "0.001"
+     }
+    ],
+    null
+   ]
+  },
+  {
+   "args": {
+    "cursor": 0,
+    "end": null,
+    "start": null
+   },
+   "call": "trades",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.usdm",
+   "name": "binance.usdm trades cursor zero",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "fromId": "0",
+      "limit": "1000",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://fapi.binance.com/fapi/v1/aggTrades"
+    }
+   ],
+   "responses": [
+    "[{\"a\":1001,\"p\":\"83200.10\",\"q\":\"0.500\",\"f\":2001,\"l\":2002,\"T\":1792578000123,\"m\":true},{\"a\":1002,\"p\":\"83200.20\",\"q\":\"0.001\",\"f\":2003,\"l\":2003,\"T\":1792578000456,\"m\":false}]"
+   ],
+   "result": [
+    [
+     {
+      "T": 1792578000123,
+      "a": 1001,
+      "f": 2001,
+      "l": 2002,
+      "m": true,
+      "p": "83200.10",
+      "q": "0.500"
+     },
+     {
+      "T": 1792578000456,
+      "a": 1002,
+      "f": 2003,
+      "l": 2003,
+      "m": false,
+      "p": "83200.20",
+      "q": "0.001"
+     }
+    ],
+    null
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T11:59:59.999000Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "trades",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "okx:spot:BTC-USDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT"
+   },
+   "key": "okx.spot",
+   "name": "okx.spot trades end",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "after": "1792584000000",
+      "instId": "BTC-USDT",
+      "limit": "100",
+      "type": "2"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/market/history-trades"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[{\"instId\":\"BTC-USDT\",\"side\":\"buy\",\"sz\":\"0.1\",\"px\":\"83200\",\"tradeId\":\"555002\",\"ts\":\"1792578000456\"},{\"instId\":\"BTC-USDT\",\"side\":\"sell\",\"sz\":\"0.2\",\"px\":\"83199.9\",\"tradeId\":\"555001\",\"ts\":\"1792578000123\"}]}"
+   ],
+   "result": [
+    [
+     {
+      "instId": "BTC-USDT",
+      "px": "83200",
+      "side": "buy",
+      "sz": "0.1",
+      "tradeId": "555002",
+      "ts": "1792578000456"
+     },
+     {
+      "instId": "BTC-USDT",
+      "px": "83199.9",
+      "side": "sell",
+      "sz": "0.2",
+      "tradeId": "555001",
+      "ts": "1792578000123"
+     }
+    ],
+    "555001"
+   ]
+  },
+  {
+   "args": {
+    "cursor": "555001",
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "trades",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "okx:spot:BTC-USDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT"
+   },
+   "key": "okx.spot",
+   "name": "okx.spot trades cursor",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "after": "555001",
+      "instId": "BTC-USDT",
+      "limit": "100"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/market/history-trades"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[{\"instId\":\"BTC-USDT\",\"side\":\"buy\",\"sz\":\"0.1\",\"px\":\"83200\",\"tradeId\":\"555002\",\"ts\":\"1792578000456\"},{\"instId\":\"BTC-USDT\",\"side\":\"sell\",\"sz\":\"0.2\",\"px\":\"83199.9\",\"tradeId\":\"555001\",\"ts\":\"1792578000123\"}]}"
+   ],
+   "result": [
+    [
+     {
+      "instId": "BTC-USDT",
+      "px": "83200",
+      "side": "buy",
+      "sz": "0.1",
+      "tradeId": "555002",
+      "ts": "1792578000456"
+     },
+     {
+      "instId": "BTC-USDT",
+      "px": "83199.9",
+      "side": "sell",
+      "sz": "0.2",
+      "tradeId": "555001",
+      "ts": "1792578000123"
+     }
+    ],
+    "555001"
+   ]
+  },
+  {
+   "args": {
+    "cursor": "1",
+    "end": null,
+    "start": null
+   },
+   "call": "trades",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "okx:spot:BTC-USDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT"
+   },
+   "key": "okx.spot",
+   "name": "okx.spot trades empty",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "after": "1",
+      "instId": "BTC-USDT",
+      "limit": "100"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/market/history-trades"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[]}"
+   ],
+   "result": [
+    [],
+    null
+   ]
+  },
+  {
+   "args": {},
+   "call": "trades",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": null,
+    "instrument_id": "okx:perp_linear:BTC-USDT-SWAP",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT-SWAP"
+   },
+   "key": "okx.swap",
+   "name": "okx.swap trades latest",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "instId": "BTC-USDT-SWAP",
+      "limit": "100"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/market/history-trades"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[{\"instId\":\"BTC-USDT\",\"side\":\"buy\",\"sz\":\"0.1\",\"px\":\"83200\",\"tradeId\":\"555002\",\"ts\":\"1792578000456\"},{\"instId\":\"BTC-USDT\",\"side\":\"sell\",\"sz\":\"0.2\",\"px\":\"83199.9\",\"tradeId\":\"555001\",\"ts\":\"1792578000123\"}]}"
+   ],
+   "result": [
+    [
+     {
+      "instId": "BTC-USDT",
+      "px": "83200",
+      "side": "buy",
+      "sz": "0.1",
+      "tradeId": "555002",
+      "ts": "1792578000456"
+     },
+     {
+      "instId": "BTC-USDT",
+      "px": "83199.9",
+      "side": "sell",
+      "sz": "0.2",
+      "tradeId": "555001",
+      "ts": "1792578000123"
+     }
+    ],
+    "555001"
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "trades",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "bybit:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "bybit",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "bybit.spot",
+   "name": "bybit.spot trades",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "spot",
+      "limit": "1000",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/recent-trade"
+    }
+   ],
+   "responses": [
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"category\":\"spot\",\"list\":[{\"execId\":\"2100000000012345678\",\"symbol\":\"BTCUSDT\",\"price\":\"83200.1\",\"size\":\"0.01\",\"side\":\"Buy\",\"time\":\"1792578000123\",\"isBlockTrade\":false,\"seq\":\"5432101\"}]},\"time\":1792578000999}"
+   ],
+   "result": [
+    [
+     {
+      "execId": "2100000000012345678",
+      "isBlockTrade": false,
+      "price": "83200.1",
+      "seq": "5432101",
+      "side": "Buy",
+      "size": "0.01",
+      "symbol": "BTCUSDT",
+      "time": "1792578000123"
+     }
+    ],
+    null
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "trades",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "coinbase:spot:BTC-USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "tick_size": "0.01",
+    "token_id": "bitcoin",
+    "venue": "coinbase",
+    "venue_symbol": "BTC-USD"
+   },
+   "key": "coinbase.spot",
+   "name": "coinbase.spot trades",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "limit": "1000"
+     },
+     "priority": 0,
+     "url": "https://api.exchange.coinbase.com/products/BTC-USD/trades"
+    }
+   ],
+   "responses": [
+    "[{\"time\":\"2026-10-21T12:00:00.456789Z\",\"trade_id\":123457,\"price\":\"83200.10\",\"size\":\"0.10000000\",\"side\":\"buy\"},{\"time\":\"2026-10-21T12:00:00.123456Z\",\"trade_id\":123456,\"price\":\"83200.00\",\"size\":\"0.20000000\",\"side\":\"sell\"}]"
+   ],
+   "result": [
+    [
+     {
+      "price": "83200.10",
+      "side": "buy",
+      "size": "0.10000000",
+      "time": "2026-10-21T12:00:00.456789Z",
+      "trade_id": 123457
+     },
+     {
+      "price": "83200.00",
+      "side": "sell",
+      "size": "0.20000000",
+      "time": "2026-10-21T12:00:00.123456Z",
+      "trade_id": 123456
+     }
+    ],
+    123456
+   ]
+  },
+  {
+   "args": {
+    "cursor": 123456,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "trades",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "coinbase:spot:BTC-USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "tick_size": "0.01",
+    "token_id": "bitcoin",
+    "venue": "coinbase",
+    "venue_symbol": "BTC-USD"
+   },
+   "key": "coinbase.spot",
+   "name": "coinbase.spot trades cursor",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "after": "123456",
+      "limit": "1000"
+     },
+     "priority": 0,
+     "url": "https://api.exchange.coinbase.com/products/BTC-USD/trades"
+    }
+   ],
+   "responses": [
+    "[{\"time\":\"2026-10-21T12:00:00.456789Z\",\"trade_id\":123457,\"price\":\"83200.10\",\"size\":\"0.10000000\",\"side\":\"buy\"},{\"time\":\"2026-10-21T12:00:00.123456Z\",\"trade_id\":123456,\"price\":\"83200.00\",\"size\":\"0.20000000\",\"side\":\"sell\"}]"
+   ],
+   "result": [
+    [
+     {
+      "price": "83200.10",
+      "side": "buy",
+      "size": "0.10000000",
+      "time": "2026-10-21T12:00:00.456789Z",
+      "trade_id": 123457
+     },
+     {
+      "price": "83200.00",
+      "side": "sell",
+      "size": "0.20000000",
+      "time": "2026-10-21T12:00:00.123456Z",
+      "trade_id": 123456
+     }
+    ],
+    123456
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": null,
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "trades",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "kraken:spot:XBT/USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "kraken",
+    "venue_symbol": "XBT/USD"
+   },
+   "key": "kraken.spot",
+   "name": "kraken.spot trades start",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "pair": "XBTUSD",
+      "since": "1792576800123456000"
+     },
+     "priority": 0,
+     "url": "https://api.kraken.com/0/public/Trades"
+    }
+   ],
+   "responses": [
+    "{\"error\":[],\"result\":{\"XXBTZUSD\":[[\"83204.30000\",\"0.00040066\",1792578672.6709492,\"b\",\"l\",\"\",112344411],[\"83204.30000\",\"0.00006050\",1792578675.5948038,\"s\",\"m\",\"\",112344412]],\"last\":\"1792578675594803712\"}}"
+   ],
+   "result": [
+    [
+     [
+      "83204.30000",
+      "0.00040066",
+      "1792578672.6709492",
+      "b",
+      "l",
+      "",
+      112344411
+     ],
+     [
+      "83204.30000",
+      "0.00006050",
+      "1792578675.5948038",
+      "s",
+      "m",
+      "",
+      112344412
+     ]
+    ],
+    "1792578675594803712"
+   ]
+  },
+  {
+   "args": {
+    "cursor": "1792578675594803712",
+    "end": null,
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "trades",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "kraken:spot:XBT/USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "kraken",
+    "venue_symbol": "XBT/USD"
+   },
+   "key": "kraken.spot",
+   "name": "kraken.spot trades cursor",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "pair": "XBTUSD",
+      "since": "1792578675594803712"
+     },
+     "priority": 0,
+     "url": "https://api.kraken.com/0/public/Trades"
+    }
+   ],
+   "responses": [
+    "{\"error\":[],\"result\":{\"XXBTZUSD\":[[\"83204.30000\",\"0.00040066\",1792578672.6709492,\"b\",\"l\",\"\",112344411],[\"83204.30000\",\"0.00006050\",1792578675.5948038,\"s\",\"m\",\"\",112344412]],\"last\":\"1792578675594803712\"}}"
+   ],
+   "result": [
+    [
+     [
+      "83204.30000",
+      "0.00040066",
+      "1792578672.6709492",
+      "b",
+      "l",
+      "",
+      112344411
+     ],
+     [
+      "83204.30000",
+      "0.00006050",
+      "1792578675.5948038",
+      "s",
+      "m",
+      "",
+      112344412
+     ]
+    ],
+    "1792578675594803712"
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": null,
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "trades",
+   "error": "SemanticError: Kraken response error ['EGeneral:Invalid arguments', 'EQuery:Unknown asset pair']",
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "kraken:spot:XBT/USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "kraken",
+    "venue_symbol": "XBT/USD"
+   },
+   "key": "kraken.spot",
+   "name": "kraken.spot trades error",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "pair": "XBTUSD",
+      "since": "1792576800123456000"
+     },
+     "priority": 0,
+     "url": "https://api.kraken.com/0/public/Trades"
+    }
+   ],
+   "responses": [
+    "{\"error\":[\"EGeneral:Invalid arguments\",\"EQuery:Unknown asset pair\"]}"
+   ],
+   "result": null
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "trades",
+   "error": "SemanticError: NO_LISTED_TRADE_BACKFILL",
+   "instrument": {
+    "contract_multiplier": "1",
+    "funding_interval_h": 1,
+    "instrument_id": "hyperliquid:perp_linear:BTC",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "hyperliquid",
+    "venue_symbol": "BTC"
+   },
+   "key": "hyperliquid.perp",
+   "name": "hyperliquid.perp trades",
+   "priority": 0,
+   "requests": [],
+   "responses": [],
+   "result": null
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "oi_history",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "bybit:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "bybit",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "bybit.linear",
+   "name": "bybit.linear oi history",
+   "priority": 2,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "linear",
+      "endTime": "1792584000000",
+      "intervalTime": "5min",
+      "limit": "200",
+      "startTime": "1792576800123",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 2,
+     "url": "https://api.bybit.com/v5/market/open-interest"
+    }
+   ],
+   "responses": [
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"symbol\":\"BTCUSDT\",\"category\":\"linear\",\"list\":[{\"openInterest\":\"12345.6\",\"timestamp\":\"1792577700000\"},{\"openInterest\":\"12340.1\",\"timestamp\":\"1792577400000\"}],\"nextPageCursor\":\"lastid%3D123\"},\"time\":1792578000999}"
+   ],
+   "result": [
+    [
+     {
+      "openInterest": "12345.6",
+      "timestamp": "1792577700000"
+     },
+     {
+      "openInterest": "12340.1",
+      "timestamp": "1792577400000"
+     }
+    ],
+    "lastid%3D123"
+   ]
+  },
+  {
+   "args": {
+    "cursor": "lastid%3D123",
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "oi_history",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "bybit:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "bybit",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "bybit.linear",
+   "name": "bybit.linear oi history cursor",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "category": "linear",
+      "cursor": "lastid%3D123",
+      "endTime": "1792584000000",
+      "intervalTime": "5min",
+      "limit": "200",
+      "startTime": "1792576800123",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.bybit.com/v5/market/open-interest"
+    }
+   ],
+   "responses": [
+    "{\"retCode\":0,\"retMsg\":\"OK\",\"result\":{\"symbol\":\"BTCUSDT\",\"category\":\"linear\",\"list\":[],\"nextPageCursor\":\"\"},\"time\":1792578000999}"
+   ],
+   "result": [
+    [],
+    null
+   ]
+  },
+  {
+   "args": {
+    "cursor": null,
+    "end": "2026-10-21T12:00:00Z",
+    "start": "2026-10-21T10:00:00.123456Z"
+   },
+   "call": "oi_history",
+   "error": "SemanticError: NO_LISTED_OI_HISTORY",
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.usdm",
+   "name": "binance.usdm oi history",
+   "priority": 0,
+   "requests": [],
+   "responses": [],
+   "result": null
+  },
+  {
+   "args": {},
+   "call": "discover",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": null,
+    "instrument_id": "okx:perp_linear:BTC-USDT-SWAP",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT-SWAP"
+   },
+   "key": "okx.swap",
+   "name": "okx.swap discover",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "instId": "BTC-USDT-SWAP",
+      "instType": "SWAP"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/public/instruments"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[{\"instId\":\"BTC-USDT-SWAP\",\"ctVal\":\"0.01\",\"ctMult\":\"1\",\"ctValCcy\":\"BTC\",\"tickSz\":\"0.1\",\"lotSz\":\"0.01\",\"state\":\"live\"}]}"
+   ],
+   "result": {
+    "active": true,
+    "contract_multiplier": "0.01",
+    "lot_size": "0.01",
+    "metadata_status": "LIVE_VERIFIED",
+    "tick_size": "0.1"
+   }
+  },
+  {
+   "args": {},
+   "call": "discover",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": null,
+    "instrument_id": "okx:perp_linear:BTC-USDT-SWAP",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT-SWAP"
+   },
+   "key": "okx.swap",
+   "name": "okx.swap discover no multiplier",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "instId": "BTC-USDT-SWAP",
+      "instType": "SWAP"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/public/instruments"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[{\"instId\":\"BTC-USDT-SWAP\",\"ctVal\":\"0.0100\",\"ctMult\":\"\",\"ctValCcy\":\"BTC\",\"tickSz\":\"0.1\",\"lotSz\":\"0.01\",\"state\":\"suspend\"}]}"
+   ],
+   "result": {
+    "active": false,
+    "contract_multiplier": "0.0100",
+    "lot_size": "0.01",
+    "metadata_status": "LIVE_VERIFIED",
+    "tick_size": "0.1"
+   }
+  },
+  {
+   "args": {},
+   "call": "discover",
+   "error": "SemanticError: OKX contract value currency not base",
+   "instrument": {
+    "contract_multiplier": null,
+    "instrument_id": "okx:perp_linear:BTC-USDT-SWAP",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT-SWAP"
+   },
+   "key": "okx.swap",
+   "name": "okx.swap discover usd contract",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "instId": "BTC-USDT-SWAP",
+      "instType": "SWAP"
+     },
+     "priority": 0,
+     "url": "https://www.okx.com/api/v5/public/instruments"
+    }
+   ],
+   "responses": [
+    "{\"code\":\"0\",\"msg\":\"\",\"data\":[{\"instId\":\"BTC-USDT-SWAP\",\"ctVal\":\"100\",\"ctMult\":\"1\",\"ctValCcy\":\"USD\",\"tickSz\":\"0.1\",\"lotSz\":\"1\",\"state\":\"live\"}]}"
+   ],
+   "result": null
+  },
+  {
+   "args": {},
+   "call": "discover",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "funding_interval_h": 1,
+    "instrument_id": "hyperliquid:perp_linear:BTC",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "hyperliquid",
+    "venue_symbol": "BTC"
+   },
+   "key": "hyperliquid.perp",
+   "name": "hyperliquid.perp discover",
+   "priority": 0,
+   "requests": [
+    {
+     "json": {
+      "type": "metaAndAssetCtxs"
+     },
+     "method": "POST",
+     "params": {},
+     "priority": 0,
+     "url": "https://api.hyperliquid.xyz/info"
+    }
+   ],
+   "responses": [
+    "[{\"universe\":[{\"name\":\"ETH\",\"szDecimals\":4,\"maxLeverage\":25},{\"name\":\"BTC\",\"szDecimals\":5,\"maxLeverage\":40},{\"name\":\"OLD\",\"szDecimals\":0,\"isDelisted\":true}]},[{\"funding\":\"0.0000100\",\"openInterest\":\"20000.1\",\"markPx\":\"3100.1\",\"oraclePx\":\"3100.0\",\"dayNtlVlm\":\"1000\"},{\"funding\":\"0.0000125\",\"openInterest\":\"1000.12345\",\"markPx\":\"83210.0\",\"oraclePx\":\"83205.0\",\"midPx\":\"83209.5\",\"premium\":\"0.0001\",\"dayNtlVlm\":\"100000000.0\"},{\"funding\":\"0.0\",\"openInterest\":\"0\",\"markPx\":\"1.0\",\"oraclePx\":\"1.0\"}]]"
+   ],
+   "result": {
+    "active": true,
+    "contract_multiplier": "1",
+    "funding_interval_h": "1",
+    "lot_size": "1e-05",
+    "metadata_status": "LIVE_VERIFIED",
+    "tick_size": null,
+    "tick_size_reason": "SIGNIFICANT_FIGURES_AND_SIZE_DEPENDENT"
+   }
+  },
+  {
+   "args": {},
+   "call": "discover",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "funding_interval_h": 1,
+    "instrument_id": "hyperliquid:perp_linear:BTC",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "hyperliquid",
+    "venue_symbol": "ETH"
+   },
+   "key": "hyperliquid.perp",
+   "name": "hyperliquid.perp discover eth",
+   "priority": 0,
+   "requests": [
+    {
+     "json": {
+      "type": "metaAndAssetCtxs"
+     },
+     "method": "POST",
+     "params": {},
+     "priority": 0,
+     "url": "https://api.hyperliquid.xyz/info"
+    }
+   ],
+   "responses": [
+    "[{\"universe\":[{\"name\":\"ETH\",\"szDecimals\":4,\"maxLeverage\":25},{\"name\":\"BTC\",\"szDecimals\":5,\"maxLeverage\":40},{\"name\":\"OLD\",\"szDecimals\":0,\"isDelisted\":true}]},[{\"funding\":\"0.0000100\",\"openInterest\":\"20000.1\",\"markPx\":\"3100.1\",\"oraclePx\":\"3100.0\",\"dayNtlVlm\":\"1000\"},{\"funding\":\"0.0000125\",\"openInterest\":\"1000.12345\",\"markPx\":\"83210.0\",\"oraclePx\":\"83205.0\",\"midPx\":\"83209.5\",\"premium\":\"0.0001\",\"dayNtlVlm\":\"100000000.0\"},{\"funding\":\"0.0\",\"openInterest\":\"0\",\"markPx\":\"1.0\",\"oraclePx\":\"1.0\"}]]"
+   ],
+   "result": {
+    "active": true,
+    "contract_multiplier": "1",
+    "funding_interval_h": "1",
+    "lot_size": "0.0001",
+    "metadata_status": "LIVE_VERIFIED",
+    "tick_size": null,
+    "tick_size_reason": "SIGNIFICANT_FIGURES_AND_SIZE_DEPENDENT"
+   }
+  },
+  {
+   "args": {},
+   "call": "discover",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "funding_interval_h": 1,
+    "instrument_id": "hyperliquid:perp_linear:BTC",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "hyperliquid",
+    "venue_symbol": "OLD"
+   },
+   "key": "hyperliquid.perp",
+   "name": "hyperliquid.perp discover delisted",
+   "priority": 0,
+   "requests": [
+    {
+     "json": {
+      "type": "metaAndAssetCtxs"
+     },
+     "method": "POST",
+     "params": {},
+     "priority": 0,
+     "url": "https://api.hyperliquid.xyz/info"
+    }
+   ],
+   "responses": [
+    "[{\"universe\":[{\"name\":\"ETH\",\"szDecimals\":4,\"maxLeverage\":25},{\"name\":\"BTC\",\"szDecimals\":5,\"maxLeverage\":40},{\"name\":\"OLD\",\"szDecimals\":0,\"isDelisted\":true}]},[{\"funding\":\"0.0000100\",\"openInterest\":\"20000.1\",\"markPx\":\"3100.1\",\"oraclePx\":\"3100.0\",\"dayNtlVlm\":\"1000\"},{\"funding\":\"0.0000125\",\"openInterest\":\"1000.12345\",\"markPx\":\"83210.0\",\"oraclePx\":\"83205.0\",\"midPx\":\"83209.5\",\"premium\":\"0.0001\",\"dayNtlVlm\":\"100000000.0\"},{\"funding\":\"0.0\",\"openInterest\":\"0\",\"markPx\":\"1.0\",\"oraclePx\":\"1.0\"}]]"
+   ],
+   "result": {
+    "active": false,
+    "contract_multiplier": "1",
+    "funding_interval_h": "1",
+    "lot_size": "1",
+    "metadata_status": "LIVE_VERIFIED",
+    "tick_size": null,
+    "tick_size_reason": "SIGNIFICANT_FIGURES_AND_SIZE_DEPENDENT"
+   }
+  },
+  {
+   "args": {},
+   "call": "discover",
+   "error": "RuntimeError: coroutine raised StopIteration",
+   "instrument": {
+    "contract_multiplier": "1",
+    "funding_interval_h": 1,
+    "instrument_id": "hyperliquid:perp_linear:BTC",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USD",
+    "token_id": "bitcoin",
+    "venue": "hyperliquid",
+    "venue_symbol": "NONE"
+   },
+   "key": "hyperliquid.perp",
+   "name": "hyperliquid.perp discover missing",
+   "priority": 0,
+   "requests": [
+    {
+     "json": {
+      "type": "metaAndAssetCtxs"
+     },
+     "method": "POST",
+     "params": {},
+     "priority": 0,
+     "url": "https://api.hyperliquid.xyz/info"
+    }
+   ],
+   "responses": [
+    "[{\"universe\":[{\"name\":\"ETH\",\"szDecimals\":4,\"maxLeverage\":25},{\"name\":\"BTC\",\"szDecimals\":5,\"maxLeverage\":40},{\"name\":\"OLD\",\"szDecimals\":0,\"isDelisted\":true}]},[{\"funding\":\"0.0000100\",\"openInterest\":\"20000.1\",\"markPx\":\"3100.1\",\"oraclePx\":\"3100.0\",\"dayNtlVlm\":\"1000\"},{\"funding\":\"0.0000125\",\"openInterest\":\"1000.12345\",\"markPx\":\"83210.0\",\"oraclePx\":\"83205.0\",\"midPx\":\"83209.5\",\"premium\":\"0.0001\",\"dayNtlVlm\":\"100000000.0\"},{\"funding\":\"0.0\",\"openInterest\":\"0\",\"markPx\":\"1.0\",\"oraclePx\":\"1.0\"}]]"
+   ],
+   "result": null
+  },
+  {
+   "args": {},
+   "call": "discover",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.spot",
+   "name": "binance.spot discover",
+   "priority": 0,
+   "requests": [],
+   "responses": [],
+   "result": {
+    "contract_multiplier": "1",
+    "metadata_status": "SEMANTICS_REGISTRY"
+   }
+  },
+  {
+   "args": {},
+   "call": "depth",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.spot",
+   "name": "binance.spot depth",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "limit": "1000",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://api.binance.com/api/v3/depth"
+    }
+   ],
+   "responses": [
+    "{\"lastUpdateId\":987654,\"bids\":[[\"83200.00\",\"1.5\"],[\"83199.90\",\"2\"]],\"asks\":[[\"83200.10\",\"0.7\"],[\"83200.20\",\"1\"]]}"
+   ],
+   "result": {
+    "asks": [
+     [
+      "83200.10",
+      "0.7"
+     ],
+     [
+      "83200.20",
+      "1"
+     ]
+    ],
+    "bids": [
+     [
+      "83200.00",
+      "1.5"
+     ],
+     [
+      "83199.90",
+      "2"
+     ]
+    ],
+    "lastUpdateId": 987654
+   }
+  },
+  {
+   "args": {},
+   "call": "depth",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:perp_linear:BTCUSDT",
+    "market_type": "PERP_LINEAR",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.usdm",
+   "name": "binance.usdm depth",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "limit": "1000",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 0,
+     "url": "https://fapi.binance.com/fapi/v1/depth"
+    }
+   ],
+   "responses": [
+    "{\"lastUpdateId\":5550001,\"E\":1792578000100,\"T\":1792578000099,\"bids\":[[\"83210.0\",\"3\"]],\"asks\":[[\"83210.1\",\"4\"]]}"
+   ],
+   "result": {
+    "E": 1792578000100,
+    "T": 1792578000099,
+    "asks": [
+     [
+      "83210.1",
+      "4"
+     ]
+    ],
+    "bids": [
+     [
+      "83210.0",
+      "3"
+     ]
+    ],
+    "lastUpdateId": 5550001
+   }
+  },
+  {
+   "args": {
+    "stream": {
+     "mid": "83200.05",
+     "spread_bps": "0.012"
+    }
+   },
+   "call": "independent_book",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.spot",
+   "name": "binance.spot independent book",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "limit": "5",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 2,
+     "url": "https://api.binance.com/api/v3/depth"
+    }
+   ],
+   "responses": [
+    "{\"lastUpdateId\":987654,\"bids\":[[\"83200.00\",\"1.5\"],[\"83199.90\",\"2\"]],\"asks\":[[\"83200.10\",\"0.7\"],[\"83200.20\",\"1\"]]}"
+   ],
+   "result": {
+    "independent_rest": {
+     "best_ask": "83200.10",
+     "best_bid": "83200.00",
+     "mid": "83200.05",
+     "price_divergence_bps": "0",
+     "received_ts": "2026-10-21T12:34:56.789012Z",
+     "received_ts_prec": "COLLECTION_ONLY",
+     "source": "PUBLIC_REST",
+     "spread_bps": "0.01201922354613969582950971784271764259757055434461878328198120073245148290175306385032220533521313990",
+     "tolerance_bps": "0.01201922354613969582950971784271764259757055434461878328198120073245148290175306385032220533521313990",
+     "tolerance_method": "MAX_OBSERVED_SPREAD_OR_TWO_TICKS",
+     "ts": "2026-10-21T12:34:56.789012Z",
+     "ts_prec": "COLLECTION_ONLY"
+    },
+    "second_path_confirmed": true,
+    "second_path_reason": null
+   }
+  },
+  {
+   "args": {
+    "stream": {
+     "mid": "83300.05",
+     "spread_bps": "0.5"
+    }
+   },
+   "call": "independent_book",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.spot",
+   "name": "binance.spot independent book far",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "limit": "5",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 2,
+     "url": "https://api.binance.com/api/v3/depth"
+    }
+   ],
+   "responses": [
+    "{\"lastUpdateId\":987654,\"bids\":[[\"83200.00\",\"1.5\"],[\"83199.90\",\"2\"]],\"asks\":[[\"83200.10\",\"0.7\"],[\"83200.20\",\"1\"]]}"
+   ],
+   "result": {
+    "independent_rest": {
+     "best_ask": "83200.10",
+     "best_bid": "83200.00",
+     "mid": "83200.05",
+     "price_divergence_bps": "12.00479471500917466436094576173723785279840768402900118307251916415416317277120481920479039328307700",
+     "received_ts": "2026-10-21T12:34:56.789012Z",
+     "received_ts_prec": "COLLECTION_ONLY",
+     "source": "PUBLIC_REST",
+     "spread_bps": "0.01201922354613969582950971784271764259757055434461878328198120073245148290175306385032220533521313990",
+     "tolerance_bps": "0.5",
+     "tolerance_method": "MAX_OBSERVED_SPREAD_OR_TWO_TICKS",
+     "ts": "2026-10-21T12:34:56.789012Z",
+     "ts_prec": "COLLECTION_ONLY"
+    },
+    "second_path_confirmed": false,
+    "second_path_reason": "REST_STREAM_DISAGREEMENT"
+   }
+  },
+  {
+   "args": {
+    "stream": {
+     "mid": "83200.05",
+     "spread_bps": "0.012"
+    }
+   },
+   "call": "independent_book",
+   "error": "SemanticError: independent REST book is empty or crossed",
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "binance:spot:BTCUSDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "binance",
+    "venue_symbol": "BTCUSDT"
+   },
+   "key": "binance.spot",
+   "name": "binance.spot independent book crossed",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "limit": "5",
+      "symbol": "BTCUSDT"
+     },
+     "priority": 2,
+     "url": "https://api.binance.com/api/v3/depth"
+    }
+   ],
+   "responses": [
+    "{\"lastUpdateId\":987654,\"bids\":[[\"83200.10\",\"1.5\"]],\"asks\":[[\"83200.10\",\"0.7\"]]}"
+   ],
+   "result": null
+  },
+  {
+   "args": {
+    "stream": {
+     "mid": "83200.25",
+     "spread_bps": "0.06"
+    }
+   },
+   "call": "independent_book",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "coinbase:spot:BTC-USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "tick_size": "0.01",
+    "token_id": "bitcoin",
+    "venue": "coinbase",
+    "venue_symbol": "BTC-USD"
+   },
+   "key": "coinbase.spot",
+   "name": "coinbase.spot independent book",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "level": "2"
+     },
+     "priority": 2,
+     "url": "https://api.exchange.coinbase.com/products/BTC-USD/book"
+    }
+   ],
+   "responses": [
+    "{\"bids\":[[\"83200.00\",\"1.20000000\",3]],\"asks\":[[\"83200.50\",\"0.40000000\",1]],\"sequence\":123456789,\"auction_mode\":false,\"auction\":null,\"time\":\"2026-10-21T12:00:00.123456Z\"}"
+   ],
+   "result": {
+    "independent_rest": {
+     "best_ask": "83200.50",
+     "best_bid": "83200.00",
+     "mid": "83200.25",
+     "price_divergence_bps": "0",
+     "received_ts": "2026-10-21T12:34:56.789012Z",
+     "received_ts_prec": "COLLECTION_ONLY",
+     "source": "PUBLIC_REST",
+     "spread_bps": "0.06009597326931108981042725232195816719300723255038296158965868491981694766542167842043743858942731542",
+     "tolerance_bps": "0.06009597326931108981042725232195816719300723255038296158965868491981694766542167842043743858942731542",
+     "tolerance_method": "MAX_OBSERVED_SPREAD_OR_TWO_TICKS",
+     "ts": "2026-10-21T12:34:56.789012Z",
+     "ts_prec": "COLLECTION_ONLY"
+    },
+    "second_path_confirmed": true,
+    "second_path_reason": null
+   }
+  },
+  {
+   "args": {
+    "stream": {
+     "mid": "83200.25",
+     "spread_bps": "0.06"
+    }
+   },
+   "call": "independent_book",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "coinbase:spot:BTC-USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "tick_size": null,
+    "token_id": "bitcoin",
+    "venue": "coinbase",
+    "venue_symbol": "BTC-USD"
+   },
+   "key": "coinbase.spot",
+   "name": "coinbase.spot independent book no tick",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "level": "2"
+     },
+     "priority": 2,
+     "url": "https://api.exchange.coinbase.com/products/BTC-USD/book"
+    }
+   ],
+   "responses": [
+    "{\"bids\":[[\"83200.00\",\"1.20000000\",3]],\"asks\":[[\"83200.50\",\"0.40000000\",1]],\"sequence\":123456789,\"auction_mode\":false,\"auction\":null,\"time\":\"2026-10-21T12:00:00.123456Z\"}"
+   ],
+   "result": {
+    "independent_rest": {
+     "best_ask": "83200.50",
+     "best_bid": "83200.00",
+     "mid": "83200.25",
+     "price_divergence_bps": "0",
+     "received_ts": "2026-10-21T12:34:56.789012Z",
+     "received_ts_prec": "COLLECTION_ONLY",
+     "source": "PUBLIC_REST",
+     "spread_bps": "0.06009597326931108981042725232195816719300723255038296158965868491981694766542167842043743858942731542",
+     "tolerance_bps": "0.06009597326931108981042725232195816719300723255038296158965868491981694766542167842043743858942731542",
+     "tolerance_method": "MAX_OBSERVED_SPREAD_OR_TWO_TICKS",
+     "ts": "2026-10-21T12:34:56.789012Z",
+     "ts_prec": "COLLECTION_ONLY"
+    },
+    "second_path_confirmed": true,
+    "second_path_reason": null
+   }
+  },
+  {
+   "args": {
+    "stream": {
+     "mid": "83200.05",
+     "spread_bps": "0.012"
+    }
+   },
+   "call": "independent_book",
+   "error": "SemanticError: independent REST book is empty or crossed",
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "coinbase:spot:BTC-USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "tick_size": "0.01",
+    "token_id": "bitcoin",
+    "venue": "coinbase",
+    "venue_symbol": "BTC-USD"
+   },
+   "key": "coinbase.spot",
+   "name": "coinbase.spot independent book empty",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {
+      "level": "2"
+     },
+     "priority": 2,
+     "url": "https://api.exchange.coinbase.com/products/BTC-USD/book"
+    }
+   ],
+   "responses": [
+    "{\"bids\":[[\"0\",\"1.2\",3]],\"asks\":[[\"83200.50\",\"0.4\",1]],\"sequence\":1}"
+   ],
+   "result": null
+  },
+  {
+   "args": {
+    "stream": {
+     "mid": "83200.05",
+     "spread_bps": "0.012"
+    }
+   },
+   "call": "independent_book",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "okx:spot:BTC-USDT",
+    "market_type": "SPOT",
+    "quote_asset": "USDT",
+    "token_id": "bitcoin",
+    "venue": "okx",
+    "venue_symbol": "BTC-USDT"
+   },
+   "key": "okx.spot",
+   "name": "okx.spot independent book",
+   "priority": 0,
+   "requests": [],
+   "responses": [],
+   "result": {
+    "second_path_confirmed": false,
+    "second_path_reason": "NO_LISTED_SECOND_PATH"
+   }
+  },
+  {
+   "args": {
+    "quote": "USDT"
+   },
+   "call": "fx",
+   "error": null,
+   "instrument": {
+    "contract_multiplier": "1",
+    "instrument_id": "coinbase:spot:BTC-USD",
+    "market_type": "SPOT",
+    "quote_asset": "USD",
+    "tick_size": "0.01",
+    "token_id": "bitcoin",
+    "venue": "coinbase",
+    "venue_symbol": "BTC-USD"
+   },
+   "key": "coinbase.spot",
+   "name": "fx USDT",
+   "priority": 0,
+   "requests": [
+    {
+     "json": null,
+     "method": "GET",
+     "params": {},
+     "priority": 0,
+     "url": "https://api.exchange.coinbase.com/products/USDT-USD/stats"
+    }
+   ],
+   "responses": [
+    "{\"open\":\"1.0001\",\"high\":\"1.0003\",\"low\":\"0.9998\",\"last\":\"1.00010000\",\"volume\":\"123456789\"}"
+   ],
+   "result": "1.00010000"
+  }
+ ],
+ "now": "2026-10-21T12:34:56.789012Z"
+}

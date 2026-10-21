@@ -3,7 +3,6 @@
 Runs MarketTruthService.assess exactly as the RUN_MARKET_TRUTH job does, with every
 repository write suppressed and the database session read-only.
 """
-
 import asyncio
 import json
 import os

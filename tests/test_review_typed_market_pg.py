@@ -1,6 +1,7 @@
 """Actual normalized flow producer, typed batch storage and ordinary horizon review."""
 
 import os
+from contextlib import AsyncExitStack
 from datetime import timedelta
 
 import pytest
@@ -8,41 +9,51 @@ import pytest
 from tank.market import normalize
 from tank.market.flow import FlowAccumulator
 from tank.review import ReviewService, price_return
-from tank.storage import MemoryRepository, PostgresRepository
+from tank.storage import MemoryRepository
 from tank.util import iso, new_id, utcnow
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("subminute", [False, True])
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_actual_flow_batch_producer_to_postgres_review_without_raw_trade_table(subminute, backend):
-    url = os.getenv("TANK_TEST_DATABASE_URL")
-    if backend == "postgres" and not url:
-        pytest.skip("requires explicitly authorized isolated PostgreSQL database after 027 export gate")
-    repo = PostgresRepository(url) if backend == "postgres" else MemoryRepository()
-    await repo.open()
-    await repo.migrate()
-    prefix = new_id("typed-review")
-    start = (utcnow() - timedelta(hours=2)).replace(second=0, microsecond=0)
-    floor = start
-    if subminute:
-        start += timedelta(seconds=30)
-    end = start + timedelta(hours=1)
-    instrument = {
-        "instrument_id": prefix,
-        "token_id": "T",
-        "venue": "binance",
-        "market_type": "SPOT",
-        "venue_symbol": "TUSDT",
-        "quote_asset": "USDT",
-        "quote_usd_rate": "1",
-        "contract_multiplier": "1",
-    }
-    accumulator = FlowAccumulator()
-    first_price = "10000000000000000.01"
-    entry = "10000000000000000.00"
-    close = "10000000000000000.02"
-    try:
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_actual_flow_batch_producer_to_postgres_review_without_raw_trade_table(
+    subminute, backend, postgres_template
+):
+    async with AsyncExitStack() as resources:
+        if backend == "postgres":
+            url = os.getenv("TANK_TEST_DATABASE_URL")
+            if not url:
+                pytest.skip(
+                    "requires explicitly authorized isolated PostgreSQL database after 027 export gate"
+                )
+            repo = await resources.enter_async_context(postgres_template.repository(url))
+        else:
+            repo = await MemoryRepository().open()
+            await repo.migrate()
+            resources.push_async_callback(repo.close)
+        prefix = new_id("typed-review")
+        start = (utcnow() - timedelta(hours=2)).replace(second=0, microsecond=0)
+        floor = start
+        if subminute:
+            start += timedelta(seconds=30)
+        end = start + timedelta(hours=1)
+        instrument = {
+            "instrument_id": prefix,
+            "token_id": "T",
+            "venue": "binance",
+            "market_type": "SPOT",
+            "venue_symbol": "TUSDT",
+            "quote_asset": "USDT",
+            "quote_usd_rate": "1",
+            "contract_multiplier": "1",
+        }
+        accumulator = FlowAccumulator()
+        first_price = "10000000000000000.01"
+        entry = "10000000000000000.00"
+        close = "10000000000000000.02"
         accumulator.register_boundaries(prefix, [start, end])
         count = 61 if subminute else 60
         for minute in range(count):
@@ -99,5 +110,3 @@ async def test_actual_flow_batch_producer_to_postgres_review_without_raw_trade_t
             assert all(piece["complete"] for piece in result["coverage"]["boundary_segments"])
         assert result["start_prec"] == result["end_prec"] == "EXACT"
         assert result["computed_at_prec"] == "COLLECTION_ONLY"
-    finally:
-        await repo.close()

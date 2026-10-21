@@ -69,7 +69,9 @@ def normalize_precision(precision: str | None, *, bucket_size: Any = None) -> st
         raise ValueError(f"Unsupported timestamp precision: {precision}")
     if embedded is not None and supplied is not None and _duration(embedded) != _duration(supplied):
         raise ValueError("Conflicting bucket duration declarations")
-    return "BUCKET(" + str(embedded or supplied) + ")"
+    duration = embedded or supplied
+    assert duration is not None
+    return "BUCKET(" + duration + ")"
 
 
 def _equivalent(left: str | None, right: str | None) -> bool:
@@ -118,9 +120,9 @@ class Timestamp:
         if field == "published_at" and sibling == "published_prec":
             result["published_at_precision"] = self.precision
             result["published_at_bucket_size_s"] = None
-            bucket = _BUCKET.fullmatch(self.precision) if self.precision else None
-            if bucket:
-                seconds = _duration(bucket[1])
+            match = _BUCKET.fullmatch(self.precision) if self.precision else None
+            if match:
+                seconds = _duration(match[1])
                 result["published_prec"] = "BUCKET"
                 result["published_at_bucket_size_s"] = (
                     int(seconds) if seconds == seconds.to_integral_value() else str(seconds)
@@ -163,7 +165,7 @@ def propagate_timestamp(
     if bucket_size is None and record.get(field + "_bucket_size_s") is not None:
         bucket_size = (record[field + "_bucket_size_s"], "s")
     raw = record.get(field)
-    declarations: list[str | None] = []
+    declarations: list[Any] = []
     anchors = []
     reason = None
     if isinstance(raw, Mapping):
@@ -230,7 +232,7 @@ def interval_bounds(timestamp: Timestamp):
     Existing records without an edge retain their original start-bucket contract.
     End-labelled observations retain the provider timestamp rather than shifting it.
     """
-    if timestamp.value is None or timestamp.precision in (None, "COLLECTION_ONLY"):
+    if timestamp.value is None or timestamp.precision is None or timestamp.precision == "COLLECTION_ONLY":
         return None, None
     point = parse_time(timestamp.value)
     if timestamp.precision == "EXACT":
@@ -238,5 +240,5 @@ def interval_bounds(timestamp: Timestamp):
     if timestamp.bucket_anchor == "UNSPECIFIED":
         return None, None
     if timestamp.bucket_anchor == "END":
-        return point - bucket_duration(str(timestamp.precision)), point
-    return point, point + bucket_duration(str(timestamp.precision))
+        return point - bucket_duration(timestamp.precision), point
+    return point, point + bucket_duration(timestamp.precision)

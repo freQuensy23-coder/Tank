@@ -1,34 +1,28 @@
 """Disposable PostgreSQL proof of §14 typed market storage."""
 
 import os
-import uuid
-from urllib.parse import urlsplit, urlunsplit
 
 import pytest
 
-from tank.storage import PostgresRepository
+pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
 @pytest.fixture
-async def typed_repo():
+async def typed_repo(postgres_template):
     dsn = os.getenv("TANK_TEST_DATABASE_URL")
     if not dsn:
         pytest.skip("TANK_TEST_DATABASE_URL required; creates only an owned disposable database")
-    import psycopg
-    from psycopg import sql
-
-    parsed = urlsplit(dsn)
-    name = "tank_precision_conformance_" + uuid.uuid4().hex[:12]
-    admin = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
-    await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-    target = urlunsplit(parsed._replace(path="/" + name))
-    repo = await PostgresRepository(target).open()
-    try:
+    async with postgres_template.repository(dsn) as repo:
         yield repo
-    finally:
-        await repo.close()
-        await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
-        await admin.close()
+
+
+@pytest.fixture
+async def blank_typed_repo(postgres_template):
+    dsn = os.getenv("TANK_TEST_DATABASE_URL")
+    if not dsn:
+        pytest.skip("TANK_TEST_DATABASE_URL required; creates only an owned disposable database")
+    async with postgres_template.repository(dsn, migrated=False) as repo:
+        yield repo
 
 
 def flow(at="2026-10-18T00:00:00Z"):
@@ -138,7 +132,7 @@ async def test_ticker_partial_point_merge_and_read_queries(typed_repo):
     )["mark_price"] == "10"
 
 
-async def test_upgrade_exports_raw_and_preserves_immutable_documents(typed_repo, tmp_path, monkeypatch):
+async def test_upgrade_exports_raw_and_preserves_immutable_documents(blank_typed_repo, tmp_path, monkeypatch):
     import asyncio
     import hashlib
     import json
@@ -149,7 +143,7 @@ async def test_upgrade_exports_raw_and_preserves_immutable_documents(typed_repo,
 
     from tank.cli import main
 
-    repo = typed_repo
+    repo = blank_typed_repo
     await repo.migrate(target="026_timestamp_precision_metadata.sql")
     old = {
         "instrument_id": "test:BTC",
@@ -460,11 +454,11 @@ def test_typed_timestamp_alias_validation_and_unknown_policy():
     )
 
 
-async def test_manifest_truncate_and_settlement_companion_upgrade(typed_repo, tmp_path):
+async def test_manifest_truncate_and_settlement_companion_upgrade(blank_typed_repo, tmp_path):
     import psycopg
     from psycopg.types.json import Jsonb
 
-    repo = typed_repo
+    repo = blank_typed_repo
     await repo.migrate(target="026_timestamp_precision_metadata.sql")
     legacy = {
         "instrument_id": "legacy:X",
@@ -774,13 +768,13 @@ async def test_compact_market_projection_memory():
     await exercise_compact_market_projection(MemoryRepository())
 
 
-async def test_oi_bucket_anchor_nullable_upgrade_and_cutoff(typed_repo):
+async def test_oi_bucket_anchor_nullable_upgrade_and_cutoff(blank_typed_repo):
     import psycopg
 
     from tank.time_precision import interval_bounds, propagate_timestamp
     from tank.util import iso
 
-    repo = typed_repo
+    repo = blank_typed_repo
     await repo.migrate(target="027_typed_market.sql")
     async with repo.transaction():
         await repo._conn().execute(
@@ -876,10 +870,10 @@ async def test_oi_bucket_anchor_nullable_upgrade_and_cutoff(typed_repo):
             )
 
 
-async def test_pre027_oi_import_keeps_future_nullable_anchor_out_of_old_target(typed_repo, tmp_path):
+async def test_pre027_oi_import_keeps_future_nullable_anchor_out_of_old_target(blank_typed_repo, tmp_path):
     from psycopg.types.json import Jsonb
 
-    repo = typed_repo
+    repo = blank_typed_repo
     await repo.migrate(target="026_timestamp_precision_metadata.sql")
     legacy = {
         "instrument_id": "legacy:OI",
@@ -967,6 +961,7 @@ async def test_partition_relocation_commits_each_day_and_preserves_failed_day(ty
 async def _unproven_writes_keep_complete_bars(repo):
     proven = flow()
     await repo.put_market_batch("mkt.flow_bars_1m", [proven], keys=["bar"])
+
     for reason in (None, "STREAM_COVERAGE_UNPROVEN"):
         assert (
             await repo.put_market_batch(
@@ -975,10 +970,12 @@ async def _unproven_writes_keep_complete_bars(repo):
             == []
         )
         assert (await repo.get("mkt.flow_bars_1m", "bar"))["complete"] is True
+
     lost = dict(proven, complete=False, gap_reason="STREAM_DISCONNECTED: keepalive ping timeout")
     assert len(await repo.put_market_batch("mkt.flow_bars_1m", [lost], keys=["bar"])) == 1
     stored = await repo.get("mkt.flow_bars_1m", "bar")
     assert stored["complete"] is False and stored["gap_reason"].startswith("STREAM_DISCONNECTED")
+
     assert len(await repo.put_market_batch("mkt.flow_bars_1m", [proven], keys=["bar"])) == 1
 
 
@@ -1122,6 +1119,53 @@ async def test_book_pages_never_fetch_levels_outside_the_walked_rows(typed_repo)
     assert len(pages) == 3 and not any('"bids"' in q for q in pages)
 
 
+async def _copy_snapshot_read_fixture(repo, collection, records):
+    """Seed the read workload without serializing a full unused RETURNING reply.
+
+    Production encoding, identities and fingerprints stay identical to batch writes.
+    The batch writer itself is covered by the other tests in this module.
+    """
+    import asyncio
+    import json
+
+    from psycopg import sql
+    from psycopg.types.json import Jsonb
+
+    from tank.market_schema import MARKET_COLUMNS
+    from tank.market_storage import _prepare_records
+
+    columns = MARKET_COLUMNS[collection]
+    names = ["storage_key", *columns]
+    common_json = {
+        name
+        for name, kind in columns.items()
+        if kind == "jsonb" and all(row.get(name) is records[0].get(name) for row in records)
+    }
+    encoded_json = {}
+    command = sql.SQL("COPY {} ({}) FROM STDIN").format(
+        sql.Identifier(*collection.split(".")), sql.SQL(",").join(map(sql.Identifier, names))
+    )
+    async with repo.transaction(), repo._conn().cursor().copy(command) as writer:
+        for offset in range(0, len(records), 500):
+            prepared = await asyncio.to_thread(
+                _prepare_records, collection, records[offset : offset + 500], None, columns, False
+            )
+            for key, row in prepared.items():
+                values = [key]
+                for name, kind in columns.items():
+                    value = row.get(name)
+                    if kind == "jsonb" and value is not None:
+                        if name in common_json:
+                            if name not in encoded_json:
+                                encoded_json[name] = json.dumps(value)
+                            payload = encoded_json[name]
+                            value = Jsonb(value, dumps=lambda _value, payload=payload: payload)
+                        else:
+                            value = Jsonb(value)
+                    values.append(value)
+                await writer.write_row(values)
+
+
 async def test_a_5k_row_snapshot_read_keeps_the_loop_heartbeat_under_100_ms(typed_repo):
     import asyncio
     import time
@@ -1133,10 +1177,11 @@ async def test_a_5k_row_snapshot_read_keeps_the_loop_heartbeat_under_100_ms(type
     await typed_repo.migrate()
     base = parse_time("2026-10-18T00:00:00Z")
     levels = [[str(100 + n), "1.5"] for n in range(200)]
-    await typed_repo.put_market_batch(
-        "mkt.flow_bars_1m", [flow(iso(base + timedelta(minutes=n))) for n in range(5000)]
+    await _copy_snapshot_read_fixture(
+        typed_repo, "mkt.flow_bars_1m", [flow(iso(base + timedelta(minutes=n))) for n in range(5000)]
     )
-    await typed_repo.put_market_batch(
+    await _copy_snapshot_read_fixture(
+        typed_repo,
         "mkt.book_summaries",
         [
             {
@@ -1248,3 +1293,24 @@ async def test_sampled_history_decodes_json_rows_off_the_loop_on_postgres(typed_
     ]
     assert [r["minute_start"] for r in sampled] == ["2026-10-18T00:01:00Z", "2026-10-18T00:06:00Z"]
     assert sampled[0]["first_trade"] == {"price": "123.456789012345678901"}
+
+
+async def test_rows_recorded_since_match_memory_on_postgres(typed_repo):
+    from tank.market_storage import market_rows_recorded_since
+    from tank.storage import MemoryRepository
+
+    await typed_repo.migrate()
+    rows = [flow(at) for at in ("2026-10-18T00:00:00Z", "2026-10-18T00:01:00Z", "2026-10-18T00:02:00Z")]
+    rows[1]["recorded_at"] = "2026-10-18T00:09:00Z"
+    rows[2]["recorded_at"] = "2026-10-18T00:09:30Z"
+    memory = MemoryRepository()
+    for repo in (typed_repo, memory):
+        await repo.put_market_batch("mkt.flow_bars_1m", rows, keys=[str(i) for i in range(len(rows))])
+    args = ("mkt.flow_bars_1m", "minute_start", ["test:BTC"], "2026-10-18T00:05:00Z")
+    window = ("2026-10-18T00:00:00Z", "2026-10-18T00:02:00Z")
+    found = await market_rows_recorded_since(typed_repo, *args, *window)
+    expected = await market_rows_recorded_since(memory, *args, *window)
+    assert [(i, r["minute_start"], r["first_trade"]) for i, r, _ in found] == [
+        (i, r["minute_start"], r["first_trade"]) for i, r, _ in expected
+    ]
+    assert [r["minute_start"] for _, r, _ in found] == ["2026-10-18T00:01:00Z"]

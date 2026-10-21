@@ -73,6 +73,7 @@ assert tool_check["local_count"] == 18 and tool_check["names_match"] and tool_ch
     tool_check
 )
 
+
 marker = "tank-platform-deploy-proof-" + time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
 session = client.post(
     "sessions",
@@ -86,6 +87,7 @@ session.raise_for_status()
 session = session.json()
 sid = session["id"]
 save("session-created.json", session)
+
 READ_SKILLS = os.environ.get("TANK_PROOF_READ_SKILLS") == "1"
 prompt = (
     "Deployment check by the Tank operator, not a news item and not an event. Do exactly this: "

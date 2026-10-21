@@ -67,6 +67,7 @@ def seal_replay_evidence(inputs, run_id, destination, *, input_sha256, cutoff=No
             iid = row["instrument_id"]
             if source not in provenance[iid]:
                 provenance[iid].append(source)
+
             if parse_time(row["ts"]) >= end:
                 continue
             receipts = [
@@ -109,6 +110,7 @@ def seal_replay_evidence(inputs, run_id, destination, *, input_sha256, cutoff=No
             if lo >= hi:
                 continue
             clipped = dict(proof)
+
             if parse_time(proof["end"]) > end:
                 clipped.update(cutoff.fields("end"))
             coverage[source["instrument_id"]].append(clipped)
@@ -192,6 +194,7 @@ def seal_replay_evidence(inputs, run_id, destination, *, input_sha256, cutoff=No
         relative = digest + ".parquet"
         path = root / relative
         temporary.replace(path)
+
         verified = TradeArchive.read_verified(path, digest)
         if canonical_json(verified) != canonical_json(rows):
             raise ReplayEvidenceError("Parquet projection changed normalized source values")
@@ -244,6 +247,7 @@ def seal_replay_evidence(inputs, run_id, destination, *, input_sha256, cutoff=No
         os.fsync(folder)
     finally:
         os.close(folder)
+
     _durable_file(root.parent / (run_id + ".source-audit.json"), (canonical_json(host_audit) + "\n").encode())
     return {
         "manifest": manifest,

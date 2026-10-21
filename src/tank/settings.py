@@ -19,6 +19,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _PROCESS_CODE_VERSION: str | None = None
 _CONFIG_SUFFIXES = {".yaml", ".yml", ".json", ".md"}
 _YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
 CONFIG_OWNED_FIELDS = ("user_agent", "telegram_alerts_chat", "telegram_ops_chat")
 
 
@@ -137,6 +139,7 @@ class Settings(BaseSettings):
     codex_gateway_port: int = 8790
     codex_gateway_key: str | None = None
     codex_auth_path: Path = Field(default_factory=_default_codex_auth_path)
+
     opencode_api_key: str | None = Field(
         default=None,
         repr=False,
@@ -160,8 +163,9 @@ class Settings(BaseSettings):
     logs_dir: Path | None = None
     backup_hour_utc: int = 2
     market_retention_days: int = 90
-    shutdown_grace_s: int = 30
+    shutdown_grace_s: int = 10
     _config_snapshot: Any = PrivateAttr(default=None)
+
     _parsed_config: Any = PrivateAttr(default=None)
 
     @classmethod
@@ -169,6 +173,7 @@ class Settings(BaseSettings):
         cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings
     ):
         def docker_secrets():
+
             root = Path(
                 init_settings().get("secrets_dir")
                 or env_settings().get("secrets_dir")
@@ -192,6 +197,7 @@ class Settings(BaseSettings):
                     values[field] = value
             if (root / "x_session").is_file():
                 values["x_storage_state_path"] = root / "x_session"
+
             for field, name, role in (
                 ("database_url", "tank_db_password", "tank"),
                 ("openma_database_url", "oma_db_password", "oma"),
@@ -320,6 +326,7 @@ def resolve_versions(settings: Settings) -> Settings:
     resolved = settings.model_copy(update={"config_version": version, "code_version": _PROCESS_CODE_VERSION})
     resolved._config_snapshot = MappingProxyType(captured)
     resolved._parsed_config = {}
+
     deployment_values = {
         field: value
         for field, value in configured_values(resolved).items()
@@ -327,6 +334,7 @@ def resolve_versions(settings: Settings) -> Settings:
     }
     if deployment_values:
         resolved = resolved.model_copy(update=deployment_values)
+
     directory = settings.data_dir / "config_versions"
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / f"{version}.json"

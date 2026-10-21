@@ -6,18 +6,17 @@ import pytest
 
 from tank.event_tools import EventToolService
 from tank.settings import Settings
-from tank.storage import PostgresRepository
 from tank.util import iso, new_id, sha256
 
+pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
-async def test_primary_paraphrase_persists_high_in_postgres(tmp_path):
+
+async def test_primary_paraphrase_persists_high_in_postgres(tmp_path, postgres_template):
     url = os.getenv("TANK_TEST_DATABASE_URL")
     if not url:
         pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
-    repo = await PostgresRepository(url).open()
-    item_id, event_id = new_id("item"), None
-    try:
-        await repo.migrate()
+    async with postgres_template.repository(url) as repo:
+        item_id, event_id = new_id("item"), None
         service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
         stamp = iso()
         quote = "The SEC announced approval of the application."
@@ -73,5 +72,3 @@ async def test_primary_paraphrase_persists_high_in_postgres(tmp_path):
         event = await repo.get("evt.events", event_id)
         assert event["certainty"] == "HIGH" and event["state_verified"]
         assert event["certainty_evidence_claims"] == [created["accepted_claims"][0]["claim_id"]]
-    finally:
-        await repo.close()

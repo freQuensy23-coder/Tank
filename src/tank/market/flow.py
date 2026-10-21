@@ -17,6 +17,7 @@ class FlowAccumulator:
         self.boundaries = {}
         self.references = {}
         self.coverage_ranges = {}
+
         self.dirty = set()
 
     def prove_range(self, instrument_id, start, end, *, complete, source, reason=None, observed_at=None):
@@ -352,6 +353,7 @@ class FlowAccumulator:
                 )
                 record["boundary_segments"].append(segment)
             record["reference_points"] = []
+
             for boundary in sorted(set(points) | ({end} if bar.get("last_trade") is None else set())):
                 explicit = self.references.get((key[0], iso(boundary)))
                 last_trade = max(

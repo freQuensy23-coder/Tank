@@ -13,6 +13,7 @@ from tank.time_precision import collection_clock, offset_schedule, propagate_tim
 from tank.util import parse_time, utcnow
 
 log = logging.getLogger(__name__)
+
 TIMEOUT_SCALE = 15
 SPEC_TIMEOUTS = {
     "FILTER_ITEM": 10,
@@ -30,6 +31,8 @@ TIMEOUTS = {kind: seconds * TIMEOUT_SCALE for kind, seconds in SPEC_TIMEOUTS.ite
 
 
 ADMISSION_TIMEOUT_S = 10 * TIMEOUT_SCALE
+
+
 REPAIR_BUDGET_S = 45
 REPAIR_LOOKBACK = timedelta(hours=24)
 CAPTURE_WAIT_S = 15
@@ -138,6 +141,7 @@ class Runtime:
         thresholds = settings.load_config("thresholds")
         if thresholds.get("filter_cutoff") is None or thresholds.get("routing_cutoff") is None:
             raise ValueError("Filter and routing cutoffs require calibration before live service startup")
+
         validate_registry(settings)
 
     async def escalate(self, payload):
@@ -270,6 +274,7 @@ class Runtime:
                     f"{frame.filename.rsplit('/', 1)[-1]}:{frame.lineno}:{frame.name}"
                     for frame in traceback.extract_tb(failure.__traceback__)
                 )
+
                 log.error(
                     "Job %s (%s) failed: %s [%s]", job["job_id"], job["type"], type(exc).__name__, frames
                 )
@@ -299,6 +304,7 @@ class Runtime:
         ):
             return
         self._delivery_reconciled_at = now
+
         for status in ("FAILED", "EXPIRED"):
             async for job in self.repo.iter_all("ops.jobs", filters={"type": "DELIVER", "status": status}):
                 if not job.get("delivery_failure_recorded_at"):
@@ -333,6 +339,8 @@ class Runtime:
         await self.repo.maintain_partitions(include_history=False)
 
     async def run(self, stop=None):
+        from tank.sources.rate_limits import shared_request_budgets
+
         stop = stop or asyncio.Event()
         self.validate()
         await self.bootstrap()
@@ -343,6 +351,8 @@ class Runtime:
         except Exception:
             await self.close()
             raise
+
+        self.request_ledger = shared_request_budgets.configure(self.repo, self.settings)
         intake_stop, market_stop, sessions_stop, workers_stop = [asyncio.Event() for _ in range(4)]
         producers = [
             asyncio.create_task(self.supervise(name, service, intake_stop), name=name)
@@ -406,6 +416,7 @@ class Runtime:
                 for task in pending:
                     task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
+
                 for job_id in interrupted:
                     try:
                         async with self.repo.lock("job:" + job_id):
@@ -446,6 +457,9 @@ class Runtime:
                     await service.close()
                 except Exception:
                     log.exception("Resource close failed")
+        from tank.sources.rate_limits import shared_request_budgets
+
+        await shared_request_budgets.release(getattr(self, "request_ledger", None))
 
 
 class RuntimeSupervisor:

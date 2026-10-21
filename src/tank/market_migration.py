@@ -139,11 +139,16 @@ async def prepare_market_migration(repo, export_dir):
         }
 
 
+LATER_MARKET_COLLECTIONS = {"mkt.capture_streams", "mkt.capture_requests"}
+
+
 async def finish_market_migration(repo):
     from psycopg import sql
 
     conn = repo._conn()
     for collection in MARKET_COLUMNS:
+        if collection in LATER_MARKET_COLLECTIONS:
+            continue
         table = collection.split(".")[1]
         from tank.market_storage import _put_market_batch
 
@@ -174,6 +179,7 @@ async def finish_market_migration(repo):
                     keys = []
             if batch:
                 await _put_market_batch(repo, collection, batch, keys=keys, _columns=target_columns)
+
         checks = await (
             await conn.execute(
                 "SELECT conname,pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid=%s::regclass AND contype='c'",
@@ -351,6 +357,7 @@ async def prepare_archive_cleanup(repo, bundle_dir, version):
             (list(ARCHIVE_CLEANUP_TABLES[version]),),
         )
     ).fetchall()
+
     for row in tables:
         await conn.execute(
             sql.SQL("LOCK TABLE {} IN ACCESS EXCLUSIVE MODE").format(
@@ -424,6 +431,7 @@ async def prepare_archive_cleanup(repo, bundle_dir, version):
                         return hashlib.file_digest(source, "sha256").hexdigest()
 
                 digest = await asyncio.to_thread(file_digest)
+
                 entry = {
                     "collection": identity,
                     "sha256": digest,

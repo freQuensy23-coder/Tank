@@ -1,0 +1,97 @@
+name: capture
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  UV_FROZEN: "1"
+  TANK_TEST_DATABASE_URL: postgresql://postgres@localhost:5432/tank_test
+
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: capture/go.sum
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          version: "0.11.7"
+          python-version: "3.13.13"
+          enable-cache: true
+      - name: Migrated test database
+        run: |
+          uv sync --python 3.13.13 --frozen --extra dev
+          uv run --frozen --extra dev python -c "import psycopg; psycopg.connect('postgresql://postgres@localhost:5432/postgres', autocommit=True).execute('CREATE DATABASE tank_test')"
+          TANK_DATABASE_URL="$TANK_TEST_DATABASE_URL" TANK_DATA_DIR="$RUNNER_TEMP/tank-data" uv run --frozen --extra dev tank db migrate
+      - name: go vet
+        working-directory: capture
+        run: go vet ./...
+      - name: go test -race
+        working-directory: capture
+        run: go test -race ./...
+
+  parity:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-bookworm
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: capture/go.sum
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          version: "0.11.7"
+          python-version: "3.13.13"
+          enable-cache: true
+      - run: uv sync --python 3.13.13 --frozen --extra dev
+      - name: Build capture-parity
+        working-directory: capture
+        run: go build -o bin/capture-parity ./cmd/capture-parity
+      - name: Parity with the goldens of the retired Python capture (frames and REST polls)
+        run: uv run --frozen --extra dev python scripts/capture/parity.py --check --go capture/bin/capture-parity
+      - name: Go schema copy matches tank.market_schema
+        run: uv run --frozen --extra dev python scripts/capture/gen_schema.py --check
+      - name: Test database
+        run: uv run --frozen --extra dev python -c "import psycopg; psycopg.connect('postgresql://postgres@localhost:5432/postgres', autocommit=True).execute('CREATE DATABASE tank_test')"
+      - name: Core suites that read tank-capture's tables
+        run: >-
+          uv run --frozen --extra dev pytest -q
+          tests/test_capture_parity.py
+          tests/test_external_capture.py
+          tests/test_market_service.py
+          tests/test_market_condition_snapshot.py
+          tests/test_market_snapshot_comparators.py
+          tests/test_market_sector_registry.py
+          tests/test_market_rate_gate.py
+          tests/test_supply_capture.py
+          tests/test_replay.py

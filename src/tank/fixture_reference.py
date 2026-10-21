@@ -977,6 +977,7 @@ def _host_identity_mask(packet, private_path, input_path):
         raise ValueError("Original registry differs from its canonical host snapshot")
     if original.get("masking", {}).get("applied"):
         raise ValueError("Original authority packet must be unmasked")
+
     for field in ("fixture_reference", "cutoff", "assembled_at", "replay_mode"):
         if packet.get(field) != original.get(field):
             raise ValueError("Masking changed authority or original temporal coordinates")
@@ -1068,6 +1069,7 @@ def _host_identity_mask(packet, private_path, input_path):
     sensitive = private.get("case_sensitive_names", [])
     if not isinstance(sensitive, list) or any(k not in replacements for k in sensitive):
         raise ValueError("Invalid case-sensitive identity declaration")
+
     groups = {}
     for key in keys:
         groups.setdefault(key.casefold(), []).append(key)
@@ -1160,6 +1162,7 @@ def _host_identity_mask(packet, private_path, input_path):
             or transform(masked_raw.decode(), True).encode() != raw
         ):
             raise ValueError("Synthetic raw identity transformation is not exactly reversible")
+
         expected = transform_tree(before["record"])
         original_record, record = before["record"], row["record"]
         for field in mutable:

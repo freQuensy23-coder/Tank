@@ -20,9 +20,7 @@ old_def = """    async def _range(self, collection, field, *, start=None, end=No
             )
         ]
 """
-new_def = (
-    old_def
-    + '''
+new_def = old_def + '''
     async def _book_range(self, collection, field, *, start=None, end=None, filters=None):
         """One instrument's books, with order-book levels only where Market Truth walks them.
 
@@ -50,7 +48,6 @@ new_def = (
                 strip(index - BOOK_LEVEL_ROWS)
         return rows
 '''
-)
 assert s.count(old_def) == 1, "def"
 s = s.replace(old_def, new_def)
 

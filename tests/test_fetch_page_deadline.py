@@ -51,7 +51,7 @@ async def no_evidence(service):
     assert not list(Path(service.settings.data_dir).rglob("*.json.zst"))
 
 
-@pytest.mark.slow
+@pytest.mark.integration(reason="Real default 20-second deadline across HTTP headers or streamed body")
 @pytest.mark.parametrize("owned", [False, True])
 @pytest.mark.parametrize("kind", ["slow_drip", "delayed_headers"])
 async def test_real_twenty_second_total_deadline(tmp_path, monkeypatch, owned, kind):
@@ -162,3 +162,46 @@ def test_existing_session_error_protocol_accepts_wall_timeout():
     assert error["category"] == "TOOL_EXECUTION"
     assert isinstance(asyncio.CancelledError(), BaseException)
     assert not isinstance(asyncio.CancelledError(), Exception)
+
+
+@pytest.mark.asyncio
+async def test_exchange_page_is_fetched_by_tank_capture(tmp_path, monkeypatch):
+    def handler(request):
+        raise AssertionError("core reached an exchange host: " + request.url.host)
+
+    service, client = await setup(tmp_path, handler, False, monkeypatch)
+    url = "https://www.binance.com/en/support/announcement/abc"
+
+    request_enqueued = asyncio.Event()
+    put = service.repo.put
+
+    async def observed_put(collection, key, value, *args, **kwargs):
+        result = await put(collection, key, value, *args, **kwargs)
+        if collection == "mkt.capture_requests" and value.get("status") == "PENDING":
+            request_enqueued.set()
+        return result
+
+    monkeypatch.setattr(service.repo, "put", observed_put)
+
+    async def tank_capture():
+        await request_enqueued.wait()
+        rows = await service.repo.list("mkt.capture_requests")
+        row = rows[0]
+        assert row["kind"] == "HTTP_FETCH" and row["request"]["url"] == url
+        row.update(
+            status="COMPLETE",
+            result={"status_code": 200, "content_type": "text/html", "body": "<p>listed</p>"},
+        )
+        await service.repo.put("mkt.capture_requests", row["request_id"], row)
+
+    async with client:
+        worker = asyncio.create_task(tank_capture())
+        try:
+            async with asyncio.timeout(2):
+                item = await service.fetch_page({"url": url}, {})
+                await worker
+        finally:
+            if not worker.done():
+                worker.cancel()
+            await asyncio.gather(worker, return_exceptions=True)
+    assert "listed" in str(item)

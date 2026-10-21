@@ -105,6 +105,7 @@ class DecisionEngine:
             any(c.get("type") == "FATAL" for c in contradictions) or event.get("lifecycle") == "INVALIDATED"
         )
         unresolved = any(c.get("type") == "UNRESOLVED" for c in contradictions)
+
         credible = (
             beneficiary.get("thesis_link_credible") is True
             if role == "LOSER"
@@ -311,6 +312,7 @@ class DecisionEngine:
         )
         rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
         confidence = min([data, certainty, class_conf], key=lambda x: rank.get(x, 0))
+
         limiting_input = (
             None
             if confidence == "HIGH"
@@ -414,12 +416,14 @@ class DecisionEngine:
                 "upside": "Move extends if spot demand strengthens without crowding.",
                 "failure": "Thesis fails on denial or loss of the event anchor.",
             }
+
         scenario_reasons = {}
         if not event.get("event_id") and not event.get("statement"):
             for name, text in list(scenarios.items()):
                 if "event" in text.casefold():
                     scenarios[name] = None
                     scenario_reasons[name] = "no event premise"
+
         tactical = thesis == "C" and action in POSITIVE_ACTIONS
         outlook_tactical = thesis == "C" and bias == "BULLISH"
         return {

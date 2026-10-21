@@ -103,6 +103,7 @@ def run(state, other_state, evidence):
             )
             denied = reply(expired)
             assert denied and not denied["ok"] and "action queue" in denied["error"], denied
+
             send(queued_open, "open", time.monotonic() + 25)
             send(
                 queued_mutation,

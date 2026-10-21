@@ -41,6 +41,8 @@ def test_runtime_generation_freezes_config_and_preserves_exact_recovery_inputs(t
         old.read_config_bytes("../outside")
 
 
+@pytest.mark.integration
+@pytest.mark.process
 def test_clean_deployment_uses_git_commit_and_dirty_edit_is_identified(tmp_path):
     config = tmp_path / "config"
     config.mkdir()

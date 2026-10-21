@@ -295,6 +295,7 @@ def materialize(source, digest, root=Path("/")):
                     total += item.file_size
                     if total > 48 * 1024 * 1024:
                         raise ValueError("Skill batch contents exceed bounds")
+
                     files.append((name, archive.read(item)))
                     directories(root, str(Path(name).parent))
                     try:
@@ -313,6 +314,7 @@ def materialize(source, digest, root=Path("/")):
                                 raise ValueError("Skill target is not a regular file")
                         except FileNotFoundError:
                             prior = None
+
                         for _ in range(16):
                             candidate = ".openma-skill-" + os.urandom(12).hex()
                             try:

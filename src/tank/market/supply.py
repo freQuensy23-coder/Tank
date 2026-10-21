@@ -17,6 +17,7 @@ CHAIN_IDS = {
     "Polygon": 137,
     "Avalanche": 43114,
 }
+
 DEFILLAMA_CHAINS = {"BNB Chain": "BSC"}
 
 
@@ -84,12 +85,10 @@ class SupplyCapture:
         self.market = market
         self.repo = market.repo
         self.settings = market.settings
+
         catalog = self.settings.load_config("registry").get("lending_pool_catalog", {})
         self.lending_pool_catalog = catalog
         self.lending_pool_identities = {row["pool_id"]: row for row in catalog.get("pools", [])}
-
-    def instrument(self, token):
-        return {"instrument_id": "supply:" + token["token_id"], "token_id": token["token_id"]}
 
     async def record(self, token, kind, **fields):
         if self.settings.etherscan_api_key:
@@ -109,9 +108,7 @@ class SupplyCapture:
         return row
 
     async def request(self, token, kind, url, **kwargs):
-        raw = await self.market._request("GET", url, **kwargs)
-        await self.market._raw(self.instrument(token), kind, raw)
-        return raw
+        return await self.market._request("GET", url, **kwargs)
 
     async def resume_refresh_state(self, state, now):
         """Restore the last refresh of each step from stored observations, so a restart
@@ -187,7 +184,6 @@ class SupplyCapture:
             "https://api.etherscan.io/v2/api",
             params={"chainid": chainid, "apikey": self.settings.etherscan_api_key, **params},
         )
-        await self.market._raw(self.instrument(token), "etherscan_" + params.get("action", ""), raw)
         if raw.get("status") == "0" and raw.get("message") != "No transactions found":
             raise SemanticError("Etherscan request failed: " + str(raw.get("result")))
         if "error" in raw:
@@ -257,6 +253,7 @@ class SupplyCapture:
                         )
                         total += D(raw) / (D(10) ** decimals)
                         observed += 1
+
                         for page in range(1, 101):
                             rows = await self.etherscan(
                                 token,
@@ -279,6 +276,7 @@ class SupplyCapture:
                                     row["from"].lower() in all_addresses
                                     and row["to"].lower() in all_addresses
                                 )
+
                                 transfers.append(
                                     {
                                         "chainid": chainid,
@@ -461,6 +459,7 @@ class SupplyCapture:
                 identity_evidence=token.get("fundamentals_evidence"),
                 inference_limits=["UNSUPPORTED_IS_NOT_ZERO_FEES"],
             )
+
         slugs = token.get("defillama_protocol_slugs") or (
             [token["defillama_protocol_slug"]] if token.get("defillama_protocol_slug") else None
         )

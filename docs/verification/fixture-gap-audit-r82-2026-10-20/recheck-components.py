@@ -43,9 +43,7 @@ async def main():
                 assert sha(ROOT / source["path"]) == source["sha256"]
                 verified_sources += 1
         packet = json.loads(path.read_text())
-        settings = SimpleNamespace(
-            config_version=packet["config_version"], code_version=packet["code_version"]
-        )
+        settings = SimpleNamespace(config_version=packet["config_version"], code_version=packet["code_version"])
         inputs = load_inputs(path, settings)
         token = packet["records"][0]["record"]["token_id"]
         snapshot = await ReplayMarketReader(inputs).snapshot(token, inputs.cutoff)
@@ -62,10 +60,7 @@ async def main():
             "market_context": truth["relative"].get("market_context"),
             "weak_response": truth["liquidity"]["elasticity"].get("weak_response"),
             "oi_per_venue": [
-                {
-                    k: row.get(k)
-                    for k in ["instrument_id", "oi_class", "oi_native_chg_pct", "oi_usd_chg_pct", "reason"]
-                }
+                {k: row.get(k) for k in ["instrument_id", "oi_class", "oi_native_chg_pct", "oi_usd_chg_pct", "reason"]}
                 for row in (truth.get("derivatives") or {}).get("per_venue", [])
             ],
             "seconds": round(time.monotonic() - started, 3),

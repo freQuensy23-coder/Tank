@@ -49,6 +49,7 @@ def prepare(manifest_path):
         if p.is_file() and not p.is_symlink()
     }
     assert cache12 and all(re.fullmatch(r"[0-9a-f]{32}-le64.cache-12", n) for n in cache12)
+
     removed_aliases = []
     for path in cache_root.iterdir():
         if (

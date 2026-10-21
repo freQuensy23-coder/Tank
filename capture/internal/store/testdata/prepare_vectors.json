@@ -1,0 +1,968 @@
+[
+ {
+  "collection": "mkt.funding_obs",
+  "expected": [
+   [
+    "two",
+    {
+     "as_of": "2026-10-18T00:00:00Z",
+     "as_of_prec": null,
+     "as_of_prec_reason": "INCOMPLETE",
+     "capture_source": "WEBSOCKET",
+     "instrument_id": "batch:BTC",
+     "interval_h": "8",
+     "kind": "CURRENT_ESTIMATE",
+     "metric_key": "funding",
+     "primary_source": "WEBSOCKET",
+     "rate": "0.01",
+     "rate_8h_eq": "0.01",
+     "received_ts": "2026-10-18T00:00:02Z",
+     "received_ts_prec": null,
+     "received_ts_prec_reason": "INCOMPLETE",
+     "semantic_fingerprint": "61ddb61124514f3782405a16de98232f2c1acf36087ce09fadd40ad8be787d8f",
+     "source_disagreement": {
+      "present": true,
+      "values": {
+       "PUBLIC_REST": {
+        "interval_h": "8",
+        "rate": "0.02",
+        "rate_8h_eq": "0.02"
+       },
+       "WEBSOCKET": {
+        "interval_h": "8",
+        "rate": "0.01",
+        "rate_8h_eq": "0.01"
+       }
+      }
+     },
+     "source_observations": {
+      "PUBLIC_REST": {
+       "as_of": "2026-10-18T00:00:00Z",
+       "capture_source": "PUBLIC_REST",
+       "instrument_id": "batch:BTC",
+       "interval_h": "8",
+       "kind": "CURRENT_ESTIMATE",
+       "metric_key": "funding",
+       "rate": "0.02",
+       "rate_8h_eq": "0.02",
+       "received_ts": "2026-10-18T00:00:01Z",
+       "source_path": "rest",
+       "token_id": "BTC"
+      },
+      "WEBSOCKET": {
+       "as_of": "2026-10-18T00:00:00Z",
+       "capture_source": "WEBSOCKET",
+       "instrument_id": "batch:BTC",
+       "interval_h": "8",
+       "kind": "CURRENT_ESTIMATE",
+       "metric_key": "funding",
+       "rate": "0.01",
+       "rate_8h_eq": "0.01",
+       "received_ts": "2026-10-18T00:00:02Z",
+       "source_path": "ws",
+       "token_id": "BTC"
+      }
+     },
+     "source_path": "ws",
+     "token_id": "BTC"
+    }
+   ]
+  ],
+  "keys": [
+   "one",
+   "two"
+  ],
+  "name": "funding rest then ws",
+  "records": [
+   {
+    "as_of": "2026-10-18T00:00:00Z",
+    "capture_source": "PUBLIC_REST",
+    "instrument_id": "batch:BTC",
+    "interval_h": "8",
+    "kind": "CURRENT_ESTIMATE",
+    "metric_key": "funding",
+    "rate": "0.02",
+    "rate_8h_eq": "0.02",
+    "received_ts": "2026-10-18T00:00:01Z",
+    "source_observations": {
+     "PUBLIC_REST": {
+      "as_of": "2026-10-18T00:00:00Z",
+      "capture_source": "PUBLIC_REST",
+      "instrument_id": "batch:BTC",
+      "interval_h": "8",
+      "kind": "CURRENT_ESTIMATE",
+      "metric_key": "funding",
+      "rate": "0.02",
+      "rate_8h_eq": "0.02",
+      "received_ts": "2026-10-18T00:00:01Z",
+      "source_path": "rest",
+      "token_id": "BTC"
+     }
+    },
+    "source_path": "rest",
+    "token_id": "BTC"
+   },
+   {
+    "as_of": "2026-10-18T00:00:00Z",
+    "capture_source": "WEBSOCKET",
+    "instrument_id": "batch:BTC",
+    "interval_h": "8",
+    "kind": "CURRENT_ESTIMATE",
+    "metric_key": "funding",
+    "rate": "0.01",
+    "rate_8h_eq": "0.01",
+    "received_ts": "2026-10-18T00:00:02Z",
+    "source_observations": {
+     "WEBSOCKET": {
+      "as_of": "2026-10-18T00:00:00Z",
+      "capture_source": "WEBSOCKET",
+      "instrument_id": "batch:BTC",
+      "interval_h": "8",
+      "kind": "CURRENT_ESTIMATE",
+      "metric_key": "funding",
+      "rate": "0.01",
+      "rate_8h_eq": "0.01",
+      "received_ts": "2026-10-18T00:00:02Z",
+      "source_path": "ws",
+      "token_id": "BTC"
+     }
+    },
+    "source_path": "ws",
+    "token_id": "BTC"
+   }
+  ]
+ },
+ {
+  "collection": "mkt.funding_obs",
+  "expected": [
+   [
+    "two",
+    {
+     "as_of": "2026-10-18T00:00:00Z",
+     "as_of_prec": null,
+     "as_of_prec_reason": "INCOMPLETE",
+     "capture_source": "WEBSOCKET",
+     "instrument_id": "batch:BTC",
+     "interval_h": "8",
+     "kind": "CURRENT_ESTIMATE",
+     "metric_key": "funding",
+     "primary_source": "WEBSOCKET",
+     "rate": "0.01",
+     "rate_8h_eq": "0.01",
+     "received_ts": "2026-10-18T00:00:02Z",
+     "received_ts_prec": null,
+     "received_ts_prec_reason": "INCOMPLETE",
+     "semantic_fingerprint": "61ddb61124514f3782405a16de98232f2c1acf36087ce09fadd40ad8be787d8f",
+     "source_disagreement": {
+      "present": true,
+      "values": {
+       "PUBLIC_REST": {
+        "interval_h": "8",
+        "rate": "0.02",
+        "rate_8h_eq": "0.02"
+       },
+       "WEBSOCKET": {
+        "interval_h": "8",
+        "rate": "0.01",
+        "rate_8h_eq": "0.01"
+       }
+      }
+     },
+     "source_observations": {
+      "PUBLIC_REST": {
+       "as_of": "2026-10-18T00:00:00Z",
+       "capture_source": "PUBLIC_REST",
+       "instrument_id": "batch:BTC",
+       "interval_h": "8",
+       "kind": "CURRENT_ESTIMATE",
+       "metric_key": "funding",
+       "rate": "0.02",
+       "rate_8h_eq": "0.02",
+       "received_ts": "2026-10-18T00:00:01Z",
+       "source_path": "rest",
+       "token_id": "BTC"
+      },
+      "WEBSOCKET": {
+       "as_of": "2026-10-18T00:00:00Z",
+       "capture_source": "WEBSOCKET",
+       "instrument_id": "batch:BTC",
+       "interval_h": "8",
+       "kind": "CURRENT_ESTIMATE",
+       "metric_key": "funding",
+       "rate": "0.01",
+       "rate_8h_eq": "0.01",
+       "received_ts": "2026-10-18T00:00:02Z",
+       "source_path": "ws",
+       "token_id": "BTC"
+      }
+     },
+     "source_path": "ws",
+     "token_id": "BTC"
+    }
+   ]
+  ],
+  "keys": [
+   "one",
+   "two"
+  ],
+  "name": "funding ws then rest",
+  "records": [
+   {
+    "as_of": "2026-10-18T00:00:00Z",
+    "capture_source": "WEBSOCKET",
+    "instrument_id": "batch:BTC",
+    "interval_h": "8",
+    "kind": "CURRENT_ESTIMATE",
+    "metric_key": "funding",
+    "rate": "0.01",
+    "rate_8h_eq": "0.01",
+    "received_ts": "2026-10-18T00:00:02Z",
+    "source_observations": {
+     "WEBSOCKET": {
+      "as_of": "2026-10-18T00:00:00Z",
+      "capture_source": "WEBSOCKET",
+      "instrument_id": "batch:BTC",
+      "interval_h": "8",
+      "kind": "CURRENT_ESTIMATE",
+      "metric_key": "funding",
+      "rate": "0.01",
+      "rate_8h_eq": "0.01",
+      "received_ts": "2026-10-18T00:00:02Z",
+      "source_path": "ws",
+      "token_id": "BTC"
+     }
+    },
+    "source_path": "ws",
+    "token_id": "BTC"
+   },
+   {
+    "as_of": "2026-10-18T00:00:00Z",
+    "capture_source": "PUBLIC_REST",
+    "instrument_id": "batch:BTC",
+    "interval_h": "8",
+    "kind": "CURRENT_ESTIMATE",
+    "metric_key": "funding",
+    "rate": "0.02",
+    "rate_8h_eq": "0.02",
+    "received_ts": "2026-10-18T00:00:01Z",
+    "source_observations": {
+     "PUBLIC_REST": {
+      "as_of": "2026-10-18T00:00:00Z",
+      "capture_source": "PUBLIC_REST",
+      "instrument_id": "batch:BTC",
+      "interval_h": "8",
+      "kind": "CURRENT_ESTIMATE",
+      "metric_key": "funding",
+      "rate": "0.02",
+      "rate_8h_eq": "0.02",
+      "received_ts": "2026-10-18T00:00:01Z",
+      "source_path": "rest",
+      "token_id": "BTC"
+     }
+    },
+    "source_path": "rest",
+    "token_id": "BTC"
+   }
+  ]
+ },
+ {
+  "collection": "mkt.funding_obs",
+  "expected": [
+   [
+    "b",
+    {
+     "as_of": "2026-10-18T00:00:00Z",
+     "as_of_prec": null,
+     "as_of_prec_reason": "INCOMPLETE",
+     "capture_source": "PUBLIC_REST",
+     "funding_time": "2026-10-18T00:00:00Z",
+     "funding_time_prec": "EXACT",
+     "funding_time_prec_reason": null,
+     "instrument_id": "batch:BTC",
+     "interval_h": "8",
+     "kind": "SETTLED",
+     "metric_key": "funding",
+     "primary_source": "PUBLIC_REST",
+     "rate": "0.02",
+     "rate_8h_eq": "0.02",
+     "received_ts": "2026-10-18T00:00:01Z",
+     "received_ts_prec": null,
+     "received_ts_prec_reason": "INCOMPLETE",
+     "semantic_fingerprint": "22b697aed089b194e4117f94ecf237997b656cb6e717bda48dad704eec174298",
+     "source_disagreement": {
+      "present": true,
+      "values": {
+       "PUBLIC_REST": {
+        "interval_h": "8",
+        "rate": "0.02",
+        "rate_8h_eq": "0.02"
+       },
+       "WEBSOCKET": {
+        "interval_h": "8",
+        "rate": "0.01",
+        "rate_8h_eq": "0.01"
+       }
+      }
+     },
+     "source_observations": {
+      "PUBLIC_REST": {
+       "as_of": "2026-10-18T00:00:00Z",
+       "capture_source": "PUBLIC_REST",
+       "funding_time": "2026-10-18T00:00:00Z",
+       "funding_time_prec": "EXACT",
+       "instrument_id": "batch:BTC",
+       "interval_h": "8",
+       "kind": "SETTLED",
+       "metric_key": "funding",
+       "rate": "0.02",
+       "rate_8h_eq": "0.02",
+       "received_ts": "2026-10-18T00:00:01Z",
+       "source_path": "rest",
+       "token_id": "BTC"
+      },
+      "WEBSOCKET": {
+       "as_of": "2026-10-18T00:00:00Z",
+       "capture_source": "WEBSOCKET",
+       "funding_time": "2026-10-18T00:00:00Z",
+       "funding_time_prec": "EXACT",
+       "instrument_id": "batch:BTC",
+       "interval_h": "8",
+       "kind": "SETTLED",
+       "metric_key": "funding",
+       "rate": "0.01",
+       "rate_8h_eq": "0.01",
+       "received_ts": "2026-10-18T00:00:02Z",
+       "source_path": "ws",
+       "token_id": "BTC"
+      }
+     },
+     "source_path": "rest",
+     "token_id": "BTC"
+    }
+   ]
+  ],
+  "keys": [
+   "a",
+   "b"
+  ],
+  "name": "funding settled prefers rest",
+  "records": [
+   {
+    "as_of": "2026-10-18T00:00:00Z",
+    "capture_source": "WEBSOCKET",
+    "funding_time": "2026-10-18T00:00:00Z",
+    "funding_time_prec": "EXACT",
+    "instrument_id": "batch:BTC",
+    "interval_h": "8",
+    "kind": "SETTLED",
+    "metric_key": "funding",
+    "rate": "0.01",
+    "rate_8h_eq": "0.01",
+    "received_ts": "2026-10-18T00:00:02Z",
+    "source_observations": {
+     "WEBSOCKET": {
+      "as_of": "2026-10-18T00:00:00Z",
+      "capture_source": "WEBSOCKET",
+      "funding_time": "2026-10-18T00:00:00Z",
+      "funding_time_prec": "EXACT",
+      "instrument_id": "batch:BTC",
+      "interval_h": "8",
+      "kind": "SETTLED",
+      "metric_key": "funding",
+      "rate": "0.01",
+      "rate_8h_eq": "0.01",
+      "received_ts": "2026-10-18T00:00:02Z",
+      "source_path": "ws",
+      "token_id": "BTC"
+     }
+    },
+    "source_path": "ws",
+    "token_id": "BTC"
+   },
+   {
+    "as_of": "2026-10-18T00:00:00Z",
+    "capture_source": "PUBLIC_REST",
+    "funding_time": "2026-10-18T00:00:00Z",
+    "funding_time_prec": "EXACT",
+    "instrument_id": "batch:BTC",
+    "interval_h": "8",
+    "kind": "SETTLED",
+    "metric_key": "funding",
+    "rate": "0.02",
+    "rate_8h_eq": "0.02",
+    "received_ts": "2026-10-18T00:00:01Z",
+    "source_observations": {
+     "PUBLIC_REST": {
+      "as_of": "2026-10-18T00:00:00Z",
+      "capture_source": "PUBLIC_REST",
+      "funding_time": "2026-10-18T00:00:00Z",
+      "funding_time_prec": "EXACT",
+      "instrument_id": "batch:BTC",
+      "interval_h": "8",
+      "kind": "SETTLED",
+      "metric_key": "funding",
+      "rate": "0.02",
+      "rate_8h_eq": "0.02",
+      "received_ts": "2026-10-18T00:00:01Z",
+      "source_path": "rest",
+      "token_id": "BTC"
+     }
+    },
+    "source_path": "rest",
+    "token_id": "BTC"
+   }
+  ]
+ },
+ {
+  "collection": "mkt.funding_obs",
+  "expected": [
+   [
+    "a",
+    {
+     "as_of": "2026-10-18T00:00:00Z",
+     "as_of_prec": null,
+     "as_of_prec_reason": "INCOMPLETE",
+     "capture_source": "PUBLIC_REST_BACKUP",
+     "instrument_id": "batch:BTC",
+     "interval_h": "8",
+     "kind": "CURRENT_ESTIMATE",
+     "metric_key": "funding",
+     "primary_source": "PUBLIC_REST_BACKUP",
+     "rate": "0.04",
+     "rate_8h_eq": "0.03",
+     "received_ts": "2026-10-18T00:00:02Z",
+     "received_ts_prec": null,
+     "received_ts_prec_reason": "INCOMPLETE",
+     "semantic_fingerprint": "1e760c3ba0a46f7f6c56c6358991341350d81918dad7c20a87ef6589c3075b85",
+     "source_disagreement": {
+      "present": false,
+      "values": {
+       "PUBLIC_REST_BACKUP": {
+        "interval_h": "8",
+        "rate": "0.04",
+        "rate_8h_eq": "0.03"
+       }
+      }
+     },
+     "source_observations": {
+      "PUBLIC_REST_BACKUP": {
+       "as_of": "2026-10-18T00:00:00Z",
+       "capture_source": "PUBLIC_REST_BACKUP",
+       "instrument_id": "batch:BTC",
+       "interval_h": "8",
+       "kind": "CURRENT_ESTIMATE",
+       "metric_key": "funding",
+       "rate": "0.04",
+       "rate_8h_eq": "0.03",
+       "received_ts": "2026-10-18T00:00:02Z",
+       "source_path": "ws",
+       "token_id": "BTC"
+      }
+     },
+     "source_path": "ws",
+     "token_id": "BTC"
+    }
+   ]
+  ],
+  "keys": [
+   "a",
+   "a"
+  ],
+  "name": "funding unknown preferred source",
+  "records": [
+   {
+    "as_of": "2026-10-18T00:00:00Z",
+    "capture_source": "PUBLIC_REST_BACKUP",
+    "instrument_id": "batch:BTC",
+    "interval_h": "8",
+    "kind": "CURRENT_ESTIMATE",
+    "metric_key": "funding",
+    "rate": "0.03",
+    "rate_8h_eq": "0.03",
+    "received_ts": "2026-10-18T00:00:02Z",
+    "source_observations": {
+     "PUBLIC_REST_BACKUP": {
+      "as_of": "2026-10-18T00:00:00Z",
+      "capture_source": "PUBLIC_REST_BACKUP",
+      "instrument_id": "batch:BTC",
+      "interval_h": "8",
+      "kind": "CURRENT_ESTIMATE",
+      "metric_key": "funding",
+      "rate": "0.03",
+      "rate_8h_eq": "0.03",
+      "received_ts": "2026-10-18T00:00:02Z",
+      "source_path": "ws",
+      "token_id": "BTC"
+     }
+    },
+    "source_path": "ws",
+    "token_id": "BTC"
+   },
+   {
+    "as_of": "2026-10-18T00:00:00Z",
+    "capture_source": "PUBLIC_REST_BACKUP",
+    "instrument_id": "batch:BTC",
+    "interval_h": "8",
+    "kind": "CURRENT_ESTIMATE",
+    "metric_key": "funding",
+    "rate": "0.04",
+    "rate_8h_eq": "0.04",
+    "received_ts": "2026-10-18T00:00:02Z",
+    "source_observations": {
+     "PUBLIC_REST_BACKUP": {
+      "as_of": "2026-10-18T00:00:00Z",
+      "capture_source": "PUBLIC_REST_BACKUP",
+      "instrument_id": "batch:BTC",
+      "interval_h": "8",
+      "kind": "CURRENT_ESTIMATE",
+      "metric_key": "funding",
+      "rate": "0.04",
+      "rate_8h_eq": "0.03",
+      "received_ts": "2026-10-18T00:00:02Z",
+      "source_path": "ws",
+      "token_id": "BTC"
+     }
+    },
+    "source_path": "ws",
+    "token_id": "BTC"
+   }
+  ]
+ },
+ {
+  "collection": "mkt.tickers_24h",
+  "expected": [
+   [
+    "ticker_two",
+    {
+     "capture_sources": [
+      "PUBLIC_REST",
+      "WEBSOCKET"
+     ],
+     "field_sources": {
+      "index_price": {
+       "as_of": "2026-10-18T00:00:01Z",
+       "capture_source": "PUBLIC_REST",
+       "source_path": "rest"
+      },
+      "mark_price": {
+       "as_of": "2026-10-18T00:00:02Z",
+       "capture_source": "WEBSOCKET",
+       "source_path": "ws"
+      }
+     },
+     "index_as_of": "2026-10-18T00:00:01Z",
+     "index_as_of_prec": null,
+     "index_as_of_prec_reason": "INCOMPLETE",
+     "index_price": "11",
+     "instrument_id": "batch:BTC",
+     "mark_as_of": "2026-10-18T00:00:02Z",
+     "mark_as_of_prec": null,
+     "mark_as_of_prec_reason": "INCOMPLETE",
+     "mark_price": "10",
+     "semantic_fingerprint": "b1816adf032fc67d17b5eb6cd7f781db86e73f669f699dd5a9af9bdb032ec08c",
+     "token_id": "BTC",
+     "ts": "2026-10-18T00:00:00Z",
+     "ts_prec": null,
+     "ts_prec_reason": "INCOMPLETE",
+     "unclocked_components": {
+      "open_interest": "NO_CLOCK",
+      "volume": "NO_CLOCK"
+     }
+    }
+   ]
+  ],
+  "keys": [
+   "ticker_one",
+   "ticker_two"
+  ],
+  "name": "tickers a then b",
+  "records": [
+   {
+    "field_sources": {
+     "mark_price": {
+      "as_of": "2026-10-18T00:00:02Z",
+      "capture_source": "WEBSOCKET",
+      "source_path": "ws"
+     }
+    },
+    "instrument_id": "batch:BTC",
+    "mark_price": "10",
+    "token_id": "BTC",
+    "ts": "2026-10-18T00:00:00Z",
+    "unclocked_components": {
+     "volume": "NO_CLOCK"
+    }
+   },
+   {
+    "field_sources": {
+     "index_price": {
+      "as_of": "2026-10-18T00:00:01Z",
+      "capture_source": "PUBLIC_REST",
+      "source_path": "rest"
+     },
+     "mark_price": {
+      "as_of": "2026-10-18T00:00:01Z",
+      "capture_source": "PUBLIC_REST",
+      "source_path": "rest"
+     }
+    },
+    "index_price": "11",
+    "instrument_id": "batch:BTC",
+    "mark_price": "9",
+    "token_id": "BTC",
+    "ts": "2026-10-18T00:00:00Z",
+    "unclocked_components": {
+     "open_interest": "NO_CLOCK"
+    }
+   }
+  ]
+ },
+ {
+  "collection": "mkt.tickers_24h",
+  "expected": [
+   [
+    "ticker_two",
+    {
+     "capture_sources": [
+      "PUBLIC_REST",
+      "WEBSOCKET"
+     ],
+     "field_sources": {
+      "index_price": {
+       "as_of": "2026-10-18T00:00:01Z",
+       "capture_source": "PUBLIC_REST",
+       "source_path": "rest"
+      },
+      "mark_price": {
+       "as_of": "2026-10-18T00:00:02Z",
+       "capture_source": "WEBSOCKET",
+       "source_path": "ws"
+      }
+     },
+     "index_as_of": "2026-10-18T00:00:01Z",
+     "index_as_of_prec": null,
+     "index_as_of_prec_reason": "INCOMPLETE",
+     "index_price": "11",
+     "instrument_id": "batch:BTC",
+     "mark_as_of": "2026-10-18T00:00:02Z",
+     "mark_as_of_prec": null,
+     "mark_as_of_prec_reason": "INCOMPLETE",
+     "mark_price": "10",
+     "semantic_fingerprint": "b1816adf032fc67d17b5eb6cd7f781db86e73f669f699dd5a9af9bdb032ec08c",
+     "token_id": "BTC",
+     "ts": "2026-10-18T00:00:00Z",
+     "ts_prec": null,
+     "ts_prec_reason": "INCOMPLETE",
+     "unclocked_components": {
+      "open_interest": "NO_CLOCK",
+      "volume": "NO_CLOCK"
+     }
+    }
+   ]
+  ],
+  "keys": [
+   "ticker_one",
+   "ticker_two"
+  ],
+  "name": "tickers b then a",
+  "records": [
+   {
+    "field_sources": {
+     "index_price": {
+      "as_of": "2026-10-18T00:00:01Z",
+      "capture_source": "PUBLIC_REST",
+      "source_path": "rest"
+     },
+     "mark_price": {
+      "as_of": "2026-10-18T00:00:01Z",
+      "capture_source": "PUBLIC_REST",
+      "source_path": "rest"
+     }
+    },
+    "index_price": "11",
+    "instrument_id": "batch:BTC",
+    "mark_price": "9",
+    "token_id": "BTC",
+    "ts": "2026-10-18T00:00:00Z",
+    "unclocked_components": {
+     "open_interest": "NO_CLOCK"
+    }
+   },
+   {
+    "field_sources": {
+     "mark_price": {
+      "as_of": "2026-10-18T00:00:02Z",
+      "capture_source": "WEBSOCKET",
+      "source_path": "ws"
+     }
+    },
+    "instrument_id": "batch:BTC",
+    "mark_price": "10",
+    "token_id": "BTC",
+    "ts": "2026-10-18T00:00:00Z",
+    "unclocked_components": {
+     "volume": "NO_CLOCK"
+    }
+   }
+  ]
+ },
+ {
+  "collection": "mkt.flow_bars_1m",
+  "expected": [
+   [
+    "canonical",
+    {
+     "buy_qty": "1.00000000000000000001",
+     "buy_usd": "10",
+     "complete": true,
+     "first_trade": {
+      "price": "123.456789012345678901",
+      "ratio": 0.5
+     },
+     "instrument_id": "test:BTC",
+     "minute_start": "2026-10-18T00:00:00.250000Z",
+     "minute_start_prec": null,
+     "minute_start_prec_reason": "INCOMPLETE",
+     "n_buy": 1,
+     "n_sell": 0,
+     "recorded_at": "2026-10-18T00:01:00Z",
+     "recorded_at_prec": "COLLECTION_ONLY",
+     "recorded_at_prec_reason": null,
+     "sell_qty": "2",
+     "sell_usd": "1E-8",
+     "semantic_fingerprint": "16e23c6a05fe31db674d50be8077439348552d660d42ab72dcb0d54064b6879e",
+     "size_buckets": {
+      "B1": {
+       "buy_qty": "1",
+       "n": 1
+      }
+     },
+     "sum_sq_qty": "1E+2",
+     "token_id": "BTC"
+    }
+   ]
+  ],
+  "keys": [
+   "legacy",
+   "canonical"
+  ],
+  "name": "flow duplicates later key wins",
+  "records": [
+   {
+    "buy_qty": "1.00000000000000000001",
+    "buy_usd": "10",
+    "complete": true,
+    "first_trade": {
+     "price": "123.456789012345678901",
+     "ratio": 0.5
+    },
+    "instrument_id": "test:BTC",
+    "minute_start": "2026-10-18T00:00:00.250000Z",
+    "n_buy": 1,
+    "n_sell": 0,
+    "recorded_at": "2026-10-18T00:01:00Z",
+    "recorded_at_prec": "COLLECTION_ONLY",
+    "sell_qty": "0",
+    "sell_usd": "0.00000001",
+    "size_buckets": {
+     "B1": {
+      "buy_qty": "1",
+      "n": 1
+     }
+    },
+    "sum_sq_qty": "1E+2",
+    "token_id": "BTC"
+   },
+   {
+    "buy_qty": "1.00000000000000000001",
+    "buy_usd": "10",
+    "complete": true,
+    "first_trade": {
+     "price": "123.456789012345678901",
+     "ratio": 0.5
+    },
+    "instrument_id": "test:BTC",
+    "minute_start": "2026-10-18T00:00:00.250000Z",
+    "n_buy": 1,
+    "n_sell": 0,
+    "recorded_at": "2026-10-18T00:01:00Z",
+    "recorded_at_prec": "COLLECTION_ONLY",
+    "sell_qty": "2",
+    "sell_usd": "0.00000001",
+    "size_buckets": {
+     "B1": {
+      "buy_qty": "1",
+      "n": 1
+     }
+    },
+    "sum_sq_qty": "1E+2",
+    "token_id": "BTC"
+   }
+  ]
+ },
+ {
+  "collection": "mkt.flow_bars_1m",
+  "expected": [
+   [
+    "test:BTC:2026-10-18 00:00:00.250000+00:00",
+    {
+     "buy_qty": "1.00000000000000000001",
+     "buy_usd": "10",
+     "complete": true,
+     "first_trade": {
+      "price": "123.456789012345678901",
+      "ratio": 0.5
+     },
+     "instrument_id": "test:BTC",
+     "minute_start": "2026-10-18T00:00:00.250000Z",
+     "minute_start_prec": null,
+     "minute_start_prec_reason": "INCOMPLETE",
+     "n_buy": 1,
+     "n_sell": 0,
+     "recorded_at": "2026-10-18T00:01:00Z",
+     "recorded_at_prec": "COLLECTION_ONLY",
+     "recorded_at_prec_reason": null,
+     "sell_qty": "0",
+     "sell_usd": "1E-8",
+     "semantic_fingerprint": "1a75be002302afeb7750a5137eb791387b310386f0c97f2a7781ef0d571214ec",
+     "size_buckets": {
+      "B1": {
+       "buy_qty": "1",
+       "n": 1
+      }
+     },
+     "sum_sq_qty": "1E+2",
+     "token_id": "BTC"
+    }
+   ],
+   [
+    "test:BTC:2026-10-18 00:01:00+00:00",
+    {
+     "buy_qty": "1.00000000000000000001",
+     "buy_usd": "10",
+     "complete": true,
+     "first_trade": {
+      "price": "123.456789012345678901",
+      "ratio": 0.5
+     },
+     "instrument_id": "test:BTC",
+     "minute_start": "2026-10-18T00:01:00Z",
+     "minute_start_prec": null,
+     "minute_start_prec_reason": "INCOMPLETE",
+     "n_buy": 1,
+     "n_sell": 0,
+     "recorded_at": "2026-10-18T00:01:00Z",
+     "recorded_at_prec": "COLLECTION_ONLY",
+     "recorded_at_prec_reason": null,
+     "sell_qty": "0",
+     "sell_usd": "1E-8",
+     "semantic_fingerprint": "9220bc22b4462e99a65e8fd2a169e82440a4d25e8e17cb2090f7f6bea50e1240",
+     "size_buckets": {
+      "B1": {
+       "buy_qty": "1",
+       "n": 1
+      }
+     },
+     "sum_sq_qty": "1E+2",
+     "token_id": "BTC"
+    }
+   ]
+  ],
+  "keys": null,
+  "name": "flow default keys",
+  "records": [
+   {
+    "buy_qty": "1.00000000000000000001",
+    "buy_usd": "10",
+    "complete": true,
+    "first_trade": {
+     "price": "123.456789012345678901",
+     "ratio": 0.5
+    },
+    "instrument_id": "test:BTC",
+    "minute_start": "2026-10-18T00:00:00.250000Z",
+    "n_buy": 1,
+    "n_sell": 0,
+    "recorded_at": "2026-10-18T00:01:00Z",
+    "recorded_at_prec": "COLLECTION_ONLY",
+    "sell_qty": "0",
+    "sell_usd": "0.00000001",
+    "size_buckets": {
+     "B1": {
+      "buy_qty": "1",
+      "n": 1
+     }
+    },
+    "sum_sq_qty": "1E+2",
+    "token_id": "BTC"
+   },
+   {
+    "buy_qty": "1.00000000000000000001",
+    "buy_usd": "10",
+    "complete": true,
+    "first_trade": {
+     "price": "123.456789012345678901",
+     "ratio": 0.5
+    },
+    "instrument_id": "test:BTC",
+    "minute_start": "2026-10-18T00:01:00Z",
+    "n_buy": 1,
+    "n_sell": 0,
+    "recorded_at": "2026-10-18T00:01:00Z",
+    "recorded_at_prec": "COLLECTION_ONLY",
+    "sell_qty": "0",
+    "sell_usd": "0.00000001",
+    "size_buckets": {
+     "B1": {
+      "buy_qty": "1",
+      "n": 1
+     }
+    },
+    "sum_sq_qty": "1E+2",
+    "token_id": "BTC"
+   }
+  ]
+ },
+ {
+  "collection": "mkt.capture_gaps",
+  "expected": [
+   [
+    "GAP-1",
+    {
+     "end": "2026-10-18T00:01:00Z",
+     "end_prec": "COLLECTION_ONLY",
+     "end_prec_reason": null,
+     "gap_id": "GAP-1",
+     "instrument_id": "test:BTC",
+     "kind": "STREAM",
+     "observed_at": "2026-10-18T00:01:00Z",
+     "observed_at_prec": "COLLECTION_ONLY",
+     "observed_at_prec_reason": null,
+     "reason": "r",
+     "semantic_fingerprint": "a0c5c6b85374dc303dc3b43c28f37c02aec9f6717bd271918cb53cd7ad869869",
+     "start": "2026-10-18T00:00:00Z",
+     "start_prec": "EXACT",
+     "start_prec_reason": null,
+     "status": "OPEN"
+    }
+   ]
+  ],
+  "keys": null,
+  "name": "gap identity",
+  "records": [
+   {
+    "end": "2026-10-18T00:01:00Z",
+    "end_prec": "COLLECTION_ONLY",
+    "gap_id": "GAP-1",
+    "instrument_id": "test:BTC",
+    "kind": "STREAM",
+    "observed_at": "2026-10-18T00:01:00Z",
+    "observed_at_prec": "COLLECTION_ONLY",
+    "reason": "r",
+    "start": "2026-10-18T00:00:00Z",
+    "start_prec": "EXACT",
+    "status": "OPEN"
+   }
+  ]
+ }
+]

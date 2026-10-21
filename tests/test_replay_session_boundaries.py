@@ -72,6 +72,7 @@ async def test_explicit_replay_session_boundaries(tmp_path, monkeypatch, second_
     sent, archived = [], []
 
     async def send(service, payload):
+
         sid = payload.get("session_id")
         if sid is None:
             sid = "native-" + str(len(await repo.list("ops.agent_sessions")) + 1)
@@ -151,6 +152,7 @@ async def test_explicit_replay_session_boundaries(tmp_path, monkeypatch, second_
     assert len(report["output"]["events"]) == event_count
     assert len({sid for _, sid in sent}) == event_count
     assert set(archived) == {sid for _, sid in sent}
+
     observations = report["output"]["observations"]
     assert len(observations) == 2
     assert {o["item_id"]: o["link_type"] for o in observations} == {

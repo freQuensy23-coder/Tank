@@ -9,30 +9,30 @@ from contextlib import suppress
 from contextvars import ContextVar
 from copy import deepcopy
 from datetime import timedelta
-from decimal import Decimal, localcontext
+from decimal import Decimal
+from types import SimpleNamespace
 
 import httpx
 
 from tank.market import normalize as norm
-from tank.market.adapters import VenueAdapter
-from tank.market.archive import BookArchive, TradeArchive
 from tank.market.capture import event_anchor
-from tank.market.flow import FlowAccumulator
-from tank.market.rate_gate import PriorityGate, binance_request_weight, public_request_constraints
-from tank.market.streams import STREAM_PING_INTERVAL_S, endpoint_keys, stream_group_loop
+from tank.market.rate_gate import PriorityGate
 from tank.market_storage import (
-    latest_market_trades,
     market_dependency_head,
     market_kline_days_recorded_since,
     market_range_by_instrument,
+    market_rows_recorded_since,
     market_series_day_counts,
     sampled_market_history,
 )
+from tank.sources.capture_fetch import is_exchange_url
 from tank.time_precision import Timestamp, chosen_boundary, collection_clock, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time, sha256, utcnow
 
 REACTION_BOUND_MARGIN = timedelta(minutes=5)
 REACTION_NEWEST_MARGIN = timedelta(minutes=15)
+
+
 TICKER_ASOF_MARGIN = timedelta(minutes=15)
 TICKER_MARK_MARGIN = timedelta(minutes=2)
 
@@ -56,6 +56,42 @@ def _cut(rows_by_instrument, field, start, end):
         times = [parse_time(row[field]) for row in rows]
         out[iid] = rows[bisect_left(times, start) : bisect_left(times, end)]
     return out
+
+
+def _bound_windows(windows):
+    """Drop cached windows unused for WINDOW_TTL_S, then the least recently used ones until
+    at most WINDOW_ROWS rows and WINDOW_ENTRIES keys remain."""
+    now = time.monotonic()
+    for key in list(windows):
+        windows[key] = [lane for lane in windows[key] if now - lane.get("used", now) < WINDOW_TTL_S]
+        if not windows[key]:
+            windows.pop(key)
+    lanes = sorted(
+        ((lane.get("used", now), key, lane) for key, held in windows.items() for lane in held),
+        key=lambda item: item[0],
+    )
+    total = sum(lane.get("size", 0) for _, _, lane in lanes)
+    keys = len(windows)
+    for _, key, lane in lanes:
+        if total <= WINDOW_ROWS and keys <= WINDOW_ENTRIES:
+            break
+        windows[key].remove(lane)
+        total -= lane.get("size", 0)
+        if not windows[key]:
+            windows.pop(key)
+            keys -= 1
+
+
+def _place_levels(points):
+    """Book levels on the newest BOOK_LEVEL_ROWS rows and the newest integrity-checked row
+    only, as a fresh read places them; other rows are replaced by copies without them."""
+    newest_ok = next(
+        (n for n in range(len(points) - 1, -1, -1) if points[n][2].get("integrity_ok") is True), None
+    )
+    for n in range(len(points) - BOOK_LEVEL_ROWS):
+        when, key, row = points[n]
+        if n != newest_ok and ("bids" in row or "asks" in row):
+            points[n] = (when, key, {k: v for k, v in row.items() if k not in ("bids", "asks")})
 
 
 def book_level_keeper():
@@ -89,35 +125,8 @@ def book_level_keeper():
 _SHARED_READS = ContextVar("market_shared_snapshot_reads", default=None)
 
 log = logging.getLogger(__name__)
-RAW_FLUSH_S = 5
-LIVE_FIRST = ("mkt.flow_bars_1m", "mkt.tickers_24h")
-FLUSH_ROWS = 500
-CONTEXT_S = 10
-REST_ONLY_WINDOW = timedelta(hours=48)
-NO_TRADE_HISTORY = {"hyperliquid": "NO_LISTED_TRADE_BACKFILL"}
-BYBIT_RECENT = timedelta(hours=1)
-BYBIT_LIMIT = "SOURCE_LIMIT: Bybit recent-trade lists only the last 1000 prints"
-SOURCE_BUCKETED_OI, SOURCE_BUCKET_S = ("bybit.linear.open-interest", "binance.usdm.openInterestHist"), 300.0
-WINDOW_BEFORE, WINDOW_AFTER = timedelta(hours=24), timedelta(hours=72)
-REPAIR_CHUNK, REFERENCE_SPAN = timedelta(hours=1), timedelta(hours=24)
-PAGES_PER_FLUSH = 25
-HANDOFF_RETRY_S = 15
-HANDOFF_RETRIES = 2
-HOST_IN_FLIGHT = 4
-REFERENCE_VENUES = ("binance", "coinbase", "okx", "kraken", "bybit")
-HOT_POLL_S = 30
-HOT_TICKER_S = 20
-HL_CONTEXTS_S = 10
-SEAL_PASS_S, SEALS_PER_PASS = 10, 2
-BOOK_SAVE_S = 8
-LOOP_STALL_S = 10
-HEAD_REUSE_S = 300
-DAY_COUNTS_SAVE_S = 60
-DAY_COUNTS_MARGIN = timedelta(minutes=30)
-SERIES_MARGIN = timedelta(hours=2)
-SERIES_TRIM = timedelta(days=1)
-SERIES_APPLY_ROWS = 20000
-PUBLIC_MARKET = frozenset(
+
+TANK_CAPTURE_TABLES = frozenset(
     {
         "mkt.flow_bars_1m",
         "mkt.klines_1m",
@@ -126,11 +135,55 @@ PUBLIC_MARKET = frozenset(
         "mkt.funding_obs",
         "mkt.liq_obs",
         "mkt.tickers_24h",
+        "mkt.trades",
+        "mkt.capture_streams",
     }
 )
 
+HOT_SET_SYNC_S = 5
+
+STREAM_PING_INTERVAL_S = 20
+FLUSH_ROWS = 500
+
+SOURCE_BUCKETED_OI, SOURCE_BUCKET_S = ("bybit.linear.open-interest", "binance.usdm.openInterestHist"), 300.0
+
+HOST_IN_FLIGHT = 4
+EXCHANGE_REST_OWNER = "exchange REST belongs to tank-capture (capture/README.md)"
+
+STREAM_STATE_STALE_S = 30
+
+CAPTURE_REQUEST_DEFAULT_S, CAPTURE_REQUEST_GRACE_S = 30, 2
+CAPTURE_REQUEST_TERMINAL = ("COMPLETE", "PARTIAL", "FAILED", "EXPIRED")
+
+LOOP_STALL_S = 10
+
+
+HEAD_REUSE_S = 300
+
+
+DAY_COUNTS_SAVE_S = 60
+DAY_COUNTS_MARGIN = timedelta(minutes=30)
+SERIES_MARGIN = timedelta(hours=2)
+SERIES_TRIM = timedelta(days=1)
+SERIES_APPLY_ROWS = 20000
+
 WIDE_PAGE_ROWS = 500
 BOOK_LEVEL_ROWS = 30
+
+
+WINDOW_CACHED = frozenset(
+    {"mkt.flow_bars_1m", "mkt.klines_1m", "mkt.oi_obs", "mkt.funding_obs", "mkt.book_summaries"}
+)
+WINDOW_MARGIN = timedelta(seconds=5)
+WINDOW_ENTRIES = 32
+WINDOW_LANES = 4
+WINDOW_KEEP_S = 600
+
+
+WINDOW_TTL_S = 300
+WINDOW_ROWS = 300_000
+
+SERIES_TTL_S = 1800
 COLLECTIONS = {
     "flow_bars": ("mkt.flow_bars_1m", "minute_start"),
     "klines": ("mkt.klines_1m", "open_time"),
@@ -184,34 +237,6 @@ def funding_confirmations(observations, *, distinct_paths=False):
     return pairs
 
 
-REST_SAME_FLOW = (
-    "n_buy",
-    "n_sell",
-    "buy_qty",
-    "sell_qty",
-    "sum_sq_qty",
-    "buy_notional",
-    "sell_notional",
-    "open",
-    "high",
-    "low",
-    "close",
-    "first_trade_id",
-    "last_trade_id",
-)
-REST_VERIFIED_KEEP = 200000
-
-
-def _same_flow(stored, audited):
-    def value(row, field):
-        item = row.get(field)
-        if item is None or field in ("first_trade_id", "last_trade_id"):
-            return None if item is None else str(item)
-        return Decimal(str(item))
-
-    return all(value(stored, field) == value(audited, field) for field in REST_SAME_FLOW)
-
-
 class MarketService:
     def __init__(self, repo, settings, *, http=None):
         self.repo = repo
@@ -231,60 +256,20 @@ class MarketService:
             r["instrument_id"]: dict(r) for r in registry["instruments"] if r.get("active", True)
         }
         self.semantics = settings.load_config("semantics")["metrics"]
-        self.book_archive = BookArchive(settings.data_dir, instruments=self.instruments.values())
-        self.trade_archive = TradeArchive(settings.data_dir, instruments=self.instruments.values())
-        self._raw_written = 0.0
-        self._raw_stats = {"rows": 0, "sealed": 0, "writes": 0, "max_write_s": 0.0, "max_pending": 0}
-        self._raw_logged = time.monotonic()
-        self._started = utcnow()
-        self._hour_loads = {}
-        self._history_marks = {}
-        self._context_due = {}
         self._reads = {}
         self._hot_since = {}
-        self._frames = {}
-        self._klines_polled = {}
+
         self._kline_day_counts = {}
-        self._rest_verified = {}
         self._kline_day_counts_saved = ({}, 0.0)
         self._pending_market = {}
-        self._market_cache = {}
         self._market_flush_lock = asyncio.Lock()
-        self._market_restore_lock = asyncio.Lock()
-        self._market_restored = False
-        self._capture_checkpoints = {}
-        self._recovery_pending = set()
-        self._active_backfills = {}
-        self._pending_reconnects = {}
-        self._repair_slots = asyncio.Semaphore(3)
         self._condition_heads_memo = {}
-        self.flow = FlowAccumulator()
-        self.books = {}
-        self.streams = {}
         self._stop = None
         self._last_request = {}
-        self._response_cache = {}
-        self._cache_locks = {}
         self._request_locks = {}
-        self._poll_due = {}
-        self._metadata = set()
-        self._book_due = {}
-        self._fx = {}
+        self._request_pace_locks = {}
         self._backfills = set()
         self._capture_waits = {}
-        self._connected_since = {}
-        self._zero_cursor = {}
-        self._background = set()
-        self._stream_groups = {}
-        self._stream_controls = {}
-        self._book_initial_bridge = {}
-        self._stream_watermarks = {}
-        self._price_contexts = {}
-        self._ticker_contexts = {}
-        self._book_confirmations = {}
-        self._context_locks = {}
-        self._flushed_bars = {}
-        self._last_flow_flush = 0
         self._last_hot_expiry_refresh = 0
         try:
             self.thresholds = settings.load_config("thresholds")
@@ -337,115 +322,21 @@ class MarketService:
                         None, None, "PENDING" if row.get("status") in ("PENDING", "RUNNING") else "INCOMPLETE"
                     ).fields(field)
                 )
-        if collection == "mkt.flow_bars_1m":
-            row = dict(row, **norm.timestamp_fields("minute_start", row["minute_start"], "BUCKET(60s)"))
-            if row.get("received_ts") is not None:
-                row["received_ts_prec"] = "COLLECTION_ONLY"
         if collection.startswith("mkt."):
-            if collection == "mkt.trades":
-                raise ValueError("Individual trades belong only in normalized hourly Parquet")
-            row = dict(row) if collection == "mkt.book_summaries" else jsonable(row)
-            row = (
-                dict(
-                    row, config_version=self.settings.config_version, code_version=self.settings.code_version
-                )
-                if collection in PUBLIC_MARKET
-                else self.provenance(row)
-            )
+            if collection in TANK_CAPTURE_TABLES:
+                raise ValueError(collection + " is written by tank-capture only")
+            row = self.provenance(jsonable(row))
             row.setdefault("recorded_at", iso())
             row.update(collection_clock(row["recorded_at"]).fields("recorded_at"))
-            if collection in ("mkt.hot_tokens", "mkt.backfill_runs"):
+            if collection in ("mkt.hot_tokens", "mkt.backfill_runs", "mkt.capture_requests"):
                 changed = await self.repo.put_market_batch(collection, [row], keys=[str(key)])
                 return changed[0] if changed else row
-            if collection in ("mkt.flow_bars_1m", "mkt.tickers_24h", "mkt.funding_obs"):
-                cache = self._market_cache.setdefault(collection, {})
-                content = self._semantic_content(row)
-                old = cache.get(str(key))
-                if old and self._semantic_content(old) == content:
-                    return old
-                cache[str(key)] = row
-                if len(cache) > 10000:
-                    cache.pop(next(iter(cache)))
             self._pending_market.setdefault(collection, {})[str(key)] = row
             return row
         if collection == "qa.reviews" and await self.repo.get(collection, str(key)) is not None:
             key = str(key) + ":" + new_id("REV")
             row = dict(row, review_id=key)
         return await self.repo.put(collection, str(key), self.provenance(jsonable(row)), immutable=immutable)
-
-    async def mark_capture_gap(self, instrument, start, end, reason, *, preserve_verified=True):
-        """Invalidate every affected aggregate proof, including partial boundaries."""
-        iid = instrument["instrument_id"]
-        lo, hi = parse_time(start), parse_time(end)
-        first = lo.replace(second=0, microsecond=0)
-        rows = await self._range(
-            "mkt.flow_bars_1m",
-            "minute_start",
-            start=first,
-            end=hi + timedelta(microseconds=1),
-            filters={"instrument_id": iid},
-        )
-        by_minute = {row["minute_start"]: row for row in rows}
-        for row in self._pending_market.get("mkt.flow_bars_1m", {}).values():
-            if row["instrument_id"] == iid and first <= parse_time(row["minute_start"]) <= hi:
-                by_minute[row["minute_start"]] = row
-        cursor = first
-        while cursor <= hi.replace(second=0, microsecond=0):
-            key = (iid, iso(cursor))
-            row = by_minute.get(key[1])
-            private = self.flow.bars.get(key)
-            trusted = row and (row.get("backfill_verified") or row.get("source_archive"))
-            trusted = trusted or (private and private.get("_rest_verified")) or key in self._rest_verified
-            if not (preserve_verified and trusted):
-                left, right = max(lo, cursor), min(hi, cursor + timedelta(minutes=1))
-                if left < right:
-                    self.trade_archive.coverage(
-                        iid, left, right, complete=False, reason=str(reason), source="CAPTURE_GAP"
-                    )
-                    if private is not None:
-                        private["complete"] = False
-                        private["gap_reason"] = str(reason)
-                        private.setdefault("_coverage", []).append(
-                            {"start": iso(left), "end": iso(right), "complete": False, "reason": str(reason)}
-                        )
-                    if row:
-                        row = dict(row, complete=False, gap_reason=str(reason))
-                        for segment in row.get("boundary_segments") or []:
-                            if parse_time(segment["start"]) < right and parse_time(segment["end"]) > left:
-                                segment.update(complete=False, coverage_reason="INCOMPLETE")
-                        for point in row.get("reference_points") or []:
-                            if left < parse_time(point["boundary"]) <= right:
-                                point.update(complete=False, coverage_reason="INCOMPLETE")
-                        await self._put("mkt.flow_bars_1m", iid + ":" + key[1], row)
-            cursor += timedelta(minutes=1)
-        await self._gap(
-            instrument, "STREAM" if preserve_verified else "TRADE_INTEGRITY", reason, start=start, end=end
-        )
-
-    async def _gap(self, instrument, kind, reason, *, start=None, end=None):
-        reason = str(reason)
-        for secret in (self.settings.etherscan_api_key,):
-            if secret:
-                reason = reason.replace(secret, "[REDACTED]")
-        row = {
-            "gap_id": new_id("GAP"),
-            "instrument_id": instrument["instrument_id"],
-            "token_id": instrument["token_id"],
-            "kind": kind,
-            "reason": str(reason),
-            **norm.timestamp_fields(
-                "start",
-                start if start is not None else iso(),
-                None if start is not None else "COLLECTION_ONLY",
-            ),
-            **norm.timestamp_fields(
-                "end", end if end is not None else iso(), None if end is not None else "COLLECTION_ONLY"
-            ),
-            **collection_clock(iso()).fields("observed_at"),
-            "status": "OPEN",
-        }
-        await self._put("mkt.capture_gaps", row["gap_id"], row, immutable=True)
-        return row
 
     @classmethod
     def _semantic_content(cls, value):
@@ -461,114 +352,20 @@ class MarketService:
             return [cls._semantic_content(item) for item in value]
         return value
 
-    async def _restore_quote_usd(self):
-        """The stablecoin USD samples stored with klines over QUOTE_USD_REACH, before any
-        print is valued: a restart's backfill values its prints as of their own time."""
-        now = utcnow()
-        for quote in ("USDT", "USDC"):
-            ids = sorted(
-                iid
-                for iid, inst in self.instruments.items()
-                if inst.get("quote_asset", "").upper() == quote and norm.venue_key(inst).endswith(".spot")
-            )[:2]
-            if not ids:
-                continue
-            samples = {}
-            async for row in self.repo.iter_market_projection(
-                "mkt.klines_1m",
-                ["quote_usd_rate", "quote_usd_rate_as_of"],
-                "open_time",
-                start=now - norm.QUOTE_USD_REACH,
-                end=now,
-                instrument_ids=ids,
-                batch_size=20000,
-            ):
-                if row["quote_usd_rate"] is not None and row["quote_usd_rate_as_of"] is not None:
-                    samples[row["quote_usd_rate_as_of"]] = row["quote_usd_rate"]
-            norm.remember_quote_usd(quote, samples.items())
-
-    async def _ensure_market_restore(self):
-        if self._market_restored:
-            return
-        async with self._market_restore_lock:
-            if self._market_restored:
-                return
-            for collection, groups, field in (
-                ("mkt.tickers_24h", ("instrument_id",), "ts"),
-                ("mkt.funding_obs", ("instrument_id", "kind"), "as_of"),
-            ):
-                rows = await self.repo.latest_market_records(collection, group_by=groups, time_field=field)
-                for row in rows:
-                    iid = row["instrument_id"]
-                    key = (
-                        iid + ":" + row["kind"] + ":" + row["as_of"]
-                        if collection == "mkt.funding_obs"
-                        else iid + ":" + row["ts"]
-                    )
-                    self._market_cache.setdefault(collection, {}).setdefault(key, row)
-            await self._restore_quote_usd()
-            for row in await latest_market_trades(
-                self.repo, list(self.instruments), start=utcnow() - timedelta(days=2)
-            ):
-                iid, last = row["instrument_id"], row["last_trade"]
-                self._capture_checkpoints[iid] = {
-                    "instrument_id": iid,
-                    "last_trade_id": last["trade_id"],
-                    "last_trade": last,
-                    "last_ts": last["ts"],
-                }
-                self.flow.last[iid] = dict(last, instrument_id=iid)
-            since = (utcnow() - timedelta(minutes=3)).replace(second=0, microsecond=0)
-            for iid in self.instruments:
-                rows = await asyncio.to_thread(self.trade_archive.recent, iid, since)
-                newest = max((r["ts"][:16] for r in rows), default=None)
-                for row in rows:
-                    self.trade_archive.remember(row)
-                    if row["ts"][:16] == newest:
-                        self.flow.add(row, continuity=False, emit_record=False)
-            self._market_restored = True
-
-    async def _raw(self, instrument, kind, payload):
-        """Keep the initial Coinbase print in the planned trade Parquet only.
-
-        REST snapshots and websocket frames are normalized into typed market
-        rows. HLD §7.2 has no second raw frame journal for those same responses.
-        Books and trades retain their original payload in their own Parquet.
-        """
-        if kind == "websocket" and isinstance(payload, dict) and payload.get("type") == "last_match":
-            point = norm.trade(instrument, payload, source="WS_INITIAL_SNAPSHOT")
-            self.trade_archive.append(self.provenance(point))
-
-    async def flush_market(self, *, raw=None):
-        """Write raw journals when due, then one multi-row write per typed collection (03 §14).
-
-        Raw prints and books go to disk in one worker thread every RAW_FLUSH_S, or at
-        once with `raw=True` (a backfill about to read its prints back, an archive
-        import, shutdown); `raw=False` writes typed rows only. A typed bar can reach
-        PostgreSQL at most RAW_FLUSH_S before the prints it was built from.
-        """
+    async def flush_market(self):
+        """One multi-row write per typed collection this process queued (supply, tiers)."""
         async with self._market_flush_lock:
-            if raw or (raw is None and time.monotonic() - self._raw_written >= RAW_FLUSH_S):
-                await self._write_raw()
             pending, self._pending_market = self._pending_market, {}
-            queue = sorted(pending.items(), key=lambda item: item[0] not in LIVE_FIRST)
+            queue = list(pending.items())
             try:
                 while queue:
                     collection, values = queue[0]
                     keys = list(values)[:FLUSH_ROWS]
                     await self.repo.put_market_batch(collection, [values[key] for key in keys], keys=keys)
                     for key in keys:
-                        row = values.pop(key)
-                        if collection == "mkt.klines_1m" and row.get("open_time"):
-                            day = parse_time(row["open_time"]).replace(
-                                hour=0, minute=0, second=0, microsecond=0
-                            )
-                            self._kline_day_counts.pop((row.get("instrument_id"), day), None)
+                        values.pop(key)
                     if not values:
                         queue.pop(0)
-                    if queue and queue[0][0] not in LIVE_FIRST:
-                        live = [c for c in LIVE_FIRST if c in self._pending_market]
-                        queue[:0] = [(c, self._pending_market.pop(c)) for c in live]
                     await asyncio.sleep(0)
             except Exception:
                 for collection, values in queue:
@@ -576,56 +373,6 @@ class MarketService:
                     for key, row in values.items():
                         target.setdefault(key, row)
                 raise
-
-    async def _write_raw(self):
-        trades, books = self.trade_archive.take(), self.book_archive.take()
-        pending = sum(map(len, trades.values())) + sum(map(len, books.values()))
-        started = time.monotonic()
-
-        def write():
-            result = self.trade_archive.write(trades, seal_limit=0)
-            booked = self.book_archive.write(books, seal_limit=0)
-            return result["rows"] + booked["rows"], len(result["sealed"]) + len(booked["sealed"])
-
-        try:
-            rows, sealed = await asyncio.to_thread(write)
-        except Exception:
-            self.trade_archive.restore(trades)
-            self.book_archive.restore(books)
-            raise
-        self.trade_archive.written()
-        self.book_archive.written()
-        elapsed = time.monotonic() - started
-        self._raw_written = time.monotonic()
-        stats = self._raw_stats
-        stats.update(
-            rows=stats["rows"] + rows,
-            sealed=stats["sealed"] + sealed,
-            writes=stats["writes"] + 1,
-            max_write_s=max(stats["max_write_s"], elapsed),
-            max_pending=max(stats["max_pending"], pending),
-        )
-        if time.monotonic() - self._raw_logged >= 60:
-            log.info(
-                "raw archive: %d rows in %d writes, %d hours sealed, max write %.2fs, max batch %d rows",
-                stats["rows"],
-                stats["writes"],
-                stats["sealed"],
-                stats["max_write_s"],
-                stats["max_pending"],
-            )
-            reads, self._reads = self._reads, {}
-            log.info(
-                "rest reads: %s",
-                " ".join(f"{host}={ok}/{failed}" for host, (ok, failed) in sorted(reads.items())),
-            )
-            frames, self._frames = self._frames, {}
-            log.info(
-                "ws frames: %s",
-                " ".join(f"{endpoint.split('//')[1]}={count}" for endpoint, count in sorted(frames.items())),
-            )
-            self._raw_logged = time.monotonic()
-            self._raw_stats = {"rows": 0, "sealed": 0, "writes": 0, "max_write_s": 0.0, "max_pending": 0}
 
     async def _loop_watchdog(self):
         """Heartbeat for a daemon thread that logs the event loop thread's stack (and every
@@ -665,32 +412,9 @@ class MarketService:
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), 1)
 
-    async def _seal_loop(self):
-        """Seal finished quiet hours a few at a time, outside the market flush."""
-        while not self._stop.is_set():
-            try:
-                sealed = await asyncio.to_thread(
-                    lambda: [
-                        *self.trade_archive.seal_due(limit=SEALS_PER_PASS),
-                        *self.book_archive.seal_due(limit=SEALS_PER_PASS),
-                    ]
-                )
-                self._raw_stats["sealed"] += len(sealed)
-            except Exception as exc:
-                log.warning("seal pass failed: %s", type(exc).__name__)
-            try:
-                await self._save_day_counts()
-            except Exception as exc:
-                log.warning("series count save failed: %s", type(exc).__name__)
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._stop.wait(), SEAL_PASS_S)
-
     async def close(self):
         try:
-            await self._flush_flow()
-            await self.flush_market(raw=True)
-            await asyncio.to_thread(self.trade_archive.close)
-            await asyncio.to_thread(self.book_archive.close)
+            await self.flush_market()
             with suppress(Exception):
                 await self._save_day_counts(force=True)
         finally:
@@ -698,41 +422,6 @@ class MarketService:
                 await self.http.aclose()
 
     async def _request(self, method, url, **kwargs):
-        host = httpx.URL(url).host
-        cache_key = None
-        cache_ttl = 0
-        payload = kwargs.get("json", {})
-        if host == "api.hyperliquid.xyz":
-            if payload.get("type") == "metaAndAssetCtxs":
-                cache_key, cache_ttl = "hyperliquid:contexts", HL_CONTEXTS_S
-            elif payload.get("type") == "fundingHistory":
-                cache_key = "hyperliquid:funding:" + sha256(
-                    {"request": payload, "settlement_period": iso()[:13]}
-                )
-                cache_ttl = 3600
-        for expired_key, (captured_mono, _) in list(self._response_cache.items()):
-            ttl = HL_CONTEXTS_S if expired_key == "hyperliquid:contexts" else 3600
-            if time.monotonic() - captured_mono >= ttl:
-                self._response_cache.pop(expired_key, None)
-        if not cache_key:
-            return await self._request_live(method, url, **kwargs)
-        cache_lock_key = (
-            "hyperliquid:funding:" + payload["coin"] if payload.get("type") == "fundingHistory" else cache_key
-        )
-        async with self._cache_locks.setdefault(cache_lock_key, asyncio.Lock()):
-            if cache_key in self._response_cache:
-                cached_at, cached_body = self._response_cache[cache_key]
-                if time.monotonic() - cached_at < cache_ttl:
-                    return cached_body
-            body = await self._request_live(method, url, **kwargs)
-            observed_at = iso()
-            rows = body[1] if payload.get("type") == "metaAndAssetCtxs" else body
-            for row in rows:
-                row["_capture_observed_at"] = observed_at
-            self._response_cache[cache_key] = (time.monotonic(), body)
-            return body
-
-    async def _request_live(self, method, url, **kwargs):
         host = httpx.URL(url).host
         counts = self._reads.setdefault(host, [0, 0])
         try:
@@ -744,1432 +433,99 @@ class MarketService:
         return body
 
     async def _request_once(self, method, url, **kwargs):
+        from tank.sources.rate_limits import shared_request_budgets
+
         priority = kwargs.pop("_priority", 0)
         host = httpx.URL(url).host
-        interval = (
-            1
-            if host == "api.kraken.com"
-            else 0.21
-            if host == "api.exchange.coinbase.com"
-            else 0.35
-            if host == "api.etherscan.io"
-            else 0.08
-        )
-        lock = self._request_locks.setdefault(
-            host, PriorityGate(1 if host == "api.kraken.com" else HOST_IN_FLIGHT)
-        )
-
-        async def admit_budget():
-            from tank.sources.rate_limits import shared_request_budgets
-
-            provider = (
-                "kraken"
-                if host == "api.kraken.com"
-                else "coinbase"
-                if host == "api.exchange.coinbase.com"
-                else None
-            )
-            if provider:
-                await shared_request_budgets.acquire(
-                    provider, 1 if provider == "kraken" else 5, 1, priority=priority
-                )
-            if host in ("api.binance.com", "fapi.binance.com"):
-                path = httpx.URL(url).path
-                weight = binance_request_weight(host, path, kwargs.get("params", {}))
-                if weight:
-                    await shared_request_budgets.acquire(
-                        "binance.spot" if host == "api.binance.com" else "binance.usdm",
-                        3000 if host == "api.binance.com" else 1200,
-                        60,
-                        weight=weight,
-                        priority=priority,
-                    )
-                if host == "fapi.binance.com" and path in (
-                    "/fapi/v1/fundingRate",
-                    "/fapi/v1/fundingInfo",
-                ):
-                    await shared_request_budgets.acquire("binance.usdm.funding", 250, 300, priority=priority)
-                if host == "fapi.binance.com" and path == "/futures/data/openInterestHist":
-                    await shared_request_budgets.acquire(
-                        "binance.usdm.statistics", 500, 300, priority=priority
-                    )
-            for budget_key, capacity, window, charge in public_request_constraints(
-                host, httpx.URL(url).path, kwargs.get("params", {}), kwargs.get("json", {})
-            ):
-                await shared_request_budgets.acquire(
-                    budget_key, capacity, window, weight=charge, priority=priority
-                )
-
+        if is_exchange_url(url):
+            raise RuntimeError(EXCHANGE_REST_OWNER)
+        interval = 0.35 if host == "api.etherscan.io" else 0.08
+        lock = self._request_locks.setdefault(host, PriorityGate(HOST_IN_FLIGHT))
         for _attempt in range(4):
-            await admit_budget()
             async with lock.enter(priority):
-                now = time.monotonic()
-                start = max(now, self._last_request.get(host, 0) + interval)
-                self._last_request[host] = start
-                if start > now:
-                    await asyncio.sleep(start - now)
+                async with self._request_pace_locks.setdefault(host, asyncio.Lock()):
+                    while True:
+                        now = time.monotonic()
+                        previous = self._last_request.get(host)
+                        delay = 0 if previous is None else previous + interval - now
+                        if delay <= 0:
+                            self._last_request[host] = now
+                            break
+                        await asyncio.sleep(delay)
                 try:
                     response = await self.http.request(method, url, **kwargs)
                 except httpx.HTTPError as exc:
                     raise RuntimeError(f"{host}: {type(exc).__name__}") from None
-                self._last_request[host] = max(self._last_request[host], time.monotonic())
                 if response.status_code in (418, 429):
                     delay = float(response.headers.get("Retry-After", "60"))
                     self._last_request[host] = max(
                         self._last_request[host], time.monotonic() + min(max(delay, 1), 60)
                     )
+
+                    banned = response.status_code == 418
+                    await shared_request_budgets.block(
+                        host,
+                        utcnow() + timedelta(seconds=max(delay, 1) if banned else min(max(delay, 1), 60)),
+                        f"HTTP {response.status_code}",
+                    )
+                    if banned and shared_request_budgets.ledger is not None:
+                        raise RuntimeError(f"{host}: HTTP 418 banned for {delay:.0f}s")
                     continue
                 if response.is_error:
                     raise RuntimeError(f"{host}: HTTP {response.status_code} {response.text[:200]}")
-                weight = response.headers.get("X-MBX-USED-WEIGHT-1M")
-                if weight and int(weight) >= (2400 if host == "fapi.binance.com" else 6000):
-                    self._last_request[host] = max(self._last_request[host], time.monotonic() + 60)
+
                 return json.loads(response.content, parse_float=Decimal)
         raise RuntimeError(f"{host}: rate limited after bounded retries")
 
-    def adapter(self, instrument, *, priority=0):
-        async def request(method, url, **kwargs):
-            return await self._request(method, url, _priority=priority, **kwargs)
-
-        return VenueAdapter(instrument, request)
-
-    async def _fx_rate(self, instrument):
-        quote = instrument.get("quote_asset", "").upper()
-        if quote == "USD":
-            instrument["quote_usd_rate"] = "1"
-            return
-        cached = self._fx.get(quote)
-        if cached and (utcnow() - parse_time(cached["ts"])).total_seconds() < 300:
-            instrument.update(
-                quote_usd_rate=cached["rate"],
-                quote_usd_rate_as_of=cached["ts"],
-                quote_usd_rate_as_of_prec="COLLECTION_ONLY",
-            )
-            return
-        if quote not in ("USDT", "USDC"):
-            return
-        body = await self._request("GET", f"https://api.exchange.coinbase.com/products/{quote}-USD/stats")
-        rate = str(norm.decimal(body["last"]))
-        ts = iso()
-        self._fx[quote] = {"rate": rate, "ts": ts}
-        norm.remember_quote_usd(quote, [(ts, rate)])
-        instrument.update(
-            quote_usd_rate=rate, quote_usd_rate_as_of=ts, quote_usd_rate_as_of_prec="COLLECTION_ONLY"
-        )
-
-    async def discover(self, instrument):
-        iid = instrument["instrument_id"]
-        metadata = await self.adapter(instrument).discover()
-        instrument.update(metadata, resolved_at=iso())
-        await self._put("reg.instruments", iid, instrument)
-        self._metadata.add(iid)
-
-    async def poll_once(self, instrument_id, *, derivatives=True, klines=True, ticker=True, priority=0):
-        await self._ensure_market_restore()
-        instrument = self.instruments[instrument_id]
-        adapter = self.adapter(instrument, priority=priority)
-        if instrument_id not in self._metadata:
-            try:
-                await self.discover(instrument)
-            except Exception as exc:
-                await self._gap(instrument, "METADATA", exc)
-        try:
-            await self._fx_rate(instrument)
-        except Exception as exc:
-            await self._gap(instrument, "QUOTE_FX", exc)
-        for kind in ("derivatives", "klines", "ticker"):
-            if kind == "derivatives" and (not derivatives or norm.venue_key(instrument).endswith(".spot")):
-                continue
-            if (kind == "klines" and not klines) or (kind == "ticker" and not ticker):
-                continue
-            try:
-                if kind == "klines":
-                    rows = await adapter.klines()
-                    polled = iso()
-                    await self._raw(instrument, "klines", rows)
-                    for raw in rows:
-                        row = norm.kline(instrument, raw)
-                        await self._store_kline(instrument, row)
-                    self._klines_polled[instrument_id] = (
-                        self._klines_polled.get(instrument_id, []) + [polled]
-                    )[-5:]
-                elif kind == "ticker":
-                    await self._ticker(instrument, await adapter.ticker())
-                else:
-                    oi, current, settled, interval, mark = await adapter.derivatives()
-                    await self._raw(
-                        instrument,
-                        "derivatives",
-                        {
-                            "oi": oi,
-                            "current": current,
-                            "settled": settled,
-                            "interval": interval,
-                            "mark": mark,
-                        },
-                    )
-                    if instrument.get("funding_interval_h") != interval:
-                        instrument["funding_interval_h"] = interval
-                        await self._put("reg.instruments", instrument_id, instrument)
-                    histories = [r for r in oi if r.get("timestamp") is not None and "time" not in r]
-                    oi = [r for r in oi if r not in histories] + (
-                        self._fresh(instrument_id, "oi", histories, lambda r: r["timestamp"])[1]
-                    )
-                    for raw in oi:
-                        row = norm.oi(
-                            instrument,
-                            raw,
-                            mark=mark,
-                            mark_ts=raw.get("_capture_observed_at", iso()),
-                            mark_ts_prec="COLLECTION_ONLY",
-                        )
-                        if row.get("mark_price") is not None:
-                            index = current.get("indexPrice", current.get("oraclePx")) if current else None
-                            row.update(
-                                index_price=str(index) if index is not None else None,
-                                **norm.timestamp_fields(
-                                    "index_as_of",
-                                    raw.get("_capture_observed_at", iso()) if index is not None else None,
-                                    "COLLECTION_ONLY" if index is not None else None,
-                                ),
-                            )
-                        await self._put(
-                            "mkt.oi_obs", instrument_id + ":" + row["metric_key"] + ":" + row["ts"], row
-                        )
-                    if current and mark is not None:
-                        from tank.market.streams import save_mark
-
-                        await save_mark(
-                            self,
-                            instrument,
-                            mark,
-                            current.get("_capture_observed_at", iso()),
-                            index=current.get("indexPrice", current.get("oraclePx")),
-                            index_ts=current.get("index_time", current.get("_capture_observed_at", iso())),
-                            source="PUBLIC_REST",
-                            received_ts=current.get("_capture_observed_at"),
-                            index_clock_basis="SOURCE_TIME"
-                            if current.get("index_time")
-                            else "COLLECTION_TIME",
-                        )
-                    if current:
-                        await self._funding(instrument, current, "CURRENT_ESTIMATE", interval)
-                    predecessor, settled = self._fresh(
-                        instrument_id,
-                        "settled",
-                        settled,
-                        lambda r: r.get("fundingTime", r.get("fundingRateTimestamp", r.get("time"))),
-                    )
-                    ordered = sorted(
-                        settled,
-                        key=lambda r: parse_time(
-                            r.get("fundingTime", r.get("fundingRateTimestamp", r.get("time")))
-                        ),
-                    )
-                    previous = predecessor
-                    for raw in ordered:
-                        stamp = parse_time(
-                            raw.get("fundingTime", raw.get("fundingRateTimestamp", raw.get("time")))
-                        )
-                        historical_interval = (
-                            Decimal(str((stamp - previous).total_seconds())) / 3600
-                            if previous is not None
-                            else Decimal(1)
-                            if norm.venue_key(instrument) == "hyperliquid.perp"
-                            else None
-                        )
-                        previous = stamp
-                        if historical_interval is None:
-                            await self._gap(
-                                instrument,
-                                "FUNDING_INTERVAL",
-                                "Oldest settled funding interval unobserved",
-                                start=stamp,
-                                end=stamp,
-                            )
-                            continue
-                        await self._funding(instrument, raw, "SETTLED", historical_interval)
-            except Exception as exc:
-                await self._gap(instrument, kind.upper(), exc)
-
-    def _fresh(self, instrument_id, kind, rows, stamp):
-        """Points of a repeated REST history newer than those processed before, and the
-        time of the newest older one (a settled rate's interval starts at it)."""
-        key = (instrument_id, kind)
-        last = self._history_marks.get(key)
-        timed = [(parse_time(stamp(row)), row) for row in rows]
-        if timed:
-            newest = max(at for at, _ in timed)
-            self._history_marks[key] = newest if last is None else max(last, newest)
-        if last is None:
-            return None, list(rows)
-        older = [at for at, _ in timed if at <= last]
-        return (max(older) if older else None), [row for at, row in timed if at > last]
-
-    def context_due(self, instrument_id, kind):
-        """Stream context (mark, index, funding estimate, OI) is stored once per CONTEXT_S."""
-        now = time.monotonic()
-        key = (instrument_id, kind)
-        if self._context_due.get(key, 0) > now:
-            return False
-        self._context_due[key] = now + CONTEXT_S
-        return True
-
-    async def _funding(self, instrument, raw, kind, interval, *, source="PUBLIC_REST"):
-        row = norm.funding(instrument, raw, kind=kind, interval_h=interval)
-        row["capture_source"] = source
-        row["source_path"] = norm.venue_key(instrument) + (
-            ":websocket:funding" if source == "WEBSOCKET" else ":rest:funding"
-        )
-        ts = row["as_of"]
-        key = instrument["instrument_id"] + ":" + kind + ":" + ts
-        await self._ensure_market_restore()
-        previous = self._market_cache.get("mkt.funding_obs", {}).get(key)
-        observations = dict((previous or {}).get("source_observations") or {})
-        if previous and not observations:
-            prior_source = previous.get(
-                "capture_source", "ARCHIVE" if previous.get("source_archive") else "UNKNOWN"
-            )
-            observations[prior_source] = dict(previous)
-        metadata = {
-            "recorded_at",
-            "recorded_at_prec",
-            "recorded_at_prec_reason",
-            "received_ts",
-            "code_version",
-            "config_version",
-        }
-
-        def content(value):
-            return {name: item for name, item in value.items() if name not in metadata}
-
-        prior = observations.get(source)
-        if prior is None or sha256(content(prior)) != sha256(content(row)):
-            observations[source] = dict(row, **collection_clock(iso()).fields("recorded_at"))
-        primary = "PUBLIC_REST" if kind == "SETTLED" else "WEBSOCKET"
-        if primary not in observations:
-            primary = "PUBLIC_REST" if "PUBLIC_REST" in observations else next(iter(observations))
-        merged = dict(observations[primary])
-        values = {
-            name: {field: value[field] for field in ("rate", "interval_h", "rate_8h_eq")}
-            for name, value in observations.items()
-        }
-        signatures = {
-            tuple(norm.decimal(value[field]) for field in ("rate", "interval_h", "rate_8h_eq"))
-            for value in observations.values()
-        }
-        merged.update(
-            source_observations=observations,
-            primary_source=primary,
-            source_disagreement={"present": len(signatures) > 1, "values": values},
-        )
-        await self._put("mkt.funding_obs", key, merged)
-
-    async def _store_kline(self, instrument, row):
-        """Enrich missing exchange quote volume only with complete matching prints."""
-        iid = instrument["instrument_id"]
-        if row.get("quote_volume") is None:
-            flow = self._market_cache.get("mkt.flow_bars_1m", {}).get(iid + ":" + row["open_time"])
-            if flow and flow.get("complete") and flow.get("quote_volume") is not None:
-                with localcontext() as context:
-                    context.prec = 100
-                    quantity = Decimal(str(flow["buy_qty"])) + Decimal(str(flow["sell_qty"]))
-                if quantity == Decimal(str(row["volume_native"])):
-                    row["quote_volume"] = flow["quote_volume"]
-                    row["quote_volume_method"] = "COMPLETE_MATCHING_RAW_PRINTS"
-                    if flow.get("volume_usd") is not None:
-                        row["quote_volume_usd"] = flow["volume_usd"]
-                        row["quote_volume_usd_reason"] = None
-        self._kline_day_counts.pop(
-            (iid, parse_time(row["open_time"]).replace(hour=0, minute=0, second=0, microsecond=0)), None
-        )
-        await self._put("mkt.klines_1m", iid + ":" + row["open_time"], row)
-
-    async def save_ticker_observation(self, instrument, row):
-        """Merge partial payloads for one actual (instrument, observation time).
-
-        REST volume and stream/REST mark prices share the table's natural identity.
-        Legacy mark-prefixed storage keys remain usable across upgrade/restart.
-        """
-        row = dict(jsonable(row), **norm.timestamp_fields("ts", row["ts"], row.get("ts_prec")))
-        iid = instrument["instrument_id"]
-        key = iid + ":" + row["ts"]
-        await self._ensure_market_restore()
-        previous = self._market_cache.get("mkt.tickers_24h", {}).get(key)
-        row = dict(row)
-        incoming_sources = dict(row.pop("field_sources", {}) or {})
-        for fact in incoming_sources.values():
-            basis = fact.get("clock_basis")
-            fact["as_of_prec"] = (
-                "EXACT"
-                if basis == "SOURCE_TIME"
-                else "COLLECTION_ONLY"
-                if basis == "COLLECTION_TIME"
-                else None
-            )
-            fact.update(norm.timestamp_fields("as_of", fact.get("as_of"), fact["as_of_prec"]))
-            fact.update(
-                norm.timestamp_fields(
-                    "received_ts",
-                    fact.get("received_ts"),
-                    "COLLECTION_ONLY" if fact.get("received_ts") else None,
-                )
-            )
-        sources = dict((previous or {}).get("field_sources") or {})
-        unknown = dict((previous or {}).get("unclocked_components") or {})
-        for component in ("mark", "index"):
-            price_field, as_of = component + "_price", component + "_as_of"
-            if row.get(price_field) is not None and not row.get(as_of):
-                unknown[price_field] = {
-                    "value": row[price_field],
-                    "as_of": None,
-                    "received_ts": row.get("received_ts"),
-                    "capture_source": row.get("capture_source"),
-                    "reason": "SOURCE_CLOCK_UNAVAILABLE",
-                }
-                row.pop(price_field, None)
-                row.pop(as_of, None)
-                incoming_sources.pop(price_field, None)
-            elif (
-                previous
-                and previous.get(as_of)
-                and row.get(as_of)
-                and parse_time(row[as_of]) < parse_time(previous[as_of])
-            ):
-                row.pop(price_field, None)
-                row.pop(as_of, None)
-                incoming_sources.pop(price_field, None)
-        merged = dict(previous or {})
-        for field, value in row.items():
-            if field in ("capture_source", "capture_sources"):
-                continue
-            if value is not None or merged.get(field) is None:
-                merged[field] = value
-                if value is not None and field in incoming_sources:
-                    incoming = incoming_sources[field]
-                    prior_source = sources.get(field, {})
-
-                    def comparable(fact):
-                        return {name: item for name, item in fact.items() if name != "received_ts"}
-
-                    if (
-                        not previous
-                        or previous.get(field) != value
-                        or comparable(prior_source) != comparable(incoming)
-                    ):
-                        sources[field] = incoming
-        for field in ("mark_price", "index_price", "last", "quote_volume", "volume_native", "volume_usd"):
-            if merged.get(field) is not None and field not in sources:
-                clock = merged.get(
-                    "mark_as_of"
-                    if field == "mark_price"
-                    else "index_as_of"
-                    if field == "index_price"
-                    else "ts"
-                )
-                sources[field] = {
-                    "capture_source": None,
-                    "legacy_capture_source": (previous or {}).get("capture_source"),
-                    "as_of": clock,
-                    "received_ts": (previous or {}).get("received_ts"),
-                    "clock_basis": "LEGACY_SOURCE_UNSPECIFIED",
-                }
-        merged["field_sources"] = sources
-        for field, fact in sources.items():
-            basis = fact.get("clock_basis")
-            fact["as_of_prec"] = (
-                "EXACT"
-                if basis == "SOURCE_TIME"
-                else "COLLECTION_ONLY"
-                if basis == "COLLECTION_TIME"
-                else None
-            )
-            fact.update(norm.timestamp_fields("as_of", fact.get("as_of"), fact["as_of_prec"]))
-            fact.update(
-                norm.timestamp_fields(
-                    "received_ts",
-                    fact.get("received_ts"),
-                    "COLLECTION_ONLY" if fact.get("received_ts") else None,
-                )
-            )
-            if field in ("mark_price", "index_price"):
-                name = field.removesuffix("_price") + "_as_of"
-                merged.update(norm.timestamp_fields(name, merged.get(name), fact["as_of_prec"]))
-        if merged.get("received_ts"):
-            merged.update(collection_clock(merged["received_ts"]).fields("received_ts"))
-        if unknown:
-            merged["unclocked_components"] = unknown
-        transports = sorted(
-            {value["capture_source"] for value in sources.values() if value.get("capture_source")}
-        )
-        merged["capture_sources"] = transports
-        merged["source_provenance_complete"] = bool(sources) and all(
-            value.get("capture_source") for value in sources.values()
-        )
-        merged["capture_source"] = (
-            transports[0] if len(transports) == 1 and merged["source_provenance_complete"] else None
-        )
-        if merged.get("index_price") is not None:
-            merged["index_reason"] = None
-        if merged.get("volume_usd") is not None:
-            merged["usd_reason"] = None
-        return await self._put("mkt.tickers_24h", key, merged)
-
-    async def _ticker(self, instrument, raw):
-        received = raw.get("_capture_observed_at", iso())
-        await self._raw(instrument, "ticker", raw)
-        key = norm.venue_key(instrument)
-        if key.startswith("binance"):
-            native, quote, price = raw.get("volume"), raw.get("quoteVolume"), raw.get("lastPrice")
-        elif key.startswith("okx"):
-            native, quote, price = raw.get("vol24h"), raw.get("volCcy24h"), raw.get("last")
-        elif key.startswith("bybit"):
-            native, quote, price = raw.get("volume24h"), raw.get("turnover24h"), raw.get("lastPrice")
-        elif key.startswith("coinbase"):
-            native, quote, price = raw.get("volume"), None, raw.get("last")
-        elif key.startswith("kraken"):
-            native, quote, price = raw["v"][1], None, raw["c"][0]
-        else:
-            native, quote, price = None, raw.get("dayNtlVlm"), raw.get("markPx")
-        if key == "okx.swap":
-            native = raw.get("volCcy24h")
-            quote = None
-        fx = instrument.get("quote_usd_rate")
-        usd = norm.decimal(quote) * norm.decimal(fx) if quote is not None and fx is not None else None
-        row = {
-            "instrument_id": instrument["instrument_id"],
-            "token_id": instrument["token_id"],
-            "ts": iso(raw.get("ts", raw.get("closeTime", received))),
-            "ts_prec": "EXACT"
-            if raw.get("ts") is not None or raw.get("closeTime") is not None
-            else "COLLECTION_ONLY",
-            "received_ts": received,
-            "received_ts_prec": "COLLECTION_ONLY",
-            "volume_native": native,
-            "quote_volume": quote,
-            "volume_usd": usd,
-            "last": price,
-            "mark_price": raw.get("markPrice", raw.get("markPx")),
-            "quote_asset": instrument.get("quote_asset"),
-            "usd_reason": None if usd is not None else "24H_QUOTE_NOTIONAL_UNAVAILABLE",
-        }
-        source_path = key + (
-            ":rest:metaAndAssetCtxs"
-            if key == "hyperliquid.perp"
-            else ":rest:tickers"
-            if key.startswith("bybit")
-            else ":rest:ticker"
-        )
-        row["capture_source"] = "PUBLIC_REST"
-        row["field_sources"] = {
-            field: {
-                "capture_source": "PUBLIC_REST",
-                "source_path": source_path,
-                "as_of": row["ts"],
-                "received_ts": received,
-                "clock_basis": "SOURCE_TIME"
-                if raw.get("ts") is not None or raw.get("closeTime") is not None
-                else "COLLECTION_TIME",
-            }
-            for field in ("volume_native", "quote_volume", "volume_usd", "last")
-            if row.get(field) is not None
-        }
-        if row["mark_price"] is not None:
-            row["mark_as_of"] = received
-            row["field_sources"]["mark_price"] = {
-                "capture_source": "PUBLIC_REST",
-                "source_path": source_path,
-                "as_of": received,
-                "received_ts": received,
-                "clock_basis": "COLLECTION_TIME",
-            }
-        await self.save_ticker_observation(instrument, row)
-
-    async def ingest_trade(self, instrument, raw, *, backfill=False, row=None):
-        """`row` is `raw` already normalized with the same source (a backfill page)."""
-        row = row if row is not None else norm.trade(instrument, raw, source="REST" if backfill else "WS")
-        iid = instrument["instrument_id"]
-        await self._ensure_market_restore()
-        minute = iso(parse_time(row["ts"]).replace(second=0, microsecond=0))
-        bar_key = (iid, minute)
-        canonical = self.trade_archive.canonical(row)
-        if self.trade_archive.needs_load(canonical):
-            await self._load_trade_hour(canonical)
-        late = bar_key not in self.flow.bars and self.trade_archive.minute_archived(iid, minute)
-        row.update(config_version=self.settings.config_version, code_version=self.settings.code_version)
-        if not self.trade_archive.append(row):
-            return False
-        if backfill:
-            return True
-        if late:
-            fresh = bar_key not in self.flow.bars
-            self._merge_prints(bar_key, await self._archived_minute(iid, minute))
-            if fresh:
-                self.flow.bars[bar_key]["_coverage"] = self.trade_archive.coverage_for(iid, minute)
-        else:
-            self.flow.add(row, continuity=True, emit_record=False)
-        checkpoint = self._capture_checkpoints.get(iid)
-        if checkpoint is None or parse_time(row["ts"]) >= parse_time(checkpoint["last_ts"]):
-            self._capture_checkpoints[iid] = {
-                "instrument_id": iid,
-                "last_trade_id": row["trade_id"],
-                "last_trade": self.flow.trade_point(row),
-                "last_ts": row["ts"],
-            }
-        return True
-
-    async def _load_trade_hour(self, canonical):
-        """Load once the identities of an hour an earlier process wrote; waiters share it."""
-        task = self._hour_loads.get(canonical)
-        if task is None:
-            task = asyncio.ensure_future(asyncio.to_thread(self.trade_archive.load_ids, canonical))
-            self._hour_loads[canonical] = task
-        try:
-            ids = await task
-        finally:
-            if task.done():
-                self._hour_loads.pop(canonical, None)
-        if self.trade_archive.needs_load(canonical):
-            self.trade_archive.mark_loaded(canonical, ids)
-
-    def _merge_prints(self, key, rows):
-        """Add archived prints to a bar, skipping prints it already holds (a concurrent
-        rebuild or a live print may have created the bar during the read)."""
-        held = {str(t["trade_id"]) for t in self.flow.bars.get(key, {}).get("_trades", ())}
-        for point in rows:
-            if str(point["trade_id"]) not in held:
-                held.add(str(point["trade_id"]))
-                self.flow.add(point, continuity=False, emit_record=False)
-
-    async def _archived_minute(self, iid, minute, *, hours=None):
-        """Every print of one minute this capture holds: durable journals, plus rows
-        buffered or being written. It never waits for a flush (stream consumers call it)."""
-        hour = iso(parse_time(minute).replace(minute=0, second=0, microsecond=0))
-        pending = self.trade_archive.buffered(iid, minute)
-        if hours is None or hour not in hours:
-            grouped = await asyncio.to_thread(self.trade_archive.read_minutes, iid, hour)
-            if hours is not None:
-                hours.clear()
-                hours[hour] = grouped
-        else:
-            grouped = hours[hour]
-        rows = {str(r["trade_id"]): r for r in grouped.get(iso(parse_time(minute)), ())}
-        for row in pending + self.trade_archive.buffered(iid, minute):
-            rows.setdefault(str(row["trade_id"]), row)
-        return sorted(rows.values(), key=lambda r: (r["ts"], str(r["trade_id"])))
-
-    def summary_due(self, instrument_id):
-        return self._book_due.get(instrument_id, 0) <= time.time()
-
-    async def _save_book(self, instrument):
-        iid = instrument["instrument_id"]
-        if not self.books[iid].verified:
-            return
-        now = time.time()
-        if self._book_due.get(iid, 0) > now:
-            return
-        interval = float(self.thresholds.get("book_save_interval_s", BOOK_SAVE_S))
-        self._book_due[iid] = (now // interval + 1) * interval
-        frozen = self.books[iid].frozen()
-        row = await asyncio.to_thread(frozen.summary)
-        if not frozen.integrity_ok and self.books[iid].integrity_ok:
-            self.books[iid].integrity_ok, self.books[iid].gap_reason = False, frozen.gap_reason
-        self.book_archive.add(
-            iid,
-            "BOOK_SUMMARY",
-            {k: v for k, v in row.items() if k not in ("bids", "asks")},
-            row["received_ts"],
-        )
-        pending_snapshot = getattr(self.books[iid], "pending_snapshot", None)
-        if pending_snapshot is not None:
-            self.book_archive.add(iid, "BOOK_SNAPSHOT", pending_snapshot, pending_snapshot["received_ts"])
-            self.books[iid].pending_snapshot = None
-        key = iid + ":" + row["exchange_ts"]
-        listed = norm.venue_key(instrument) in ("binance.spot", "coinbase.spot")
-        row.update(
-            second_path_confirmed=False,
-            second_path_reason="REST_CONFIRMATION_PENDING" if listed else "NO_LISTED_SECOND_PATH",
-        )
-        await self._put("mkt.book_summaries", key, row)
-        if not row["integrity_ok"] or not listed:
-            return
-        previous = self._book_confirmations.get(iid)
-        if previous is not None and not previous.done():
-            return
-
-        async def confirm():
-            try:
-                row.update(
-                    await asyncio.wait_for(
-                        self._independent_book(instrument, row),
-                        timeout=float(self.thresholds.get("book_interval_s", 10)),
-                    )
-                )
-            except Exception as exc:
-                row.update(second_path_confirmed=False, second_path_reason=str(exc))
-            await self._put("mkt.book_summaries", key, row)
-
-        task = asyncio.create_task(confirm())
-        self._book_confirmations[iid] = task
-        self._background.add(task)
-        task.add_done_callback(self._background.discard)
-
-    async def _flush_flow(self, *, allow_recovery=True):
-        now = utcnow()
-        for iid, since in list(self._connected_since.items()):
-            observed = self._stream_watermarks.get(iid)
-            if not observed:
-                continue
-            through = min(parse_time(observed["ts"]), now)
-            cursor = self._zero_cursor.get(iid, since.replace(second=0, microsecond=0))
-            while cursor <= through.replace(second=0, microsecond=0):
-                key = (iid, iso(cursor))
-                if key not in self.flow.bars:
-                    if not allow_recovery:
-                        cursor += timedelta(minutes=1)
-                        continue
-                    rows = (
-                        await self._archived_minute(iid, cursor)
-                        if self.trade_archive.minute_archived(iid, cursor)
-                        else []
-                    )
-                    if key not in self.flow.bars:
-                        self.flow.empty_minute(self.instruments[iid], cursor)
-                        self.flow.bars[key]["_coverage"] = self.trade_archive.coverage_for(iid, cursor)
-                        if rows:
-                            self.flow.bars.pop(key)
-                            self._merge_prints(key, rows)
-                            self.flow.bars[key]["_coverage"] = self.trade_archive.coverage_for(iid, cursor)
-                    else:
-                        self._merge_prints(key, rows)
-                bar = self.flow.bars[key]
-                start, end = max(since, cursor), min(through, cursor + timedelta(minutes=1))
-                if end > start:
-                    complete = bar.get("gap_reason") is None
-                    self.flow.prove_range(
-                        iid,
-                        start,
-                        end,
-                        complete=complete,
-                        source="CONTINUOUS_STREAM",
-                        reason=bar.get("gap_reason"),
-                    )
-                    self.trade_archive.coverage(
-                        iid, start, end, complete=complete, reason=bar.get("gap_reason")
-                    )
-                cursor += timedelta(minutes=1)
-            self._zero_cursor[iid] = max(
-                since.replace(second=0, microsecond=0),
-                through.replace(second=0, microsecond=0) - timedelta(minutes=1),
-            )
-        dirty, self.flow.dirty = self.flow.dirty, set()
-        for key, bar in list(self.flow.bars.items()):
-            minute = parse_time(key[1])
-            if key in dirty:
-                coverage = bar.get("_coverage", [])
-                covered = self.flow.covered(minute, minute + timedelta(minutes=1), coverage)
-                complete = covered and not bar.get("gap_reason")
-                row = self.flow.record(key, complete=complete)
-                if not covered and not row.get("gap_reason"):
-                    row["gap_reason"] = next(
-                        (
-                            p["reason"]
-                            for p in reversed(coverage)
-                            if p.get("complete") is not True and p.get("reason")
-                        ),
-                        "STREAM_COVERAGE_UNPROVEN",
-                    )
-                await self._put("mkt.flow_bars_1m", key[0] + ":" + key[1], row)
-            if minute + timedelta(minutes=3) < now:
-                self.flow.bars.pop(key, None)
-                self._market_cache.get("mkt.flow_bars_1m", {}).pop(key[0] + ":" + key[1], None)
-
-    @staticmethod
-    def _ranges_cover(ranges, start, end):
-        cursor = start
-        for lo, hi in sorted(ranges):
-            if lo > cursor:
-                return False
-            cursor = max(cursor, hi)
-            if cursor >= end:
-                return True
-        return cursor >= end
-
-    async def _persist_rest_flow_ranges(self, instrument, start, end, proven_ranges):
-        """Audit newly captured REST evidence and replace whole bars in batches. Returns the
-        (print before, print after) pairs of the trade-ID gaps it recorded."""
-        if not proven_ranges:
-            return []
-        iid = instrument["instrument_id"]
-        for lo, hi in proven_ranges:
-            self.trade_archive.coverage(iid, lo, hi, complete=True, source="REST_RANGE_EXHAUSTED")
-        await self.flush_market(raw=True)
-        previous = self.flow.references.get((iid, iso(start)), {}).get("last_trade")
-        minute = parse_time(start).replace(second=0, microsecond=0)
-        hours = {}
-        held = {
-            row["minute_start"]: row
-            async for row in self.repo.iter_market_projection(
-                "mkt.flow_bars_1m",
-                ["minute_start", "complete", *REST_SAME_FLOW],
-                "minute_start",
-                start=minute,
-                end=parse_time(end),
-                instrument_ids=[iid],
-                batch_size=5000,
-            )
-        }
-        for row in self._pending_market.get("mkt.flow_bars_1m", {}).values():
-            if row["instrument_id"] == iid and minute <= parse_time(row["minute_start"]) < parse_time(end):
-                held[row["minute_start"]] = row
-        consecutive = norm.venue_key(instrument).split(".")[0] in ("binance", "coinbase", "kraken")
-        found = []
-
-        def audit(minute, rows, coverage, boundaries, previous):
-            """One minute's bar from its archived prints, built in a worker thread: it reads
-            only its own copies, and the loop applies the trade-ID gaps it reports."""
-            accumulator = FlowAccumulator()
-            accumulator.boundaries = boundaries
-            accumulator.references = self.flow.references
-            accumulator.last[iid] = previous if previous else {}
-            if not previous:
-                accumulator.last.pop(iid, None)
-            key = (iid, iso(minute))
-            accumulator.empty_minute(instrument, minute)
-            gap = None
-            gaps = []
-            if consecutive:
-                rows.sort(key=lambda r: int(r["trade_id"]))
-            for point in rows:
-                if (
-                    previous
-                    and consecutive
-                    and point["trade_id"] != previous["trade_id"]
-                    and int(point["trade_id"]) != int(previous["trade_id"]) + 1
-                ):
-                    gap = "REST_TRADE_ID_GAP"
-                    gaps.append((previous, point))
-                accumulator.add(point, continuity=False, emit_record=False)
-                previous = point
-            bar = accumulator.bars[key]
-            bar["_coverage"] = coverage
-            bar["gap_reason"] = gap
-            span = None
-            if gap:
-                span = max(parse_time(start), minute), min(parse_time(end), minute + timedelta(minutes=1))
-                bar["_coverage"].append(
-                    {"start": iso(span[0]), "end": iso(span[1]), "complete": False, "reason": gap}
-                )
-            complete = (
-                accumulator.covered(minute, minute + timedelta(minutes=1), bar["_coverage"]) and gap is None
-            )
-            bar["_rest_verified"] = complete
-            row = accumulator.record(key, complete=complete)
-            row.update(backfill_verified=complete, capture_method="REST_RANGE_EXHAUSTED")
-            if not complete and not row.get("gap_reason"):
-                row["gap_reason"] = next(
-                    (
-                        p["reason"]
-                        for p in reversed(bar["_coverage"])
-                        if p.get("complete") is not True and p.get("reason")
-                    ),
-                    "STREAM_COVERAGE_UNPROVEN",
-                )
-            return key, bar, row, gaps, span, previous
-
-        while minute < parse_time(end):
-            rows = await self._archived_minute(iid, minute, hours=hours)
-            coverage = self.trade_archive.coverage_for(iid, minute)
-            boundaries = {
-                key: set(points)
-                for key in ((iid, iso(minute)),)
-                if (points := self.flow.boundaries.get(key)) is not None
-            }
-            key, bar, row, gaps, span, previous = await asyncio.to_thread(
-                audit, minute, rows, coverage, boundaries, previous
-            )
-            for before, after in gaps:
-                await self.mark_capture_gap(
-                    instrument, before["ts"], after["ts"], "REST_TRADE_ID_GAP", preserve_verified=False
-                )
-            found.extend(gaps)
-            if span:
-                self.trade_archive.coverage(iid, *span, complete=False, reason="REST_TRADE_ID_GAP")
-            stored = held.get(iso(minute))
-            if (
-                bar["_rest_verified"]
-                and stored
-                and stored.get("complete") is True
-                and _same_flow(stored, row)
-            ):
-                self._rest_verified[key] = True
-                while len(self._rest_verified) > REST_VERIFIED_KEEP:
-                    self._rest_verified.pop(next(iter(self._rest_verified)))
-            else:
-                await self._put("mkt.flow_bars_1m", iid + ":" + iso(minute), row)
-            if minute >= utcnow() - timedelta(minutes=3):
-                self.flow.bars[key] = bar
-            await asyncio.sleep(0)
-            if minute.minute == 59:
-                await self.flush_market(raw=False)
-            minute += timedelta(minutes=1)
-        await self.flush_market(raw=False)
-        return found
-
-    def _register_capture_boundaries(self, ids, cutoff, anchor=None):
-        end = parse_time(cutoff)
-        points = {end}
-        for minutes in (15, 60, 240, 1440):
-            points.update((end - timedelta(minutes=minutes), end - timedelta(minutes=2 * minutes)))
-        if anchor is not None:
-            at = parse_time(anchor.get("ts") if isinstance(anchor, dict) else anchor)
-            points.update((at, at - (end - at)))
-        for iid in ids:
-            self.flow.register_boundaries(iid, points)
-
-    def _record_reference(self, instrument, boundary, raw, source):
-        point = norm.trade(instrument, raw, source="REST")
-        if parse_time(point["ts"]) >= parse_time(boundary):
-            raise norm.SemanticError("Reference trade must be strictly before requested boundary")
-        iid = instrument["instrument_id"]
-        self.flow.register_boundaries(iid, [boundary])
-        self.flow.references[iid, iso(boundary)] = {
-            **norm.timestamp_fields("boundary", boundary, "EXACT"),
-            "complete": True,
-            "last_trade": self.flow.trade_point(point),
-            **collection_clock().fields("observed_at"),
-            "coverage_reason": None,
-            "source": source,
-        }
-
-    async def backfill(self, instrument, anchor, *, checkpoint=None):
-        iid = instrument["instrument_id"]
-        self._active_backfills[iid] = self._active_backfills.get(iid, 0) + 1
-        try:
-            return await self._backfill(instrument, anchor, checkpoint=checkpoint)
-        finally:
-            self._active_backfills[iid] -= 1
-            if not self._active_backfills[iid]:
-                self._active_backfills.pop(iid)
-            await self.flush_market()
-            queued = self._pending_reconnects.pop(iid, None)
-            if queued and not self._active_backfills.get(iid) and not (self._stop and self._stop.is_set()):
-                task = asyncio.create_task(self.backfill(instrument, iso(), checkpoint=queued))
-                self._background.add(task)
-                task.add_done_callback(self._background.discard)
-
-    async def _backfill(self, instrument, anchor, *, checkpoint=None):
-        """Page immutable prints. Unproven endpoints/retention remain explicit gaps."""
-        key = norm.venue_key(instrument)
-        start = parse_time(checkpoint["last_ts"]) if checkpoint else parse_time(anchor) - timedelta(hours=24)
-        end = parse_time(anchor)
-        capture_start = start if checkpoint else start - timedelta(minutes=1)
-        self._register_capture_boundaries({instrument["instrument_id"]}, end, {"ts": start})
-        adapter = self.adapter(instrument, priority=0 if checkpoint else 1)
-        cursor = None
-        seen = set()
-        times = []
-        proven_ranges = []
-        kraken_forward_ranges = []
-        first_window_trade = None
-        reference_candidate = None
-        rest_last = None
-        slices = (
-            [
-                (start + timedelta(hours=i), min(start + timedelta(hours=i + 1), end))
-                for i in range(max(1, int((end - start).total_seconds() // 3600) + 1))
-                if start + timedelta(hours=i) < end
-            ]
-            if key.startswith("binance")
-            else [(capture_start, end)]
-        )
-        try:
-            for slice_index, (lo, hi) in enumerate(slices):
-                cursor = (
-                    int(checkpoint["last_trade_id"]) + 1
-                    if checkpoint
-                    and checkpoint.get("last_trade_id")
-                    and key.startswith("binance")
-                    and slice_index == 0
-                    else checkpoint.get("end_cursor")
-                    if checkpoint and not key.startswith("binance")
-                    else None
-                )
-                exhausted = False
-                for page in range(10000):
-                    rows, next_cursor = await adapter.trades(
-                        start=lo, end=hi - timedelta(milliseconds=1), cursor=cursor
-                    )
-                    if not rows:
-                        if key.startswith("binance"):
-                            exhausted = True
-                        break
-                    await self._raw(
-                        instrument,
-                        "backfill_trades",
-                        {
-                            "request": {
-                                "start": iso(lo),
-                                "end": iso(hi - timedelta(milliseconds=1)),
-                                "cursor": cursor,
-                            },
-                            "response": rows,
-                        },
-                    )
-                    normalized = await asyncio.to_thread(
-                        lambda rows=rows: sorted(
-                            ((norm.trade(instrument, raw, source="REST"), raw) for raw in rows),
-                            key=lambda x: parse_time(x[0]["ts"]),
-                        )
-                    )
-                    for t, raw in normalized:
-                        ts = parse_time(t["ts"])
-                        if ts < start and (
-                            reference_candidate is None or ts > parse_time(reference_candidate[0]["ts"])
-                        ):
-                            reference_candidate = (t, raw)
-                        if (
-                            key.startswith(("binance", "kraken"))
-                            and start <= ts < end
-                            and (
-                                first_window_trade is None
-                                or int(t["trade_id"]) < int(first_window_trade["trade_id"])
-                            )
-                        ):
-                            first_window_trade = t
-                        if (
-                            ts < end
-                            and (not checkpoint or capture_start <= ts)
-                            and (not key.startswith("binance") or lo <= ts < hi)
-                        ):
-                            times.append(ts)
-                            if key.startswith(("binance", "coinbase", "kraken")):
-                                rest_last = max(rest_last or 0, int(t["trade_id"]))
-                            await self.ingest_trade(instrument, raw, backfill=True, row=dict(t))
-                    if page % PAGES_PER_FLUSH == PAGES_PER_FLUSH - 1:
-                        await self.flush_market()
-                    await asyncio.sleep(0)
-                    if key.startswith("binance"):
-                        if len(rows) < 1000 or parse_time(normalized[-1][0]["ts"]) >= hi:
-                            exhausted = True
-                            break
-                        next_cursor = int(normalized[-1][0]["trade_id"]) + 1
-                    elif key.startswith("kraken"):
-                        if parse_time(normalized[-1][0]["ts"]) >= end:
-                            exhausted = bool(times and min(times) <= start)
-                            if not exhausted:
-                                kraken_forward_ranges.append((lo, min(hi, utcnow())))
-                            break
-                    elif parse_time(normalized[0][0]["ts"]) <= start:
-                        exhausted = True
-                        break
-                    if next_cursor is None or str(next_cursor) in seen:
-                        break
-                    seen.add(str(next_cursor))
-                    cursor = next_cursor
-                if exhausted:
-                    proven_ranges.append((lo, min(hi, utcnow())))
-        except Exception as exc:
-            await self._gap(instrument, "PRE_EVENT_FLOW", exc, start=start, end=end)
-        if not checkpoint and key.startswith("binance") and end < utcnow() - REST_ONLY_WINDOW:
-            missing = not self._ranges_cover(proven_ranges, start, end)
-            if missing:
-                from tank.market.archive import fetch_archive
-
-                day = start.date()
-                while day <= end.date():
-                    if day < utcnow().date():
-                        try:
-                            await fetch_archive(
-                                self.repo,
-                                self.settings,
-                                instrument["venue_symbol"],
-                                day.isoformat(),
-                                market_type=instrument["market_type"],
-                                kind="aggTrades",
-                                http=self.http,
-                                market=self,
-                                window=(capture_start, end),
-                            )
-                        except Exception as exc:
-                            await self._gap(
-                                instrument,
-                                "TRADE_ARCHIVE",
-                                exc,
-                                start=day.isoformat(),
-                                end=iso(parse_time(day.isoformat()) + timedelta(days=1)),
-                            )
-                    day += timedelta(days=1)
-        if not checkpoint and reference_candidate and not key.startswith("binance"):
-            self._record_reference(instrument, start, reference_candidate[1], "REST_ENUMERATION")
-        if not checkpoint and key == "binance.spot" and first_window_trade is None:
-            try:
-                rows, _ = await adapter.trades(end=start - timedelta(milliseconds=1))
-                await self._raw(
-                    instrument,
-                    "pre24_reference_trades",
-                    {"end": iso(start - timedelta(milliseconds=1)), "response": rows},
-                )
-                earlier = [(norm.trade(instrument, raw), raw) for raw in rows]
-                earlier = [pair for pair in earlier if parse_time(pair[0]["ts"]) < start]
-                if earlier:
-                    _, raw = max(earlier, key=lambda pair: int(pair[0]["trade_id"]))
-                    await self.ingest_trade(instrument, raw, backfill=True)
-                    self._record_reference(instrument, start, raw, "BINANCE_END_BOUND")
-            except Exception as exc:
-                await self._gap(instrument, "PRE24_REFERENCE", exc, start=None, end=start)
-        if not checkpoint and key.startswith("binance") and first_window_trade:
-            before_id = int(first_window_trade["trade_id"])
-            try:
-                for _ in range(10):
-                    if before_id <= 0:
-                        break
-                    lower_id = max(0, before_id - 1000)
-                    rows, _ = await adapter.trades(cursor=lower_id)
-                    await self._raw(
-                        instrument, "pre24_reference_trades", {"fromId": lower_id, "response": rows}
-                    )
-                    predecessors = []
-                    for raw in rows:
-                        point = norm.trade(instrument, raw)
-                        if int(point["trade_id"]) < before_id and parse_time(point["ts"]) < start:
-                            predecessors.append((point, raw))
-                    if predecessors:
-                        _, raw = max(predecessors, key=lambda item: int(item[0]["trade_id"]))
-                        await self.ingest_trade(instrument, raw, backfill=True)
-                        self._record_reference(instrument, start, raw, "BINANCE_ID_PREDECESSOR")
-                        break
-                    before_id = lower_id
-            except Exception as exc:
-                await self._gap(instrument, "PRE24_REFERENCE", exc, start=None, end=start)
-        if (
-            not checkpoint
-            and key == "kraken.spot"
-            and not self.flow.references.get((instrument["instrument_id"], iso(start)))
-        ):
-            span = timedelta(minutes=1)
-            cursor = None
-            candidate = None
-            query_start = start - span
-            for _attempt in range(32):
-                try:
-                    rows, next_cursor = await adapter.trades(start=query_start, cursor=cursor)
-                    await self._raw(
-                        instrument,
-                        "pre24_reference_trades",
-                        {
-                            "start": iso(query_start),
-                            "cursor": cursor,
-                            "response": rows,
-                        },
-                    )
-                    points = sorted(
-                        ((norm.trade(instrument, raw), raw) for raw in rows),
-                        key=lambda pair: parse_time(pair[0]["ts"]),
-                    )
-                    earlier = [pair for pair in points if parse_time(pair[0]["ts"]) < start]
-                    if earlier:
-                        candidate = max(
-                            [*earlier, *([candidate] if candidate else [])],
-                            key=lambda pair: parse_time(pair[0]["ts"]),
-                        )
-                    crossed = any(parse_time(point["ts"]) >= start for point, _ in points)
-                    if candidate and crossed:
-                        await self.ingest_trade(instrument, candidate[1], backfill=True)
-                        self._record_reference(instrument, start, candidate[1], "KRAKEN_SINCE_CURSOR")
-                        break
-                    if candidate and next_cursor is not None and str(next_cursor) != str(cursor):
-                        cursor = next_cursor
-                    else:
-                        cursor = None
-                        span *= 2
-                        query_start = start - min(span, start - parse_time("1970-01-01T00:00:00Z"))
-                except Exception as exc:
-                    await self._gap(instrument, "PRE24_REFERENCE", exc, start=query_start, end=start)
-                    break
-            else:
-                await self._gap(
-                    instrument,
-                    "PRE24_REFERENCE",
-                    "PREDECESSOR_SEARCH_REQUEST_BUDGET_EXHAUSTED",
-                    start=query_start,
-                    end=start,
-                )
-        if kraken_forward_ranges and first_window_trade:
-            predecessor = self.flow.references.get((instrument["instrument_id"], iso(start)), {}).get(
-                "last_trade"
-            )
-            previous_id = (
-                checkpoint.get("last_trade_id")
-                if checkpoint
-                else (predecessor.get("trade_id") if predecessor else None)
-            )
-            if previous_id is not None and int(first_window_trade["trade_id"]) == int(previous_id) + 1:
-                proven_ranges.extend(kraken_forward_ranges)
-        if checkpoint and not self._ranges_cover(proven_ranges, start, end):
-            await self._gap(instrument, "RECONNECT", "CHECKPOINT_RANGE_NOT_EXHAUSTED", start=start, end=end)
-        limit = (
-            " (SOURCE_LIMIT: Bybit recent-trade lists only the last 1000 prints)"
-            if key.startswith("bybit")
-            else ""
-        )
-        for hours in () if checkpoint else (24, 4, 1):
-            lo = end - timedelta(hours=hours)
-            if not self._ranges_cover(proven_ranges, lo, end):
-                await self._gap(
-                    instrument,
-                    "PRE_EVENT_FLOW",
-                    f"{hours}h window not fully covered by retained REST trades{limit}",
-                    start=lo,
-                    end=end,
-                )
-        if not checkpoint and not self.flow.references.get((instrument["instrument_id"], iso(start))):
-            await self._gap(
-                instrument,
-                "PRE24_REFERENCE",
-                "NO_RETAINED_TRADE_BEFORE_PRE24_START",
-                start=capture_start,
-                end=start,
-            )
-        gaps = await self._persist_rest_flow_ranges(instrument, start, end, proven_ranges)
-        handoff = [pair for pair in gaps if rest_last is None or int(pair[1]["trade_id"]) > rest_last]
-        retries = int((checkpoint or {}).get("handoff_retry", 0))
-        if checkpoint and handoff and retries < HANDOFF_RETRIES:
-            before = min((pair[0] for pair in handoff), key=lambda p: int(p["trade_id"]))
-            retry = {
-                "last_ts": iso(parse_time(before["ts"]).replace(second=0, microsecond=0)),
-                "last_trade_id": before["trade_id"],
-                "handoff_retry": retries + 1,
-            }
-            task = asyncio.create_task(self._retry_handoff(instrument, iso(end), retry))
-            self._background.add(task)
-            task.add_done_callback(self._background.discard)
-        await self._backfill_klines(instrument, start, end, include_reference=not checkpoint)
-        await self.flush_market()
-
-    async def _retry_handoff(self, instrument, anchor, checkpoint):
-        """A follow-up reconnect backfill once REST had time to publish the handoff prints."""
-        await asyncio.sleep(HANDOFF_RETRY_S)
-        if self._stop is not None and self._stop.is_set():
-            return
-        iid = instrument["instrument_id"]
-        if self._active_backfills.get(iid):
-            pending = self._pending_reconnects
-            if iid not in pending or parse_time(checkpoint["last_ts"]) < parse_time(pending[iid]["last_ts"]):
-                pending[iid] = checkpoint
-            return
-        await self.backfill(instrument, anchor, checkpoint=checkpoint)
-
     async def repair_windows(self, token_id, start, end, *, budget_s=None):
-        """Repair every incomplete or missing persisted minute of [start, end) for a token's
-        instruments over REST from the last proven print (03 §5.1 fill order, §5.2 step 2),
-        within budget_s. Minutes REST cannot reach stay incomplete with their reason.
-        Returns {instrument_id: {"incomplete_before", "incomplete_after"}}."""
+        """Ask tank-capture to repair every incomplete or missing persisted minute of
+        [start, end) for a token's instruments within budget_s (03 §5.1 fill order, §5.2
+        step 2). Returns {instrument_id: {"incomplete_before", "incomplete_after"}}."""
         if getattr(self.settings, "replay", False):
             return {}
-        deadline = time.monotonic() + budget_s if budget_s else None
-        lo = parse_time(start).replace(second=0, microsecond=0)
-        hi = min(parse_time(end), utcnow() - timedelta(seconds=5)).replace(second=0, microsecond=0)
-        instruments = [
-            i for i in self.instruments.values() if i["token_id"] == token_id and i.get("active", True)
-        ]
-        spot = [i for i in instruments if norm.venue_key(i).endswith(".spot")]
-        perp = [i for i in instruments if i not in spot]
-        recent = max(lo, hi - REFERENCE_SPAN)
-        reference = sorted(
-            spot, key=lambda i: REFERENCE_VENUES.index(i["venue"]) if i["venue"] in REFERENCE_VENUES else 99
-        )[:1]
-        phases = [
-            (reference, recent, hi, True),
-            ([i for i in spot if i not in reference], recent, hi, False),
-            (perp, recent, hi, False),
-            (instruments, lo, recent, False),
-        ]
-        results = {}
-        for group, a, b, reserved in phases:
-            done = await asyncio.gather(
-                *(self._repair_instrument(inst, a, b, deadline, reserved=reserved) for inst in group)
-            )
-            for inst, result in zip(group, done, strict=True):
-                total = results.setdefault(
-                    inst["instrument_id"], {"incomplete_before": 0, "incomplete_after": 0}
-                )
-                for name in total:
-                    total[name] += result[name]
-        return results
+        return await self._request_repair(token_id, start, end, budget_s)
 
-    async def _incomplete_runs(self, iid, lo, hi):
-        """Contiguous [start, end) runs of minutes without a complete persisted bar, and the
-        bars of [lo - 1 min, hi) by minute."""
-        rows = await self._range(
-            "mkt.flow_bars_1m",
-            "minute_start",
-            start=lo - timedelta(minutes=1),
-            end=hi - timedelta(microseconds=1),
-            filters={"instrument_id": iid},
+    async def _request_repair(self, token_id, start, end, budget_s):
+        """repair_windows run by tank-capture: a mkt.capture_requests row it claims and
+        finishes within the budget. Its result, or {} when none arrived in time."""
+        requested = utcnow()
+        budget = float(budget_s) if budget_s else CAPTURE_REQUEST_DEFAULT_S
+        lo, hi = parse_time(start).replace(second=0, microsecond=0), parse_time(end)
+        request_id = "CR-" + sha256(
+            {"token_id": token_id, "start": iso(lo), "end": iso(hi), "requested_at": iso(requested)}
         )
-        bars = {parse_time(r["minute_start"]): r for r in rows}
-        runs, minute = [], lo
-        while minute < hi:
-            if not (bars.get(minute) or {}).get("complete"):
-                if runs and runs[-1][1] == minute:
-                    runs[-1][1] = minute + timedelta(minutes=1)
-                else:
-                    runs.append([minute, minute + timedelta(minutes=1)])
-            minute += timedelta(minutes=1)
-        return runs, bars
-
-    async def _repair_instrument(self, instrument, lo, hi, deadline, *, reserved=False):
-        iid = instrument["instrument_id"]
-        if hi <= lo:
-            return {"incomplete_before": 0, "incomplete_after": 0}
-        runs, bars = await self._incomplete_runs(iid, lo, hi)
-        before = sum((b - a) // timedelta(minutes=1) for a, b in runs)
-        venue = instrument["venue"]
-        chunks = [
-            (max(start, end - REPAIR_CHUNK * (n + 1)), end - REPAIR_CHUNK * n)
-            for start, end in reversed(runs)
-            for n in range(-(-(end - start) // REPAIR_CHUNK))
-        ]
-        for start, end in chunks:
-            if venue in NO_TRADE_HISTORY or (venue == "bybit" and end < utcnow() - BYBIT_RECENT):
-                continue
-            remaining = None if deadline is None else deadline - time.monotonic()
-            if remaining is not None and remaining <= 0:
-                break
-            checkpoint = {"instrument_id": iid, "last_ts": iso(start)}
-            previous = bars.get(start - timedelta(minutes=1)) or {}
-            if previous.get("complete") and (previous.get("last_trade") or {}).get("trade_id"):
-                checkpoint.update(
-                    last_trade_id=previous["last_trade"]["trade_id"], last_trade=previous["last_trade"]
-                )
-            elif venue == "kraken":
-                checkpoint.update(await self._kraken_predecessor(instrument, start))
-            following = await self.repo.get("mkt.flow_bars_1m", iid + ":" + iso(end)) or {}
-            if venue in ("coinbase", "okx") and (following.get("first_trade") or {}).get("trade_id"):
-                checkpoint["end_cursor"] = following["first_trade"]["trade_id"]
-
-            async def repair(end=end, checkpoint=checkpoint):
-                if reserved:
-                    await self.backfill(instrument, iso(end), checkpoint=checkpoint)
-                    return
-                async with self._repair_slots:
-                    await self.backfill(instrument, iso(end), checkpoint=checkpoint)
-
-            try:
-                await asyncio.wait_for(repair(), remaining)
-            except TimeoutError:
-                break
-            done, _ = await self._incomplete_runs(iid, start, end)
-            missing = sum((b - a) // timedelta(minutes=1) for a, b in done)
-            log.info(
-                "repair %s %s→%s: %d/%d minutes complete",
-                iid,
-                iso(start),
-                iso(end),
-                (end - start) // timedelta(minutes=1) - missing,
-                (end - start) // timedelta(minutes=1),
-            )
-        runs, bars = await self._incomplete_runs(iid, lo, hi)
-        reason = NO_TRADE_HISTORY.get(venue) or (
-            BYBIT_LIMIT if venue == "bybit" else "REST_REPAIR_INCOMPLETE"
+        pending = Timestamp(None, None, "PENDING")
+        await self._put(
+            "mkt.capture_requests",
+            request_id,
+            {
+                "request_id": request_id,
+                "kind": "REPAIR_WINDOWS",
+                "token_id": token_id,
+                **chosen_boundary(lo, precision="EXACT").fields("start"),
+                **chosen_boundary(hi, precision="EXACT").fields("end"),
+                "budget_s": budget,
+                **collection_clock(requested).fields("requested_at"),
+                **collection_clock(requested + timedelta(seconds=budget)).fields("deadline"),
+                **pending.fields("started_at"),
+                **pending.fields("finished_at"),
+                "status": "PENDING",
+                "reason": None,
+                "result": None,
+            },
         )
-        for start, end in runs:
-            minute = start
-            while minute < end:
-                bar = bars.get(minute)
-                if bar is not None and not bar.get("gap_reason"):
-                    await self._put("mkt.flow_bars_1m", iid + ":" + iso(minute), dict(bar, gap_reason=reason))
-                minute += timedelta(minutes=1)
-        await self.flush_market()
-        return {
-            "incomplete_before": before,
-            "incomplete_after": sum((b - a) // timedelta(minutes=1) for a, b in runs),
-        }
-
-    async def _kraken_predecessor(self, instrument, start):
-        """The last Kraken print before start, found by a `since` page that crosses start:
-        consecutive per-pair IDs then prove the repaired prefix."""
-        adapter = self.adapter(instrument, priority=0)
-        for minutes in (2, 10, 60, 240):
-            rows, _ = await adapter.trades(start=start - timedelta(minutes=minutes))
-            points = [norm.trade(instrument, raw, source="REST") for raw in rows]
-            earlier = [p for p in points if parse_time(p["ts"]) < start]
-            if earlier and any(parse_time(p["ts"]) >= start for p in points):
-                point = max(earlier, key=lambda p: int(p["trade_id"]))
-                return {"last_trade_id": point["trade_id"], "last_trade": self.flow.trade_point(point)}
+        until = time.monotonic() + budget + CAPTURE_REQUEST_GRACE_S
+        while True:
+            row = await self.repo.get("mkt.capture_requests", request_id) or {}
+            if row.get("status") in CAPTURE_REQUEST_TERMINAL or time.monotonic() >= until:
+                break
+            await asyncio.sleep(0.25)
+        if row.get("status") in ("COMPLETE", "PARTIAL"):
+            return (row.get("result") or {}).get("instruments") or {}
+        log.warning(
+            "window repair %s for %s: %s", request_id, token_id, row.get("reason") or row.get("status")
+        )
         return {}
-
-    async def _backfill_klines(
-        self, instrument, start, end, *, include_reference=True, kind="PRE_EVENT_KLINES"
-    ):
-        """Actual closed candles, including the close at/before a return anchor."""
-        start, end = parse_time(start), parse_time(end)
-        first = start.replace(second=0, microsecond=0) - timedelta(minutes=1) if include_reference else start
-        last = end.replace(second=0, microsecond=0)
-        iid = instrument["instrument_id"]
-        expected = max(0, int((last - first).total_seconds() // 60))
-        expected_points = {first + timedelta(minutes=n) for n in range(expected)}
-
-        async def observed():
-            rows = await self._range(
-                "mkt.klines_1m", "open_time", start=first, end=last, filters={"instrument_id": iid}
-            )
-            return {
-                parse_time(row["open_time"])
-                for row in rows
-                if row.get("complete") is True and parse_time(row["open_time"]) + timedelta(minutes=1) <= end
-            }
-
-        points = await observed()
-        adapter = self.adapter(instrument, priority=1)
-        for offset in range(0, expected, 240):
-            lo = first + timedelta(minutes=offset)
-            hi = min(lo + timedelta(minutes=240), last)
-            if all(lo + timedelta(minutes=n) in points for n in range(int((hi - lo).total_seconds() // 60))):
-                continue
-            try:
-                rows = await adapter.klines(start=lo, end=hi)
-                await self._raw(instrument, "backfill_klines", rows)
-                for raw in rows:
-                    row = norm.kline(instrument, raw)
-                    if first <= parse_time(row["open_time"]) < last:
-                        await self._store_kline(instrument, row)
-            except Exception as exc:
-                await self._gap(instrument, kind, exc, start=lo, end=hi)
-        await self.flush_market()
-        points = await observed()
-        return {
-            "instrument_id": iid,
-            "start": iso(first),
-            "end": iso(last),
-            "expected_minutes": expected,
-            "complete_minutes": len(points & expected_points),
-            "complete": expected > 0 and expected_points <= points,
-            "includes_anchor_close": include_reference,
-        }
-
-    async def _backfill_benchmark_klines(self, anchor):
-        result = []
-        for symbol in ("BTC", "ETH"):
-            tokens = {token["token_id"] for token in self.tokens.values() if token.get("symbol") == symbol}
-            candidates = [
-                inst
-                for inst in self.instruments.values()
-                if inst["token_id"] in tokens
-                and inst.get("active", True)
-                and norm.venue_key(inst).endswith(".spot")
-            ]
-            if not candidates:
-                continue
-            instrument = min(
-                candidates, key=lambda inst: (norm.venue_key(inst) != "binance.spot", inst["instrument_id"])
-            )
-            async with self._context_locks.setdefault(instrument["instrument_id"], asyncio.Lock()):
-                result.append(
-                    await self._backfill_klines(instrument, parse_time(anchor) - timedelta(days=1), anchor)
-                )
-        return result
 
     async def escalate(self, event_id, tokens):
         async with self.repo.lock("market-hot-set"), self.repo.transaction():
@@ -2240,82 +596,10 @@ class MarketService:
                 )
         if self.settings.replay:
             return
-        await self._sync_streams()
+        await self._sync_hot_set()
         for token_id in retained:
             if token_id in [v.get("token_id") if isinstance(v, dict) else v for v in tokens]:
                 await self._schedule_event_backfill(event_id, token_id, anchor)
-
-    async def _capture_window_coverage(self, instrument, anchor):
-        end = parse_time(anchor)
-        result = {"instrument_id": instrument["instrument_id"], "windows": {}}
-        for hours in (1, 4, 24):
-            start = end - timedelta(hours=hours)
-            lo = start.replace(second=0, microsecond=0)
-            if start > lo:
-                lo += timedelta(minutes=1)
-            hi = end.replace(second=0, microsecond=0)
-            expected = max(0, int((hi - lo).total_seconds() // 60))
-            metrics = {}
-            for name, collection, field in [
-                ("flow", "mkt.flow_bars_1m", "minute_start"),
-                ("klines", "mkt.klines_1m", "open_time"),
-            ]:
-                rows = await self._range(
-                    collection,
-                    field,
-                    start=lo,
-                    end=hi,
-                    filters={"instrument_id": instrument["instrument_id"]},
-                )
-                complete = sum(1 for r in rows if r.get("complete"))
-                metrics[name] = {
-                    "expected_minutes": expected,
-                    "complete_minutes": complete,
-                    "missing_or_incomplete_minutes": max(0, expected - complete),
-                    "complete": complete == expected and expected > 0,
-                }
-            result["windows"][f"W{hours}H"] = dict(
-                start=iso(start),
-                end=iso(end),
-                observed_bucket_start=iso(lo),
-                observed_bucket_end=iso(hi),
-                timestamp_precision="BUCKET",
-                unresolved_boundary_seconds=(lo - start).total_seconds() + (end - hi).total_seconds(),
-                **metrics,
-            )
-        result["complete"] = all(
-            w["flow"]["complete"] and w["klines"]["complete"] and w["unresolved_boundary_seconds"] == 0
-            for w in result["windows"].values()
-        )
-        if norm.venue_key(instrument).endswith(".spot"):
-            boundary = end - timedelta(days=1)
-            bars = await self._range(
-                "mkt.flow_bars_1m",
-                "minute_start",
-                start=boundary.replace(second=0, microsecond=0) - timedelta(minutes=1),
-                end=boundary.replace(second=0, microsecond=0) + timedelta(minutes=1),
-                filters={"instrument_id": instrument["instrument_id"]},
-            )
-            points = [
-                point
-                for bar in bars
-                for point in (bar.get("reference_points") or [])
-                if point.get("complete") is True and parse_time(point["boundary"]) == boundary
-            ]
-            reference = (
-                max(points, key=lambda point: parse_time(point["last_trade"]["ts"]))["last_trade"]
-                if points
-                else None
-            )
-            result["pre24_reference"] = {
-                "available": reference is not None,
-                "trade_id": reference.get("trade_id") if reference else None,
-                "ts": reference.get("ts") if reference else None,
-                "ts_prec": reference.get("ts_prec") if reference else None,
-                "reason": None if reference else "INCOMPLETE",
-            }
-            result["complete"] = result["complete"] and reference is not None
-        return result
 
     async def wait_capture(self, event_id, token_id, *, timeout_s=30):
         """Await durable prerequisite or return an explicit bounded incomplete result.
@@ -2352,7 +636,8 @@ class MarketService:
             return
         backfill_id = "BF-" + sha256({"event_id": event_id, "token_id": token_id, "anchor": iso(anchor)})
         old = await self.repo.get("mkt.backfill_runs", backfill_id)
-        if old and old.get("status") in ("COMPLETE", "PARTIAL"):
+
+        if old and old.get("status") in ("COMPLETE", "PARTIAL", "PENDING", "RUNNING"):
             self._backfills.add(marker)
             return
         row = {
@@ -2372,58 +657,6 @@ class MarketService:
         row.update(norm.timestamp_fields("anchor", anchor, precision))
         await self._put("mkt.backfill_runs", backfill_id, row)
         self._backfills.add(marker)
-
-        async def capture():
-            try:
-                row.update(status="RUNNING")
-                await self._put("mkt.backfill_runs", backfill_id, row)
-                instruments = [i for i in self.instruments.values() if i["token_id"] == token_id]
-                for offset in (-86400, -14400, -3600, 900, 3600, 14400, 86400, 259200):
-                    cutoff = (
-                        parse_time(anchor) if offset < 0 else parse_time(anchor) + timedelta(seconds=offset)
-                    )
-                    begin = (
-                        parse_time(anchor) + timedelta(seconds=offset) if offset < 0 else parse_time(anchor)
-                    )
-                    self._register_capture_boundaries(
-                        {i["instrument_id"] for i in instruments}, cutoff, {"ts": begin}
-                    )
-                benchmarks = await self._backfill_benchmark_klines(anchor)
-
-                async def capture_window(inst):
-                    async with self._repair_slots:
-                        await self.backfill(inst, anchor)
-
-                await asyncio.gather(*(capture_window(inst) for inst in instruments))
-                try:
-                    await self.repair_windows(
-                        token_id,
-                        parse_time(anchor) - WINDOW_BEFORE,
-                        iso(min(utcnow(), parse_time(anchor) + WINDOW_AFTER)),
-                    )
-                except Exception as exc:
-                    log.warning("window repair for %s failed: %s", token_id, type(exc).__name__)
-                coverage = await asyncio.gather(
-                    *(self._capture_window_coverage(inst, anchor) for inst in instruments)
-                )
-                ready = bool(coverage) and all(r["complete"] for r in [*coverage, *benchmarks])
-                row.update(
-                    status="COMPLETE" if ready else "PARTIAL",
-                    finished_at=iso(),
-                    reason=None if ready else "INCOMPLETE_VENUE_WINDOWS_EXCLUDED",
-                    result={"instruments": coverage, "benchmark_klines": benchmarks},
-                )
-                async with self.repo.transaction():
-                    await self._put("mkt.backfill_runs", backfill_id, row)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                row.update(status="FAILED", finished_at=iso(), reason=str(exc))
-                await self._put("mkt.backfill_runs", backfill_id, row)
-
-        task = asyncio.create_task(capture())
-        self._background.add(task)
-        task.add_done_callback(self._background.discard)
 
     async def capture_changes(self, since=None, end=None):
         """Durable historical completions and coalesced actual late normalized data."""
@@ -2537,6 +770,7 @@ class MarketService:
                     target["highwater"] = (
                         max(target["highwater"], arrival) if target["highwater"] else arrival
                     )
+
                     target["market_from"] = (
                         min(target["market_from"], stamp) if target["market_from"] else stamp
                     )
@@ -2630,7 +864,7 @@ class MarketService:
                     await self.repo.delete("mkt.hot_tokens", token_id + ":" + row["event_id"])
             remaining = await self.repo.list("mkt.hot_tokens", filters={"token_id": token_id}, limit=1)
             await self._record_capture_tier(token_id, "HOT" if remaining else "BASE", "DEMOTION")
-        await self._sync_streams()
+        await self._sync_hot_set()
 
     async def _record_capture_tier(self, token_id, tier, reason):
         from tank.market.supply import supply_cadences
@@ -2691,89 +925,16 @@ class MarketService:
             },
         )
 
-    async def _sync_streams(self):
+    async def _sync_hot_set(self):
+        """Hot expiry and the hot set this process scales supply by; tank-capture subscribes
+        the same set from mkt.hot_tokens."""
         if time.monotonic() - self._last_hot_expiry_refresh >= 60:
             await self.refresh_hot_expiry()
             self._last_hot_expiry_refresh = time.monotonic()
-        rows = await self.repo.list("mkt.hot_tokens", limit=10000)
-        hot = {r["token_id"] for r in rows}
         self._hot_since = {}
-        for r in rows:
+        for r in await self.repo.list("mkt.hot_tokens", limit=10000):
             if r["token_id"] not in self._hot_since or r["since"] < self._hot_since[r["token_id"]]:
                 self._hot_since[r["token_id"]] = r["since"]
-        desired = {}
-        for iid, inst in self.instruments.items():
-            if inst["token_id"] in hot:
-                for endpoint in endpoint_keys(inst):
-                    desired.setdefault(endpoint, set()).add(iid)
-        for endpoint, task in list(self.streams.items()):
-            if endpoint not in desired:
-                self._stream_groups.pop(endpoint, None)
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-                self.streams.pop(endpoint, None)
-                self._stream_controls.pop(endpoint, None)
-        for endpoint, members in desired.items():
-            previous = self._stream_groups.get(endpoint, set())
-            self._stream_groups[endpoint] = members
-            if self._stop is None or self.settings.replay:
-                continue
-            if endpoint not in self.streams or self.streams[endpoint].done():
-                self._stream_controls[endpoint] = asyncio.Queue()
-                self.streams[endpoint] = asyncio.create_task(stream_group_loop(self, endpoint))
-            elif members != previous:
-                self._stream_controls[endpoint].put_nowait(set(members))
-
-    @norm.precise
-    async def _independent_book(self, instrument, stream):
-        """Second path (03 §5.9): only the listed REST book snapshots (02 §4.1, §4.3)."""
-        key = norm.venue_key(instrument)
-        s = instrument["venue_symbol"]
-        if key == "binance.spot":
-            raw = await self._request(
-                "GET", "https://api.binance.com/api/v3/depth", params={"symbol": s, "limit": 5}, _priority=2
-            )
-        elif key == "coinbase.spot":
-            raw = await self._request(
-                "GET",
-                "https://api.exchange.coinbase.com/products/" + s + "/book",
-                params={"level": 2},
-                _priority=2,
-            )
-        else:
-            return {"second_path_confirmed": False, "second_path_reason": "NO_LISTED_SECOND_PATH"}
-        bid, ask = raw["bids"][0][0], raw["asks"][0][0]
-        ts = iso()
-        await self._raw(instrument, "independent_rest_book", raw)
-        bid, ask = norm.decimal(bid), norm.decimal(ask)
-        if bid <= 0 or ask <= bid:
-            raise norm.SemanticError("independent REST book is empty or crossed")
-        mid = (bid + ask) / 2
-        spread = (ask - bid) / mid * 10000
-        divergence = abs(mid / norm.decimal(stream["mid"]) - 1) * 10000
-        tick = instrument.get("tick_size")
-        tick_bps = norm.decimal(tick) / mid * 10000 if tick else Decimal(0)
-        tolerance = max(spread, norm.decimal(stream["spread_bps"]), 2 * tick_bps)
-        return jsonable(
-            {
-                "second_path_confirmed": divergence <= tolerance,
-                "independent_rest": {
-                    "best_bid": bid,
-                    "best_ask": ask,
-                    "mid": mid,
-                    "spread_bps": spread,
-                    "ts": iso(ts),
-                    "ts_prec": "COLLECTION_ONLY",
-                    "received_ts": iso(),
-                    "received_ts_prec": "COLLECTION_ONLY",
-                    "source": "PUBLIC_REST",
-                    "price_divergence_bps": divergence,
-                    "tolerance_bps": tolerance,
-                    "tolerance_method": "MAX_OBSERVED_SPREAD_OR_TWO_TICKS",
-                },
-                "second_path_reason": None if divergence <= tolerance else "REST_STREAM_DISAGREEMENT",
-            }
-        )
 
     def _instrument_semantics(self, instruments):
         """The versioned field registry is authoritative, without runtime promotion."""
@@ -2863,6 +1024,7 @@ class MarketService:
         states = {}
         push = {}
         end = parse_time(cutoff)
+        stream = await self._stream_state(token_id)
         for iid, instrument in self.instruments.items():
             if instrument["token_id"] != token_id or norm.venue_key(instrument).endswith(".spot"):
                 continue
@@ -2870,9 +1032,9 @@ class MarketService:
             if key == "hyperliquid.perp":
                 states[iid] = "NOT_SUPPORTED"
                 continue
-            states[iid] = "CONNECTED" if iid in self._connected_since else "DISCONNECTED"
-            observed = self._stream_watermarks.get(iid)
-            since = self._connected_since.get(iid)
+            states[iid] = "CONNECTED" if iid in stream.connected else "DISCONNECTED"
+            observed = stream.watermarks.get(iid)
+            since = stream.connected.get(iid)
             if (
                 observed
                 and states[iid] == "CONNECTED"
@@ -2895,7 +1057,7 @@ class MarketService:
                     "cadence_s": base,
                     "observed_through": {
                         iid: max(at for at in polls if parse_time(at) <= end)
-                        for iid, polls in self._klines_polled.items()
+                        for iid, polls in stream.polls.items()
                         if self.instruments.get(iid, {}).get("token_id") == token_id
                         and any(parse_time(at) <= end for at in polls)
                     },
@@ -2930,6 +1092,33 @@ class MarketService:
                 },
             },
         }
+
+    async def _stream_state(self, token_id=None):
+        """Connection, exchange-time watermark, klines polls and last print by instrument from
+        the mkt.capture_streams rows tank-capture rewrites every few seconds (a stale one is a
+        stopped capture: not connected)."""
+        state = SimpleNamespace(connected={}, watermarks={}, polls={}, last_trade={})
+        fresh = utcnow() - timedelta(seconds=STREAM_STATE_STALE_S)
+        filters = {"token_id": token_id} if token_id is not None else None
+        for row in await self.repo.list("mkt.capture_streams", filters=filters, limit=10000):
+            iid = row["instrument_id"]
+            if iid not in self.instruments:
+                continue
+            if row.get("stream") == "WS":
+                if row.get("last_trade_ts"):
+                    state.last_trade[iid] = row["last_trade_ts"]
+                if (
+                    row.get("state") == "CONNECTED"
+                    and row.get("connected_since")
+                    and row.get("updated_at")
+                    and parse_time(row["updated_at"]) >= fresh
+                ):
+                    state.connected[iid] = parse_time(row["connected_since"])
+                    if row.get("watermark_ts"):
+                        state.watermarks[iid] = {"ts": row["watermark_ts"]}
+            elif row.get("stream") == "KLINES_POLL" and row.get("recent_polls"):
+                state.polls[iid] = list(row["recent_polls"])
+        return state
 
     async def _condition_history(self, collection, field, instrument_id, cutoff, assembled_at):
         """Reuse immutable history, incorporating newly eligible and late corrected points."""
@@ -3077,6 +1266,7 @@ class MarketService:
             "interval_s",
             "c" if kind == "price" else "volume_native",
         ]
+
         heads = (
             []
             if captured_rows is not None
@@ -3086,7 +1276,9 @@ class MarketService:
         )
         cache = self.__dict__.setdefault("_condition_series", {})
         locks = self.__dict__.setdefault("_condition_series_locks", {})
+
         key = (iid, kind, rolling) if rolling else (iid, kind, start, cutoff) if fixed_window else (iid, kind)
+
         margin = SERIES_MARGIN if rolling or not fixed_window else timedelta(0)
         async with locks.setdefault(key, asyncio.Lock()):
             previous = cache.get(key)
@@ -3102,11 +1294,15 @@ class MarketService:
                 and previous["assembled_at"] is not None
                 and parse_time(assembled_at) < parse_time(previous["assembled_at"])
             )
+            hidden = set()
             if behind:
-                reset = upper_open > previous["upper_open"] or await self._klines_recorded_between(
-                    iid, assembled_at, previous["assembled_at"], previous["upper_open"]
-                )
+                reset = upper_open > previous["upper_open"]
+                if not reset:
+                    hidden = await self._klines_recorded_between(
+                        iid, assembled_at, previous["assembled_at"], upper_open
+                    )
             if not reset and (heads, start, cutoff) == previous["served"]["request"]:
+                previous["used"] = time.monotonic()
                 return dict(previous["series"], coverage_count=coverage_count)
             state_start = start - margin if reset else previous["start"]
             state_upper = upper_open if reset else max(upper_open, previous["upper_open"])
@@ -3239,7 +1435,15 @@ class MarketService:
                 opens, points = times[low:high], values[low:high]
                 valid, known = complete[low:high], precise[low:high]
                 append_only, changed_from = False, None
-                if served:
+                if hidden:
+                    gone = {microseconds(at) for at in hidden}
+                    keep = [i for i, stamp in enumerate(opens) if stamp not in gone]
+                    opens = array("q", (opens[i] for i in keep))
+                    points = array("d") if kind == "price" else []
+                    points.extend(values[low + i] for i in keep)
+                    valid = bytearray(valid[i] for i in keep)
+                    known = bytearray(known[i] for i in keep)
+                elif served:
                     served_low, served_high = (
                         microseconds(served["start"]),
                         microseconds(served["upper_open"]),
@@ -3273,7 +1477,7 @@ class MarketService:
                 append_only,
                 changed_from,
             ) = await asyncio.to_thread(window)
-            fingerprint = sha256([state_fingerprint, iso(start), iso(upper_open)])
+            fingerprint = sha256([state_fingerprint, iso(start), iso(upper_open), sorted(hidden)])
             series = {
                 "times_us": output_times,
                 "values": output_values,
@@ -3313,15 +1517,23 @@ class MarketService:
                 "series": series,
                 "unknown_availability": unknown_availability,
             }
-            if captured_rows is None:
+
+            if captured_rows is None and not (behind and not reset):
+                state["used"] = time.monotonic()
+                cache.pop(key, None)
                 cache[key] = state
                 while len(cache) > 256:
                     cache.pop(next(iter(cache)))
+                for stale in [
+                    k for k, held in cache.items() if state["used"] - held.get("used", 0) > SERIES_TTL_S
+                ]:
+                    cache.pop(stale, None)
             return series
 
     async def _klines_recorded_between(self, iid, after, upto, market_end):
-        """Whether a kline of the instrument opened by `market_end` was recorded in (after, upto]."""
-        async for _ in self.repo.iter_late_arrivals(
+        """Open times of the instrument's klines opened by `market_end` and recorded in (after, upto]."""
+        found = set()
+        async for row in self.repo.iter_late_arrivals(
             "mkt.klines_1m",
             "recorded_at",
             "open_time",
@@ -3329,10 +1541,9 @@ class MarketService:
             end=parse_time(upto) + timedelta(microseconds=1),
             market_end=market_end,
             filters={"instrument_id": iid},
-            batch_size=1,
         ):
-            return True
-        return False
+            found.add(row["open_time"])
+        return found
 
     async def _condition_heads(self, collection, field, start, cutoff, assembled_at, filters):
         """The three dependency heads of a window in one round trip. A head counts only rows
@@ -3540,6 +1751,7 @@ class MarketService:
         result["tickers"] = await self.repo.latest_market_records(
             "mkt.tickers_24h", cutoff=end, assembled_at=assembled, filters={"token_id": token_id}
         )
+
         result["klines"] = []
         recent_fields = [
             "instrument_id",
@@ -3661,6 +1873,7 @@ class MarketService:
                 self.settings.code_version,
             ]
         )
+
         result["instruments"] = target + [i for i in selected if i not in target]
         heads["relative"] = sha256(
             [
@@ -4162,6 +2375,7 @@ class MarketService:
                             order=order,
                         )
                     )
+
             peers = [
                 i["instrument_id"]
                 for i in self.instruments.values()
@@ -4219,6 +2433,7 @@ class MarketService:
             return await self.repo.market_series_counts(instrument_ids, start, cutoff, assembled)
         cache = self._kline_day_counts
         days = [first + timedelta(days=n) for n in range((last - first).days)]
+
         counts = {
             (iid, day): cache[iid, day] for day in days for iid in instrument_ids if (iid, day) in cache
         }
@@ -4261,6 +2476,7 @@ class MarketService:
             self.repo, parse_time(saved["saved_at"]) - DAY_COUNTS_MARGIN, today
         )
         loaded = 0
+
         for iid, day, count in saved["counts"]:
             key = (iid, parse_time(day))
             if key[1] < today and key not in changed and key not in self._kline_day_counts:
@@ -4334,6 +2550,13 @@ class MarketService:
         sliced = self._shared_slice(collection, field, filters, ids, start, end)
         if sliced is not None:
             return sliced
+        if collection not in WINDOW_CACHED:
+            return await self._ranged_read(collection, field, ids, start, end, filters, books=books)
+        return await self._ranged_cached(collection, field, ids, start, end, filters, books=books)
+
+    async def _ranged_read(
+        self, collection, field, ids, start, end, filters=None, *, books=False, keys_out=None
+    ):
         if books:
             return await market_range_by_instrument(
                 self.repo,
@@ -4346,11 +2569,110 @@ class MarketService:
                 batch_size=WIDE_PAGE_ROWS,
                 keep=None if hasattr(self.repo, "_conn") else book_level_keeper(),
                 level_rows=BOOK_LEVEL_ROWS if hasattr(self.repo, "_conn") else None,
+                keys_out=keys_out,
             )
+
         page = WIDE_PAGE_ROWS if collection == "mkt.tickers_24h" else 1000
         return await market_range_by_instrument(
-            self.repo, collection, field, ids, start, end, filters, batch_size=page
+            self.repo, collection, field, ids, start, end, filters, batch_size=page, keys_out=keys_out
         )
+
+    async def _ranged_cached(self, collection, field, ids, start, end, filters, *, books):
+        """A window read that equals a fresh `_ranged_read` but, once the window was read,
+        fetches only rows past its end and rows recorded since that read: a warm BTC
+        snapshot re-read two days of five collections (~100k rows, ~10 s) every minute."""
+        start, end = parse_time(start), parse_time(end)
+        key = (collection, field, tuple(sorted(set(ids))), tuple(sorted((filters or {}).items())), books)
+        windows = self.__dict__.setdefault("_windows", {})
+        locks = self.__dict__.setdefault("_window_locks", {})
+        async with locks.setdefault(key, asyncio.Lock()):
+            lanes = windows.pop(key, [])
+            entry = next(
+                (
+                    lane
+                    for lane in lanes
+                    if lane["start"] <= start <= lane["end"] and not (books and end < lane["end"])
+                ),
+                None,
+            )
+            if entry is not None:
+                lanes.remove(entry)
+            clock = utcnow()
+            if entry is None:
+                keys = {}
+                out = await self._ranged_read(
+                    collection, field, ids, start, end, filters, books=books, keys_out=keys
+                )
+                rows = {
+                    iid: [
+                        (parse_time(row[field]), k, row)
+                        for k, row in zip(keys.get(iid, []), out[iid], strict=True)
+                    ]
+                    for iid in out
+                }
+                entry = {"start": start, "end": end, "clock": clock, "rows": rows, "starts": []}
+            else:
+                late = await market_rows_recorded_since(
+                    self.repo,
+                    collection,
+                    field,
+                    ids,
+                    entry["clock"] - WINDOW_MARGIN,
+                    start,
+                    entry["end"],
+                    filters,
+                )
+                fresh = {}
+                if end > entry["end"]:
+                    fresh = await self._ranged_read(
+                        collection, field, ids, entry["end"], end, filters, books=books, keys_out=(keys := {})
+                    )
+                rows = entry["rows"]
+
+                now = time.monotonic()
+                entry["starts"] = [(at, s) for at, s in entry["starts"] if now - at < WINDOW_KEEP_S]
+                entry["starts"].append((now, start))
+                floor = min(s for _, s in entry["starts"])
+                for iid in rows:
+                    held = rows[iid]
+                    first = bisect_left(held, floor, key=lambda point: point[0])
+                    held = rows[iid] = held[first:]
+                    changed = [(k, row) for i, row, k in late if i == iid]
+                    if changed:
+                        index = {point[1]: n for n, point in enumerate(held)}
+                        for k, row in changed:
+                            point = (parse_time(row[field]), k, row)
+                            if k in index:
+                                old = held[index[k]][2]
+                                if books and "bids" not in row and "bids" in old:
+                                    row = dict(row, bids=old["bids"], asks=old.get("asks"))
+                                    point = (point[0], k, row)
+                                held[index[k]] = point
+                            else:
+                                held.insert(
+                                    bisect_right(held, (point[0], k), key=lambda p: (p[0], p[1])), point
+                                )
+                    if fresh.get(iid):
+                        held.extend(
+                            (parse_time(row[field]), k, row)
+                            for k, row in zip(keys[iid], fresh[iid], strict=True)
+                        )
+                entry.update(start=floor, end=max(end, entry["end"]), clock=clock)
+                if books:
+                    for held in rows.values():
+                        _place_levels(held)
+            entry["used"] = time.monotonic()
+            entry["size"] = sum(len(held) for held in entry["rows"].values())
+            windows[key] = [entry, *lanes][:WINDOW_LANES]
+            _bound_windows(windows)
+            return {
+                iid: [
+                    point[2]
+                    for point in held[bisect_left(held, start, key=lambda point: point[0]) :]
+                    if point[0] < end
+                ]
+                for iid, held in entry["rows"].items()
+            }
 
     async def snapshot_anchors(self, token_id, cutoff, anchors):
         """Snapshots of one token and cutoff for several anchors (e.g. PRE_24H/4H/1H) with
@@ -4430,6 +2752,7 @@ class MarketService:
         bars, klines, OI, funding and liquidations from 2 x the event window before the cutoff
         (previous-window comparisons), books over the last 24 h and the hour before the anchor,
         and tickers only around the window bounds (see the scope branches below)."""
+
         requested = cutoff if isinstance(cutoff, Timestamp) else chosen_boundary(cutoff, precision="EXACT")
         if requested.value is None:
             raise ValueError("Snapshot requires a cutoff value")
@@ -4498,14 +2821,11 @@ class MarketService:
         }
         instruments = [r for r in self.instruments.values() if r["token_id"] == token_id]
         ids = {r["instrument_id"] for r in instruments}
-        self._register_capture_boundaries(ids, cutoff, anchor)
-        await self._flush_flow(allow_recovery=False)
-        if not self._market_flush_lock.locked():
-            await self.flush_market()
         result["flow_segments"] = []
         result["reference_points"] = []
         for name, (collection, field) in COLLECTIONS.items():
             values = []
+
             if name in bounded:
                 window_rows = {iid: [] for iid in ids}
                 for low, high in bounded[name]:
@@ -4595,6 +2915,7 @@ class MarketService:
             result[name] = sorted(
                 values, key=lambda r: r.get(field) or r.get("funding_time") or r.get("settlement_time")
             )
+
         members = {}
         for t in self.tokens.values():
             if t.get("sector"):
@@ -4607,6 +2928,7 @@ class MarketService:
             self.tokens.get(token_id, {}).get("sector"),
         )
         same_sector = members.get(sector, set()) - {token_id} if sector != "BENCHMARK" else set()
+
         if len(same_sector) < 2 and sector != "IDENTITY_PAYMENTS":
             same_sector |= {
                 identity
@@ -4627,6 +2949,7 @@ class MarketService:
         } - {token_id}
         shared = _SHARED_READS.get()
         assembled = shared.setdefault("assembled", iso()) if shared is not None else iso()
+
         rolling = "LIVE_SNAPSHOT" if cutoff_dt >= utcnow() - timedelta(hours=1) else None
         captured_klines = None
         if recent_start == history_start:
@@ -4692,6 +3015,7 @@ class MarketService:
                 rolling=rolling,
             )
             result["stat_price_series"][iid] = series
+
             wanted = set(series["times_us"][-1:])
             hourly = next((v for v in reversed(series["times_us"]) if v % 3600000000 == 0), None)
             if hourly is not None:
@@ -4735,6 +3059,7 @@ class MarketService:
             current = chosen.get(inst["token_id"])
             if current is None or counts[inst["instrument_id"]] > counts[current["instrument_id"]]:
                 chosen[inst["token_id"]] = inst
+
         from math import isfinite
 
         boundaries = [cutoff_dt - timedelta(seconds=n) for n in (0, 900, 3600, 14400, 86400)]
@@ -4751,6 +3076,7 @@ class MarketService:
             upper_open = boundary - timedelta(minutes=1)
             if upper_open < history_start or not sector_ids:
                 continue
+
             pending = await self.repo.latest_market_records(
                 "mkt.klines_1m",
                 time_field="open_time",
@@ -4914,9 +3240,9 @@ class MarketService:
 
     async def coverage(self):
         hot = {r["token_id"] for r in await self.repo.list("mkt.hot_tokens", limit=10000)}
+        stream = await self._stream_state()
         result = []
         for iid, inst in self.instruments.items():
-            state = self._capture_checkpoints.get(iid)
             gaps = await self.repo.list("mkt.capture_gaps", filters={"instrument_id": iid}, limit=10000)
             result.append(
                 {
@@ -4925,8 +3251,8 @@ class MarketService:
                     "venue": inst["venue"],
                     "market_type": inst["market_type"],
                     "tier": "HOT" if inst["token_id"] in hot else "BASE",
-                    "stream_connected": iid in self._connected_since,
-                    "last_trade_ts": state.get("last_ts") if state else None,
+                    "stream_connected": iid in stream.connected,
+                    "last_trade_ts": stream.last_trade.get(iid),
                     "metadata_status": inst.get("metadata_status", "UNVERIFIED"),
                     "gap_count": len(gaps),
                     "latest_gap": gaps[-1] if gaps else None,
@@ -4975,158 +3301,6 @@ class MarketService:
         temp.replace(path)
         return result
 
-    async def _instrument_loop(self, instrument):
-        iid = instrument["instrument_id"]
-        deriv_due = 0
-        audit_due = time.monotonic() + 60
-        while not self._stop.is_set():
-            started = time.monotonic()
-            hot = instrument["token_id"] in self._hot_since
-            do_deriv = started >= deriv_due and not hot
-            try:
-                await self.poll_once(iid, derivatives=do_deriv, ticker=not hot)
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                await self._gap(instrument, "POLL", exc)
-            if time.monotonic() >= audit_due:
-                audit_due = time.monotonic() + float(self.thresholds.get("kline_audit_interval_s", 3600))
-                now = utcnow().replace(second=0, microsecond=0)
-                try:
-                    await self._backfill_klines(
-                        instrument, now - timedelta(hours=25), now, include_reference=False, kind="KLINES_GAP"
-                    )
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    await self._gap(instrument, "KLINES_GAP", exc)
-            if do_deriv:
-                deriv_due = time.monotonic() + float(self.thresholds.get("base_oi_funding_interval_s", 300))
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(
-                    self._stop.wait(),
-                    max(
-                        1,
-                        float(self.thresholds.get("base_kline_interval_s", 60))
-                        - (time.monotonic() - started),
-                    ),
-                )
-
-    async def _hot_context_loop(self, instrument):
-        """HOT OI and funding (perps) on a fixed HOT_POLL_S wall-clock grid half a step from
-        the tickers', ahead of other requests to their host. A cycle that waited on a slow
-        host doubled their age (r116: binance funding max 92 s against its 60 s cadence)."""
-        interval = float(self.thresholds.get("hot_poll_interval_s", HOT_POLL_S))
-        if norm.venue_key(instrument).endswith(".spot"):
-            return
-        await self._hot_grid(instrument, interval, interval / 2, klines=False, ticker=False)
-
-    async def _hot_ticker_loop(self, instrument):
-        """HOT 24h REST tickers on a fixed wall-clock grid, ahead of other requests to their
-        host. In the derivatives cycle a slow host stretched them: r115 E2E #7 read a
-        hyperliquid ticker 119.5 s old (a ~3 min cycle) against its 60 s cadence."""
-        interval = float(self.thresholds.get("hot_ticker_interval_s", HOT_TICKER_S))
-        await self._hot_grid(instrument, interval, 0, klines=False, derivatives=False)
-
-    async def _hot_grid(self, instrument, interval, offset, **kinds):
-        """Poll `kinds` of a HOT instrument at every grid point (wall clock, `offset` into
-        each `interval`) at gate priority -1; a request stuck past the next point is cut
-        and recorded as a POLL gap, so a missed point never doubles an age."""
-        iid = instrument["instrument_id"]
-        while not self._stop.is_set():
-            if instrument["token_id"] in self._hot_since:
-                try:
-                    await asyncio.wait_for(self.poll_once(iid, priority=-1, **kinds), interval)
-                except asyncio.CancelledError:
-                    raise
-                except Exception as exc:
-                    await self._gap(instrument, "POLL", exc)
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(
-                    self._stop.wait(), max(0.01, interval - (time.time() - offset) % interval)
-                )
-
-    async def bootstrap_history(self, *, days=90):
-        """Daily: import missing verified archive days, newest first; failures remain visible
-        gaps and are fetched again on the next pass (the filesystem and the imported rows
-        are the only state)."""
-        while self._stop is None or not self._stop.is_set():
-            await self._oi_history_pass(days)
-            await self._bootstrap_pass(days)
-            if self._stop is None:
-                return
-            with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._stop.wait(), 86400)
-
-    async def _oi_history_pass(self, days):
-        """Bybit 5-min OI history back `days` (02 §4.6), older than the first stored sample,
-        so venue-synchronized OI normal ranges have their 7+ days (03 §0). Rows use the live
-        metric key and 300 s grid; samples already captured live are not rewritten."""
-        end, start = utcnow(), utcnow() - timedelta(days=days)
-        for inst in self.instruments.values():
-            if norm.venue_key(inst) != "bybit.linear" or not inst.get("active", True):
-                continue
-            if self._stop is not None and self._stop.is_set():
-                return
-            iid = inst["instrument_id"]
-            stored = await self._range(
-                "mkt.oi_obs",
-                "ts",
-                start=start,
-                end=end,
-                filters={"instrument_id": iid, "metric_key": "bybit.linear.open-interest"},
-            )
-            upto = parse_time(stored[0]["ts"]) - timedelta(seconds=1) if stored else end
-            if upto <= start:
-                continue
-            adapter, cursor = self.adapter(inst, priority=2), None
-            try:
-                for _ in range(1000):
-                    rows, cursor = await adapter.oi_history(start=start, end=upto, cursor=cursor)
-                    for raw in rows:
-                        row = norm.oi(inst, raw)
-                        await self._put("mkt.oi_obs", iid + ":" + row["metric_key"] + ":" + row["ts"], row)
-                    await self.flush_market(raw=False)
-                    if not rows or not cursor:
-                        break
-            except asyncio.CancelledError:
-                raise
-            except Exception as exc:
-                await self._gap(inst, "HISTORICAL_OI", exc, start=iso(start), end=iso(upto))
-
-    async def _bootstrap_pass(self, days):
-        from tank.market.archive import fetch_archive
-
-        instruments = [i for i in self.instruments.values() if norm.venue_key(i).startswith("binance")]
-        for age in range(1, days + 1):
-            date = (utcnow() - timedelta(days=age)).date().isoformat()
-            for inst in instruments:
-                if self._stop is not None and self._stop.is_set():
-                    return
-                kinds = ["metrics", "klines"] if norm.venue_key(inst) == "binance.usdm" else ["klines"]
-                for kind in kinds:
-                    try:
-                        await fetch_archive(
-                            self.repo,
-                            self.settings,
-                            inst["venue_symbol"],
-                            date,
-                            market_type=inst["market_type"],
-                            kind=kind,
-                            http=self.http,
-                            market=self,
-                        )
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as exc:
-                        await self._gap(
-                            inst,
-                            "HISTORICAL_" + kind.upper(),
-                            exc,
-                            start=date + "T00:00:00Z",
-                            end=iso(parse_time(date) + timedelta(days=1)),
-                        )
-
     async def _supply_loop(self):
         from tank.market.supply import SUPPLY_LOOP_SLEEP_S, SupplyCapture
 
@@ -5142,80 +3316,56 @@ class MarketService:
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), SUPPLY_LOOP_SLEEP_S)
 
-    async def _repair_on_start(self, repairs):
-        for token_id, start, end in repairs:
-            log.info("startup repair %s: %s → %s", token_id, iso(start), end)
-            try:
-                result = await self.repair_windows(token_id, start, end)
-                log.info("startup repair %s: %s", token_id, result)
-            except Exception as exc:
-                log.warning("startup repair %s failed: %s", token_id, type(exc).__name__)
+    async def _record_started_tiers(self):
+        async with self.repo.lock("market-hot-set"), self.repo.transaction():
+            active_tokens = {row["token_id"] for row in await self.repo.list("mkt.hot_tokens", limit=10000)}
+            for token_id in self.tokens:
+                await self._record_capture_tier(
+                    token_id, "HOT" if token_id in active_tokens else "BASE", "CAPTURE_POLICY_STARTED"
+                )
+
+    async def _schedule_hot_backfills(self):
+        for hot in await self.repo.list("mkt.hot_tokens", limit=10000):
+            event = await self.repo.get("evt.events", hot["event_id"]) or {}
+            await self._schedule_event_backfill(
+                hot["event_id"], hot["token_id"], event_anchor(event)["ts"] if event else hot["since"]
+            )
 
     async def run(self, stop):
+        """tank-capture holds the streams, pollers, backfills and exchange REST; this process
+        keeps the hot set's tiers, expiry and capture obligations, supply capture and reads."""
         self._stop = stop
         if self.settings.replay:
             return
         workers = []
         try:
-            async with self.repo.lock("market-hot-set"), self.repo.transaction():
-                active_tokens = {
-                    row["token_id"] for row in await self.repo.list("mkt.hot_tokens", limit=10000)
-                }
-                for token_id in self.tokens:
-                    await self._record_capture_tier(
-                        token_id, "HOT" if token_id in active_tokens else "BASE", "CAPTURE_POLICY_STARTED"
-                    )
-            await self._ensure_market_restore()
-            await self._sync_streams()
-            started = iso()
-            earliest = {}
-            for hot in await self.repo.list("mkt.hot_tokens", limit=10000):
-                event = await self.repo.get("evt.events", hot["event_id"]) or {}
-                at = parse_time(event_anchor(event)["ts"] if event else hot["since"])
-                span = earliest.setdefault(hot["token_id"], [at - WINDOW_BEFORE, at + WINDOW_AFTER])
-                span[0], span[1] = min(span[0], at - WINDOW_BEFORE), max(span[1], at + WINDOW_AFTER)
-            if earliest:
-                repairs = [
-                    (token_id, start, iso(min(parse_time(started), end)))
-                    for token_id, (start, end) in earliest.items()
-                ]
-                task = asyncio.create_task(self._repair_on_start(repairs))
-                self._background.add(task)
-                task.add_done_callback(self._background.discard)
-            for hot in await self.repo.list("mkt.hot_tokens", limit=10000):
-                event = await self.repo.get("evt.events", hot["event_id"]) or {}
-                await self._schedule_event_backfill(
-                    hot["event_id"], hot["token_id"], event_anchor(event)["ts"] if event else hot["since"]
-                )
-            workers = [asyncio.create_task(self._instrument_loop(inst)) for inst in self.instruments.values()]
-            workers += [
-                asyncio.create_task(self._hot_context_loop(inst)) for inst in self.instruments.values()
+            await self._record_started_tiers()
+            await self._sync_hot_set()
+            await self._schedule_hot_backfills()
+            workers = [
+                asyncio.create_task(self._warm_series_counts()),
+                asyncio.create_task(self._supply_loop()),
+                asyncio.create_task(self._loop_watchdog()),
             ]
-            workers += [
-                asyncio.create_task(self._hot_ticker_loop(inst)) for inst in self.instruments.values()
-            ]
-            workers.append(asyncio.create_task(self._warm_series_counts()))
-            workers.append(asyncio.create_task(self._seal_loop()))
-            workers.append(asyncio.create_task(self._loop_watchdog()))
-            workers.append(asyncio.create_task(self._supply_loop()))
-            workers.append(
-                asyncio.create_task(
-                    self.bootstrap_history(days=int(self.thresholds.get("historical_lookback_days", 90)))
-                )
-            )
+            checked = utcnow()
             while not stop.is_set():
-                await self._flush_flow()
                 await self.flush_market()
-                await self._sync_streams()
+                await self._sync_hot_set()
+                if (utcnow() - checked).total_seconds() >= DAY_COUNTS_SAVE_S:
+                    checked = await self._evict_recorded_days(checked)
                 with suppress(asyncio.TimeoutError):
-                    await asyncio.wait_for(stop.wait(), RAW_FLUSH_S)
+                    await asyncio.wait_for(stop.wait(), HOT_SET_SYNC_S)
         finally:
-            for task in [*workers, *self.streams.values(), *self._background]:
+            for task in workers:
                 task.cancel()
-            await asyncio.gather(*workers, *self.streams.values(), *self._background, return_exceptions=True)
-            self.streams.clear()
-            self._background.clear()
-            self._stream_groups.clear()
-            self._stream_controls.clear()
-            self._connected_since.clear()
-            self._stream_watermarks.clear()
+            await asyncio.gather(*workers, return_exceptions=True)
+
+    async def _evict_recorded_days(self, since):
+        """Past-day kline counts of days tank-capture wrote into since `since`; the counts
+        are saved after."""
+        now = utcnow()
+        today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        for key in await market_kline_days_recorded_since(self.repo, since - DAY_COUNTS_MARGIN, today):
+            self._kline_day_counts.pop(key, None)
+        await self._save_day_counts()
+        return now

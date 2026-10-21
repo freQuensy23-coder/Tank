@@ -4,107 +4,134 @@ on:
   push:
     branches: [main, prod-main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   lint-python:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          python-version: "3.13"
-      - run: uv sync --frozen --extra dev
-      - name: no comments
-        run: uv run python scripts/ci/no_comments.py src tests scripts deploy
-      - name: ruff check
-        run: uv run ruff check .
-      - name: ruff format
-        run: uv run ruff format --check .
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          version: "0.11.7"
+          python-version: "3.13.13"
+          enable-cache: true
+      - run: uv sync --python 3.13.13 --frozen --extra dev
+      - name: Source comment policy
+        run: uv run --frozen --extra dev python scripts/ci/no_comments.py src tests scripts deploy capture
+      - name: Python lint
+        run: uv run --frozen --extra dev ruff check src tests scripts deploy
+      - name: Python format
+        run: uv run --frozen --extra dev ruff format --check src tests scripts deploy
+      - name: CI policy regressions
+        run: uv run --frozen --extra dev pytest -q tests/test_ci_no_comments.py
 
   lint-go:
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
-      - id: gomod
-        run: echo "dirs=$(find . -name go.mod -not -path './vendor/*' -not -path '*/upstream/*' -exec dirname {} \; | tr '\n' ' ')" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-go@v5
-        if: steps.gomod.outputs.dirs != ''
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          go-version: stable
-      - name: no comments
-        if: steps.gomod.outputs.dirs != ''
-        run: python3 scripts/ci/no_comments.py ${{ steps.gomod.outputs.dirs }}
-      - name: golangci-lint
-        if: steps.gomod.outputs.dirs != ''
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: capture/go.sum
+      - name: Go format
+        working-directory: capture
+        run: test -z "$(gofmt -l .)"
+      - name: Go vet
+        working-directory: capture
+        run: go vet ./...
+      - name: Install pinned golangci-lint
         run: |
-          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
-          for d in ${{ steps.gomod.outputs.dirs }}; do (cd "$d" && gofmt -l . | tee /dev/stderr | (! read) && go vet ./... && "$(go env GOPATH)/bin/golangci-lint" run ./...); done
+          curl --fail --silent --show-error --location https://github.com/golangci/golangci-lint/releases/download/v2.5.0/golangci-lint-2.5.0-linux-amd64.tar.gz --output "$RUNNER_TEMP/golangci-lint.tar.gz"
+          printf '%s  %s\n' c77313a77e19b06123962c411d9943cc0d092bbec76b956104d18964e274902e "$RUNNER_TEMP/golangci-lint.tar.gz" | sha256sum --check --status
+          tar -xzf "$RUNNER_TEMP/golangci-lint.tar.gz" --directory "$RUNNER_TEMP" golangci-lint-2.5.0-linux-amd64/golangci-lint
+      - name: Go lint
+        working-directory: capture
+        run: '"$RUNNER_TEMP/golangci-lint-2.5.0-linux-amd64/golangci-lint" run ./...'
 
   mypy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          python-version: "3.13"
-      - run: uv sync --frozen --extra dev
-      - run: uv run mypy
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          version: "0.11.7"
+          python-version: "3.13.13"
+          enable-cache: true
+      - run: uv sync --python 3.13.13 --frozen --extra dev
+      - run: uv run --frozen --extra dev mypy
 
   test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 6
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.13"
-      - run: uv sync --frozen --extra dev
-      - name: unit tests (3 min budget)
-        timeout-minutes: 3
-        run: uv run pytest -q -m "not slow" -n auto --dist worksteal --timeout 60 -p no:cacheprovider --durations=15
+    uses: ./.github/workflows/test-suite.yml
 
-  test-slow:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-        with:
-          python-version: "3.13"
-      - run: uv sync --frozen --extra dev
-      - run: uv run pytest -q -m slow --timeout 300 -p no:cacheprovider
+  capture:
+    uses: ./.github/workflows/capture.yml
 
   image:
-    needs: [lint-python, lint-go, mypy, test, test-slow]
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    needs: [lint-python, lint-go, mypy, test, capture]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
       contents: read
       packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: tank
+            context: .
+          - image: tank-capture
+            context: ./capture
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        if: github.event_name == 'push'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - id: name
-        run: echo "image=ghcr.io/${GITHUB_REPOSITORY,,}/tank" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v6
+        env:
+          IMAGE_NAME: ${{ matrix.image }}
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/$IMAGE_NAME"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            echo "branch_tag=$image:$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
-          context: .
-          push: true
+          context: ${{ matrix.context }}
+          push: ${{ github.event_name == 'push' }}
+          build-args: GIT_SHA=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
           tags: |
             ${{ steps.name.outputs.image }}:${{ github.sha }}
-            ${{ steps.name.outputs.image }}:${{ github.ref_name }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            ${{ steps.name.outputs.branch_tag }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

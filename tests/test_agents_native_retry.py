@@ -134,6 +134,7 @@ async def test_retained_old_exhausted_new_retrying_sequence_waits_for_actual_out
         assert "terminal_failure" not in current and not current.get("pending_retry_event")
         assert len(posts) == 1
         assert not (await service.completed_turn("s"))["complete"]
+
         await service.process_event("s", error("late-old-exhausted", CALLBACK, "exhausted"))
         assert (await repo.get("ops.agent_sessions", "s"))["status"] == "OPEN"
         if outcome == "COMPLETED":

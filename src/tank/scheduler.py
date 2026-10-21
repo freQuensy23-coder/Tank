@@ -21,12 +21,22 @@ CHECKPOINTS = {
     "POST_72H": 259200,
 }
 BENCHMARK_TOKENS = frozenset({"bitcoin:BTC", "ethereum:ETH"})
+
+
 REACTION_MEASUREMENT_SLOTS = 2
+
+
 EVAL_CONDITIONS_BUDGET_S = 15
+
+
 EVAL_CONDITION_BUDGET_S = 8
 REACTION_RETRY_S = 30
+
+
 CAPTURE_YIELD_POLL_S, CAPTURE_YIELD_MAX_S = 2, 300
 CAPTURE_EXPIRY_S, CAPTURE_EXPIRY_SAFETY_S = 6 * 3600, 1200
+
+
 LATE_REVISION_DEFER_S = 1800
 
 
@@ -104,6 +114,7 @@ class Scheduler:
         self.background[name] = task
 
         def completed(finished):
+
             if self.background.get(name) is finished:
                 self.background.pop(name)
 
@@ -275,6 +286,7 @@ class Scheduler:
             if missing_pre and self.market is not None:
 
                 async def capture_pre(payloads=missing_pre):
+
                     for payload in payloads:
                         await self.reaction_capture(payload, wait_for_slot=True)
 
@@ -489,8 +501,10 @@ class Scheduler:
 
             if isinstance(self.truth, MarketTruthService):
                 raise RuntimeError("Selective condition evaluator is required")
+
             return await self.truth.assess(event_id, token_id, cutoff)
         truth = await evaluator(event_id, token_id, cutoff, requirements=requirements)
+
         return truth
 
     async def eval_conditions(self, payload):
@@ -506,6 +520,7 @@ class Scheduler:
             requirement_sets.setdefault(key, set()).update(
                 (item["metric"], item["window"]) for item in self.condition_requirements(condition["expr"])
             )
+
         conditions.sort(
             key=lambda c: (
                 bool(self.condition_requirements(c["expr"])),
@@ -520,6 +535,7 @@ class Scheduler:
         outcomes = {"evaluated": [], "fired": [], "deferred": []}
 
         async def bounded_truth(key, requirements):
+
             remaining = limit["until"] - loop.time()
             if remaining <= 0:
                 raise _EvalBudgetSpent
@@ -597,6 +613,7 @@ class Scheduler:
                     return []
 
                 periods = persistence_windows(expr)
+
                 market_cutoff_stamp = cutoff_stamp
                 if periods:
                     from datetime import datetime
@@ -671,6 +688,7 @@ class Scheduler:
                             **evaluation_stamp.fields("cutoff"),
                         }
                         return matched
+
                     history = {row["window"]: dict(row) for row in previous.get("history", [])}
                     if not history and previous.get("window") is not None:
                         history[previous["window"]] = dict(previous)
@@ -778,6 +796,7 @@ class Scheduler:
                 else:
                     await self.repo.put("ana.watch_conditions", cond["cond_id"], updated)
                 outcomes["fired" if fired else "evaluated"].append(cond["cond_id"])
+
         return outcomes
 
     async def milestone_check(self, payload):
@@ -791,6 +810,7 @@ class Scheduler:
             and (not payload.get("due_at") or row.get("due_at") == payload["due_at"])
         ]
         resolution = matches[-1] if matches else None
+
         await self.message(
             "MILESTONE",
             payload["event_id"],
@@ -844,6 +864,7 @@ class Scheduler:
                 plan = await self._reaction_plan(payload)
                 if plan["complete"]:
                     return plan["result"]
+
             if self._reaction_slots.locked() and not wait_for_slot:
                 from tank.delivery import DeliveryDeferred
 
@@ -863,6 +884,7 @@ class Scheduler:
     async def detect_late_data(self, now):
         marker = await self.repo.get("ops.scheduler_checkpoints", "reaction-capture-changes")
         since = marker["at"] if marker else None
+
         queued = {
             (job["payload"].get("event_id"), job["payload"].get("token_id"), job["payload"].get("checkpoint"))
             async for job in self.repo.iter_all(
@@ -1047,7 +1069,9 @@ class Scheduler:
         if await self._benchmark_only(payload):
             return await self._measure_benchmark(payload, captured_stamp, start, end, start_stamp, end_stamp)
         await self._yield_to_market_truth(payload, end)
+
         captured_stamp = collection_clock()
+
         snapshot = await self.market.snapshot(
             payload["token_id"],
             end_stamp,
@@ -1599,6 +1623,7 @@ class Scheduler:
         data_root = Path(self.settings.data_dir).resolve()
         if target.resolve().is_relative_to(data_root):
             raise ValueError("Backup destination must be outside live data directory")
+
         roots = {"bundles": data_root / "bundles"}
         protected = protected_evidence_paths(self.settings)
         import threading
@@ -1694,7 +1719,8 @@ class Scheduler:
         jobs_cutoff = offset_schedule(
             collection_clock(now), -timedelta(days=self.threshold("jobs_retention_days", 30))
         )
-        await self.repo.prune_market(market_cutoff.value)
+        book_cutoff = parse_time(now) - timedelta(hours=self.threshold("book_summary_retention_hours", 72))
+        await self.repo.prune_market(market_cutoff.value, book_before=book_cutoff)
         await self.repo.prune_jobs(jobs_cutoff.value)
         removed = await self.raw_retention(now)
         marker.with_suffix(".json").write_text(
@@ -1733,6 +1759,7 @@ class Scheduler:
             now, states=("TRACKED", "COOLDOWN", "MONITORING", "ALERTED"), include_recent_terminal=False
         ):
             event_id = candidate["event_id"]
+
             async with self.repo.lock("event:" + event_id), self.repo.transaction():
                 event = await self.repo.get("evt.events", event_id)
                 if event and event.get("lifecycle") in {"TRACKED", "COOLDOWN", "MONITORING", "ALERTED"}:

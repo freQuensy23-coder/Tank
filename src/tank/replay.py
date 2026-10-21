@@ -152,6 +152,7 @@ def _semantic_end(value, fixed_interval=None):
                 and entry is not None
             ):
                 stamp = _market_timestamp(value, key)
+
                 if stamp.value is not None and not (
                     key == "observed_at" and stamp.precision == "COLLECTION_ONLY"
                 ):
@@ -297,6 +298,7 @@ class ReplayInputs:
             if self.exclusive_boundary(bound) and _point_at_boundary(row["record"], bound):
                 return False
             receipts = [parse_time(row["available_at"]), *_receipt_times(row["record"])]
+
             historical = (
                 max(receipts) > parse_time(self.cutoff)
                 and self.assembled_at is not None
@@ -532,6 +534,7 @@ async def replay_bundle(bundle_path, repo, settings, *, runner=None, output_dir=
     Custom runners are useful for offline tests; none imply native acceptance.
     """
     inputs = load_inputs(bundle_path, settings)
+
     from tank.models import TABLE_COLUMNS
 
     for collection in TABLE_COLUMNS:
@@ -617,20 +620,18 @@ class ReplayMarketReader:
             }
         manifests = (self.evidence_capture or {}).get("rebuild_manifests", [])
         if manifests:
-            from types import SimpleNamespace
-
             from tank.market.archive import TradeArchive
+            from tank.market.capture import capture_boundary_points
             from tank.market.flow import FlowAccumulator
-            from tank.market.service import MarketService
 
             instruments = [
                 row for row in self.inputs.registry.get("instruments", []) if row.get("token_id") == token_id
             ]
             ids = {row["instrument_id"] for row in instruments}
             boundary_flow = FlowAccumulator()
-            MarketService._register_capture_boundaries(
-                SimpleNamespace(flow=boundary_flow), ids, cutoff, anchor
-            )
+            points = capture_boundary_points(cutoff, anchor)
+            for iid in ids:
+                boundary_flow.register_boundaries(iid, points)
             for instrument in instruments:
                 iid = instrument["instrument_id"]
                 selected = [row for row in manifests if row["instrument_id"] == iid]
@@ -897,6 +898,7 @@ async def replay_fixture(repo, settings, fixture_id):
         raise ReplayError(f"insufficient_fixture: no captured packet for {fixture_id}")
     bundle_id = digest(json.loads(path.read_text()))
     directory = settings.data_dir / "replay" / "bundles" / bundle_id
+
     result = await run_operational_replay(path, repo, settings)
     freeze(directory / "outputs.json", result)
     freeze(directory / "inputs.json", json.loads(path.read_text()))
@@ -984,11 +986,13 @@ async def reproduce_bundle(repo, settings, sha, *, mode="fresh-session"):
         actual = await run_operational_replay(source, repo, settings)
     else:
         raise ReplayError("Unknown replay mode")
+
     matches = actual["output_sha256"] == expected["output_sha256"]
     if mode == "captured-tools":
         if not matches:
             raise ReplayError("bundle reproduction differs from immutable output")
         return {"reproduced": True, "input_sha256": sha, "output_sha256": actual["output_sha256"]}
+
     semantic_expected = semantic_verdict_output(expected["output"])
     semantic_actual = semantic_verdict_output(actual["output"])
     semantic_match = actual.get("status", "COMPLETED") == "COMPLETED" and semantic_expected == semantic_actual
@@ -1156,6 +1160,7 @@ async def resolve_replay_message_references(message, inputs, repo, substitutions
         ]
         if embedded is not None:
             originals.append(embedded)
+
         bound = substitutions.get(identifier)
         if bound and originals:
             causal = [
@@ -1366,6 +1371,7 @@ def prepare_masked_packet(source_path, masked_path, private_map_path, replacemen
         return value
 
     masked = mask({k: v for k, v in packet.items() if k != "input_sha256"})
+
     for key in ("config_version", "code_version", "cutoff"):
         masked[key] = packet[key]
     private = {"schema_version": 1, "source_sha256": digest(packet), "replacements": replacements}
@@ -1519,6 +1525,7 @@ async def replay_agent_session(
                 "mkt.raw_archives",
             }:
                 continue
+
             if not baseline and not (
                 row["collection"].startswith("ingest.")
                 or _market_record(row)
@@ -1629,6 +1636,7 @@ async def replay_agent_session(
             and row["record"].get("status") == "DONE"
             and mapped_capture(row["record"].get("arguments", row["record"].get("input"))) == arguments
         ]
+
         return (
             min(
                 candidates,
@@ -1700,6 +1708,7 @@ async def replay_agent_session(
                     "insufficient_fixture: one unambiguous original external tool result required"
                 )
             capture = min(matches, key=lambda row: parse_time(row["available_at"]))
+
             capture_timestamp = propagate_timestamp(capture, "available_at")
             if parse_time(capture_timestamp.value) > clock.now():
                 await advance_clock(capture_timestamp)
@@ -1909,6 +1918,7 @@ async def replay_agent_session(
         )
         if not phase or any(row["phase_id"] == phase["phase_id"] for row in phase_checkpoints):
             return
+
         follower = service.tasks.get(sid)
         if follower is not None and not follower.done():
             follower.cancel()
@@ -1976,6 +1986,7 @@ async def replay_agent_session(
                 if job["type"] == "DELIVER":
                     if inputs.fixture_reference:
                         continue
+
                     outcome = await replay_delivery(job["payload"])
                     await repo.put("ops.jobs", job["job_id"], dict(job, result=outcome, status="DONE"))
                     continue
@@ -2085,6 +2096,7 @@ async def replay_agent_session(
                     ]
                     if any(missing_capture_error(call) for call in calls):
                         raise ReplayError("insufficient_fixture: required replay tool capture is absent")
+
                     queued_deliveries = [
                         row
                         async for row in repo.iter_all(
@@ -2092,6 +2104,7 @@ async def replay_agent_session(
                         )
                     ]
                     execution = await service.completed_turn(sid)
+
                     if (
                         execution["complete"]
                         and (inputs.fixture_reference or not queued_deliveries)
@@ -2305,7 +2318,9 @@ async def replay_agent_session(
             if worker:
                 worker.cancel()
                 await asyncio.gather(worker, return_exceptions=True)
+
             await service.stop_followers()
+
             owned = [
                 row async for row in repo.iter_all("ops.agent_sessions", filters={"replay_run_id": run_id})
             ]

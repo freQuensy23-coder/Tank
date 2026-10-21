@@ -22,6 +22,7 @@ def stage(tmp_path):
 
 
 def input_tree(tmp_path, overlay):
+
     root = tmp_path / "source"
     root.mkdir()
     manifest = json.loads((overlay.BASE / "manifest.json").read_text())

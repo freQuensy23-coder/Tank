@@ -31,11 +31,7 @@ async def main(out):
             results = {}
             for sid in SOURCES:
                 result = await service.poll_once(sid)
-                results[sid] = {
-                    "items": result["items"],
-                    "status": result["status"],
-                    "errors": result["errors"][:3],
-                }
+                results[sid] = {"items": result["items"], "status": result["status"], "errors": result["errors"][:3]}
             items = await repo.list("ingest.source_items", limit=100000)
             files = list((data / "raw" / "items").rglob("*.json.zst"))
             report["rounds"].append(
@@ -44,9 +40,7 @@ async def main(out):
                     "results": results,
                     "items_total": len(items),
                     "raw_files_total": len(files),
-                    "raw_files_by_source": dict(
-                        Counter(f.relative_to(data / "raw" / "items").parts[0] for f in files)
-                    ),
+                    "raw_files_by_source": dict(Counter(f.relative_to(data / "raw" / "items").parts[0] for f in files)),
                     "items_by_source": dict(Counter(i["source_id"] for i in items)),
                     "every_raw_file_is_an_item": sorted(f.name for f in files)
                     == sorted(i["item_id"] + ".json.zst" for i in items),

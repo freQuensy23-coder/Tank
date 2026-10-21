@@ -1,29 +1,21 @@
 """A routed item completes atomically with its accepted observation."""
 
-import os
-
 import pytest
+from test_session_binding_concurrency import fixture_repo
 
 from tank.event_tools import EventToolService
 from tank.settings import Settings
-from tank.storage import MemoryRepository, PostgresRepository
 from tank.util import iso, new_id, sha256
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
 @pytest.mark.parametrize("fail_item_write", [False, True])
-async def test_observation_and_source_completion_are_atomic(tmp_path, monkeypatch, backend, fail_item_write):
-    if backend == "postgres":
-        url = os.getenv("TANK_TEST_DATABASE_URL")
-        if not url:
-            pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
-        repo = PostgresRepository(url)
-    else:
-        repo = MemoryRepository()
-    await repo.open()
-    try:
-        if backend == "postgres":
-            await repo.migrate()
+async def test_observation_and_source_completion_are_atomic(
+    tmp_path, monkeypatch, backend, fail_item_write, postgres_template
+):
+    async with fixture_repo(backend, postgres_template) as repo:
         service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
         first, second, stamp = new_id("item"), new_id("item"), iso()
         quote = "Product announced"
@@ -102,5 +94,3 @@ async def test_observation_and_source_completion_are_atomic(tmp_path, monkeypatc
         else:
             assert observations[0]["link_type"] == "CORROBORATION"
         assert not await repo.list("out.alerts", filters={"event_id": origin["event_id"]})
-    finally:
-        await repo.close()

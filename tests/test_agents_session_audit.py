@@ -442,6 +442,7 @@ async def test_native_queued_tool_result_executions_continue_after_transient_idl
         for number, name in enumerate(names[:3]):
             await emit({"id": f"call-{number}", "type": "agent.custom_tool_use", "name": name, "input": {}})
         await asyncio.wait_for(first_idle.wait(), timeout=2)
+
         for number, name in enumerate(names[3:], start=3):
             await emit({"id": f"run-{number}", "type": "session.status_running"})
             await emit({"id": f"call-{number}", "type": "agent.custom_tool_use", "name": name, "input": {}})

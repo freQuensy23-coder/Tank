@@ -23,9 +23,13 @@ from tank.time_precision import collection_clock, offset_schedule, propagate_tim
 from tank.util import canonical_json, iso, sha256
 
 REST_TIMEOUT_S = 30
+
 DEFAULT_MAX_RUNNING_SESSIONS = 2
 ADMITTED_JOB_TYPES = ("AGENT_MESSAGE", "SCOUT_REVIEW")
+
 ADMISSION_SLEEP_S = 60
+
+
 MATERIAL_EVENT_TYPES = {
     "agent.custom_tool_use",
     "user.custom_tool_result",
@@ -39,6 +43,7 @@ MATERIAL_EVENT_TYPES = {
     "span.model_request_end",
     "host.analysis_incomplete",
 }
+
 IDLE_RECHECK_TICKS = 60
 
 
@@ -96,6 +101,7 @@ class SessionService:
         self.repo, self.settings, self.tool_dispatch = repo, settings, tool_dispatch
         self.http = http or httpx.AsyncClient(timeout=REST_TIMEOUT_S)
         self.owns_http = http is None
+
         self.stream_http = stream_http or (
             http
             if http is not None
@@ -115,6 +121,7 @@ class SessionService:
         self.closed = False
 
     def clock_timestamp(self):
+
         return collection_clock(iso())
 
     def event_timestamp(self, event):
@@ -185,6 +192,7 @@ class SessionService:
 
     async def request(self, method, path, **kwargs):
         headers = self.headers(kwargs.pop("idem", None))
+
         kwargs.setdefault("timeout", REST_TIMEOUT_S)
         response = await self.http.request(method, self.url(path), headers=headers, **kwargs)
         response.raise_for_status()
@@ -237,6 +245,7 @@ class SessionService:
         identity = event_id or item_id or payload.get("proposal_id")
         if not identity:
             raise ValueError("Session needs event, item or proposal identity")
+
         marker = sha256(
             {
                 "identity": identity,
@@ -397,6 +406,7 @@ class SessionService:
                 if session.get("runtime_status") != "RUNNING":
                     session["runtime_status"] = "PENDING"
                 await self.repo.put("ops.agent_sessions", sid, session)
+
             session = await self.post_message_intent(sid, key)
         self.start_stream(sid)
         return session
@@ -673,7 +683,9 @@ class SessionService:
                         },
                     )
             return before
+
         await self.catch_up(sid)
+
         current = await self.repo.get("ops.agent_sessions", sid)
         drained = await self.execution_barrier(current)
         if not drained["complete"] or drained["accepted_input_ids"] != before["accepted_input_ids"]:
@@ -701,6 +713,7 @@ class SessionService:
             for message in current.get("message_log", []):
                 if message["message_id"] in outcomes:
                     message["source_completion_verified"] = copy.deepcopy(outcomes[message["message_id"]])
+
                     if "workflow_completion_verified" in message:
                         message["legacy_workflow_completion_verified"] = message.pop(
                             "workflow_completion_verified"
@@ -813,6 +826,7 @@ class SessionService:
         recovered = {**descriptor, **self.clock_timestamp().fields("recovered_at")}
         session.update(descriptor)
         session["recovered_prompt_descriptor"] = recovered
+
         async with self.repo.lock("session:" + session["session_id"]):
             current = await self.repo.get("ops.agent_sessions", session["session_id"])
             current.update(descriptor)
@@ -938,6 +952,7 @@ class SessionService:
                     slow_result = await self.invoke_tool(session, event["name"], event["input"], call_id)
             except Exception as error:
                 slow_error, slow_error_status = self.tool_failure(error)
+
             slow_ready = not decision_market_refresh_completed
         async with self.repo.lock("tool:" + key):
             stored = await self.repo.get("ops.tool_calls", key)
@@ -1365,6 +1380,7 @@ class SessionService:
                 retry = active.get("retry_count", 0) if active else session.get("retry_count", 0)
                 if retry < 1 and body:
                     message_id = active["message_id"] if active else "legacy"
+
                     async with self.repo.lock("session:" + sid):
                         durable = await self.repo.get("ops.agent_sessions", sid)
                         event = dict(event)
@@ -1483,6 +1499,7 @@ class SessionService:
             self.seen_events.setdefault(sid, set()).add(seen_key(event))
 
     async def catch_up(self, sid):
+
         page = None
         while True:
             params = {"limit": 100, "order": "asc"}
@@ -1509,6 +1526,7 @@ class SessionService:
                 if message.event == "ping":
                     continue
                 data = json.loads(message.data)
+
                 event = data.get("event", data) if "seq" in data else data
                 seq = data.get("seq")
                 if seq is None and message.id and message.id.isdigit():
@@ -1601,6 +1619,7 @@ class SessionService:
                 await self.request("POST", f"sessions/{sid}/archive", json={})
                 session["status"] = "ENDED"
                 await self.repo.put("ops.agent_sessions", sid, session)
+
             return True
 
     async def follow(self, sid):
@@ -1767,6 +1786,7 @@ class SessionService:
                 sid = session["session_id"]
                 settled = session.get("runtime_status") == "IDLE" and not session.get("active_message_id")
                 following = sid in self.tasks and not self.tasks[sid].done()
+
                 if settled and not following and tick % IDLE_RECHECK_TICKS:
                     continue
                 if await self.finish_if_idle(sid):

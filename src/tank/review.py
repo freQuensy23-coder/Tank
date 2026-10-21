@@ -393,6 +393,7 @@ class ReviewService:
             for r in conditions
             if r.get("fired_at")
         ]
+
         window = relative.get("windows", {}).get(
             {"H1": "W1H", "H4": "W4H", "H12": "W12H", "H24": "W24H", "D3": "W3D", "D7": "W7D"}[horizon], {}
         )
@@ -536,6 +537,7 @@ class ReviewService:
                 if "reproducible_verdict" in check
                 else None
             )
+
         events = await self.rows("evt.events", "known_to_us_at", start, end)
         for event in events:
             ems = (

@@ -22,6 +22,7 @@ def redact_tool_arguments(arguments, settings):
         for key, value in configured.items()
         if _SECRET_SETTING.search(key) and isinstance(value, str) and value
     }
+
     for key, value in configured.items():
         if key.endswith("_url") and isinstance(value, str):
             try:

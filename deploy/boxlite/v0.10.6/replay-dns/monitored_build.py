@@ -59,6 +59,7 @@ def run(
     }
     if shutil.disk_usage(root).free < FLOOR:
         raise RuntimeError("Host headroom below 8 GiB before phase")
+
     if subprocess.run(DOCKER + ["inspect", name], capture_output=True, check=False).returncode == 0:
         raise RuntimeError("Owned build phase name already exists")
     volume = subprocess.run(

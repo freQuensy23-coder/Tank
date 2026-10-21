@@ -339,6 +339,7 @@ def test_who_excludes_unjustified_links_and_never_repeats_primary_as_secondary()
     assert who.count("primary Uniswap (UNI)") == 1
     assert "secondary Uniswap (UNI)" not in who and "candidate" not in who
     assert "loser OutsideLoser" in who
+
     secondary = dict(
         primary,
         token_id="cow:COW",
@@ -472,6 +473,7 @@ def test_actual_spot_exclusion_cause_reaches_the_card(source_reason):
     assert "bybit — INCOMPLETE" not in card
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "verdict,why",
     [
@@ -556,6 +558,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
             },
         )
         service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
+
         await repo.put("ops.agent_sessions", "card-session", {"session_id": "card-session", "event_id": eid})
         result = await service.dispatch(
             "publish_card",
@@ -596,7 +599,6 @@ def test_header_preserves_agent_supplied_sentence_and_structured_action():
     verdict = "The institution chose this protocol as infrastructure for its planned network."
     card = compose_card(event, assessment, [beneficiary], [decision], [truth], verdict=verdict)
     assert card.splitlines()[0] == "MAJOR (M2) — " + verdict
-    assert verdict in card
     assert "WHAT TO DO: WAIT — Thesis A · Trade B" in card
     assert event["statement"].endswith("planned network.")
 

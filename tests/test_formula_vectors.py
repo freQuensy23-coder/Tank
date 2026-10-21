@@ -26,6 +26,7 @@ def test_t1_oi_decomposition_real_native():
     assert d["position"] == Decimal("8.18")
     assert d["markup"] == Decimal("7.05")
     assert round(d["interaction"], 3) == Decimal("0.577")
+
     assert Decimal(str(d["pos_share"])).quantize(Decimal("0.001"), rounding=ROUND_DOWN) == Decimal("0.517")
     assert d["pos_share"] > 0.5
     assert oi_class(0.0818, float(usd), d, [-0.03, 0.035], [-0.04, 0.05]) == "REAL_NATIVE"
@@ -254,6 +255,7 @@ def _three_venue_snapshot_with_stale_funding():
 
     snap = synthetic_start_snapshot()
     cutoff = parse_time(snap["cutoff"])
+
     for collection in ("instruments", "flow_bars", "klines", "books", "semantics"):
         extra = []
         for row in snap[collection]:
@@ -267,6 +269,7 @@ def _three_venue_snapshot_with_stale_funding():
                     clone["metric_key"] = clone["metric_key"].replace("A.spot.", "C.spot.")
                 extra.append(clone)
         snap[collection].extend(extra)
+
     snap["funding"] = [
         r for r in snap["funding"] if parse_time(r["settlement_time"]) < cutoff - timedelta(hours=9)
     ]
@@ -285,6 +288,7 @@ def test_t8_data_confidence_medium_funding_freshness_blocks_start():
     assert dc["derivatives_native_coverage_ready"] is True
     assert dc["class"] == "MEDIUM", dc
     assert dc["limiting"]["condition"] == "freshness" and dc["limiting"]["collection"] == "funding"
+
     e, a, b = (
         {"event_id": "e", "event_state": "APPROVED", "state_verified": True, "freshness": "FRESH"},
         {"class": "MAJOR", "certainty": "HIGH", "impact_horizon": {"impact_start": "NOW"}},

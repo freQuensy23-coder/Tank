@@ -110,6 +110,7 @@ def filter_cutoff(rows):
 
 
 def routing_metrics(rows, cutoff):
+
     tp = fp = fn = 0
     errors = []
     for row in rows:

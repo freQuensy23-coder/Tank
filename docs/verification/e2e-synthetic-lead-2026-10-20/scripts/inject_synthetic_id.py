@@ -3,7 +3,6 @@
 The feed document is parsed by the product's own RSS parser, its bytes stored by the
 raw store, and the row ingested by SourceService.ingest, which queues FILTER_ITEM.
 """
-
 import asyncio
 import json
 import sys
@@ -71,14 +70,7 @@ async def main():
         )
         await svc.ingest(source, row)
         stored = await repo.get("ingest.source_items", row["item_id"])
-        keys = (
-            "item_id",
-            "external_id",
-            "published_at",
-            "published_at_precision",
-            "observed_at",
-            "relevance",
-        )
+        keys = ("item_id", "external_id", "published_at", "published_at_precision", "observed_at", "relevance")
         print(json.dumps({k: stored.get(k) for k in keys}, default=str))
     finally:
         if hasattr(svc, "close"):

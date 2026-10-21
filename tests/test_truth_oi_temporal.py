@@ -48,6 +48,7 @@ def packet_with_explicit_legacy_bybit_buckets():
         )
         for row in packet["oi"]
     ]
+
     for row in packet["oi"]:
         row.update(
             ts_prec="BUCKET(300s)",

@@ -396,9 +396,8 @@ async def session_catalog(service):
 
 async def cleanup_owned(repo, settings, before, initial_catalog, *, wait_s):
     """Test-only remote resource disposal AFTER final snapshots, never local mutations."""
-    from tank.integration_extract import session_status
-
     from tank.agents.sessions import SessionService
+    from tank.integration_extract import session_status
     from tank.util import sha256
 
     service = SessionService(repo, settings, None)

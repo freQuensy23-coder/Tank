@@ -150,6 +150,7 @@ async def test_exact_ten_rejects_source_side_only_without_quiet_clamp():
 
 async def test_exact_ten_does_not_invent_live_or_relation_claim_type_requirement():
     service, args = await prepare(exposure=10, event_state="APPROVED", claim_type="STATE")
+
     args["edges"][0]["causal_chain"] = "Counterparty selected this as the sole required rail."
     await service.set_beneficiaries(args, {})
     assert (await service.repo.list("evt.beneficiary_edges"))[0]["exposure_score"] == 10
@@ -216,6 +217,7 @@ async def test_proposed_sole_rail_rating_has_no_invented_stage_gate_and_cannot_s
     }
     beneficiary = dict(edge, capture_class="DIRECT")
     engine = DecisionEngine()
+
     positive = engine.evaluate(
         dict(event, event_state="LIVE"), assessment, dict(beneficiary, credible=True), market
     )

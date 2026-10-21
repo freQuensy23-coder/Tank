@@ -26,6 +26,7 @@ def apply(root, *, replay_dns=False):
         identity = manifest["retained_lifecycle"]["runtime_identity"]
         if not re.fullmatch(r"[a-f0-9]{64}", identity):
             raise ValueError("Execution requires the actual prepared runtime identity")
+
         verify_runtime(root)
         matches = [row for row in replacements if row["path"] == rebase["target"]]
         if len(matches) != 1:

@@ -65,6 +65,7 @@ def raw_packet():
                 trade_aggregation="PER_FILL",
             )
         )
+
         for index in range(9 * 96):
             t = START - timedelta(minutes=15 * (index + 1))
             packet["klines"].append(
@@ -187,6 +188,7 @@ def raw_packet():
 
 def derive(packet, start=START, end=END):
     spot = spot_truth(packet["flow_bars"], [], packet["instruments"], start, end)
+
     spot["composite_cohort"] = deepcopy(spot["composite_max"])
     relative = dict(
         ref_venue="A:spot:T",
@@ -213,6 +215,7 @@ def test_raw_native_volume_and_basis_support_require_complete_own_history():
     assert f["perp_volume_up_beyond_normal"] is True
     assert f["basis_within_normal"] is True
     assert f["perp_taker_flow_buy"] is True
+
     for row in packet["klines"]:
         if parse_time(row["open_time"]) >= START:
             row["volume_native"] = "10"
@@ -246,6 +249,7 @@ def test_raw_lead_increment_ticket_and_depth_support_values():
     assert spot["size_profile"]["sell_share_rising"] is True
     assert deriv["support_features"]["ask_depth_building"] is True
     assert deriv["support_features"]["exchange_inflows"] is True
+
     assert deriv["incremental_share"]["spot"] == 0.5
     packet = raw_packet()
     for row in packet["klines"]:
@@ -260,6 +264,7 @@ def test_raw_large_ticket_minority_and_ask_refill_include_missing_and_failed_con
     for row in packet["flow_bars"]:
         row["size_buckets"]["B4"] = dict(buy_notional="1000", sell_notional="1000")
     assert derive(packet)[1]["support_features"]["large_tickets_minority"] is True
+
     for row in packet["books"]:
         row["depth"]["ask"]["p1"]["usd"] = "100"
     assert derive(packet)[1]["support_features"]["ask_replenishment"] is True
@@ -325,6 +330,7 @@ def test_raw_funding_dispersion_fragmentation_needs_independent_complete_path():
     assert deriv["funding_dispersion_normal_range_8h"] == [Decimal(0), Decimal(0)]
     assert liq["fragmentation"]["funding_path_validated"] is True
     assert liq["fragmentation"]["validated"] is True
+
     _, _, _, supply, relative = derive(packet)
     assert (
         select_move(spot, deriv, liq, supply, relative, "HIGH", "EVENT")["move_class"]
@@ -382,6 +388,7 @@ def test_raw_alternating_top_venue_signs_do_not_invent_second_path():
     candidate = next(c for c in classified["divergence"]["candidates"] if c["state"] == "FRAGMENTATION")
     assert candidate["eligible"] is True and candidate["refuted"] is False
     assert classified["move_class"] != "REAL_MARKET_FRAGMENTATION"
+
     for row in packet["flow_bars"]:
         if row["minute_start"] == iso(start):
             row["complete"] = False
@@ -400,6 +407,7 @@ def scoring_qualifiers(spot, deriv, liq, supply, relative, cls, qualifier_native
     support feature, lead, funding classification, volume share, or depth trend
     is overwritten here. Those are raw-derived by derive().
     """
+
     deriv["synchronized"] = {
         key: deriv["per_venue"][0].get(key)
         for key in ("oi_native_chg_pct", "native_normal_range", "oi_class")
@@ -418,6 +426,7 @@ def scoring_qualifiers(spot, deriv, liq, supply, relative, cls, qualifier_native
         liq["elasticity"]["weak_response"] = True
     if cls == "DISTRIBUTION":
         supply["supply_in_evidence"] = "TRUE"
+
         spot["cohort_comparisons"] = {
             "W24H": dict(current=dict(sign=-1), other=dict(sign=1), share_majority=True)
         }
@@ -533,6 +542,7 @@ def test_raw_support_missing_evidence_never_counts_as_zero_or_positive():
         "exchange_inflows",
     ]:
         assert f[key] is None, key
+
     assert f["basis_within_normal"] is False
 
 
@@ -646,5 +656,6 @@ def test_each_support_term_loses_exactly_one_point_when_raw_evidence_is_removed(
                 row["independent_rest"]["mid"] = "105"
     else:
         raise AssertionError("Unmapped written support term " + term)
+
     reduced, _ = raw_scores(packet, cls, None if term == "native_not_up" else native)
     assert reduced[cls] == maximum - 1

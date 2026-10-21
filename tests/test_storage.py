@@ -1,9 +1,11 @@
 import asyncio
 import os
+from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import timedelta
 
 import pytest
 import pytest_asyncio
+from deployment_postgres_helpers import deployment_repository
 
 from tank.storage import ImmutableRecordError, MemoryRepository, PostgresRepository
 from tank.util import iso, new_id, parse_time, utcnow
@@ -115,30 +117,36 @@ def complete_fixture_record(collection, record):
     return record
 
 
-@pytest_asyncio.fixture(params=["memory", "postgres"])
-async def repo(request):
-    if request.param == "postgres":
-        url = os.getenv("TANK_TEST_DATABASE_URL")
-        if not url:
-            pytest.skip(
-                "Real PostgreSQL requires TANK_TEST_DATABASE_URL pointing at an isolated test database"
+@pytest_asyncio.fixture(
+    params=["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def repo(request, postgres_template):
+    async with AsyncExitStack() as resources:
+        if request.param == "postgres_deployment":
+            result = await resources.enter_async_context(deployment_repository())
+        elif request.param in {"postgres", "postgres_fresh"}:
+            url = os.getenv("TANK_TEST_DATABASE_URL")
+            if not url:
+                pytest.skip(
+                    "Real PostgreSQL requires TANK_TEST_DATABASE_URL pointing at an isolated test database"
+                )
+            fresh = request.param == "postgres_fresh"
+            result = await resources.enter_async_context(
+                postgres_template.repository(url, migrated=not fresh)
             )
-        result = PostgresRepository(url)
-        await result.open()
-        await result.migrate()
-        async with result.transaction():
-            await result._conn().execute("TRUNCATE ops.jobs, reg.tokens, evt.events, out.alerts CASCADE")
-    else:
-        result = MemoryRepository()
-        await result.open()
-    original_put = result.put
+            if fresh:
+                await result.migrate()
+        else:
+            result = MemoryRepository()
+            resources.push_async_callback(result.close)
+            await result.open()
+        original_put = result.put
 
-    async def put_fixture(collection, key, record, **kwargs):
-        return await original_put(collection, key, complete_fixture_record(collection, record), **kwargs)
+        async def put_fixture(collection, key, record, **kwargs):
+            return await original_put(collection, key, complete_fixture_record(collection, record), **kwargs)
 
-    result.put = put_fixture
-    yield result
-    await result.close()
+        result.put = put_fixture
+        yield result
 
 
 async def test_nested_transaction_rollback_and_exact_filters(repo):
@@ -220,6 +228,9 @@ async def test_event_lock_serializes_increment(repo):
     assert (await repo.get("evt.events", "event"))["counter"] == 10
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", ["postgres"], indirect=True)
 async def test_postgres_reopen_keeps_jobs_and_typed_columns(repo):
     if not isinstance(repo, PostgresRepository):
         pytest.skip("PostgreSQL restart/persistence requires the real PostgreSQL repository")
@@ -315,6 +326,9 @@ async def test_indexed_range_pages_equal_timestamps_exclusive_end(repo):
         await repo.list_range("mkt.liq_obs", "no_such_field")
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", [pytest.param("postgres_fresh", id="postgres")], indirect=True)
 async def test_postgres_migrations_repeat_and_nested_temporal_projection(repo):
     if not isinstance(repo, PostgresRepository):
         pytest.skip("Migration identity and SQL projections require real PostgreSQL")
@@ -402,22 +416,20 @@ async def test_preservation_before_market_truth_includes_beneficiary_and_benchma
     assert {"world:WLD", "ondo:ONDO", "bitcoin:BTC", "ethereum:ETH"} <= tokens
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", [pytest.param("postgres_deployment", id="postgres")], indirect=True)
 async def test_deployed_agent_role_select_only(repo):
-    if not isinstance(repo, PostgresRepository):
-        pytest.skip("Role provisioning test requires isolated PostgreSQL cluster with database tank")
+    assert isinstance(repo, PostgresRepository)
     from pathlib import Path
 
     import psycopg
 
     async with repo.transaction():
         database = await (await repo._conn().execute("SELECT current_database() AS db")).fetchone()
-        if database["db"] != "tank":
-            pytest.skip(
-                "Exact deployment role SQL intentionally requires database named tank; run this test in isolated tank"
-            )
+        assert database["db"] == "tank"
         db = await (await repo._conn().execute("SELECT 1 FROM pg_database WHERE datname='tank'")).fetchone()
-        if db is None:
-            pytest.skip("Provisioning SQL targets database tank; create it only in an isolated test cluster")
+        assert db is not None
         script = Path(__file__).resolve().parents[1] / "deploy" / "read_only_role.sql"
         await repo._conn().execute(script.read_text(), prepare=False)
         await repo._conn().execute("GRANT USAGE,CREATE ON SCHEMA reg TO tank")
@@ -555,6 +567,9 @@ async def test_normalized_retention_keeps_whole_event_day(repo):
         await repo.get("mkt.trades", "unsupported-current-raw-sql")
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", ["postgres"], indirect=True)
 async def test_sql_typed_completeness_serials_and_independent_partitions(repo):
     if not isinstance(repo, PostgresRepository):
         pytest.skip("Actual typed SQL constraints require PostgreSQL")
@@ -584,21 +599,21 @@ async def test_sql_typed_completeness_serials_and_independent_partitions(repo):
             ).fetchone()
             ids.append(row["id"])
     assert all(i > 0 for i in ids) and len(set(ids)) == 2
+
     assert await repo.maintain_partitions() >= 0
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", [pytest.param("postgres_deployment", id="postgres")], indirect=True)
 async def test_agent_new_connection_defaults_read_only(repo):
-    if not isinstance(repo, PostgresRepository):
-        pytest.skip("Actual role login settings require PostgreSQL")
+    assert isinstance(repo, PostgresRepository)
     import psycopg
     from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
     async with repo.transaction():
         database = await (await repo._conn().execute("SELECT current_database() AS db")).fetchone()
-        if database["db"] != "tank":
-            pytest.skip(
-                "Exact deployment role SQL intentionally requires database named tank; run this test in isolated tank"
-            )
+        assert database["db"] == "tank"
         await repo._conn().execute(
             (
                 __import__("pathlib").Path(__file__).resolve().parents[1] / "deploy/read_only_role.sql"
@@ -619,6 +634,9 @@ async def test_agent_new_connection_defaults_read_only(repo):
         await connection.close()
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", ["postgres"], indirect=True)
 async def test_default_typed_partition_drain_preserves_exact_row(repo):
     if not isinstance(repo, PostgresRepository):
         pytest.skip("Actual partition relocation requires PostgreSQL")
@@ -647,6 +665,7 @@ async def test_default_typed_partition_drain_preserves_exact_row(repo):
             )
         ).fetchone()
     assert before["physical"] == "mkt.flow_bars_1m_historical"
+
     await repo.maintain_partitions(include_history=False)
     assert await repo.get("mkt.flow_bars_1m", key) == original
     async with repo.transaction():
@@ -802,11 +821,31 @@ async def test_capture_tier_transitions_follow_market_retention(repo):
     assert await repo.get("ops.capture_tier_transitions", recent)
 
 
-async def test_lock_waiters_do_not_drain_the_pool(repo):
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", ["postgres"], indirect=True)
+async def test_lock_waiters_do_not_drain_the_pool(repo, monkeypatch):
     if not isinstance(repo, PostgresRepository):
         pytest.skip("Pool behavior requires PostgreSQL")
     key = new_id("contended")
     held, release = asyncio.Event(), asyncio.Event()
+    ready = asyncio.Event()
+    attempted = set()
+    waiters = []
+    transaction = repo.transaction
+
+    @asynccontextmanager
+    async def observed_transaction():
+        async with transaction() as current:
+            yield current
+
+        task = asyncio.current_task()
+        if task in waiters:
+            attempted.add(task)
+            if len(attempted) == len(waiters):
+                ready.set()
+
+    monkeypatch.setattr(repo, "transaction", observed_transaction)
 
     async def holder():
         async with repo.lock(key):
@@ -820,13 +859,16 @@ async def test_lock_waiters_do_not_drain_the_pool(repo):
             order.append(n)
 
     hold = asyncio.create_task(holder())
-    await held.wait()
-    waiters = [asyncio.create_task(waiter(n)) for n in range(40)]
-    await asyncio.sleep(0.5)
-    assert await asyncio.wait_for(repo.get("reg.tokens", "absent"), timeout=5) is None
-    assert not order
-    release.set()
-    await asyncio.wait_for(asyncio.gather(hold, *waiters), timeout=60)
+    try:
+        await held.wait()
+        waiters = [asyncio.create_task(waiter(n)) for n in range(40)]
+        await asyncio.wait_for(ready.wait(), timeout=5)
+
+        assert await asyncio.wait_for(repo.get("reg.tokens", "absent"), timeout=5) is None
+        assert not order
+    finally:
+        release.set()
+        await asyncio.wait_for(asyncio.gather(hold, *waiters), timeout=60)
     assert sorted(order) == list(range(40))
 
 
@@ -838,12 +880,16 @@ async def test_one_reaction_capture_runs_at_a_time_and_other_jobs_do_not_wait(re
     other = await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
     first = await repo.claim_job()
     assert first["job_id"] == captures[0]["job_id"]
+
     assert (await repo.claim_job())["job_id"] == other["job_id"]
     assert await repo.claim_job() is None
     await repo.finish_job(first["job_id"])
     assert (await repo.claim_job())["job_id"] == captures[1]["job_id"]
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", ["postgres"], indirect=True)
 async def test_concurrent_claims_respect_the_capture_cap(repo):
     if not isinstance(repo, PostgresRepository):
         pytest.skip("Concurrent claims require PostgreSQL")
@@ -859,6 +905,7 @@ async def test_concurrent_claims_respect_the_capture_cap(repo):
 async def test_due_captures_are_claimed_earliest_expiry_first(repo):
     await _clear_queue(repo)
     now = utcnow()
+
     slack = await repo.enqueue(
         "REACTION_CAPTURE",
         {},
@@ -881,6 +928,9 @@ async def test_due_captures_are_claimed_earliest_expiry_first(repo):
     assert (await repo.claim_job())["job_id"] == slack["job_id"]
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.parametrize("repo", ["postgres"], indirect=True)
 async def test_late_deliver_claim_is_logged_with_type_and_wait(repo, caplog):
     import logging
 
@@ -915,6 +965,7 @@ async def test_captures_yield_to_event_analysis_unless_near_expiry(repo):
         "REACTION_CAPTURE", {}, new_id("idem"), priority=0, expires_at=iso(now + timedelta(hours=5))
     )
     deliver = await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
+
     assert (await repo.claim_job())["job_id"] == deliver["job_id"]
     assert await repo.claim_job() is None
     urgent = await repo.enqueue(
@@ -943,3 +994,70 @@ async def test_captures_wait_for_a_fresh_event_card(repo):
         immutable=True,
     )
     assert (await repo.claim_job())["job_id"] == capture["job_id"]
+
+
+async def test_memory_reads_return_isolated_values_and_see_own_writes_before_rollback():
+    repo = MemoryRepository()
+    original = {"token_id": "a", "nested": {"values": [1]}}
+    await repo.put("reg.tokens", "a", original)
+    fetched = await repo.get("reg.tokens", "a")
+    listed = await repo.list("reg.tokens")
+    scanned = [row async for row in repo.iter_all("reg.tokens")]
+    fetched["nested"]["values"].append(2)
+    listed[0]["nested"]["values"].append(3)
+    scanned[0]["nested"]["values"].append(4)
+    assert await repo.get("reg.tokens", "a") == original
+    with pytest.raises(ValueError, match="rollback"):
+        async with repo.transaction():
+            await repo.put("reg.tokens", "a", {"token_id": "a", "nested": {"values": [9]}})
+            assert (await repo.get("reg.tokens", "a"))["nested"]["values"] == [9]
+            assert (await repo.list("reg.tokens"))[0]["nested"]["values"] == [9]
+            assert [row["nested"]["values"] async for row in repo.iter_all("reg.tokens")] == [[9]]
+            raise ValueError("rollback")
+    assert await repo.get("reg.tokens", "a") == original
+
+
+async def test_memory_cancelled_reader_keeps_writer_exclusive_and_releases_waiter():
+    repo = MemoryRepository()
+    await repo.put("reg.tokens", "a", {"token_id": "a", "value": "before"})
+    held, release, attempted, next_attempted = (asyncio.Event() for _ in range(4))
+
+    async def writer():
+        async with repo.transaction():
+            await repo.put("reg.tokens", "a", {"token_id": "a", "value": "committed"})
+            held.set()
+            await release.wait()
+
+    async def read_one():
+        attempted.set()
+        return await repo.get("reg.tokens", "a")
+
+    async def read_list():
+        next_attempted.set()
+        return await repo.list("reg.tokens")
+
+    owner = asyncio.create_task(writer())
+    readers = []
+    try:
+        await asyncio.wait_for(held.wait(), 1)
+        cancelled = asyncio.create_task(read_one())
+        readers.append(cancelled)
+        await asyncio.wait_for(attempted.wait(), 1)
+        assert not cancelled.done()
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        waiting = asyncio.create_task(read_list())
+        readers.append(waiting)
+        await asyncio.wait_for(next_attempted.wait(), 1)
+        assert not waiting.done()
+        release.set()
+        await asyncio.wait_for(owner, 1)
+        assert await asyncio.wait_for(waiting, 1) == [{"token_id": "a", "value": "committed"}]
+        assert (await asyncio.wait_for(repo.get("reg.tokens", "a"), 1))["value"] == "committed"
+    finally:
+        release.set()
+        for task in [owner, *readers]:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(owner, *readers, return_exceptions=True)

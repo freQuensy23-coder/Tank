@@ -1,5 +1,4 @@
 """Summarize a py-spy raw (collapsed) GIL profile: share per thread, and inclusive app frames."""
-
 import collections
 import re
 import sys

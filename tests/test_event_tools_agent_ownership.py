@@ -225,6 +225,7 @@ async def test_capture_caps_and_source_side_integration_remain_deterministic(own
     await owner_service.set_assessment({"event_id": eid, "assessment": supplied}, {})
     chain = (await owner_service.rows("evt.capture_chains", eid))[0]
     assert chain["capture_score"] == 3 and chain["conditional"]
+
     claim = await owner_service.repo.get("evt.claims", proof)
     claim.update(directionality="SOURCE_SIDE_SUPPORT", state_claim="LIVE")
     await owner_service.repo.put("evt.claims", proof, claim)
@@ -306,6 +307,7 @@ async def test_structural_criterion_quote_binds_selected_gate_verified_claim(
     assert result["criterion"] == "G1"
     assert result["criterion_quote"] == original["criterion_quote"]
     assert ("STRUCTURAL_GATE" in result["class_reasons"]) == (expected != "STRUCTURAL_SHOCK")
+
     assert (await owner_service.repo.get("evt.claims", proof))["evidence"][0]["quote"] == primary_quote
 
 

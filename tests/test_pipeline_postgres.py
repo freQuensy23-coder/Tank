@@ -7,42 +7,18 @@ from types import SimpleNamespace
 import pytest
 
 from tank.agents.pipeline import Pipeline
-from tank.storage import PostgresRepository
 from tank.util import iso, new_id
+
+pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
 @pytest.fixture
-async def isolated_routing_repo():
-    """Own the database, including legacy tables, independently of suite history."""
-    import uuid
-
-    import psycopg
-    from psycopg import sql
-    from psycopg.conninfo import conninfo_to_dict, make_conninfo
-
-    dsn = os.getenv("TANK_TEST_DATABASE_URL")
-    if not dsn:
+async def isolated_routing_repo(postgres_template):
+    url = os.getenv("TANK_TEST_DATABASE_URL")
+    if not url:
         pytest.skip("Requires an explicitly configured PostgreSQL test connection")
-    admin = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
-    name = "tank_route_qa_" + uuid.uuid4().hex[:16]
-    repo = None
-    created = False
-    try:
-        await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-        created = True
-        params = conninfo_to_dict(dsn)
-        params["dbname"] = name
-        repo = await PostgresRepository(make_conninfo(**params)).open()
-        await repo.migrate()
+    async with postgres_template.repository(url) as repo:
         yield repo
-    finally:
-        if repo is not None:
-            await repo.close()
-        try:
-            if created:
-                await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
-        finally:
-            await admin.close()
 
 
 @pytest.mark.asyncio
@@ -139,6 +115,7 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
                     await repo.put(
                         "ingest.source_items", identifiers[0], {**latest, "new_observation": "preserved"}
                     )
+
                 unrelated = await pipe.route_item({"item_id": identifiers[3]})
                 assert unrelated["routing_message"] == {"kind": "NEW_ITEM", "item_id": identifiers[3]}
                 new_one, new_two = await asyncio.gather(
