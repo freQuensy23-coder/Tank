@@ -52,12 +52,17 @@ jobs:
           docker version
           docker compose version
           docker buildx version
+      - name: Check SDK KVM prerequisite
+        if: matrix.kind == 'openma'
+        run: |
+          test -c /dev/kvm
+          stat -c 'SDK host KVM type=%F mode=%a gid=%g' /dev/kvm
       - name: Ordinary cold and unchanged warm build, offline runtime checks
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import hashlib,importlib.util,json,os,re,subprocess,sys,tarfile,time
+          import hashlib,importlib.util,json,os,re,stat,subprocess,sys,tarfile,time
           root=Path(os.environ["GITHUB_WORKSPACE"])
           expected=os.environ["PRODUCT_REF"]
           kind=os.environ["KIND"]
@@ -195,7 +200,12 @@ jobs:
             ("pinned-runner",["/tests/openma/lifecycle/pinned-runner.integration.mjs"]),
             ("pinned-provider",["/tests/openma/lifecycle/pinned-provider.integration.mjs"]),
             ("sdk-context",["/tests/openma/lifecycle/sdk-context-initialization.check.mjs"])]
-           result["existing_app_integrations"]={label:appcheck(label,base+args,marker=True) for label,args in cases}
+           kvm=Path("/dev/kvm").stat()
+           assert stat.S_ISCHR(kvm.st_mode),"/dev/kvm must be a character device"
+           result["sdk_host"]={"device":"/dev/kvm","character_device":True,"mode":oct(stat.S_IMODE(kvm.st_mode)),"gid":kvm.st_gid,"image_default_user":"node","scope":"context initialization; native qualification NOT_RUN"}
+           sdkbase=base.copy()
+           sdkbase[sdkbase.index("--entrypoint"):sdkbase.index("--entrypoint")]=["--device","/dev/kvm:/dev/kvm","--group-add",str(kvm.st_gid)]
+           result["existing_app_integrations"]={label:appcheck(label,(sdkbase if label=="sdk-context" else base)+args,marker=True) for label,args in cases}
           result["smoke_seconds"]=time.monotonic()-started
           result["status"]="PASS"
           (out/"result.json").write_text(json.dumps(result,indent=2)+"\n")
