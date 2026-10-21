@@ -299,3 +299,11 @@ def offline_credentials(monkeypatch, tmp_path):
         for name, value in original.items():
             Settings.model_fields[name].default = value
         Settings.model_rebuild(force=True)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_quote_usd_history(monkeypatch):
+    """The stablecoin USD samples are process state; no test inherits another's."""
+    from tank.market import normalize
+
+    monkeypatch.setattr(normalize, "QUOTE_USD_HISTORY", {})

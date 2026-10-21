@@ -2567,3 +2567,48 @@ async def test_reconnect_backfill_asks_rest_again_when_it_trails_the_stream(setu
     assert (bar["n_buy"] + bar["n_sell"]) == (5 if catches_up else 4)
     gaps = [g for g in await repo.list("mkt.capture_gaps") if "REST_TRADE_ID_GAP" in str(g)]
     assert gaps
+
+
+@pytest.mark.asyncio
+async def test_a_restart_values_backfilled_prints_with_restored_quote_usd_samples(setup):
+    from tank.market import normalize as norm
+
+    repo, settings, _ = setup
+    inst = {
+        "instrument_id": "bybit:spot:BTCUSDT",
+        "token_id": "bitcoin:BTC",
+        "venue": "bybit",
+        "market_type": "SPOT",
+        "venue_symbol": "BTCUSDT",
+        "quote_asset": "USDT",
+        "active": True,
+    }
+    sampled = (utcnow() - timedelta(hours=2)).replace(second=0, microsecond=0)
+    await repo.put_market_batch(
+        "mkt.klines_1m",
+        [
+            {
+                "instrument_id": inst["instrument_id"],
+                "token_id": inst["token_id"],
+                "open_time": iso(sampled),
+                "open_time_prec": "BUCKET(60s)",
+                "interval_s": 60,
+                "complete": True,
+                "c": "100",
+                "volume_native": "1",
+                "quote_usd_rate": "0.998",
+                "quote_usd_rate_as_of": iso(sampled),
+                "recorded_at": iso(sampled + timedelta(minutes=1)),
+            }
+        ],
+        keys=["k"],
+    )
+    service = MarketService(repo, settings)
+    service.instruments[inst["instrument_id"]] = inst
+    await service._ensure_market_restore()
+    later = int((sampled + timedelta(minutes=30)).timestamp() * 1000)
+    earlier = int((sampled - timedelta(minutes=1)).timestamp() * 1000)
+    raw = {"S": "Sell", "v": "1", "p": "100", "i": "7"}
+    assert norm.trade(inst, dict(raw, T=later), source="REST")["notional_usd"] == "99.800"
+    assert norm.trade(inst, dict(raw, T=earlier), source="REST")["notional_usd"] is None
+    await service.close()

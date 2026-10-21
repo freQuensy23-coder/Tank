@@ -508,6 +508,32 @@ class MarketService:
             return [cls._semantic_content(item) for item in value]
         return value
 
+    async def _restore_quote_usd(self):
+        """The stablecoin USD samples stored with klines over QUOTE_USD_REACH, before any
+        print is valued: a restart's backfill values its prints as of their own time."""
+        now = utcnow()
+        for quote in ("USDT", "USDC"):
+            ids = sorted(
+                iid
+                for iid, inst in self.instruments.items()
+                if inst.get("quote_asset", "").upper() == quote and norm.venue_key(inst).endswith(".spot")
+            )[:2]
+            if not ids:
+                continue
+            samples = {}
+            async for row in self.repo.iter_market_projection(
+                "mkt.klines_1m",
+                ["quote_usd_rate", "quote_usd_rate_as_of"],
+                "open_time",
+                start=now - norm.QUOTE_USD_REACH,
+                end=now,
+                instrument_ids=ids,
+                batch_size=20000,
+            ):
+                if row["quote_usd_rate"] is not None and row["quote_usd_rate_as_of"] is not None:
+                    samples[row["quote_usd_rate_as_of"]] = row["quote_usd_rate"]
+            norm.remember_quote_usd(quote, samples.items())
+
     async def _ensure_market_restore(self):
         if self._market_restored:
             return
@@ -527,6 +553,7 @@ class MarketService:
                         else iid + ":" + row["ts"]
                     )
                     self._market_cache.setdefault(collection, {}).setdefault(key, row)
+            await self._restore_quote_usd()
             # The reconnect backfill resumes from the last stored print (03 §5.2): the
             # newest flow bar that holds a trade carries its ID and time.
             for row in await latest_market_trades(
@@ -895,6 +922,7 @@ class MarketService:
         rate = str(norm.decimal(body["last"]))
         ts = iso()
         self._fx[quote] = {"rate": rate, "ts": ts}
+        norm.remember_quote_usd(quote, [(ts, rate)])
         instrument.update(
             quote_usd_rate=rate, quote_usd_rate_as_of=ts, quote_usd_rate_as_of_prec="COLLECTION_ONLY"
         )
