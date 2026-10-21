@@ -1,7 +1,5 @@
-#!/usr/bin/env python3
-"""Prepare a real pinned OpenMA dependency build; never assemble a native runtime."""
+"""Fixture support for the real pinned OpenMA dependency build."""
 
-import argparse
 import hashlib
 import importlib.util
 import json
@@ -76,15 +74,3 @@ def prepare(source, destination):
     }
     (destination / "tank-dependency-build.json").write_text(json.dumps(receipt, indent=2) + "\n")
     return receipt
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, required=True)
-    parser.add_argument("--destination", type=Path, required=True)
-    args = parser.parse_args()
-    print(json.dumps(prepare(args.source, args.destination), indent=2))
-
-
-if __name__ == "__main__":
-    main()

@@ -137,6 +137,23 @@ port; sandbox checks analysis libraries, font caches and actual browser-worker
 RPC, including profile isolation and persistence. Scratch exports test the
 actual main/sandbox context filters with synthetic excluded inputs.
 
+Image checks are pytest integration tests, separate from the default unit
+collection. Run them explicitly against an already built image, from this
+checkout:
+
+```sh
+uv run --frozen --extra dev pytest -q \
+  -c tests/integration/pytest.ini --confcutdir=tests/integration \
+  tests/integration/test_tank_image.py --image tank-v0:local
+```
+
+Use `test_capture_image.py` with `--revision` matching the image, or
+`test_sandbox_image.py` for the other images. The explicit configuration keeps
+Docker integration work outside the unit suite's offline boundary. Running
+ordinary `pytest` never collects this directory or starts Docker. CI runs the
+same cases against its real built images; no standalone CI checker scripts are
+needed.
+
 The separate OpenMA job prepares the pinned official upstream and builds the
 actual generated `deps` stage with `SKIP_CONSOLE=1`. It checks the installed
 pinned pnpm/tsx/esbuild environment offline. Native BoxLite/runtime stages are

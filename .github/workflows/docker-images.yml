@@ -11,7 +11,8 @@ on:
       - src/**
       - pyproject.toml
       - uv.lock
-      - scripts/ci/**
+      - tests/integration/**
+      - tests/conftest.py
       - tests/test_deploy.py
       - tests/test_openma_deployment_composer.py
       - tests/test_openma_browser_worker.py
@@ -59,9 +60,18 @@ jobs:
               assert available >= 12_000_000_000, "Cold image build requires 12 GB free or separate builder storage"
           PYTHON
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.9.5"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
       - name: Verify real build-context filters
         if: matrix.kind != 'capture'
-        run: python3 scripts/ci/docker-context.py "${{ matrix.kind }}"
+        run: >-
+          uv run --frozen --extra dev pytest -q
+          -c tests/integration/pytest.ini --confcutdir=tests/integration
+          tests/integration/test_context.py --context-kind "${{ matrix.kind }}"
       - name: Build actual image
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -76,7 +86,11 @@ jobs:
           cache-from: type=gha,scope=tank-image-${{ matrix.kind }}
           cache-to: type=gha,mode=max,scope=tank-image-${{ matrix.kind }}
       - name: Smoke actual image without external network
-        run: python3 scripts/ci/docker-smoke.py "${{ matrix.kind }}" --image "tank-ci:${{ matrix.kind }}" --revision "${{ github.sha }}"
+        run: >-
+          uv run --frozen --extra dev pytest -q
+          -c tests/integration/pytest.ini --confcutdir=tests/integration
+          "tests/integration/test_${{ matrix.kind }}_image.py"
+          --image "tank-ci:${{ matrix.kind }}" --revision "${{ github.sha }}"
 
   openma:
     name: OpenMA dependency build
@@ -101,7 +115,12 @@ jobs:
           git -C "$RUNNER_TEMP/openma-upstream" fetch --depth 1 origin 85d5361f535c7221de975838dc48444e468cc02e
           git -C "$RUNNER_TEMP/openma-upstream" checkout --detach FETCH_HEAD
       - name: Prepare guarded dependency build
-        run: python3 scripts/ci/openma-docker-check.py --source "$RUNNER_TEMP/openma-upstream" --destination "$RUNNER_TEMP/openma-deps"
+        run: >-
+          uv run --frozen --extra dev pytest -q
+          -c tests/integration/pytest.ini --confcutdir=tests/integration
+          tests/integration/test_openma_context.py
+          --openma-source "$RUNNER_TEMP/openma-upstream"
+          --openma-destination "$RUNNER_TEMP/openma-deps"
       - name: Build actual generated dependency stage
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -117,4 +136,7 @@ jobs:
           cache-from: type=gha,scope=tank-openma-deps
           cache-to: type=gha,mode=max,scope=tank-openma-deps
       - name: Smoke pinned dependency environment offline
-        run: python3 scripts/ci/docker-smoke.py openma-deps --image tank-ci:openma-deps
+        run: >-
+          uv run --frozen --extra dev pytest -q
+          -c tests/integration/pytest.ini --confcutdir=tests/integration
+          tests/integration/test_openma_image.py --image tank-ci:openma-deps

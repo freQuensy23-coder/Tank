@@ -231,7 +231,7 @@ def test_dependency_context_rejects_wrong_real_git_commit_without_publishing(tmp
     )
     before = hashlib.sha256((source / "README").read_bytes()).hexdigest()
     destination = tmp_path / "output"
-    script = module("scripts/ci/openma-docker-check.py")
+    script = module("tests/integration/openma_context.py")
     with pytest.raises(ValueError, match="does not match pinned commit"):
         script.prepare(source, destination)
     assert not destination.exists()
@@ -244,7 +244,7 @@ def test_dependency_context_preserves_existing_destination(tmp_path):
     destination.mkdir()
     marker = destination / "keep"
     marker.write_bytes(b"existing operator files")
-    script = module("scripts/ci/openma-docker-check.py")
+    script = module("tests/integration/openma_context.py")
     with pytest.raises(ValueError, match="Destination must be new"):
         script.prepare(source, destination)
     assert marker.read_bytes() == b"existing operator files"

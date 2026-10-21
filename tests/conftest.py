@@ -16,6 +16,9 @@ from urllib.parse import urlsplit
 
 import pytest
 
+# Docker integration tests have their own explicit pytest command and boundary.
+collect_ignore = ["integration"]
+
 TEST_DATABASE_VARIABLES = frozenset(
     {"TANK_TEST_DATABASE_URL", "TANK_E2E_DATABASE_URL", "TANK_SOURCE_TEST_DATABASE_URL"}
 )
