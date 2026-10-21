@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"sync"
 	"syscall"
@@ -25,11 +26,13 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/config"
 	"github.com/freQuensy23-coder/Tank/capture/internal/rest"
 	"github.com/freQuensy23-coder/Tank/capture/internal/store"
-	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
 // healthStale is how old the last successful flush may be for the service to be healthy.
 const healthStale = 30 * time.Second
+
+// shutdownLimit bounds a stop: the final flush has 20 s of it.
+const shutdownLimit = 45 * time.Second
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -104,7 +107,7 @@ func run(log *slog.Logger) error {
 		Instruments: cfg.Instruments, Order: cfg.Order, Tokens: cfg.Tokens, Thresholds: cfg.Thresholds,
 		ConfigVersion: cfg.ConfigVersion, CodeVersion: cfg.CodeVersion, Writer: cfg.Mode,
 		Shadow: cfg.Mode == config.Shadow, Log: log,
-	}, st, writer, venues{client}, dial(cfg.UserAgent), clock)
+	}, st, writer, capture.RESTVenues(client), dial(cfg.UserAgent), clock)
 	health.set(svc, lock)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -126,6 +129,14 @@ func run(log *slog.Logger) error {
 		}
 	}()
 	go logReads(runCtx, client, log)
+	go func() {
+		// A stop that does not finish must not hold the writer lock: exit with the stacks.
+		<-runCtx.Done()
+		time.Sleep(shutdownLimit)
+		buf := make([]byte, 1<<20)
+		log.Error("shutdown exceeded its limit", "limit", shutdownLimit.String(), "stacks", string(buf[:runtime.Stack(buf, true)]))
+		os.Exit(1)
+	}()
 	err = svc.Run(runCtx)
 	select {
 	case <-lock.Lost():
@@ -133,31 +144,6 @@ func run(log *slog.Logger) error {
 	default:
 	}
 	return err
-}
-
-// venues adapts internal/rest to the runtime.
-type venues struct{ client *rest.Client }
-
-func (v venues) Venue(inst *venue.Instrument, priority int) capture.Venue {
-	return adapter{rest.NewAdapter(inst, v.client, priority)}
-}
-
-func (v venues) FXRate(ctx context.Context, quote string) (string, error) {
-	return rest.FXRate(ctx, v.client, quote)
-}
-
-type adapter struct{ *rest.Adapter }
-
-func (a adapter) Derivatives(ctx context.Context) (*capture.Derivatives, error) {
-	d, err := a.Adapter.Derivatives(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &capture.Derivatives{OI: d.OI, Current: d.Current, Settled: d.Settled, Interval: d.Interval, Mark: d.Mark}, nil
-}
-
-func (a adapter) IndependentBook(ctx context.Context, stream map[string]any) (map[string]any, error) {
-	return a.Adapter.IndependentBook(ctx, stream, nil)
 }
 
 // dial opens public WebSocket connections (websockets.connect: 32 MiB frames).

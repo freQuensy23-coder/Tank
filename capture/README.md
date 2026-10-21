@@ -144,4 +144,14 @@ uv run python scripts/capture/shadow_compare.py --since 2026-10-21T00:00:00Z --u
 
 compares `mkt_shadow.flow_bars_1m` with `mkt.flow_bars_1m` per minute and instrument
 (buy/sell quantity, trade counts, Σq², size buckets, completeness) and prints the result
-per venue.
+per venue. It exits 1 when a minute complete in both schemas differs: the rollout gate.
+
+## Not in tank-capture
+
+- The Binance Vision daily archives (`data.binance.vision`): the 90-day kline and metrics
+  bootstrap and the aggTrades fill of windows older than REST retention. With
+  `TANK_EXTERNAL_CAPTURE` core does not fetch them either.
+- The raw trade and book Parquet journals (`raw/trades`, `raw/books`): the interface is
+  tables.
+- Discovered instrument metadata (OKX `ctVal`, Hyperliquid `szDecimals`) is held in memory;
+  `reg.instruments` keeps the registry's values.

@@ -70,7 +70,12 @@ async def binance_snapshots(http, insts, frames):
         )
         response.raise_for_status()
         frames.append(
-            {"t": iso(), "rest": "depth_snapshot", "instrument_id": inst["instrument_id"], "text": response.text}
+            {
+                "t": iso(),
+                "rest": "depth_snapshot",
+                "instrument_id": inst["instrument_id"],
+                "text": response.text,
+            }
         )
 
 
@@ -86,7 +91,8 @@ async def okx_contracts(http, insts):
         ).json()
         row = body["data"][0]
         inst["contract_multiplier"] = str(
-            __import__("decimal").Decimal(row["ctVal"]) * __import__("decimal").Decimal(row.get("ctMult") or "1")
+            __import__("decimal").Decimal(row["ctVal"])
+            * __import__("decimal").Decimal(row.get("ctMult") or "1")
         )
 
 
@@ -108,7 +114,9 @@ async def record(name, venue, market, seconds, http):
         root = url.split("?", 1)[0]
         messages = subscription_messages(insts, endpoint=root)
         if venue == "okx" and market == "PERP_LINEAR":
-            messages.append({"op": "subscribe", "args": [{"channel": "liquidation-orders", "instType": "SWAP"}]})
+            messages.append(
+                {"op": "subscribe", "args": [{"channel": "liquidation-orders", "instType": "SWAP"}]}
+            )
         jobs.append(record_socket(root, messages, frames, seconds))
         if venue == "binance":
             jobs.append(binance_snapshots(http, insts, frames))

@@ -103,6 +103,8 @@ jobs:
         run: go build -o bin/capture-parity ./cmd/capture-parity
       - name: Parity with the Python reference
         run: uv run python scripts/capture/parity.py --check --go capture/bin/capture-parity
+      - name: REST poll parity with the Python reference
+        run: uv run python scripts/capture/rest_parity.py --check --go capture/bin/capture-parity
       - name: Go schema copy matches tank.market_schema
         run: uv run python scripts/capture/gen_schema.py --check
       - name: Test database
