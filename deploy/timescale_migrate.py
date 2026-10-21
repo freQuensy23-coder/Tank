@@ -220,6 +220,20 @@ def swap(conn, table, segment, ts):
                     sql.SQL(privilege), sql.Identifier("mkt", table), sql.Identifier(grantee)
                 )
             )
+        # Sequences of serial columns (liq_obs.id) belong to the old table: hand them over
+        # before the drop, or the drop takes them and every insert fails.
+        cur.execute(
+            "SELECT s.relname, a.attname FROM pg_depend d JOIN pg_class s ON s.oid = d.objid "
+            "JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid "
+            "WHERE s.relkind = %s AND d.refobjid = %s::regclass",
+            ("S", f"mkt.{table}__old"),
+        )
+        for seq, column in cur.fetchall():
+            cur.execute(
+                sql.SQL("ALTER SEQUENCE {} OWNED BY {}.{}").format(
+                    sql.Identifier("mkt", seq), sql.Identifier("mkt", table), sql.Identifier(column)
+                )
+            )
         cur.execute(sql.SQL("DROP TABLE {} CASCADE").format(sql.Identifier("mkt", table + "__old")))
     conn.commit()
     for name, definition in checks:
