@@ -68,7 +68,7 @@ jobs:
       - run: uv sync --frozen --extra dev
       - name: unit tests (3 min budget)
         timeout-minutes: 3
-        run: uv run pytest -q -n auto --timeout 120 -p no:cacheprovider
+        run: uv run pytest -q -n 8 --dist worksteal --timeout 120 -p no:cacheprovider --durations=15
 
   image:
     needs: [lint-python, lint-go, mypy, test]
