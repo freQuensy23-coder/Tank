@@ -96,7 +96,7 @@ func Instruments(meta map[string]any) []*venue.Instrument {
 	var out []*venue.Instrument
 	for _, raw := range pyval.List(meta["instruments"]) {
 		m := pyval.Map(raw)
-		inst := FromRegistry(m)
+		inst := venue.FromRegistry(m)
 		if inst.QuoteAsset == "USDT" {
 			inst.QuoteUSDRate, inst.QuoteUSDRateAsOf = USDTRate, meta["recorded_at"]
 		}
@@ -106,21 +106,6 @@ func Instruments(meta map[string]any) []*venue.Instrument {
 		out = append(out, inst)
 	}
 	return out
-}
-
-// FromRegistry builds an instrument from its registry dict.
-func FromRegistry(m map[string]any) *venue.Instrument {
-	s := func(k string) string { v, _ := m[k].(string); return v }
-	active := true
-	if v, ok := m["active"].(bool); ok {
-		active = v
-	}
-	return &venue.Instrument{
-		ID: s("instrument_id"), TokenID: s("token_id"), Venue: s("venue"), MarketType: s("market_type"),
-		Symbol: s("venue_symbol"), QuoteAsset: m["quote_asset"], WSSymbol: s("ws_symbol"), Active: active,
-		ContractMultiplier: m["contract_multiplier"], FundingIntervalH: m["funding_interval_h"], TickSize: m["tick_size"],
-		QuoteUSDRate: m["quote_usd_rate"], QuoteUSDRateAsOf: m["quote_usd_rate_as_of"],
-	}
 }
 
 // FrameClock is driven by the recorded receive times.

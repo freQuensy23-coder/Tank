@@ -90,3 +90,18 @@ func (i *Instrument) Clone() *Instrument {
 	c := *i
 	return &c
 }
+
+// FromRegistry builds an instrument from its registry dict.
+func FromRegistry(m map[string]any) *Instrument {
+	s := func(k string) string { v, _ := m[k].(string); return v }
+	active := true
+	if v, ok := m["active"].(bool); ok {
+		active = v
+	}
+	return &Instrument{
+		ID: s("instrument_id"), TokenID: s("token_id"), Venue: s("venue"), MarketType: s("market_type"),
+		Symbol: s("venue_symbol"), QuoteAsset: m["quote_asset"], WSSymbol: s("ws_symbol"), Active: active,
+		ContractMultiplier: m["contract_multiplier"], FundingIntervalH: m["funding_interval_h"], TickSize: m["tick_size"],
+		QuoteUSDRate: m["quote_usd_rate"], QuoteUSDRateAsOf: m["quote_usd_rate_as_of"],
+	}
+}

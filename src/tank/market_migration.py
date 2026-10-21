@@ -139,11 +139,17 @@ async def prepare_market_migration(repo, export_dir):
         }
 
 
+# Typed collections created by later migrations have no legacy rows to carry over.
+LATER_MARKET_COLLECTIONS = {"mkt.capture_streams", "mkt.capture_requests"}
+
+
 async def finish_market_migration(repo):
     from psycopg import sql
 
     conn = repo._conn()
     for collection in MARKET_COLUMNS:
+        if collection in LATER_MARKET_COLLECTIONS:
+            continue
         table = collection.split(".")[1]
         from tank.market_storage import _put_market_batch
 
