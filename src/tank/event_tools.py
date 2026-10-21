@@ -215,6 +215,28 @@ def summarize_unlocks(rows, cutoff):
     }
 
 
+def dedupe_request_log(calls, truth_hashes):
+    """A get_market_truth result repeats Market Truth rows that the bundle
+    already holds in full under market_truth; an exact copy (same sha256) is
+    kept once and referenced here. Anything not identical stays as stored."""
+    known = set(truth_hashes)
+    out = []
+    for call in calls:
+        result = call.get("result")
+        if call.get("tool") == "get_market_truth" and isinstance(result, dict) and isinstance(result.get("market_truth"), list):
+            entries = []
+            for entry in result["market_truth"]:
+                digest = sha256(entry)
+                entries.append(
+                    {"same_as_bundle_market_truth": entry.get("mta_id"), "sha256": digest}
+                    if digest in known and isinstance(entry, dict)
+                    else entry
+                )
+            call = {**call, "result": {**result, "market_truth": entries}}
+        out.append(call)
+    return out
+
+
 def write_evidence_bundle(bundle, data_dir):
     """Freeze the bundle file durably; runs in a thread (pure CPU and blocking
     file I/O: canonical JSON, zstd, fsync), never on the event loop."""
@@ -2569,8 +2591,11 @@ class EventToolService:
             raise ValueError("UPDATE requires a published original")
         if kind == "PARTIAL" and assessment["class"] != "STRUCTURAL_SHOCK":
             raise ValueError("PARTIAL requires STRUCTURAL_SHOCK")
-        beneficiaries = await self.rows("evt.beneficiary_edges", eid)
-        current_maps = await self.rows("evt.beneficiary_maps", eid)
+        # Each collection is read once per call (r113-r114: about 60 sequential
+        # round trips under a loaded pool made publish_card take 16-22 s).
+        fetched_edges = await self.rows("evt.beneficiary_edges", eid)
+        beneficiaries = list(fetched_edges)
+        current_maps = active_maps
         if current_maps:
             event["beneficiary_map"] = max(current_maps, key=lambda row: int(row["map_version"]))
         map_version = max((int(m["map_version"]) for m in current_maps), default=None)
@@ -2581,9 +2606,9 @@ class EventToolService:
         beneficiaries = [
             edge for edge in beneficiaries if edge.get("token_id") in analysis_tokens & decision_tokens
         ]
-        maps = await self.rows("evt.beneficiary_maps", eid)
+        maps = active_maps
         least = max(maps, key=lambda r: int(r["map_version"])).get("least_repriced_edge") if maps else None
-        all_edges = await self.rows("evt.beneficiary_edges", eid)
+        all_edges = fetched_edges
         pinned = initial_full.get("shown_tokens", []) if initial_full else []
         if kind == "UPDATE" and pinned:
             beneficiaries = []
@@ -2645,24 +2670,32 @@ class EventToolService:
                         "missing_decisions": sorted(missing_decision),
                     }
                 )
+        # Market Truth rows reach ~1.8 MB each; the card keeps references to the
+        # immutable ana.market_truth rows (the bundle freezes them in full).
+        truth_hashes = await asyncio.to_thread(lambda: [sha256(truth) for truth in truths])
         ctx = {
             "event": event,
             "assessment": assessment,
             "beneficiaries": beneficiaries,
             "decisions": decisions,
-            "market_truths": truths,
+            "market_truths": [
+                {"mta_id": truth.get("mta_id"), "token_id": truth.get("token_id"), "sha256": digest}
+                for truth, digest in zip(truths, truth_hashes, strict=True)
+            ],
         }
         verdict = a.get("verdict", "")
         why = a.get("why", [])
         if kind != "PARTIAL" and len(why) not in {2, 3}:
             raise ValueError("FULL/UPDATE require 2–3 WHY bullets")
         evidence_labels = {}
+        source_items_read = {}
         for claim in event.get("claims", []):
             for evidence in claim.get("evidence", []):
                 item_id = evidence.get("item_id")
                 if not item_id or item_id in evidence_labels:
                     continue
                 item = await self.repo.get("ingest.source_items", item_id)
+                source_items_read[item_id] = item
                 if item:
                     source_id = item.get("source_id")
                     source = await self.repo.get("reg.sources", source_id) if source_id else None
@@ -2715,19 +2748,23 @@ class EventToolService:
         # delivery then drops, so versions are never queued one slot apart (W2).
         delivery_not_before = delivery_stamp.value
         cutoff = iso()
-        observations = await self.rows("evt.event_observations", eid)
-        claims = await self.rows("evt.claims", eid)
+        # Read earlier in this call; nothing above writes them. Copies, because
+        # the bundle's lists are sorted in place when it is frozen.
+        claims = list(event["claims"])
+        observations = list(observations)
         ids = {o["item_id"] for o in observations} | {e["item_id"] for r in claims for e in r["evidence"]}
         bundle = {
             **collection_clock(cutoff).fields("cutoff"),
             "event": event,
-            "source_items": [await self.require("ingest.source_items", i) for i in sorted(ids)],
+            "source_items": [
+                source_items_read.get(i) or await self.require("ingest.source_items", i) for i in sorted(ids)
+            ],
             "observations": observations,
             "claims": claims,
             "state_changes": await self.rows("evt.state_changes", eid),
             "ems": assessment,
             "capture_chains": await self.rows("evt.capture_chains", eid),
-            "beneficiary_map": await self.rows("evt.beneficiary_maps", eid),
+            "beneficiary_map": list(active_maps),
             "beneficiary_edges": all_edges,
             "market_truth": truths,
             "outlooks": [
@@ -2738,7 +2775,7 @@ class EventToolService:
                 if decision.get("outlook_id") or isinstance(decision.get("outlook"), dict)
             ],
             "decisions": decisions,
-            "contradictions": await self.rows("ana.contradictions", eid),
+            "contradictions": list(event["contradictions"]),
             "data_confidence": [m["data_confidence"] for m in truths],
             "unresolved_fields": [],
             "config_hash": self.settings.config_version,
@@ -2758,10 +2795,18 @@ class EventToolService:
             "request_log": [],
         }
         calls_by_key = {}
-        for row in await self.rows("ops.tool_calls", eid):
-            calls_by_key[(row.get("session_id"), row.get("call_id"))] = row
         if c.get("session_id"):
             for row in await self.rows("ops.tool_calls", filters={"session_id": c["session_id"]}):
+                calls_by_key[(row.get("session_id"), row.get("call_id"))] = row
+        # Event calls of other sessions only; tool results are large (Market
+        # Truth inside), so this session's are not fetched a second time.
+        async for meta in self.repo.iter_metadata(
+            "ops.tool_calls", ["session_id", "call_id"], filters={"event_id": eid}
+        ):
+            key = (meta.get("session_id"), meta.get("call_id"))
+            if key in calls_by_key:
+                continue
+            for row in await self.rows("ops.tool_calls", filters={"event_id": eid, "call_id": key[1]}):
                 calls_by_key[(row.get("session_id"), row.get("call_id"))] = row
         calls = list(calls_by_key.values())
         producing_records = [
@@ -2822,7 +2867,7 @@ class EventToolService:
                     "reason": "Producing session did not expose a deployed agent version",
                 }
             )
-        bundle["request_log"] = calls
+        bundle["request_log"] = await asyncio.to_thread(dedupe_request_log, calls, truth_hashes)
         bundle["tool_call_ids"] = sorted(
             set([r["call_id"] for r in calls if r.get("call_id")] + bundle["tool_call_ids"])
         )
