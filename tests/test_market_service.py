@@ -1974,7 +1974,7 @@ async def test_hot_series_poll_context_on_their_own_schedule(setup):
 
 @pytest.mark.asyncio
 async def test_replay_never_repairs_from_live_rest(setup):
-    repo, settings, inst = setup
+    repo, settings, _ = setup
     service = MarketService(repo, settings)
 
     async def backfill(*args, **kwargs):
@@ -2062,7 +2062,7 @@ async def test_condition_heads_are_reused_until_their_scope_is_written(setup, mo
 
 @pytest.mark.asyncio
 async def test_startup_repair_includes_the_minute_that_just_ended(setup):
-    repo, settings, inst = setup
+    repo, settings, _ = setup
     settings.replay = False
     service = MarketService(repo, settings)
     ended = []
@@ -2098,3 +2098,47 @@ async def test_reference_spot_venue_is_repaired_first_and_never_waits_for_a_slot
     assert order and set(order) == {"binance"}  # the reference venue ran; the others queue for a slot
     assert HOT_POLL_S < 60  # HOT context stays inside its 60 s cadence at any minute cutoff
     await service.close()
+
+
+async def test_snapshot_anchors_yield_widest_first_and_equal_single_snapshots(setup):
+    """PRE windows of one token and cutoff share their reads; each snapshot equals its own call."""
+    from tank.market.service import BOOK_LEVEL_ROWS
+    from tank.util import iso, parse_time
+
+    repo, settings, inst = setup
+    http = httpx.AsyncClient()
+    service = MarketService(repo, settings, http=http)
+    cutoff = parse_time("2026-06-17T12:00:00Z")
+    levels = [["2", "1"], ["3", "1"]]
+    for i in range(BOOK_LEVEL_ROWS + 300):
+        await repo.put(
+            "mkt.book_summaries",
+            f"book{i:04d}",
+            {
+                "instrument_id": inst["instrument_id"],
+                "token_id": inst["token_id"],
+                "exchange_ts": iso(cutoff - timedelta(minutes=10 * i)),
+                "integrity_ok": i % 7 == 3,
+                "mid": "2",
+                "bids": levels,
+                "asks": levels,
+            },
+        )
+    anchors = [{"type": "T1", "ts": iso(cutoff - timedelta(hours=h)), "ts_prec": "EXACT"} for h in (1, 30, 4)]
+
+    def stable(snapshot):
+        out = {k: v for k, v in snapshot.items() if not k.startswith("assembled_at")}
+        out["capture_status"] = {k: v for k, v in out["capture_status"].items() if k != "observed_at"}
+        return out
+
+    shared = [
+        (a, stable(s)) async for a, s in service.snapshot_anchors(inst["token_id"], iso(cutoff), anchors)
+    ]
+    # Windows reach back 2 x max(1 day, cutoff - anchor): the 30 h anchor is the widest; ties keep order.
+    assert [a["ts"] for a, _ in shared] == [anchors[1]["ts"], anchors[0]["ts"], anchors[2]["ts"]]
+    for anchor, snapshot in shared:
+        single = stable(await service.snapshot(inst["token_id"], iso(cutoff), anchor=anchor))
+        assert snapshot == single
+        assert sum("asks" in b for b in snapshot["books"]) <= BOOK_LEVEL_ROWS + 1
+    assert len(shared[0][1]["books"]) > len(shared[-1][1]["books"])
+    await http.aclose()

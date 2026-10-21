@@ -946,3 +946,76 @@ async def sampled_market_history(
     async with repo.transaction():
         rows = await (await repo._conn().execute(query, args)).fetchall()
     return sorted((decode(collection, row) for row in rows), key=lambda r: r[time_field])
+
+
+async def market_range_by_instrument(
+    repo, collection, time_field, instrument_ids, start, end, filters=None, *, batch_size=20000, keep=None
+):
+    """Rows of several instruments in [start, end), paged on one key for all of them.
+
+    Per instrument the rows come in the order iter_range returns them for that instrument
+    alone ((time_field, storage_key)), so callers can replace a per-instrument loop of range
+    reads (e.g. 9 collections x the instruments of a token) without changing any output.
+    Pages are keyset-paged like iter_range; `keep(instrument_id, rows)` runs after each
+    appended row so a caller can shrink older rows while they stream (book levels).
+    20k-row pages bound the raw-plus-record transient of one page (~100 MB at 100k on BTC).
+    """
+    from psycopg import sql
+
+    instrument_ids = sorted(set(instrument_ids))
+    out = {iid: [] for iid in instrument_ids}
+    if not instrument_ids:
+        return out
+    if not hasattr(repo, "_conn"):
+        for iid in instrument_ids:
+            async for row in repo.iter_range(
+                collection,
+                time_field,
+                start=start,
+                end=end,
+                filters=dict(filters or {}, instrument_id=iid),
+                batch_size=batch_size,
+            ):
+                out[iid].append(row)
+                if keep is not None:
+                    keep(iid, out[iid])
+        return out
+    from tank.storage import _exact_predicate, _read_record
+
+    clauses = [
+        sql.SQL("{} IS NOT NULL").format(sql.Identifier(time_field)),
+        sql.SQL("instrument_id = ANY(%s::text[])"),
+    ]
+    args = [instrument_ids]
+    for op, bound in ((">=", start), ("<", end)):
+        if bound is not None:
+            clauses.append(sql.SQL("{} " + op + " %s").format(sql.Identifier(time_field)))
+            args.append(parse_time(bound))
+    if filters:
+        extra, values = _exact_predicate(collection, filters)
+        clauses.extend(extra)
+        args.extend(values)
+    after = None
+    while True:
+        page_clauses, page_args = list(clauses), list(args)
+        if after is not None:
+            page_clauses.append(
+                sql.SQL("(instrument_id, {}, storage_key) > (%s, %s, %s)").format(sql.Identifier(time_field))
+            )
+            page_args.extend(after)
+        query = sql.SQL("SELECT * FROM {} WHERE {} ORDER BY instrument_id, {}, storage_key LIMIT %s").format(
+            sql.Identifier(*collection.split(".")),
+            sql.SQL(" AND ").join(page_clauses),
+            sql.Identifier(time_field),
+        )
+        async with repo.transaction():
+            rows = await (await repo._conn().execute(query, [*page_args, batch_size])).fetchall()
+        for row in rows:
+            iid = row["instrument_id"]
+            out[iid].append(_read_record(collection, row))
+            if keep is not None:
+                keep(iid, out[iid])
+        if len(rows) < batch_size:
+            return out
+        last = rows[-1]
+        after = (last["instrument_id"], last[time_field], last["storage_key"])
