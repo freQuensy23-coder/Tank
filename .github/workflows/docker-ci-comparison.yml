@@ -156,7 +156,26 @@ jobs:
             (out/(label+".log")).write_text(output+"\n")
             if marker:assert json.loads(output.splitlines()[-1])["status"]=="PASS",label
             return {"status":"PASS","output_log":label+".log"}
-           result["vitest"]=appcheck("vitest",["docker","run","--rm","--network","none","--entrypoint","pnpm",image,"--dir","/app","exec","vitest","run",*vitest])
+           def vitestcheck(label,package,targets):
+            args=["docker","run","--rm","--network","none","--entrypoint","pnpm",image,"--dir",package,"exec","vitest","run","--config","vitest.config.ts","--configLoader","runner","--no-cache","--reporter=json",*targets]
+            record=appcheck(label,args)
+            output=(out/(label+".log")).read_text()
+            reports=[]
+            for match in re.finditer(r"\{",output):
+             try:value=json.JSONDecoder().raw_decode(output,match.start())[0]
+             except ValueError:continue
+             if isinstance(value,dict) and isinstance(value.get("testResults"),list) and "numTotalTests" in value:reports.append(value)
+            assert len(reports)==1,label
+            report=reports[0]
+            assert report["success"] and report["numTotalTests"]>0 and report.get("numFailedTests",0)==0 and report.get("numPendingTests",0)==0,label
+            actual={Path(test["name"]).name for test in report["testResults"]}
+            assert actual=={Path(target).name for target in targets},(label,actual)
+            assert all(test["status"]=="passed" for test in report["testResults"]),label
+            record.update(files=sorted(actual),tests=report["numTotalTests"],skipped=report.get("numPendingTests",0))
+            return record
+           result["vitest"]=[
+            vitestcheck("vitest-main-node","/app/apps/main-node",["test/"+Path(path).name for path in vitest[:4]]),
+            vitestcheck("vitest-litebox","/app/packages/sandbox-adapter-litebox",["test/"+Path(vitest[4]).name])]
            python=Path(command(["uv","python","find","--managed-python","3.12"])).resolve()
            prefix=python.parent.parent
            envs=["-e","TANK_AUDIT_OPENMA_ROOT=/app","-e","TANK_FILE_IO_TEST_PYTHON=/opt/qa-python/bin/"+python.name,"-e","TANK_SDK_CHECK_ROOT=/app"]
@@ -210,7 +229,7 @@ jobs:
       - name: Run the preserved application behavior tests
         run: |
           uv sync --frozen --extra dev
-          uv run --frozen pytest -q tests/test_deploy.py tests/test_openma_browser_worker.py tests/test_skill_alias_claims.py --junitxml="$RUNNER_TEMP/vendor-python.xml"
+          uv run --frozen --extra dev pytest -q tests/test_deploy.py tests/test_openma_browser_worker.py tests/test_skill_alias_claims.py --junitxml="$RUNNER_TEMP/vendor-python.xml"
           python3 - <<'PY'
           import os,xml.etree.ElementTree as ET
           root=ET.parse(os.environ["RUNNER_TEMP"]+"/vendor-python.xml").getroot()
