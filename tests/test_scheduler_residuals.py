@@ -33,7 +33,7 @@ async def test_verified_backup_is_cached_per_process_day_but_force_and_restart_r
     final = tmp_path / f"tank-{NOW.date()}"
     final.mkdir()
     (final / "COMPLETE").write_text(iso(NOW))
-    # to_thread needs a synchronous callable; record all actual verification calls.
+
     calls = []
     monkeypatch.setattr("tank.scheduler.verify_backup", lambda path, **kwargs: calls.append(path))
     settings = SimpleNamespace(backup_dir=tmp_path)
@@ -127,7 +127,7 @@ async def test_terminal_capture_is_recorded_as_gap_and_not_resurrected_or_claime
     await repo.delete("ops.jobs", job["job_id"])
     await scheduler.tick(NOW)
     assert not await repo.list("ops.jobs", filters={"idem_key": "e:T:POST_72H"})
-    # Literal lifecycle requires an actual +72h capture, even after exhausted attempts.
+
     real_scheduler = Scheduler(repo, SimpleNamespace(), None, None)
     real_scheduler.analysis_tokens = AsyncMock(return_value={"T"})
     await real_scheduler.lifecycle(NOW)

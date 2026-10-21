@@ -21,13 +21,8 @@ import (
 	"time"
 )
 
-// Build is the code revision, set at build time with
-// -ldflags "-X github.com/freQuensy23-coder/Tank/capture/internal/config.Build=<rev>".
 var Build string
 
-// CodeVersion identifies this binary in the code_version of every row it writes:
-// "tank-capture/" + Build, else the VCS revision the Go toolchain stamped (+"-dirty"),
-// else "tank-capture/dev".
 func CodeVersion() string {
 	if Build != "" {
 		return "tank-capture/" + Build
@@ -52,7 +47,6 @@ func CodeVersion() string {
 	return "tank-capture/dev"
 }
 
-// versionedSuffixes are tank.settings._CONFIG_SUFFIXES.
 var versionedSuffixes = map[string]bool{".yaml": true, ".yml": true, ".json": true, ".md": true}
 
 func hidden(relative string) bool {
@@ -64,9 +58,6 @@ func hidden(relative string) bool {
 	return false
 }
 
-// CaptureTree is tank.settings._capture_tree: every versioned file below root by its
-// relative POSIX path. Hidden parts and __pycache__ are skipped; a versioned symlink is
-// an error; symlinked directories are not followed.
 func CaptureTree(root string) (map[string][]byte, error) {
 	captured := map[string][]byte{}
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
@@ -90,7 +81,7 @@ func CaptureTree(root string) (map[string][]byte, error) {
 		if entry.IsDir() || !versionedSuffixes[filepath.Ext(path)] {
 			return nil
 		}
-		info, err := os.Stat(path) // is_file() follows a symlink
+		info, err := os.Stat(path)
 		if err != nil || !info.Mode().IsRegular() {
 			return nil
 		}
@@ -113,7 +104,6 @@ func CaptureTree(root string) (map[string][]byte, error) {
 	return captured, nil
 }
 
-// Digest is tank.settings._digest: SHA-256 over path NUL content NUL in path order.
 func Digest(captured map[string][]byte) string {
 	paths := make([]string, 0, len(captured))
 	for p := range captured {
@@ -142,10 +132,6 @@ func fullCommit(commit string) bool {
 	return true
 }
 
-// ConfigVersion is tank.settings._config_version for the configuration directory: the
-// deployment manifest (.tank-config-version.json, written by deploy/prepare_config.py)
-// when present, else the Git identity of the directory, else "uncommitted.<digest>"
-// when Git is unavailable (a read-only mount without .git).
 func ConfigVersion(root string) (string, error) {
 	captured, err := CaptureTree(root)
 	if err != nil {
@@ -196,9 +182,6 @@ func git(dir string, input []byte, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// gitIdentity is tank.settings._git_config_identity: the HEAD commit, and whether the
-// captured bytes differ from the versioned files at HEAD (read from Git objects, so
-// ignored, untracked or assume-unchanged files cannot pass as committed).
 func gitIdentity(root, digest string) (string, bool, error) {
 	root, err := filepath.Abs(root)
 	if err != nil {

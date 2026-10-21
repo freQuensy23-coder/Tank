@@ -10,8 +10,6 @@ every read selects FINAL, so a row reads as its last write. Numbers are stored a
 exact decimal text (some carry 100 digits), timestamps as DateTime64(6, UTC), JSON as text.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
@@ -24,7 +22,6 @@ import httpx
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
 from tank.util import iso, parse_time
 
-# collection -> the time column its daily partitions follow.
 MARKET_TABLES = {
     "mkt.klines_1m": "open_time",
     "mkt.flow_bars_1m": "minute_start",
@@ -34,7 +31,7 @@ MARKET_TABLES = {
     "mkt.liq_obs": "ts",
     "mkt.tickers_24h": "ts",
 }
-# Per-trade prints of every venue (written by tank-capture; replay and audit read them).
+
 TRADES = "mkt.trades"
 TRADE_COLUMNS = {
     "instrument_id": "String",
@@ -75,12 +72,12 @@ TYPES = {
     "bigint": "Int64",
     "text[]": "Array(String)",
 }
-# Column codecs: measured on prod prints, 43.7 -> 27.1 bytes per trade (LZ4 default -> these).
+
 ZSTD = "CODEC(ZSTD(3))"
 TIME_CODEC = "CODEC(DoubleDelta, ZSTD(3))"
 VERSION_CODEC = "CODEC(Delta, ZSTD(3))"
 CODECS = {"timestamptz": TIME_CODEC, "boolean": "", "bigint": "CODEC(Delta, ZSTD(3))"}
-# Book summaries are kept 72 h, the other series 90 days (03 §14); trades 30 days.
+
 TRADES_TTL_DAYS = 30
 
 
@@ -133,7 +130,6 @@ class ClickHouse:
             "date_time_output_format": "iso",
             "output_format_json_quote_64bit_integers": "0",
             "output_format_json_quote_decimals": "0",
-            # Every identity holds its partition's day, so FINAL never merges across days.
             "do_not_merge_across_partitions_select_final": "1",
         }
         for name, (value, _) in (params or {}).items():
@@ -183,7 +179,6 @@ class Query:
 
     def param(self, value, kind):
         if isinstance(value, (list, tuple)):
-            # A list goes in the statement body: thousands of keys overflow the URL.
             return "(" + (_literal(value)[1:-1] or "NULL") + ")"
         name = f"p{len(self.params)}"
         self.params[name] = (_literal(value), kind)
@@ -243,7 +238,7 @@ def _record(collection, row):
         elif kind == "text[]":
             out[name] = list(value) or None
         elif kind == "numeric":
-            out[name] = Decimal(value)  # decode() gives str(Decimal), as from PostgreSQL
+            out[name] = Decimal(value)
         else:
             out[name] = value
     return decode(collection, out)
@@ -264,9 +259,6 @@ def _table(collection):
 
 
 async def _select(ch, collection, q, order, tail="", selected="*"):
-    """SELECT {selected} ... ORDER BY {order} {tail} in two steps: the keys of the chosen rows
-    first (FINAL over the sort and filter columns only), then those rows whole. One step
-    would merge every column of the whole range (2 GB on a 90-day klines head)."""
     day = MARKET_TABLES[collection]
     keys = await ch.rows(
         f"SELECT storage_key, `{day}` AS _day FROM {_table(collection)} WHERE {q.predicate()} ORDER BY {order} {tail}",
@@ -280,9 +272,6 @@ async def _select(ch, collection, q, order, tail="", selected="*"):
     k.where(f"`{day}` <= {k.param(max(days), DT)}")
     k.where(f"storage_key IN {k.param([r['storage_key'] for r in keys], 'Array(String)')}")
     return await ch.rows(f"SELECT {selected} FROM {_table(collection)} WHERE {k.predicate()} ORDER BY {order}", k.params)
-
-
-# --- generic repository reads -------------------------------------------------------------
 
 
 async def get(ch, collection, key):
@@ -365,9 +354,6 @@ async def late_page(
         (rec, (parse_time(rec[arrival_field]), row["storage_key"]))
         for rec, row in zip(records, rows, strict=True)
     ]
-
-
-# --- market_storage reads -----------------------------------------------------------------
 
 
 async def latest_market_records(
@@ -591,9 +577,6 @@ async def range_by_instrument_page(
         (row["instrument_id"], rec, row["storage_key"], parse_time(row[time_field]))
         for row, rec in zip(rows, records, strict=True)
     ]
-
-
-# --- retention ----------------------------------------------------------------------------
 
 
 async def prune(ch, cutoff, preserved_days, *, book_cutoff=None, trades_cutoff=None):

@@ -180,7 +180,6 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(service, 
             "verdict": "Material partnership",
             "why": ["Defined access", "Relevant actor"],
         },
-        # Serialization-only system call, not an invented agent tool receipt.
         {"event_id": eid, "call_id": "c", "role": "system"},
     )
     assert result["published"]
@@ -246,7 +245,9 @@ def test_nullable_scores_skip_numeric_constraints():
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
-async def test_numeric_map_version_ten_removes_old_token(service, backend, postgres_template, repository_lifetime):
+async def test_numeric_map_version_ten_removes_old_token(
+    service, backend, postgres_template, repository_lifetime
+):
     import os
 
     from tank.util import new_id
@@ -375,8 +376,7 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service):
     assert same["counters"] == armed["counters"]
     same.update(status="FIRED", fired_at=iso())
     await service.repo.put("ana.watch_conditions", same["cond_id"], same)
-    # This unit exercises consumption with already refreshed market truth; the
-    # actual asynchronous refresh/worker boundary is covered separately.
+
     await service.repo.put(
         "ana.market_truth",
         "condition-truth-fresh",
@@ -388,8 +388,7 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service):
     assert consumed["consumed_by"] == fired["dec_id"]
     again = await service.dispatch("get_decision", {"event_id": eid, "token": token}, {})
     assert again["action"] == "HOLD"
-    # W1 (03 §6.6, §7.2): the spent watch is not reused or shown again; the same
-    # expression is re-armed afresh, so a later upgrade can still produce ADD.
+
     rearmed = next(c for c in again["conditions"] if c["role"] == "UPGRADE")
     assert rearmed["cond_id"] != same["cond_id"] and rearmed["status"] == "ARMED"
     assert rearmed["rearmed_from"] == same["cond_id"] and "counters" not in rearmed
@@ -713,7 +712,7 @@ async def test_real_session_tool_refuses_cross_event_mutation(service):
     assert stored["returned_at"]
     assert replies
     assert not await service.repo.list("ops.source_escalations")
-    # Other-event reads are allowed through the same real session wrapper.
+
     await sessions.tool(session, {"id": "scope-read", "name": "get_event", "input": {"event_id": "B"}})
     assert (await service.repo.get("ops.tool_calls", "scope-session:scope-read"))["result"][
         "event"
@@ -1226,7 +1225,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(service
         later = now + timedelta(minutes=16)
         for module in ("tank.analysis.cards", "tank.event_tools", "tank.delivery"):
             monkeypatch.setattr(module + ".utcnow", lambda: later)
-        # No new item or second publication call is needed at the due time.
+
         await delivery.deliver({"alert_id": published["alert_id"], "version": 2})
 
     assert len(sent) == 2
@@ -1394,7 +1393,9 @@ async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
-async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(service, backend, postgres_template, repository_lifetime):
+async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
+    service, backend, postgres_template, repository_lifetime
+):
     import os
 
     from tank.analysis.decisions import DecisionEngine
@@ -1471,9 +1472,7 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(servic
         historic_decision = complete_decision_fixture(
             eid + "-history", eid, token, iso(now - timedelta(days=2)), eid + "-history"
         )
-        # Keep the >1000-row selector regression, but old records need only
-        # their real typed columns. The current/future truth below retains its
-        # complete quantitative graph for exact-reference bundle assertions.
+
         historic_truth = {
             key: value for key, value in historic_truth.items() if key in TABLE_COLUMNS["ana.market_truth"]
         }
@@ -1987,7 +1986,9 @@ def complete_decision_fixture(dec_id, event_id, token_id, cutoff, mta_id):
 
 @pytest.mark.integration
 @pytest.mark.postgres
-async def test_real_event_tool_producers_satisfy_postgres_typed_contract(service, tmp_path, postgres_template, repository_lifetime):
+async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
+    service, tmp_path, postgres_template, repository_lifetime
+):
     import os
 
     from tank.analysis.decisions import DecisionEngine
@@ -2043,8 +2044,6 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(service
         )
         x["claims"][0].update(quote=quote, state_claim="APPROVED")
         context = {
-            # Typed domain producer/serialization coverage; no native session
-            # or per-message workflow is claimed by this direct-dispatch unit.
             "model_id": "fixture-model",
             "prompt_version": "fixture-prompt",
             "role": "system",
@@ -2185,7 +2184,9 @@ async def test_search_and_fetched_evidence_keep_agent_certainty(service, media_t
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
-async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(service, backend, monkeypatch, postgres_template, repository_lifetime):
+async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(
+    service, backend, monkeypatch, postgres_template, repository_lifetime
+):
     import asyncio
     import os
 
@@ -2224,8 +2225,7 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(s
                 del transaction_depth[task]
                 if task in pending_notification:
                     pending_notification.remove(task)
-                    # PostgreSQL readers cannot see enqueues until outer commit.
-                    # Waking earlier can consume every signal before rows exist.
+
                     jobs_changed.set()
 
     async def observed_enqueue(kind, payload, *args, **kwargs):
@@ -2259,9 +2259,7 @@ async def test_truth_job_exact_spec_keys_priorities_and_cross_call_idempotency(s
 
     async def finish_truth(job):
         payload = job["payload"]
-        # The shared canonical builder keeps real formula values but omits
-        # optional measurement annotations. This unit tests durable job/result
-        # round-trips; full metadata serialization is covered separately above.
+
         truth = complete_truth_fixture(new_id("mta"), eid, payload["token_id"], payload["cutoff"])
         await base.put("ana.market_truth", truth["mta_id"], truth)
         current = await base.get("ops.jobs", job["job_id"])
@@ -2496,7 +2494,7 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(servi
             assert not repeat["published"], repeat
         assert len(sent) == 2
         assert len(await service.repo.list("out.alerts", filters={"event_id": eid})) == 2
-        # Persisted FATAL/EXIT cannot make an unrelated class change immediate.
+
         event = await service.repo.get("evt.events", eid)
         await service.repo.put("evt.events", eid, {**event, "freshness": "FRESH", "lifecycle": "MONITORING"})
         await service.repo.put(
@@ -2691,7 +2689,7 @@ async def test_produced_loser_has_supported_negative_grade_without_long_action(
     await service.repo.put("ana.market_truth", truth["mta_id"], truth)
     decision = await service.dispatch("get_decision", {"event_id": eid, "token": "world:WLD"}, {})
     assert decision["thesis_grade"] == expected_grade
-    # The actual empty market snapshot remains UNKNOWN; a supported negative thesis does not fabricate market direction.
+
     assert decision["outlook"]["direction"] == "UNKNOWN"
     assert decision["action"] not in {"START", "ADD"}
 
@@ -2912,7 +2910,7 @@ async def test_magnitude_agent_judgment_is_preserved_with_or_without_ratio_metad
     out = await service.dispatch("set_assessment", {"event_id": eid, "assessment": assessment}, {})
     stored = await service.repo.get("evt.ems_assessments", out["ems_id"])
     assert stored["dims"]["magnitude"]["value"] == 10
-    # Actual quoted NUMBER claims supply a denominator of the prescribed kind and unit.
+
     for key, quote in [
         ("numerator", "World token flow is 10 USD."),
         ("denominator", "World token market cap is 100 USD."),
@@ -2947,7 +2945,7 @@ async def test_magnitude_agent_judgment_is_preserved_with_or_without_ratio_metad
     }
     out = await service.dispatch("set_assessment", {"event_id": eid, "assessment": assessment}, {})
     stored = await service.repo.get("evt.ems_assessments", out["ems_id"])
-    assert stored["dims"]["magnitude"]["value"] == 10  # Agent owns the rubric judgment.
+    assert stored["dims"]["magnitude"]["value"] == 10
     marketing = "World marketing budget is 100 USD."
     await service.repo.put(
         "evt.claims",
@@ -3448,7 +3446,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             )
             native = SessionService(repo, service.settings, dispatch, http=http)
             session = await native.resolve({"kind": "NEW_ITEM", "item_id": item["item_id"]})
-            # This is the real incomplete POST snapshot, not a hand-seeded prompt version.
+
             assert session["prompt_version"] is None and session["prompt_label"] == config["prompt_version"]
             args = extraction()
             args.update(
@@ -3756,9 +3754,7 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
             )
 
             async def settle_owned_missing_input_jobs():
-                # This declared fixture has no retained market observations.
-                # Complete only this tool's durable rendezvous with the real
-                # empty-input formula (UNKNOWN), never a fabricated tool result.
+
                 await truth_job_enqueued.wait()
                 for kind in ("ESCALATE_TOKENS", "RUN_MARKET_TRUTH"):
                     jobs = [
@@ -3959,7 +3955,7 @@ async def test_trusted_reference_clock_changes_logical_age_only(service, tmp_pat
     assert (await reference.dispatch("search_tank_items", {"query": "Product"}, {}))["items"][0][
         "item_id"
     ] == "i"
-    # Even a sealed source is invisible until the prefix importer admits it.
+
     unimported = EventToolService(MemoryRepository(), options, None, None, reference_clock=clock)
     assert not (await unimported.dispatch("search_tank_items", {"query": "Product"}, {}))["items"]
     monkeypatch.setattr("tank.event_tools.utcnow", lambda: parse_time("2022-09-22T01:00:00Z"))
@@ -4074,7 +4070,7 @@ async def test_primary_event_fact_certainty_allows_neutral_paraphrase(service, p
 
 
 async def test_primary_selection_paraphrase_preserves_fact_certainty(service):
-    # Actual retained primary selection wording; no class or token-capture expectation.
+
     quote = (
         "The Clearing House announced the selection of Quant, a leading provider of programmable money "
         "infrastructure, to power its On-Chain Money Initiative, a new interoperable payments network "
@@ -4327,7 +4323,6 @@ async def test_immediate_access_uses_agent_structured_fact_and_effective_time(se
             claim_id=report_claim["claim_id"], quote=report_quote
         )
     if case == "missing_quote":
-        # The declared schema requires a non-empty quote (minLength 1).
         with pytest.raises(ValueError, match="immediate_market_access.quote: shorter than 1"):
             await service.dispatch("set_assessment", dict(event_id=eid, assessment=assessment), {})
     elif case not in {"wrong_claim", "future_date"}:
@@ -4452,8 +4447,7 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
         service.repo = live_update_database
         database_url = service.repo.database_url
     repo = service.repo
-    # PostgreSQL's queue uses its actual clock. The simulated due boundary is
-    # just before that clock so the due worker can claim without changing jobs.
+
     base = utcnow() - timedelta(minutes=15, seconds=3)
     clock = [base]
     for module in ("tank.util", "tank.event_tools", "tank.analysis.cards", "tank.delivery", "tank.storage"):
@@ -4547,7 +4541,7 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
                 repo = PostgresRepository(database_url)
                 await repo.open()
                 service.repo = repo
-            # Recreate services after restart. No new source item/tool invocation.
+
             clock[0] = base + timedelta(minutes=15)
             job = await repo.claim_job()
             assert job["job_id"] == update_jobs[0]["job_id"]
@@ -4705,7 +4699,6 @@ async def test_each_layer_needs_agent_reason_when_primary_does_not_supply_a_seco
     }
     args = {"event_id": eid, "edges": edges, "layer_reasons": notes}
     if role != "SECONDARY":
-        # A real primary benefit does not explain the absence of intermediaries.
         with pytest.raises(ValueError, match="ISSUER_PRODUCT.*SECONDARY"):
             await service.dispatch("set_beneficiaries", args, {})
         notes["ISSUER_PRODUCT"] = "   "
@@ -4856,8 +4849,7 @@ async def test_token_facts_show_unlocks_before_the_cutoff_and_nothing_after(serv
         ("past", "PAST"),
         ("next", "UPCOMING"),
     ]
-    # A late-receipt reconstruction is known from the end of its schedule_as_of
-    # bucket, as replay admits it (lead rulings F-02, F-04).
+
     from tank.event_tools import known_at
 
     day = (now - timedelta(days=30)).replace(hour=0, minute=0, second=0, microsecond=0)
@@ -4958,9 +4950,6 @@ async def test_token_facts_for_btc_fit_the_context(service):
                 "total24h": str(200000 + n),
                 "total30d": "7277898",
                 "available": True,
-                # Only the latest FUNDAMENTALS row needs the large chart:
-                # retain all143 timestamps/kinds and the real5500-point payload
-                # without re-serializing that same graph into obsolete rows.
                 "totalDataChart": chart if n == 140 else [[1296432000, str(n)]],
             }
             row.update(
@@ -5077,7 +5066,7 @@ async def test_token_facts_give_the_covered_daily_volume(service):
         )
     facts = await service.dispatch("get_token_facts", {"token": "BTC"}, {})
     volume = facts["covered_daily_volume"]
-    # Native over every fresh venue; USD only where the venue reports it.
+
     assert volume["total_native"] == "20500.5" and volume["total_usd"] == "1500000000"
     assert {v["instrument_id"] for v in volume["venues"]} == {
         "binance:spot:BTCUSDT",
@@ -5207,8 +5196,8 @@ async def test_publish_card_keeps_market_truth_once_and_reads_each_collection_on
         "same_as_bundle_market_truth": "mta-1",
         "sha256": sha256(truth),
     }
-    assert deduped[0]["result"]["market_truth"][1] == {"mta_id": "other", "v": 1}  # not identical: kept
-    assert deduped[1] == calls[1] and calls[0]["result"]["market_truth"][0] is truth  # input untouched
+    assert deduped[0]["result"]["market_truth"][1] == {"mta_id": "other", "v": 1}
+    assert deduped[1] == calls[1] and calls[0]["result"]["market_truth"][0] is truth
 
     monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
     monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card")

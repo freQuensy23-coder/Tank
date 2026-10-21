@@ -1,7 +1,5 @@
 """Verify and stage the frozen capture bytes; never regenerate expected results."""
 
-from __future__ import annotations
-
 import argparse
 import hashlib
 import json

@@ -16,8 +16,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Get is repo.get for a typed collection: the decoded row by storage key, nil when
-// absent.
 func (s *Store) Get(ctx context.Context, collection, key string) (map[string]any, error) {
 	if !schema.Known(collection) {
 		return nil, fmt.Errorf("unknown market collection %s", collection)
@@ -36,7 +34,6 @@ func (s *Store) Get(ctx context.Context, collection, key string) (map[string]any
 	return out[0], nil
 }
 
-// typedArgument renders a filter value for "column = $n::kind".
 func typedArgument(collection, column, kind string, value any) (any, error) {
 	switch kind {
 	case "timestamptz":
@@ -74,9 +71,6 @@ func typedArgument(collection, column, kind string, value any) (any, error) {
 	return nil, fmt.Errorf("%s.%s: unknown column type %s", collection, column, kind)
 }
 
-// exactPredicate is tank.storage._exact_predicate for a typed collection: aliases
-// resolved, None as IS NULL, equality on the typed column otherwise. Placeholders
-// start after the existing args.
 func exactPredicate(collection string, filters map[string]any, args []any) ([]string, []any, error) {
 	names := make([]string, 0, len(filters))
 	for k := range filters {
@@ -116,8 +110,6 @@ func bound(clauses []string, args []any, column, operator string, t time.Time) (
 	return append(clauses, column+" "+operator+" $"+strconv.Itoa(len(args))), args
 }
 
-// Range is repo.iter_range for a typed collection: rows with start <= field < end
-// (a zero time is unbounded) and the exact filters, by (field, storage_key).
 func (s *Store) Range(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) ([]map[string]any, error) {
 	if schema.Kind(collection, field) != "timestamptz" {
 		return nil, fmt.Errorf("%s.%s is not a typed timestamp column", collection, field)
@@ -144,8 +136,6 @@ func (s *Store) Range(ctx context.Context, collection, field string, start, end 
 	return out, err
 }
 
-// Earliest is the smallest field value of the rows with start <= field < end matching
-// filters (the zero time and false when there is none): one aggregate, no rows read.
 func (s *Store) Earliest(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) (time.Time, bool, error) {
 	if schema.Kind(collection, field) != "timestamptz" {
 		return time.Time{}, false, fmt.Errorf("%s.%s is not a typed timestamp column", collection, field)
@@ -173,9 +163,6 @@ func (s *Store) Earliest(ctx context.Context, collection, field string, start, e
 	return first.UTC(), true, nil
 }
 
-// Projection is iter_market_projection: the requested columns (aliases and storage_key
-// allowed) of rows with start <= field < end, by (field, storage_key). A nil
-// instrumentIDs is unscoped; an empty one matches nothing.
 func (s *Store) Projection(ctx context.Context, collection string, fields []string, field string, start, end time.Time, instrumentIDs []string) ([]map[string]any, error) {
 	aliases := schema.Aliases[collection]
 	if target, ok := aliases[field]; ok {
@@ -260,8 +247,6 @@ func (s *Store) Projection(ctx context.Context, collection string, fields []stri
 	return out, rows.Err()
 }
 
-// LatestTrades is latest_market_trades: the last_trade of the newest flow bar holding a
-// print at or after start, per instrument (the capture cursor a restart resumes from).
 func (s *Store) LatestTrades(ctx context.Context, ids []string, start time.Time) (map[string]map[string]any, error) {
 	out := map[string]map[string]any{}
 	if len(ids) == 0 {
@@ -304,8 +289,6 @@ func (s *Store) LatestTrades(ctx context.Context, ids []string, start time.Time)
 	return out, rows.Err()
 }
 
-// LatestRecords is latest_market_records without bounds: the newest point per group
-// (ties by storage key, newest first), optionally for some instruments only.
 func (s *Store) LatestRecords(ctx context.Context, collection string, groupBy []string, timeField string, instrumentIDs []string) ([]map[string]any, error) {
 	if !schema.Known(collection) || len(groupBy) == 0 {
 		return nil, fmt.Errorf("Latest market records require a market collection and typed grouping")
@@ -367,7 +350,6 @@ func (s *Store) LatestRecords(ctx context.Context, collection string, groupBy []
 	return out, err
 }
 
-// HotTokens is every row of the live mkt.hot_tokens (core's escalations).
 func (s *Store) HotTokens(ctx context.Context) ([]map[string]any, error) {
 	rows, err := s.Pool.Query(ctx, "SELECT "+selectList("mkt.hot_tokens", "")+" FROM "+liveTable("mkt.hot_tokens")+" ORDER BY storage_key")
 	if err != nil {
@@ -377,8 +359,6 @@ func (s *Store) HotTokens(ctx context.Context) ([]map[string]any, error) {
 	return out, err
 }
 
-// BackfillRuns are the live mkt.backfill_runs rows (core's capture obligations) with
-// one of the statuses, oldest first.
 func (s *Store) BackfillRuns(ctx context.Context, statuses []string) ([]map[string]any, error) {
 	rows, err := s.Pool.Query(ctx, "SELECT "+selectList("mkt.backfill_runs", "")+" FROM "+liveTable("mkt.backfill_runs")+
 		" WHERE status = ANY($1::text[]) ORDER BY started_at NULLS FIRST,storage_key", statuses)
@@ -389,18 +369,16 @@ func (s *Store) BackfillRuns(ctx context.Context, statuses []string) ([]map[stri
 	return out, err
 }
 
-// requests is core's repair request collection; it always resolves to mkt.
 const requests = "mkt.capture_requests"
 
-// ClaimRequest takes one PENDING repair request: requests whose deadline passed become
-// EXPIRED first, then the oldest PENDING one becomes RUNNING for writer. It returns the
-// claimed row (nil when there is none).
 func (s *Store) ClaimRequest(ctx context.Context, writer string, now time.Time) (map[string]any, error) {
 	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 	rows, err := tx.Query(ctx, "SELECT "+selectList(requests, "")+" FROM "+liveTable(requests)+
 		" WHERE status='PENDING' AND deadline <= $1 FOR UPDATE SKIP LOCKED", now)
 	if err != nil {
@@ -443,8 +421,6 @@ func (s *Store) ClaimRequest(ctx context.Context, writer string, now time.Time) 
 	return row, nil
 }
 
-// FinishRequest writes a claimed request back (status, finished_at, result, reason)
-// under the storage key core gave it.
 func (s *Store) FinishRequest(ctx context.Context, row map[string]any) error {
 	id, _ := row["request_id"].(string)
 	if id == "" {
@@ -459,8 +435,6 @@ func (s *Store) FinishRequest(ctx context.Context, row map[string]any) error {
 	return err
 }
 
-// PruneFetches deletes finished HTTP_FETCH requests older than before: their response
-// bodies are one-shot (core deletes the row once read; this catches rows it gave up on).
 func (s *Store) PruneFetches(ctx context.Context, before time.Time) (int64, error) {
 	tag, err := s.Pool.Exec(ctx, "DELETE FROM "+liveTable(requests)+
 		" WHERE kind='HTTP_FETCH' AND status IN ('COMPLETE','FAILED','EXPIRED') AND finished_at < $1", before)
@@ -470,7 +444,6 @@ func (s *Store) PruneFetches(ctx context.Context, before time.Time) (int64, erro
 	return tag.RowsAffected(), nil
 }
 
-// Now is the database clock (clock_timestamp()).
 func (s *Store) Now(ctx context.Context) (time.Time, error) {
 	var t time.Time
 	err := s.Pool.QueryRow(ctx, "SELECT clock_timestamp()").Scan(&t)

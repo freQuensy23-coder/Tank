@@ -759,7 +759,6 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
 
     monkeypatch.setattr(runtime_module, "CAPTURE_WAIT_S", 0.02)
 
-    # The Go process owns acquisition; this worker exercises its durable boundary.
     repo = MemoryRepository()
     capture_started, release_capture, stop_capture = (asyncio.Event() for _ in range(3))
     requests = []
@@ -871,7 +870,7 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
             assert first["result"]["detail"]["capture_status"]["bounded_wait_s"] >= 0.02
             assert not release_capture.is_set()
             truth.assess.assert_awaited_once()
-            # Another anchor must not change this event's actual pending status.
+
             await repo.put(
                 "mkt.backfill_runs",
                 "different",
@@ -903,7 +902,7 @@ async def test_external_capture_consumer_uses_bounded_incomplete_then_terminal_h
             assert done["result"]["detail"]["capture_status"]["status"] == terminal_status
             assert (await repo.get("ops.jobs", job["job_id"]))["result"] == first["result"]
             assert len(requests) == 2
-            for request, cutoff in zip(requests, (iso(now - timedelta(minutes=1)), iso(now))):
+            for request, cutoff in zip(requests, (iso(now - timedelta(minutes=1)), iso(now)), strict=True):
                 assert request["end"] == cutoff
                 assert request["start"] == iso(
                     (now - timedelta(hours=1) - runtime_module.REPAIR_LOOKBACK).replace(
@@ -934,7 +933,6 @@ async def transport_database(backend, postgres_template):
     if not source:
         pytest.skip("Requires isolated PostgreSQL with CREATE DATABASE permission")
     async with postgres_template.repository(source) as repository:
-        # Tests deliberately own/reopen their pool against this same child DSN.
         await repository.close()
         yield repository.database_url
 
@@ -962,7 +960,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
     clock = [base + timedelta(minutes=30)]
     for module in ("tank.util", "tank.storage", "tank.delivery", "tank.runtime"):
         monkeypatch.setattr(module + ".utcnow", lambda: clock[0])
-    # The lock wait is shortened; what is checked is the no-attempt deferral.
+
     monkeypatch.setattr("tank.delivery.DELIVERY_LOCK_WAIT_S", 0.2)
     aid = new_id("alert")
     eid = new_id("event")
@@ -1070,9 +1068,6 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
                 runtime.handlers = {"DELIVER": handle}
                 await asyncio.wait_for(runtime.worker(stop), 3)
 
-            # Another worker owns the event's network send (the per-event lock).
-            # Repeated scheduling waits are not five failed HTTP attempts or a
-            # terminal queue error.
             held, release = asyncio.Event(), asyncio.Event()
 
             async def other_worker_send():
@@ -1093,8 +1088,7 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
             assert not await repo.list("out.deliveries", filters={"alert_id": aid, "version": 3})
             release.set()
             await owner
-            # The other worker's older version is superseded by version 3 (W2,
-            # 03 §7.4): it ends without a send and never follows the newer card.
+
             await delivery.deliver(older["payload"])
             assert not sent_requests
             assert not await repo.list("out.deliveries", filters={"alert_id": aid, "version": 2})
@@ -1211,8 +1205,7 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
                 return await original_enter(stack, target)
 
             monkeypatch.setattr(delivery, "_enter_delivery_lock", observed_enter)
-            # Cancellation during a blocked PG advisory acquire must roll back
-            # and return its borrowed connection; the holder remains untouched.
+
             waiter = asyncio.create_task(delivery.deliver(job["payload"]))
             await asyncio.wait_for(acquiring.wait(), 2)
             await asyncio.sleep(0.01)
@@ -1244,8 +1237,7 @@ async def test_contended_delivery_lock_is_scheduling_then_sends_once(
             assert not requests and not await repo.list("out.deliveries", filters={"alert_id": aid})
             release.set()
             await asyncio.wait_for(holder_task, 2)
-            # A fresh connection can immediately acquire both locks after the
-            # cancelled waiter and timed acquire clean up their transactions.
+
             async with repo.lock("event:" + eid), repo.lock(f"deliver:{aid}:1:telegram:alerts"):
                 assert await repo.get("out.alerts", aid + ":1") == alert
             await asyncio.sleep(max(0, (parse_time(queued["run_after"]) - utcnow()).total_seconds()) + 0.02)
@@ -1297,7 +1289,7 @@ async def test_market_truth_repairs_windows_within_budget_before_assessing():
     assert token == "T" and budget == runtime_module.REPAIR_BUDGET_S
     assert end == parse_time("2026-10-20T13:00:00Z")
     assert end - start <= timedelta(hours=25) and start <= parse_time(anchor) - timedelta(hours=24)
-    # A market without repair (older build or fake) assesses unchanged.
+
     calls.clear()
     rt.market = SimpleNamespace(capture_readiness=Market().capture_readiness)
     await rt.assess({"event_id": "e", "token_id": "T"})

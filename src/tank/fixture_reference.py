@@ -336,9 +336,6 @@ def validate(packet, market_record, *, private_mask_path=None, input_path=None):
                 )
             sources[record["item_id"]] = row
         elif row["collection"] == "mkt.unlocks":
-            # A captured vesting calendar is an input, not an analyst verdict.
-            # Its release date may be in the future; visibility is determined
-            # by when the calendar was actually observed, without backdating.
             record = row["record"]
             _reject_analysis_seed(record)
             observed = record.get("observed_at")
@@ -386,12 +383,15 @@ def validate(packet, market_record, *, private_mask_path=None, input_path=None):
                             "Repeated phased capture arguments require nonoverlapping validity intervals"
                         )
     for capture in packet["tool_results"]:
-        if phases and capture.get("valid_until") is not None:
-            if (
+        if (
+            phases
+            and capture.get("valid_until") is not None
+            and (
                 parse_time(capture["valid_until"]) <= parse_time(capture["simulated_available_at"])
                 or parse_time(capture["valid_until"]) > cutoff
-            ):
-                raise ValueError("Fixture capture validity must be a bounded half-open interval")
+            )
+        ):
+            raise ValueError("Fixture capture validity must be a bounded half-open interval")
         if capture.get("origin") == "DECLARED_SYNTHETIC_TOOL_RESPONSE":
             _synthetic_manifest(reference)
             lookup = {
@@ -586,17 +586,27 @@ def project_original_source(kind, original, selector):
             fields = ("cooked", "created_at", "updated_at", "version", "last_edited_at", "username")
             result = {"post_stream": {"posts": [{k: post[k] for k in fields if k in post}]}}
         elif kind == "DISCOURSE_TOPIC_POST_V1":
-            # One reply selected by post_number; later posts of the topic stay host-only.
             if (
                 not isinstance(selector, dict)
                 or set(selector) != {"post_number"}
                 or type(selector["post_number"]) is not int
             ):
                 raise ValueError("Discourse topic post projection requires an explicit integer post_number")
-            matches = [p for p in obj["post_stream"]["posts"] if p.get("post_number") == selector["post_number"]]
+            matches = [
+                p for p in obj["post_stream"]["posts"] if p.get("post_number") == selector["post_number"]
+            ]
             if len(matches) != 1:
                 raise ValueError("Discourse topic post selection must be unique")
-            fields = ("id", "post_number", "cooked", "created_at", "updated_at", "version", "last_edited_at", "username")
+            fields = (
+                "id",
+                "post_number",
+                "cooked",
+                "created_at",
+                "updated_at",
+                "version",
+                "last_edited_at",
+                "username",
+            )
             result = {
                 "topic_id": obj.get("id"),
                 "post_stream": {"posts": [{k: matches[0][k] for k in fields if k in matches[0]}]},
@@ -633,7 +643,7 @@ def verify_derivation(record, proof, raw, *, signed_original=None):
             raise ValueError("Signed identity view changed original CID or source kind")
     descriptor = proof.get("derivation")
     if descriptor is None:
-        return  # Explicitly independent source-review binding, not a machine derivation claim.
+        return
     from tank.sources import parsers
 
     kind = descriptor.get("kind")
@@ -967,7 +977,7 @@ def _host_identity_mask(packet, private_path, input_path):
         raise ValueError("Original registry differs from its canonical host snapshot")
     if original.get("masking", {}).get("applied"):
         raise ValueError("Original authority packet must be unmasked")
-    # These fields are immutable authority and temporal coordinates, never names.
+
     for field in ("fixture_reference", "cutoff", "assembled_at", "replay_mode"):
         if packet.get(field) != original.get(field):
             raise ValueError("Masking changed authority or original temporal coordinates")
@@ -1059,7 +1069,7 @@ def _host_identity_mask(packet, private_path, input_path):
     sensitive = private.get("case_sensitive_names", [])
     if not isinstance(sensitive, list) or any(k not in replacements for k in sensitive):
         raise ValueError("Invalid case-sensitive identity declaration")
-    # Case variants are unambiguous only when each variant is explicitly exact.
+
     groups = {}
     for key in keys:
         groups.setdefault(key.casefold(), []).append(key)
@@ -1089,7 +1099,6 @@ def _host_identity_mask(packet, private_path, input_path):
 
         return pattern.sub(replace, text)
 
-    # Validate the actual synthetic bodies, not merely the authoritative substring.
     sources = {
         row["key"]: row for row in original.get("records", []) if row["collection"] == "ingest.source_items"
     }
@@ -1153,8 +1162,7 @@ def _host_identity_mask(packet, private_path, input_path):
             or transform(masked_raw.decode(), True).encode() != raw
         ):
             raise ValueError("Synthetic raw identity transformation is not exactly reversible")
-        # Compare every non-content-identity field, including role, subtype,
-        # source class, timestamp precision and all known clock siblings.
+
         expected = transform_tree(before["record"])
         original_record, record = before["record"], row["record"]
         for field in mutable:

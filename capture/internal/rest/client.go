@@ -1,7 +1,3 @@
-// Package rest is the public venue REST surface of tank.market: VenueAdapter
-// (tank.market.adapters) and MarketService._request with its Hyperliquid response cache,
-// over the shared request budget (internal/budget). Responses keep Python's view of JSON:
-// numbers keep their exact text (json.loads(parse_float=Decimal)).
 package rest
 
 import (
@@ -25,8 +21,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
 )
 
-// HLContexts is HL_CONTEXTS_S: one metaAndAssetCtxs response serves every Hyperliquid
-// instrument for this long. A fundingHistory response is shared for an hour.
 const (
 	HLContexts = 10 * time.Second
 	HLFunding  = time.Hour
@@ -34,7 +28,6 @@ const (
 
 const hlContextsKey = "hyperliquid:contexts"
 
-// Attempts is the number of tries a rate-limited (429) request gets.
 const Attempts = 4
 
 type cached struct {
@@ -42,12 +35,11 @@ type cached struct {
 	body any
 }
 
-// Client sends budgeted public REST requests.
 type Client struct {
 	HTTP      *http.Client
 	UserAgent string
 	Gate      *budget.Gate
-	// Now is the collection clock (iso stamps); monotonic ages the response cache.
+
 	Now       func() time.Time
 	monotonic func() time.Time
 
@@ -57,8 +49,6 @@ type Client struct {
 	reads map[string][2]int
 }
 
-// NewClient is httpx.AsyncClient(timeout=30, headers={"User-Agent": ...}) behind gate,
-// with clock as the collection clock (pytime.Wall when nil).
 func NewClient(userAgent string, gate *budget.Gate, clock func() time.Time) *Client {
 	if clock == nil {
 		clock = pytime.Wall{}.Now
@@ -75,8 +65,6 @@ func NewClient(userAgent string, gate *budget.Gate, clock func() time.Time) *Cli
 	}
 }
 
-// TakeReads returns and resets the REST reads per host since the last call:
-// [succeeded, failed] (the service's per-minute "rest reads" log).
 func (c *Client) TakeReads() map[string][2]int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -85,9 +73,6 @@ func (c *Client) TakeReads() map[string][2]int {
 	return reads
 }
 
-// Do is MarketService._request: one shared response per Hyperliquid contexts or funding
-// history request (cache hits take no budget and keep the original observation time),
-// otherwise a live request. params are the query parameters, body a JSON payload.
 func (c *Client) Do(ctx context.Context, method, rawURL string, params map[string]string, body map[string]any, priority int) (any, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -159,7 +144,6 @@ func (c *Client) lock(key string) *sync.Mutex {
 	return l
 }
 
-// expire drops cached responses past their TTL.
 func (c *Client) expire() {
 	now := c.monotonic()
 	c.mu.Lock()
@@ -175,7 +159,6 @@ func (c *Client) expire() {
 	}
 }
 
-// live is _request_live: one budgeted request, counted per host.
 func (c *Client) live(ctx context.Context, method string, u *url.URL, host string, params map[string]string, body map[string]any, priority int) (any, error) {
 	value, err := c.once(ctx, method, u, host, params, body, priority)
 	if ctx.Err() == nil || err == nil {
@@ -192,8 +175,6 @@ func (c *Client) live(ctx context.Context, method string, u *url.URL, host strin
 	return value, err
 }
 
-// once is _request_once: the budget first (without a host slot), then the host slot and
-// its start spacing; a 429 is retried after its Retry-After, a 418 never.
 func (c *Client) once(ctx context.Context, method string, u *url.URL, host string, params map[string]string, body map[string]any, priority int) (any, error) {
 	for attempt := 0; attempt < Attempts; attempt++ {
 		if err := c.Gate.Admit(ctx, host, u.Path, params, body, priority); err != nil {
@@ -220,7 +201,7 @@ func (c *Client) once(ctx context.Context, method string, u *url.URL, host strin
 			continue
 		}
 		if status >= 400 {
-			// The venue's error code and message are the gap evidence (bodies carry no credentials).
+
 			return nil, fmt.Errorf("%s: HTTP %d %s", host, status, prefix(string(data), 200))
 		}
 		value, err := pyval.Decode(data)
@@ -264,7 +245,9 @@ func (c *Client) send(ctx context.Context, method string, u *url.URL, params map
 	if err != nil {
 		return 0, nil, nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return 0, nil, nil, err
@@ -272,7 +255,6 @@ func (c *Client) send(ctx context.Context, method string, u *url.URL, params map
 	return resp.StatusCode, resp.Header, data, nil
 }
 
-// errorName is the httpx exception name a transport failure would carry.
 func errorName(err error) string {
 	var op *net.OpError
 	dial := errors.As(err, &op) && op.Op == "dial"
@@ -292,7 +274,6 @@ func errorName(err error) string {
 	return "ReadError"
 }
 
-// prefix is text[:n] in characters.
 func prefix(text string, n int) string {
 	runes := []rune(text)
 	if len(runes) > n {
@@ -301,7 +282,6 @@ func prefix(text string, n int) string {
 	return string(runes)
 }
 
-// copyValue copies decoded JSON, so a shared cached response is never mutated.
 func copyValue(v any) any {
 	switch x := v.(type) {
 	case map[string]any:
@@ -320,7 +300,6 @@ func copyValue(v any) any {
 	return v
 }
 
-// sortedKeys are m's keys in order.
 func sortedKeys(m map[string]any) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -330,22 +309,16 @@ func sortedKeys(m map[string]any) []string {
 	return keys
 }
 
-// FetchLimit caps a raw fetch's response body (HTTP_FETCH capture requests).
 const FetchLimit = 32 << 20
 
-// ErrTooLarge is a raw fetch whose body exceeds FetchLimit.
 var ErrTooLarge = errors.New("RESPONSE_TOO_LARGE")
 
-// Fetched is one raw HTTP response.
 type Fetched struct {
 	Status      int
 	ContentType string
 	Body        []byte
 }
 
-// Fetch is one raw budgeted request for a capture request: the venue budget
-// (budget.FetchConstraints), the host slot and spacing, 429 retried after Retry-After and
-// 418 never, like Do; the body is returned whatever its status, at most FetchLimit bytes.
 func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, headers map[string]string, body any, priority int) (*Fetched, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -396,8 +369,6 @@ type rawResponse struct {
 	header http.Header
 }
 
-// Download streams one budgeted GET into dst (an archive file, no size limit); like Fetch,
-// 429 is retried after Retry-After and 418 never. A non-200 status writes nothing.
 func (c *Client) Download(ctx context.Context, rawURL string, dst io.Writer, priority int) (int, int64, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
@@ -433,7 +404,7 @@ func (c *Client) Download(ctx context.Context, rawURL string, dst io.Writer, pri
 		if resp.StatusCode == http.StatusOK {
 			n, err = io.Copy(dst, resp.Body)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		retry, oerr := c.Gate.Observe(ctx, host, resp.StatusCode, resp.Header)
 		release()
 		if err != nil {
@@ -487,7 +458,9 @@ func (c *Client) raw(ctx context.Context, method string, u *url.URL, params, hea
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, FetchLimit+1))
 	if err != nil {
 		return nil, err

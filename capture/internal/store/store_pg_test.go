@@ -17,10 +17,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
 )
 
-// The PostgreSQL tests run against TANK_TEST_DATABASE_URL, a database already migrated
-// with `tank db migrate` (CI migrates it once). They write only rows of their own random
-// instruments, tokens, requests and buckets, and private shadow schemas, and remove them.
-
 func databaseURL(t *testing.T) string {
 	t.Helper()
 	url := os.Getenv("TANK_TEST_DATABASE_URL")
@@ -32,7 +28,7 @@ func databaseURL(t *testing.T) string {
 
 func suffix() string {
 	b := make([]byte, 6)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }
 
@@ -46,24 +42,25 @@ func open(t *testing.T, schema string) *Store {
 	}
 	t.Cleanup(func() {
 		if schema != "mkt" {
-			s.Pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+quote(schema)+" CASCADE")
+			if _, err := s.Pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+quote(schema)+" CASCADE"); err != nil {
+				t.Error(err)
+			}
 		}
 		s.Close()
 	})
 	return s
 }
 
-// cleanup deletes the live rows a test wrote for its instruments.
 func cleanup(t *testing.T, s *Store, column, value string, collections ...string) {
 	t.Cleanup(func() {
 		for _, c := range collections {
-			s.Pool.Exec(context.Background(), "DELETE FROM "+liveTable(c)+" WHERE "+quote(column)+" LIKE $1", value)
+			if _, err := s.Pool.Exec(context.Background(), "DELETE FROM "+liveTable(c)+" WHERE "+quote(column)+" LIKE $1", value); err != nil {
+				t.Error(err)
+			}
 		}
 	})
 }
 
-// python runs a script with the tank package against the test database; the script
-// reads JSON from stdin and prints JSON.
 func python(t *testing.T, script string, input any) any {
 	t.Helper()
 	payload, err := json.Marshal(input)
@@ -145,7 +142,7 @@ func TestPutMarketBatchRoundTrip(t *testing.T) {
 	if _, err := s.PutMarketBatch(ctx, "mkt.flow_bars_1m", []map[string]any{with(row, "unregistered", "lost")}, nil); err == nil || !strings.Contains(err.Error(), "nknown typed") {
 		t.Fatalf("unknown field: %v", err)
 	}
-	// Python reads the same row.
+
 	read := python(t, `import asyncio, json, os, sys
 from tank.storage import PostgresRepository
 key = json.load(sys.stdin)
@@ -190,7 +187,6 @@ func TestUnprovenFlowBarNeverReplacesComplete(t *testing.T) {
 	}
 }
 
-// pointPackets are the funding and ticker packets of tank's merge tests.
 func pointPackets(iid string) map[string][]map[string]any {
 	base := map[string]any{"instrument_id": iid, "token_id": "BTC", "kind": "CURRENT_ESTIMATE", "as_of": "2026-10-18T00:00:00Z", "metric_key": "funding", "interval_h": "8"}
 	rest := with(base, "rate", "0.02", "rate_8h_eq", "0.02", "capture_source", "PUBLIC_REST", "source_path", "rest", "received_ts", "2026-10-18T00:00:01Z")
@@ -208,8 +204,6 @@ func pointPackets(iid string) map[string][]map[string]any {
 	}
 }
 
-// The server-side point merge (sequential writes) and the batch merge give Go and
-// Python the same stored rows.
 func TestPointMergeEqualsPython(t *testing.T) {
 	shadow := "mkt_shadow_" + suffix()
 	s := open(t, shadow)
@@ -256,7 +250,7 @@ asyncio.run(main())`, map[string]any{"prefix": iid, "packets": packets}).(map[st
 			}
 		}
 	}
-	// A current estimate prefers the WebSocket source; both sources stay, disagreeing.
+
 	if seq := want["mkt.funding_obs:seq"].(map[string]any); seq["rate"] != "0.01" || seq["capture_source"] != "WEBSOCKET" || seq["source_disagreement"].(map[string]any)["present"] != true {
 		t.Fatalf("funding merge: %v", seq)
 	}
@@ -274,7 +268,9 @@ func TestShadowSchema(t *testing.T) {
 		t.Fatal(out, err)
 	}
 	var live int
-	s.Pool.QueryRow(ctx, "SELECT count(*) FROM mkt.flow_bars_1m WHERE instrument_id=$1", iid).Scan(&live)
+	if err := s.Pool.QueryRow(ctx, "SELECT count(*) FROM mkt.flow_bars_1m WHERE instrument_id=$1", iid).Scan(&live); err != nil {
+		t.Fatal(err)
+	}
 	if live != 0 {
 		t.Fatal("a shadow write reached mkt")
 	}
@@ -283,7 +279,7 @@ func TestShadowSchema(t *testing.T) {
 	if err != nil || len(out) != 1 || out[0]["id"] == nil {
 		t.Fatalf("liq id from the shadow sequence: %v %v", out, err)
 	}
-	// A column a later migration adds to mkt reaches an existing copy at the next Open.
+
 	if _, err := s.Pool.Exec(ctx, "ALTER TABLE "+quote(shadow)+".capture_streams DROP COLUMN recent_polls"); err != nil {
 		t.Fatal(err)
 	}
@@ -293,7 +289,9 @@ func TestShadowSchema(t *testing.T) {
 	}
 	defer again.Close()
 	var restored bool
-	again.Pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=$1 AND table_name='capture_streams' AND column_name='recent_polls')", shadow).Scan(&restored)
+	if err := again.Pool.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=$1 AND table_name='capture_streams' AND column_name='recent_polls')", shadow).Scan(&restored); err != nil {
+		t.Fatal(err)
+	}
 	if !restored {
 		t.Fatal("missing shadow column not restored")
 	}
@@ -321,7 +319,7 @@ func TestLockExclusion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A terminated lock backend is replaced: the lock is held again, Lost stays open.
+
 	var pid int
 	if err := b.Pool.QueryRow(ctx, "SELECT pid FROM pg_locks WHERE locktype='advisory' AND ((classid::bigint<<32)|objid::bigint)=$1 AND granted", LockID(key)).Scan(&pid); err != nil {
 		t.Fatal(err)
@@ -385,7 +383,7 @@ func TestListenHotTokens(t *testing.T) {
 	if !found {
 		t.Fatal("HotTokens misses the row")
 	}
-	// A dropped listener reconnects and wakes the receiver with an empty payload.
+
 	if _, err := s.Pool.Exec(ctx, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE query LIKE 'LISTEN%' AND datname=current_database() AND pid<>pg_backend_pid()"); err != nil {
 		t.Fatal(err)
 	}
@@ -412,9 +410,11 @@ func TestClaimAndFinishRequests(t *testing.T) {
 	if _, err := s.PutMarketBatch(ctx, "mkt.capture_requests", []map[string]any{request("1", past), request("2", future)}, []string{"key-" + id + "1", "key-" + id + "2"}); err != nil {
 		t.Fatal(err)
 	}
-	// ClaimRequest acts on every PENDING request: never on ones another test owns.
+
 	var foreign int
-	s.Pool.QueryRow(ctx, "SELECT count(*) FROM mkt.capture_requests WHERE status='PENDING' AND request_id NOT LIKE $1", id+"%").Scan(&foreign)
+	if err := s.Pool.QueryRow(ctx, "SELECT count(*) FROM mkt.capture_requests WHERE status='PENDING' AND request_id NOT LIKE $1", id+"%").Scan(&foreign); err != nil {
+		t.Fatal(err)
+	}
 	if foreign > 0 {
 		t.Skip("foreign PENDING requests in the test database")
 	}
@@ -506,8 +506,12 @@ func TestLedger(t *testing.T) {
 	bucket := "storetest:" + suffix() + "|1.0|2.0"
 	host := "storetest-" + suffix() + ".example"
 	t.Cleanup(func() {
-		s.Pool.Exec(context.Background(), "DELETE FROM ops.request_budget_ledger WHERE bucket=$1", bucket)
-		s.Pool.Exec(context.Background(), "DELETE FROM ops.request_budget_blocks WHERE host=$1", host)
+		if _, err := s.Pool.Exec(context.Background(), "DELETE FROM ops.request_budget_ledger WHERE bucket=$1", bucket); err != nil {
+			t.Error(err)
+		}
+		if _, err := s.Pool.Exec(context.Background(), "DELETE FROM ops.request_budget_blocks WHERE host=$1", host); err != nil {
+			t.Error(err)
+		}
 	})
 	ledger := s.Ledger()
 	for i := 0; i < 2; i++ {
@@ -559,7 +563,7 @@ func TestWriterFlush(t *testing.T) {
 	if bar == nil || bar["sell_qty"] != "0" || stored == nil {
 		t.Fatalf("written %v %v", bar, stored)
 	}
-	// A failing write returns its rows to the queue.
+
 	w.Sink(points.Row{Collection: "mkt.klines_1m", Key: iid + ":k2", Record: with(kline, "open_time", "2026-10-18T00:01:00Z")})
 	w.Sink(points.Row{Collection: "mkt.flow_bars_1m", Key: iid + ":bad", Record: with(flowRow(iid, "2026-10-18T00:03:00Z"), "unregistered", "x")})
 	if err := w.Flush(ctx); err == nil {
@@ -570,8 +574,6 @@ func TestWriterFlush(t *testing.T) {
 	}
 }
 
-// A terminated lock backend is replaced: the lock is held again on a new connection and
-// Lost stays open.
 func TestLockSurvivesTerminatedBackend(t *testing.T) {
 	fastLock(t)
 	s := open(t, "mkt")

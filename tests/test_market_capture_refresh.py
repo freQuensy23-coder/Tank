@@ -35,11 +35,9 @@ from tank.util import iso, parse_time, utcnow
 def _canonical_snapshot(full_flow_history):
     """Private immutable seed; decoded output is owned by one caller only."""
     source = compact_start_snapshot()
-    # Preserve the real seven-day derivative baselines and every current
-    # window endpoint, without redundant five-minute history observations.
+
     end_value = parse_time(source["cutoff"])
-    # Every tested decision uses this event's complete four-hour window.
-    # Preserve its preceding price-reference bar as well.
+
     if not full_flow_history:
         source["flow_bars"] = [
             r
@@ -90,8 +88,7 @@ class ReleasedMarket:
         self.reads = []
 
     async def snapshot(self, token, cutoff, *, anchor=None):
-        # Before acquisition completes no numerical observations are available.
-        # Keeping unrelated price/funding history here only bloats the LOW MTA.
+
         unavailable = {"flow_bars", "books", "oi", "klines", "funding"} if not self.released else set()
         result = {
             key: [] if key in unavailable else copy.deepcopy(value) for key, value in self.source.items()
@@ -187,11 +184,13 @@ async def seed_domain(repo, settings, end):
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
 async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_ack(
-    tmp_path, backend, postgres_template
+    tmp_path, backend, postgres_template, monkeypatch
 ):
     async with _refresh_repository(backend, postgres_template) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
+        logical_now = [end]
+        monkeypatch.setattr("tank.event_tools.utcnow", lambda: logical_now[0])
         market = ReleasedMarket(shifted_snapshot(end, full_flow_history=True))
         truth = MarketTruthService(repo, settings, market)
         tools = EventToolService(repo, settings, truth, DecisionEngine())
@@ -213,7 +212,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
         assert fired["status"] == "FIRED" and not fired.get("consumed_by")
         messages = [row async for row in repo.iter_all("ops.jobs", filters={"type": "AGENT_MESSAGE"})]
         assert any(row["payload"].get("kind") == "CONDITION_FIRED" for row in messages)
-        # The transient condition evaluator must not append a replacement MTA.
+
         assert len(await repo.list("ana.market_truth")) == 1
         await seed_bound_session(repo)
         sent = []
@@ -256,12 +255,14 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
                 decision = ledger["result"]
                 assert decision["mta_id"] != first["mta_id"]
                 fresh = await repo.get("ana.market_truth", decision["mta_id"])
+                assert fresh["cutoff"] == iso(end)
                 assert fresh["data_confidence"]["class"] == "HIGH"
                 assert decision["action"] == "START"
                 assert (await repo.get("ana.watch_conditions", watch["cond_id"]))["consumed_by"] == decision[
                     "dec_id"
                 ]
                 before = await persisted_ids(repo)
+                logical_now[0] += timedelta(minutes=1)
                 await sessions.process_event("s", event, 7)
                 assert sent[0] == sent[1]
                 assert (await repo.get("ops.tool_calls", "s:decision"))["returned_at"]
@@ -381,8 +382,7 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
     async with _refresh_repository(backend, postgres_template) as repo:
         settings = Settings(data_dir=tmp_path, _env_file=None)
         end = utcnow().replace(second=0, microsecond=0)
-        # The race tests durable refresh ownership, including incomplete data;
-        # numerical LOW -> HIGH/START is asserted separately above.
+
         market = ReleasedMarket(
             {
                 "cutoff": iso(end),
@@ -445,7 +445,7 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
             pending = asyncio.create_task(sessions.process_event("s", event, 8))
             try:
                 await asyncio.wait_for(entering.wait(), 5)
-                # Same expression intentionally exercises reconciliation's reuse branch.
+
                 second.update(status="FIRED", fired_at=iso())
                 await repo.put("ana.watch_conditions", second["cond_id"], second)
                 release.set()

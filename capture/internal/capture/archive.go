@@ -18,17 +18,10 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
 )
 
-// ArchiveHost is the Binance public data archive (DATA_GUIDE §4.8).
 const ArchiveHost = "data.binance.vision"
 
-// archivePriority keeps archive files behind live capture: they are large and not urgent.
 const archivePriority = 1
 
-// runArchive is an ARCHIVE_FETCH request: request {url} names one daily or monthly zip of
-// the Binance public data archive. Its .CHECKSUM is read first; the zip is streamed to
-// DataDir/archive/binance/<path after /data/>, hashed on the way, and kept only when the
-// SHA-256 matches. Core reads the stored file; it never reaches the archive itself.
-// An already stored file with the published checksum is not downloaded again.
 func (s *Service) runArchive(ctx context.Context, row map[string]any, budgetS time.Duration, finish func(string, any, any)) {
 	req := pyval.Map(row["request"])
 	raw := text(req["url"])
@@ -88,7 +81,9 @@ func (s *Service) runArchive(ctx context.Context, row map[string]any, budgetS ti
 		finish("FAILED", "ARCHIVE_STORE_FAILED", map[string]any{"error": err.Error()})
 		return
 	}
-	defer os.Remove(tmp)
+	defer func() {
+		_ = os.Remove(tmp)
+	}()
 	h := sha256.New()
 	status, size, err := s.opt.Fetcher.Download(ctx, raw, io.MultiWriter(f, h), archivePriority)
 	if err == nil {
@@ -124,7 +119,9 @@ func fileSHA256(p string) (int64, string, error) {
 	if err != nil {
 		return 0, "", err
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 	h := sha256.New()
 	n, err := io.Copy(h, f)
 	if err != nil {
@@ -133,7 +130,6 @@ func fileSHA256(p string) (int64, string, error) {
 	return n, hexSum(h), nil
 }
 
-// fetchReason names a failed fetch for the request row.
 func fetchReason(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "REQUEST_BUDGET_EXHAUSTED"

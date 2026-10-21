@@ -1,5 +1,3 @@
-// Command capture-parity runs one recorded fixture through tank-capture's ports and
-// prints the full output; scripts/capture/parity.py --go diffs it against Python.
 package main
 
 import (
@@ -16,7 +14,7 @@ func main() {
 	var err error
 	switch {
 	case len(os.Args) == 3 && os.Args[1] == "rest":
-		// A recorded REST poll cycle (scripts/capture/rest_parity.py --go).
+
 		var p *restparity.Payload
 		if p, err = restparity.Load(os.Args[2]); err == nil {
 			out, err = restparity.Run(p)

@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from test_market_service import setup  # noqa: F401
 
 from tank.market.rate_gate import PriorityGate
 from tank.market.service import MarketService
@@ -24,14 +23,14 @@ async def test_gate_admits_capacity_holders_then_lowest_priority_first():
 
     holders = [asyncio.create_task(hold(n, p)) for n, p in (("a", 5), ("b", 5), ("low", 9), ("high", 0))]
     await asyncio.sleep(0.01)
-    assert order == ["a", "b"]  # two in flight, two waiting
+    assert order == ["a", "b"]
     release.set()
     await asyncio.gather(*holders)
     assert order == ["a", "b", "high", "low"]
 
 
 @pytest.mark.asyncio
-async def test_concurrent_requests_overlap_but_start_one_interval_apart(setup):  # noqa: F811
+async def test_concurrent_requests_overlap_but_start_one_interval_apart(setup):
     repo, settings, _ = setup
     starts, active, peak = [], [0], [0]
     release = asyncio.Event()
@@ -52,8 +51,8 @@ async def test_concurrent_requests_overlap_but_start_one_interval_apart(setup): 
             *(service._request("GET", "https://api.llama.fi/summary/fees/abc") for _ in range(4))
         )
     gaps = [b - a for a, b in zip(sorted(starts), sorted(starts)[1:], strict=False)]
-    assert peak[0] > 1  # several in flight
-    assert all(gap >= 0.07 for gap in gaps)  # never a burst: 0.08 s host interval
+    assert peak[0] > 1
+    assert all(gap >= 0.07 for gap in gaps)
 
 
 @pytest.mark.asyncio
@@ -61,7 +60,7 @@ async def test_a_negative_priority_request_takes_a_full_budget_first():
     from tank.sources.rate_limits import SharedRequestBudgets
 
     budgets = SharedRequestBudgets()
-    await budgets.acquire("host", 1, 0.2)  # the window is full
+    await budgets.acquire("host", 1, 0.2)
     order = []
 
     async def request(name, priority):
@@ -69,7 +68,7 @@ async def test_a_negative_priority_request_takes_a_full_budget_first():
         order.append(name)
 
     repairs = [asyncio.create_task(request(f"repair{i}", 1)) for i in range(3)]
-    await asyncio.sleep(0.05)  # the repairs wait first
+    await asyncio.sleep(0.05)
     ticker = asyncio.create_task(request("ticker", -1))
     await asyncio.wait_for(asyncio.gather(ticker, *repairs), 5)
     assert order[0] == "ticker" and sorted(order[1:]) == ["repair0", "repair1", "repair2"]
@@ -115,7 +114,7 @@ def control_request_clock(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_overdue_request_starts_are_spaced_from_actual_admission(setup, monkeypatch):  # noqa: F811
+async def test_overdue_request_starts_are_spaced_from_actual_admission(setup, monkeypatch):
     repo, settings, _ = setup
     clock = control_request_clock(monkeypatch)
     starts, active, peak = [], 0, 0
@@ -142,7 +141,7 @@ async def test_overdue_request_starts_are_spaced_from_actual_admission(setup, mo
         try:
             await entered.get()
             await clock.sleeping.get()
-            # Simulate a blocked loop resuming after every old reserved slot expired.
+
             clock.advance(0.5)
             await entered.get()
             for _ in range(2):
@@ -150,14 +149,14 @@ async def test_overdue_request_starts_are_spaced_from_actual_admission(setup, mo
                 clock.advance(0.08)
                 await entered.get()
             assert starts == pytest.approx([10.0, 10.5, 10.58, 10.66])
-            assert peak == 4  # The pacing lock must never cover the HTTP request.
+            assert peak == 4
         finally:
             release.set()
             await asyncio.gather(*requests)
 
 
 @pytest.mark.asyncio
-async def test_cancelled_pacing_wait_does_not_reserve_a_future_start(setup, monkeypatch):  # noqa: F811
+async def test_cancelled_pacing_wait_does_not_reserve_a_future_start(setup, monkeypatch):
     repo, settings, _ = setup
     clock = control_request_clock(monkeypatch)
     starts, entered, release = [], asyncio.Queue(), asyncio.Event()
@@ -196,7 +195,7 @@ async def test_cancelled_pacing_wait_does_not_reserve_a_future_start(setup, monk
 
 
 @pytest.mark.asyncio
-async def test_delayed_response_frees_saturated_slot_without_restarting_pacer(setup, monkeypatch):  # noqa: F811
+async def test_delayed_response_frees_saturated_slot_without_restarting_pacer(setup, monkeypatch):
     repo, settings, _ = setup
     clock = control_request_clock(monkeypatch)
     starts, entered = [], asyncio.Queue()
@@ -224,7 +223,7 @@ async def test_delayed_response_frees_saturated_slot_without_restarting_pacer(se
             requests.append(
                 asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
             )
-            await asyncio.sleep(0)  # Let the fifth task join the full host's permit queue.
+            await asyncio.sleep(0)
             assert len(service._request_locks["api.llama.fi"].waiters) == 1
             clock.advance(2.0)
             released_at = clock.monotonic()

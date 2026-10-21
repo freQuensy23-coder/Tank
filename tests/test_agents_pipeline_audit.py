@@ -23,7 +23,7 @@ def options():
 
 def test_filter_question_asks_the_03_3_1_condition_about_the_named_item():
     design = Path("03_Tank_V0_Technical_Design.md").read_text()
-    # Same condition and project list as 03 §3.1, phrased for Jev's literal reading (user decision 2026-10-20).
+
     projects = FILTER.split("one of these projects: ")[1].rstrip("?")
     assert f"one of these projects: {projects}?" in design and FILTER.startswith("Is `item` about crypto")
     state = Pipeline.state({"source_name": "Outlet", "title": "Aave approved", "body": "Details"})
@@ -226,7 +226,7 @@ async def test_official_repost_promotion_during_filter_request_preserves_latest_
     )
 
     async def handler(request):
-        # Taking this same lock proves the model request does not block ingestion.
+
         async with repo.lock("ingest-dedup"):
             item = await repo.get("ingest.source_items", "i")
             item.update(
@@ -292,7 +292,7 @@ async def test_failed_event_is_not_a_routing_candidate():
             "status": "FAILED",
         },
     )
-    # object() deliberately cannot issue HTTP: terminal events are never scored.
+
     routed = await Pipeline(repo, opts, http=object()).route_item({"item_id": "i"})
     assert routed["route"]["decision"] == "NEW_SESSION"
     assert routed["routing_scores"] == {}
@@ -423,7 +423,7 @@ def test_routing_state_names_item_and_event_with_readable_identities():
 
 @pytest.mark.parametrize("text", ["Uniswap governance passes fee switch", "$UNI fee switch passes"])
 async def test_event_with_resolved_token_id_is_a_candidate_for_alias_or_ticker(text):
-    # W5: event tools store tokens as registry token_ids ("uniswap:UNI"), never bare tickers.
+
     from tank.util import utcnow
 
     opts, _ = options()

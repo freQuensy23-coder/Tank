@@ -52,12 +52,10 @@ def insert_series(collection, password, since=None):
         f"ifNull(`{n}`, [])" if MARKET_COLUMNS[collection].get(n) == "text[]" else f"`{n}`" for n in names
     )
     pg = f"postgresql('postgres:5432', 'tank', '{table}', 'tank', '{password}', '{VIEW_SCHEMA}')"
-    # --since: only rows the old writer recorded after the first copy (a handover's tail).
+
     where = f" WHERE recorded_at >= parseDateTime64BestEffort('{since}', 6, 'UTC')" if since else ""
     version = "1"
     if since and collection == "mkt.flow_bars_1m":
-        # A handover tail: the old writer's complete bar replaces the unproven one the new
-        # writer stored for the minute it joined in (later _version wins).
         version = "toUInt64(toUnixTimestamp64Nano(now64(9)))"
         where += (
             " AND complete AND (instrument_id, minute_start) IN (SELECT instrument_id, minute_start "
@@ -142,8 +140,7 @@ async def main():
             print(collection, "postgres", pg_counts[collection], "clickhouse", rows[0]["n"], flush=True)
             if since is None and int(rows[0]["n"]) < pg_counts[collection]:
                 raise SystemExit(f"{collection}: ClickHouse has fewer rows than PostgreSQL")
-        # Prints: each hourly file (and open hour journal) goes in as it is; ClickHouse converts
-        # the text columns while inserting (input()).
+
         files = sorted(
             Path(settings.data_dir, "raw", "trades").glob(
                 trade_files.removeprefix("tank-data/raw/trades/") + ".parquet"

@@ -4,7 +4,7 @@
   "source_guards": "source-guards.json",
   "runtime_generated_modules": {},
   "assets_sha256": {
-    "prepare_overlay.py": "71a60c1d34b7e82dbea287aaba07edfddec0db528d8852cc12a22c1d3b7d644a",
+    "prepare_overlay.py": "b55e010c0427ce23ca11befeca1bc28835ecd01bfef666124e58c7dd464a63cc",
     "replacements.json": "cd3cc285588c334518848fda6996e12a022252e712a2ae6e913a4df40132773f",
     "source-guards.json": "bd3fac554d93e418d8226ff60a0c3b7f8512b8572700cc7b9adcc25a155fa689"
   }

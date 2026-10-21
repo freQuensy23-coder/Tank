@@ -195,7 +195,7 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
             inspected_after_new = asyncio.Event()
 
             async def no_delivery():
-                # worker calls this only after an actual claim finds no due work.
+
                 if (await repo.get("ops.jobs", jobs["new"]))["status"] == "DONE":
                     inspected_after_new.set()
 
@@ -207,7 +207,6 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
                 return (await repo.get("ops.jobs", jobs[name]))["status"]
 
             try:
-                # Two sessions run: the message to running s1 passes, the others wait.
                 await until(lambda: _done(status, "busy"))
                 await until(lambda: _waiting(repo, jobs, "new", "idle"))
                 assert posted == [("s1", "i_busy")]
@@ -215,16 +214,16 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
                     job = await repo.get("ops.jobs", jobs[name])
                     assert job["status"] == "QUEUED" and job["attempts"] == 0 and job["last_error"] is None
                     assert job["expires_at"] == expiries[name]
-                    # A waiting turn sleeps instead of spinning on the job workers.
+
                     assert parse_time(job["run_after"]) > utcnow() + timedelta(seconds=30)
-                # One slot frees: the older waiting turn (NEW_ITEM) goes first.
+
                 await release(repo, "s1")
                 await sessions.wake_waiting()
                 await until(lambda: _done(status, "new"))
                 await asyncio.wait_for(inspected_after_new.wait(), timeout=1)
                 assert await status("idle") == "QUEUED"
                 assert posted[1] == ("s_new", "i_new")
-                # Another slot frees: the remaining turn goes.
+
                 await release(repo, "s2")
                 await sessions.wake_waiting()
                 await until(lambda: _done(status, "idle"))

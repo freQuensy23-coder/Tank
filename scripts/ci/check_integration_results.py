@@ -1,7 +1,5 @@
 """Require the complete integration collection to pass with no skipped cases."""
 
-from __future__ import annotations
-
 import argparse
 import json
 import xml.etree.ElementTree as ET

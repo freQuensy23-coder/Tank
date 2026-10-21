@@ -123,7 +123,6 @@ async def test_cms_fallback_is_not_used_for_non404_failure(tmp_path, monkeypatch
     async def record_retry(delay):
         retry_delays.append(delay)
 
-    # Replace only this source module's asyncio reference, not global sleep.
     monkeypatch.setattr(source_module, "asyncio", SimpleNamespace(sleep=record_retry))
 
     def handle(request):

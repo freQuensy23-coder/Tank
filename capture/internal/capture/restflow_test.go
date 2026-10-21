@@ -14,25 +14,23 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// fakeTrade is one print a fake venue serves.
 type fakeTrade struct {
 	id  int64
 	ts  time.Time
 	buy bool
 }
 
-// fakeVenue serves REST trades with each venue's paging contract (adapters.py).
 type fakeVenue struct {
 	inst      *venue.Instrument
-	trades    []fakeTrade // ascending by id
-	retention time.Time   // older prints are not served (OKX history limits)
+	trades    []fakeTrade
+	retention time.Time
 	calls     int
 }
 
 func (f *fakeVenue) raw(t fakeTrade) any {
 	switch f.inst.VenueName() {
 	case "coinbase":
-		side := "sell" // Coinbase reports the maker side
+		side := "sell"
 		if !t.buy {
 			side = "buy"
 		}
@@ -174,7 +172,6 @@ func newRESTRig(t *testing.T, venueName string) *restRig {
 	return &restRig{t: t, clock: clock, mem: mem, v: v, s: s, inst: inst, base: base}
 }
 
-// prints adds one print every `every` over [from, to), IDs from first.
 func (r *restRig) prints(first int64, from, to time.Time, every time.Duration) {
 	id := first
 	for at := from; at.Before(to); at = at.Add(every) {
@@ -185,7 +182,9 @@ func (r *restRig) prints(first int64, from, to time.Time, every time.Duration) {
 
 func (r *restRig) repair(lo, hi time.Time) {
 	r.s.runRepair(context.Background(), r.inst, &repairJob{start: lo, end: hi, reason: "TEST", spans: []span{{lo, hi}}})
-	r.mem.Flush(context.Background())
+	if err := r.mem.Flush(context.Background()); err != nil {
+		r.t.Fatal(err)
+	}
 }
 
 func (r *restRig) bar(minute time.Time) map[string]any {
@@ -216,7 +215,7 @@ func TestCoinbaseBackwardPagingRebuildsProvenMinutes(t *testing.T) {
 	if gaps := r.gaps("RECONNECT"); len(gaps) != 0 {
 		t.Fatalf("an exhausted range records no gap: %v", gaps)
 	}
-	// A second repair reproduces every stored bar: nothing is rewritten.
+
 	writes := r.mem.writes["mkt.flow_bars_1m"]
 	r.repair(r.base, r.base.Add(30*time.Minute))
 	if r.mem.writes["mkt.flow_bars_1m"] != writes {
@@ -227,7 +226,7 @@ func TestCoinbaseBackwardPagingRebuildsProvenMinutes(t *testing.T) {
 func TestOKXPagingRunningOutIsNotSuccess(t *testing.T) {
 	r := newRESTRig(t, "okx")
 	r.prints(1, r.base.Add(-5*time.Minute), r.base.Add(32*time.Minute), 2*time.Second)
-	r.v.retention = r.base.Add(12 * time.Minute) // history ends before the range start
+	r.v.retention = r.base.Add(12 * time.Minute)
 	r.repair(r.base, r.base.Add(30*time.Minute))
 	if bars := r.mem.bars(r.inst.ID); len(bars) != 0 {
 		t.Fatalf("an unexhausted range proves nothing and writes no bar: %d bars", len(bars))
@@ -240,7 +239,7 @@ func TestOKXPagingRunningOutIsNotSuccess(t *testing.T) {
 func TestBinanceIDHoleInRESTKeepsBothMinutesIncomplete(t *testing.T) {
 	r := newRESTRig(t, "binance")
 	r.prints(1, r.base.Add(-2*time.Minute), r.base.Add(12*time.Minute), time.Second)
-	// Drop one aggregate at 10:04:59 (its minute) next to 10:05:00 (the next minute).
+
 	hole := r.base.Add(4*time.Minute + 59*time.Second)
 	kept := r.v.trades[:0]
 	for _, tr := range r.v.trades {
@@ -275,11 +274,13 @@ func TestStoredBarRevisionRules(t *testing.T) {
 			"bar_version": version, "gap_reason": map[bool]any{true: nil, false: "STREAM_DISCONNECTED: x"}[complete],
 		}))
 	}
-	stored(minuteOf(r.base, 2), true, int64(1), 1)   // complete but missing prints: revised
-	stored(minuteOf(r.base, 3), false, int64(1), 59) // incomplete: completed as a revision
-	stored(minuteOf(r.base, 4), false, int64(0), 10) // provisional: sealed, not a revision
-	stored(minuteOf(r.base, 5), true, nil, 1)        // the in-process capture's bar (no version)
-	r.mem.Flush(context.Background())
+	stored(minuteOf(r.base, 2), true, int64(1), 1)
+	stored(minuteOf(r.base, 3), false, int64(1), 59)
+	stored(minuteOf(r.base, 4), false, int64(0), 10)
+	stored(minuteOf(r.base, 5), true, nil, 1)
+	if err := r.mem.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	r.repair(r.base, r.base.Add(10*time.Minute))
 	for m, want := range map[int]int64{2: 2, 3: 2, 4: 1, 5: 2, 6: 1} {
 		row := r.bar(minuteOf(r.base, m))
@@ -302,8 +303,10 @@ func TestCompleteStoredBarNeverDowngraded(t *testing.T) {
 		"instrument_id": r.inst.ID, "minute_start": pytime.ISO(minute), "complete": true,
 		"n_buy": int64(40), "n_sell": int64(20), "bar_version": int64(1),
 	}))
-	r.mem.Flush(context.Background())
-	// Drop a print of minute 3: the REST rebuild of that minute is incomplete.
+	if err := r.mem.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
 	kept := r.v.trades[:0]
 	for _, tr := range r.v.trades {
 		if !tr.ts.Equal(minute.Add(30 * time.Second)) {
@@ -330,7 +333,7 @@ func TestKrakenQuietWindowProvenByConsecutiveIDs(t *testing.T) {
 			t.Fatalf("quiet Kraken minute %d proven empty: %v", m, row)
 		}
 	}
-	// Without the continuing ID (a print is missing), nothing is proven.
+
 	r = newRESTRig(t, "kraken")
 	r.v.trades = []fakeTrade{
 		{id: 10, ts: r.base.Add(-90 * time.Second), buy: true},

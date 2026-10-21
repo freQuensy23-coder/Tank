@@ -82,7 +82,7 @@ async def test_pre_event_capture_uses_pre_window_and_is_immutable(monkeypatch):
         lambda snapshot, config: {"relative": {"windows": {"EVENT": {"r_raw": 0.01}}}},
     )
     scheduler = Scheduler(repo, SimpleNamespace(config_version="cfg", code_version="code"), market, None)
-    # An analysed token: BTC/ETH outside the analysis set follow the benchmark path instead.
+
     payload = {
         "event_id": "e",
         "token_id": "test:T",
@@ -105,7 +105,7 @@ async def test_pre_event_capture_uses_pre_window_and_is_immutable(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_missing_market_value_never_fires_not_equal_condition():
-    # Incomplete funding must not be interpreted as safe funding.
+
     repo = MemoryRepository()
     now = utcnow()
     await repo.put("evt.events", "e", {"event_id": "e"})
@@ -299,7 +299,7 @@ async def test_relocated_backup_recovers_source_web_replay_config_logs_and_both_
     assert (final / "tank.dump").read_bytes() == b"dump tank"
     assert (final / "oma.dump").read_bytes() == b"dump oma"
     assert not (final / "data/chrome-profile").exists()
-    # Simulate loss of the original host and move the backup to a new recovery mount.
+
     shutil.rmtree(live)
     recovery = tmp_path / "recovery"
     shutil.copytree(final, recovery)
@@ -342,8 +342,7 @@ async def test_market_file_retention_preserves_event_windows_and_permanent_evide
     )
     await repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": "e", "class": "MAJOR"})
     await repo.put("ana.market_truth", "truth", {"mta_id": "truth", "event_id": "e", "token_id": "token:T"})
-    # Raw market files are found by their HLD §7.2 path; a UTC day overlapping the
-    # MAJOR event window is kept, other days go after 30 days.
+
     paths = {}
     for key, age in [("event", 60), ("old", 70), ("new", 2)]:
         day = (now - timedelta(days=age)).date().isoformat()
@@ -437,7 +436,7 @@ async def test_real_generated_conditions_use_two_closed_nonoverlapping_hours(mon
         calls.append(cutoff)
         stamp = parse_time(cutoff.value)
         assert cutoff.precision == ("EXACT" if stamp.minute == 0 and stamp.second == 0 else None)
-        # A rolling first-minute sample disagrees; only completed-hour observations qualify.
+
         direction = "BUY" if stamp.minute == 0 and stamp.second == 0 else "SELL"
         return {
             "spot": {"W1H": {"direction": direction, "cw_breadth": {"buy": 0.8, "sell": 0.2}}},
@@ -660,7 +659,7 @@ async def test_reaction_cpu_computation_does_not_block_async_heartbeat(monkeypat
 
     def slow_compute(snapshot, *, config):
         started.set()
-        # A bounded emergency release avoids hanging the test if this regresses to inline execution.
+
         if not release.wait(timeout=1):
             raise AssertionError("Async heartbeat could not run while CPU worker was waiting")
         return {"relative": {"windows": {"EVENT": {}}}}
@@ -832,7 +831,7 @@ async def test_backup_excludes_fake_auth_secrets_and_browser_state_in_every_evid
     profile.mkdir()
     (profile / "Cookies").write_text("FAKE_X_PRIVATE_COOKIES")
     now = utcnow().replace(hour=8)
-    # Stale failed generations must not leak formerly copied secret files into a retry.
+
     stale = target / f".tank-{now.date()}.partial"
     stale.mkdir()
     (stale / "stale-secret.txt").write_text("FAKE_STALE_PRIVATE_SECRET")
@@ -1187,7 +1186,7 @@ async def test_reaction_creation_registers_only_five_post_jobs_and_starts_pre_wi
     captured = []
 
     async def capture(payload, *, wait_for_slot=False):
-        assert wait_for_slot  # background PRE capture waits for a slot
+        assert wait_for_slot
         captured.append(payload)
         started.set()
         await release.wait()
@@ -1266,7 +1265,7 @@ async def test_reaction_pre_error_retries_missing_windows_and_close_cancels_owne
     scheduler.analysis_tokens = AsyncMock(return_value={"T"})
     scheduler.reaction_capture = AsyncMock(side_effect=RuntimeError("synthetic capture failure"))
     await scheduler.ensure_reactions(event)
-    await asyncio.gather(*scheduler.background.values())  # failure remains retryable, never a PRE job
+    await asyncio.gather(*scheduler.background.values())
     assert scheduler.reaction_capture.await_count == 1
     started = asyncio.Event()
 
@@ -1310,8 +1309,7 @@ async def test_older_completion_callback_preserves_same_name_replacement_until_s
         await asyncio.Event().wait()
 
     async def first():
-        # This callback runs after the first task finishes but before its done
-        # callbacks, exercising replacement while the old cleanup is queued.
+
         asyncio.get_running_loop().call_soon(scheduler.launch, "same", replacement)
 
     scheduler.launch("same", first)
@@ -1348,13 +1346,13 @@ async def test_rearmed_market_watch_needs_a_new_window_and_a_clear():
     price = {"relative": {"close_1h_price": "9"}}
     truth = SimpleNamespace(assess=AsyncMock(side_effect=lambda *a, **k: price))
     scheduler = Scheduler(repo, SimpleNamespace(), None, truth)
-    # The level that fired the predecessor still holds: no window after arming yet.
+
     await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=10))})
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
-    # A full window later the level still holds: a level never re-fires.
+
     await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=61))})
     assert (await repo.get("ana.watch_conditions", "c2"))["status"] == "ARMED"
-    # Price recovers (the watch clears), then closes below again: it fires.
+
     price["relative"]["close_1h_price"] = "10.5"
     await scheduler.eval_conditions({"cutoff": iso(armed + timedelta(minutes=62))})
     cleared = await repo.get("ana.watch_conditions", "c2")
@@ -1506,8 +1504,14 @@ async def test_late_revision_is_deferred_so_following_late_completions_fold_into
     await repo.put(
         "out.reaction_checkpoints",
         "e:t:POST_15M",
-        {"event_id": "e", "token_id": "t", "checkpoint": "POST_15M", "revision": 1,
-         "captured_at": iso(now - timedelta(hours=1)), "anchor": {"ts": anchor}},
+        {
+            "event_id": "e",
+            "token_id": "t",
+            "checkpoint": "POST_15M",
+            "revision": 1,
+            "captured_at": iso(now - timedelta(hours=1)),
+            "anchor": {"ts": anchor},
+        },
     )
 
     class Market:
@@ -1515,11 +1519,16 @@ async def test_late_revision_is_deferred_so_following_late_completions_fold_into
 
         async def capture_changes(self, since, end):
             Market.round += 1
-            yield {"change_id": f"CAP-LIVE-{Market.round}", "event_id": "e", "token_id": "t",
-                   "anchor": anchor, "observed_at": iso(now)}
+            yield {
+                "change_id": f"CAP-LIVE-{Market.round}",
+                "event_id": "e",
+                "token_id": "t",
+                "anchor": anchor,
+                "observed_at": iso(now),
+            }
 
     scheduler = Scheduler(repo, SimpleNamespace(), Market(), None)
-    for minute in range(0, 30, 5):  # every completion within the 30 min deferral folds
+    for minute in range(0, 30, 5):
         await scheduler.detect_late_data(now + timedelta(minutes=minute))
     (job,) = await repo.list("ops.jobs", filters={"type": "REACTION_CAPTURE"})
     assert parse_time(job["run_after"]) == now + timedelta(seconds=scheduler_module.LATE_REVISION_DEFER_S)
@@ -1571,11 +1580,13 @@ async def test_reaction_measurements_are_limited_and_extra_jobs_requeue():
 
     scheduler._reaction_plan, scheduler._measure_reaction, scheduler._commit_reaction = plan, measure, commit
     payloads = [{"event_id": "e", "token_id": "t", "checkpoint": f"C{n}"} for n in range(3)]
-    running = [asyncio.create_task(scheduler.reaction_capture(p)) for p in payloads[:REACTION_MEASUREMENT_SLOTS]]
+    running = [
+        asyncio.create_task(scheduler.reaction_capture(p)) for p in payloads[:REACTION_MEASUREMENT_SLOTS]
+    ]
     await asyncio.sleep(0)
     with pytest.raises(DeliveryDeferred):
         await scheduler.reaction_capture(payloads[-1])
-    # A background PRE capture waits for a slot instead of deferring.
+
     waiting = asyncio.create_task(scheduler.reaction_capture(payloads[-1], wait_for_slot=True))
     await asyncio.sleep(0)
     assert not waiting.done() and len(started) == REACTION_MEASUREMENT_SLOTS
@@ -1615,7 +1626,7 @@ async def test_eval_conditions_budget_stops_cleanly_and_rotates(monkeypatch):
         )
     monkeypatch.setattr(scheduler_module, "EVAL_CONDITIONS_BUDGET_S", -1)
     scheduler = Scheduler(repo, SimpleNamespace(), None, SimpleNamespace(assess=AsyncMock(return_value={})))
-    await scheduler.eval_conditions({"cutoff": iso(now)})  # budget spent at once: nothing started
+    await scheduler.eval_conditions({"cutoff": iso(now)})
     for cond_id in ("exit", "old-upgrade", "new-upgrade"):
         assert "counters" not in await repo.get("ana.watch_conditions", cond_id)
     order = []
@@ -1629,8 +1640,7 @@ async def test_eval_conditions_budget_stops_cleanly_and_rotates(monkeypatch):
     repo.get = tracking_get
     monkeypatch.setattr(scheduler_module, "EVAL_CONDITIONS_BUDGET_S", 60)
     await scheduler.eval_conditions({"cutoff": iso(now)})
-    # Least recently touched first; INVALIDATION wins only ties, so a slow
-    # invalidation cannot hold every batch (r107).
+
     assert order == ["old-upgrade", "new-upgrade", "exit"]
 
 
@@ -1701,7 +1711,11 @@ async def test_eval_conditions_progresses_when_one_market_read_outlasts_the_budg
     for row in (
         condition("slow", "slow-token", market, role="INVALIDATION"),
         condition("fast", "fast-token", market),
-        condition("fatal", "slow-token", {"metric": "event.contradiction_fatal", "window": "W1H", "op": "==", "value": True}),
+        condition(
+            "fatal",
+            "slow-token",
+            {"metric": "event.contradiction_fatal", "window": "W1H", "op": "==", "value": True},
+        ),
     ):
         await repo.put("ana.watch_conditions", row["cond_id"], row)
     reads = []
@@ -1715,7 +1729,7 @@ async def test_eval_conditions_progresses_when_one_market_read_outlasts_the_budg
     monkeypatch.setattr(scheduler_module, "EVAL_CONDITIONS_BUDGET_S", 0.2)
     scheduler = Scheduler(repo, SimpleNamespace(), None, SimpleNamespace(condition_values=condition_values))
     await asyncio.wait_for(scheduler.eval_conditions({"cutoff": iso(now)}), 2)
-    assert (await repo.get("ana.watch_conditions", "fatal")).get("last_evaluated_at")  # cheap one first
+    assert (await repo.get("ana.watch_conditions", "fatal")).get("last_evaluated_at")
     slow = await repo.get("ana.watch_conditions", "slow")
     assert slow.get("last_attempted_at") and "counters" not in slow
     await asyncio.wait_for(scheduler.eval_conditions({"cutoff": iso(now + timedelta(minutes=1))}), 2)
@@ -1789,7 +1803,13 @@ async def test_pre_windows_each_read_only_their_checkpoint_window(monkeypatch):
     monkeypatch.setattr(truth_module, "compute_market_truth", fake_truth)
     scheduler = Scheduler(repo, SimpleNamespace(config_version="c", code_version="c"), Market(), None)
     for label in ("PRE_24H", "PRE_4H", "PRE_1H"):
-        payload = {"event_id": "e", "token_id": "test:T", "checkpoint": label, "anchor": {"type": "T1", "ts": iso(now)}, "retro": True}
+        payload = {
+            "event_id": "e",
+            "token_id": "test:T",
+            "checkpoint": label,
+            "anchor": {"type": "T1", "ts": iso(now)},
+            "retro": True,
+        }
         await scheduler.reaction_capture(payload, wait_for_slot=True)
     assert sorted(calls) == sorted(
         (iso(now - timedelta(seconds=s)), "REACTION") for s in (86400, 14400, 3600)

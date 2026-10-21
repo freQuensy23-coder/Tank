@@ -13,10 +13,8 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 )
 
-// HostInFlight is HOST_IN_FLIGHT: requests in flight per host (Kraken's counter is serial).
 const HostInFlight = 4
 
-// Interval is the request start spacing per host of MarketService._request_once.
 func Interval(host string) time.Duration {
 	switch host {
 	case "api.kraken.com":
@@ -29,7 +27,6 @@ func Interval(host string) time.Duration {
 	return 80 * time.Millisecond
 }
 
-// InFlight is the PriorityGate capacity per host.
 func InFlight(host string) int {
 	if host == "api.kraken.com" {
 		return 1
@@ -37,8 +34,6 @@ func InFlight(host string) int {
 	return HostInFlight
 }
 
-// UsedWeightLimit is the whole-IP X-MBX-USED-WEIGHT-1M at which a Binance host is
-// closed for a minute (the documented limit; Tank keeps itself to half of it).
 func UsedWeightLimit(host string) int {
 	if host == "fapi.binance.com" {
 		return 2400
@@ -46,7 +41,6 @@ func UsedWeightLimit(host string) int {
 	return 6000
 }
 
-// BannedError is a 418: the host is closed until Until and the request is never retried.
 type BannedError struct {
 	Host  string
 	Until time.Time
@@ -58,17 +52,14 @@ func (e *BannedError) Error() string {
 
 type hostGate struct {
 	slots *priorityGate
-	pace  *priorityGate // one priority-ordered admission waiter, never the HTTP request
-	last  time.Time     // latest actual admission or provider cooldown
+	pace  *priorityGate
+	last  time.Time
 }
 
-// Gate is the per-process admission in front of the shared ledger: one PriorityGate per
-// host, the host's start spacing, and SharedRequestBudgets' urgent yielding.
 type Gate struct {
 	ledger Ledger
 	owner  string
 
-	// Interval and InFlight are the start spacing and concurrency per host.
 	Interval func(host string) time.Duration
 	InFlight func(host string) int
 
@@ -77,11 +68,10 @@ type Gate struct {
 
 	mu     sync.Mutex
 	hosts  map[string]*hostGate
-	urgent map[string]int       // bucket -> waiting requests of negative priority
-	banned map[string]time.Time // host -> end of a 418 ban this process received
+	urgent map[string]int
+	banned map[string]time.Time
 }
 
-// NewGate is admission through ledger l for owner (the process named in the ledger).
 func NewGate(l Ledger, owner string) *Gate {
 	return &Gate{
 		ledger: l, owner: owner, Interval: Interval, InFlight: InFlight,
@@ -115,9 +105,6 @@ func (g *Gate) host(host string) *hostGate {
 	return h
 }
 
-// Admit is admit_budget: every bucket of the request, in order, from the shared ledger.
-// It holds no host slot while it waits. A host under a 418 ban this process received
-// fails at once with its BannedError; other processes' blocks are waited out.
 func (g *Gate) Admit(ctx context.Context, host, path string, params map[string]string, payload map[string]any, priority int) error {
 	buckets, err := Constraints(host, path, params, payload)
 	if err != nil {
@@ -126,7 +113,6 @@ func (g *Gate) Admit(ctx context.Context, host, path string, params map[string]s
 	return g.AdmitBuckets(ctx, host, buckets, priority)
 }
 
-// AdmitBuckets waits for the host's ban to end and acquires buckets in order.
 func (g *Gate) AdmitBuckets(ctx context.Context, host string, buckets []Bucket, priority int) error {
 	g.mu.Lock()
 	until, banned := g.banned[host]
@@ -142,8 +128,6 @@ func (g *Gate) AdmitBuckets(ctx context.Context, host string, buckets []Bucket, 
 	return nil
 }
 
-// acquire is SharedRequestBudgets.acquire on the ledger: while a request with a negative
-// priority waits for a bucket, requests of priority >= 0 leave its capacity to it.
 func (g *Gate) acquire(ctx context.Context, host string, b Bucket, priority int) error {
 	if err := valid(b.Capacity, b.Weight); err != nil {
 		return err
@@ -183,9 +167,6 @@ func (g *Gate) acquire(ctx context.Context, host string, b Bucket, priority int)
 	}
 }
 
-// Enter takes a host slot and serializes only start admission, in priority order.
-// An overdue timer spaces the next request from its actual start; cancelled waits
-// never reserve a future start. release frees only the HTTP slot.
 func (g *Gate) Enter(ctx context.Context, host string, priority int) (release func(), err error) {
 	h := g.host(host)
 	if err := h.slots.enter(ctx, priority); err != nil {
@@ -195,7 +176,7 @@ func (g *Gate) Enter(ctx context.Context, host string, priority int) (release fu
 		h.slots.release()
 		return nil, err
 	}
-	defer h.pace.release() // Enter returns before the caller begins network I/O.
+	defer h.pace.release()
 	for {
 		if err := ctx.Err(); err != nil {
 			h.slots.release()
@@ -223,7 +204,6 @@ func (g *Gate) Enter(ctx context.Context, host string, priority int) (release fu
 	}, nil
 }
 
-// push moves the host's next start to at least until (plus its spacing).
 func (g *Gate) push(host string, until time.Time) {
 	h := g.host(host)
 	g.mu.Lock()
@@ -233,7 +213,6 @@ func (g *Gate) push(host string, until time.Time) {
 	g.mu.Unlock()
 }
 
-// retryAfter is float(Retry-After) seconds, def when absent or unreadable.
 func retryAfter(header http.Header, def float64) float64 {
 	if v := strings.TrimSpace(header.Get("Retry-After")); v != "" {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
@@ -243,11 +222,6 @@ func retryAfter(header http.Header, def float64) float64 {
 	return def
 }
 
-// Observe applies a response to host. A 429 closes the host, here and for every process,
-// for Retry-After clamped to [1, 60] s and asks for a retry. A 418 closes it for
-// Retry-After (120 s when absent, at least 60 s) and is never retried. A Binance
-// X-MBX-USED-WEIGHT-1M at the venue limit closes the host for a minute; that response
-// is still used. Ledger failures leave the local block in place.
 func (g *Gate) Observe(ctx context.Context, host string, status int, header http.Header) (retry bool, err error) {
 	now := g.now()
 	switch status {
@@ -277,8 +251,6 @@ func (g *Gate) Observe(ctx context.Context, host string, status int, header http
 	return false, nil
 }
 
-// priorityGate is rate_gate.PriorityGate: at most capacity holders; waiters are admitted
-// lowest priority number first, in arrival order within a priority.
 type priorityGate struct {
 	mu       sync.Mutex
 	capacity int
@@ -337,13 +309,12 @@ func (p *priorityGate) enter(ctx context.Context, priority int) error {
 		w.canceled = true
 		p.mu.Unlock()
 		if granted {
-			p.release() // the slot had passed to this waiter: hand it on
+			p.release()
 		}
 		return ctx.Err()
 	}
 }
 
-// release passes the slot to the next live waiter, or frees it.
 func (p *priorityGate) release() {
 	p.mu.Lock()
 	defer p.mu.Unlock()

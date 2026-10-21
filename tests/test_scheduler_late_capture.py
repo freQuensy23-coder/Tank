@@ -7,7 +7,6 @@ from datetime import timedelta
 
 import httpx
 import pytest
-from test_capture_parity import parity_binary  # noqa: F401
 
 from tank.market.service import MarketService
 from tank.runtime import Runtime
@@ -24,12 +23,11 @@ from tank.util import iso, parse_time, utcnow
 async def test_backfill_changes_append_reaction_revision_once_and_preserve_original(
     tmp_path,
     monkeypatch,
-    parity_binary,  # noqa: F811 - imported pytest fixture
+    parity_binary,
     request,
 ):
     import tank.scheduler as scheduler_module
 
-    # The end-to-end revision path, not the late-revision deferral (tested in test_scheduler).
     monkeypatch.setattr(scheduler_module, "LATE_REVISION_DEFER_S", 0)
     anchor = utcnow().replace(second=0, microsecond=0) - timedelta(hours=2)
     inst = {
@@ -82,8 +80,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
     async def persist_capture(output, *, observed, minute):
         for row in output["rows"]:
             await repo.put_market_batch(row["collection"], [row["row"]], keys=[row["key"]])
-        # The parity harness's earlier bars contain deliberate scaffold gaps.
-        # Only this complete target minute is the external late correction.
+
         bars = [
             {**bar, **collection_clock(observed).fields("recorded_at")}
             for bar in output["bars"]
@@ -121,17 +118,14 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         }
         original = await scheduler.reaction_capture(payload)
         assert original["r_raw"] is None and original["revision"] == 1
-        # Core asks for capture; the external producer owns normalization and rows.
+
         await market._schedule_event_backfill("e", "test:T", iso(anchor))
         pending = await market.capture_readiness("e", "test:T", anchor=iso(anchor))
         assert pending["status"] == "PENDING"
         key = pending["backfill_id"]
         await repo.put_market_batch("mkt.backfill_runs", [{**pending, "status": "RUNNING"}], keys=[key])
         observed = utcnow()
-        # Consumer fixture: these are already-normalized historical rows supplied by
-        # external capture, not an oversized response to a live limit=3 poll.
-        # Go obligation acquisition itself is covered in capture/obligations_test.go.
-        # The reference venue requires a complete trailing24h of native flow.
+
         historical = []
         for minute in range(-1440, 1):
             opened = anchor + timedelta(minutes=minute)
@@ -165,8 +159,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
             historical,
             keys=[row["instrument_id"] + ":" + row["open_time"] for row in historical],
         )
-        # Complete captured minute bars carry actual last-print boundary references;
-        # target-token returns use these references, rather than kline close substitutes.
+
         history_bars = []
         for row in historical:
             end = parse_time(row["open_time"]) + timedelta(minutes=1)
@@ -211,7 +204,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
             history_bars,
             keys=[row["instrument_id"] + ":" + row["minute_start"] for row in history_bars],
         )
-        # The external fixture worker closes its durable partial historical obligation.
+
         await repo.put_market_batch(
             "mkt.backfill_runs",
             [
@@ -232,7 +225,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         assert jobs and all(job["payload"]["automatic_revision"] for job in jobs)
         for job in jobs:
             await scheduler.reaction_capture(job["payload"])
-            # As Runtime.worker does; a still-QUEUED revision would absorb the next change.
+
             await repo.put("ops.jobs", job["job_id"], {**job, "status": "DONE"})
         revised = await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:2")
         assert revised["revision"] == 2 and revised["r_raw"] is not None
@@ -243,7 +236,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         await scheduler.detect_late_data(utcnow())
         await scheduler.reaction_capture(jobs[0]["payload"])
         assert len([row async for row in repo.iter_all("out.reaction_checkpoints")]) == 2
-        # A fresh capture change with identical semantic outputs is acknowledged without another revision.
+
         unchanged = dict(
             jobs[0]["payload"],
             change_id=jobs[0]["payload"]["change_id"] + ":same",
@@ -252,8 +245,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         result = await scheduler.reaction_capture(unchanged)
         assert result["changed"] is False
         assert len([row async for row in repo.iter_all("out.reaction_checkpoints")]) == 2
-        # Recorded frames cross the real Go normalizer/flow builder, then the same
-        # external row boundary the live capture process writes.
+
         late_observed = utcnow()
         frames = [
             {"recorded_at": iso(late_observed), "instruments": [inst]},
@@ -316,8 +308,7 @@ async def test_backfill_changes_append_reaction_revision_once_and_preserve_origi
         assert live["rwp_id"] == original["rwp_id"]
         assert await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:1") == original
         assert await repo.get("out.reaction_checkpoints", "e:test:T:PRE_1H:2") == revised
-        # Replaying the same Go-normalized capture preserves its original availability;
-        # runtime raw-print dedup belongs to the Go sealer tests, not this parity adapter.
+
         duplicate = await go_capture("duplicate", frames)
         assert duplicate == late
         await persist_capture(duplicate, observed=late_observed, minute=late_minute)

@@ -19,8 +19,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _PROCESS_CODE_VERSION: str | None = None
 _CONFIG_SUFFIXES = {".yaml", ".yml", ".json", ".md"}
 _YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
-# TDD §13, HLD §3: installation values kept in the versioned configuration
-# (sources.yaml contact e-mail, delivery.yaml chat IDs), never in the environment.
+
+
 CONFIG_OWNED_FIELDS = ("user_agent", "telegram_alerts_chat", "telegram_ops_chat")
 
 
@@ -130,8 +130,7 @@ class Settings(BaseSettings):
     config_dir: Path = Path("config")
     replay_private_mask_path: Path | None = Field(default=None, repr=False, exclude=True)
     database_url: str = "postgresql:///tank"
-    # Exchange market series (HLD §7.1): ClickHouse HTTP endpoint, user tank (password: the
-    # tank_db_password secret). None keeps them in PostgreSQL (tests, replay databases).
+
     clickhouse_url: str | None = None
     openma_url: str = "http://127.0.0.1:8787"
     openma_database_url: str = "postgresql:///oma"
@@ -142,8 +141,7 @@ class Settings(BaseSettings):
     codex_gateway_port: int = 8790
     codex_gateway_key: str | None = None
     codex_auth_path: Path = Field(default_factory=_default_codex_auth_path)
-    # Jev through OpenCode System One (lead ruling 2026-10-20 17:55): jev-1.13 with this
-    # key, jev-1.13-free without it. Docker secret `opencode_api_key`.
+
     opencode_api_key: str | None = Field(
         default=None,
         repr=False,
@@ -169,7 +167,7 @@ class Settings(BaseSettings):
     market_retention_days: int = 90
     shutdown_grace_s: int = 10
     _config_snapshot: Any = PrivateAttr(default=None)
-    # Parsed files of the frozen snapshot, filled on first use; one dict per resolve_versions.
+
     _parsed_config: Any = PrivateAttr(default=None)
 
     @classmethod
@@ -177,8 +175,7 @@ class Settings(BaseSettings):
         cls, settings_cls, init_settings, env_settings, dotenv_settings, file_secret_settings
     ):
         def docker_secrets():
-            # Explicit constructor/environment/.env values keep their ordinary
-            # precedence. The production Compose service uses file secrets.
+
             root = Path(
                 init_settings().get("secrets_dir")
                 or env_settings().get("secrets_dir")
@@ -202,8 +199,7 @@ class Settings(BaseSettings):
                     values[field] = value
             if (root / "x_session").is_file():
                 values["x_storage_state_path"] = root / "x_session"
-            # The Compose roles (HLD §8): the same URLs deploy/tank_entrypoint.py builds,
-            # so `docker compose exec tank tank …` (HLD §9 CLI) reaches the database too.
+
             for field, name, role in (
                 ("database_url", "tank_db_password", "tank"),
                 ("openma_database_url", "oma_db_password", "oma"),
@@ -221,8 +217,6 @@ class Settings(BaseSettings):
                 values = source()
                 present = sorted(name for name in CONFIG_OWNED_FIELDS if values.get(name))
                 if present:
-                    # The configuration is the only source (TDD §13); environment values
-                    # are ignored, never used, and named so the operator removes them.
                     logging.getLogger("tank.settings").warning(
                         "Ignoring %s from the environment: set sources.yaml contact_email and "
                         "delivery.yaml chat IDs instead",
@@ -272,7 +266,6 @@ class Settings(BaseSettings):
         relative = name if name.endswith((".yaml", ".yml")) else name + ".yaml"
         cache = self._parsed_config if self._config_snapshot is not None else None
         if cache is not None and relative in cache:
-            # The snapshot is immutable, so it is parsed once; callers get their own copy.
             return copy.deepcopy(cache[relative])
         value = yaml.load(self.read_config_bytes(relative), Loader=_YAML_LOADER)
         if not isinstance(value, dict):
@@ -335,8 +328,7 @@ def resolve_versions(settings: Settings) -> Settings:
     resolved = settings.model_copy(update={"config_version": version, "code_version": _PROCESS_CODE_VERSION})
     resolved._config_snapshot = MappingProxyType(captured)
     resolved._parsed_config = {}
-    # Explicit constructor values (tests, replay) keep precedence; the environment
-    # cannot set these fields.
+
     deployment_values = {
         field: value
         for field, value in configured_values(resolved).items()
@@ -344,8 +336,7 @@ def resolve_versions(settings: Settings) -> Settings:
     }
     if deployment_values:
         resolved = resolved.model_copy(update=deployment_values)
-    # Persist exact inputs for recovery/replay. Environment credentials never enter
-    # this artifact. Backup includes this directory as part of data_dir.
+
     directory = settings.data_dir / "config_versions"
     directory.mkdir(parents=True, exist_ok=True)
     target = directory / f"{version}.json"

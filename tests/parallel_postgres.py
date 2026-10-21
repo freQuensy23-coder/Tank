@@ -6,8 +6,6 @@ The controller preserves templates; workers only replace their own dbname.
 This plugin never connects, creates databases, or loads credential files.
 """
 
-from __future__ import annotations
-
 import os
 import re
 from collections.abc import Mapping, MutableMapping, Sequence
@@ -37,7 +35,6 @@ def resolve_test_databases(environment: Mapping[str, str], worker_id: str | None
         try:
             fields = conninfo_to_dict(value)
         except (ProgrammingError, ValueError):
-            # libpq diagnostics can contain DSN fragments; never echo them.
             raise ValueError(f"{variable}: invalid libpq DSN") from None
         database = fields.get("dbname", "")
         if _DATABASE.fullmatch(database) is None:

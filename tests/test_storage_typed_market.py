@@ -187,7 +187,7 @@ async def test_upgrade_exports_raw_and_preserves_immutable_documents(blank_typed
     broken = dict(manifest, row_count=2)
     with pytest.raises(ValueError, match="total count"):
         list(read_verified_legacy_raw(broken))
-    await repo.migrate(market_export_dir=tmp_path)  # idempotent restart
+    await repo.migrate(market_export_dir=tmp_path)
 
 
 async def test_funding_source_merge_survives_partial_restart(typed_repo):
@@ -961,7 +961,7 @@ async def test_partition_relocation_commits_each_day_and_preserves_failed_day(ty
 async def _unproven_writes_keep_complete_bars(repo):
     proven = flow()
     await repo.put_market_batch("mkt.flow_bars_1m", [proven], keys=["bar"])
-    # A writer without proof for the minute (restored bar, second process) cannot unprove it.
+
     for reason in (None, "STREAM_COVERAGE_UNPROVEN"):
         assert (
             await repo.put_market_batch(
@@ -970,12 +970,12 @@ async def _unproven_writes_keep_complete_bars(repo):
             == []
         )
         assert (await repo.get("mkt.flow_bars_1m", "bar"))["complete"] is True
-    # Evidence of loss still invalidates it.
+
     lost = dict(proven, complete=False, gap_reason="STREAM_DISCONNECTED: keepalive ping timeout")
     assert len(await repo.put_market_batch("mkt.flow_bars_1m", [lost], keys=["bar"])) == 1
     stored = await repo.get("mkt.flow_bars_1m", "bar")
     assert stored["complete"] is False and stored["gap_reason"].startswith("STREAM_DISCONNECTED")
-    # An unproven bar may be replaced by anything, including a proven one.
+
     assert len(await repo.put_market_batch("mkt.flow_bars_1m", [proven], keys=["bar"])) == 1
 
 
@@ -1044,7 +1044,7 @@ async def test_batched_range_read_gives_the_loop_turns_while_it_decodes(typed_re
     done.set()
     await other
     assert len(out["test:BTC"]) == 2500
-    assert turns[0] - before >= 2  # yields every YIELD_ROWS rows, not only between pages
+    assert turns[0] - before >= 2
 
 
 async def test_book_pages_never_fetch_levels_outside_the_walked_rows(typed_repo):
@@ -1113,10 +1113,10 @@ async def test_book_pages_never_fetch_levels_outside_the_walked_rows(typed_repo)
     finally:
         typed_repo._conn = real_conn
     got = out["test:BTC"]
-    assert [("bids" in r) for r in got] == [True, False, False, True, True]  # newest 2 + newest checked
+    assert [("bids" in r) for r in got] == [True, False, False, True, True]
     assert got[0]["bids"] == levels and got[4]["asks"] == levels
     pages = [q for q in queries if "LIMIT" in q]
-    assert len(pages) == 3 and not any('"bids"' in q for q in pages)  # levels never decoded per page
+    assert len(pages) == 3 and not any('"bids"' in q for q in pages)
 
 
 async def _copy_snapshot_read_fixture(repo, collection, records):
@@ -1176,7 +1176,7 @@ async def test_a_5k_row_snapshot_read_keeps_the_loop_heartbeat_under_100_ms(type
 
     await typed_repo.migrate()
     base = parse_time("2026-10-18T00:00:00Z")
-    levels = [[str(100 + n), "1.5"] for n in range(200)]  # wide rows: 200 levels a side
+    levels = [[str(100 + n), "1.5"] for n in range(200)]
     await _copy_snapshot_read_fixture(
         typed_repo, "mkt.flow_bars_1m", [flow(iso(base + timedelta(minutes=n))) for n in range(5000)]
     )

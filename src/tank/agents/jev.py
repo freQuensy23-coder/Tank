@@ -15,7 +15,6 @@ class JevBinding:
     semantic_model: str = MODEL
 
 
-# Without a key OpenCode serves the free tier; with an OpenCode key, the paid model.
 FREE = JevBinding()
 KEYED = JevBinding(request_model="jev-1.13", resolved_models=("jev-1.13",))
 

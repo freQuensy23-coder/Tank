@@ -93,7 +93,7 @@ func TestOverdueStartSpacesTheNextActualAdmission(t *testing.T) {
 	if secondWait.delay != 80*time.Millisecond {
 		t.Fatalf("second delay %v", secondWait.delay)
 	}
-	// The timer wakes late; the request starts at t+500ms, not its reserved t+80ms.
+
 	c.advance(500 * time.Millisecond)
 	close(secondWait.wake)
 	second := pacingStarted(t, ctx, secondResult)
@@ -195,7 +195,7 @@ func TestResponseCompletionDoesNotRestartStartSpacing(t *testing.T) {
 			runtime.Gosched()
 		}
 	}
-	// Four requests remain in flight until this delayed response completes.
+
 	c.advance(2 * time.Second)
 	if retry, err := g.Observe(ctx, "api.bybit.com", 200, nil); retry || err != nil {
 		t.Fatalf("successful response: retry=%v err=%v", retry, err)

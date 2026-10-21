@@ -247,7 +247,7 @@ def test_kraken_checksum_tiny_decimal_is_fixed_point():
 
     book = OrderBook(instrument("kraken"))
     zlib.crc32(b"20010100")
-    # ask price0.0000002->2,size0.0010->10; bid0.0000001->1,size0.0100->100
+
     book.snapshot(
         [{"price": Decimal("0.0000001"), "qty": Decimal("0.0100")}],
         [{"price": Decimal("0.0000002"), "qty": Decimal("0.0010")}],
@@ -351,17 +351,17 @@ def test_prints_are_valued_with_the_latest_quote_usd_sample_at_or_before_them():
     }
     t0 = datetime(2026, 10, 21, 7, 0, tzinfo=UTC)
     norm.remember_quote_usd("USDT", [(iso(t0), "0.999"), (iso(t0 + timedelta(minutes=5)), "1.001")])
-    # The live fields carry the newest sample; a print before it must not use it.
+
     inst.update(quote_usd_rate="1.001", quote_usd_rate_as_of=iso(t0 + timedelta(minutes=5)))
 
     def usd(at):
         raw = {"S": "Buy", "v": "2", "p": "100", "T": int(at.timestamp() * 1000), "i": "1"}
         return norm.trade(inst, raw)["notional_usd"]
 
-    assert usd(t0 + timedelta(minutes=4, seconds=59)) == "199.800"  # the sample before, not the later one
+    assert usd(t0 + timedelta(minutes=4, seconds=59)) == "199.800"
     assert usd(t0 + timedelta(minutes=5)) == "200.200"
-    assert usd(t0 - timedelta(seconds=1)) is None  # nothing at or before it
-    assert usd(t0 + timedelta(hours=7)) is None  # the last sample is too old
+    assert usd(t0 - timedelta(seconds=1)) is None
+    assert usd(t0 + timedelta(hours=7)) is None
     kline = norm.kline(
         inst, [int((t0 + timedelta(minutes=3)).timestamp() * 1000), "1", "1", "1", "1", "2", "10"]
     )

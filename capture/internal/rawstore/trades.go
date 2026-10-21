@@ -1,9 +1,3 @@
-// Package rawstore keeps every captured print (HLD §7.2) in ClickHouse table mkt.trades:
-// one row per print, ReplacingMergeTree on (instrument_id, ts, trade_id), so a print
-// captured twice (a reconnect replay, a REST repair) reads once.
-//
-// Prints are buffered in memory and inserted every flush; a failed insert keeps them for
-// the next one.
 package rawstore
 
 import (
@@ -18,15 +12,12 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyjson"
 )
 
-// Table is the ClickHouse table of prints.
 const Table = "mkt.trades"
 
-// Inserter is the ClickHouse client (store.ClickHouse).
 type Inserter interface {
 	Insert(ctx context.Context, table string, lines [][]byte) error
 }
 
-// Trades buffers prints and inserts them into mkt.trades.
 type Trades struct {
 	ch           Inserter
 	code, config string
@@ -35,7 +26,6 @@ type Trades struct {
 	buf          [][]byte
 }
 
-// New writes prints through ch; rows carry the code and config versions.
 func New(ch Inserter, code, config string, log *slog.Logger) *Trades {
 	return &Trades{ch: ch, code: code, config: config, log: log}
 }
@@ -64,7 +54,6 @@ func chTime(v any) any {
 	return t.UTC().Format("2006-01-02 15:04:05.000000")
 }
 
-// Row is the mkt.trades row of a print.
 func (t *Trades) Row(tr *normalize.Trade, version uint64) map[string]any {
 	rec := tr.Record()
 	row := map[string]any{"_version": version, "code_version": t.code, "config_version": t.config}
@@ -82,7 +71,6 @@ func (t *Trades) Row(tr *normalize.Trade, version uint64) map[string]any {
 	return row
 }
 
-// Add buffers one normalized print.
 func (t *Trades) Add(tr *normalize.Trade) {
 	line, err := json.Marshal(t.Row(tr, uint64(time.Now().UnixNano())))
 	if err != nil {
@@ -94,7 +82,6 @@ func (t *Trades) Add(tr *normalize.Trade) {
 	t.mu.Unlock()
 }
 
-// Flush inserts the buffered prints; on an error they stay buffered, ahead of later ones.
 func (t *Trades) Flush(time.Time) error {
 	t.mu.Lock()
 	lines := t.buf

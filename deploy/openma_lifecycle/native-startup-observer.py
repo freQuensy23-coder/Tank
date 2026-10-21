@@ -46,8 +46,7 @@ def all_processes(root):
 
 
 def role(root, pid, worker, state):
-    # Read only this credential-free guest's new-process argv to match the exact
-    # worker path/state. Never retain argument strings, request data or env.
+
     try:
         args = (root / str(pid) / "cmdline").read_bytes().split(b"\0")
         if len(args) < 4 or args[1] != str(worker).encode() or b"--state-dir" not in args:

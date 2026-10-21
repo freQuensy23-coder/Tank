@@ -8,6 +8,7 @@ Writes <run>/weeks/<week-start>/:
                           conditions fired; descriptive only, never calibration)
 Usage: python3 shadow_weekly.py --run /srv/tank/data/qa/v0h-<start> --week-start 2026-10-21
 """
+
 import argparse
 import json
 import os
@@ -16,11 +17,19 @@ import sys
 from datetime import date, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import iso, query, utcnow, write_json  # noqa: E402
-from shadow_daily import tank_container  # noqa: E402
+from common import iso, query, utcnow, write_json
+from shadow_daily import tank_container
 
-MISS_REASONS = ["LATE", "WRONG_BENEFICIARY", "BAD_DATA", "OLD_NEWS", "STATE_ERROR", "MARKET_TRUTH_ERROR",
-                "DELIVERY_FAILURE", "SOURCE_NOT_COVERED"]
+MISS_REASONS = [
+    "LATE",
+    "WRONG_BENEFICIARY",
+    "BAD_DATA",
+    "OLD_NEWS",
+    "STATE_ERROR",
+    "MARKET_TRUTH_ERROR",
+    "DELIVERY_FAILURE",
+    "SOURCE_NOT_COVERED",
+]
 
 EVENTS = """
 SELECT e.event_id, e.statement, e.known_to_us_at, e.public_at, e.event_state, e.freshness, e.lifecycle,
@@ -37,7 +46,10 @@ SELECT e.event_id, e.statement, e.known_to_us_at, e.public_at, e.event_state, e.
 
 
 def main(run, week_start, with_outcomes):
-    since, until = week_start.isoformat() + "T00:00:00Z", (week_start + timedelta(days=7)).isoformat() + "T00:00:00Z"
+    since, until = (
+        week_start.isoformat() + "T00:00:00Z",
+        (week_start + timedelta(days=7)).isoformat() + "T00:00:00Z",
+    )
     d = os.path.join(run, "weeks", week_start.isoformat())
     os.makedirs(d, exist_ok=True)
     events = query(EVENTS, {"since": since, "until": until})
@@ -47,34 +59,78 @@ def main(run, week_start, with_outcomes):
         group = [e for e in events if e["class"] == cls]
         if not group:
             continue
-        lines += [f"## {cls or 'no assessment'} ({len(group)})", "", "| known_to_us_at | event | state | freshness | sources | cards | sent | statement |",
-                  "|---|---|---|---|---|---:|---:|---|"]
-        lines += [f"| {e['known_to_us_at']} | {e['event_id']} | {e['event_state']} | {e['freshness']} | {','.join(e['sources'] or [])} | "
-                  f"{len(e['alerts'] or [])} | {e['sent']} | {(e['statement'] or '')[:160]} |" for e in group]
+        lines += [
+            f"## {cls or 'no assessment'} ({len(group)})",
+            "",
+            "| known_to_us_at | event | state | freshness | sources | cards | sent | statement |",
+            "|---|---|---|---|---|---:|---:|---|",
+        ]
+        lines += [
+            f"| {e['known_to_us_at']} | {e['event_id']} | {e['event_state']} | {e['freshness']} | {','.join(e['sources'] or [])} | "
+            f"{len(e['alerts'] or [])} | {e['sent']} | {(e['statement'] or '')[:160]} |"
+            for e in group
+        ]
         lines.append("")
     open(os.path.join(d, "tank-events.md"), "w").write("\n".join(lines))
-    write_json(os.path.join(d, "miss-audit-template.json"), {
-        "week": [since, until],
-        "instructions": "List every major event of the week from the covered source buckets (01 §4.2). For each, set "
-                        "tank_event_id to the matching Tank event or null; verdict CAUGHT if that event is MAJOR+ with a card, "
-                        "otherwise MISS with one miss_reason. Label MISS events that exist in Tank with "
-                        "`tank review label <event_id> MISS --miss-reason R`.",
-        "miss_reasons": MISS_REASONS,
-        "rows": [{"reviewer": None, "external_event": None, "source_bucket": None, "public_at": None,
-                  "tank_event_id": None, "verdict": None, "miss_reason": None, "notes": None}],
-        "tank_major_plus": [{"event_id": e["event_id"], "class": e["class"], "sent": e["sent"], "statement": e["statement"]}
-                            for e in events if e["class"] in ("MAJOR", "STRUCTURAL_SHOCK")],
-    })
+    write_json(
+        os.path.join(d, "miss-audit-template.json"),
+        {
+            "week": [since, until],
+            "instructions": "List every major event of the week from the covered source buckets (01 §4.2). For each, set "
+            "tank_event_id to the matching Tank event or null; verdict CAUGHT if that event is MAJOR+ with a card, "
+            "otherwise MISS with one miss_reason. Label MISS events that exist in Tank with "
+            "`tank review label <event_id> MISS --miss-reason R`.",
+            "miss_reasons": MISS_REASONS,
+            "rows": [
+                {
+                    "reviewer": None,
+                    "external_event": None,
+                    "source_bucket": None,
+                    "public_at": None,
+                    "tank_event_id": None,
+                    "verdict": None,
+                    "miss_reason": None,
+                    "notes": None,
+                }
+            ],
+            "tank_major_plus": [
+                {
+                    "event_id": e["event_id"],
+                    "class": e["class"],
+                    "sent": e["sent"],
+                    "statement": e["statement"],
+                }
+                for e in events
+                if e["class"] in ("MAJOR", "STRUCTURAL_SHOCK")
+            ],
+        },
+    )
     if with_outcomes:
         c = tank_container()
         with open(os.path.join(d, "outcomes.jsonl"), "w") as fh:
             for e in events:
                 for alert_id in e["alerts"] or []:
-                    out = subprocess.run(["docker", "exec", c, "tank", "review", "show", alert_id], capture_output=True, text=True)
-                    fh.write(json.dumps({"alert_id": alert_id, "exit": out.returncode,
-                                         "show": json.loads(out.stdout) if out.returncode == 0 else None,
-                                         "error": out.stderr[-300:] if out.returncode else None}) + "\n")
-    print(json.dumps({"week": week_start.isoformat(), "events": len(events), "dir": d, "written_at": iso(utcnow())}))
+                    out = subprocess.run(
+                        ["docker", "exec", c, "tank", "review", "show", alert_id],
+                        capture_output=True,
+                        text=True,
+                    )
+                    fh.write(
+                        json.dumps(
+                            {
+                                "alert_id": alert_id,
+                                "exit": out.returncode,
+                                "show": json.loads(out.stdout) if out.returncode == 0 else None,
+                                "error": out.stderr[-300:] if out.returncode else None,
+                            }
+                        )
+                        + "\n"
+                    )
+    print(
+        json.dumps(
+            {"week": week_start.isoformat(), "events": len(events), "dir": d, "written_at": iso(utcnow())}
+        )
+    )
 
 
 if __name__ == "__main__":

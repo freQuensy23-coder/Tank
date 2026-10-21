@@ -16,14 +16,13 @@ Per table, smallest first, and resumable:
 """
 
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import psycopg
 from psycopg import sql
 
 from tank.settings import Settings
 
-# table -> (time column, segment-by columns); smallest first.
 TABLES = {
     "liq_obs": ("ts", "instrument_id"),
     "flow_bars_1m": ("minute_start", "instrument_id"),
@@ -32,11 +31,11 @@ TABLES = {
     "oi_obs": ("ts", "instrument_id, metric_key"),
     "klines_1m": ("open_time", "instrument_id"),
 }
-# Columns not carried over (order-book levels are not stored any more, 03 §14).
+
 DROPPED = {"book_summaries": {"bids", "asks"}}
-COMPRESS_AFTER = "2 days"  # gap repair DML still works on compressed chunks
-# Partitions this recent are copied in the swap itself (revisions and repairs may still
-# change them); older ones are copied and compressed beforehand.
+COMPRESS_AFTER = "2 days"
+
+
 SWAP_WINDOW = timedelta(days=8)
 
 
@@ -76,7 +75,6 @@ def copy_rows(cur, table, source, upsert):
     names = sql.SQL(",").join(map(sql.Identifier, cols))
     conflict = sql.SQL("ON CONFLICT DO NOTHING")
     if upsert:
-        # Rows the source changed after an earlier copy win (a revised bar, a late repair).
         cur.execute(
             "SELECT indexdef FROM pg_indexes WHERE schemaname='mkt' AND tablename=%s AND indexdef ILIKE 'CREATE UNIQUE%%'",
             (table + "__ts",),
@@ -119,8 +117,7 @@ def prepare(conn, table, ts, segment):
                 "CREATE TABLE {} (LIKE {} INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING STORAGE)"
             ).format(sql.Identifier("mkt", table + "__ts"), sql.Identifier("mkt", table))
         )
-        # NOT VALID legacy checks would reject old rows on copy: dropped here, added back
-        # NOT VALID after the swap (unvalidated_checks).
+
         for name, _ in unvalidated_checks(cur, table):
             cur.execute(
                 sql.SQL("ALTER TABLE {} DROP CONSTRAINT {}").format(
@@ -154,7 +151,7 @@ def part_day(name):
     """The UTC day of a daily partition (mkt.<t>_YYYYMMDD), None for the DEFAULT one."""
     digits = name.rsplit("_", 1)[-1]
     if len(digits) == 8 and digits.isdigit():
-        return datetime(int(digits[:4]), int(digits[4:6]), int(digits[6:]), tzinfo=timezone.utc)
+        return datetime(int(digits[:4]), int(digits[4:6]), int(digits[6:]), tzinfo=UTC)
     return None
 
 
@@ -162,7 +159,7 @@ def backfill(conn, table, done):
     """Copy every partition older than the swap window and compress its chunks at once,
     so the copy costs ~10% of the original; the old partitions stay readable until the
     swap (no history hole for Market Truth meanwhile)."""
-    cutoff = datetime.now(timezone.utc) - SWAP_WINDOW
+    cutoff = datetime.now(UTC) - SWAP_WINDOW
     with conn.cursor() as cur:
         parts = children(cur, table)
     for part in parts:
@@ -171,7 +168,7 @@ def backfill(conn, table, done):
             continue
         with conn.cursor() as cur:
             n = copy_rows(cur, table, part, upsert=False)
-            lo = day or datetime(1970, 1, 1, tzinfo=timezone.utc)
+            lo = day or datetime(1970, 1, 1, tzinfo=UTC)
             hi = (day + timedelta(days=1)) if day else cutoff
             cur.execute(
                 "SELECT count(compress_chunk(c, if_not_compressed => true)) "
@@ -189,11 +186,11 @@ def swap(conn, table, segment, ts):
     with conn.cursor() as cur:
         cur.execute("SET LOCAL lock_timeout = '30s'")
         cur.execute(sql.SQL("LOCK TABLE {} IN ACCESS EXCLUSIVE MODE").format(sql.Identifier("mkt", table)))
-        cutoff = datetime.now(timezone.utc) - SWAP_WINDOW
+        cutoff = datetime.now(UTC) - SWAP_WINDOW
         for part in children(cur, table):
             day = part_day(part)
             if day is None or day < cutoff:
-                continue  # copied and compressed by backfill (DEFAULT holds only old rows)
+                continue
             n = copy_rows(cur, table, part, upsert=True)
             log(table, part, "upserted", n)
         cur.execute(
@@ -219,8 +216,7 @@ def swap(conn, table, segment, ts):
                     sql.SQL(privilege), sql.Identifier("mkt", table), sql.Identifier(grantee)
                 )
             )
-        # Sequences of serial columns (liq_obs.id) belong to the old table: hand them over
-        # before the drop, or the drop takes them and every insert fails.
+
         cur.execute(
             "SELECT s.relname, a.attname FROM pg_depend d JOIN pg_class s ON s.oid = d.objid "
             "JOIN pg_attribute a ON a.attrelid = d.refobjid AND a.attnum = d.refobjsubid "

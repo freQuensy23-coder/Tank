@@ -4,6 +4,7 @@ import json
 import subprocess
 
 import pytest
+import yaml
 
 from tank.settings import Settings, resolve_versions
 
@@ -77,7 +78,7 @@ def test_invalid_candidate_cannot_replace_valid_snapshot(tmp_path):
     settings = Settings(config_dir=config, data_dir=tmp_path / "data")
     old = resolve_versions(settings)
     (config / "thresholds.yaml").write_text("filter_cutoff: [\n")
-    with pytest.raises(Exception):
+    with pytest.raises(yaml.YAMLError):
         resolve_versions(settings)
     assert old.load_config("thresholds")["filter_cutoff"] == 0.71
     assert len(list((settings.data_dir / "config_versions").glob("*.json"))) == 1

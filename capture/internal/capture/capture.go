@@ -1,7 +1,3 @@
-// Package capture is the tank-capture runtime: the hot set, the public WebSocket stream
-// groups, the flow sealer, REST repairs, capture obligations and requests, the pollers
-// and the stream state Tank reads. It is tank.market.service.MarketService without the
-// reads core keeps (snapshots, Market Truth inputs).
 package capture
 
 import (
@@ -12,14 +8,10 @@ import (
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/normalize"
 	"github.com/freQuensy23-coder/Tank/capture/internal/points"
-	"github.com/freQuensy23-coder/Tank/capture/internal/pydec"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// Store is the PostgreSQL side the runtime reads (internal/store). Written collections
-// resolve to the service's schema; hot tokens, capture requests and BackfillRuns read
-// the live tables core writes.
 type Store interface {
 	Get(ctx context.Context, collection, key string) (map[string]any, error)
 	Range(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) ([]map[string]any, error)
@@ -34,13 +26,11 @@ type Store interface {
 	FinishRequest(ctx context.Context, row map[string]any) error
 }
 
-// Writer queues typed rows and writes them in batches (internal/store.Writer).
 type Writer interface {
 	Sink(points.Row)
 	Flush(ctx context.Context) error
 }
 
-// Derivatives is VenueAdapter.derivatives(): (oi, current, settled, interval, mark).
 type Derivatives struct {
 	OI       []any
 	Current  map[string]any
@@ -49,7 +39,6 @@ type Derivatives struct {
 	Mark     any
 }
 
-// Venue is the REST surface of one instrument at one gate priority (internal/rest).
 type Venue interface {
 	Discover(ctx context.Context) (map[string]any, error)
 	Klines(ctx context.Context, start, end *time.Time) ([]any, error)
@@ -62,13 +51,11 @@ type Venue interface {
 	RecentTrades(ctx context.Context, limit int) ([]any, error)
 }
 
-// Venues builds instrument adapters and reads the stablecoin USD rate.
 type Venues interface {
 	Venue(inst *venue.Instrument, priority int) Venue
 	FXRate(ctx context.Context, quote string) (string, error)
 }
 
-// Conn is one WebSocket connection (gorilla/websocket.Conn satisfies it).
 type Conn interface {
 	ReadMessage() (int, []byte, error)
 	WriteMessage(messageType int, data []byte) error
@@ -78,62 +65,50 @@ type Conn interface {
 	Close() error
 }
 
-// Dialer opens a WebSocket connection.
 type Dialer func(ctx context.Context, url string) (Conn, error)
 
-// Clock is the collection clock and a monotonic one.
 type Clock interface {
 	Now() time.Time
 	Monotonic() time.Duration
 }
 
-// SystemClock is the process clock at Python's microsecond precision.
 type SystemClock struct{ start time.Time }
 
-// NewSystemClock starts the monotonic clock now.
 func NewSystemClock() *SystemClock { return &SystemClock{start: time.Now()} }
 
-// Now is utcnow().
 func (c *SystemClock) Now() time.Time { return time.Now().UTC().Truncate(time.Microsecond) }
 
-// Monotonic is time.monotonic() since the clock started.
 func (c *SystemClock) Monotonic() time.Duration { return time.Since(c.start) }
 
-// Options are the configuration the runtime reads (internal/config).
 type Options struct {
-	Instruments   map[string]*venue.Instrument // active registry instruments
-	Order         []string                     // their ids in registry order
+	Instruments   map[string]*venue.Instrument
+	Order         []string
 	Tokens        map[string]map[string]any
 	Thresholds    map[string]any
 	ConfigVersion string
 	CodeVersion   string
-	// Writer names the rows this process claims or reports.
+
 	Writer string
-	// CanWrite reports whether the writer lock is held; while it is not, flushes keep the
-	// queued rows in memory (nil: always).
+
 	CanWrite func() bool
-	// Leading is closed once this process holds the writer lock; until then it captures
-	// streams only (no claims, repairs or file writes). nil: leading from the start.
+
 	Leading <-chan struct{}
-	// Fetcher serves HTTP_FETCH capture requests (nil: they fail).
+
 	Fetcher Fetcher
-	// Raw stores every print in the hourly trade files (nil: none are stored).
+
 	Raw RawTrades
-	// DataDir is tank's data volume: ARCHIVE_FETCH stores under DataDir/archive.
+
 	DataDir string
 	Log     *slog.Logger
 }
 
-// RawTrades is the hourly raw trade store (internal/rawstore).
 type RawTrades interface {
 	Add(t *normalize.Trade)
 	Flush(now time.Time) error
 }
 
-// rawFlushEvery is how often buffered prints reach their hour journal.
 const rawFlushEvery = 5 * time.Second
 
-// Threshold is thresholds.get(name, default) as a float.
 func (o *Options) Threshold(name string, def float64) float64 {
 	v, ok := o.Thresholds[name]
 	if !ok || v == nil {
@@ -146,7 +121,6 @@ func (o *Options) Threshold(name string, def float64) float64 {
 	return d.Float64()
 }
 
-// Window constants of tank.market.service.
 const (
 	WindowBefore     = 24 * time.Hour
 	WindowAfter      = 72 * time.Hour
@@ -164,26 +138,14 @@ const (
 	streamStateEvery = 5 * time.Second
 )
 
-// ReferenceVenues is REFERENCE_VENUES: the spot venues tried first for the 03 §5.7
-// reference input.
 var ReferenceVenues = []string{"binance", "coinbase", "okx", "kraken", "bybit"}
 
-// NoTradeHistory is NO_TRADE_HISTORY.
 var NoTradeHistory = map[string]string{"hyperliquid": "NO_LISTED_TRADE_BACKFILL"}
 
-// BybitLimit is BYBIT_LIMIT.
 const BybitLimit = "SOURCE_LIMIT: Bybit recent-trade lists only the last 1000 prints"
 
-// ErrStopped is returned by work cut short by shutdown.
 var ErrStopped = errors.New("capture stopped")
 
-func decimalOf(v any) (pydec.Dec, bool) {
-	d, err := pyval.Decimal(v)
-	return d, err == nil
-}
-
-// text is str(value) for a present value and "" for None (pyval.Str renders None as
-// Python's "None", which must never become an ID or a cursor).
 func text(v any) string {
 	if v == nil {
 		return ""

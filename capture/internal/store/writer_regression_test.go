@@ -26,7 +26,6 @@ type writerBatch struct {
 
 type writerTraceKey struct{}
 
-// Observe actual pgx queries without replacing Store or its write behavior.
 type writerTrace struct {
 	mu         sync.Mutex
 	statements map[string]string
@@ -71,9 +70,6 @@ func (tr *writerTrace) snapshot() []writerBatch {
 	return append([]writerBatch(nil), tr.batches...)
 }
 
-// Live observations that arrive during a chunk preempt remaining backfill chunks.
-// A real PostgreSQL constraint failure requeues only the unwritten tail; a newer
-// queued replacement wins and retry never resubmits already successful chunks.
 func TestWriterLiveChunksAndFailureRetry(t *testing.T) {
 	s := open(t, "mkt_shadow_"+suffix())
 	ctx := context.Background()
@@ -92,8 +88,7 @@ func TestWriterLiveChunksAndFailureRetry(t *testing.T) {
 	}
 	s.Pool.Close()
 	s.Pool = pool
-	// Only this test-owned shadow table is modified; this fails on the real last
-	// INSERT, after the preceding chunks have committed.
+
 	if _, err := s.Pool.Exec(ctx, "ALTER TABLE "+s.Table("mkt.klines_1m")+" ADD CONSTRAINT writer_tail_rejected CHECK (c <> 0)"); err != nil {
 		t.Fatal(err)
 	}

@@ -7,7 +7,7 @@
   "assets_sha256": {
     "prepare_overlay.py": "73e11f83b6640f56d8ad29ad991c258f2b5c253fdb8e48494b7c5408e4e4550e",
     "stable-skill-paths.ts": "44a2ab8688f7abcbdf51489dc05775efa7191c1a58679abd60fd5c7be5f22dd4",
-    "claim-skill-paths.py": "c3d2c932acb5a48e4208e85a4f802856bd9f8420cada6aa84b27aaa47b598141"
+    "claim-skill-paths.py": "6e3095acd91041af44eb33de7a3ca58a1e91d385699a167592d417cfe2be0c5b"
   },
   "generated_modules_sha256": {
     "packages/control-plane-node/src/lib/node-managed-stable-skills.ts": "44a2ab8688f7abcbdf51489dc05775efa7191c1a58679abd60fd5c7be5f22dd4",

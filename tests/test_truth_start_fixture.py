@@ -231,9 +231,7 @@ def synthetic_start_snapshot():
 @lru_cache(maxsize=1)
 def _compact_start_seed():
     snapshot = synthetic_start_snapshot()
-    # All observations have the same zero rate and an 8h settlement interval.
-    # Keep 8h historical samples plus every exact analysis boundary, so rates,
-    # eligible weekly history and source-time metadata remain unchanged.
+
     funding = snapshot["funding"]
     end = parse_time(snapshot["cutoff"])
     boundaries = {end - timedelta(seconds=seconds) for seconds in (0, 900, 3600, 14400, 86400)}
@@ -243,14 +241,13 @@ def _compact_start_seed():
         for index, row in enumerate(funding)
         if index % 96 == 0 or parse_time(row["settlement_time"]) in boundaries
     ]
-    # Native OI is constant; a 15m grid still supplies genuine same-length
-    # historical pairs for every requested window and all exact endpoints.
+
     snapshot["oi"] = snapshot["oi"][::3]
     return snapshot
 
 
 def compact_start_snapshot():
-    # The cached input graph stays private; every test receives a fresh copy.
+
     return deepcopy(_compact_start_seed())
 
 
@@ -265,7 +262,7 @@ def test_synthetic_start_truth_positive_path():
 def test_confidence_diagnostics_do_not_add_unlisted_grade_conditions():
     snapshot = compact_start_snapshot()
     snapshot["capture_status"] = {"status": "RUNNING", "reason": "BACKFILL_PENDING"}
-    # Native coverage and semantics remain valid when USD decomposition is unavailable.
+
     for row in snapshot["oi"]:
         row["oi_usd"] = None
     result = compute_market_truth(snapshot)
@@ -276,8 +273,7 @@ def test_confidence_diagnostics_do_not_add_unlisted_grade_conditions():
 
 def test_threshold_configuration_is_consumed_and_isolated_between_calls():
     snapshot = compact_start_snapshot()
-    # These thresholds concern spot coverage and flow significance. Keep a complete
-    # 15m event for the real kernel, without unrelated weekly derivative baselines.
+
     end = parse_time(snapshot["cutoff"])
     start = end - timedelta(minutes=15)
     snapshot["anchor"] = {"type": "T0", "ts": iso(start)}
@@ -319,7 +315,7 @@ def legacy_semantic_baseline():
     assert baseline["data_confidence"]["class"] == "HIGH"
 
     def fresh():
-        # Neither private baseline graph is exposed to a parametrized case.
+
         return deepcopy((snapshot, baseline))
 
     return fresh
@@ -336,7 +332,6 @@ def test_legacy_semantic_status_cannot_reduce_confidence_or_mask_real_freshness(
     assert actual["data_confidence"] == baseline["data_confidence"]
     assert actual["derivatives"]["synchronized"] == baseline["derivatives"]["synchronized"]
     if status == "INFERRED":
-        # Preserve the original final-status missing-books regression once.
         snapshot["books"] = []
         missing = compute_market_truth(snapshot)
         assert missing["data_confidence"]["class"] == "MEDIUM"
@@ -349,8 +344,6 @@ def test_missing_instrument_registry_and_selftest_records_do_not_cap_observed_co
     baseline = compute_market_truth(snapshot)
     assert baseline["data_confidence"]["class"] == "HIGH"
 
-    # Actual typed observations carry identities even if discovery/self-test
-    # metadata has not arrived. Those metadata records are not a fourth gate.
     snapshot["instruments"] = []
     for row in snapshot["semantics"]:
         row["semantic_confidence"] = "DOCUMENTED_UNTESTED"
@@ -359,7 +352,6 @@ def test_missing_instrument_registry_and_selftest_records_do_not_cap_observed_co
     assert observed["spot"] == baseline["spot"]
     assert observed["derivatives"] == baseline["derivatives"]
 
-    # Removing metadata must not hide a genuinely stale observed field.
     snapshot["books"] = [
         row for row in snapshot["books"] if parse_time(row["exchange_ts"]) < end - timedelta(seconds=10)
     ]

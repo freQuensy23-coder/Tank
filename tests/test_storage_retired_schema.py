@@ -1,11 +1,8 @@
 """Guarded retirement retains every legacy row before removing obsolete SQL."""
 
-# ruff: noqa: F811
-
 import asyncio
 
 import pytest
-from test_storage_typed_market import blank_typed_repo  # noqa: F401
 
 from tank.storage import PostgresRepository
 
@@ -33,7 +30,7 @@ async def test_migration_lock_serializes_concurrent_runners_and_releases_after_c
         with pytest.raises(asyncio.CancelledError):
             await task
         await asyncio.wait_for(waiting, timeout=300)
-        # The same pooled connection can reacquire without a leaked session lock.
+
         await asyncio.wait_for(repo.migrate(), timeout=10)
     finally:
         release.set()

@@ -19,7 +19,7 @@ class PriorityGate:
         while self.waiters:
             _, _, future = heapq.heappop(self.waiters)
             if not future.done():
-                future.set_result(True)  # the slot passes to this waiter
+                future.set_result(True)
                 return
         self.active -= 1
 

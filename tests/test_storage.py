@@ -599,7 +599,7 @@ async def test_sql_typed_completeness_serials_and_independent_partitions(repo):
             ).fetchone()
             ids.append(row["id"])
     assert all(i > 0 for i in ids) and len(set(ids)) == 2
-    # Calling this requires no backup path, file access, or market-retention operation.
+
     assert await repo.maintain_partitions() >= 0
 
 
@@ -665,7 +665,7 @@ async def test_default_typed_partition_drain_preserves_exact_row(repo):
             )
         ).fetchone()
     assert before["physical"] == "mkt.flow_bars_1m_historical"
-    # Startup creates current/future partitions without relocating old captures.
+
     await repo.maintain_partitions(include_history=False)
     assert await repo.get("mkt.flow_bars_1m", key) == original
     async with repo.transaction():
@@ -838,8 +838,7 @@ async def test_lock_waiters_do_not_drain_the_pool(repo, monkeypatch):
     async def observed_transaction():
         async with transaction() as current:
             yield current
-        # Observe real unsuccessful lock probes after their pooled connection
-        # has returned, rather than waiting an arbitrary amount of wall time.
+
         task = asyncio.current_task()
         if task in waiters:
             attempted.add(task)
@@ -862,9 +861,9 @@ async def test_lock_waiters_do_not_drain_the_pool(repo, monkeypatch):
     hold = asyncio.create_task(holder())
     try:
         await held.wait()
-        waiters = [asyncio.create_task(waiter(n)) for n in range(40)]  # more waiters than the pool holds
+        waiters = [asyncio.create_task(waiter(n)) for n in range(40)]
         await asyncio.wait_for(ready.wait(), timeout=5)
-        # Unrelated work still gets a connection while 40 tasks wait on the key.
+
         assert await asyncio.wait_for(repo.get("reg.tokens", "absent"), timeout=5) is None
         assert not order
     finally:
@@ -881,8 +880,7 @@ async def test_one_reaction_capture_runs_at_a_time_and_other_jobs_do_not_wait(re
     other = await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
     first = await repo.claim_job()
     assert first["job_id"] == captures[0]["job_id"]
-    # The higher-priority captures are still due, but one is running: the next claim
-    # skips them and takes the lower-priority job.
+
     assert (await repo.claim_job())["job_id"] == other["job_id"]
     assert await repo.claim_job() is None
     await repo.finish_job(first["job_id"])
@@ -907,7 +905,7 @@ async def test_concurrent_claims_respect_the_capture_cap(repo):
 async def test_due_captures_are_claimed_earliest_expiry_first(repo):
     await _clear_queue(repo)
     now = utcnow()
-    # Enqueued first and due earlier, but with hours of slack.
+
     slack = await repo.enqueue(
         "REACTION_CAPTURE",
         {},
@@ -962,18 +960,18 @@ async def test_captures_yield_to_event_analysis_unless_near_expiry(repo):
     await _clear_queue(repo)
     now = utcnow()
     truth = await repo.enqueue("RUN_MARKET_TRUTH", {}, new_id("idem"), priority=1)
-    assert (await repo.claim_job())["job_id"] == truth["job_id"]  # Market Truth is running
+    assert (await repo.claim_job())["job_id"] == truth["job_id"]
     slack = await repo.enqueue(
         "REACTION_CAPTURE", {}, new_id("idem"), priority=0, expires_at=iso(now + timedelta(hours=5))
     )
     deliver = await repo.enqueue("DELIVER", {}, new_id("idem"), priority=3)
-    # The capture has the higher priority but waits behind analysis; DELIVER does not.
+
     assert (await repo.claim_job())["job_id"] == deliver["job_id"]
     assert await repo.claim_job() is None
     urgent = await repo.enqueue(
         "REACTION_CAPTURE", {}, new_id("idem"), priority=0, expires_at=iso(now + timedelta(minutes=10))
     )
-    assert (await repo.claim_job())["job_id"] == urgent["job_id"]  # expiry safety
+    assert (await repo.claim_job())["job_id"] == urgent["job_id"]
     await repo.finish_job(urgent["job_id"])
     await repo.finish_job(truth["job_id"])
     assert (await repo.claim_job())["job_id"] == slack["job_id"]

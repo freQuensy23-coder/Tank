@@ -46,8 +46,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
                     row["venue"] = "binance"
                 if row.get("venue") == "B":
                     row["venue"] = "coinbase"
-        # Controlled one-minute source history for the composite statistical path.
-        # These are independent synthetic observations, not interpolation of market data.
+
         anchor_time = parse_time(packet["anchor"]["ts"])
         packet["instruments"].append(
             dict(instrument_id="A:spot:BTC", token_id="BTC", venue="binance", market_type="SPOT")
@@ -58,9 +57,6 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             ("A:spot:BTC", "BTC", "binance"),
         ):
             for minute in range(8 * 1440, 0, -1):
-                # Sample the same bounded token history as the source seed at
-                # one-minute resolution. Flat token history makes the price
-                # normal range unavailable, so the required class cannot resolve.
                 price = "100" if token == "BTC" else str(100 * (1 + 0.02 * sin((1 - minute / 60) / 6)))
                 packet["klines"].append(
                     dict(
@@ -322,7 +318,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             assert not any(
                 query.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for query in statements
             )
-            # Same source/cutoff returns cached dependency nodes, never a durable MTA.
+
             repeated = await truth.condition_values(event, "T", packet["cutoff"], composite_requirements)
             assert repeated["move_class"] == composite["move_class"]
             assert all(p["reused"] for p in repeated["_condition_evaluation"]["proofs"])

@@ -1,6 +1,3 @@
-// Package points is the part of tank.market.service that turns normalized
-// observations into typed rows: _put (provenance, availability clock and repeated-point
-// suppression), save_mark, save_ticker_observation, _funding, _ticker and _store_kline.
 package points
 
 import (
@@ -17,18 +14,15 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// cached are the series whose repeated identical points never reach PostgreSQL.
 var cached = map[string]bool{"mkt.flow_bars_1m": true, "mkt.tickers_24h": true, "mkt.funding_obs": true}
 
 const cacheSize = 10000
 
-// Row is a typed record queued for the writer.
 type Row struct {
 	Collection, Key string
 	Record          map[string]any
 }
 
-// Sink receives rows that must be written.
 type Sink func(Row)
 
 type lru struct {
@@ -67,7 +61,6 @@ type priceContext struct {
 	markProvenance, indexProvenance        map[string]any
 }
 
-// Points holds the in-memory state of the observation pipeline.
 type Points struct {
 	mu            sync.Mutex
 	clock         pytime.Clock
@@ -79,7 +72,6 @@ type Points struct {
 	prices        map[string]*priceContext
 }
 
-// New is the pipeline writing through sink.
 func New(clock pytime.Clock, sink Sink, configVersion, codeVersion string, fx *normalize.FX) *Points {
 	return &Points{
 		clock: clock, sink: sink, ConfigVersion: configVersion, CodeVersion: codeVersion, fx: fx,
@@ -98,8 +90,6 @@ func (p *Points) cache(collection string) *lru {
 
 func (p *Points) now() time.Time { return p.clock.Now() }
 
-// semanticContent is MarketService._semantic_content: transport receipt clocks,
-// versions and the fingerprint removed, recursively.
 func semanticContent(value any) any {
 	switch v := value.(type) {
 	case map[string]any:
@@ -134,9 +124,6 @@ func sameContent(a, b map[string]any) bool {
 	return string(pyjson.MustDumps(semanticContent(a), true)) == string(pyjson.MustDumps(semanticContent(b), true))
 }
 
-// Put is MarketService._put for typed market collections: public market rows carry the
-// config and code versions, every row its recorded_at availability clock, and a point
-// whose semantic content repeats the cached one is not written again.
 func (p *Points) Put(collection, key string, row map[string]any) map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -153,8 +140,7 @@ func (p *Points) put(collection, key string, row map[string]any) map[string]any 
 			row["received_ts_prec"] = pytime.CollectionOnly
 		}
 	}
-	// Public market rows and the provenance of the others both carry the versions;
-	// rows of public endpoints hold no secret to redact.
+
 	row["config_version"], row["code_version"] = p.ConfigVersion, p.CodeVersion
 	if _, ok := row["recorded_at"]; !ok || row["recorded_at"] == nil {
 		row["recorded_at"] = pytime.ISO(p.now())
@@ -174,14 +160,12 @@ func (p *Points) put(collection, key string, row map[string]any) map[string]any 
 	return row
 }
 
-// Cached is the cached row of a series point, if held.
 func (p *Points) Cached(collection, key string) map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.cache(collection).get(key)
 }
 
-// Restore seeds the cache with a stored row (the newest per instrument at start).
 func (p *Points) Restore(collection, key string, row map[string]any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -190,7 +174,6 @@ func (p *Points) Restore(collection, key string, row map[string]any) {
 	}
 }
 
-// Forget drops a cached row (a flow bar that left memory).
 func (p *Points) Forget(collection, key string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -236,7 +219,6 @@ func iso(v any) string {
 
 func after(a, b any) bool { return pytime.MustParse(a).After(pytime.MustParse(b)) }
 
-// precisionOf is the as_of precision of a provenance fact's clock basis.
 func precisionOf(fact map[string]any) string {
 	switch fact["clock_basis"] {
 	case "SOURCE_TIME":
@@ -273,8 +255,6 @@ func equalValues(a, b any) bool {
 	return string(pyjson.MustDumps(a, true)) == string(pyjson.MustDumps(b, true))
 }
 
-// SaveTickerObservation is save_ticker_observation: partial payloads of one actual
-// (instrument, observation time) merge, each field keeping its own source and clock.
 func (p *Points) SaveTickerObservation(inst *venue.Instrument, row map[string]any) map[string]any {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -350,9 +330,10 @@ func (p *Points) saveTicker(inst *venue.Instrument, input map[string]any) map[st
 	for _, field := range []string{"mark_price", "index_price", "last", "quote_volume", "volume_native", "volume_usd"} {
 		if merged[field] != nil && sources[field] == nil {
 			clockField := "ts"
-			if field == "mark_price" {
+			switch field {
+			case "mark_price":
 				clockField = "mark_as_of"
-			} else if field == "index_price" {
+			case "index_price":
 				clockField = "index_as_of"
 			}
 			var legacySource, receivedTS any
@@ -426,17 +407,14 @@ func comparable(fact map[string]any) map[string]any {
 	return out
 }
 
-// MarkInput is one save_mark call.
 type MarkInput struct {
 	Price, TS, Index, IndexTS any
-	Source                    string // WEBSOCKET (default) or PUBLIC_REST
-	Received                  any    // nil: now
+	Source                    string
+	Received                  any
 	IndexClockBasis           string
 	Persist                   bool
 }
 
-// SaveMark is streams.save_mark: track the newest mark/index; store a point only when
-// Persist (the stream cadence).
 func (p *Points) SaveMark(inst *venue.Instrument, in MarkInput) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -574,8 +552,6 @@ func (p *Points) saveMark(inst *venue.Instrument, in MarkInput) {
 	}
 }
 
-// OKXIndex is the OKX index-tickers branch of process_frame: the index joins the price
-// context, and with a mark already held it is a mark observation.
 func (p *Points) OKXIndex(inst *venue.Instrument, idxPx, ts any, persist func() bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -586,9 +562,6 @@ func (p *Points) OKXIndex(inst *venue.Instrument, idxPx, ts any, persist func() 
 	}
 }
 
-// Funding is MarketService._funding: one funding point per (instrument, kind, as_of)
-// keeping every source's observation; the primary source (REST for settled rates, the
-// stream for estimates) carries the row.
 func (p *Points) Funding(inst *venue.Instrument, raw map[string]any, kind string, interval any, source string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -677,7 +650,6 @@ func (p *Points) Funding(inst *venue.Instrument, raw map[string]any, kind string
 	return nil
 }
 
-// valueKey is a decimal's value identity (Decimal equality ignores the exponent).
 func valueKey(d pydec.Dec) string {
 	s := d.FormatF()
 	if strings.Contains(s, ".") {
@@ -689,7 +661,6 @@ func valueKey(d pydec.Dec) string {
 	return s
 }
 
-// jsonbFirstKey is the first key of a dict restored from jsonb (shorter keys first).
 func jsonbFirstKey(m map[string]any) string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -704,7 +675,6 @@ func jsonbFirstKey(m map[string]any) string {
 	return keys[0]
 }
 
-// Ticker is MarketService._ticker: a REST 24h ticker as a ticker observation.
 func (p *Points) Ticker(inst *venue.Instrument, raw map[string]any) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -730,7 +700,7 @@ func (p *Points) Ticker(inst *venue.Instrument, raw map[string]any) error {
 		quote, price = raw["dayNtlVlm"], raw["markPx"]
 	}
 	if key == "okx.swap" {
-		native, quote = raw["volCcy24h"], nil // swap vol24h is contracts, volCcy24h is BASE
+		native, quote = raw["volCcy24h"], nil
 	}
 	var usd any
 	if quote != nil && inst.QuoteUSDRate != nil {
@@ -779,7 +749,7 @@ func (p *Points) Ticker(inst *venue.Instrument, raw map[string]any) error {
 		}
 	}
 	if row["mark_price"] != nil {
-		// REST tickers expose no exchange mark clock: the HTTP observation clock.
+
 		row["mark_as_of"] = received
 		sources["mark_price"] = map[string]any{
 			"capture_source": "PUBLIC_REST", "source_path": sourcePath, "as_of": received,
@@ -791,7 +761,6 @@ func (p *Points) Ticker(inst *venue.Instrument, raw map[string]any) error {
 	return nil
 }
 
-// jsonish is jsonable for a frame value (Decimals and JSON numbers to Python types).
 func jsonish(v any) any {
 	switch x := v.(type) {
 	case pydec.Dec:
@@ -812,8 +781,6 @@ func jsonish(v any) any {
 	return v
 }
 
-// StoreKline is MarketService._store_kline: a missing exchange quote volume is taken
-// only from the complete flow bar whose prints match the kline's volume exactly.
 func (p *Points) StoreKline(inst *venue.Instrument, row map[string]any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -836,7 +803,6 @@ func (p *Points) StoreKline(inst *venue.Instrument, row map[string]any) {
 	p.put("mkt.klines_1m", inst.ID+":"+row["open_time"].(string), row)
 }
 
-// PutFlow records a written flow bar for kline enrichment and repeated-point suppression.
 func (p *Points) PutFlow(key string, row map[string]any) map[string]any {
 	return p.Put("mkt.flow_bars_1m", key, row)
 }

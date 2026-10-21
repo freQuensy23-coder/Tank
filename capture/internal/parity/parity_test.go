@@ -11,8 +11,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/testutil"
 )
 
-// Every recorded fixture gives the digests the Python reference committed
-// (scripts/capture/parity.py --write).
 func TestRecordedFramesMatchPython(t *testing.T) {
 	paths, err := filepath.Glob(testutil.Path("frames", "*.jsonl.gz"))
 	if err != nil || len(paths) == 0 {

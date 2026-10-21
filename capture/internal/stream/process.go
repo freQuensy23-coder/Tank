@@ -13,20 +13,17 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// Mark is one save_mark call.
 type Mark struct {
 	Price, TS, Index, IndexTS any
 	Persist                   bool
 }
 
-// Sink receives what process_frame produces; the service implements it.
 type Sink interface {
 	Trade(inst *venue.Instrument, raw any) error
 	BookUpdated(inst *venue.Instrument, book *books.Book) error
 	Liquidation(inst *venue.Instrument, raw map[string]any) error
 	Mark(inst *venue.Instrument, m Mark) error
-	// OKXIndex is the index-tickers branch: the index joins the instrument's price
-	// context and, with a mark already held, produces a mark observation.
+
 	OKXIndex(inst *venue.Instrument, idxPx, ts any, persist func() bool) error
 	Funding(inst *venue.Instrument, raw map[string]any, kind string, interval any) error
 	OI(inst *venue.Instrument, raw map[string]any) error
@@ -35,23 +32,19 @@ type Sink interface {
 	Now() time.Time
 }
 
-// Member is the per-(socket, instrument) state process_frame reads.
 type Member struct {
 	Inst      *venue.Instrument
 	Book      *books.Book
-	Bridging  bool // Binance: the first depth event must bridge the REST snapshot
+	Bridging  bool
 	TickerCtx map[string]any
 }
 
-// ErrSkip marks a frame the snapshot already contains (no watermark either).
 var ErrSkip = errors.New("frame already in snapshot")
 
 func need(m map[string]any, k string) (any, error) { return pyval.Need(m, k) }
 
 func list(v any) []any { return pyval.List(v) }
 
-// Process is streams.process_frame for one routed payload. It returns ErrSkip for a
-// Binance depth event older than the snapshot (Python returns before the watermark).
 func Process(sink Sink, mem *Member, raw any) error {
 	inst := mem.Inst
 	iid := inst.ID
@@ -99,7 +92,7 @@ func Process(sink Sink, mem *Member, raw any) error {
 				if err != nil {
 					return err
 				}
-				if !(first <= target && target <= u) {
+				if first > target || target > u {
 					return pyval.Semantic("initial Binance snapshot bridge missing")
 				}
 				mem.Bridging = false
@@ -159,7 +152,7 @@ func Process(sink Sink, mem *Member, raw any) error {
 			return sink.BookUpdated(inst, book)
 		case "l2update":
 			if book.Sequence == nil {
-				return nil // updates before this subscription's snapshot belong to no book yet
+				return nil
 			}
 			var bids, asks []any
 			for _, r := range list(rm["changes"]) {
@@ -385,7 +378,7 @@ func Process(sink Sink, mem *Member, raw any) error {
 						return err
 					}
 				} else if book.Sequence == nil {
-					continue // updates before this subscription's snapshot belong to no book yet
+					continue
 				} else {
 					seq, err := pyval.Int(book.Sequence)
 					if err != nil {
@@ -486,8 +479,6 @@ func intField(m map[string]any, k string) (int64, error) {
 	return pyval.Int(v)
 }
 
-// WatermarkStamps are the exchange times a frame carries (record_stream_watermark):
-// observed public socket progress, never next-funding or event times.
 func WatermarkStamps(inst *venue.Instrument, raw any) []any {
 	rm := pyval.Map(raw)
 	if rm == nil {
@@ -498,7 +489,7 @@ func WatermarkStamps(inst *venue.Instrument, raw any) []any {
 	var stamps []any
 	switch {
 	case key == "binance.usdm" && pyval.Map(data)["e"] == "depthUpdate":
-		return nil // independent public depth cannot prove regular trade/liquidation continuity
+		return nil
 	case strings.HasPrefix(key, "binance"):
 		if e := pyval.Map(data)["E"]; e != nil {
 			stamps = append(stamps, e)
@@ -527,7 +518,7 @@ func WatermarkStamps(inst *venue.Instrument, raw any) []any {
 		latest := ""
 		for _, row := range list(data) {
 			if s, ok := pyval.Map(row)["timestamp"].(string); ok && s > latest {
-				latest = s // one ISO format per feed: the latest string is the latest time
+				latest = s
 			}
 		}
 		if latest != "" {

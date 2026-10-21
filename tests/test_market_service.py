@@ -139,7 +139,7 @@ async def test_fundamentals_use_registered_slugs_only_and_partial_holders_revenu
     def handler(request):
         path = request.url.path
         paths.append(path)
-        # HLD §4.8 lists only /summary/fees/{protocol}; no catalog lookups.
+
         assert path.startswith("/summary/fees/")
         metric = request.url.params["dataType"]
         if path.endswith("abc-v2") and metric == "dailyHoldersRevenue":
@@ -241,7 +241,7 @@ async def test_hot_escalation_priority_age_repeat_and_event_specific_demote(setu
     await service.escalate("old", ["bitcoin:BTC"])
     await service.demote("bitcoin:BTC", "old")
     assert len(await repo.list("mkt.hot_tokens")) == 1
-    # replay escalation has no external backfill/subscription effects.
+
     await http.aclose()
 
 
@@ -644,7 +644,7 @@ async def test_bybit_legacy_temporal_proof_not_reused_by_condition_loader(setup)
     assert len(snapshot["semantics"]) == 1
     assert "semantic_confidence" not in snapshot["semantics"][0]
     assert snapshot["semantics"][0]["timestamp_semantics"] == "EXCHANGE_EVENT_TIME"
-    assert await repo.get("qa.reviews", "old-bybit-proof")  # old audit evidence remains immutable
+    assert await repo.get("qa.reviews", "old-bybit-proof")
     await service.close()
 
 
@@ -663,7 +663,7 @@ async def test_series_counts_survive_an_import_evicting_a_counted_day(setup, mon
         return {(iid, lo + timedelta(days=n)): 1440 for n in range((hi - lo).days)}
 
     async def edge_counts(ids, lo, hi, assembled):
-        service._kline_day_counts.clear()  # a klines archive import lands meanwhile
+        service._kline_day_counts.clear()
         return {}
 
     monkeypatch.setattr(service_module, "market_series_day_counts", day_counts)
@@ -692,7 +692,7 @@ async def test_snapshot_keeps_book_levels_only_on_the_newest_rows(setup):
                 "instrument_id": inst["instrument_id"],
                 "token_id": inst["token_id"],
                 "exchange_ts": iso(start + timedelta(seconds=10 * i)),
-                "integrity_ok": i <= 5,  # the newest integrity-checked book is old
+                "integrity_ok": i <= 5,
                 "mid": "2",
                 "spread_bps": "1",
                 "depth": {"bid": {"p1": {"usd": "4"}}, "ask": {"p1": {"usd": "6"}}},
@@ -749,7 +749,7 @@ async def test_condition_heads_are_reused_until_their_scope_is_written(setup, mo
 
     monkeypatch.setattr(service_module, "market_dependency_head", counted)
     window = ("mkt.oi_obs", "ts", now - timedelta(days=1), now)
-    assembled = utcnow()  # after the write: the head saw every row of its scope
+    assembled = utcnow()
     first = await service._condition_heads(*window, iso(assembled), {"instrument_id": iid})
     again = await service._condition_heads(
         *window, iso(assembled + timedelta(seconds=30)), {"instrument_id": iid}
@@ -779,9 +779,7 @@ async def test_condition_heads_are_reused_until_their_scope_is_written(setup, mo
     later = await service._condition_heads(
         *window, iso(utcnow() + timedelta(seconds=1)), {"instrument_id": iid}
     )
-    assert len(calls) == 2 and later[1]["ts"] == iso(
-        now - timedelta(minutes=1)
-    )  # a write invalidates the reuse
+    assert len(calls) == 2 and later[1]["ts"] == iso(now - timedelta(minutes=1))
     await service.close()
 
 
@@ -819,7 +817,7 @@ async def test_snapshot_anchors_yield_widest_first_and_equal_single_snapshots(se
     shared = [
         (a, stable(s)) async for a, s in service.snapshot_anchors(inst["token_id"], iso(cutoff), anchors)
     ]
-    # Windows reach back 2 x max(1 day, cutoff - anchor): the 30 h anchor is the widest; ties keep order.
+
     assert [a["ts"] for a, _ in shared] == [anchors[1]["ts"], anchors[0]["ts"], anchors[2]["ts"]]
     for anchor, snapshot in shared:
         single = stable(await service.snapshot(inst["token_id"], iso(cutoff), anchor=anchor))
@@ -841,8 +839,7 @@ async def test_snapshot_never_queues_behind_a_running_flush(setup):
         return await real(**kwargs)
 
     service.flush_market = counted
-    # Capture owns exchange writes; this reader must never flush, with or without
-    # a concurrent Python fundamentals flush.
+
     async with service._market_flush_lock:
         locked = await asyncio.wait_for(service.snapshot(inst["token_id"], utcnow()), 1)
     assert flushes == []
@@ -997,7 +994,6 @@ async def test_market_truth_snapshot_reads_one_day_of_books_and_tickers_at_windo
             edge - timedelta(minutes=15) <= t <= edge + timedelta(minutes=2, seconds=1) for edge in edges
         )
 
-    # Adjacent bound windows merge into one read; both ends of every read sit at a bound.
     ticker_reads = [(a, z) for c, a, z in reads if c == "mkt.tickers_24h"]
     assert ticker_reads and all(near_edge(a) and near_edge(z) for a, z in ticker_reads)
     assert sum((z - a).total_seconds() for a, z in ticker_reads) < 6 * 17 * 60
@@ -1053,7 +1049,7 @@ async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewr
     assert (await first._series_counts([iid], start, utcnow(), iso()))[iid] == 15
     assert counted == [(start, today)]
     await first._save_day_counts(force=True)
-    # After the save an audit rewrites a bar of two days ago.
+
     rewritten = today - timedelta(days=2) + timedelta(minutes=10)
     await repo.put_market_batch("mkt.klines_1m", [kline(rewritten, iso())], keys=[iid + ":" + iso(rewritten)])
     restarted = MarketService(repo, settings)
@@ -1061,8 +1057,7 @@ async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewr
     counted.clear()
     assert (await restarted._series_counts([iid], start, utcnow(), iso()))[iid] == 16
     assert counted == [(today - timedelta(days=2), today - timedelta(days=1))]
-    # A newly recorded capture row is detected by the reader's external-write
-    # poll, rather than by a retired in-process exchange flush.
+
     checked = utcnow()
     appended = today - timedelta(days=1) + timedelta(minutes=10)
     await repo.put_market_batch("mkt.klines_1m", [kline(appended, iso())], keys=[iid + ":" + iso(appended)])
@@ -1121,7 +1116,6 @@ async def test_window_cache_reads_equal_fresh_reads_through_appends_rewrites_and
 
     service_module.market_range_by_instrument = spy
     try:
-        # A rewrite, a late older row, rows past the window, and a later window.
         await put([row(10, "999"), row(11, "777")])
         cached = await service._ranged(
             collection,
@@ -1131,7 +1125,7 @@ async def test_window_cache_reads_equal_fresh_reads_through_appends_rewrites_and
             end + timedelta(minutes=10),
             books=books,
         )
-        assert reads == [(end, end + timedelta(minutes=10))]  # only the rows past the cached window
+        assert reads == [(end, end + timedelta(minutes=10))]
     finally:
         service_module.market_range_by_instrument = original
     fresh = await service._ranged_read(
@@ -1167,6 +1161,6 @@ def test_window_cache_is_bounded_by_age_and_rows(monkeypatch):
         ("b",): [lane(999.0, 40)],
     }
     service_module._bound_windows(windows)
-    assert ("old",) not in windows  # unused past its TTL
-    # 130 rows > 100: the least recently used lane (a, 990) goes first.
+    assert ("old",) not in windows
+
     assert [w["used"] for w in windows[("a",)]] == [995.0] and windows[("b",)][0]["size"] == 40

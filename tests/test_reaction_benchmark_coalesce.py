@@ -28,7 +28,10 @@ def klines(token, iid, end, minutes=180):
 
 
 class KlineMarket:
-    instruments = {"binance:spot:BTCUSDT": {"token_id": "bitcoin:BTC"}, "binance:perp:BTCUSDT": {"token_id": "bitcoin:BTC"}}
+    instruments = {
+        "binance:spot:BTCUSDT": {"token_id": "bitcoin:BTC"},
+        "binance:perp:BTCUSDT": {"token_id": "bitcoin:BTC"},
+    }
 
     def __init__(self, end):
         self.end = end
@@ -45,12 +48,18 @@ class KlineMarket:
 
 
 async def seed(repo, anchor, analysis_set):
-    await repo.put("evt.events", "e", {"event_id": "e", "public_at": iso(anchor), "known_to_us_at": iso(anchor)})
-    await repo.put("evt.beneficiary_maps", "e:1", {"event_id": "e", "map_version": 1, "analysis_set": analysis_set})
+    await repo.put(
+        "evt.events", "e", {"event_id": "e", "public_at": iso(anchor), "known_to_us_at": iso(anchor)}
+    )
+    await repo.put(
+        "evt.beneficiary_maps", "e:1", {"event_id": "e", "map_version": 1, "analysis_set": analysis_set}
+    )
 
 
 @pytest.mark.parametrize("in_analysis_set", [False, True])
-async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(tmp_path, monkeypatch, in_analysis_set):
+async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(
+    tmp_path, monkeypatch, in_analysis_set
+):
     end = utcnow().replace(second=0, microsecond=0)
     anchor = end - timedelta(hours=2)
     repo = MemoryRepository()
@@ -73,11 +82,14 @@ async def test_benchmark_checkpoint_uses_base_klines_only_outside_analysis_set(t
         assert "benchmark" not in data and data["spot_method"] == "NONE"
     else:
         assert data["spot_method"] == "NOT_APPLICABLE" and data["spot_cvd"] is None
-        assert market.snapshots == 0  # klines only, never a full BTC/ETH snapshot
+        assert market.snapshots == 0
         assert data["benchmark"]["r_raw_venue"] == "binance:spot:BTCUSDT"
-        # Close at the anchor (bar 59 of 180) to close at anchor + 1 h (bar 119).
+
         assert data["r_raw"] == pytest.approx((100 + 119) / (100 + 59) - 1)
-    assert await scheduler.analysis_tokens(await repo.get("evt.events", "e")) >= {"bitcoin:BTC", "ethereum:ETH"}
+    assert await scheduler.analysis_tokens(await repo.get("evt.events", "e")) >= {
+        "bitcoin:BTC",
+        "ethereum:ETH",
+    }
 
 
 async def test_late_changes_keep_one_queued_revision_per_checkpoint(tmp_path):
@@ -114,10 +126,12 @@ async def test_late_changes_keep_one_queued_revision_per_checkpoint(tmp_path):
         await scheduler.detect_late_data(end + timedelta(minutes=n))
     jobs = [j async for j in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE"})]
     assert sorted(j["payload"]["checkpoint"] for j in jobs) == ["POST_1H", "PRE_1H"]
-    # Once the queued revision ran, the next change queues a new one.
+
     for job in jobs:
         await repo.put("ops.jobs", job["job_id"], {**job, "status": "DONE"})
     market.changes = [dict(market.changes[0], change_id="CAP-LIVE-9", observed_at=iso(end))]
     await scheduler.detect_late_data(end + timedelta(minutes=9))
-    jobs = [j async for j in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE", "status": "QUEUED"})]
+    jobs = [
+        j async for j in repo.iter_all("ops.jobs", filters={"type": "REACTION_CAPTURE", "status": "QUEUED"})
+    ]
     assert sorted(j["payload"]["checkpoint"] for j in jobs) == ["POST_1H", "PRE_1H"]

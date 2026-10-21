@@ -1,7 +1,5 @@
 """Verify and stage exact public supplementary captures for historical source tests."""
 
-from __future__ import annotations
-
 import argparse
 import hashlib
 import json
@@ -33,7 +31,10 @@ def safe_name(name: str) -> bool:
 def stage(destination: Path) -> dict:
     manifest = json.loads((BUNDLE / "manifest.json").read_text())
     archive = BUNDLE / "captures.tar.gz"
-    if archive.stat().st_size != manifest["archive_bytes"] or digest(archive.read_bytes()) != manifest["archive_sha256"]:
+    if (
+        archive.stat().st_size != manifest["archive_bytes"]
+        or digest(archive.read_bytes()) != manifest["archive_sha256"]
+    ):
         raise ValueError("supplementary archive checksum mismatch")
     entries = {entry["path"]: entry for entry in manifest["files"]}
     if len(entries) != len(manifest["files"]) or len(entries) != manifest["total_files"]:

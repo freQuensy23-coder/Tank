@@ -55,8 +55,10 @@ func TestArchiveFetchStoresVerifiedFileOnce(t *testing.T) {
 	if status, _, result = run(); status != "COMPLETE" || result["reused"] != true || site.downloads != 1 {
 		t.Fatalf("second fetch downloaded again: %s %v downloads=%d", status, result, site.downloads)
 	}
-	// A corrupted download is never kept.
-	os.Remove(want)
+
+	if err := os.Remove(want); err != nil {
+		t.Fatal(err)
+	}
 	site.zip = []byte("tampered")
 	if status, reason, _ = run(); status != "FAILED" || reason != "ARCHIVE_CHECKSUM_MISMATCH" {
 		t.Fatalf("tampered: %s %v", status, reason)

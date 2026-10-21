@@ -115,7 +115,7 @@ async def test_independent_routing_calls_overlap_preserve_source_updates_and_ded
                     await repo.put(
                         "ingest.source_items", identifiers[0], {**latest, "new_observation": "preserved"}
                     )
-                # These independent jobs run while both Jev requests wait.
+
                 unrelated = await pipe.route_item({"item_id": identifiers[3]})
                 assert unrelated["routing_message"] == {"kind": "NEW_ITEM", "item_id": identifiers[3]}
                 new_one, new_two = await asyncio.gather(

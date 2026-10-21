@@ -79,8 +79,6 @@ async def test_symlinked_and_protected_days_are_never_removed(tmp_path):
     auth_day = trade_day(tmp_path / "data", now - timedelta(days=71))
     auth = auth_day / "auth.json"
     auth.write_text("FAKE_PRIVATE_AUTH")
-    scheduler = Scheduler(
-        MemoryRepository(), settings(tmp_path / "data", codex_auth_path=auth), None, None
-    )
+    scheduler = Scheduler(MemoryRepository(), settings(tmp_path / "data", codex_auth_path=auth), None, None)
     assert await scheduler.prune_raw_files(now, None) == []
     assert (outside / "keep.parquet").exists() and auth.exists()

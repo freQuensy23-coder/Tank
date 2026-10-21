@@ -103,8 +103,7 @@ def run(state, other_state, evidence):
             )
             denied = reply(expired)
             assert denied and not denied["ok"] and "action queue" in denied["error"], denied
-            # This op could complete synchronously if the fatal handler ever
-            # released the lock before exiting, even with the renderer hung.
+
             send(queued_open, "open", time.monotonic() + 25)
             send(
                 queued_mutation,

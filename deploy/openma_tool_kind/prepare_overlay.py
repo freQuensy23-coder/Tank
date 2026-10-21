@@ -38,7 +38,7 @@ def apply(root):
         if digest(after) != row["after_sha256"]:
             raise ValueError("Tool-kind output hash mismatch: " + row["path"])
         planned.append((target, after, row["path"]))
-    # Validate every source and resulting hash before touching any target.
+
     for target, after, _ in planned:
         target.write_bytes(after)
     return {name: digest(after) for _, after, name in planned}

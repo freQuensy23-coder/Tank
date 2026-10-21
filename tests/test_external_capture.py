@@ -13,7 +13,6 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import yaml
-from test_storage_typed_market import typed_repo  # noqa: F401
 
 from tank.market.normalize import timestamp_fields
 from tank.market.service import CAPTURE_REQUEST_GRACE_S, EXCHANGE_REST_OWNER, MarketService
@@ -77,7 +76,7 @@ async def finish(repo, collection, key, **fields):
 async def test_external_escalation_writes_the_obligation_and_starts_nothing(settings):
     repo = MemoryRepository()
     service = MarketService(repo, settings)
-    service._stop = asyncio.Event()  # in process, a running service would open sockets now
+    service._stop = asyncio.Event()
     await service.escalate("EVT-1", [TOKEN])
     assert [row["token_id"] for row in await repo.list("mkt.hot_tokens")] == [TOKEN]
     (run,) = await repo.list("mkt.backfill_runs")
@@ -87,7 +86,6 @@ async def test_external_escalation_writes_the_obligation_and_starts_nothing(sett
     )
     assert (await service.capture_readiness("EVT-1", TOKEN, anchor=run["anchor"]))["status"] == "PENDING"
 
-    # A restart leaves an obligation tank-capture holds to it, and asks a failed one again.
     await update(repo, "mkt.backfill_runs", run["backfill_id"], status="RUNNING")
     restarted = MarketService(repo, settings)
     await restarted._schedule_hot_backfills()
@@ -136,7 +134,7 @@ async def repair_round_trip(repo, service):
             "requested_at": request["requested_at"],
         }
     )
-    # A failure, and a request nobody finishes, leave the minutes as they are: {}.
+
     worker = asyncio.create_task(capture_worker(repo, {"status": "FAILED", "reason": "venue down"}, []))
     assert (
         await service.repair_windows(TOKEN, "2026-10-20T10:00:00Z", "2026-10-21T10:00:00Z", budget_s=10) == {}
@@ -219,11 +217,10 @@ async def check_stream_state(repo, service):
     assert coverage[PERP]["stream_connected"] and coverage[PERP]["last_trade_ts"] == iso(
         now - timedelta(seconds=3)
     )
-    # A row tank-capture stopped rewriting is a stopped stream.
+
     assert not coverage[SPOT]["stream_connected"]
     assert coverage[SPOT]["last_trade_ts"] == iso(now - timedelta(seconds=9))
-    # updated_at is outside the semantic fingerprint: tank-capture rewrites the row
-    # unconditionally; here the last state it wrote (one more print) is 31 s old.
+
     stale = stream_rows(now, perp_updated=now - timedelta(seconds=31), spot_updated=now)
     await repo.put_market_batch(
         "mkt.capture_streams", [dict(stale[0], last_trade_id="43")], keys=[PERP + ":WS"]
@@ -257,7 +254,7 @@ async def test_external_capture_never_calls_exchange_rest(settings):
         ):
             with pytest.raises(RuntimeError, match="tank-capture"):
                 await service._request(method, url, **extra)
-        # Supply sources are not exchange market data: they stay with this process.
+
         assert await service._request("GET", "https://api.llama.fi/summary/fees/abc") == {"ok": True}
         assert hosts == ["api.llama.fi"]
         assert EXCHANGE_REST_OWNER.startswith("exchange REST")
@@ -295,11 +292,8 @@ async def test_external_run_keeps_tiers_and_obligations_and_captures_nothing(set
     await service.close()
 
 
-# PostgreSQL: the migration 046 contract itself.
-
-
 @pytest.fixture
-async def migrated(typed_repo):  # noqa: F811
+async def migrated(typed_repo):
     await typed_repo.migrate()
     return typed_repo
 
@@ -321,10 +315,10 @@ async def test_request_ledger_is_one_budget_for_every_process(migrated):
         started = time.monotonic()
         await first.acquire("kraken", 1, 1, host="api.kraken.com")
         await second.acquire("kraken", 1, 1, priority=-1, host="api.kraken.com")
-        assert time.monotonic() - started >= 0.9  # Kraken: one request per second in total
+        assert time.monotonic() - started >= 0.9
         await first.acquire("binance.spot", 3000, 60, weight=2, host="api.binance.com")
         await second.acquire("binance.spot", 3000, 60, weight=4, host="api.binance.com")
-        # tank-capture names the same buckets: "<key>|<window_s>|<capacity>" as floats.
+
         assert [(row["bucket"], row["owner"]) for row in await ledger_rows(migrated)] == [
             ("kraken|1.0|1.0", "second"),
             ("binance.spot|60.0|3000.0", "first"),
@@ -333,7 +327,7 @@ async def test_request_ledger_is_one_budget_for_every_process(migrated):
         await first.block("api.binance.com", utcnow() + timedelta(seconds=1), "HTTP 429")
         started = time.monotonic()
         await second.acquire("binance.spot", 3000, 60, weight=2, host="api.binance.com")
-        assert time.monotonic() - started >= 0.8  # the 429 closed the host for both
+        assert time.monotonic() - started >= 0.8
         started = time.monotonic()
         await second.acquire("binance.usdm", 1200, 60, weight=1, host="fapi.binance.com")
         assert time.monotonic() - started < 0.5
@@ -412,7 +406,7 @@ async def test_shared_ledger_closes_hosts_on_429_and_418(tmp_path, monkeypatch):
         replies[:] = [httpx.Response(418, headers={"Retry-After": "120"})]
         with pytest.raises(RuntimeError, match="418"):
             await service._request_once("GET", url, params=params)
-        assert not replies  # a ban is never asked again
+        assert not replies
         (host, until, reason) = ledger.blocks.pop()
         assert host == "api.llama.fi" and reason == "HTTP 418"
         assert 110 < (until - utcnow()).total_seconds() <= 120
@@ -426,6 +420,6 @@ async def test_shared_ledger_closes_hosts_on_429_and_418(tmp_path, monkeypatch):
         monkeypatch.setattr("tank.market.service.time", SimpleNamespace(monotonic=clock.monotonic))
         assert await service._request_once("GET", url, params=params) == []
         assert [(host, reason) for host, _, reason in ledger.blocks] == [("api.llama.fi", "HTTP 429")]
-        # Retry-After is clamped like the in-process gate's wait.
+
         assert 50 < (ledger.blocks[0][1] - utcnow()).total_seconds() <= 60
         await service.close()

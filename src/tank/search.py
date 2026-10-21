@@ -4,8 +4,6 @@ The DDGS private hooks below are deliberately tied to 9.16.0. See docs/SEARCH.md
 before upgrading: accepting ``backend='duckduckgo'`` alone is not a safety boundary.
 """
 
-from __future__ import annotations
-
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
@@ -66,7 +64,7 @@ class SearchLimiter:
         self._last_started: float | None = None
 
     def mark_started(self) -> None:
-        # Called on the worker thread immediately before the sole HTTP request.
+
         self._last_started = self.clock()
 
     async def run(self, attempt: Callable[[], list[dict[str, Any]]]) -> list[dict[str, Any]]:
@@ -78,14 +76,12 @@ class SearchLimiter:
             try:
                 return await asyncio.shield(task)
             except asyncio.CancelledError:
-                # to_thread cannot kill a blocking request. Drain it before releasing
-                # the shared lock, including when callers cancel more than once.
                 while not task.done():
                     try:
                         await asyncio.shield(task)
                     except asyncio.CancelledError:
                         continue
-                    except Exception:  # noqa: BLE001 - retrieve any drained vendor exception below
+                    except Exception:
                         break
                 if task.done() and not task.cancelled():
                     task.exception()
@@ -143,23 +139,21 @@ class _DuckDuckGoHTTP:
 
 class _DuckDuckGoEngine(Duckduckgo):
     def __init__(self, transport: _DuckDuckGoHTTP):
-        # Do not construct DDGS's primp client: it selects random browser identity.
-        # Inherit the actual pinned payload builder, parser and result normalizers.
+
         self.http_client = transport
         self.results = []
 
 
 class _DuckDuckGoOnly(DDGS):
     def __init__(self, engine: _DuckDuckGoEngine):
-        # The upstream constructor also reads DDGS_PROXY from the environment.
-        # This transport has no proxy configuration or credential lookup.
+
         self._timeout = 20
         self.engine = engine
 
     def _get_engines(self, category: str, backend: str) -> list[_DuckDuckGoEngine]:
         if category != "text" or backend != "duckduckgo":
             raise SearchError("POLICY", "Only DuckDuckGo text search is allowed")
-        # Never call super: its empty/unknown registry path falls back to auto.
+
         return [self.engine]
 
 
@@ -180,8 +174,6 @@ def _search_sync(query: str, user_agent: str, mark_started: Callable[[], None]) 
                 raise transport.error
             return results
         except DDGSException as exc:
-            # DDGS catches engine exceptions in its executor; preserve the typed
-            # transport failure rather than downgrading a block to "no results".
             if transport.error is not None:
                 raise transport.error from exc
             raise
@@ -230,12 +222,10 @@ class DuckDuckGoSearchService:
             try:
                 results = await self.limiter.run(run_attempt)
             except asyncio.CancelledError:
-                # The limiter drains a submitted request before cancellation returns.
-                # Log its attempt even though the caller no longer awaits a result.
                 if launched and on_attempt is not None:
                     await on_attempt(attempt_number)
                 raise
-            except Exception as exc:  # noqa: BLE001 - remote/vendor failures are safe tool errors
+            except Exception as exc:
                 error = _classify(exc)
                 error.attempts = attempt_number
             if on_attempt is not None:

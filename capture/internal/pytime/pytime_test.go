@@ -24,8 +24,6 @@ type timeVectors struct {
 	} `json:"precisions"`
 }
 
-// Vectors from tank.util.iso/parse_time and tank.time_precision
-// (scripts/capture/gen_pyvectors.py).
 func TestTimesMatchPython(t *testing.T) {
 	var v timeVectors
 	testutil.Decode(t, &v, "pyvectors", "time.json.gz")

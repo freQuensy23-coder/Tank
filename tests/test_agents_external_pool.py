@@ -16,9 +16,7 @@ from tank.storage import MemoryRepository
 @pytest.mark.parametrize(
     "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
 )
-async def test_external_tool_burst_allows_unrelated_worker_progress(
-    backend, tool, postgres_template
-):
+async def test_external_tool_burst_allows_unrelated_worker_progress(backend, tool, postgres_template):
     async with fixture_repo(backend, postgres_template) as repo:
         await exercise_external_tool_burst(repo, tool)
 
@@ -58,7 +56,7 @@ async def exercise_external_tool_burst(repo, tool):
         ]
         try:
             await asyncio.wait_for(all_entered.wait(), timeout=2)
-            # A worker must be able to commit even while every remote tool is blocked.
+
             await asyncio.wait_for(
                 repo.put("ops.agent_sessions", "worker", dict(template, session_id="worker")),
                 timeout=2,

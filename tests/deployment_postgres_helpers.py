@@ -47,8 +47,7 @@ async def _owned_container(container_id, owner):
 
 
 async def _ready(container_id, owner, dsn):
-    # The image starts a temporary server during init. Wait for the final PID 1
-    # postgres process, then a real tank connection, not merely a socket file.
+
     async with asyncio.timeout(60):
         while True:
             state = await _owned_container(container_id, owner)
@@ -73,7 +72,7 @@ async def _ready(container_id, owner, dsn):
 async def deployment_repository():
     if shutil.which("docker") is None:
         raise RuntimeError("Selected deployment PostgreSQL integrations require Docker")
-    # Resolve an already-present intended image once, then create by immutable ID.
+
     image = json.loads(await _docker("image", "inspect", IMAGE))[0]
     image_id = image["Id"]
     if not re.fullmatch(r"sha256:[a-f0-9]{64}", image_id) or image["Os"] != "linux":
@@ -85,29 +84,53 @@ async def deployment_repository():
         temporary = Path(directory)
         socket = temporary / "socket"
         socket.mkdir()
-        socket.chmod(0o777)  # The image's postgres UID creates its socket here.
+        socket.chmod(0o777)
         secret_dir = temporary / "secrets"
         secret_dir.mkdir()
         secret_dir.chmod(0o755)
-        for name in ("tank_db_password", "oma_db_password", "tank_agent_db_password", "tank_replay_agent_db_password"):
+        for name in (
+            "tank_db_password",
+            "oma_db_password",
+            "tank_agent_db_password",
+            "tank_replay_agent_db_password",
+        ):
             password = secret_dir / name
             password.write_text(secrets.token_urlsafe(32))
-            password.chmod(0o444)  # Disposable values, mounted read-only for the image UID.
+            password.chmod(0o444)
         dsn = make_conninfo(user="postgres", dbname="tank", host=str(socket))
 
         async def allocate():
             nonlocal container_id
             created = await _docker(
-                "create", "--name", "tank-test-deployment-" + owner,
-                "--label", OWNER_LABEL + "=" + owner,
-                "--network", "none", "--shm-size", "1g",
-                "--tmpfs", "/var/lib/postgresql/data:rw,nosuid,nodev",
-                "--mount", f"type=bind,src={socket},dst=/socket",
-                "--mount", f"type=bind,src={secret_dir},dst=/run/secrets,readonly",
-                "--mount", f"type=bind,src={ROOT / 'deploy/postgres-init.sh'},dst=/docker-entrypoint-initdb.d/10-tank.sh,readonly",
-                "--env", "POSTGRES_HOST_AUTH_METHOD=trust",
-                image_id, "postgres", "-c", "listen_addresses=", "-c", "unix_socket_directories=/var/run/postgresql,/socket",
-                "-c", "max_locks_per_transaction=1024", "-c", "max_connections=300",
+                "create",
+                "--name",
+                "tank-test-deployment-" + owner,
+                "--label",
+                OWNER_LABEL + "=" + owner,
+                "--network",
+                "none",
+                "--shm-size",
+                "1g",
+                "--tmpfs",
+                "/var/lib/postgresql/data:rw,nosuid,nodev",
+                "--mount",
+                f"type=bind,src={socket},dst=/socket",
+                "--mount",
+                f"type=bind,src={secret_dir},dst=/run/secrets,readonly",
+                "--mount",
+                f"type=bind,src={ROOT / 'deploy/postgres-init.sh'},dst=/docker-entrypoint-initdb.d/10-tank.sh,readonly",
+                "--env",
+                "POSTGRES_HOST_AUTH_METHOD=trust",
+                image_id,
+                "postgres",
+                "-c",
+                "listen_addresses=",
+                "-c",
+                "unix_socket_directories=/var/run/postgresql,/socket",
+                "-c",
+                "max_locks_per_transaction=1024",
+                "-c",
+                "max_connections=300",
             )
             if not re.fullmatch(r"[a-f0-9]{64}", created):
                 raise RuntimeError("Docker did not return an exact owned container ID")

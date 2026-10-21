@@ -1,4 +1,5 @@
 """Offline checks of the read-only acceptance measurement helpers (no database)."""
+
 import importlib.util
 import sys
 from pathlib import Path
@@ -32,15 +33,31 @@ def test_summary_unmeasured_is_never_a_pass():
 
 def test_source_ratio_uses_counter_deltas_and_cadence():
     health = load("v0a_health")
-    start = {"taken_at": "2026-10-21T00:00:00Z", "feeds": {
-        "S01:0": {"reads": {"ok": 1000, "failed": 5}, "detail_reads": {"ok": 0, "failed": 0}},
-    }}
-    end = {"taken_at": "2026-10-21T01:00:00Z", "feeds": {
-        "S01:0": {"reads": {"ok": 1059, "failed": 6}, "detail_reads": {"ok": 0, "failed": 0}, "status": "HEALTHY"},
-        "S02:0": {"reads": {"ok": 30, "failed": 0}, "detail_reads": {"ok": 10, "failed": 0}, "status": "HEALTHY"},
-    }}
-    rows = {r["source_id"]: r for r in health.sources(start, end, {"S01:0": 60, "S02:0": 60, "S03:0": 60}, 3600)}
+    start = {
+        "taken_at": "2026-10-21T00:00:00Z",
+        "feeds": {
+            "S01:0": {"reads": {"ok": 1000, "failed": 5}, "detail_reads": {"ok": 0, "failed": 0}},
+        },
+    }
+    end = {
+        "taken_at": "2026-10-21T01:00:00Z",
+        "feeds": {
+            "S01:0": {
+                "reads": {"ok": 1059, "failed": 6},
+                "detail_reads": {"ok": 0, "failed": 0},
+                "status": "HEALTHY",
+            },
+            "S02:0": {
+                "reads": {"ok": 30, "failed": 0},
+                "detail_reads": {"ok": 10, "failed": 0},
+                "status": "HEALTHY",
+            },
+        },
+    }
+    rows = {
+        r["source_id"]: r for r in health.sources(start, end, {"S01:0": 60, "S02:0": 60, "S03:0": 60}, 3600)
+    }
     assert rows["S01"]["reads"] == 60 and rows["S01"]["failures"] == 1
-    assert rows["S01"]["status"] == "FAIL"  # 1/60 > 1%
-    assert rows["S02"]["status"] == "FAIL"  # 30 polls of 60 expected: not polled at its cadence
+    assert rows["S01"]["status"] == "FAIL"
+    assert rows["S02"]["status"] == "FAIL"
     assert rows["S03"]["reads"] == 0 and rows["S03"]["status"] == "FAIL"

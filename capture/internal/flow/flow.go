@@ -1,6 +1,3 @@
-// Package flow is tank.market.flow.FlowAccumulator: 1m flow bars with size buckets,
-// boundary segments and reference points, built from normalized prints and coverage
-// proofs. Record returns the same dict the Python accumulator records.
 package flow
 
 import (
@@ -20,30 +17,24 @@ var bucketLimits = []pydec.Dec{
 	pydec.FromInt(1000), pydec.FromInt(10000), pydec.FromInt(100000), pydec.FromInt(1000000),
 }
 
-// BucketLimitsUSD are the size bucket edges (03 §5.2): B1 < 1k ... B5 >= 1M.
 var BucketLimitsUSD = []int64{1000, 10000, 100000, 1000000}
 
-// Key identifies one instrument minute.
 type Key struct {
 	IID    string
-	Minute int64 // unix seconds of the minute start
+	Minute int64
 }
 
-// MinuteTime is the minute start.
 func (k Key) MinuteTime() time.Time { return time.Unix(k.Minute, 0).UTC() }
 
-// MinuteISO is the minute start as iso().
 func (k Key) MinuteISO() string { return pytime.ISO(k.MinuteTime()) }
 
-// KeyOf is the bar key of a time.
 func KeyOf(iid string, t time.Time) Key { return Key{iid, pytime.MinuteFloor(t).Unix()} }
 
-// Proof is one coverage proof: [Start, End) is (in)complete.
 type Proof struct {
 	Start, End time.Time
 	Complete   bool
-	Source     string // "" when absent
-	Reason     string // "" is None
+	Source     string
+	Reason     string
 	Observed   time.Time
 }
 
@@ -51,7 +42,6 @@ func (p Proof) sameKind(o Proof) bool {
 	return p.Start.Equal(o.Start) && p.Complete == o.Complete && p.Source == o.Source && p.Reason == o.Reason
 }
 
-// TradePoint is FlowAccumulator.trade_point.
 type TradePoint struct {
 	TradeID      string
 	Price        string
@@ -60,7 +50,6 @@ type TradePoint struct {
 	TSPrecReason string
 }
 
-// Map is the trade point dict, or None (an untyped nil) without a point.
 func (p *TradePoint) Map() any {
 	if p == nil {
 		return nil
@@ -71,7 +60,6 @@ func (p *TradePoint) Map() any {
 	}
 }
 
-// PointOf is trade_point(trade).
 func PointOf(t *normalize.Trade) *TradePoint {
 	if t == nil {
 		return nil
@@ -102,7 +90,6 @@ func (b *bucket) dict() map[string]any {
 	}
 }
 
-// Bar is one instrument minute under accumulation.
 type Bar struct {
 	InstrumentID, TokenID string
 	Venue, MarketType     any
@@ -123,7 +110,7 @@ type Bar struct {
 	TradeAggregation          string
 	QuoteVolume               pydec.Dec
 	VolumeUSD                 *pydec.Dec
-	ZeroTrade                 bool // zero_trade_minute is present (an empty minute without prints)
+	ZeroTrade                 bool
 	fromEmpty                 bool
 	notionalReasonSet         bool
 	qty, quote                pydec.Dec
@@ -134,17 +121,15 @@ type Bar struct {
 	RESTVerified              bool
 }
 
-// Accumulator is FlowAccumulator.
 type Accumulator struct {
 	Bars           map[Key]*Bar
 	Last           map[string]*normalize.Trade
-	Boundaries     map[Key]map[int64]time.Time // minute -> exact boundary points (unix micro)
-	References     map[string]map[string]any   // iid + "|" + iso(boundary) -> explicit point
+	Boundaries     map[Key]map[int64]time.Time
+	References     map[string]map[string]any
 	CoverageRanges map[string][]Proof
 	Dirty          map[Key]bool
 }
 
-// New is FlowAccumulator().
 func New() *Accumulator {
 	return &Accumulator{
 		Bars:           map[Key]*Bar{},
@@ -156,7 +141,6 @@ func New() *Accumulator {
 	}
 }
 
-// RefKey is the references key of (instrument, boundary).
 func RefKey(iid string, boundary time.Time) string { return iid + "|" + pytime.ISO(boundary) }
 
 func newBuckets() *[5]bucket { return &[5]bucket{} }
@@ -169,8 +153,6 @@ func appendProof(list []Proof, proof Proof) []Proof {
 	return append(list, proof)
 }
 
-// ProveRange is prove_range: record that [start, end) of an instrument is (in)complete
-// and attach the proof to every overlapping bar held.
 func (a *Accumulator) ProveRange(iid string, start, end time.Time, complete bool, source, reason string, observed time.Time) Proof {
 	proof := Proof{Start: start, End: end, Complete: complete, Source: source, Reason: reason, Observed: observed}
 	recent := appendProof(a.CoverageRanges[iid], proof)
@@ -197,7 +179,6 @@ func (a *Accumulator) ProveRange(iid string, start, end time.Time, complete bool
 	return proof
 }
 
-// EmptyMinute is empty_minute: a minute without prints (yet).
 func (a *Accumulator) EmptyMinute(inst *venue.Instrument, minute time.Time) {
 	key := KeyOf(inst.ID, minute)
 	if _, ok := a.Bars[key]; ok {
@@ -219,9 +200,6 @@ func (a *Accumulator) EmptyMinute(inst *venue.Instrument, minute time.Time) {
 	a.Bars[key] = b
 }
 
-// RegisterBoundaries is register_boundaries: exact window edges inside minutes get
-// boundary segments and reference points; an edge on a minute start also bounds the
-// previous minute.
 func (a *Accumulator) RegisterBoundaries(iid string, points []time.Time) {
 	add := func(key Key, at time.Time) {
 		set := a.Boundaries[key]
@@ -241,8 +219,6 @@ func (a *Accumulator) RegisterBoundaries(iid string, points []time.Time) {
 	}
 }
 
-// Covered is FlowAccumulator.covered: every sub-interval of [start, end) has a covering
-// proof and the last such proof is complete.
 func Covered(start, end time.Time, ranges []Proof) bool {
 	if start.Equal(end) {
 		return true
@@ -288,8 +264,6 @@ func intID(id string) (int64, bool) {
 	return v, err == nil
 }
 
-// Add is FlowAccumulator.add without the record: with continuity, consecutive-ID venues
-// flag TRADE_ID_GAP, OKX a non-monotonic ID and Bybit a missing or regressing sequence.
 func (a *Accumulator) Add(t *normalize.Trade, continuity bool) {
 	iid := t.InstrumentID
 	key := KeyOf(iid, t.TS)
@@ -414,7 +388,7 @@ func (a *Accumulator) Add(t *normalize.Trade, continuity bool) {
 		b.lastTS, b.Close, b.LastTradeID, b.LastTrade = &ts, &p, &id, PointOf(t)
 	}
 	if !b.fromEmpty && b.FirstTrade == nil {
-		b.FirstTrade = PointOf(t) // setdefault: only the bar created by this print lacks the key
+		b.FirstTrade = PointOf(t)
 	}
 	b.qty = pydec.Add(b.qty, q, prec)
 	b.quote = pydec.Add(b.quote, pydec.Mul(q, p, prec), prec)
@@ -446,7 +420,6 @@ func strOrNil(s *string) any {
 	return *s
 }
 
-// fields is the bar's own dict (keys without a leading underscore).
 func (b *Bar) fields() map[string]any {
 	r := map[string]any{
 		"instrument_id": b.InstrumentID, "token_id": b.TokenID, "venue": b.Venue,
@@ -508,8 +481,6 @@ func copyMap(m map[string]any) map[string]any {
 	return out
 }
 
-// Record is FlowAccumulator.record(key, complete=complete, segments=segments) with the
-// collection clock at now. complete nil leaves the bar's flag unchanged.
 func (a *Accumulator) Record(key Key, complete *bool, segments bool, now time.Time) map[string]any {
 	b := a.Bars[key]
 	if complete != nil {
@@ -669,7 +640,6 @@ func uniqueSorted(ts []time.Time) []time.Time {
 	return out
 }
 
-// MarkGap is mark_gap: bars of [floor(start), end] become incomplete with reason.
 func (a *Accumulator) MarkGap(iid string, start, end time.Time, reason string) {
 	lo := pytime.MinuteFloor(start)
 	for key, b := range a.Bars {

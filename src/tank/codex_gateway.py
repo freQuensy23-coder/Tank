@@ -4,8 +4,6 @@ The provider URLs are intentionally constants, not deployment configuration.
 Tests replace the HTTP transport, never the destination or real auth store.
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import binascii
@@ -100,10 +98,10 @@ class Credentials:
 
     def needs_refresh(self) -> bool:
         if self.expires_at is not None:
-            return self.expires_at <= time.time() + 300  # Codex CLI's five-minute refresh window.
+            return self.expires_at <= time.time() + 300
         try:
             refreshed = datetime.fromisoformat(self.document["last_refresh"])
-            return time.time() - refreshed.timestamp() >= 8 * 86400  # CLI's fallback refresh interval.
+            return time.time() - refreshed.timestamp() >= 8 * 86400
         except (KeyError, ValueError, TypeError, AttributeError):
             return True
 
@@ -151,10 +149,7 @@ class CodexGateway:
     async def _close_response(response: httpx.Response) -> None:
         try:
             await response.aclose()
-        except Exception:  # noqa: BLE001 -- cleanup exceptions may contain OAuth credentials.
-            # Cleanup is best effort after a response/error/cancellation. Never
-            # replace the active outcome with a provider-supplied close message.
-            # CancelledError remains outside this Exception boundary.
+        except Exception:
             log.warning("Codex upstream response cleanup failed")
 
     def _load(self) -> Credentials:
@@ -226,7 +221,7 @@ class CodexGateway:
                 self._runner, self.settings.codex_gateway_host, self.settings.codex_gateway_port
             )
             await site.start()
-            self.bound_port = site._server.sockets[0].getsockname()[1]
+            self.bound_port = self._runner.addresses[0][1]
             self.ready.set()
         except BaseException:
             await self.close()
@@ -246,8 +241,6 @@ class CodexGateway:
             if runner:
                 await runner.cleanup()
         finally:
-            # A cancelled model request must not discard rotated refresh tokens.
-            # Let its bounded token exchange finish and persist before closing.
             if self._auth_tasks:
                 await asyncio.gather(*tuple(self._auth_tasks), return_exceptions=True)
             self.bound_port = None
@@ -255,13 +248,13 @@ class CodexGateway:
             if client:
                 try:
                     await client.aclose()
-                except Exception:  # noqa: BLE001 -- callers may log shutdown errors; expose only a static code.
+                except Exception:
                     raise GatewayError("codex_gateway_close_failed") from None
 
     def _persist(self, credentials: Credentials, update: dict) -> Credentials:
         current = self._load()
         if current.fingerprint != credentials.fingerprint:
-            return current  # Operator replaced the login while refresh was in flight.
+            return current
         document = current.document
         document["tokens"].update(update)
         document["last_refresh"] = datetime.now(UTC).isoformat().replace("+00:00", "Z")
@@ -304,11 +297,11 @@ class CodexGateway:
     def _auth_done(self, task: asyncio.Task) -> None:
         self._auth_tasks.discard(task)
         if not task.cancelled():
-            task.exception()  # Retrieve exceptions if the originating caller disconnected.
+            task.exception()
 
     async def _credentials_locked(self, rejected: Credentials | None = None) -> Credentials:
         async with self._refresh_lock:
-            credentials = self._load()  # Observe external rotation on every request.
+            credentials = self._load()
             forced = rejected is not None and credentials.fingerprint == rejected.fingerprint
             if not forced and not credentials.needs_refresh():
                 return credentials
@@ -317,10 +310,10 @@ class CodexGateway:
             if self._refresh_failure:
                 fingerprint, failed_at, error = self._refresh_failure
                 if fingerprint == credentials.fingerprint and time.monotonic() - failed_at < 1:
-                    raise error  # Coalesce a simultaneous wave of failed refreshes.
+                    raise error
             try:
                 assert self._client is not None
-                # Use an explicit Request: the client's cookie jar is never applied.
+
                 request = httpx.Request(
                     "POST",
                     TOKEN_URL,
@@ -411,8 +404,7 @@ class CodexGateway:
             else:
                 messages.append(item)
         result = dict(body, input=messages, instructions=instructions, store=False, stream=True)
-        # These are API-platform fields rejected by ChatGPT sign-in, as in pi's
-        # own ChatGPT provider. No local spending or output-token cap is added.
+
         for name in ("max_output_tokens", "temperature", "prompt_cache_retention", "prompt_cache_options"):
             result.pop(name, None)
         return result
@@ -482,7 +474,7 @@ class CodexGateway:
             async for chunk in upstream.aiter_bytes():
                 safe = redactor.feed(chunk)
                 if safe:
-                    await downstream.write(safe)  # Awaiting propagates backpressure.
+                    await downstream.write(safe)
             await downstream.write(redactor.feed(b"", final=True))
             await downstream.write_eof()
             return downstream
@@ -491,8 +483,7 @@ class CodexGateway:
         except httpx.HTTPError:
             if downstream is None:
                 return self._error(GatewayError("codex_upstream_unavailable", 502))
-            # A partial stream must fail visibly, rather than becoming a valid
-            # truncated response or changing an already-sent HTTP status.
+
             await downstream.write(
                 b'event: error\ndata: {"type":"error","code":"codex_stream_interrupted","message":"Codex stream interrupted"}\n\n'
             )
@@ -500,9 +491,7 @@ class CodexGateway:
             return downstream
         except (ConnectionError, asyncio.CancelledError):
             raise
-        except Exception:  # noqa: BLE001 -- credential-safe HTTP boundary; see comment below.
-            # No unexpected exception is rendered by aiohttp's error logger:
-            # credential-bearing provider messages must never enter diagnostics.
+        except Exception:
             if downstream is not None and downstream.prepared:
                 await downstream.write(
                     b'event: error\ndata: {"type":"error","code":"codex_stream_interrupted","message":"Codex stream interrupted"}\n\n'
@@ -519,16 +508,13 @@ class CodexGateway:
         pending = ""
         encoding = None
         redactor = _Redactor(self._secrets)
-        # SSE lines are UTF-8; incremental decoding handles split code points.
+
         import codecs
 
         decoder = codecs.getincrementaldecoder("utf-8")()
         async for chunk in upstream.aiter_bytes():
             pending += decoder.decode(redactor.feed(chunk))
             if encoding is None and pending.lstrip():
-                # The Codex backend can omit/mislabel its SSE content type.
-                # Distinguish actual JSON responses by body shape instead of
-                # treating every successful response as SSE.
                 encoding = "json" if pending.lstrip().startswith("{") else "sse"
             if encoding == "json":
                 continue

@@ -11,7 +11,6 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 import yaml
-from test_market_service import setup  # noqa: F401
 
 from tank.analysis.truth import compute_condition_values
 from tank.market.service import MarketService
@@ -150,7 +149,7 @@ async def test_real_postgres_market_precision_funding_and_missing_usd_contract(
         "TestProducerPrecisionFundingAndMissingUSD",
         prefix,
     )
-    # Core reads the actual Go writer's typed rows, including exact precision aliases.
+
     expected = {
         "binance:current": "EXACT",
         "binance:history": "BUCKET(300s)",
@@ -238,7 +237,7 @@ async def test_real_postgres_cached_ticker_and_funding_point_identity_survives_r
 
 @pytest.mark.asyncio
 async def test_real_postgres_loader_to_condition_compute_selective_read_footprint(
-    setup,  # noqa: F811
+    setup,
     postgres_repo,
     monkeypatch,
 ):
@@ -246,7 +245,7 @@ async def test_real_postgres_loader_to_condition_compute_selective_read_footprin
     inst = dict(original_inst, instrument_id=new_id("condition-pg"))
     end = (utcnow() - timedelta(hours=2)).replace(second=0, microsecond=0)
     start = end - timedelta(minutes=15)
-    # Independent typed observations: one two-unit BUY per complete minute.
+
     rows = [
         {
             "instrument_id": inst["instrument_id"],

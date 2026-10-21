@@ -15,8 +15,8 @@ from tank.search import DuckDuckGoSearchService, SearchError, SearchLimiter
 
 USER_AGENT = "TankV0/search-test (offline fixture)"
 RESULT = {"title": "Official announcement", "href": "https://example.test/official", "body": "A fact."}
-# DuckDuckGo HTML layout consumed by ddgs 9.16.0's Duckduckgo engine, including
-# result__body, direct snippet link and the advertising link filtered upstream.
+
+
 DDG_HTML = """<!doctype html><html><body>
 <div class="result__body"><h2><a href="https://example.test/official">Official announcement</a></h2>
 <a class="result__snippet" href="https://example.test/official">A fact.</a></div>
@@ -67,7 +67,7 @@ async def test_pinned_engine_payload_parser_and_unmodified_result(monkeypatch):
         return original_text(instance, query, **kwargs)
 
     monkeypatch.setattr(search.DDGS, "text", text)
-    # Public fake proxy settings must not influence the transport. No credentials.
+
     monkeypatch.setenv("DDGS_PROXY", "http://forbidden.test:1")
     monkeypatch.setenv("HTTPS_PROXY", "http://forbidden.test:1")
 
@@ -81,8 +81,6 @@ async def test_pinned_engine_payload_parser_and_unmodified_result(monkeypatch):
 
     install_http(monkeypatch, respond)
 
-    # Empty registry triggers upstream's auto fallback. Our actual DDGS.text
-    # path must still work without consulting it, even with a trap backend.
     class Forbidden:
         def __init__(self, *args, **kwargs):
             pytest.fail("An alternate engine was instantiated")
@@ -239,8 +237,7 @@ async def test_blocking_search_does_not_block_ingestion_and_cancel_drains_worker
     task = asyncio.create_task(adapter.search("official", on_attempt=account))
     try:
         await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
-        # Reaching here while the blocking worker waits proves the loop is free
-        # to ingest unrelated items, process SSE and run scheduler tasks.
+
         ticks = []
         await asyncio.wait_for(asyncio.sleep(0), timeout=0.2)
         ticks.append("ingestion ran")

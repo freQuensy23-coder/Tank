@@ -131,14 +131,13 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
         async def aclose(self):
             if failure_kind not in {"native_terminal", "native_terminated", "lost_acceptance"}:
                 current = await repo.get("ops.agent_sessions", "owned-session")
-                # The follower's final HTTP close must precede host abort mutation.
+
                 assert current["status"] == "OPEN"
             retired.set()
 
     async def transport(request):
         path = request.url.path
         if path.endswith("/archive"):
-            # Cancellation of native follower precedes archive/final local state.
             if failure_kind != "lost_acceptance":
                 assert retired.is_set()
             row = await repo.get("ops.agent_sessions", "owned-session")

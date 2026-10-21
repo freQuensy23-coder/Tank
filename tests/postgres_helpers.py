@@ -25,7 +25,7 @@ def _connection_identity(admin_dsn):
     params = conninfo_to_dict(admin_dsn)
     if not params.get("dbname", "").startswith("tank_test"):
         raise ValueError("PostgreSQL test admin must select a dedicated tank_test* database")
-    # Values can include credentials: this private key is never logged or exposed.
+
     identity = dict(params)
     identity.pop("dbname")
     identity.setdefault("port", "5432")
@@ -59,8 +59,7 @@ def schema_template_marker():
         digest.update(name)
         digest.update(len(data).to_bytes(8, "big"))
         digest.update(data)
-    # 004's dated legacy partitions are retired by027/032–035. The final typed
-    # schema uses default partitions, so UTC midnight does not invalidate a seed.
+
     return "tank-test-schema-template:v1:" + digest.hexdigest()
 
 
@@ -123,8 +122,6 @@ async def _validate_schema_template(admin_dsn, name):
     _template_name(name)
     admin = await psycopg.AsyncConnection.connect(admin_dsn, autocommit=True)
     try:
-        # PostgreSQL 16 CREATE DATABASE interlocks with autovacuum itself via
-        # CountOtherDBBackends; client and unknown backend types still block us.
         row = await (
             await admin.execute(
                 "SELECT d.datallowconn, shobj_description(d.oid,'pg_database'),"
@@ -151,7 +148,7 @@ async def prepare_schema_template(admin_dsn, name):
     """Create, migrate and seal a new CI-owned seed; never replace an existing DB."""
     _connection_identity(admin_dsn)
     _template_name(name)
-    # CREATE refuses existing names. Only this successful creation is ours to clean.
+
     await _create_database(admin_dsn, name=name)
     repo = PostgresRepository(make_conninfo(admin_dsn, dbname=name))
     try:
@@ -198,8 +195,6 @@ class PostgresTemplate:
 
     async def _template(self, admin_dsn):
         if self._external_template is not None:
-            # Use this admin connection's catalog: a separate seed DSN is forbidden.
-            # Recheck immutability before every CREATE; retain no pooled resources.
             await _validate_schema_template(admin_dsn, self._external_template)
             return self._external_template
         identity = _connection_identity(admin_dsn)

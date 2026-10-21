@@ -14,8 +14,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
 )
 
-// DepthSnapshot is prepare_member's Binance REST book (limit 1000) that the first depth
-// event of a new member must bridge.
 func (a *Adapter) DepthSnapshot(ctx context.Context) (map[string]any, error) {
 	var base, path string
 	switch a.key {
@@ -33,10 +31,6 @@ func (a *Adapter) DepthSnapshot(ctx context.Context) (map[string]any, error) {
 	return object(body, "depth snapshot")
 }
 
-// IndependentBook is MarketService._independent_book, the second path (03 §5.9): only the
-// listed REST book snapshots (02 §4.1, §4.3), at priority 2, compared with the stream
-// summary (its mid and spread_bps) in the 100-digit context of norm.precise. It returns
-// the fields merged into the book summary row.
 func (a *Adapter) IndependentBook(ctx context.Context, stream map[string]any, now func() time.Time) (map[string]any, error) {
 	if now == nil {
 		now = a.now
@@ -77,7 +71,7 @@ func (a *Adapter) IndependentBook(ctx context.Context, stream map[string]any, no
 	if err != nil {
 		return nil, err
 	}
-	ts := pytime.ISO(now()) // neither listed snapshot carries a clock
+	ts := pytime.ISO(now())
 	bid, err := pyval.Decimal(bidRaw)
 	if err != nil {
 		return nil, err
@@ -139,8 +133,6 @@ func (a *Adapter) IndependentBook(ctx context.Context, stream map[string]any, no
 	}, nil
 }
 
-// FXRate is the request of MarketService._fx_rate: the listed Coinbase 24h stats of
-// QUOTE-USD (02 §4.3), whose last price is the quote's USD rate (it carries no clock).
 func FXRate(ctx context.Context, c *Client, quote string) (string, error) {
 	body, err := c.Do(ctx, "GET", Coinbase+"/products/"+quote+"-USD/stats", nil, nil, 0)
 	if err != nil {
@@ -169,7 +161,6 @@ func floatRepr(f float64) string {
 	return s
 }
 
-// str is Python str() of a decoded or registry scalar.
 func str(v any) string {
 	if f, ok := v.(float64); ok {
 		return floatRepr(f)
@@ -177,7 +168,6 @@ func str(v any) string {
 	return pyval.Str(v)
 }
 
-// repr is Python repr() of a decoded JSON value (a venue's error list in a message).
 func repr(v any) string {
 	switch x := v.(type) {
 	case nil:
@@ -213,7 +203,6 @@ func repr(v any) string {
 	return pyval.Str(v)
 }
 
-// reprString is repr(str): single quotes unless the text holds one and no double quote.
 func reprString(s string) string {
 	quote := byte('\'')
 	if strings.ContainsRune(s, '\'') && !strings.ContainsRune(s, '"') {

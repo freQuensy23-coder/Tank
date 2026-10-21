@@ -17,8 +17,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// repairQueue serializes the REST repairs of one instrument (one backfill at a time,
-// queued ranges merged, the earliest start kept).
 type repairQueue struct {
 	running bool
 	pending []*repairJob
@@ -28,10 +26,9 @@ type repairJob struct {
 	start, end time.Time
 	reason     string
 	cursor     any
-	spans      []span // sealer ranges the job closes
+	spans      []span
 }
 
-// queueRepair asks for a REST repair of [sp.start, sp.end) of an instrument.
 func (s *Service) queueRepair(inst *venue.Instrument, sp span, reason string, cursor any) {
 	s.mu.Lock()
 	q := s.repairs[inst.ID]
@@ -82,8 +79,6 @@ func (s *Service) runRepairs(ctx context.Context, inst *venue.Instrument) {
 	}
 }
 
-// runRepair repairs one range from the last proven print before it (the checkpoint of
-// _repair_instrument).
 func (s *Service) runRepair(ctx context.Context, inst *venue.Instrument, job *repairJob) {
 	if _, none := NoTradeHistory[inst.Venue]; none {
 		return
@@ -117,7 +112,6 @@ func (s *Service) runRepair(ctx context.Context, inst *venue.Instrument, job *re
 	s.flush(ctx)
 }
 
-// headCheck asks REST for the newest prints of an instrument whose chain has gone quiet.
 func (s *Service) headCheck(ctx context.Context, check HeadCheck) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -133,8 +127,6 @@ func (s *Service) headCheck(ctx context.Context, check HeadCheck) {
 
 type pollKinds struct{ derivatives, klines, ticker bool }
 
-// instrument is the instrument with its discovered metadata and the current stablecoin
-// USD sample (MarketService mutates its registry dicts; the runtime works on copies).
 func (s *Service) instrument(iid string) *venue.Instrument {
 	inst := s.opt.Instruments[iid].Clone()
 	s.mu.Lock()
@@ -162,7 +154,6 @@ func applyMetadata(inst *venue.Instrument, md map[string]any) {
 	}
 }
 
-// discover is MarketService.discover for one instrument.
 func (s *Service) discover(ctx context.Context, inst *venue.Instrument) error {
 	md, err := s.venues.Venue(inst, 0).Discover(ctx)
 	if err != nil {
@@ -181,13 +172,10 @@ func (s *Service) discovered(iid string) bool {
 	return s.metadata[iid] != nil
 }
 
-// discoverAll reads the listed metadata of every instrument once at start (OKX ctVal,
-// Hyperliquid meta; the others come from the semantics registry without a request).
 func (s *Service) discoverAll(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	// In parallel (the venue gates still pace each host): one by one it took ~40 s and
-	// held back the streams a standby process connects before a roll hands over.
+
 	sem := make(chan struct{}, discoverParallel)
 	var wg sync.WaitGroup
 	for _, iid := range s.opt.Order {
@@ -207,11 +195,8 @@ func (s *Service) discoverAll(ctx context.Context) {
 	wg.Wait()
 }
 
-// discoverParallel bounds the instruments discovered at once at start.
 const discoverParallel = 16
 
-// fxRate is MarketService._fx_rate: the stablecoin USD sample of an instrument's quote,
-// fetched at most every 300 s.
 func (s *Service) fxRate(ctx context.Context, inst *venue.Instrument) error {
 	quote := inst.Quote()
 	if quote == "USD" {
@@ -244,7 +229,6 @@ func (s *Service) fxRate(ctx context.Context, inst *venue.Instrument) error {
 	return nil
 }
 
-// poll is MarketService.poll_once.
 func (s *Service) poll(ctx context.Context, iid string, kinds pollKinds, priority int) {
 	if !s.discovered(iid) {
 		if err := s.discover(ctx, s.opt.Instruments[iid]); err != nil {
@@ -256,8 +240,7 @@ func (s *Service) poll(ctx context.Context, iid string, kinds pollKinds, priorit
 		s.gap(inst, "QUOTE_FX", err.Error(), nil, nil)
 	}
 	v := s.venues.Venue(inst, priority)
-	// OI and funding first: a slow host must not push the HOT derivatives cadence behind
-	// klines and tickers (03 §5.1).
+
 	if kinds.derivatives && !inst.Spot() {
 		if err := s.pollDerivatives(ctx, inst, v); err != nil {
 			s.gap(inst, "DERIVATIVES", err.Error(), nil, nil)
@@ -299,8 +282,6 @@ func (s *Service) poll(ctx context.Context, iid string, kinds pollKinds, priorit
 	}
 }
 
-// fresh is MarketService._fresh: the points of a repeated REST history newer than those
-// processed before, and the time of the newest older one.
 func (s *Service) fresh(iid, kind string, rows []any, stamp func(map[string]any) any) (*time.Time, []any) {
 	key := [2]string{iid, kind}
 	s.mu.Lock()
@@ -354,7 +335,6 @@ func settledStamp(r map[string]any) any {
 	return nil
 }
 
-// pollDerivatives is the derivatives branch of poll_once.
 func (s *Service) pollDerivatives(ctx context.Context, inst *venue.Instrument, v Venue) error {
 	d, err := v.Derivatives(ctx)
 	if err != nil {
@@ -460,7 +440,6 @@ func (s *Service) pollDerivatives(ctx context.Context, inst *venue.Instrument, v
 	return nil
 }
 
-// hoursBetween is Decimal(str((stamp - previous).total_seconds())) / 3600.
 func hoursBetween(previous, stamp time.Time) pydec.Dec {
 	seconds := stamp.Sub(previous).Seconds()
 	text, _ := floatText(seconds)
@@ -474,9 +453,6 @@ func floatText(f float64) (string, error) {
 	return pyjson.FloatRepr(f)
 }
 
-// instrumentLoop is _instrument_loop: klines every base_kline_interval_s, BASE tickers
-// every base_ticker_interval_s and derivatives (HOT ones run on their own grids), and the hourly kline audit of the
-// trailing 25 h, which fetches only the minutes the database lacks.
 func (s *Service) instrumentLoop(ctx context.Context, inst *venue.Instrument) {
 	iid := inst.ID
 	var derivDue, tickerDue time.Duration
@@ -485,8 +461,7 @@ func (s *Service) instrumentLoop(ctx context.Context, inst *venue.Instrument) {
 		started := s.clock.Monotonic()
 		_, hot := s.hot(inst.TokenID)
 		doDeriv := started >= derivDue && !hot
-		// A 24 h ticker every base_ticker_interval_s, not every kline minute (r135: 181
-		// instruments x 60/h were most of mkt.tickers_24h).
+
 		doTicker := started >= tickerDue && !hot
 		s.poll(ctx, iid, pollKinds{derivatives: doDeriv, klines: true, ticker: doTicker}, 0)
 		if s.clock.Monotonic() >= auditDue {
@@ -513,9 +488,6 @@ func (s *Service) instrumentLoop(ctx context.Context, inst *venue.Instrument) {
 	}
 }
 
-// hotGrid is _hot_grid: poll a HOT instrument's kinds at every point of a wall-clock grid
-// (offset into each interval) ahead of other requests to its host; a request stuck past
-// the next point is cut and recorded, so a missed point never doubles an age.
 func (s *Service) hotGrid(ctx context.Context, inst *venue.Instrument, interval, offset float64, kinds pollKinds) {
 	for ctx.Err() == nil {
 		if _, hot := s.hot(inst.TokenID); hot {
@@ -535,8 +507,6 @@ func (s *Service) hotGrid(ctx context.Context, inst *venue.Instrument, interval,
 	}
 }
 
-// oiHistoryLoop is the daily _oi_history_pass: Bybit 5-min OI history back
-// historical_lookback_days, older than the first stored sample (02 §4.6).
 func (s *Service) oiHistoryLoop(ctx context.Context) {
 	days := int(s.opt.Threshold("historical_lookback_days", 90))
 	for ctx.Err() == nil {

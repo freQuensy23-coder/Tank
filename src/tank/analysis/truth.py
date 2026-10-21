@@ -6,9 +6,8 @@ capture may occur later. When supplied, assembled_at bounds which received rows
 were available to construct this snapshot. Missing evidence never votes true.
 """
 
-from __future__ import annotations
-
 import asyncio
+import contextlib
 import hashlib
 import json
 import pickle
@@ -43,7 +42,7 @@ RISK_ORDER = [
 
 _BASELINE_CACHE = ContextVar("truth_baseline_cache", default=None)
 _BASELINE_DEPENDENCY = ContextVar("truth_baseline_dependency", default=None)
-# Per-assessment observation-time memo (id(row) -> (row, time)); set with _ASSESSMENT_INPUTS.
+
 _TIMES = ContextVar("truth_observation_times", default=None)
 _PARAMETERS = ContextVar("tank_truth_parameters", default=None)
 _ASSESSMENT_INPUTS = ContextVar("truth_assessment_inputs", default=None)
@@ -245,7 +244,7 @@ def beta(token, benchmark):
     pairs = [(benchmark[t], token[t]) for t in token.keys() & benchmark.keys()]
     if len(pairs) < int(parameter("history_min_days", 7)) * 24:
         return 1.0, "INSUFFICIENT_HISTORY"
-    x, y = zip(*pairs)
+    x, y = zip(*pairs, strict=False)
     xm, ym = mean(x), mean(y)
     den = sum((v - xm) ** 2 for v in x)
     weight = float(parameter("beta_blume_weight", 2 / 3))
@@ -286,8 +285,6 @@ def _time(row):
             return hit[1]
     value = _observation_time(row)
     if times is not None:
-        # An assessment reads one frozen snapshot. Retaining the row prevents
-        # identity reuse by temporary derived observations during that call.
         times[id(row)] = (row, value)
     return value
 
@@ -757,7 +754,7 @@ def oi_temporally_admissible(row):
     raw = row.get("ts")
     if "ts_bucket_anchor" not in row and not (isinstance(raw, dict) and "bucket_anchor" in raw):
         return True
-    # Each OI row is judged once per assessment, not once per window (5 windows x ~60k rows).
+
     inputs = _ASSESSMENT_INPUTS.get()
     memo = inputs.setdefault("oi_admissible", {}) if inputs is not None else None
     identity = id(row)
@@ -844,7 +841,7 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     tolerance = float(parameter("oi_sync_tolerance_s", 60))
 
     def nearest(t):
-        # Same choice as min() over rows in their order: smallest distance, first row on ties.
+
         lo = bisect_left(ordered_times, t - timedelta(seconds=tolerance))
         hi = bisect_right(ordered_times, min(t + timedelta(seconds=tolerance), end))
         best = None
@@ -881,15 +878,15 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
         )
     )
     length = _time(z) - _time(a)
-    # 03 §0/§5.4: the window's change is judged against the same-length changes in history.
-    # Pairs use the requested window length; the earlier point is the nearest observation
-    # within half the history's cadence (base tier: 300 s), never only an exact offset.
+
     window = end - start
     bytime = {_time(r): r for r in rows if start - timedelta(days=lookback_days()) <= _time(r) < start}
     if venue_history is not None:
         venue_history = [_history_slice(times, venue_rows, start) for times, venue_rows in venue_history]
     history_times = sorted(bytime)
-    gaps = sorted((b - a).total_seconds() for a, b in zip(history_times, history_times[1:]) if b > a)
+    gaps = sorted(
+        (b - a).total_seconds() for a, b in zip(history_times, history_times[1:], strict=False) if b > a
+    )
     pair_tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0)
     cache = _BASELINE_CACHE.get()
     dependency = _BASELINE_DEPENDENCY.get()
@@ -905,7 +902,10 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
             else history_fingerprint(
                 [(t, r.get("oi_native"), _stored_usd(r)) for t, r in sorted(bytime.items())]
                 if venue_history is None
-                else [[(t, r.get("oi_native"), _stored_usd(r)) for t, r in zip(*v)] for v in venue_history]
+                else [
+                    [(t, r.get("oi_native"), _stored_usd(r)) for t, r in zip(*v, strict=False)]
+                    for v in venue_history
+                ]
             ),
         )
         if cache is not None
@@ -941,8 +941,7 @@ def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
                     if uu is not None and ou:
                         hu.append(float(uu / ou - 1))
                         usd_ends.append(t)
-            # §0 per measure: a range needs 7 days of its own pairs (USD pairs exist only where
-            # capture stored oi_usd, e.g. never on Bybit base-tier history).
+
             minimum = float(parameter("history_min_days", 7)) * 86400
             if not usd_ends or (max(usd_ends) - min(usd_ends) + window).total_seconds() < minimum:
                 hu = []
@@ -989,7 +988,7 @@ def window_usd_volume(snapshot, instrument, start, end):
     if index is not None:
         times, rows = index.get(instrument, ((), ()))
         lo, hi = bisect_left(times, start), bisect_left(times, end)
-        points = zip(times[lo:hi], rows[lo:hi])
+        points = zip(times[lo:hi], rows[lo:hi], strict=False)
     else:
         points = sorted(
             [
@@ -1053,13 +1052,13 @@ def _composite_history(venue_history, window):
     """
     series = []
     for times, rows in venue_history:
-        gaps = sorted((b - a).total_seconds() for a, b in zip(times, times[1:]) if b > a)
-        # Same pairing tolerance as one venue's history: half its cadence, at least the sync tolerance.
+        gaps = sorted((b - a).total_seconds() for a, b in zip(times, times[1:], strict=False) if b > a)
+
         tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0)
         values = [(decimal(r.get("oi_native")), _stored_usd(r)) for r in rows]
         series.append((times, values, tolerance))
     history = sorted({t for times, _, _ in series for t in times})
-    # §0 "at least 7 days" is the stored history's span, as for one venue's series.
+
     minimum = float(parameter("history_min_days", 7)) * 86400
     if not history or (history[-1] - history[0]).total_seconds() < minimum:
         return [], []
@@ -1095,7 +1094,7 @@ def _composite_history(venue_history, window):
             hu.append(float(u1 / u0 - 1))
 
     def stored(ends):
-        # The history a measure's pairs span, from the first pair's start bound to the last end.
+
         return bool(ends) and (ends[-1] - ends[0] + window).total_seconds() >= minimum
 
     return (hn if stored(native_ends) else []), (hu if stored(usd_ends) else [])
@@ -1105,7 +1104,6 @@ def synchronized_oi(sync, start, end):
     admissible = []
     tolerance = float(parameter("oi_sync_tolerance_s", 60))
     for p, rows, category in sync:
-        # Its unpublished sidedness is not compatible with the single-sided cohort.
         if _venue(p) == "hyperliquid":
             continue
         eligible = [r for r in rows if oi_temporally_admissible(r) and _time(r) <= end]
@@ -1165,7 +1163,6 @@ def derivatives_truth(snapshot, start, end):
                 instruments.setdefault(iid, row)
                 groups.setdefault(iid, [])
     for iid in groups:
-        # One list per instrument per assessment (read-only here), so its split is shared.
         groups[iid] = _oi_rows(snapshot, iid)
     sem = {(s.get("instrument_id"), s["metric_key"]): s for s in snapshot.get("semantics", [])}
     per = []
@@ -1395,8 +1392,6 @@ def _prices(snapshot, token=None, *, exact=False, reference_only=False):
     key = (id(candles), id(projected), snapshot["cutoff"], token)
     prices = inputs.setdefault("prices", {})
     if key not in prices:
-        # The five windows consume the same float price observations. Keep the
-        # source references as well as the groups for this assessment only.
         prices[key] = (candles, projected, _price_groups(snapshot, token))
     return prices[key][2]
 
@@ -1419,9 +1414,6 @@ def _price_groups(snapshot, token=None, *, exact=False, reference_only=False):
             price = (decimal if exact else number)(raw)
         if price and t <= cutoff:
             if exact and reference_only:
-                # Relative truth consumes exact decimals only for the last
-                # close and last hourly close. Keep those original observations
-                # without expanding Decimal contexts for every historical bar.
                 latest, hourly = references.setdefault(r["instrument_id"], [None, None])
                 if latest is None or t >= latest[0]:
                     references[r["instrument_id"]][0] = (t, price)
@@ -1441,7 +1433,9 @@ def _price_groups(snapshot, token=None, *, exact=False, reference_only=False):
                 continue
             if token and projected.get("token_id") != token:
                 continue
-            for micros, value in zip(projected.get("times_us", ()), projected.get("values", ())):
+            for micros, value in zip(
+                projected.get("times_us", ()), projected.get("values", ()), strict=False
+            ):
                 t = epoch + timedelta(microseconds=int(micros))
                 price = number(value)
                 if price and price > 0 and t <= cutoff:
@@ -1597,11 +1591,11 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         pa, pz = fresh_price(p, a), fresh_price(p, z)
         return pz / pa - 1 if pa and pz else None
 
-    # The benchmark itself: beta = 1 makes r_btc_adj identically 0 (03 §5.7 compares the token's
-    # own move with its own history), so BTC is judged by r_raw against its own r_raw history.
     benchmark = token_symbols.get(token_id) == "BTC"
     historical_times = sorted(t for t in prices if t < start)
-    deltas = [(b - a).total_seconds() for a, b in zip(historical_times, historical_times[1:]) if b > a]
+    deltas = [
+        (b - a).total_seconds() for a, b in zip(historical_times, historical_times[1:], strict=False) if b > a
+    ]
     history_resolution_s = int(median(deltas)) if deltas else None
     history_diagnostics = {}
 
@@ -1616,7 +1610,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
         durations = []
         stalenesses = []
         ends = []
-        # Fixed target duration; lookup the last observable price at each bound, never ceil the window.
+
         for t in historical_times:
             target = t - timedelta(seconds=length)
             i = bisect_left(historical_times, target)
@@ -1634,7 +1628,9 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             ):
                 continue
             out.append(
-                prices[t] / prices[a] - 1 if benchmark else prices[t] / prices[a] - 1 - bb * (btc[t] / btc[a] - 1)
+                prices[t] / prices[a] - 1
+                if benchmark
+                else prices[t] / prices[a] - 1 - bb * (btc[t] / btc[a] - 1)
             )
             durations.append((t - a).total_seconds())
             stalenesses.append(lag)
@@ -1719,8 +1715,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
                 length, {"exact": False, "reason": "INCOMPLETE", "target_window_duration_s": length}
             ),
         )
-    # Registry sector roles survive reversible identity/symbol masking. Snapshots
-    # without explicit baskets retain the equivalent captured Token.sector grouping.
+
     sector_members = defaultdict(list)
     token_sectors = {}
     for row in snapshot.get("tokens", []):
@@ -1734,7 +1729,7 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
             for identity in sector_members[basket["sector"]]:
                 token_sectors[identity] = basket["sector"]
     sector = token_sectors.get(token_id)
-    # Fixed semantic sector order preserves the existing equal-weight arithmetic.
+
     defi_sectors = (
         "DEX_EXECUTION",
         "LENDING_CREDIT",
@@ -1999,7 +1994,7 @@ def liquidity_truth(snapshot, start, end, spot, relative):
             volume_buckets[int(_time(r).timestamp()) // 900].append(r)
     covered_volumes = []
     expected_venues = {v["venue"] for v in spot["venues"]}
-    for bucket, rs in volume_buckets.items():
+    for _bucket, rs in volume_buckets.items():
         selected = [r for r in rs if _venue(r) in expected_venues]
         if (
             expected_venues
@@ -2013,14 +2008,14 @@ def liquidity_truth(snapshot, start, end, spot, relative):
     k = min(Decimal(1), mean(covered_volumes) / decimal(impact_tiers[2])) if covered_volumes else None
     tiers = {
         name: decimal(size) * k if k is not None else None
-        for name, size in list(zip(("T1", "T2", "T3"), impact_tiers))
+        for name, size in list(zip(("T1", "T2", "T3"), impact_tiers, strict=False))
     }
     per = []
     predepth = []
     nowdepth = []
     side_now = {"bid": [], "ask": []}
     side_pre = {"bid": [], "ask": []}
-    # Per covered venue and side: (usd, native) depth within the band, now and pre-event mean.
+
     venue_now = {"bid": {}, "ask": {}}
     venue_pre = {"bid": {}, "ask": {}}
     spreads = []
@@ -2107,7 +2102,7 @@ def liquidity_truth(snapshot, start, end, spot, relative):
         )
         for f in flows:
             t = _time(f)
-            k = bisect_left(times, t) - 1  # the last book before t, within one book interval
+            k = bisect_left(times, t) - 1
             if k < 0 or times[k] < t - book_interval:
                 continue
             baseline = rs[k]
@@ -2130,9 +2125,7 @@ def liquidity_truth(snapshot, start, end, spot, relative):
                 if x.get("low") is not None
             ]
             low = decimal(f.get("low"))
-            resilient = (
-                (min(future) >= low) if future and low is not None and t + resilience <= end else None
-            )
+            resilient = (min(future) >= low) if future and low is not None and t + resilience <= end else None
             burst_results.append(
                 dict(
                     venue=venue,
@@ -2147,8 +2140,7 @@ def liquidity_truth(snapshot, start, end, spot, relative):
     drop = float(1 - aggregate / pre) if aggregate is not None and pre else None
     bn, sn = _sum(flow, "buy_notional"), _sum(flow, "sell_notional")
     net_usd = bn - sn if bn is not None and sn is not None else None
-    # 03 §5.5/§5.8 in native units: net taker flow against native depth, no FX dependency
-    # (a venue's missing historical quote rate nulls its USD notionals); USD only without native.
+
     bq, sq = _sum(flow, "buy_qty"), _sum(flow, "sell_qty")
     if bq is not None and sq is not None:
         net, unit, k = bq - sq, "NATIVE", 1
@@ -2173,10 +2165,16 @@ def liquidity_truth(snapshot, start, end, spot, relative):
         """Sum over the venues whose band is covered: a lower bound of the depth (exact when
         every venue is covered); venues without the band are never extrapolated."""
         rows = {v: t[index] for v, t in table.get(side, {}).items() if t[index] is not None}
-        return (sum(rows.values()) if rows else None), sorted(rows), bool(all_venues) and set(rows) == all_venues
+        return (
+            (sum(rows.values()) if rows else None),
+            sorted(rows),
+            bool(all_venues) and set(rows) == all_venues,
+        )
 
     bound, covered, complete = lower_bound(venue_now, hit_side, k) if hit_side else (None, [], False)
-    pre_bound, pre_covered, pre_complete = lower_bound(venue_pre, hit_side, k) if hit_side else (None, [], False)
+    pre_bound, pre_covered, pre_complete = (
+        lower_bound(venue_pre, hit_side, k) if hit_side else (None, [], False)
+    )
     average_hit_depth = []
     if hit_side:
         for rs in groups.values():
@@ -2187,17 +2185,11 @@ def liquidity_truth(snapshot, start, end, spot, relative):
                 average_hit_depth.append(mean(values))
     avg = sum(average_hit_depth) if average_hit_depth and len(average_hit_depth) == len(groups) else None
     small_price = (
-        (raw if net > 0 else -raw) < float(parameter("depth_band_pct", 1)) / 100 if net and raw is not None else None
-    )
-    absorbed = (
-        None
-        if not net or bound is None
-        else False
-        if abs(net) < bound
-        else True
-        if complete
+        (raw if net > 0 else -raw) < float(parameter("depth_band_pct", 1)) / 100
+        if net and raw is not None
         else None
     )
+    absorbed = None if not net or bound is None else False if abs(net) < bound else True if complete else None
     weak = (
         None
         if not net
@@ -2222,7 +2214,7 @@ def liquidity_truth(snapshot, start, end, spot, relative):
     }
     cohort_now = {side: sum(venue_now[side][v][0] for v in cohorts[side]) for side in cohorts}
     cohort_pre = {side: sum(venue_pre[side][v][0] for v in cohorts[side]) for side in cohorts}
-    # Depth change over the venues covered both now and pre-event (like the synchronized OI cohort).
+
     side_drops = {
         side: float(1 - cohort_now[side] / cohort_pre[side]) if cohorts[side] and cohort_pre[side] else None
         for side in ("bid", "ask")
@@ -2400,7 +2392,6 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
             prev_buy = prev_sell = Decimal(0)
             prev_valid = bool(previous)
             for r in previous:
-                # A bar without a historical USD rate has size_buckets = None (flow.py).
                 for k in large_buckets:
                     bucket = (r.get("size_buckets") or {}).get(k) or {}
                     if bucket.get("buy_notional") is None or bucket.get("sell_notional") is None:
@@ -2422,7 +2413,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
                 else None,
                 compatible_venues=compatible,
             )
-    # First crossing uses only complete, contiguous event bars and the token's historical 15m range.
+
     nr = relative["windows"]["W15M"]["normal_range"]
     sequence = []
     groups = defaultdict(list)
@@ -2433,12 +2424,12 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         ):
             groups[r["instrument_id"]].append(r)
     complete = True
-    for instrument, rows in groups.items():
+    for _instrument, rows in groups.items():
         rows.sort(key=_time)
         if not all(r.get("complete") is True for r in rows):
             complete = False
             continue
-        if any((_time(b) - _time(a)).total_seconds() != 60 for a, b in zip(rows, rows[1:])):
+        if any((_time(b) - _time(a)).total_seconds() != 60 for a, b in zip(rows, rows[1:], strict=False)):
             complete = False
             continue
         p0 = number(rows[0].get("o"))
@@ -2529,7 +2520,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         state=None,
         reason="NOT_ESTIMABLE",
     )
-    # Continuous as-of book states, not exact wall-clock bucket membership.
+
     books = [
         b
         for b in snapshot.get("books", [])
@@ -2564,9 +2555,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         assembled_at=snapshot.get("assembled_at"),
     )
     complete_venues = {v["venue"] for v in capture["venues"]}
-    # 03 §5.8 "an arbitrage that pays": mids of different quote assets (USDT vs USD) are compared
-    # in USD with the book's stored quote rate, and the gap must also clear the conversion's own
-    # uncertainty (a Coinbase last price cached up to 300 s, no spread of its own).
+
     conversion_bps = decimal(parameter("quote_conversion_uncertainty_bps", 2))
     unevaluated = []
     for index, a in enumerate(sorted(grouped)):
@@ -2579,7 +2568,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
             for t in times:
                 states = []
                 for rows, stamps in ((ar, at), (br, bt)):
-                    k = bisect_right(stamps, t) - 1  # the book state as of t
+                    k = bisect_right(stamps, t) - 1
                     states.append(rows[k] if k >= 0 and (t - stamps[k]).total_seconds() <= cadence else None)
                 if None in states:
                     gaps = []
@@ -2594,7 +2583,6 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
                 cost = Decimal(0) if same_quote else conversion_bps
                 xm, ym = (xm, ym) if same_quote else (_usd_mid(x, xm), _usd_mid(y, ym))
                 if xm is None or not ym:
-                    # No quote rate: a cross-quote pair cannot be compared (recorded, never a gap).
                     unevaluated.append([a, b])
                     gaps = []
                     break
@@ -2630,7 +2618,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
                 persistent = True
                 pairs.append([a, b])
                 validated = validated or (second and {a, b} <= complete_venues)
-    # Funding dispersion uses settled 8h-equivalent historical observations on the same venue cohort.
+
     funding_groups = {
         p["instrument_id"]: [] for p in deriv.get("per_venue", []) if p.get("funding_8h_eq") is not None
     }
@@ -2695,7 +2683,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
     )
     deriv["funding_dispersion_normal_range_8h"] = normal_dispersion
     deriv["funding_dispersion_beyond_normal"] = funding_beyond
-    # The discriminator's top-venue sign-flip route does not pretend to be independent confirmation.
+
     top = set(spots[primary]["topn"]["venues"]) if spots[primary].get("topn") else set()
     signs = {v: [] for v in top}
     cursor = start
@@ -2718,9 +2706,6 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         for venue in top:
             signs[venue].append(found.get(venue))
         if any(venue not in found for venue in top):
-            # This route requires complete top-venue evidence in every window.
-            # One missing window makes top_sign_flips unknown regardless of any
-            # later observations; scanning the rest cannot change that result.
             break
         cursor += timedelta(minutes=15)
     flips = []
@@ -2728,7 +2713,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         if None in values or len(values) < 3:
             continue
         directional = [v for v in values if v != 0]
-        flips.append(sum(a != b for a, b in zip(directional, directional[1:])))
+        flips.append(sum(a != b for a, b in zip(directional, directional[1:], strict=False)))
     top_flips = (
         any(n > 1 for n in flips)
         if signs and all(len(v) >= 3 and None not in v for v in signs.values())
@@ -2751,7 +2736,7 @@ def enrich_evidence(snapshot, start, end, spots, primary, deriv, relative, liqui
         complete_venues=sorted(complete_venues),
         reason=None if books or dispersion is not None else "INCOMPLETE",
     )
-    # Token RV distribution, using hourly samples and sample standard deviation.
+
     token = relative["ref_venue"]
     prices = _prices(snapshot).get(token, {})
     hourly = {t: p for t, p in prices.items() if t.minute == 0 and t.second == 0}
@@ -2897,7 +2882,6 @@ def supply_truth(snapshot, start, end):
             if pct is not None and nr and pct > nr[1]:
                 evidence = True
     else:
-        # No observation is n/a with a reason, never an empty (FR-T-13, 03 §0).
         unavailable["exchange_inventory"] = current.get("reason", "INCOMPLETE") if current else "INCOMPLETE"
     wallet = latest(("WALLET_FLOWS",))
     if wallet and wallet.get("available") is not False:
@@ -2938,7 +2922,6 @@ def supply_truth(snapshot, start, end):
     elif unlock:
         unavailable["unlocks"] = unlock.get("reason", "INCOMPLETE")
     elif not any(kind(r) == "UNLOCK" for r in rows):
-        # No schedule read: an empty list would read as "no unlock scheduled".
         unavailable["unlocks"] = "INCOMPLETE"
     schedules += [r for r in rows if kind(r) == "UNLOCK" and r.get("available") is not False]
     for u in schedules:
@@ -3023,13 +3006,12 @@ def supply_truth(snapshot, start, end):
             )
         )
 
-    # FR-M-03: retain observed holders revenue independently of capture judgment.
     def fundamental_available(row):
         if isinstance(row.get("ts"), bool):
             return False
         receipt = row.get("received_ts")
         if receipt is None:
-            return True  # Legacy unknown receipt stays explicitly unknown below.
+            return True
         try:
             return not isinstance(receipt, bool) and parse_time(receipt) <= end
         except (ValueError, TypeError, OverflowError):
@@ -3184,9 +3166,10 @@ def benchmark_reaction_values(snapshot, start, end):
     def last_close(bound):
         eligible = [r for r in rows if r["instrument_id"] == venue and close_time(r) <= bound]
         latest = max(eligible, key=close_time) if eligible else None
-        # A close more than one bar before the bound is not the price at the bound: a gap in
-        # base-tier history must stay n/a, never a zero return between two copies of one close.
-        if latest is not None and (bound - close_time(latest)).total_seconds() > int(latest.get("interval_s", 60)):
+
+        if latest is not None and (bound - close_time(latest)).total_seconds() > int(
+            latest.get("interval_s", 60)
+        ):
             return None
         return latest
 
@@ -3296,7 +3279,11 @@ def interval_deadline(intervals, row):
         return None
     interval = float(sem["source_interval_s"])
     allowed = 2 * interval + float(sem.get("publish_lag_s") or 0)
-    start = _time(row) - timedelta(seconds=interval) if sem.get("timestamp_semantics") == "BUCKET_END" else _time(row)
+    start = (
+        _time(row) - timedelta(seconds=interval)
+        if sem.get("timestamp_semantics") == "BUCKET_END"
+        else _time(row)
+    )
     return start + timedelta(seconds=allowed), allowed, start
 
 
@@ -3335,8 +3322,7 @@ def available_field_freshness(snapshot, end):
                 continue
             key = (r.get("instrument_id"), r.get("metric_key"), r.get("kind", r.get("type")), r.get("chain"))
             groups[key].append(r)
-        # Sorted by field, not first-observed order: that order depended on how far back the
-        # snapshot read a collection, and the first failed check is Data Confidence's limiting one.
+
         for key in sorted(groups, key=lambda k: tuple("" if v is None else str(v) for v in k)):
             rows = groups[key]
             row = max(rows, key=_time)
@@ -3361,9 +3347,6 @@ def available_field_freshness(snapshot, end):
                 source = "SETTLEMENT_INTERVAL"
             stream = None
             if collection == "liquidations":
-                # An event stream is fresh while its socket is proven connected (watermark of
-                # the shared public socket); a quiet market has no events and is not stale.
-                # Without a watermark only the last event proves the connection.
                 entry = metadata.get(collection, {}) or {}
                 watermarks = entry.get("observed_through", {}) if isinstance(entry, dict) else {}
                 watermark = (
@@ -3372,7 +3355,9 @@ def available_field_freshness(snapshot, end):
                 states = entry.get("coverage_status_by_instrument", {}) if isinstance(entry, dict) else {}
                 stream = dict(
                     freshness_basis="STREAM_WATERMARK" if watermark is not None else "LAST_EVENT",
-                    coverage_status=states.get(row.get("instrument_id")) if isinstance(states, dict) else None,
+                    coverage_status=states.get(row.get("instrument_id"))
+                    if isinstance(states, dict)
+                    else None,
                 )
                 if watermark is not None:
                     stamp = parse_time(watermark)
@@ -3396,7 +3381,9 @@ def available_field_freshness(snapshot, end):
             if observed.value != iso(stamp):
                 observed = propagate_timestamp({"observed_at": iso(stamp)}, "observed_at")
             age = (end - stamp).total_seconds()
-            published = interval_deadline(intervals, row) if collection not in ("flow_bars", "klines") else None
+            published = (
+                interval_deadline(intervals, row) if collection not in ("flow_bars", "klines") else None
+            )
             if published is not None:
                 _, cadence, start = published
                 source = "SOURCE_INTERVAL_PLUS_PUBLISH_LAG"
@@ -3440,7 +3427,11 @@ def data_confidence(snapshot, spot, derivatives, end):
         for r in snapshot.get("instruments", [])
         if r.get("instrument_id") and r.get("token_id", snapshot.get("token_id")) == snapshot.get("token_id")
     }
-    owners = {r["instrument_id"]: r.get("token_id") for r in snapshot.get("instruments", []) if r.get("instrument_id")}
+    owners = {
+        r["instrument_id"]: r.get("token_id")
+        for r in snapshot.get("instruments", [])
+        if r.get("instrument_id")
+    }
     for collection in ("flow_bars", "books", "oi", "funding", "klines"):
         for r in snapshot.get(collection, []):
             iid = r.get("instrument_id")
@@ -3489,7 +3480,7 @@ def data_confidence(snapshot, spot, derivatives, end):
     class_ready = not perp_ids or bool(
         derivatives.get("synchronized") and derivatives["synchronized"].get("classification_ready")
     )
-    for iid, venue, market, family, collection in required:
+    for iid, _unused_venue, _unused_market, family, collection in required:
         rows = [
             r
             for r in snapshot.get(collection, [])
@@ -3673,9 +3664,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
                 if value is not None:
                     history.append(value)
                     history_windows.append((t - length, t))
-        # §0: a current observation cannot complete the required historical
-        # weekly cycle. Use precisely the pre-window source span measured by
-        # the eligible normal-range samples, including their lower bounds.
+
         if (
             not history_windows
             or (max(z for _, z in history_windows) - min(a for a, _ in history_windows)).total_seconds()
@@ -3849,8 +3838,8 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
     for venue, rows in books.items():
         rows.sort(key=_time)
         times = [_time(r) for r in rows]
-        i = bisect_right(times, start) - 1  # the last book at or before start, within one interval
-        j = bisect_right(times, end) - 1  # the last book at or before end
+        i = bisect_right(times, start) - 1
+        j = bisect_right(times, end) - 1
         before = rows[i] if i >= 0 and times[i] >= start - book_interval else None
         after = rows[j] if j >= 0 else None
         if before is not None and after is not None and ask(before) is not None and ask(after) is not None:
@@ -3858,7 +3847,7 @@ def support_features(snapshot, start, end, spot, deriv, liquidity, supply):
         for flow in window_flows.get(venue, []):
             buy, sell = decimal(flow.get("buy_notional")), decimal(flow.get("sell_notional"))
             t = _time(flow)
-            k = bisect_left(times, t) - 1  # the last book before t, within one interval
+            k = bisect_left(times, t) - 1
             pre = rows[k] if k >= 0 and times[k] >= t - book_interval else None
             if buy is None or sell is None or pre is None or ask(pre) is None or buy - sell < ask(pre):
                 continue
@@ -4197,8 +4186,6 @@ def decisive_facts(spot, derivatives, liquidity, relative, supply, move_class, w
     ]
     oi_class_text = sync.get("oi_class")
     if oi_class_text is None:
-        # §5.4: OI is shown with its decomposition. When the synchronized one is missing,
-        # say why and report the venues whose own decomposition classifies (e.g. F-11).
         dec = sync.get("decomposition") or {}
         why = dec.get("detail") or dec.get("reason") or sync.get("oi_usd_detail") or "INCOMPLETE"
         venues_text = []
@@ -4215,7 +4202,9 @@ def decisive_facts(spot, derivatives, liquidity, relative, supply, move_class, w
                 + (f", price-markup component {markup:+,.0f} USD" if markup is not None else "")
                 + ")"
             )
-        oi_class_text = f"unavailable ({why})" + ("; by venue: " + ", ".join(venues_text) if venues_text else "")
+        oi_class_text = f"unavailable ({why})" + (
+            "; by venue: " + ", ".join(venues_text) if venues_text else ""
+        )
     add(
         "derivatives.oi_native_chg_pct",
         oi,
@@ -4349,7 +4338,11 @@ def decisive_facts(spot, derivatives, liquidity, relative, supply, move_class, w
                 start=iso(start),
                 cutoff=iso(end),
                 text="Supply in evidence: inventory change "
-                + (f"{float(inventory['chg_pct']):+.2%}" if inventory.get("chg_pct") is not None else "unknown")
+                + (
+                    f"{float(inventory['chg_pct']):+.2%}"
+                    if inventory.get("chg_pct") is not None
+                    else "unknown"
+                )
                 + f"; labeled exchange transfers {len(classified)}.",
                 evidence=[
                     dict(
@@ -4394,8 +4387,8 @@ def canonical_fact_text(fact):
     elif coverage.get("validated") is True:
         label = "independent public REST confirmation"
     elif coverage and all(isinstance(v, dict) and "complete" in v for v in coverage.values()):
-        label = (
-            _count(sum(v["complete"] is True for v in coverage.values()), "complete trailing-24h reference venue")
+        label = _count(
+            sum(v["complete"] is True for v in coverage.values()), "complete trailing-24h reference venue"
         )
     elif "classified_flows" in coverage:
         label = _count(coverage["classified_flows"], "classified flow")
@@ -4632,8 +4625,6 @@ def timestamp_companions(result, snapshot):
         "event_public_at",
     }
 
-    # Only (instrument, time) pairs that the result names can be looked up below; parse those
-    # once and propagate precision only for matching source rows (not ~60k history rows).
     needed = set()
 
     def collect(value, iid=None):
@@ -4644,10 +4635,8 @@ def timestamp_companions(result, snapshot):
             iid = value.get("instrument_id", value.get("ref_venue", iid))
             for key, child in value.items():
                 if key in temporal and isinstance(child, str):
-                    try:
+                    with contextlib.suppress(TypeError, ValueError):
                         needed.add((iid, parse_time(child)))
-                    except (TypeError, ValueError):
-                        pass
                 else:
                     collect(child, iid)
 
@@ -4724,9 +4713,8 @@ def timestamp_companions(result, snapshot):
             return propagate_timestamp(snapshot, "requested_cutoff")
         base = cutoff_stamp
         if key == "start" and (
-            path.endswith("pre_event_runup")
+            path.endswith(("pre_event_runup", ".EVENT"))
             or value.get("window") == "EVENT"
-            or path.endswith(".EVENT")
             or path == "analysis_window"
             and result["primary_window"] == "EVENT"
         ):
@@ -4751,8 +4739,7 @@ def timestamp_companions(result, snapshot):
                         and (
                             "window" in value
                             or ".windows." in path
-                            or path.endswith("pre_event_runup")
-                            or path.endswith("lead_lag")
+                            or path.endswith(("pre_event_runup", "lead_lag"))
                         )
                     )
                     if child is not None and chosen:
@@ -4887,11 +4874,9 @@ def _compute_market_truth(snapshot, *, config=None):
     start = parse_time(av) if av else end - timedelta(hours=4)
     if start >= end:
         raise ValueError("anchor must precede cutoff")
-    # Both complete assessments and transient condition inputs share identical cutoff bounds.
+
     snapshot = bounded_market_snapshot(snapshot, end)
-    # Every derivative window uses the same immutable source candles. Build
-    # their instrument/time index once for this assessment, keeping all gaps,
-    # completeness flags and original decimal USD observations unchanged.
+
     indexed = defaultdict(list)
     for row in snapshot.get("klines", []):
         indexed[row.get("instrument_id")].append((_time(row), row))
@@ -5025,11 +5010,6 @@ def _compute_market_truth(snapshot, *, config=None):
     return jsonable(result)
 
 
-# One full assessment at a time per process. It is 7-11 s of pure Python run in worker
-# threads (asyncio.to_thread); several at once (MT + PRE anchors + reaction captures) left the
-# event loop thread a small share of the GIL and stalled open transactions. A waiting thread
-# holds no GIL, so the loop keeps about half; total compute time is unchanged (no parallelism
-# under the GIL anyway). Short condition evaluations are not serialized.
 _COMPUTE_SLOT = threading.RLock()
 
 
@@ -5299,7 +5279,7 @@ def condition_market_state(snapshot, end, cache):
             fingerprint(_PARAMETERS.get()),
             fingerprint(snapshot.get("expected_direction")),
         )
-        # Enrichment annotates graph outputs, so cached source nodes stay immutable.
+
         return deepcopy(remember(cache, key, build))
 
     spots, windows, primary, instruments = node(
@@ -5694,7 +5674,7 @@ class MarketTruthService:
         self.repo, self.settings, self.market = repo, settings, market
         self._condition_cache = {}
         self._condition_baselines = {}
-        # Per-token normal-range/baseline caches reused across assessments (exact keys).
+
         self._assessment_baselines = {}
         self._assessment_locks = {}
 
@@ -5766,7 +5746,7 @@ class MarketTruthService:
             knobs, config_version=self.settings.config_version, code_version=self.settings.code_version
         )
         lock = self._assessment_locks.setdefault(token_id, asyncio.Lock())
-        async with lock:  # one thread at a time per token cache
+        async with lock:
             result = await asyncio.to_thread(
                 compute_market_truth,
                 snapshot,
