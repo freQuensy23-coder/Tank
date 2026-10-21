@@ -38,10 +38,11 @@ def session_settings():
 
 
 class FakeTelegram:
-    def __init__(self, updates=(), member="member"):
+    def __init__(self, updates=(), member="member", is_member=None):
         self.updates = list(updates)
         self.sent = []
         self.member = member
+        self.is_member = is_member
         self.next_id = 1000
 
     def __call__(self, request):
@@ -53,7 +54,10 @@ class FakeTelegram:
             ready = [row for row in self.updates if row["update_id"] >= body.get("offset", 0)]
             return httpx.Response(200, json={"ok": True, "result": ready})
         if method == "getChatMember":
-            return httpx.Response(200, json={"ok": True, "result": {"status": self.member}})
+            result = {"status": self.member}
+            if self.is_member is not None:
+                result["is_member"] = self.is_member
+            return httpx.Response(200, json={"ok": True, "result": result})
         if method == "sendChatAction":
             return httpx.Response(200, json={"ok": True, "result": True})
         if method == "sendMessage":
@@ -298,7 +302,10 @@ async def test_question_goes_into_the_same_session_and_final_turn_text_becomes_t
         assert "final assistant message" in content["question"]["instructions"]
         session = await repo.get("ops.agent_sessions", "ses_1")
         answers = await service.turn_answers(session)
-        assert answers[session["message_log"][-1]["message_id"]] == "Потому что OI падает."
+        assert answers[session["message_log"][-1]["message_id"]] == {
+            "text": "Потому что OI падает.",
+            "ended": True,
+        }
         session["message_log"][-1]["turn_status"] = "DONE"
         await repo.put("ops.agent_sessions", "ses_1", session)
         await service.deliver_answers("ses_1")
@@ -432,3 +439,178 @@ async def test_terminal_question_job_records_a_failure_answer():
     await runtime.terminal_delivery_failure(job, "EXPIRED")
     assert (await repo.get("out.user_questions", question_id))["answer_status"] == "FAILED"
     assert len(await repo.list("ops.jobs", filters={"type": "TELEGRAM_ANSWER"})) == 1
+
+
+@pytest.mark.asyncio
+async def test_restricted_user_counts_only_while_still_a_member():
+    repo = MemoryRepository()
+    await seed(repo)
+    question = message(
+        16, date=1_800_000_700, text="?", reply_to_message={"message_id": 55, "from": {"id": BOT}}
+    )
+    gone = FakeTelegram([{"update_id": 1, "message": question}], member="restricted", is_member=False)
+    await run_inbox(repo, gone, now=1_800_000_701)
+    assert (await repo.get("ops.telegram_messages", f"{USER}:16"))["status"] == "IGNORED"
+    again = message(
+        17, date=1_800_000_800, text="?", reply_to_message={"message_id": 55, "from": {"id": BOT}}
+    )
+    present = FakeTelegram([{"update_id": 2, "message": again}], member="restricted", is_member=True)
+    await run_inbox(repo, present, now=1_800_000_801)
+    assert (await repo.get("ops.telegram_messages", f"{USER}:17"))["status"] != "IGNORED"
+
+
+@pytest.mark.asyncio
+async def test_reply_resolves_the_session_recorded_on_the_alert():
+    repo = MemoryRepository()
+    await seed(repo)
+    alert = await repo.get("out.alerts", "a:1")
+    await repo.put("out.alerts", "a:2", {**alert, "version": 2, "session_id": "ses_origin"}, immutable=True)
+    await repo.put(
+        "out.deliveries",
+        "d2",
+        {
+            "alert_id": "a",
+            "version": 2,
+            "channel": CARD_CHANNEL,
+            "status": "SENT",
+            "attempt": 1,
+            "message_ref": "56",
+            "at": "2027-01-15T09:00:00Z",
+        },
+        immutable=True,
+    )
+    reply = message(
+        18,
+        date=1_800_000_900,
+        text="?",
+        chat=int(ALERTS),
+        chat_type="supergroup",
+        reply_to_message={"message_id": 56, "from": {"id": BOT}},
+    )
+    await run_inbox(repo, FakeTelegram([{"update_id": 1, "message": reply}]), now=1_800_000_901)
+    assert (await repo.get("out.user_questions", question_id_for(ALERTS, 18)))["session_id"] == "ses_origin"
+
+
+@pytest.mark.asyncio
+async def test_first_question_is_answered_while_a_second_is_still_running():
+    repo = MemoryRepository()
+    first = await ask(repo)
+    await repo.put(
+        "out.user_questions",
+        "q_2",
+        {**(await repo.get("out.user_questions", first)), "question_id": "q_2", "text": "И ещё?"},
+    )
+    ids = iter(["in_q", "in_q2"])
+    posts = []
+    history = [
+        {"id": "r1", "type": "session.status_running", "execution_id": "in_q"},
+        {"id": "x1", "type": "agent.message", "content": [{"type": "text", "text": "Ответ один."}]},
+        {
+            "id": "i1",
+            "type": "session.status_idle",
+            "execution_id": "in_q",
+            "stop_reason": {"type": "end_turn"},
+        },
+        {"id": "r2", "type": "session.status_running", "execution_id": "in_q2"},
+    ]
+
+    def handler(request):
+        if request.method == "POST":
+            posts.append(json.loads(request.content))
+            return httpx.Response(200, json={"data": [{"id": next(ids)}]})
+        return httpx.Response(200, json={"data": history, "next_page": None})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        service.start_stream = lambda sid: None
+        await service.send_message({"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": first})
+        await service.send_message({"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": "q_2"})
+        await service.process_event(
+            "ses_1",
+            {
+                "id": "i1",
+                "type": "session.status_idle",
+                "execution_id": "in_q",
+                "stop_reason": {"type": "end_turn"},
+            },
+        )
+    assert (await repo.get("out.user_questions", first))["answer_text"] == "Ответ один."
+    assert not (await repo.get("out.user_questions", "q_2")).get("answer_status")
+
+
+@pytest.mark.asyncio
+async def test_failed_session_without_answer_is_reconciled_after_restart():
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
+    session["status"] = "FAILED"
+    session["message_log"].append(
+        {"message_id": "mq", "payload": payload, "turn_status": "FAILED", "remote_event_id": "in_q"}
+    )
+    await repo.put("ops.agent_sessions", "ses_1", session)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(openma([], []))) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        await service.reconcile_answers()
+    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "FAILED"
+
+
+@pytest.mark.asyncio
+async def test_terminal_answer_job_is_recorded_once_and_marked_reconciled():
+    from tank.runtime import Runtime
+
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    runtime = object.__new__(Runtime)
+    runtime.repo = repo
+    runtime.delivery = None
+    runtime.inbox = TelegramInbox(repo, inbox_settings(), http=httpx.AsyncClient())
+    job = await repo.enqueue("TELEGRAM_ANSWER", {"question_id": question_id}, question_id)
+    await repo.put("ops.jobs", job["job_id"], {**job, "status": "FAILED"})
+    await runtime.reconcile_delivery_failures()
+    runtime._delivery_reconciled_at = None
+    await runtime.reconcile_delivery_failures()
+    assert (await repo.get("out.user_questions", question_id))["status"] == "DELIVERY_FAILED"
+    failures = await repo.list("out.deliveries", filters={"question_id": question_id, "status": "FAILED"})
+    assert len(failures) == 1
+    assert (await repo.get("ops.jobs", job["job_id"])).get("followup_failure_recorded_at")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_answer_ledger_rows_satisfy_the_delivery_schema_and_route_replies(backend, postgres_template):
+    import os
+    from contextlib import AsyncExitStack
+
+    async with AsyncExitStack() as lifetime:
+        if backend == "postgres":
+            database_url = os.getenv("TANK_TEST_DATABASE_URL")
+            if not database_url:
+                pytest.skip("Requires isolated TANK_TEST_DATABASE_URL")
+            repo = await lifetime.enter_async_context(postgres_template.repository(database_url))
+        else:
+            repo = await MemoryRepository().open()
+        await repo.put(
+            "out.user_questions",
+            "q_pg",
+            {
+                "question_id": "q_pg",
+                "session_id": "ses_pg",
+                "status": "ANSWERED",
+                "answer_status": "ANSWERED",
+                "answer_text": "Ответ.",
+                "chat_id": str(USER),
+                "reply_to_message_id": 9,
+            },
+        )
+        telegram = FakeTelegram()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+            inbox = TelegramInbox(repo, inbox_settings(), http=http)
+            await inbox.answer({"question_id": "q_pg"})
+            await inbox.answer({"question_id": "q_pg"})
+            target = await inbox.reply_target(USER, {"message_id": 1001})
+        assert [row["text"] for row in telegram.sent] == ["Ответ."]
+        assert target["session_id"] == "ses_pg" and target["kind"] == "ANSWER"
+        assert (await repo.get("out.user_questions", "q_pg"))["status"] == "DELIVERED"

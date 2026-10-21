@@ -765,6 +765,7 @@ TABLE_COLUMNS["ops.market_migration_exports"] = {
 }
 APPEND_ONLY = APPEND_ONLY | {"ops.market_migration_exports"}
 
+TABLE_COLUMNS["out.deliveries"]["question_id"] = "text"
 TABLE_COLUMNS["ops.telegram_messages"] = {
     "chat_id": "text",
     "message_id": "bigint",

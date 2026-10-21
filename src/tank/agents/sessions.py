@@ -349,7 +349,7 @@ class SessionService:
         return session
 
     async def continuable(self, payload):
-        """A follow-up reopens a FAILED session; an archived or natively terminated one cannot continue."""
+        """An archived or natively terminated session cannot take a follow-up question."""
         question_id = payload["question_id"]
         session = await self.repo.get("ops.agent_sessions", payload.get("session_id") or "")
         if (
@@ -363,34 +363,30 @@ class SessionService:
         if session.get("status") == "ENDED":
             await record_answer(self.repo, question_id, None, status="ARCHIVED")
             return False
-        own = sha256(payload)
-        if session.get("status") == "FAILED" or own in session.get("retired_message_ids", []):
-            async with self.repo.lock("session:" + session["session_id"]):
-                current = await self.repo.get("ops.agent_sessions", session["session_id"])
-                retired = set(current.get("retired_message_ids", []))
-                if current.get("status") == "FAILED":
-                    retired.update(
-                        row["message_id"]
-                        for row in current.get("message_log", [])
-                        if row.get("turn_status") != "DONE"
-                    )
-                    current.setdefault("reopened", []).append(
-                        {
-                            "question_id": question_id,
-                            "previous_status": current["status"],
-                            **self.clock_timestamp().fields("at"),
-                        }
-                    )
-                    current.update(
-                        status="OPEN",
-                        runtime_status="IDLE",
-                        active_message_id=None,
-                        pending_retry_event=None,
-                    )
-                retired.discard(own)
-                current["retired_message_ids"] = sorted(retired)
-                await self.repo.put("ops.agent_sessions", current["session_id"], current)
         return True
+
+    def reopen_for_question(self, session, payload, key):
+        """Under the session lock: reopen a FAILED session and retire its unfinished turns, never this one."""
+        retired = set(session.get("retired_message_ids", []))
+        if session.get("status") == "FAILED":
+            retired.update(
+                row["message_id"]
+                for row in session.get("message_log", [])
+                if row.get("turn_status") != "DONE"
+            )
+            session.setdefault("reopened", []).append(
+                {
+                    "question_id": payload["question_id"],
+                    "previous_status": session["status"],
+                    **self.clock_timestamp().fields("at"),
+                }
+            )
+            session.update(
+                status="OPEN", runtime_status="IDLE", active_message_id=None, pending_retry_event=None
+            )
+        retired.discard(key)
+        if retired or "retired_message_ids" in session:
+            session["retired_message_ids"] = sorted(retired)
 
     async def question_context(self, question_id):
         question = await self.repo.get("out.user_questions", question_id)
@@ -422,6 +418,12 @@ class SessionService:
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             async with self.repo.lock("session:" + sid):
                 session = await self.repo.get("ops.agent_sessions", sid)
+                if payload.get("kind") == "USER_QUESTION":
+                    if session.get("status") == "ENDED" or session.get("termination_receipt"):
+                        status = "NO_SESSION" if session.get("termination_receipt") else "ARCHIVED"
+                        await record_answer(self.repo, payload["question_id"], None, status=status)
+                        return None
+                    self.reopen_for_question(session, payload, key)
                 if key in session.get("messages", []):
                     self.start_stream(sid)
                     return session
@@ -714,8 +716,11 @@ class SessionService:
         return result
 
     async def turn_answers(self, session):
-        """The last agent text of each accepted input's executions, keyed by owning message."""
-        texts, current, page = {}, None, None
+        """Per accepted message: the last agent text of its executions and whether its turn ended.
+
+        A turn ends when the newest execution owned by the message went idle with end_turn.
+        """
+        texts, ends, order, current, page = {}, {}, [], None, None
         while True:
             params = {"limit": 100, "order": "asc"}
             if page:
@@ -725,6 +730,8 @@ class SessionService:
                 kind = event.get("type")
                 if kind == "session.status_running":
                     current = event.get("execution_id")
+                    if current and current not in order:
+                        order.append(current)
                 elif kind == "agent.message" and current:
                     text = "".join(
                         block.get("text", "")
@@ -733,47 +740,72 @@ class SessionService:
                     ).strip()
                     if text:
                         texts[current] = text
+                elif kind == "session.status_idle" and event.get("execution_id"):
+                    ends[event["execution_id"]] = (event.get("stop_reason") or {}).get("type") == "end_turn"
             page = data.get("next_page")
             if not page:
                 break
         answers = {}
-        for execution_id, text in texts.items():
+        for execution_id in order:
             owner = await self.native_input_owner(session, execution_id)
-            if owner:
-                answers[owner[0]] = text
+            if not owner:
+                continue
+            answer = answers.setdefault(owner[0], {"text": None, "ended": False})
+            answer["ended"] = ends.get(execution_id, False)
+            if execution_id in texts:
+                answer["text"] = texts[execution_id]
         return answers
 
     async def deliver_answers(self, sid):
-        """Hand each settled follow-up question its answer, or its failure, exactly once."""
+        """Hand each settled follow-up question its answer, or its failure, exactly once.
+
+        Questions settle independently: a later queued turn never holds back an earlier answer.
+        """
         session = await self.repo.get("ops.agent_sessions", sid)
+        if session is None:
+            return
         stopped = session.get("status") in ("FAILED", "ENDED")
         pending = [
             row
             for row in session.get("message_log", [])
-            if row.get("payload", {}).get("kind") == "USER_QUESTION"
-            and not row.get("answer_recorded")
-            and (row.get("turn_status") in ("DONE", "FAILED") or stopped)
+            if row.get("payload", {}).get("kind") == "USER_QUESTION" and not row.get("answer_recorded")
         ]
         if not pending:
             return
-        answers = (
-            await self.turn_answers(session)
-            if any(row.get("turn_status") == "DONE" for row in pending)
-            else {}
-        )
+        live = any(row.get("remote_event_id") and row.get("turn_status") != "FAILED" for row in pending)
+        answers = await self.turn_answers(session) if live else {}
+        recorded = set()
         for row in pending:
             question_id = row["payload"]["question_id"]
-            if row.get("turn_status") == "DONE":
-                await record_answer(self.repo, question_id, answers.get(row["message_id"]), status="ANSWERED")
-            else:
+            answer = answers.get(row["message_id"], {})
+            if row.get("turn_status") == "FAILED" or (stopped and not answer.get("ended")):
                 await record_answer(self.repo, question_id, None, status="FAILED")
-        recorded = {row["message_id"] for row in pending}
+            elif row.get("turn_status") == "DONE" or answer.get("ended"):
+                await record_answer(self.repo, question_id, answer.get("text"), status="ANSWERED")
+            else:
+                continue
+            recorded.add(row["message_id"])
+        if not recorded:
+            return
         async with self.repo.lock("session:" + sid):
             current = await self.repo.get("ops.agent_sessions", sid)
             for row in current.get("message_log", []):
                 if row["message_id"] in recorded:
                     row["answer_recorded"] = True
             await self.repo.put("ops.agent_sessions", sid, current)
+
+    async def reconcile_answers(self):
+        """Questions still waiting after a restart or a lost terminal hand-off get their answer."""
+        sessions = set()
+        async for question in self.repo.iter_all("out.user_questions", filters={"status": "QUEUED"}):
+            sid = question.get("session_id")
+            if sid and not (sid in self.tasks and not self.tasks[sid].done()):
+                sessions.add(sid)
+        for sid in sorted(sessions):
+            try:
+                await self.deliver_answers(sid)
+            except (httpx.HTTPError, ValueError, KeyError):
+                continue
 
     async def settled_turn(self, sid):
         """Read committed queue states, drain every history page, then recheck inputs."""
@@ -1630,7 +1662,14 @@ class SessionService:
                 current.update(propagate_timestamp(event, "processed_at").fields("processed_at"))
                 await self.repo.put("ops.agent_sessions", sid, current)
             self.seen_events.setdefault(sid, set()).add(seen_key(event))
-            if current.get("status") in ("FAILED", "ENDED"):
+            if current.get("status") in ("FAILED", "ENDED") or (
+                kind == "session.status_idle"
+                and (event.get("stop_reason") or {}).get("type") == "end_turn"
+                and any(
+                    row.get("payload", {}).get("kind") == "USER_QUESTION" and not row.get("answer_recorded")
+                    for row in current.get("message_log", [])
+                )
+            ):
                 await self.deliver_answers(sid)
 
     async def catch_up(self, sid):
@@ -1948,6 +1987,8 @@ class SessionService:
                 if await self.finish_if_idle(sid):
                     continue
                 self.start_stream(sid)
+            if tick % IDLE_RECHECK_TICKS == 0:
+                await self.reconcile_answers()
             tick += 1
             await self.wake_waiting()
             with suppress(TimeoutError):

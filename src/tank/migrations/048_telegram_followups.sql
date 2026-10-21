@@ -19,3 +19,12 @@ immutable boolean NOT NULL DEFAULT false,
 CREATE INDEX IF NOT EXISTS out_user_questions_session_id_idx ON out.user_questions ("session_id");
 CREATE INDEX IF NOT EXISTS out_user_questions_status_idx ON out.user_questions ("status");
 CREATE INDEX IF NOT EXISTS out_user_questions_doc_idx ON out.user_questions USING gin(document);
+-- Answers and prompts to readers are a third delivery subject next to alerts and ops notices.
+ALTER TABLE out.deliveries ADD COLUMN IF NOT EXISTS "question_id" text;
+ALTER TABLE out.deliveries DROP CONSTRAINT IF EXISTS delivery_subject;
+ALTER TABLE out.deliveries ADD CONSTRAINT delivery_subject CHECK (
+    (alert_id IS NOT NULL AND version IS NOT NULL AND notice_id IS NULL AND question_id IS NULL)
+    OR (alert_id IS NULL AND version IS NULL AND notice_id IS NOT NULL AND question_id IS NULL)
+    OR (alert_id IS NULL AND version IS NULL AND notice_id IS NULL AND question_id IS NOT NULL));
+CREATE INDEX IF NOT EXISTS out_deliveries_question_id_idx ON out.deliveries ("question_id");
+CREATE INDEX IF NOT EXISTS out_deliveries_message_ref_idx ON out.deliveries ("channel", "message_ref");

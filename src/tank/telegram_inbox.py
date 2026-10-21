@@ -11,7 +11,7 @@ import html
 import logging
 import re
 import time
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from difflib import SequenceMatcher
 
 import httpx
@@ -30,7 +30,7 @@ MEMBER_CACHE_S = 600
 MESSAGE_LIMIT = 4000
 ANSWER_CHANNEL = "telegram:answer"
 CARD_CHANNEL = "telegram:alerts"
-MEMBER_STATUSES = {"creator", "administrator", "member", "restricted"}
+MEMBER_STATUSES = {"creator", "administrator", "member"}
 
 QUESTION_INSTRUCTIONS = (
     "A reader of Tank's Telegram output asks a follow-up question about this session's event. "
@@ -233,7 +233,9 @@ class TelegramInbox:
             member = await self.call(
                 "getChatMember", {"chat_id": self.settings.telegram_alerts_chat, "user_id": user}
             )
-            allowed = member.get("status") in MEMBER_STATUSES
+            allowed = member.get("status") in MEMBER_STATUSES or (
+                member.get("status") == "restricted" and member.get("is_member") is True
+            )
         except RuntimeError:
             allowed = False
         self.members[user] = (allowed, time.monotonic() + MEMBER_CACHE_S)
@@ -302,34 +304,41 @@ class TelegramInbox:
                 best = (distance, other)
         return best[1] if best else None
 
-    async def sent(self, channel):
+    async def sent(self, channel, **filters):
         return [
             row
             async for row in self.repo.iter_all(
-                "out.deliveries", filters={"channel": channel, "status": "SENT"}
+                "out.deliveries", filters={"channel": channel, "status": "SENT", **filters}
+            )
+            if row.get("message_ref")
+        ]
+
+    async def sent_between(self, channel, start, end):
+        return [
+            row
+            async for row in self.repo.iter_range(
+                "out.deliveries", "at", start=start, end=end, filters={"channel": channel, "status": "SENT"}
             )
             if row.get("message_ref")
         ]
 
     async def card_target(self, delivery):
-        alerts = [
-            row
-            async for row in self.repo.iter_all(
-                "out.alerts", filters={"alert_id": delivery["alert_id"], "version": delivery["version"]}
-            )
-        ]
-        if not alerts:
+        alert = await self.repo.get("out.alerts", f"{delivery['alert_id']}:{delivery['version']}")
+        if alert is None:
             return None
-        alert = alerts[0]
-        sessions = [
-            row
-            async for row in self.repo.iter_all("ops.agent_sessions", filters={"event_id": alert["event_id"]})
-        ]
-        if not sessions:
+        session_id = alert.get("session_id")
+        if session_id is None:
+            async for row in self.repo.iter_all(
+                "ops.agent_sessions", filters={"event_id": alert["event_id"]}
+            ):
+                if not row.get("replay_run_id"):
+                    session_id = row["session_id"]
+                    break
+        if session_id is None:
             return None
         return {
             "kind": "CARD",
-            "session_id": sessions[0]["session_id"],
+            "session_id": session_id,
             "event_id": alert["event_id"],
             "alert_id": alert["alert_id"],
             "version": alert["version"],
@@ -351,12 +360,10 @@ class TelegramInbox:
     async def reply_target(self, chat_id, reply):
         ref = str(reply["message_id"])
         if str(chat_id) == str(self.settings.telegram_alerts_chat):
-            for delivery in await self.sent(CARD_CHANNEL):
-                if delivery["message_ref"] == ref:
-                    return await self.card_target(delivery)
-        for delivery in await self.sent(ANSWER_CHANNEL):
-            if delivery["message_ref"] == ref and str(delivery.get("chat_id")) == str(chat_id):
-                return await self.answer_target(delivery)
+            for delivery in await self.sent(CARD_CHANNEL, message_ref=ref):
+                return await self.card_target(delivery)
+        for delivery in await self.sent(ANSWER_CHANNEL, message_ref=ref, chat_id=str(chat_id)):
+            return await self.answer_target(delivery)
         return None
 
     async def forwarded_target(self, message, bot):
@@ -372,16 +379,16 @@ class TelegramInbox:
         if date is None:
             return None
         text = plain(message.get("text") or message.get("caption") or "")
+        start = datetime.fromtimestamp(date - FORWARD_MATCH_S, UTC)
+        end = datetime.fromtimestamp(date + FORWARD_MATCH_S, UTC)
         candidates = []
         for channel in (CARD_CHANNEL, ANSWER_CHANNEL):
-            for delivery in await self.sent(channel):
+            for delivery in await self.sent_between(channel, start, end):
                 stamp = delivery.get("telegram_date")
+                if stamp is not None and int(stamp) != int(date):
+                    continue
                 if stamp is None:
                     stamp = parse_time(delivery["at"]).timestamp()
-                    if abs(stamp - date) > FORWARD_MATCH_S:
-                        continue
-                elif int(stamp) != int(date):
-                    continue
                 target = (
                     await self.card_target(delivery)
                     if channel == CARD_CHANNEL
@@ -492,47 +499,74 @@ class TelegramInbox:
         else:
             text = FAILED_TEXT
         parts = chunks(text)
-        async with self.repo.lock("answer:" + question["question_id"]):
-            ledger = [
-                row
-                async for row in self.repo.iter_all(
-                    "out.deliveries",
-                    filters={
-                        "question_id": question["question_id"],
-                        "channel": ANSWER_CHANNEL,
-                        "status": "SENT",
-                    },
-                )
-                if row.get("purpose") == "ANSWER"
-            ]
-            done = {row["chunk"]: row for row in ledger}
-            previous = question.get("reply_to_message_id")
-            for index, part in enumerate(parts):
-                if index in done:
-                    previous = done[index]["message_ref"]
-                    continue
-                result = await self.send(question["chat_id"], part, previous)
-                previous = str(result["message_id"])
-                await self.repo.put(
-                    "out.deliveries",
-                    new_id("delivery"),
-                    {
-                        "channel": ANSWER_CHANNEL,
-                        "question_id": question["question_id"],
-                        "session_id": question["session_id"],
-                        "purpose": "ANSWER",
-                        "chat_id": question["chat_id"],
-                        "chunk": index,
-                        "chunks": len(parts),
-                        "status": "SENT",
-                        "attempt": 1,
-                        "message_ref": previous,
-                        "telegram_date": result.get("date"),
-                        "text": part,
-                        **collection_clock(utcnow()).fields("at"),
-                    },
-                    immutable=True,
-                )
+        ledger = [
+            row
+            async for row in self.repo.iter_all(
+                "out.deliveries",
+                filters={"question_id": question["question_id"], "channel": ANSWER_CHANNEL, "status": "SENT"},
+            )
+            if row.get("purpose") == "ANSWER"
+        ]
+        done = {row["chunk"]: row for row in ledger}
+        previous = question.get("reply_to_message_id")
+        for index, part in enumerate(parts):
+            if index in done:
+                previous = done[index]["message_ref"]
+                continue
+            result = await self.send(question["chat_id"], part, previous)
+            previous = str(result["message_id"])
+            await self.repo.put(
+                "out.deliveries",
+                new_id("delivery"),
+                {
+                    "channel": ANSWER_CHANNEL,
+                    "question_id": question["question_id"],
+                    "session_id": question["session_id"],
+                    "purpose": "ANSWER",
+                    "chat_id": question["chat_id"],
+                    "chunk": index,
+                    "chunks": len(parts),
+                    "status": "SENT",
+                    "attempt": 1,
+                    "message_ref": previous,
+                    "telegram_date": result.get("date"),
+                    "text": part,
+                    **collection_clock(utcnow()).fields("at"),
+                },
+                immutable=True,
+            )
+        async with self.repo.lock("question:" + question["question_id"]):
             question = await self.repo.get("out.user_questions", question["question_id"])
             question.update(status="DELIVERED", **collection_clock(utcnow()).fields("delivered_at"))
             await self.repo.put("out.user_questions", question["question_id"], question)
+
+    async def answer_failed(self, payload, reason):
+        """A TELEGRAM_ANSWER job that ran out of attempts leaves a terminal, monitorable record."""
+        question_id = payload["question_id"]
+        async with self.repo.lock("question:" + question_id):
+            question = await self.repo.get("out.user_questions", question_id)
+            if question is None or question.get("status") in ("DELIVERED", "DELIVERY_FAILED"):
+                return
+            question.update(
+                status="DELIVERY_FAILED",
+                delivery_failure=str(reason),
+                **collection_clock(utcnow()).fields("delivery_failed_at"),
+            )
+            await self.repo.put("out.user_questions", question_id, question)
+        await self.repo.put(
+            "out.deliveries",
+            new_id("delivery"),
+            {
+                "channel": ANSWER_CHANNEL,
+                "question_id": question_id,
+                "session_id": question["session_id"],
+                "purpose": "ANSWER",
+                "chat_id": question.get("chat_id"),
+                "status": "FAILED",
+                "terminal": True,
+                "attempt": 5,
+                "error": str(reason),
+                **collection_clock(utcnow()).fields("at"),
+            },
+            immutable=True,
+        )

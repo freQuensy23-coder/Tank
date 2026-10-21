@@ -308,6 +308,8 @@ class Runtime:
             from tank.telegram_inbox import record_answer
 
             await record_answer(self.repo, job["payload"]["question_id"], None, status="FAILED")
+        if job["type"] == "TELEGRAM_ANSWER" and getattr(self, "inbox", None):
+            await self.inbox.answer_failed(job["payload"], reason)
 
     async def reconcile_delivery_failures(self):
         now = utcnow()
@@ -326,11 +328,17 @@ class Runtime:
                         job["job_id"],
                         {**job, **collection_clock(utcnow()).fields("delivery_failure_recorded_at")},
                     )
-            async for job in self.repo.iter_all(
-                "ops.jobs", filters={"type": "AGENT_MESSAGE", "status": status}
-            ):
-                if job["payload"].get("kind") == "USER_QUESTION":
-                    await self.terminal_delivery_failure(job, status)
+            for kind in ("AGENT_MESSAGE", "TELEGRAM_ANSWER"):
+                async for job in self.repo.iter_all("ops.jobs", filters={"type": kind, "status": status}):
+                    if job.get("followup_failure_recorded_at"):
+                        continue
+                    if kind == "TELEGRAM_ANSWER" or job["payload"].get("kind") == "USER_QUESTION":
+                        await self.terminal_delivery_failure(job, status)
+                        await self.repo.put(
+                            "ops.jobs",
+                            job["job_id"],
+                            {**job, **collection_clock(utcnow()).fields("followup_failure_recorded_at")},
+                        )
 
     @staticmethod
     async def pause(stop, seconds):
