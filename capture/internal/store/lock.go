@@ -45,6 +45,8 @@ type Lock struct {
 	key     string
 	id      int64
 	connect connector
+	// timing copied at creation: the watcher never reads the package variables
+	ping, retry, retryMax, connectMax time.Duration
 
 	mu       sync.Mutex
 	conn     lockConn
@@ -88,6 +90,9 @@ func acquireLock(ctx context.Context, key string, connect connector) (*Lock, err
 		held, err := tryLock(ctx, conn, id)
 		if err != nil {
 			conn.Close(context.Background())
+			if ctx.Err() != nil {
+				return nil, ctx.Err() // the wait ended mid-query
+			}
 			return nil, err
 		}
 		if held {
@@ -104,7 +109,8 @@ func acquireLock(ctx context.Context, key string, connect connector) (*Lock, err
 		case <-time.After(lockPoll):
 		}
 	}
-	l := &Lock{key: key, id: id, connect: connect, conn: conn, lost: make(chan struct{}), stop: make(chan struct{}), done: make(chan struct{})}
+	l := &Lock{key: key, id: id, connect: connect, conn: conn, lost: make(chan struct{}), stop: make(chan struct{}), done: make(chan struct{}),
+		ping: lockPing, retry: lockRetry, retryMax: lockRetryMax, connectMax: lockConnectMax}
 	l.held.Store(true)
 	go l.watch()
 	return l, nil
@@ -131,7 +137,7 @@ func holder(ctx context.Context, conn lockConn, id int64) (uint32, error) {
 
 func (l *Lock) watch() {
 	defer close(l.done)
-	ticker := time.NewTicker(lockPing)
+	ticker := time.NewTicker(l.ping)
 	defer ticker.Stop()
 	for {
 		select {
@@ -142,7 +148,7 @@ func (l *Lock) watch() {
 		l.mu.Lock()
 		conn := l.conn
 		l.mu.Unlock()
-		ctx, cancel := context.WithTimeout(context.Background(), lockPing)
+		ctx, cancel := context.WithTimeout(context.Background(), l.ping)
 		err := conn.Ping(ctx)
 		cancel()
 		if err == nil {
@@ -163,14 +169,14 @@ func (l *Lock) watch() {
 // connection the server has not noticed): that backend is terminated. Any other holder
 // is another writer: Lost closes and false returns.
 func (l *Lock) reacquire(stale uint32) bool {
-	backoff := lockRetry
+	backoff := l.retry
 	for {
 		select {
 		case <-l.stop:
 			return false
 		default:
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), lockConnectMax)
+		ctx, cancel := context.WithTimeout(context.Background(), l.connectMax)
 		other, err := l.attempt(ctx, stale)
 		cancel()
 		if err == nil && other == 0 {
@@ -188,7 +194,7 @@ func (l *Lock) reacquire(stale uint32) bool {
 			return false
 		case <-time.After(backoff):
 		}
-		backoff = min(2*backoff, lockRetryMax)
+		backoff = min(2*backoff, l.retryMax)
 	}
 }
 

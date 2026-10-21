@@ -306,9 +306,7 @@ func TestLockExclusion(t *testing.T) {
 	a, b := open(t, "mkt"), open(t, "mkt")
 	ctx := context.Background()
 	key := "tank:capture:test:" + suffix()
-	previous := lockPing
-	lockPing = 200 * time.Millisecond
-	defer func() { lockPing = previous }()
+	fastLock(t)
 	first, err := a.Lock(ctx, key)
 	if err != nil {
 		t.Fatal(err)
@@ -323,7 +321,7 @@ func TestLockExclusion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A lost lock connection is reported, and the lock is free again.
+	// A terminated lock backend is replaced: the lock is held again, Lost stays open.
 	var pid int
 	if err := b.Pool.QueryRow(ctx, "SELECT pid FROM pg_locks WHERE locktype='advisory' AND ((classid::bigint<<32)|objid::bigint)=$1 AND granted", LockID(key)).Scan(&pid); err != nil {
 		t.Fatal(err)
@@ -331,10 +329,13 @@ func TestLockExclusion(t *testing.T) {
 	if _, err := b.Pool.Exec(ctx, "SELECT pg_terminate_backend($1)", pid); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-second.Lost():
-	case <-time.After(5 * time.Second):
-		t.Fatal("lost lock not reported")
+	eventually(t, "lock not re-acquired", func() bool {
+		second.mu.Lock()
+		defer second.mu.Unlock()
+		return second.Held() && int(second.conn.PID()) != pid
+	})
+	if lost(second) {
+		t.Fatal("a re-acquired lock must not report Lost")
 	}
 	second.Release()
 	third, err := a.Lock(ctx, key)
@@ -573,7 +574,7 @@ func TestWriterFlush(t *testing.T) {
 // Lost stays open.
 func TestLockSurvivesTerminatedBackend(t *testing.T) {
 	fastLock(t)
-	s := open(t, "mkt_shadow_"+suffix())
+	s := open(t, "mkt")
 	ctx := context.Background()
 	l, err := s.Lock(ctx, "tank:capture:test:"+suffix())
 	if err != nil {
