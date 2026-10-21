@@ -59,7 +59,7 @@ func (e *BannedError) Error() string {
 type hostGate struct {
 	slots *priorityGate
 	pace  *priorityGate // one priority-ordered admission waiter, never the HTTP request
-	last  time.Time     // latest actual admission, response, or provider cooldown
+	last  time.Time     // latest actual admission or provider cooldown
 }
 
 // Gate is the per-process admission in front of the shared ledger: one PriorityGate per
@@ -185,7 +185,7 @@ func (g *Gate) acquire(ctx context.Context, host string, b Bucket, priority int)
 
 // Enter takes a host slot and serializes only start admission, in priority order.
 // An overdue timer spaces the next request from its actual start; cancelled waits
-// never reserve a future start. release records the response and frees the HTTP slot.
+// never reserve a future start. release frees only the HTTP slot.
 func (g *Gate) Enter(ctx context.Context, host string, priority int) (release func(), err error) {
 	h := g.host(host)
 	if err := h.slots.enter(ctx, priority); err != nil {
@@ -218,11 +218,6 @@ func (g *Gate) Enter(ctx context.Context, host string, priority int) (release fu
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			g.mu.Lock()
-			if t := g.now(); t.After(h.last) {
-				h.last = t
-			}
-			g.mu.Unlock()
 			h.slots.release()
 		})
 	}, nil

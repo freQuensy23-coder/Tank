@@ -468,7 +468,6 @@ class MarketService:
                     response = await self.http.request(method, url, **kwargs)
                 except httpx.HTTPError as exc:
                     raise RuntimeError(f"{host}: {type(exc).__name__}") from None
-                self._last_request[host] = max(self._last_request[host], time.monotonic())
                 if response.status_code in (418, 429):
                     delay = float(response.headers.get("Retry-After", "60"))
                     self._last_request[host] = max(

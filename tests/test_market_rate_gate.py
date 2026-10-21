@@ -193,3 +193,56 @@ async def test_cancelled_pacing_wait_does_not_reserve_a_future_start(setup, monk
             await asyncio.gather(
                 *(task for task in (first, waiting, following) if task is not None), return_exceptions=True
             )
+
+
+@pytest.mark.asyncio
+async def test_delayed_response_frees_saturated_slot_without_restarting_pacer(setup, monkeypatch):  # noqa: F811
+    repo, settings, _ = setup
+    clock = control_request_clock(monkeypatch)
+    starts, entered = [], asyncio.Queue()
+    releases = [asyncio.Event() for _ in range(4)]
+
+    async def handler(request):
+        index = len(starts)
+        starts.append(clock.monotonic())
+        entered.put_nowait(index)
+        if index < 4:
+            await releases[index].wait()
+        return httpx.Response(200, json={"ok": True})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = MarketService(repo, settings, http=http)
+        requests, observers = [], []
+        try:
+            for index in range(4):
+                requests.append(
+                    asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
+                )
+                if index:
+                    clock.advance(await clock.sleeping.get())
+                assert await entered.get() == index
+            requests.append(
+                asyncio.create_task(service._request("GET", "https://api.llama.fi/summary/fees/abc"))
+            )
+            await asyncio.sleep(0)  # Let the fifth task join the full host's permit queue.
+            assert len(service._request_locks["api.llama.fi"].waiters) == 1
+            clock.advance(2.0)
+            released_at = clock.monotonic()
+            releases[0].set()
+            await requests[0]
+            started = asyncio.create_task(entered.get())
+            sleeping = asyncio.create_task(clock.sleeping.get())
+            observers = [started, sleeping]
+            await asyncio.wait(observers, return_when=asyncio.FIRST_COMPLETED)
+            assert not sleeping.done(), "Response completion restarted the host's start interval"
+            assert await started == 4
+            assert starts[-1] == released_at
+            assert all(not task.done() for task in requests[1:4])
+            await requests[-1]
+        finally:
+            for event in releases:
+                event.set()
+            for task in [*requests, *observers]:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*requests, *observers, return_exceptions=True)

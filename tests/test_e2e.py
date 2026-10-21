@@ -807,9 +807,11 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
     from tank.scheduler import Scheduler
     from tank.util import iso
 
-    clock = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
-    if clock.hour == 23:
-        pytest.skip("nightly backup window integration tested separately")
+    repo = isolated_e2e_database
+    # Queue expiry is evaluated with PostgreSQL's clock; domain timestamps share it.
+    async with repo.transaction():
+        clock = (await (await repo._conn().execute("SELECT clock_timestamp() AS clock")).fetchone())["clock"]
+    backup_clock = clock.replace(hour=12, minute=0, second=0, microsecond=0)
     for name in (
         "tank.util",
         "tank.storage",
@@ -826,7 +828,6 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
         module = importlib.import_module(name)
         if hasattr(module, "utcnow"):
             monkeypatch.setattr(module, "utcnow", lambda: clock)
-    repo = isolated_e2e_database
     config = {
         "sources": {
             "sources": [
@@ -886,8 +887,18 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
         code_version="synthetic-test",
         shutdown_grace_s=3,
     )
+    assert backup_clock.hour < settings.backup_hour_utc, "Synthetic backup clock must precede its window"
     settings.backup_dir.mkdir()
     settings.data_dir.mkdir()
+    backup_results = []
+
+    class FixtureScheduler(Scheduler):
+        async def maintenance(self, now, **kwargs):
+            # Scope the chosen noon clock to the actual backup boundary only.
+            result = await super().maintenance(backup_clock, **kwargs)
+            backup_results.append((now, result))
+            return result
+
     text = "Binance approved the synthetic autonomous $T listing."
     timestamp = iso(clock - __import__("datetime").timedelta(minutes=1))
     queue = asyncio.Queue()
@@ -1213,7 +1224,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                 event_tools=tools,
                 sessions=sessions,
                 delivery=delivery,
-                scheduler=Scheduler(repo, settings, market, truth),
+                scheduler=FixtureScheduler(repo, settings, market, truth),
             )
             runtime_task = asyncio.create_task(runtime.run(stop))
             try:
@@ -1257,6 +1268,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                     await asyncio.sleep(0.01)
             stop.set()
             await asyncio.wait_for(runtime_task, 12)
+            assert backup_results and all(result["status"] == "deferred" for _, result in backup_results)
             assert [event["name"] for event in wire] == [
                 "record_event",
                 "set_assessment",

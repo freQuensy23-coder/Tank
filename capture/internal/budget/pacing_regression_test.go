@@ -3,6 +3,7 @@ package budget
 import (
 	"context"
 	"errors"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -154,4 +155,67 @@ func TestCancelledPacingWaitDoesNotReserveTheNextStart(t *testing.T) {
 	close(next.wake)
 	release := pacingStarted(t, ctx, following)
 	release()
+}
+
+func TestResponseCompletionDoesNotRestartStartSpacing(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	g, c, waits := controlledPacingGate()
+	var releases []func()
+	defer func() {
+		for _, release := range releases {
+			release()
+		}
+	}()
+	first, err := g.Enter(ctx, "api.bybit.com", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	releases = append(releases, first)
+	for i := 1; i < HostInFlight; i++ {
+		pending := pacingEnter(ctx, g)
+		wait := pacingWaitFor(t, ctx, waits, pending)
+		c.advance(wait.delay)
+		close(wait.wake)
+		releases = append(releases, pacingStarted(t, ctx, pending))
+	}
+	pending := pacingEnter(ctx, g)
+	h := g.host("api.bybit.com")
+	for {
+		h.slots.mu.Lock()
+		queued := h.slots.waiters.Len()
+		h.slots.mu.Unlock()
+		if queued == 1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		default:
+			runtime.Gosched()
+		}
+	}
+	// Four requests remain in flight until this delayed response completes.
+	c.advance(2 * time.Second)
+	if retry, err := g.Observe(ctx, "api.bybit.com", 200, nil); retry || err != nil {
+		t.Fatalf("successful response: retry=%v err=%v", retry, err)
+	}
+	first()
+	select {
+	case result := <-pending:
+		if result.err != nil {
+			t.Fatal(result.err)
+		}
+		defer result.release()
+		h.slots.mu.Lock()
+		active := h.slots.active
+		h.slots.mu.Unlock()
+		if active != HostInFlight {
+			t.Fatalf("active %d: the other three requests must still hold their permits", active)
+		}
+	case wait := <-waits:
+		t.Fatalf("successful completion added an artificial %v start delay", wait.delay)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
 }
