@@ -248,6 +248,7 @@ class DeliveryService:
                         f"Telegram API rejected delivery (HTTP {response.status_code})", delay
                     )
                 message_ref = str(data["result"]["message_id"])
+                telegram_date = data["result"].get("date")
                 returned_reply = data["result"].get("reply_to_message") or {}
                 response_reply_to_message_ref = (
                     str(returned_reply["message_id"])
@@ -289,6 +290,7 @@ class DeliveryService:
                         **sent_at.fields("sent_at"),
                         "status": "SENT",
                         "message_ref": message_ref,
+                        "telegram_date": telegram_date,
                         "response_reply_to_message_ref": response_reply_to_message_ref,
                     },
                     immutable=True,

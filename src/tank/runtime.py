@@ -26,6 +26,7 @@ SPEC_TIMEOUTS = {
     "MILESTONE_CHECK": 90,
     "REACTION_CAPTURE": 120,
     "SCOUT_REVIEW": 300,
+    "TELEGRAM_ANSWER": 10,
 }
 TIMEOUTS = {kind: seconds * TIMEOUT_SCALE for kind, seconds in SPEC_TIMEOUTS.items()}
 
@@ -53,6 +54,7 @@ class Runtime:
         delivery=None,
         scheduler=None,
         gateway=None,
+        inbox=None,
     ):
         from tank.logging import configure_logging
 
@@ -92,6 +94,11 @@ class Runtime:
         self.sources, self.market, self.truth = sources, market, truth
         self.pipeline, self.sessions, self.event_tools = pipeline, sessions, event_tools
         self.delivery = delivery or DeliveryService(repo, settings)
+        if inbox is None:
+            from tank.telegram_inbox import TelegramInbox
+
+            inbox = TelegramInbox(repo, settings)
+        self.inbox = inbox
         self.scheduler = scheduler or Scheduler(repo, settings, market, truth)
         if hasattr(self.event_tools, "scheduler"):
             self.event_tools.scheduler = self.scheduler
@@ -106,6 +113,7 @@ class Runtime:
             "MILESTONE_CHECK": self.scheduler.milestone_check,
             "REACTION_CAPTURE": self.scheduler.reaction_capture,
             "SCOUT_REVIEW": self.scout_review,
+            "TELEGRAM_ANSWER": self.inbox.answer,
         }
 
     def validate(self):
@@ -363,6 +371,7 @@ class Runtime:
             for name, service, flag in [
                 ("market", self.market, market_stop),
                 ("sessions", self.sessions, sessions_stop),
+                *([("telegram", self.inbox, sessions_stop)] if getattr(self, "inbox", None) else []),
             ]
         ]
         workers = [asyncio.create_task(self.worker(workers_stop, n), name=f"worker-{n}") for n in range(8)]
@@ -449,6 +458,7 @@ class Runtime:
             self.sessions,
             self.pipeline,
             self.delivery,
+            getattr(self, "inbox", None),
             self.event_tools,
             self.gateway,
         ):

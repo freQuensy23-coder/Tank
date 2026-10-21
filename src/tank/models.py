@@ -764,3 +764,16 @@ TABLE_COLUMNS["ops.market_migration_exports"] = {
     "created_at_prec_reason": "text",
 }
 APPEND_ONLY = APPEND_ONLY | {"ops.market_migration_exports"}
+
+TABLE_COLUMNS["ops.telegram_messages"] = {
+    "chat_id": "text",
+    "message_id": "bigint",
+    "user_id": "text",
+    "status": "text",
+}
+TABLE_COLUMNS["out.user_questions"] = {
+    "question_id": "text",
+    "session_id": "text",
+    "event_id": "text",
+    "status": "text",
+}
