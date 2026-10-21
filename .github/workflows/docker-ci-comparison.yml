@@ -1,0 +1,226 @@
+name: Vendor Compose validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      product_ref:
+        description: Exact frozen product commit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  images:
+    name: Ordinary build and smoke (${{ matrix.kind }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [tank, openma, capture, sandbox]
+    env:
+      PRODUCT_REF: ${{ inputs.product_ref }}
+      KIND: ${{ matrix.kind }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - name: Preserve QA-only frozen smokes outside product checkout
+        run: |
+          echo "QA_EVIDENCE_DIR=$RUNNER_TEMP/vendor-image-evidence" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/vendor-qa"
+          cp tools/validation/docker-smoke.py "$RUNNER_TEMP/vendor-qa/docker-smoke.py"
+          cp tools/validation/openma-build-benchmark.py "$RUNNER_TEMP/vendor-qa/openma-build-benchmark.py"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.product_ref }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        if: matrix.kind == 'openma'
+        with:
+          version: '0.9.5'
+          enable-cache: false
+      - name: Install real Python 3.12 for existing file-I/O tests
+        if: matrix.kind == 'openma'
+        run: uv python install 3.12
+      - name: Check hosted capacity and record tool versions
+        run: |
+          test "$(df --output=avail -B1 . | tail -n1)" -ge 12000000000
+          docker version
+          docker compose version
+          docker buildx version
+      - name: Ordinary cold and unchanged warm build, offline runtime checks
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,importlib.util,json,os,re,subprocess,sys,tarfile,time
+          root=Path(os.environ["GITHUB_WORKSPACE"])
+          expected=os.environ["PRODUCT_REF"]
+          kind=os.environ["KIND"]
+          out=Path(os.environ["QA_EVIDENCE_DIR"])
+          out.mkdir(parents=True,exist_ok=True)
+          def command(args):
+           process=subprocess.run(args,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE)
+           if process.stderr:print(process.stderr,file=sys.stderr,flush=True)
+           if process.returncode:
+            print(process.stdout,flush=True)
+            process.check_returncode()
+           return process.stdout.strip()
+          assert command(["git","rev-parse","HEAD"])==expected
+          task=Path(os.environ["RUNNER_TEMP"])/"vendor-build-inputs"
+          for name in ("secrets","backup","oci"):
+           (task/name).mkdir(parents=True,exist_ok=True)
+          for name in ("postgres_password","tank_db_password","oma_db_password","oma_api_key","oma_root_secret","oma_auth_secret","openrouter_api_key","opencode_api_key","telegram_bot_token","etherscan_api_key","tank_replay_agent_db_password","tank_agent_db_password","codex_gateway_key"):
+           (task/"secrets"/name).write_text("build-only-placeholder\n")
+          (task/"pg_hba.conf").write_text("local all all reject\n")
+          settings={"TANK_SECRETS_DIR":str(task/"secrets"),"TANK_BACKUP_PATH":str(task/"backup"),"TANK_PG_HBA_PATH":str(task/"pg_hba.conf"),"TANK_COMPOSE_CIDR":"172.31.240.0/24","TANK_SANDBOX_OCI_PATH":str(task/"oci"),"TANK_CONFIG_PATH":str(root/"config"),"KVM_GID":"65534","TANK_CAPTURE_GIT_SHA":expected}
+          envfile=task/"compose.env"
+          envfile.write_text("".join(f"{k}={v}\n" for k,v in settings.items()))
+          compose=["docker","compose","--env-file",str(envfile),"--progress","plain"]
+          if kind=="capture":
+           build=compose+["--profile","capture","build","tank-capture"]
+           image="tank-capture:local"
+          elif kind=="sandbox":
+           build=["docker","build","--progress","plain","-f","deploy/sandbox.Dockerfile","-t","tank-analysis:python3.12-local","."]
+           image="tank-analysis:python3.12-local"
+          else:
+           build=compose+["build",kind]
+           image={"tank":"tank-v0:persistent-no-x","openma":"tank-openma:local"}[kind]
+          (out/"compose-resolved.json").write_text(command(compose+["--profile","capture","config","--format","json"])+"\n")
+          initial_cache=command(["docker","buildx","du"])
+          def inspect():
+           v=json.loads(command(["docker","image","inspect",image]))[0]
+           return {"id":v["Id"],"bytes":v["Size"],"architecture":v["Architecture"],"os":v["Os"],"user":v["Config"]["User"]}
+          def build_once(label):
+           started=time.monotonic()
+           path=out/(label+".log")
+           with path.open("w") as log:
+            process=subprocess.Popen(build,cwd=root,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+            for line in process.stdout:
+             log.write(line);log.flush()
+             print(line,end="",flush=True)
+            code=process.wait()
+           elapsed=time.monotonic()-started
+           if code:raise RuntimeError(f"{label} failed: exit{code}")
+           text=path.read_text()
+           return {"seconds":elapsed,"image":inspect(),"cached_vertices":len(re.findall(r"(?m)^#\d+ CACHED$",text))}
+          result={"kind":kind,"product_ref":expected,"workflow_ref":os.environ["GITHUB_SHA"],"command":build,"cold_definition":"First build on a fresh hosted runner; no restored build cache.","initial_buildx_du":initial_cache,"cold":build_once("cold")}
+          result["warm"]=build_once("warm")
+          assert result["cold"]["image"]["id"]==result["warm"]["image"]["id"]
+          assert result["warm"]["cached_vertices"]>0
+          def module(name,path):
+           spec=importlib.util.spec_from_file_location(name,path)
+           mod=importlib.util.module_from_spec(spec)
+           sys.modules[name]=mod
+           spec.loader.exec_module(mod)
+           return mod
+          smoke=module("vendor_frozen_smoke",Path(os.environ["RUNNER_TEMP"])/"vendor-qa/docker-smoke.py")
+          smoke.ROOT=root
+          started=time.monotonic()
+          if kind=="tank":smoke.tank(image)
+          elif kind=="capture":smoke.capture(image,expected)
+          elif kind=="sandbox":smoke.sandbox(image)
+          else:
+           native_source=json.loads((root/"vendor/openma/tank-native/SOURCE.json").read_text())
+           archive=root/"vendor/openma/tank-native"/native_source["archive"]["path"]
+           assert hashlib.sha256(archive.read_bytes()).hexdigest()==native_source["archive"]["sha256"]
+           runtime=Path(os.environ["RUNNER_TEMP"])/"vendor-native-reference"
+           runtime.mkdir()
+           with tarfile.open(archive) as tar:tar.extractall(runtime,filter="data")
+           native=module("vendor_frozen_openma_smoke",Path(os.environ["RUNNER_TEMP"])/"vendor-qa/openma-build-benchmark.py")
+           result["openma_smoke"]=native.smoke_full_image(image,runtime)
+           files=native_source["runtime_files"]
+           paths=["/opt/tank-boxlite-runtime/"+r["path"] for r in files]
+           hashes=command(["docker","run","--rm","--network","none","--entrypoint","sha256sum",image,*paths])
+           actual={line.split("  ",1)[1]:line.split("  ",1)[0] for line in hashes.splitlines()}
+           modes=command(["docker","run","--rm","--network","none","--entrypoint","stat",image,"-c","%a %s %n",*paths])
+           attributes={line.split(" ",2)[2]:line.split(" ",2)[:2] for line in modes.splitlines()}
+           assert len(actual)==len(files)==18
+           for r,path in zip(files,paths):
+            assert actual[path]==r["sha256"],r["path"]
+            mode,size=attributes[path]
+            assert int(mode,8)==int(r["mode"],8) and int(size)==r["bytes"],r["path"]
+           licenses=["/usr/share/licenses/tank-boxlite-runtime/"+r["path"].removeprefix("licenses/") for r in native_source["licenses"]]
+           outputs=command(["docker","run","--rm","--network","none","--entrypoint","sha256sum",image,*licenses])
+           observed={line.split("  ",1)[1]:line.split("  ",1)[0] for line in outputs.splitlines()}
+           for record,path in zip(native_source["licenses"],licenses):assert observed[path]==record["sha256"]
+           result["native18"]={"status":"PASS","files":18,"bytes_hashes_modes_exact":True,"native_qualification":"NOT_RUN","licenses":len(licenses)}
+           vitest=["apps/main-node/test/tank-execution-status-faults.test.ts","apps/main-node/test/tank-session-executions-route.test.ts","apps/main-node/test/tank-stable-skill-paths.test.ts","apps/main-node/test/tank-existing-inputs-fixture-adapted.test.ts","packages/sandbox-adapter-litebox/test/tank-private-ip-network.test.ts"]
+           def appcheck(label,args,marker=False):
+            output=command(args)
+            print(output,flush=True)
+            (out/(label+".log")).write_text(output+"\n")
+            if marker:assert json.loads(output.splitlines()[-1])["status"]=="PASS",label
+            return {"status":"PASS","output_log":label+".log"}
+           result["vitest"]=appcheck("vitest",["docker","run","--rm","--network","none","--entrypoint","pnpm",image,"--dir","/app","exec","vitest","run",*vitest])
+           python=Path(command(["uv","python","find","--managed-python","3.12"])).resolve()
+           prefix=python.parent.parent
+           envs=["-e","TANK_AUDIT_OPENMA_ROOT=/app","-e","TANK_FILE_IO_TEST_PYTHON=/opt/qa-python/bin/"+python.name,"-e","TANK_SDK_CHECK_ROOT=/app"]
+           mounts=["--mount","type=bind,src="+str(root/"tests/openma")+",dst=/tests/openma,readonly","--mount","type=bind,src="+str(prefix)+",dst=/opt/qa-python,readonly"]
+           base=["docker","run","--rm","--network","none",*mounts,*envs,"--entrypoint","env",image,"-u","NODE_PATH","pnpm","--dir","/app/apps/main-node","exec","tsx"]
+           nodefiles=sorted(str(p.relative_to(root)) for folder in ("file-io","lifecycle","replay") for p in (root/"tests/openma"/folder).glob("*.test.mjs"))
+           assert len(nodefiles)==7
+           result["node_suites"]=appcheck("node-suites",base+["--test","--test-reporter=tap",*("/"+p for p in nodefiles)])
+           tap=(out/"node-suites.log").read_text()
+           counts={name:int(re.search(r"(?m)^# "+name+r" (\d+)$",tap).group(1)) for name in ("tests","pass","fail","skipped")}
+           assert counts=={"tests":73,"pass":73,"fail":0,"skipped":0},counts
+           result["node_suites"]["counts"]=counts
+           cases=[
+            ("history",["/tests/openma/execution/test-history.mjs","/app"]),
+            ("status",["/tests/openma/execution/test-status.mjs","/app"]),
+            ("output-lifetime",["/tests/openma/execution/output-lifetime-child.mjs","controls"]),
+            ("pinned-runner",["/tests/openma/lifecycle/pinned-runner.integration.mjs"]),
+            ("pinned-provider",["/tests/openma/lifecycle/pinned-provider.integration.mjs"]),
+            ("sdk-context",["/tests/openma/lifecycle/sdk-context-initialization.check.mjs"])]
+           result["existing_app_integrations"]={label:appcheck(label,base+args,marker=True) for label,args in cases}
+          result["smoke_seconds"]=time.monotonic()-started
+          result["status"]="PASS"
+          (out/"result.json").write_text(json.dumps(result,indent=2)+"\n")
+          print(json.dumps(result,indent=2))
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: vendor-static-${{ matrix.kind }}
+          path: |
+            ${{ env.QA_EVIDENCE_DIR }}/*.json
+            ${{ env.QA_EVIDENCE_DIR }}/*.log
+          if-no-files-found: error
+
+  behavior:
+    name: Existing Python application tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.product_ref }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          version: '0.9.5'
+          enable-cache: false
+      - name: Run the preserved application behavior tests
+        run: |
+          uv sync --frozen --extra dev
+          uv run --frozen pytest -q tests/test_deploy.py tests/test_openma_browser_worker.py tests/test_skill_alias_claims.py --junitxml="$RUNNER_TEMP/vendor-python.xml"
+          python3 - <<'PY'
+          import os,xml.etree.ElementTree as ET
+          root=ET.parse(os.environ["RUNNER_TEMP"]+"/vendor-python.xml").getroot()
+          suites=[root] if root.tag=="testsuite" else list(root.iter("testsuite"))
+          assert sum(int(s.get("tests",0)) for s in suites)==24
+          assert sum(int(s.get(k,0)) for s in suites for k in ("failures","errors","skipped"))==0
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: vendor-static-python-behavior
+          path: ${{ runner.temp }}/vendor-python.xml
+          if-no-files-found: error
