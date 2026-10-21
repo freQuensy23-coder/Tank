@@ -1,22 +1,25 @@
-.git
-.venv
+# Only the application, locked dependencies and operational deployment assets are
+# needed by the main image. Tests, evidence, captures and local checkouts stay out.
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
+!src/
+!src/**
+!deploy/
+!deploy/**
+
+# Exclusions still apply inside the allowed trees.
+**/.git
 **/__pycache__
-.pytest_cache
-.ruff_cache
-.env
-.env.*
-data
-logs
-codex-auth
-chrome-profile
-browser
-backup
-secrets
+**/*.py[cod]
+**/*.egg-info
+**/node_modules
+**/.venv
+**/.env
+**/.env.*
 **/auth.json
 **/*storage-state*.json
-fixture_check/data
-deploy/generated
-*.egg-info
-
-deploy/operator.env
 **/secrets/**
+deploy/generated
+deploy/operator.env

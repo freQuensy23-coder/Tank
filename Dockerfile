@@ -8,12 +8,24 @@ COPY --from=pgclient /usr/lib/postgresql/16/bin/pg_dump /usr/local/bin/pg_dump
 COPY --from=pgclient /usr/lib/postgresql/16/bin/pg_restore /usr/local/bin/pg_restore
 COPY --from=pgclient /usr/lib/postgresql/16/bin/psql /usr/local/bin/psql
 WORKDIR /app
-ENV UV_PROJECT_ENVIRONMENT=/opt/tank/venv PATH=/opt/tank/venv/bin:$PATH PLAYWRIGHT_BROWSERS_PATH=/opt/playwright PYTHONUNBUFFERED=1
+ENV UV_PROJECT_ENVIRONMENT=/opt/tank/venv \
+    UV_LINK_MODE=copy \
+    PATH=/opt/tank/venv/bin:$PATH \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/playwright \
+    PYTHONUNBUFFERED=1
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
-RUN /opt/tank/venv/bin/python -m playwright install --with-deps chromium
+# Keep downloaded wheels/build backends outside image layers and reusable on rebuilds.
+RUN --mount=type=cache,id=tank-uv,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project
+RUN /opt/tank/venv/bin/python -m playwright install --with-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+# Source edits must not repeat account and writable-directory preparation.
+RUN useradd --create-home --uid 1000 tank \
+    && mkdir -p /data/replay/evidence /browser /codex-auth /backup \
+    && chown -R tank:tank /data /browser /codex-auth /backup
 COPY src ./src
-RUN uv sync --frozen --no-dev && useradd --create-home --uid 1000 tank && mkdir -p /data/replay/evidence /browser /codex-auth /backup && chown -R tank:tank /data /browser /codex-auth /backup
+RUN --mount=type=cache,id=tank-uv,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
 COPY deploy /app/deploy
 USER tank
 ENTRYPOINT ["/usr/bin/tini", "--", "/opt/tank/venv/bin/python", "/app/deploy/tank_entrypoint.py"]

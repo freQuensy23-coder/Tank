@@ -14,6 +14,46 @@ PIN = "85d5361f535c7221de975838dc48444e468cc02e"
 BASE = Path(__file__).resolve().parent
 
 
+def prepare_dockerfile(docker):
+    """Render the shared build stages; native assembly remains in guarded prepare()."""
+
+    def edit_docker(old, new, count=1):
+        nonlocal docker
+        if docker.count(old) != count:
+            raise ValueError("Dockerfile patch context mismatch")
+        docker = docker.replace(old, new)
+
+    edit_docker("FROM node:22-slim", "FROM node:24-bookworm-slim", count=2)
+    edit_docker("AS runtime\n", "AS runtime\nENV COREPACK_HOME=/opt/corepack\n")
+    edit_docker("&& corepack enable", "&& corepack enable && corepack prepare pnpm@11.0.8 --activate")
+    # Fetch from the frozen workspace lock before copying package source. The
+    # upstream COPY packages includes every TypeScript edit, which otherwise
+    # invalidates the download step even when no dependency changed.
+    metadata = "COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .pnpm-approve-builds.json ./"
+    edit_docker(
+        metadata,
+        metadata
+        + "\nRUN --mount=type=cache,id=tank-openma-pnpm11,target=/pnpm/store,sharing=locked"
+        + " corepack enable"
+        + " && corepack prepare pnpm@11.0.8 --activate"
+        + " && pnpm fetch --frozen-lockfile --store-dir=/pnpm/store",
+    )
+    edit_docker(
+        "RUN corepack enable \\\n  && pnpm install --frozen-lockfile",
+        "RUN --mount=type=cache,id=tank-openma-pnpm11,target=/pnpm/store,sharing=locked"
+        + " pnpm install --offline --frozen-lockfile --store-dir=/pnpm/store",
+    )
+    # Runtime assets do not participate in the console build. The entrypoint
+    # reads the complete native bundle from /opt/tank-boxlite-runtime below;
+    # copying that bundle under /app as well would duplicate it in the image.
+    edit_docker(
+        "COPY --from=deps /app /app",
+        "COPY --from=deps /app /app\n"
+        + "COPY tank-deploy/openma_entrypoint.mjs /app/tank-deploy/openma_entrypoint.mjs",
+    )
+    return docker
+
+
 def prepare(source, destination, boxlite_runtime=None):
     source = Path(source).resolve()
     destination = Path(destination).resolve()
@@ -285,15 +325,7 @@ def prepare(source, destination, boxlite_runtime=None):
     deploy.mkdir()
     shutil.copy(BASE / "openma_entrypoint.mjs", deploy / "openma_entrypoint.mjs")
     shutil.copytree(boxlite_runtime, deploy / "boxlite-runtime")
-    docker = (destination / "apps/main-node/Dockerfile").read_text()
-    docker = docker.replace("FROM node:22-slim", "FROM node:24-bookworm-slim")
-    docker = docker.replace(
-        "COPY tsconfig.json ./", "COPY tsconfig.json ./\nCOPY tank-deploy /app/tank-deploy"
-    )
-    docker = docker.replace("AS runtime\n", "AS runtime\nENV COREPACK_HOME=/opt/corepack\n")
-    docker = docker.replace(
-        "&& corepack enable", "&& corepack enable && corepack prepare pnpm@11.0.8 --activate"
-    )
+    docker = prepare_dockerfile((destination / "apps/main-node/Dockerfile").read_text())
     executables = " ".join(
         "/opt/tank-boxlite-runtime/" + name
         for name in sorted(runtime_metadata["files"])
