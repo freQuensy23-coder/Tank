@@ -240,11 +240,17 @@ class SourcePoller:
                     found_on.update(dict.fromkeys(page_snapshot, len(pages)))
                     pages.append((page, page_state.get("fetched_at") or self.stamp()))
                     cursor = json.loads(page).get("result", {}).get("nextPageCursor")
-            # Diff against the newest snapshot, including one still pending.
-            previous = state.get("instruments")
-            for batch in state.get("pending_batches", []):
-                if "instruments" in batch["coverage"]:
-                    previous = batch["coverage"]["instruments"]
+            # Diff against the newest snapshot. It lives in its own document, written
+            # only when it changes, so the feed checkpoint stays small.
+            snapshot_key = key + ":instruments"
+            stored = await self.state(snapshot_key)
+            previous = stored.get("instruments")
+            if previous is None:
+                # Checkpoints written before the split kept the snapshot inline.
+                previous = state.get("instruments")
+                for batch in state.get("pending_batches", []):
+                    if "instruments" in batch["coverage"]:
+                        previous = batch["coverage"]["instruments"]
             if previous is not None and str(feed.get("venue", "")).lower() == "coinbase":
                 # Pre-v2 snapshots did not observe these flags. Establish their
                 # baseline now; missing historical fields are not false statuses.
@@ -285,7 +291,9 @@ class SourcePoller:
                                 else "STATE_UPDATE",
                             }
                         )
-            state["instruments"] = snapshot
+            digest = sha256(snapshot)
+            if stored.get("sha256") != digest:
+                await self.save(snapshot_key, {"sha256": digest, "instruments": snapshot})
         elif kind in {"rss", "atom", "feed"}:
             rows = await asyncio.to_thread(parsers.feeds, payload, sid, feed)
             state["entry_errors"] = [
@@ -505,7 +513,6 @@ class SourcePoller:
                         coverage = {
                             field: acquired[field]
                             for field in (
-                                "instruments",
                                 "instrument_snapshot_schema_version",
                                 "pending_proposals",
                                 "discovery_checkpoint",
@@ -555,6 +562,7 @@ class SourcePoller:
                         if field in acquired:
                             current[field] = acquired[field]
                     current.pop("acquisition_error", None)
+                    current.pop("instruments", None)
                     if not any(batch["rows"] for batch in current.get("pending_batches", [])):
                         current["article_errors"] = {}
                     count_read(current, "reads", ok=True)
@@ -796,6 +804,7 @@ class SourcePoller:
                 while current.get("pending_batches") and not current["pending_batches"][0]["rows"]:
                     batch = current["pending_batches"].pop(0)
                     current.update(batch["coverage"])
+                    current.pop("instruments", None)
                 current["article_errors"] = article_errors
                 if duplicates:
                     current["duplicate_ids"] = (current.get("duplicate_ids", []) + duplicates)[-1000:]
