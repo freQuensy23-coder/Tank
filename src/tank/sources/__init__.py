@@ -12,7 +12,7 @@ import re
 import ssl
 from copy import deepcopy
 from pathlib import Path
-from urllib.parse import parse_qsl, urlsplit
+from urllib.parse import urlsplit
 
 import certifi
 import httpx
@@ -105,13 +105,9 @@ class SourceService:
             else host
         )
         weight = feed.get("request_weight", 1)
-        if provider in {"binance.spot", "binance.usdm"}:
-            from tank.market.rate_gate import binance_request_weight
-
-            parts = urlsplit(feed["url"])
-            weight = binance_request_weight(host, parts.path, dict(parse_qsl(parts.query)))
         for rule in self.api_limits:
-            if rule.get("provider") != provider:
+            # Exchange hosts are budgeted by tank-capture, which makes the request.
+            if rule.get("provider") != provider or is_exchange_url(feed["url"]):
                 continue
             if rule.get("tank_max_requests_per_s") is not None:
                 await shared_request_budgets.acquire(provider, rule["tank_max_requests_per_s"], 1, host=host)

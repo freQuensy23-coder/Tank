@@ -23,6 +23,7 @@ from tank.market_storage import (
     market_series_day_counts,
     sampled_market_history,
 )
+from tank.sources.capture_fetch import is_exchange_url
 from tank.time_precision import Timestamp, chosen_boundary, collection_clock, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time, sha256, utcnow
 
@@ -153,20 +154,6 @@ FLUSH_ROWS = 500  # typed rows per write; a live flush can run between two of th
 SOURCE_BUCKETED_OI, SOURCE_BUCKET_S = ("bybit.linear.open-interest", "binance.usdm.openInterestHist"), 300.0
 # Requests in flight per venue host (Kraken: 1).
 HOST_IN_FLIGHT = 4
-# tank-capture (capture/README.md) is the only client of these.
-EXCHANGE_HOSTS = frozenset(
-    {
-        "api.binance.com",
-        "fapi.binance.com",
-        "data.binance.vision",
-        "api.exchange.coinbase.com",
-        "api.kraken.com",
-        "www.okx.com",
-        "openapi.okx.com",
-        "api.bybit.com",
-        "api.hyperliquid.xyz",
-    }
-)
 EXCHANGE_REST_OWNER = "exchange REST belongs to tank-capture (capture/README.md)"
 # tank-capture rewrites its stream state every few seconds; an older row is a stopped writer.
 STREAM_STATE_STALE_S = 30
@@ -255,8 +242,6 @@ def funding_confirmations(observations, *, distinct_paths=False):
                 (rest, min(near, key=lambda item: (abs((item[0] - at).total_seconds()), item[1]))[2])
             )
     return pairs
-
-
 
 
 class MarketService:
@@ -461,7 +446,7 @@ class MarketService:
 
         priority = kwargs.pop("_priority", 0)
         host = httpx.URL(url).host
-        if host in EXCHANGE_HOSTS:
+        if is_exchange_url(url):
             raise RuntimeError(EXCHANGE_REST_OWNER)
         interval = 0.35 if host == "api.etherscan.io" else 0.08
         lock = self._request_locks.setdefault(host, PriorityGate(HOST_IN_FLIGHT))
@@ -3446,4 +3431,3 @@ class MarketService:
             self._kline_day_counts.pop(key, None)
         await self._save_day_counts()
         return now
-

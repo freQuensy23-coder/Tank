@@ -28,6 +28,7 @@ EXCHANGE_FETCH_HOSTS = frozenset(
         "api.exchange.coinbase.com",
         "api.kraken.com",
         "www.okx.com",
+        "openapi.okx.com",
         "api.bybit.com",
         "api.hyperliquid.xyz",
     }

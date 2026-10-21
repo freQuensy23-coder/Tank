@@ -45,7 +45,7 @@ async def test_concurrent_requests_overlap_but_start_one_interval_apart(setup): 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = MarketService(repo, settings, http=http)
         await asyncio.gather(
-            *(service._request("GET", "https://api.bybit.com/v5/market/time") for _ in range(4))
+            *(service._request("GET", "https://api.llama.fi/summary/fees/abc") for _ in range(4))
         )
     gaps = [b - a for a, b in zip(sorted(starts), sorted(starts)[1:], strict=False)]
     assert peak[0] > 1  # several in flight

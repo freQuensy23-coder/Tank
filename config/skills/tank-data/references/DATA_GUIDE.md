@@ -745,6 +745,8 @@ All RSS; item key `guid` (else `link`); fields title, link, pubDate, description
 
 ## 4. Market data catalog
 
+**The sandbox never connects to an exchange.** tank-capture is the only client of the exchange hosts below; it records trades, books, klines, OI and funding into the `mkt.*` tables, which the agent reads with `psql "$TANK_DB_URL"`. The endpoints are listed so the agent knows what each column came from, not to call them.
+
 Tank-side request budgets are set at ≤ 50% of each venue's documented limit. Binance limits below were read from `exchangeInfo.rateLimits`. Instrument symbols per venue are listed in 03 §2.11.
 
 ### 4.1 Binance Spot
@@ -1217,7 +1219,7 @@ RETURNING *;
 Metric meaning and units come from the authoritative field registry, without runtime semantic-confidence or self-test gates. Any `semantic_confidence` columns retained in the physical schema are legacy storage and do not gate interpretation, Data Confidence or decisions.
 
 
-# Executable sandbox access and shared API limits
+# Executable sandbox access
 
 Connect only through the injected read-only `TANK_DB_URL`; never print that URL. PostgreSQL access is read-only as `tank_agent`. The following examples perform reads; results from own scripts inform analysis and are not card numbers. Facts still require quotes stored through Tank tools.
 
@@ -1253,7 +1255,7 @@ DuckDuckGo search needs **no API key** and costs zero. Use Tank's custom `web_se
 
 Etherscan reads use `GET https://api.etherscan.io/v2/api` with `chainid`, `module=account`, `action=tokenbalance` or `tokentx`, token contract/wallet and `apikey=os.environ["ETHERSCAN_API_KEY"]`. Use the verified token contract and chain ID; no ticker guessing. Do not print a request URL containing its API key. DefiLlama uses key-free `https://api.llama.fi/summary/fees/{verified_slug}?dataType=dailyFees|dailyRevenue|dailyHoldersRevenue`, `https://api.llama.fi/protocols`, `https://api.llama.fi/v2/chains`, `https://defillama-datasets.llama.fi/emissions/{unlock_slug}`, `https://stablecoins.llama.fi/stablecoincharts/{chain}`, and `https://yields.llama.fi/lendBorrow`. Fee protocol slugs and unlock slugs are different namespaces. Do not sum parent rollups and children twice. Missing provider metrics remain unavailable, never zero. Lending utilization fetches only `/lendBorrow`; its UUIDs are resolved using versioned `registry.yaml` `lending_pool_catalog` entries (`pool_id`, `project`, `chain`, `underlying_tokens`) with retained source hash/capture time. Runtime never fetches `/pools` for identity enrichment, and unknown UUIDs stay explicitly unmapped rather than guessing chain/protocol.
 
-The sandbox and Tank service **share the same venue/IP limits**. The service reserves at most one half of each documented limit; sandbox scripts share the other half across all active sessions. The combined service plus sandbox traffic must remain within the full documented venue/IP quota. Do not spend the service half again or assume every sandbox has its own quota. If you cannot establish remaining capacity in the sandbox half, use cached database data or Tank custom tools and defer direct provider calls; a separate local sleep loop does not establish global capacity. Consult cached Tank data first. Known baseline ceilings for the service are Binance spot 3,000 request-weight/minute (documented 6,000), Binance USD-M 1,200/minute (documented 2,400), Coinbase 5 requests/second, Kraken 1 request/second, and SEC 5 requests/second (half of documented 10). Respect endpoint weights and independent endpoint buckets, not just request counts. Read Binance used-weight headers. For endpoint-specific undocumented quotas, record UNKNOWN and honor actual Retry-After rather than fabricate a universal cap. Agents must never print keys, persist them to files, or send them to endpoints other than their own API. Replay receives only its read-only database URL and no external API credentials.
+The sandbox does not call exchange APIs or WebSockets. Exchange data is in the `mkt.*` tables below, written only by tank-capture; read it there.
 
 
 # Actual typed market tables after migration 027
@@ -1899,9 +1901,9 @@ This manifest is generated from current `sources.yaml` and takes precedence for 
 
 Binance spot/futures weights depend on endpoint and limit; see config/api_limits.yaml and the documented used-weight headers. USD-M fundingRate/fundingInfo have a shared500requests/5minutes cap (Tank≤250), and openInterestHist has a separate1000requests/5minutes cap (Tank≤500). The native archive endpoints remain read-only and checksum verified.
 
-Bybit official HTTP IP quota is600requests/5seconds, so the service budget is at most300/5seconds; all sandbox sessions share the other300/5seconds. Hyperliquid official aggregate HTTP quota is1200weight/minute, Tank≤600: l2Book/allMids cost2; the ordinary info requests Tank uses cost20; userRole costs60. fundingHistory/recentTrades add weight per20returned items and candleSnapshot per60. Preserve these response-size weights. Etherscan free tier documents3calls/second and100000/day on selected chains; the service half-budget is1.5/second and50000/day; all sandbox sessions share the remaining half. An unsupported free-tier chain remains n/a.
+Bybit official HTTP IP quota is600requests/5seconds, so tank-capture budgets at most300/5seconds. Hyperliquid official aggregate HTTP quota is1200weight/minute, Tank≤600: l2Book/allMids cost2; the ordinary info requests Tank uses cost20; userRole costs60. fundingHistory/recentTrades add weight per20returned items and candleSnapshot per60. Preserve these response-size weights. Etherscan free tier documents3calls/second and100000/day on selected chains; the service half-budget is1.5/second and50000/day; all sandbox sessions share the remaining half. An unsupported free-tier chain remains n/a.
 
-OKX official endpoint limits are per2seconds; the service may reserve at most half, while all sandbox sessions share the other half:
+OKX official endpoint limits are per2seconds; tank-capture reserves at most half:
 
 | Endpoint | Documented requests/2s | Service budget/2s | Scope |
 |---|---|---|---|

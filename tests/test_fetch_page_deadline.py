@@ -161,3 +161,29 @@ def test_existing_session_error_protocol_accepts_wall_timeout():
     assert error["category"] == "TOOL_EXECUTION"
     assert isinstance(asyncio.CancelledError(), BaseException)
     assert not isinstance(asyncio.CancelledError(), Exception)
+
+
+@pytest.mark.asyncio
+async def test_exchange_page_is_fetched_by_tank_capture(tmp_path, monkeypatch):
+    def handler(request):
+        raise AssertionError("core reached an exchange host: " + request.url.host)
+
+    service, client = await setup(tmp_path, handler, False, monkeypatch)
+    url = "https://www.binance.com/en/support/announcement/abc"
+
+    async def tank_capture():
+        while not (rows := await service.repo.list("mkt.capture_requests")):
+            await asyncio.sleep(0.01)
+        row = rows[0]
+        assert row["kind"] == "HTTP_FETCH" and row["request"]["url"] == url
+        row.update(
+            status="COMPLETE",
+            result={"status_code": 200, "content_type": "text/html", "body": "<p>listed</p>"},
+        )
+        await service.repo.put("mkt.capture_requests", row["request_id"], row)
+
+    async with client:
+        worker = asyncio.create_task(tank_capture())
+        item = await service.fetch_page({"url": url}, {})
+        await worker
+    assert "listed" in str(item)

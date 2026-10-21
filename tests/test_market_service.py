@@ -419,38 +419,6 @@ def test_missing_oi_field_is_data_error_without_runtime_semantic_promotion():
 
 
 @pytest.mark.asyncio
-async def test_market_and_sources_share_weighted_binance_budget(setup, monkeypatch):
-    from tank.market.rate_gate import binance_request_weight
-    from tank.sources.rate_limits import shared_request_budgets
-
-    repo, settings, _ = setup
-    calls = []
-
-    async def acquire(key, capacity, window_s, *, weight=1, priority=0, host=None):
-        calls.append((key, capacity, window_s, weight))
-
-    monkeypatch.setattr(shared_request_budgets, "acquire", acquire)
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={}))
-    ) as client:
-        service = MarketService(repo, settings, http=client)
-        await service._request(
-            "GET", "https://api.binance.com/api/v3/depth", params={"symbol": "BTCUSDT", "limit": 1000}
-        )
-        await service._request("GET", "https://fapi.binance.com/fapi/v1/fundingInfo")
-        await service._request("GET", "https://fapi.binance.com/futures/data/openInterestHist")
-    assert calls == [
-        ("binance.spot", 3000, 60, 50),
-        ("binance.usdm.funding", 250, 300, 1),
-        ("binance.usdm.statistics", 500, 300, 1),
-    ]
-    assert binance_request_weight("fapi.binance.com", "/fapi/v1/aggTrades", {}) == 20
-    assert binance_request_weight("fapi.binance.com", "/fapi/v1/klines", {"limit": 1000}) == 5
-    with pytest.raises(ValueError, match="Unconfigured"):
-        binance_request_weight("api.binance.com", "/unverified-new-endpoint", {})
-
-
-@pytest.mark.asyncio
 async def test_capture_wait_is_bounded_and_late_completion_supersedes_timeout(setup):
     import asyncio
 
@@ -534,24 +502,6 @@ async def test_hot_expiry_protection_is_scoped_to_event_and_token(setup):
 
     assert restored["expires_at"] == iso(parse_time(restored["since"]) + timedelta(hours=72))
     await service.close()
-
-
-def test_documented_provider_scopes_and_hyperliquid_base_reservation():
-    from tank.market.rate_gate import public_request_constraints
-
-    def budgets(host, path="/info", params=None, payload=None):
-        return public_request_constraints(host, path, params or {}, payload or {})
-
-    assert budgets("api.bybit.com") == [("bybit", 300, 5, 1)]
-    a = budgets("www.okx.com", "/api/v5/public/funding-rate", {"instId": "BTC-USDT-SWAP"})
-    b = budgets("www.okx.com", "/api/v5/public/funding-rate", {"instId": "ETH-USDT-SWAP"})
-    assert a[0][0] != b[0][0] and a[0][1:] == (5, 2, 1)
-    with pytest.raises(ValueError):  # unlisted endpoints are not admitted (audit W10)
-        budgets("api.hyperliquid.xyz", payload={"type": "recentTrades"})
-    candle = {"type": "candleSnapshot", "req": {"interval": "1m", "startTime": 0, "endTime": 180000}}
-    assert budgets("api.hyperliquid.xyz", payload=candle) == [("hyperliquid", 600, 60, 21)]
-    with pytest.raises(ValueError):
-        budgets("www.okx.com", "/new-undocumented-path")
 
 
 @pytest.mark.asyncio

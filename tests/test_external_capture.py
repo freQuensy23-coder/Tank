@@ -15,7 +15,6 @@ import pytest
 import yaml
 from test_storage_typed_market import typed_repo  # noqa: F401
 
-from tank.market.archive import fetch_archive
 from tank.market.normalize import timestamp_fields
 from tank.market.service import CAPTURE_REQUEST_GRACE_S, EXCHANGE_REST_OWNER, MarketService
 from tank.settings import Settings
@@ -261,8 +260,6 @@ async def test_external_capture_never_calls_exchange_rest(settings):
         # Supply sources are not exchange market data: they stay with this process.
         assert await service._request("GET", "https://api.llama.fi/summary/fees/abc") == {"ok": True}
         assert hosts == ["api.llama.fi"]
-        with pytest.raises(RuntimeError, match="tank-capture"):
-            await fetch_archive(service.repo, settings, "ABCUSDT", "2026-10-01", market=service)
         assert EXCHANGE_REST_OWNER.startswith("exchange REST")
         await service.close()
 
