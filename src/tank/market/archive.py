@@ -5,6 +5,7 @@ import csv
 import hashlib
 import io
 import itertools
+import logging
 import os
 import threading
 import time
@@ -16,6 +17,8 @@ from urllib.parse import quote
 
 from tank.time_precision import collection_clock
 from tank.util import canonical_json, iso, parse_time, utcnow
+
+log = logging.getLogger(__name__)
 
 
 class ArchiveIntegrityError(ValueError):
@@ -205,7 +208,13 @@ class HourlyParquet:
         ]
         sealed = []
         for canonical in sorted(set(due)):
-            self.seal(canonical)
+            try:
+                self.seal(canonical)
+            except Exception as exc:  # noqa: BLE001 - one bad hour must not stop writes or other seals
+                # Journals stay on disk and the hour is retried on the next write.
+                self._orphans.add(Path(canonical))
+                log.warning("seal of %s failed: %s", canonical, type(exc).__name__)
+                continue
             sealed.append(str(canonical))
         return sealed
 
@@ -224,6 +233,8 @@ class HourlyParquet:
                     while True:
                         try:
                             batch = reader.read_next_batch()
+                            # A batch cut mid-write can parse yet point outside its buffers.
+                            batch.validate(full=True)
                         except StopIteration:
                             break
                         except (pa.ArrowInvalid, OSError):
