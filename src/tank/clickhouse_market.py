@@ -133,6 +133,8 @@ class ClickHouse:
             "date_time_output_format": "iso",
             "output_format_json_quote_64bit_integers": "0",
             "output_format_json_quote_decimals": "0",
+            # Every identity holds its partition's day, so FINAL never merges across days.
+            "do_not_merge_across_partitions_select_final": "1",
         }
         for name, (value, _) in (params or {}).items():
             request["param_" + name] = value
@@ -258,13 +260,32 @@ def _table(collection):
     return f"{collection} FINAL"
 
 
+async def _select(ch, collection, q, order, tail="", selected="*"):
+    """SELECT {selected} ... ORDER BY {order} {tail} in two steps: the keys of the chosen rows
+    first (FINAL over the sort and filter columns only), then those rows whole. One step
+    would merge every column of the whole range (2 GB on a 90-day klines head)."""
+    day = MARKET_TABLES[collection]
+    keys = await ch.rows(
+        f"SELECT storage_key, `{day}` AS _day FROM {_table(collection)} WHERE {q.predicate()} ORDER BY {order} {tail}",
+        q.params,
+    )
+    if not keys:
+        return []
+    days = [parse_time(r["_day"]) for r in keys]
+    k = Query()
+    k.where(f"`{day}` >= {k.param(min(days), DT)}")
+    k.where(f"`{day}` <= {k.param(max(days), DT)}")
+    k.where(f"storage_key IN {k.param([r['storage_key'] for r in keys], 'Array(String)')}")
+    return await ch.rows(f"SELECT {selected} FROM {_table(collection)} WHERE {k.predicate()} ORDER BY {order}", k.params)
+
+
 # --- generic repository reads -------------------------------------------------------------
 
 
 async def get(ch, collection, key):
     q = Query()
     q.where(f"storage_key = {q.param(str(key), 'String')}")
-    rows = await ch.rows(f"SELECT * FROM {_table(collection)} WHERE {q.predicate()} LIMIT 1", q.params)
+    rows = await _select(ch, collection, q, "storage_key", "LIMIT 1")
     return _record(collection, rows[0]) if rows else None
 
 
@@ -283,11 +304,7 @@ async def range_page(
             f"(`{time_field}`, storage_key) > ({q.param(parse_time(after[0]), DT)}, {q.param(str(after[1]), 'String')})"
         )
     _filters(q, collection, filters)
-    rows = await ch.rows(
-        f"SELECT * FROM {_table(collection)} WHERE {q.predicate()} ORDER BY `{time_field}`, storage_key "
-        f"LIMIT {int(limit)}",
-        q.params,
-    )
+    rows = await _select(ch, collection, q, f"`{time_field}`, storage_key", f"LIMIT {int(limit)}")
     records = await _decode(collection, rows)
     return [(rec, (rec[time_field], row["storage_key"])) for rec, row in zip(records, rows, strict=True)]
 
@@ -297,11 +314,7 @@ async def latest_before(ch, collection, time_field, cutoff, *, filters=None):
     q = Query()
     q.where(f"`{time_field}` < {q.param(parse_time(cutoff), DT)}")
     _filters(q, collection, filters)
-    rows = await ch.rows(
-        f"SELECT * FROM {_table(collection)} WHERE {q.predicate()} "
-        f"ORDER BY `{time_field}` DESC, storage_key DESC LIMIT 1",
-        q.params,
-    )
+    rows = await _select(ch, collection, q, f"`{time_field}` DESC, storage_key DESC", "LIMIT 1")
     return _record(collection, rows[0]) if rows else None
 
 
@@ -310,10 +323,7 @@ async def all_page(ch, collection, *, filters=None, after=None, limit=1000):
     _filters(q, collection, filters)
     if after is not None:
         q.where(f"storage_key > {q.param(str(after), 'String')}")
-    rows = await ch.rows(
-        f"SELECT * FROM {_table(collection)} WHERE {q.predicate()} ORDER BY storage_key LIMIT {int(limit)}",
-        q.params,
-    )
+    rows = await _select(ch, collection, q, "storage_key", f"LIMIT {int(limit)}")
     records = await _decode(collection, rows)
     return [(row["storage_key"], rec) for row, rec in zip(rows, records, strict=True)]
 
@@ -327,11 +337,7 @@ async def list_latest(ch, collection, time_field, *, filters=None, limit=100, st
         q.where(f"`{time_field}` >= {q.param(parse_time(start), DT)}")
     if end is not None:
         q.where(f"`{time_field}` < {q.param(parse_time(end), DT)}")
-    rows = await ch.rows(
-        f"SELECT * FROM {_table(collection)} WHERE {q.predicate()} "
-        f"ORDER BY `{time_field}` DESC, storage_key DESC LIMIT {int(limit)}",
-        q.params,
-    )
+    rows = await _select(ch, collection, q, f"`{time_field}` DESC, storage_key DESC", f"LIMIT {int(limit)}")
     return await _decode(collection, rows)
 
 
@@ -350,11 +356,7 @@ async def late_page(
         q.where(
             f"(`{arrival_field}`, storage_key) > ({q.param(after[0], DT)}, {q.param(str(after[1]), 'String')})"
         )
-    rows = await ch.rows(
-        f"SELECT * FROM {_table(collection)} WHERE {q.predicate()} "
-        f"ORDER BY `{arrival_field}`, storage_key LIMIT {int(limit)}",
-        q.params,
-    )
+    rows = await _select(ch, collection, q, f"`{arrival_field}`, storage_key", f"LIMIT {int(limit)}")
     records = await _decode(collection, rows)
     return [
         (rec, (parse_time(rec[arrival_field]), row["storage_key"]))
@@ -379,10 +381,8 @@ async def latest_market_records(
     if instrument_ids is not None:
         _ids(q, instrument_ids)
     groups = ", ".join(f"`{g}`" for g in group_by)
-    rows = await ch.rows(
-        f"SELECT * FROM {_table(collection)} WHERE {q.predicate()} "
-        f"ORDER BY {groups}, `{time_field}` DESC NULLS LAST, storage_key DESC LIMIT 1 BY {groups}",
-        q.params,
+    rows = await _select(
+        ch, collection, q, f"{groups}, `{time_field}` DESC NULLS LAST, storage_key DESC", f"LIMIT 1 BY {groups}"
     )
     return await _decode(collection, rows)
 
@@ -556,10 +556,8 @@ async def sampled_market_history(
     q.where(f"`{time_field}` < {q.param(end, DT)}")
     groups = ", ".join(["instrument_id", *(f"`{g}`" for g in group_fields)])
     bucket = f"intDiv(toUnixTimestamp(`{time_field}`), {int(bucket_s)})"
-    rows = await ch.rows(
-        f"SELECT * FROM {_table(collection)} WHERE {q.predicate()} "
-        f"ORDER BY {groups}, {bucket}, `{time_field}` DESC LIMIT 1 BY {groups}, {bucket}",
-        q.params,
+    rows = await _select(
+        ch, collection, q, f"{groups}, {bucket}, `{time_field}` DESC, storage_key DESC", f"LIMIT 1 BY {groups}, {bucket}"
     )
     records = await _decode(collection, rows)
     return sorted(records, key=lambda r: r[time_field])
@@ -582,10 +580,8 @@ async def range_by_instrument_page(
             f"{q.param(after[1], DT)}, {q.param(after[2], 'String')})"
         )
     selected = "*" if levels else "* EXCEPT (bids, asks)" if collection == "mkt.book_summaries" else "*"
-    rows = await ch.rows(
-        f"SELECT {selected} FROM {_table(collection)} WHERE {q.predicate()} "
-        f"ORDER BY instrument_id, `{time_field}`, storage_key LIMIT {int(limit)}",
-        q.params,
+    rows = await _select(
+        ch, collection, q, f"instrument_id, `{time_field}`, storage_key", f"LIMIT {int(limit)}", selected
     )
     records = await _decode(collection, rows)
     return [

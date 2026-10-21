@@ -76,6 +76,8 @@ func (c *ClickHouse) post(ctx context.Context, query string, params map[string]s
 	q.Set("output_format_json_quote_decimals", "0")
 	// A repair or a funding backfill spans many daily partitions in one insert.
 	q.Set("max_partitions_per_insert_block", "1000")
+	// Every identity holds its partition's day, so FINAL never merges across days.
+	q.Set("do_not_merge_across_partitions_select_final", "1")
 	for k, v := range params {
 		q.Set("param_"+k, v)
 	}
