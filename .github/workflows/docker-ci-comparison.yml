@@ -157,7 +157,7 @@ jobs:
             if marker:assert json.loads(output.splitlines()[-1])["status"]=="PASS",label
             return {"status":"PASS","output_log":label+".log"}
            def vitestcheck(label,package,targets):
-            args=["docker","run","--rm","--network","none","--entrypoint","pnpm",image,"--dir",package,"exec","vitest","run","--config","vitest.config.ts","--configLoader","runner","--no-cache","--reporter=json",*targets]
+            args=["docker","run","--rm","--network","none","--tmpfs","/app/node_modules/.vite:rw,nosuid,nodev,uid=1000,gid=1000,mode=700","--entrypoint","pnpm",image,"--dir",package,"exec","vitest","run","--config","vitest.config.ts","--configLoader","runner","--no-cache","--reporter=json",*targets]
             record=appcheck(label,args)
             output=(out/(label+".log")).read_text()
             reports=[]
