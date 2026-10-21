@@ -181,15 +181,17 @@ async def main():
                 raise SystemExit(f"{n} {path}: {response.text[:300]}")
             if n % 200 == 0:
                 print("trade files", n, "of", len(files), flush=True)
-        rows = await ch.rows(
-            f"SELECT count() AS n, min(ts) AS first, max(ts) AS last FROM {chm.TRADES}"
-        )
+        rows = await ch.rows(f"SELECT count() AS n, min(ts) AS first, max(ts) AS last FROM {chm.TRADES}")
         print(chm.TRADES, rows[0], flush=True)
         conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(VIEW_SCHEMA)))
         if cleanup:
             for collection in chm.MARKET_TABLES:
-                conn.execute(sql.SQL("TRUNCATE {}.{}").format(*map(sql.Identifier, collection.split("."))))
-                print(collection, "emptied in PostgreSQL", flush=True)
+                conn.execute(
+                    sql.SQL("DROP TABLE IF EXISTS {}.{} CASCADE").format(
+                        *map(sql.Identifier, collection.split("."))
+                    )
+                )
+                print(collection, "dropped from PostgreSQL", flush=True)
     await ch.close()
 
 

@@ -1192,6 +1192,8 @@ async def _maintain_partitions(self, *, extra_days=None, include_history=True):
         return 0
     from psycopg import sql
 
+    from tank import clickhouse_market as chm
+
     created = 0
 
     async with self.transaction():
@@ -1209,7 +1211,7 @@ async def _maintain_partitions(self, *, extra_days=None, include_history=True):
             ).fetchall()
             hypertables = {row["name"] for row in rows}
     for collection, ts in PARTITIONED.items():
-        if collection in hypertables:
+        if collection in hypertables or chm.client(self, collection) is not None:
             continue
         schema, name = collection.split(".")
         historical = sql.Identifier(schema, name + "_historical")
@@ -1343,6 +1345,8 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
         if isinstance(self, PostgresRepository):
             from psycopg import sql
 
+            from tank import clickhouse_market as chm
+
             await self.maintain_partitions(include_history=False)
 
             installed = await (
@@ -1361,7 +1365,7 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
                 ).fetchall()
                 dropped = 0
                 for row in rows:
-                    if row["name"] not in temporal:
+                    if row["name"] not in temporal or chm.client(self, row["name"]) is not None:
                         continue
                     if any(row["range_start"] < end and start < row["range_end"] for start, end in spans):
                         continue
@@ -1380,7 +1384,7 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
                 hypertables = {row["name"] for row in rows}
             await self._conn().execute("SELECT set_config('tank.retention_purge','on',true)")
             for collection, ts in temporal.items():
-                if collection in hypertables:
+                if collection in hypertables or chm.client(self, collection) is not None:
                     continue
                 age = cutoff
                 args = [age]
@@ -1400,7 +1404,7 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
                 )
                 counts[collection] = cursor.rowcount
             await self._conn().execute("SELECT set_config('tank.retention_purge','off',true)")
-            if book_before is not None:
+            if book_before is not None and chm.client(self, "mkt.book_summaries") is None:
                 book_cutoff = parse_time(book_before)
                 cursor = await self._conn().execute(
                     "SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
