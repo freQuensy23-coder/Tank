@@ -1025,14 +1025,21 @@ class Scheduler:
             "token_id": payload["token_id"],
             "checkpoint": payload["checkpoint"],
         }
-        revisions = [
-            int(row.get("revision") or 1)
-            async for row in self.repo.iter_metadata("out.reaction_checkpoints", ["revision"], filters=filters)
+        fields = ["revision", "anchor", "retro", "reason", "data_fingerprint"]
+        rows = [
+            row async for row in self.repo.iter_metadata("out.reaction_checkpoints", fields, filters=filters)
         ]
-        if not revisions:
+        if not rows:
             return None
-        key = f"{payload['event_id']}:{payload['token_id']}:{payload['checkpoint']}:{max(revisions)}"
-        row = await self.repo.get("out.reaction_checkpoints", key)
+        newest = max(rows, key=lambda row: int(row.get("revision") or 1))
+        newest["revision"] = int(newest.get("revision") or 1)
+        if newest.get("data_fingerprint") and newest.get("anchor"):
+            # r110: decoding a whole row (up to 2 MB of Market Truth) on the
+            # event loop for each capture stalled market capture; the plan and
+            # the commit read only these fields.
+            return newest
+        key = f"{payload['event_id']}:{payload['token_id']}:{payload['checkpoint']}:{newest['revision']}"
+        row = await self.repo.get("out.reaction_checkpoints", key)  # a legacy row without data_fingerprint
         if row is not None:
             return row
         latest = None  # A row stored under another key: fall back to the full scan.
