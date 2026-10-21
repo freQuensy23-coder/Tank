@@ -5341,7 +5341,7 @@ class MarketService:
                         )
 
     async def _supply_loop(self):
-        from .supply import SupplyCapture
+        from .supply import SUPPLY_LOOP_SLEEP_S, SupplyCapture
 
         capture = SupplyCapture(self)
         while not self._stop.is_set():
@@ -5353,7 +5353,7 @@ class MarketService:
             except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
                 log.warning("supply capture failed: %s", type(exc).__name__)
             with suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._stop.wait(), 60)
+                await asyncio.wait_for(self._stop.wait(), SUPPLY_LOOP_SLEEP_S)
 
     async def _repair_on_start(self, repairs):
         for token_id, start, end in repairs:
