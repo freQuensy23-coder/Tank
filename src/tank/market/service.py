@@ -122,6 +122,10 @@ WINDOW_BEFORE, WINDOW_AFTER = timedelta(hours=24), timedelta(hours=72)
 # the trailing REFERENCE_SPAN of spot (03 §5.7 reference venue) is repaired before anything else.
 REPAIR_CHUNK, REFERENCE_SPAN = timedelta(hours=1), timedelta(hours=24)
 PAGES_PER_FLUSH = 25
+# A reconnect backfill whose REST prints stop short of the stream's first print is asked
+# again this much later, at most HANDOFF_RETRIES times; a gap that survives stays recorded.
+HANDOFF_RETRY_S = 15
+HANDOFF_RETRIES = 2
 # Requests in flight per venue host (Kraken: 1).
 HOST_IN_FLIGHT = 4
 # Reference spot venues by repair speed (03 §5.7 needs one complete trailing 24 h).
@@ -1545,9 +1549,10 @@ class MarketService:
         return cursor >= end
 
     async def _persist_rest_flow_ranges(self, instrument, start, end, proven_ranges):
-        """Audit newly captured REST evidence and replace whole bars in batches."""
+        """Audit newly captured REST evidence and replace whole bars in batches. Returns the
+        (print before, print after) pairs of the trade-ID gaps it recorded."""
         if not proven_ranges:
-            return
+            return []
         iid = instrument["instrument_id"]
         for lo, hi in proven_ranges:
             self.trade_archive.coverage(iid, lo, hi, complete=True, source="REST_RANGE_EXHAUSTED")
@@ -1574,6 +1579,7 @@ class MarketService:
             if row["instrument_id"] == iid and minute <= parse_time(row["minute_start"]) < parse_time(end):
                 held[row["minute_start"]] = row
         consecutive = norm.venue_key(instrument).split(".")[0] in ("binance", "coinbase", "kraken")
+        found = []  # (print before, print after) of every trade-ID gap
 
         def audit(minute, rows, coverage, boundaries, previous):
             """One minute's bar from its archived prints, built in a worker thread: it reads
@@ -1600,7 +1606,7 @@ class MarketService:
                     and int(point["trade_id"]) != int(previous["trade_id"]) + 1
                 ):
                     gap = "REST_TRADE_ID_GAP"
-                    gaps.append((previous["ts"], point["ts"]))
+                    gaps.append((previous, point))
                 accumulator.add(point, continuity=False, emit_record=False)
                 previous = point
             bar = accumulator.bars[key]
@@ -1641,8 +1647,11 @@ class MarketService:
             key, bar, row, gaps, span, previous = await asyncio.to_thread(
                 audit, minute, rows, coverage, boundaries, previous
             )
-            for lo, hi in gaps:
-                await self.mark_capture_gap(instrument, lo, hi, "REST_TRADE_ID_GAP", preserve_verified=False)
+            for before, after in gaps:
+                await self.mark_capture_gap(
+                    instrument, before["ts"], after["ts"], "REST_TRADE_ID_GAP", preserve_verified=False
+                )
+            found.extend(gaps)
             if span:
                 self.trade_archive.coverage(iid, *span, complete=False, reason="REST_TRADE_ID_GAP")
             stored = held.get(iso(minute))
@@ -1664,6 +1673,7 @@ class MarketService:
                 await self.flush_market(raw=False)
             minute += timedelta(minutes=1)
         await self.flush_market(raw=False)
+        return found
 
     def _register_capture_boundaries(self, ids, cutoff, anchor=None):
         end = parse_time(cutoff)
@@ -1726,6 +1736,7 @@ class MarketService:
         kraken_forward_ranges = []
         first_window_trade = None
         reference_candidate = None
+        rest_last = None  # newest trade id REST returned for the window
         # Binance timestamp slices cannot exceed one hour. Others paginate to oldest print.
         slices = (
             [
@@ -1797,6 +1808,8 @@ class MarketService:
                             and (not key.startswith("binance") or lo <= ts < hi)
                         ):
                             times.append(ts)
+                            if key.startswith(("binance", "coinbase", "kraken")):
+                                rest_last = max(rest_last or 0, int(t["trade_id"]))
                             await self.ingest_trade(instrument, raw, backfill=True, row=dict(t))
                     # A flush per page waited on the shared fsynced journal write (prod r106:
                     # ~5k prints/min); the prints of PAGES_PER_FLUSH pages are bounded memory.
@@ -2002,9 +2015,37 @@ class MarketService:
                 start=capture_start,
                 end=start,
             )
-        await self._persist_rest_flow_ranges(instrument, start, end, proven_ranges)
+        gaps = await self._persist_rest_flow_ranges(instrument, start, end, proven_ranges)
+        # A gap at the handoff ends at a print newer than every print REST returned here.
+        handoff = [pair for pair in gaps if rest_last is None or int(pair[1]["trade_id"]) > rest_last]
+        retries = int((checkpoint or {}).get("handoff_retry", 0))
+        if checkpoint and handoff and retries < HANDOFF_RETRIES:
+            # REST trails the stream (coinbase r114 05:52: ids 621-623 were in neither
+            # source at the reconnect): ask REST again from the last print it had.
+            before = min((pair[0] for pair in handoff), key=lambda p: int(p["trade_id"]))
+            retry = {
+                "last_ts": iso(parse_time(before["ts"]).replace(second=0, microsecond=0)),
+                "last_trade_id": before["trade_id"],
+                "handoff_retry": retries + 1,
+            }
+            task = asyncio.create_task(self._retry_handoff(instrument, iso(end), retry))
+            self._background.add(task)
+            task.add_done_callback(self._background.discard)
         await self._backfill_klines(instrument, start, end, include_reference=not checkpoint)
         await self.flush_market()
+
+    async def _retry_handoff(self, instrument, anchor, checkpoint):
+        """A follow-up reconnect backfill once REST had time to publish the handoff prints."""
+        await asyncio.sleep(HANDOFF_RETRY_S)
+        if self._stop is not None and self._stop.is_set():
+            return
+        iid = instrument["instrument_id"]
+        if self._active_backfills.get(iid):
+            pending = self._pending_reconnects
+            if iid not in pending or parse_time(checkpoint["last_ts"]) < parse_time(pending[iid]["last_ts"]):
+                pending[iid] = checkpoint
+            return
+        await self.backfill(instrument, anchor, checkpoint=checkpoint)
 
     async def repair_windows(self, token_id, start, end, *, budget_s=None):
         """Repair every incomplete or missing persisted minute of [start, end) for a token's

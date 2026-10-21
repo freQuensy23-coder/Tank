@@ -2515,3 +2515,45 @@ async def test_rest_range_keeps_a_complete_bar_and_its_recorded_at_unless_its_pr
     assert corrected["recorded_at"] != first["recorded_at"]
     assert corrected["n_buy"] + corrected["n_sell"] == 2 and corrected["complete"] is True
     await service.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("catches_up", [True, False])
+async def test_reconnect_backfill_asks_rest_again_when_it_trails_the_stream(setup, monkeypatch, catches_up):
+    from tank.market import service as service_module
+
+    monkeypatch.setattr(service_module, "HANDOFF_RETRY_S", 0)
+    repo, settings, inst = setup
+    minute = (utcnow() - timedelta(minutes=30)).replace(second=0, microsecond=0)
+    at = int(minute.timestamp() * 1000)
+
+    def trade(number):
+        return {"a": number, "p": "2", "q": "1", "T": at + 1000 * (number - 100), "m": False}
+
+    calls = []
+
+    def handler(request):
+        if not request.url.path.endswith("aggTrades"):
+            return httpx.Response(200, json=[])
+        calls.append(int(request.url.params["fromId"]))
+        # REST has 101-102 at the reconnect; 103 only once it caught up with the stream.
+        published = [101, 102] + ([103] if catches_up and len(calls) > 1 else [])
+        return httpx.Response(200, json=[trade(n) for n in published if n >= calls[-1]])
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = MarketService(repo, settings, http=http)
+        for number in (104, 105):  # the stream's first prints after the reconnect
+            await service.ingest_trade(inst, trade(number))
+        checkpoint = {"last_trade_id": "100", "last_ts": iso(minute)}
+        await service.backfill(inst, iso(minute + timedelta(minutes=1)), checkpoint=checkpoint)
+        while service._background:
+            await asyncio.gather(*list(service._background), return_exceptions=True)
+        await service.flush_market()
+    # The first backfill, then one retry from the last REST print before the gap (102);
+    # REST that never catches up is asked twice more, and the gap stays recorded.
+    assert calls == ([101, 103] if catches_up else [101, 103, 103])
+    bar = await repo.get("mkt.flow_bars_1m", inst["instrument_id"] + ":" + iso(minute))
+    assert bar["complete"] is catches_up
+    assert (bar["n_buy"] + bar["n_sell"]) == (5 if catches_up else 4)
+    gaps = [g for g in await repo.list("mkt.capture_gaps") if "REST_TRADE_ID_GAP" in str(g)]
+    assert gaps
