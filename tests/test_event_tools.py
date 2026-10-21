@@ -5043,3 +5043,50 @@ async def test_named_cutoff_precisions_are_accepted_as_buckets(service):
         if not task.done():
             task.cancel()
     assert result["cutoff_prec_normalized"] == {"from": "MINUTE", "to": "BUCKET(1m)"}
+
+
+async def test_publish_card_keeps_market_truth_once_and_reads_each_collection_once(service, monkeypatch):
+    """E2E #6 (r114): publish_card took 22 s. The card's card_struct copied the
+    1.8 MB Market Truth, the bundle's request_log repeated it, and collections
+    were re-read. Now card_struct references the immutable truth row, an exact
+    request_log copy is a reference, and each collection is read once."""
+    import tank.analysis.cards as cards
+    from tank.event_tools import dedupe_request_log
+    from tank.util import sha256
+
+    truth = {"mta_id": "mta-1", "token_id": "T", "big": "x" * 10_000}
+    calls = [
+        {"tool": "get_market_truth", "call_id": "c1", "result": {"market_truth": [truth, {"mta_id": "other", "v": 1}]}},
+        {"tool": "get_decision", "call_id": "c2", "result": {"action": "WAIT"}},
+    ]
+    deduped = dedupe_request_log(calls, [sha256(truth)])
+    assert deduped[0]["result"]["market_truth"][0] == {"same_as_bundle_market_truth": "mta-1", "sha256": sha256(truth)}
+    assert deduped[0]["result"]["market_truth"][1] == {"mta_id": "other", "v": 1}  # not identical: kept
+    assert deduped[1] == calls[1] and calls[0]["result"]["market_truth"][0] is truth  # input untouched
+
+    monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
+    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card")
+    x = await seed(service)
+    eid = (await service.dispatch("record_event", x, {}))["event_id"]
+    event = await service.repo.get("evt.events", eid)
+    event["current_ems_id"] = "ems"
+    await service.repo.put("evt.events", eid, event)
+    await service.repo.put(
+        "evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": eid, "class": "STRUCTURAL_SHOCK"}
+    )
+    reads = []
+    original = service.repo.iter_all
+
+    def counting(collection, **kwargs):
+        reads.append(collection)
+        return original(collection, **kwargs)
+
+    monkeypatch.setattr(service.repo, "iter_all", counting)
+    result = await service.dispatch(
+        "publish_card",
+        {"event_id": eid, "kind": "PARTIAL", "verdict": "v", "why": []},
+        {"event_id": eid, "call_id": "c", "role": "system"},
+    )
+    assert result["published"]
+    for collection in ("evt.beneficiary_maps", "evt.beneficiary_edges", "evt.claims", "evt.event_observations", "ana.contradictions"):
+        assert reads.count(collection) == 1, (collection, reads.count(collection))
