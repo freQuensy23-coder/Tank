@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from datetime import timedelta
 from decimal import Decimal as D
 
@@ -31,6 +32,18 @@ REFRESH_KINDS = {
     "chain_liquidity": "CHAIN_LIQUIDITY",
     "fundamentals": "FUNDAMENTALS",
 }
+
+
+# The supply loop sleeps this long between poll passes (MarketService._supply_loop).
+SUPPLY_LOOP_SLEEP_S = 60
+
+
+def refresh_due(age_s, cadence_s, cycle_s):
+    """03 §5.10: a kind must never be older than its §5.6 cadence. A pass over all tokens takes
+    minutes and the loop sleeps between passes, so refreshing only at age >= cadence left every
+    kind stale for a few minutes per period. Refresh at 0.9 x cadence, or earlier by two full
+    poll cycles (longest pass + loop sleep), whichever comes first."""
+    return age_s >= max(0.0, min(0.9 * cadence_s, cadence_s - 2 * cycle_s))
 
 
 def supply_cadences(hot):
@@ -127,6 +140,8 @@ class SupplyCapture:
     async def poll(self, hot):
         state = getattr(self.market, "_supply_refresh", {})
         self.market._supply_refresh = state
+        started = time.monotonic()
+        cycle = getattr(self.market, "_supply_longest_pass_s", 0.0) + SUPPLY_LOOP_SLEEP_S
         now = utcnow()
         if not getattr(self.market, "_supply_refresh_resumed", False):
             await self.resume_refresh_state(state, now)
@@ -141,13 +156,18 @@ class SupplyCapture:
                 ("chain_liquidity", periods["CHAIN_LIQUIDITY"], self.chain_liquidity),
                 ("fundamentals", periods["FUNDAMENTALS"], self.fundamentals),
             ]:
-                if (token_id, kind) in state and (now - state[token_id, kind]).total_seconds() < seconds:
+                if (token_id, kind) in state and not refresh_due(
+                    (now - state[token_id, kind]).total_seconds(), seconds, cycle
+                ):
                     continue
                 try:
                     await call(token)
                 except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
                     await self.record(token, kind.upper(), available=False, reason=str(exc))
                 state[token_id, kind] = now
+        self.market._supply_longest_pass_s = max(
+            getattr(self.market, "_supply_longest_pass_s", 0.0), time.monotonic() - started
+        )
 
     async def unlocks(self, token):
         slug = token.get("unlock_slug")
