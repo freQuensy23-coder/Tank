@@ -848,27 +848,22 @@
           "status": "R38_SEALED_ACCEPTANCE_FAILED"
         }
       ],
-      "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+      "readiness": "EXECUTED_ACCEPTANCE_PASSED",
       "missing": [
-        "assertion failed: {\"in\":[\"MAJOR\",\"STRUCTURAL_SHOCK\"],\"path\":[\"assessments\",\"*\",\"class\"]}",
-        "assertion failed: {\"path\":[\"beneficiary_edges\",\"*\"],\"satisfies\":{\"in\":[\"INDIRECT\",\"NARRATIVE_ONLY\",\"UNKNOWN\"],\"path\":[\"capture_class\"],\"when\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}}",
-        "assertion failed: {\"path\":[\"decisions\",\"*\"],\"satisfies\":{\"in\":[\"C\",\"D\"],\"path\":[\"thesis_grade\"],\"when\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}}",
-        "assertion failed: {\"path\":[\"decisions\",\"*\"],\"satisfies\":{\"any\":[{\"not_in\":[\"START\",\"WATCH_TO_START\",\"ADD\",\"HOLD\"],\"path\":[\"action\"]},{\"equals\":true,\"path\":[\"tactical\"]}],\"when\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}}",
-        "assertion failed: {\"path\":[\"beneficiary_edges\"],\"some\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}",
-        "required manual clause failed: OI decomposition must actually be shown from retained native/USD/price inputs, or assertion remains unproven if unavailable."
+        "Fresh native tank-replay session on r106 (main 4f9559d, code 17da9b4d); re-run if session/skill/decision/card code changes before V0-C sign-off."
       ],
       "known_conflict": null,
       "acceptance_input": {
-        "path": "data/replay/acceptance-r38-code-prepared/F-09/inputs/input.json.zst",
-        "sha256": "5a1f4211ea7a649b2c2afa39666f033c093509d7d08da7cbb503d1927eb04f59"
+        "path": "data/replay/acceptance-r106/F-09/inputs/input.json.zst",
+        "sha256": "3a12690fb262b7557387ccfe9a6ec70c826fa938593a06cfe20960490c779483"
       },
       "private_name_map": {
-        "path": "data/replay/acceptance-r36-prepared/F-09/private/map.json",
-        "sha256": "19aaba53535b71330b5d127681b17db5459c94675265ccfcce6ef0a5b5e7d8e2"
+        "path": "data/replay/acceptance-r106/F-09/private/map.json",
+        "sha256": "50249ef683a02d212832c6b3ad84db3e6ad290d78f8e18f15cc6009950e720d6"
       },
       "sealed_outcomes": {
-        "path": "data/replay/acceptance-r38-code-prepared/F-09/sealed/outcomes.json",
-        "sha256": "96b97fe7782eeb76feca15a66c1aacfa53698bbbce980c1d1b14a6443eafbda2"
+        "path": "data/replay/acceptance-r106/F-09/sealed/outcomes.json",
+        "sha256": "76e231d608745b3b078f5c31ff9ebdfdc3fa92e6c9a27452dd1a97286f033a5d"
       },
       "acceptance_history": [
         {
@@ -906,11 +901,39 @@
           "missing": [
             "Completed current-context native outcome with all sealed automated and manual clauses."
           ]
+        },
+        {
+          "readiness": "EXECUTED_ACCEPTANCE_FAILED",
+          "missing": [
+            "assertion failed: {\"in\":[\"MAJOR\",\"STRUCTURAL_SHOCK\"],\"path\":[\"assessments\",\"*\",\"class\"]}",
+            "assertion failed: {\"path\":[\"beneficiary_edges\",\"*\"],\"satisfies\":{\"in\":[\"INDIRECT\",\"NARRATIVE_ONLY\",\"UNKNOWN\"],\"path\":[\"capture_class\"],\"when\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}}",
+            "assertion failed: {\"path\":[\"decisions\",\"*\"],\"satisfies\":{\"in\":[\"C\",\"D\"],\"path\":[\"thesis_grade\"],\"when\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}}",
+            "assertion failed: {\"path\":[\"decisions\",\"*\"],\"satisfies\":{\"any\":[{\"not_in\":[\"START\",\"WATCH_TO_START\",\"ADD\",\"HOLD\"],\"path\":[\"action\"]},{\"equals\":true,\"path\":[\"tactical\"]}],\"when\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}}",
+            "assertion failed: {\"path\":[\"beneficiary_edges\"],\"some\":{\"equals\":\"asset-k\",\"path\":[\"token_id\"]}}",
+            "required manual clause failed: OI decomposition must actually be shown from retained native/USD/price inputs, or assertion remains unproven if unavailable."
+          ],
+          "acceptance_input": {
+            "path": "data/replay/acceptance-r38-code-prepared/F-09/inputs/input.json.zst",
+            "sha256": "5a1f4211ea7a649b2c2afa39666f033c093509d7d08da7cbb503d1927eb04f59"
+          },
+          "private_name_map": {
+            "path": "data/replay/acceptance-r36-prepared/F-09/private/map.json",
+            "sha256": "19aaba53535b71330b5d127681b17db5459c94675265ccfcce6ef0a5b5e7d8e2"
+          },
+          "sealed_outcomes": {
+            "path": "data/replay/acceptance-r38-code-prepared/F-09/sealed/outcomes.json",
+            "sha256": "96b97fe7782eeb76feca15a66c1aacfa53698bbbce980c1d1b14a6443eafbda2"
+          },
+          "acceptance_run": {
+            "path": "docs/verification/masked-f09-r38-2026-10-19/F-09/acceptance-run-with-manual.json",
+            "sha256": "cf403968a100f9d40abb61b4223275c570c83016d1abcc651e4b498133616c8e"
+          },
+          "superseded_reason": "Superseded by the fresh native tank-replay run on r106 (main 4f9559d, code 17da9b4d)."
         }
       ],
       "acceptance_run": {
-        "path": "docs/verification/masked-f09-r38-2026-10-19/F-09/acceptance-run-with-manual.json",
-        "sha256": "cf403968a100f9d40abb61b4223275c570c83016d1abcc651e4b498133616c8e"
+        "path": "docs/verification/native-fixtures-2026-10-20/F-09/acceptance-run-with-manual.json",
+        "sha256": "aa6e21c18d1979b5c42b34d85d6193d69648898c7b410090043e3dc5381f5362"
       }
     },
     {
