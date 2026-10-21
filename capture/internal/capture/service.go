@@ -211,8 +211,9 @@ func (s *Service) Run(ctx context.Context) error {
 		// Write what the standby captured first: the gap left to repair is then only what
 		// no process saw.
 		s.flush(ctx)
-		s.startupRepairs(ctx, hot, maxTime(started, s.clock.Now()))
+		// The last hour first, outside the repair slots; then the hot windows' history.
 		s.sweep(ctx)
+		s.startupRepairs(ctx, hot, maxTime(started, s.clock.Now()))
 	})
 	s.loop(ctx, time.Second, s.tick)
 	s.loop(ctx, streamStateEvery, func(context.Context) { s.publishStreams() })

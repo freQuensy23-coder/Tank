@@ -671,7 +671,7 @@ func (s *Service) startupRepairs(ctx context.Context, hot []map[string]any, star
 			return
 		}
 		s.log.Info("startup repair", "token", token, "start", pytime.ISO(w.start), "end", pytime.ISO(minTime(started, w.end)))
-		s.repairUnrepaired(ctx, token, w.start, pytime.MinuteFloor(minTime(started, w.end)))
+		s.repairUnrepaired(ctx, token, w.start, pytime.MinuteFloor(minTime(started, w.end)), false)
 	}
 }
 
@@ -718,8 +718,9 @@ func sourceLimit(reason string) bool {
 }
 
 // repairUnrepaired repairs every unrepaired run of every instrument of token in [lo, hi),
-// instruments in parallel.
-func (s *Service) repairUnrepaired(ctx context.Context, token string, lo, hi time.Time) {
+// instruments in parallel; reserved skips the shared repair slots (the recent sweep must
+// not queue behind a long history backlog).
+func (s *Service) repairUnrepaired(ctx context.Context, token string, lo, hi time.Time, reserved bool) {
 	var wg sync.WaitGroup
 	for _, inst := range s.tokenInstruments(token) {
 		for _, gap := range s.unrepaired(ctx, inst.ID, lo, hi) {
@@ -727,7 +728,7 @@ func (s *Service) repairUnrepaired(ctx context.Context, token string, lo, hi tim
 			wg.Add(1)
 			go func(inst *venue.Instrument, gap span) {
 				defer wg.Done()
-				s.repairInstrument(ctx, inst, gap.start, gap.end, false)
+				s.repairInstrument(ctx, inst, gap.start, gap.end, reserved)
 			}(inst, gap)
 		}
 	}
@@ -754,7 +755,7 @@ func (s *Service) sweep(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		s.repairUnrepaired(ctx, token, hi.Add(-sweepSpan), hi)
+		s.repairUnrepaired(ctx, token, hi.Add(-sweepSpan), hi, true)
 	}
 }
 
