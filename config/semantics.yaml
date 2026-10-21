@@ -344,6 +344,9 @@ metrics:
   timestamp_semantics: BUCKET_END
   timestamp_unit: MS
   timestamp_precision: BUCKET
+  source_interval_s: 300
+  publish_lag_s: 90
+  publish_lag_basis: Earliest prod receipt 43-80 s after period end (p0/p1, mkt.oi_obs 24 h to 2026-10-21 00:55Z)
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: oi_native_single_sided
@@ -414,6 +417,9 @@ metrics:
     controls sampling cadence, not an aggregate bucket.
   timestamp_unit: MS
   timestamp_precision: EXACT
+  source_interval_s: 300
+  publish_lag_s: 90
+  publish_lag_basis: Earliest prod receipt 61-77 s after the sample timestamp (p0/p1, mkt.oi_obs 24 h to 2026-10-21 00:55Z)
   price_contaminated: false
   requires_native_normalization: false
   aggregation_class: oi_native_single_sided

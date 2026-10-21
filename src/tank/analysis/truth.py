@@ -3034,6 +3034,31 @@ def capture_cadence(snapshot, collection, row=None):
     return None, "CADENCE_NOT_CONFIGURED"
 
 
+def source_intervals(snapshot):
+    """Series the provider publishes once per interval (metric semantics source_interval_s,
+    publish_lag_s), keyed (metric_key, instrument_id or None)."""
+    return {
+        (sem["metric_key"], sem.get("instrument_id")): sem
+        for sem in snapshot.get("semantics", [])
+        if sem.get("metric_key") and number(sem.get("source_interval_s"))
+    }
+
+
+def interval_deadline(intervals, row):
+    """Freshness deadline of a row of a once-per-interval series, else None. The next point
+    is due one interval after this one and visible publish_lag_s later, so the series is
+    within its own cadence (03 §5.10) while age from the interval start <= 2 x interval + lag.
+    Returns (deadline, allowed age in s, interval start)."""
+    key = row.get("metric_key")
+    sem = intervals.get((key, row.get("instrument_id"))) or intervals.get((key, None))
+    if sem is None:
+        return None
+    interval = float(sem["source_interval_s"])
+    allowed = 2 * interval + float(sem.get("publish_lag_s") or 0)
+    start = _time(row) - timedelta(seconds=interval) if sem.get("timestamp_semantics") == "BUCKET_END" else _time(row)
+    return start + timedelta(seconds=allowed), allowed, start
+
+
 def observed_through(snapshot, collection, instrument_id):
     """Capture watermark: the source was polled successfully through this time (e.g. a venue
     that publishes no candle for a minute without trades). Never a value, only availability."""
@@ -3049,6 +3074,7 @@ def available_field_freshness(snapshot, end):
     snapshot are inputs of the relative block, not fields of this token."""
     checks = []
     metadata = (snapshot.get("capture_metadata") or {}).get("collections", {})
+    intervals = source_intervals(snapshot)
     token = snapshot.get("token_id")
     owners = {
         r["instrument_id"]: r["token_id"]
@@ -3126,6 +3152,11 @@ def available_field_freshness(snapshot, end):
             if observed.value != iso(stamp):
                 observed = propagate_timestamp({"observed_at": iso(stamp)}, "observed_at")
             age = (end - stamp).total_seconds()
+            published = interval_deadline(intervals, row) if collection not in ("flow_bars", "klines") else None
+            if published is not None:
+                _, cadence, start = published
+                source = "SOURCE_INTERVAL_PLUS_PUBLISH_LAG"
+                age = (end - start).total_seconds()
             fresh = cadence is not None and 0 <= age <= cadence
             checks.append(
                 dict(
@@ -3210,6 +3241,7 @@ def data_confidence(snapshot, spot, derivatives, end):
         ):
             failed.append(dict(condition="derivatives_coverage", reason="INCOMPLETE"))
     native_coverage_ready = not perp_ids or not any(f["condition"] == "derivatives_coverage" for f in failed)
+    intervals = source_intervals(snapshot)
     class_ready = not perp_ids or bool(
         derivatives.get("synchronized") and derivatives["synchronized"].get("classification_ready")
     )
@@ -3243,14 +3275,21 @@ def data_confidence(snapshot, spot, derivatives, end):
                 continue
             if collection == "funding" and (number(r.get("rate")) is None or not number(r.get("interval_h"))):
                 continue
-            valid.append(stamp)
+            valid.append((stamp, r))
         mark = observed_through(snapshot, collection, iid) if collection == "klines" and valid else None
-        if mark is not None and max(valid) < mark <= end:
-            valid.append(mark)
+        if mark is not None and max(t for t, _ in valid) < mark <= end:
+            valid.append((mark, None))
         cadence, cadence_source = capture_cadence(
             snapshot, collection, rows[-1] if rows else {"instrument_id": iid}
         )
-        if not valid or cadence is None or (end - max(valid)).total_seconds() > cadence:
+        deadlines = []
+        for stamp, r in valid:
+            published = interval_deadline(intervals, r) if r is not None and collection == "oi" else None
+            if published is not None:
+                deadlines.append(published[0])
+            elif cadence is not None:
+                deadlines.append(stamp + timedelta(seconds=cadence))
+        if not deadlines or max(deadlines) < end:
             failed.append(
                 dict(
                     condition="freshness",

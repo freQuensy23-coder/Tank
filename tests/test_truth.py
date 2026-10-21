@@ -659,6 +659,66 @@ def test_freshness_counts_only_the_assessed_tokens_fields_not_peer_closes():
     assert checks[0]["fresh"] is True
 
 
+def test_once_per_interval_oi_is_fresh_within_two_intervals_plus_publish_lag():
+    """03 §5.10 'within its own cadence': Bybit publishes 5-min singleOpenInterest ~60-80 s after
+    the sample time, so a HOT 60 s cadence can never be met; it is judged by 2 x 300 s + lag."""
+    from tank.analysis.truth import available_field_freshness
+
+    end = parse_time("2026-10-21T00:31:00Z")
+    iid = "bybit:perp_linear:BTCUSDT"
+    semantics = [
+        {"metric_key": "bybit.linear.open-interest", "instrument_id": iid, "source_interval_s": 300,
+         "publish_lag_s": 90, "timestamp_semantics": "EXCHANGE_EVENT_TIME"},
+        {"metric_key": "binance.usdm.openInterestHist", "instrument_id": "binance:perp_linear:BTCUSDT",
+         "source_interval_s": 300, "publish_lag_s": 90, "timestamp_semantics": "BUCKET_END"},
+    ]
+
+    def check(age_s, key="bybit.linear.open-interest", instrument=iid):
+        snapshot = {
+            "token_id": "bitcoin:BTC",
+            "semantics": semantics,
+            "capture_metadata": {"collections": {"oi": {"cadence_s": 60}}},
+            "oi": [{"instrument_id": instrument, "token_id": "bitcoin:BTC", "metric_key": key,
+                    "ts": iso(end - timedelta(seconds=age_s)), "oi_native": "1"}],
+        }
+        (result,) = available_field_freshness(snapshot, end)
+        return result
+
+    fresh = check(360)
+    assert fresh["fresh"] is True
+    assert fresh["cadence_s"] == 690 and fresh["cadence_source"] == "SOURCE_INTERVAL_PLUS_PUBLISH_LAG"
+    assert check(700)["fresh"] is False
+    # Period-end timestamps: the age runs from the bucket start (label - 300 s).
+    assert check(380, "binance.usdm.openInterestHist", "binance:perp_linear:BTCUSDT")["age_s"] == 680
+    assert check(400, "binance.usdm.openInterestHist", "binance:perp_linear:BTCUSDT")["fresh"] is False
+    # Point series keep their capture cadence.
+    assert check(61, "binance.usdm.openInterest", "binance:perp_linear:BTCUSDT")["fresh"] is False
+
+
+def test_data_confidence_required_oi_uses_the_interval_rule_for_bybit_5min():
+    from tank.analysis.truth import data_confidence
+
+    end = parse_time("2026-10-21T00:31:00Z")
+    iid = "bybit:perp_linear:BTCUSDT"
+
+    def failed(age_s):
+        snapshot = {
+            "token_id": "bitcoin:BTC",
+            "instruments": [{"instrument_id": iid, "token_id": "bitcoin:BTC", "market_type": "PERP_LINEAR", "venue": "bybit"}],
+            "semantics": [{"metric_key": "bybit.linear.open-interest", "source_interval_s": 300, "publish_lag_s": 90}],
+            "capture_metadata": {"collections": {"oi": {"cadence_s": 60}, "funding": {"cadence_s": 3600}}},
+            "oi": [{"instrument_id": iid, "metric_key": "bybit.linear.open-interest",
+                    "ts": iso(end - timedelta(seconds=age_s)), "oi_native": "1"}],
+            "funding": [{"instrument_id": iid, "ts": iso(end - timedelta(seconds=30)), "rate": "0.0001", "interval_h": 8}],
+        }
+        spot = {"venues": [], "coverage": {"n_complete": 2, "exact_majority": True}}
+        result = data_confidence(snapshot, spot, {"synchronized": None}, end)
+        return [f for f in result["failed"] if f["condition"] == "freshness" and f.get("collection") == "oi"]
+
+    assert failed(360) == []
+    assert failed(700)
+
+
 def test_liquidation_freshness_comes_from_stream_watermark_not_last_event():
     """A quiet market has no liquidations; the proven socket watermark keeps the stream fresh.
     Without a watermark the failure says the connection is unproven, not that events are stale."""
