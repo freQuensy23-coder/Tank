@@ -5,7 +5,8 @@ import hashlib
 import json
 import logging
 import time
-from bisect import bisect_left
+from bisect import bisect_left, bisect_right
+from collections import defaultdict
 from contextlib import suppress
 from copy import deepcopy
 from datetime import timedelta
@@ -154,6 +155,45 @@ COLLECTIONS = {
     "tickers": ("mkt.tickers_24h", "ts"),
     "supply": ("mkt.supply_obs", "ts"),
 }
+
+
+def funding_confirmations(observations, *, distinct_paths=False):
+    """(REST, WEBSOCKET) pairs: each PUBLIC_REST CURRENT_ESTIMATE funding observation with the
+    nearest WEBSOCKET one of its instrument and kind within 60 s (the first in input order on
+    ties); with distinct_paths, both carry a source_path and the paths differ.
+
+    WEBSOCKET rows are indexed by time once. The pairwise scan parsed both timestamps of every
+    pair, quadratic in a BTC snapshot's funding rows, on the event loop (r111 profile, 21 Oct).
+    """
+    websocket = defaultdict(list)
+    for index, ws in enumerate(observations):
+        if (
+            ws.get("capture_source") == "WEBSOCKET"
+            and ws.get("kind") == "CURRENT_ESTIMATE"
+            and ws.get("as_of")
+            and (ws.get("source_path") or not distinct_paths)
+        ):
+            websocket[ws.get("instrument_id")].append((parse_time(ws["as_of"]), index, ws))
+    for rows in websocket.values():
+        rows.sort(key=lambda item: (item[0], item[1]))
+    pairs = []
+    for rest in observations:
+        if rest.get("capture_source") != "PUBLIC_REST" or rest.get("kind") != "CURRENT_ESTIMATE":
+            continue
+        if distinct_paths and not rest.get("source_path"):
+            continue
+        rows = websocket.get(rest.get("instrument_id"), [])
+        at = parse_time(rest["as_of"])
+        lo = bisect_left(rows, at - timedelta(seconds=60), key=lambda item: item[0])
+        hi = bisect_right(rows, at + timedelta(seconds=60), key=lambda item: item[0])
+        near = [
+            item
+            for item in rows[lo:hi]
+            if not distinct_paths or item[2]["source_path"] != rest["source_path"]
+        ]
+        if near:
+            pairs.append((rest, min(near, key=lambda item: (abs((item[0] - at).total_seconds()), item[1]))[2]))
+    return pairs
 
 
 class MarketService:
@@ -3645,7 +3685,6 @@ class MarketService:
                 result["supply"].extend(rows)
                 supply_heads.append(head)
             result["semantics"] = self._instrument_semantics(target)
-            result["funding_confirmations"] = []
             observations = [
                 o
                 for point in result["funding"]
@@ -3656,30 +3695,10 @@ class MarketService:
                 )
                 if o.get("as_of") and parse_time(o["as_of"]) <= end
             ]
-            for rest in observations:
-                if rest.get("capture_source") != "PUBLIC_REST" or rest.get("kind") != "CURRENT_ESTIMATE":
-                    continue
-                matching = [
-                    ws
-                    for ws in observations
-                    if ws.get("instrument_id") == rest.get("instrument_id")
-                    and ws.get("capture_source") == "WEBSOCKET"
-                    and ws.get("kind") == rest.get("kind")
-                    and ws.get("source_path")
-                    and rest.get("source_path")
-                    and ws["source_path"] != rest["source_path"]
-                    and abs((parse_time(ws["as_of"]) - parse_time(rest["as_of"])).total_seconds()) <= 60
-                ]
-                if matching:
-                    ws = min(
-                        matching,
-                        key=lambda row: abs(
-                            (parse_time(row["as_of"]) - parse_time(rest["as_of"])).total_seconds()
-                        ),
-                    )
-                    result["funding_confirmations"].append(
-                        dict(rest, independent_path_verified=True, primary_source_path=ws["source_path"])
-                    )
+            result["funding_confirmations"] = [
+                dict(rest, independent_path_verified=True, primary_source_path=ws["source_path"])
+                for rest, ws in funding_confirmations(observations, distinct_paths=True)
+            ]
             for name in ("funding", "books", "supply", "liquidations"):
                 result[name] = list({sha256(row): row for row in result[name]}.values())
             heads["oi"] = sha256([oi_heads, result["semantics"], result["capture_metadata"]])
@@ -4670,32 +4689,10 @@ class MarketService:
                 list(point["source_observations"].values()) if point.get("source_observations") else [point]
             )
         ]
-        result["funding_confirmations"] = []
-        for rest in result["funding_source_observations"]:
-            if rest.get("capture_source") != "PUBLIC_REST" or rest.get("kind") != "CURRENT_ESTIMATE":
-                continue
-            matching = [
-                ws
-                for ws in result["funding_source_observations"]
-                if ws.get("instrument_id") == rest.get("instrument_id")
-                and ws.get("capture_source") == "WEBSOCKET"
-                and ws.get("kind") == rest.get("kind")
-                and abs((parse_time(ws["as_of"]) - parse_time(rest["as_of"])).total_seconds()) <= 60
-            ]
-            if matching:
-                ws = min(
-                    matching,
-                    key=lambda row: abs(
-                        (parse_time(row["as_of"]) - parse_time(rest["as_of"])).total_seconds()
-                    ),
-                )
-                result["funding_confirmations"].append(
-                    {
-                        **rest,
-                        "independent_path_verified": True,
-                        "primary_source_path": ws.get("source_path"),
-                    }
-                )
+        result["funding_confirmations"] = [
+            {**rest, "independent_path_verified": True, "primary_source_path": ws.get("source_path")}
+            for rest, ws in funding_confirmations(result["funding_source_observations"])
+        ]
         result["capture_metadata"] = await self._shared_call(
             ("capture_metadata", token_id, cutoff), lambda: self._capture_metadata(token_id, cutoff)
         )
