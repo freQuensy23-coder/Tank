@@ -15,6 +15,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     environment: production
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 15
     steps:
       - id: ref
@@ -30,7 +33,7 @@ jobs:
         env:
           IMAGE: ${{ steps.ref.outputs.image }}
           TARGET: ${{ secrets.PROD_SSH_USER }}@${{ secrets.PROD_SSH_HOST }}
-          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.repository_owner }}
         run: |
           ssh "$TARGET" "IMAGE='$IMAGE' GHCR_USER='$GHCR_USER' GHCR_TOKEN='$GHCR_TOKEN' bash -s" <<'REMOTE'
