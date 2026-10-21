@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { lookup } from 'node:dns/promises';
@@ -13,6 +14,26 @@ export function verifyNativePlatform(shim, metadata, system = { platform: proces
   }
   const declared = metadata.architecture ?? { aarch64: 'arm64', x86_64: 'amd64' }[metadata.elf?.architecture];
   if (declared && declared !== architecture) throw Error('BoxLite provenance architecture differs from the OpenMA Linux container');
+  return architecture;
+}
+
+export function verifyNativeQualification(shim, provenance, qualifications, system = { platform: process.platform, arch: process.arch }) {
+  const metadata = JSON.parse(provenance.toString('utf8'));
+  const architecture = verifyNativePlatform(shim, metadata, system);
+  const receipt = qualifications?.[architecture];
+  const shimHash = createHash('sha256').update(shim).digest('hex');
+  const provenanceHash = createHash('sha256').update(provenance).digest('hex');
+  const version = metadata.boxlite_version ?? metadata.source?.version;
+  const qualified = architecture === 'amd64'
+    ? receipt?.schema === 'tank.boxlite-native-qualification.v1'
+      && receipt.status === 'PASS' && receipt.architecture === architecture
+      && ['kvm', 'state_persistence', 'dns', 'replay_isolation'].every(check => receipt.checks?.[check] === 'PASS')
+    : receipt?.schema === 'tank.boxlite-qualified-replay-dns-artifact.v1'
+      && receipt.status === 'QUALIFIED_NATIVE_REPLAY_NETWORK' && receipt.qualification?.status === 'PASS'
+      && receipt.source?.version === '0.10.6' && receipt.files?.['boxlite-shim'] === shimHash;
+  if (version !== '0.10.6' || !qualified || receipt.shim_sha256 !== shimHash || receipt.provenance_sha256 !== provenanceHash) {
+    throw Error(`BoxLite native component qualification missing or invalid for ${architecture}`);
+  }
   return architecture;
 }
 
@@ -44,7 +65,10 @@ export async function replayDatabaseRoute(readSecret, resolve = lookup) {
 
 export async function main() {
   const nativeRoot = process.env.BOXLITE_RUNTIME_DIR ?? '/opt/tank-boxlite-runtime';
-  verifyNativePlatform(readFileSync(`${nativeRoot}/boxlite-shim`), JSON.parse(readFileSync(`${nativeRoot}/provenance.json`, 'utf8')));
+  verifyNativeQualification(
+    readFileSync(`${nativeRoot}/boxlite-shim`), readFileSync(`${nativeRoot}/provenance.json`),
+    JSON.parse(readFileSync(new URL('../tank-native-qualification.json', import.meta.url), 'utf8')),
+  );
   process.env.DATABASE_URL = `postgresql://oma:${encodeURIComponent(secret('oma_db_password'))}@postgres:5432/oma`;
   process.env.API_KEY = secret('oma_api_key');
   process.env.PLATFORM_ROOT_SECRET = secret('oma_root_secret');

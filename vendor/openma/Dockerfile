@@ -75,10 +75,16 @@ RUN if [ "$SKIP_CONSOLE" != "1" ]; then \
     fi
 
 FROM node:24-bookworm-slim AS boxlite-runtime
+ARG TARGETARCH
 WORKDIR /opt/tank-boxlite-runtime
-COPY tank-native/boxlite-runtime-v0.10.6-tank-replay-dns-amd64.tar.gz /tmp/boxlite-runtime.tar.gz
-RUN test "$(dpkg --print-architecture)" = amd64 \
-  && echo "3ea02ae7ca0563b2f8266e07310c41b4f99db1aaf463a25f3d0eaac7a348377f  /tmp/boxlite-runtime.tar.gz" | sha256sum --check - \
+COPY tank-native/boxlite-runtime-v0.10.6-tank-replay-dns-${TARGETARCH}.tar.gz /tmp/boxlite-runtime.tar.gz
+RUN test "$(dpkg --print-architecture)" = "$TARGETARCH" \
+  && case "$TARGETARCH" in \
+       amd64) tank_archive_sha=3ea02ae7ca0563b2f8266e07310c41b4f99db1aaf463a25f3d0eaac7a348377f ;; \
+       arm64) tank_archive_sha=2372c189fc7e6b90aa26fa56941b5c4d38439ae31ad0664ecd473d0dc6c3bcbe ;; \
+       *) exit 1 ;; \
+     esac \
+  && echo "$tank_archive_sha  /tmp/boxlite-runtime.tar.gz" | sha256sum --check - \
   && tar -xzf /tmp/boxlite-runtime.tar.gz -C /opt/tank-boxlite-runtime \
   && sha256sum --check SHA256SUMS \
   && rm /tmp/boxlite-runtime.tar.gz
@@ -113,6 +119,7 @@ COPY --from=deps /app/packages /app/packages
 COPY --from=deps /app/apps /app/apps
 COPY --from=deps /app/tsconfig.json /app/tsconfig.json
 COPY tank-deploy/openma_entrypoint.mjs /app/tank-deploy/openma_entrypoint.mjs
+COPY tank-native-qualification.json /app/tank-native-qualification.json
 
 # /app/data holds the sqlite db + per-session sandbox workdirs. Mount a
 # volume here in production so state survives container restarts.
