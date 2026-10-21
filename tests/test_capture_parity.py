@@ -1,9 +1,9 @@
-"""tank-capture parity: the same recorded exchange traffic through tank.market and the Go port.
+"""tank-capture parity: recorded exchange traffic through the Go port against the goldens.
 
-scripts/capture/parity.py runs every fixture of capture/testdata/frames through the
-Python reference and the capture-parity binary and requires identical normalized trades,
-typed rows, flow bars, fingerprints and watermarks. scripts/capture/rest_parity.py does
-the same for the recorded REST poll cycles of capture/testdata/rest.
+scripts/capture/parity.py runs every fixture of capture/testdata/frames and
+capture/testdata/rest through the capture-parity binary and requires the full outputs the
+retired Python capture produced (scripts/capture/goldens): normalized trades, typed rows,
+flow bars, fingerprints and watermarks.
 """
 
 import importlib.util
@@ -74,9 +74,9 @@ def parity_binary(tmp_path_factory):
     return binary
 
 
-def run_parity(name, binary, fixtures):
+def run_parity(binary, fixtures):
     result = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "capture" / name), "--check", "--go", str(binary)],
+        [sys.executable, str(ROOT / "scripts" / "capture" / "parity.py"), "--check", "--go", str(binary)],
         check=False,
         cwd=ROOT,
         capture_output=True,
@@ -88,9 +88,6 @@ def run_parity(name, binary, fixtures):
     assert fixtures and len(passed) == len(fixtures)
 
 
-def test_go_port_matches_python_reference_on_recorded_frames(parity_binary):
-    run_parity("parity.py", parity_binary, sorted((CAPTURE / "testdata" / "frames").glob("*.jsonl.gz")))
-
-
-def test_go_rest_polls_match_python_reference_on_recorded_responses(parity_binary):
-    run_parity("rest_parity.py", parity_binary, sorted((CAPTURE / "testdata" / "rest").glob("*.json.gz")))
+def test_go_port_matches_the_goldens_on_recorded_frames_and_rest_polls(parity_binary):
+    testdata = CAPTURE / "testdata"
+    run_parity(parity_binary, [*testdata.glob("frames/*.jsonl.gz"), *testdata.glob("rest/*.json.gz")])

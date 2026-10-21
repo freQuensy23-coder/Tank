@@ -1,29 +1,46 @@
 name: capture
 
-# tank-capture (capture/README.md): Go vet and tests, and the parity harness that feeds the
-# same recorded exchange frames through tank.market and the Go port.
+# tank-capture (capture/README.md), the only exchange capture: Go vet and race tests, the
+# parity of the Go port with the goldens of the retired Python capture, and the core suites
+# that read what it writes.
 on:
   pull_request:
     paths:
       - .github/workflows/capture.yml
       - capture/**
+      - compose.yaml
       - scripts/capture/**
       - src/tank/market/**
       - src/tank/market_schema.py
       - src/tank/market_storage.py
       - src/tank/migrations/**
+      - src/tank/replay.py
+      - src/tank/runtime.py
+      - src/tank/settings.py
+      - src/tank/sources/rate_limits.py
       - tests/test_capture*.py
+      - tests/test_external_capture.py
+      - tests/test_market_*.py
+      - tests/test_supply_capture.py
       - uv.lock
   push:
     paths:
       - .github/workflows/capture.yml
       - capture/**
+      - compose.yaml
       - scripts/capture/**
       - src/tank/market/**
       - src/tank/market_schema.py
       - src/tank/market_storage.py
       - src/tank/migrations/**
+      - src/tank/replay.py
+      - src/tank/runtime.py
+      - src/tank/settings.py
+      - src/tank/sources/rate_limits.py
       - tests/test_capture*.py
+      - tests/test_external_capture.py
+      - tests/test_market_*.py
+      - tests/test_supply_capture.py
       - uv.lock
 
 permissions:
@@ -70,9 +87,9 @@ jobs:
       - name: go vet
         working-directory: capture
         run: go vet ./...
-      - name: go test
+      - name: go test -race
         working-directory: capture
-        run: go test ./...
+        run: go test -race ./...
 
   parity:
     runs-on: ubuntu-24.04
@@ -101,13 +118,21 @@ jobs:
       - name: Build capture-parity
         working-directory: capture
         run: go build -o bin/capture-parity ./cmd/capture-parity
-      - name: Parity with the Python reference
+      - name: Parity with the goldens of the retired Python capture (frames and REST polls)
         run: uv run python scripts/capture/parity.py --check --go capture/bin/capture-parity
-      - name: REST poll parity with the Python reference
-        run: uv run python scripts/capture/rest_parity.py --check --go capture/bin/capture-parity
       - name: Go schema copy matches tank.market_schema
         run: uv run python scripts/capture/gen_schema.py --check
       - name: Test database
         run: uv run python -c "import psycopg; psycopg.connect('postgresql://postgres@localhost:5432/postgres', autocommit=True).execute('CREATE DATABASE tank_test')"
-      - name: Capture tests
-        run: uv run pytest -q tests/test_capture_parity.py tests/test_capture_shadow_compare.py
+      - name: Core suites that read tank-capture's tables
+        run: >-
+          uv run pytest -q
+          tests/test_capture_parity.py
+          tests/test_external_capture.py
+          tests/test_market_service.py
+          tests/test_market_condition_snapshot.py
+          tests/test_market_snapshot_comparators.py
+          tests/test_market_sector_registry.py
+          tests/test_market_rate_gate.py
+          tests/test_supply_capture.py
+          tests/test_replay.py

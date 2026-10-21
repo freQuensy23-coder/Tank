@@ -8,9 +8,10 @@ pollers) produced for every recorded fixture before that code was deleted:
   scripts/capture/goldens/<fixture>.json.gz       WebSocket frames (capture/testdata/frames)
   scripts/capture/goldens/rest-<fixture>.json.gz  REST poll cycles (capture/testdata/rest)
 
-This script runs only at the commit that still has the Python reference: the commit that
-added it. To regenerate (e.g. for a new fixture), check that commit out in a worktree and
-run `uv run python scripts/capture/gen_goldens.py` there, then copy the goldens back.
+This script runs only at commit a510e03 (branch lead/remove-legacy-capture), the last with
+the Python reference and the old parity.py/rest_parity.py it imports. To regenerate (e.g.
+for a new fixture), check that commit out in a worktree, run
+`uv run python scripts/capture/gen_goldens.py` there and copy the goldens back.
 """
 
 import asyncio

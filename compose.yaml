@@ -63,13 +63,10 @@ services:
       dockerfile: Dockerfile
       args:
         GIT_SHA: ${TANK_CAPTURE_GIT_SHA:-dev}
-    profiles:
-    - capture
     restart: unless-stopped
     init: true
     environment:
       TANK_CONFIG_DIR: /config
-      TANK_CAPTURE_MODE: ${TANK_CAPTURE_MODE:-shadow}
       TANK_CAPTURE_HEALTH_ADDR: ':8791'
       GOMEMLIMIT: 640MiB
     secrets:

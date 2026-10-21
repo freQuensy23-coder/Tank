@@ -78,7 +78,6 @@ async def test_archive_checksum_rejected_and_durable_hour_retry(tmp_path):
 
     from tank.market.archive import fetch_archive
     from tank.storage import MemoryRepository
-    from tank.util import parse_time
 
     payload, _ = zipped("1767225600000000,1,1,1,1,1,1767225659999999,1,1,1,1\n")
     downloads = []

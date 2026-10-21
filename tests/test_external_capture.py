@@ -1,4 +1,4 @@
-"""TANK_EXTERNAL_CAPTURE: tank-capture owns exchange capture; this process escalates and reads.
+"""tank-capture owns exchange capture; this process escalates and reads.
 
 The table contract with tank-capture (capture/README.md): mkt.backfill_runs and
 mkt.capture_requests are created PENDING here and finished there; mkt.capture_streams is
@@ -6,7 +6,6 @@ written there and read here; ops.request_budget_ledger is shared by both.
 """
 
 import asyncio
-import hashlib
 import time
 from datetime import timedelta
 from types import SimpleNamespace
@@ -18,7 +17,7 @@ from test_storage_typed_market import typed_repo  # noqa: F401
 
 from tank.market.archive import fetch_archive
 from tank.market.normalize import timestamp_fields
-from tank.market.service import CAPTURE_REQUEST_GRACE_S, EXTERNAL_REST_DISABLED, MarketService
+from tank.market.service import CAPTURE_REQUEST_GRACE_S, EXCHANGE_REST_OWNER, MarketService
 from tank.settings import Settings
 from tank.sources.rate_limits import RequestLedger, SharedRequestBudgets
 from tank.storage import MemoryRepository
@@ -60,15 +59,7 @@ def make_settings(tmp_path, **values):
 
 @pytest.fixture
 def settings(tmp_path):
-    return make_settings(tmp_path, external_capture=True)
-
-
-def test_capture_flags_default_off(monkeypatch, tmp_path):
-    assert not Settings(_env_file=None).external_capture
-    assert not Settings(_env_file=None).request_ledger
-    monkeypatch.setenv("TANK_EXTERNAL_CAPTURE", "true")
-    monkeypatch.setenv("TANK_REQUEST_LEDGER", "1")
-    assert Settings(_env_file=None).external_capture and Settings(_env_file=None).request_ledger
+    return make_settings(tmp_path)
 
 
 async def put(repo, collection, row, key):
@@ -95,7 +86,6 @@ async def test_external_escalation_writes_the_obligation_and_starts_nothing(sett
     assert run["backfill_id"] == "BF-" + sha256(
         {"event_id": "EVT-1", "token_id": TOKEN, "anchor": run["anchor"]}
     )
-    assert service.streams == {} and service._background == set()
     assert (await service.capture_readiness("EVT-1", TOKEN, anchor=run["anchor"]))["status"] == "PENDING"
 
     # A restart leaves an obligation tank-capture holds to it, and asks a failed one again.
@@ -107,7 +97,6 @@ async def test_external_escalation_writes_the_obligation_and_starts_nothing(sett
     again = MarketService(repo, settings)
     await again._schedule_hot_backfills()
     assert (await repo.get("mkt.backfill_runs", run["backfill_id"]))["status"] == "PENDING"
-    assert again._background == set()
     for market in (service, restarted, again):
         await market.close()
 
@@ -252,25 +241,6 @@ async def test_external_stream_state_comes_from_capture_streams(settings):
     await service.close()
 
 
-async def test_in_process_stream_state_is_unchanged(tmp_path):
-    repo = MemoryRepository()
-    service = MarketService(repo, make_settings(tmp_path))
-    now = utcnow()
-    service._connected_since[PERP] = now - timedelta(minutes=1)
-    service._stream_watermarks[PERP] = {"ts": iso(now - timedelta(seconds=1))}
-    service._klines_polled[SPOT] = [iso(now - timedelta(seconds=5))]
-    service._capture_checkpoints[SPOT] = {"last_ts": iso(now - timedelta(seconds=7))}
-    metadata = await service._capture_metadata(TOKEN, iso(now))
-    liquidations = metadata["collections"]["liquidations"]
-    assert liquidations["coverage_status_by_instrument"] == {PERP: "CONNECTED", HL: "NOT_SUPPORTED"}
-    assert liquidations["observed_through"] == {PERP: iso(now - timedelta(seconds=1))}
-    assert metadata["collections"]["klines"]["observed_through"] == {SPOT: iso(now - timedelta(seconds=5))}
-    coverage = {row["instrument_id"]: row for row in await service.coverage()}
-    assert coverage[PERP]["stream_connected"] and not coverage[SPOT]["stream_connected"]
-    assert coverage[SPOT]["last_trade_ts"] == iso(now - timedelta(seconds=7))
-    await service.close()
-
-
 async def test_external_capture_never_calls_exchange_rest(settings):
     hosts = []
 
@@ -286,13 +256,14 @@ async def test_external_capture_never_calls_exchange_rest(settings):
             ("POST", "https://api.hyperliquid.xyz/info", {"json": {"type": "metaAndAssetCtxs"}}),
             ("GET", "https://api.kraken.com/0/public/Trades", {"params": {"pair": "ABCUSD"}}),
         ):
-            with pytest.raises(RuntimeError, match=EXTERNAL_REST_DISABLED):
+            with pytest.raises(RuntimeError, match="tank-capture"):
                 await service._request(method, url, **extra)
         # Supply sources are not exchange market data: they stay with this process.
         assert await service._request("GET", "https://api.llama.fi/summary/fees/abc") == {"ok": True}
         assert hosts == ["api.llama.fi"]
-        with pytest.raises(RuntimeError, match=EXTERNAL_REST_DISABLED):
+        with pytest.raises(RuntimeError, match="tank-capture"):
             await fetch_archive(service.repo, settings, "ABCUSDT", "2026-10-01", market=service)
+        assert EXCHANGE_REST_OWNER.startswith("exchange REST")
         await service.close()
 
 
@@ -306,22 +277,6 @@ async def test_external_run_keeps_tiers_and_obligations_and_captures_nothing(set
         {"token_id": TOKEN, "event_id": "EVT-1", "priority": 2, **timestamp_fields("since", since, "EXACT")},
         TOKEN + ":EVT-1",
     )
-
-    def forbidden(*args, **kwargs):
-        raise AssertionError("in-process capture started")
-
-    for name in (
-        "_instrument_loop",
-        "_hot_context_loop",
-        "_hot_ticker_loop",
-        "bootstrap_history",
-        "_seal_loop",
-        "_repair_on_start",
-        "_writer_lock",
-        "backfill",
-        "poll_once",
-    ):
-        monkeypatch.setattr(service, name, forbidden)
 
     async def idle():
         await service._stop.wait()
@@ -340,11 +295,10 @@ async def test_external_run_keeps_tiers_and_obligations_and_captures_nothing(set
     tiers = [row async for row in repo.iter_all("ops.capture_tier_transitions")]
     assert [(row["token_id"], row["tier"]) for row in tiers] == [(TOKEN, "HOT")]
     assert (await repo.get("mkt.hot_tokens", TOKEN + ":EVT-1"))["expires_at"] is not None
-    assert service.streams == {} and service._background == set()
     await service.close()
 
 
-# PostgreSQL: the migration 045 contract itself.
+# PostgreSQL: the migration 046 contract itself.
 
 
 @pytest.fixture
@@ -390,65 +344,26 @@ async def test_request_ledger_is_one_budget_for_every_process(migrated):
     assert first.ledger is None and second.ledger is None
 
 
-async def test_ledger_is_configured_only_for_shared_capture(migrated):
-    budgets = SharedRequestBudgets()
-    off = SimpleNamespace(external_capture=False, request_ledger=False)
-    assert budgets.configure(migrated, off) is None and budgets.ledger is None
-    assert (
-        budgets.configure(MemoryRepository(), SimpleNamespace(external_capture=True, request_ledger=False))
-        is None
-    )
-    ledger = budgets.configure(migrated, SimpleNamespace(external_capture=False, request_ledger=True))
-    assert budgets.ledger is ledger
-    await budgets.acquire("coinbase", 5, 1, host="api.exchange.coinbase.com")
-    await budgets.release(ledger)
-    assert budgets.ledger is None
-    with pytest.raises(RuntimeError, match="closed"):
-        await ledger.wait_s("coinbase|1.0|5.0", 5.0, 1.0, 1.0, None)
-
-
-async def test_in_process_capture_waits_for_the_writer_lock(migrated, tmp_path, monkeypatch):
-    import psycopg
-
-    service = MarketService(migrated, make_settings(tmp_path))
-    digest = int.from_bytes(hashlib.sha256(b"tank:capture:writer").digest()[:8], "big", signed=True)
-    other = await psycopg.AsyncConnection.connect(migrated.database_url, autocommit=True)
-    try:
-        await other.execute("SELECT pg_advisory_lock(%s)", (digest,))  # a live tank-capture
-        started = []
-
-        async def tiers():
-            started.append(True)
-
-        monkeypatch.setattr(service, "_record_started_tiers", tiers)
-        stop = asyncio.Event()
-        task = asyncio.create_task(service.run(stop))
-        await asyncio.sleep(0.5)
-        assert not task.done() and not started
-        stop.set()
-        assert await asyncio.wait_for(task, 10) is None
-        assert not started and service._stop is None
-        await other.execute("SELECT pg_advisory_unlock(%s)", (digest,))
-        writer = await service._writer_lock(asyncio.Event())
-        probe = await (await other.execute("SELECT pg_try_advisory_lock(%s)", (digest,))).fetchone()
-        assert probe[0] is False  # one writer at a time
-        await service._check_writer_lock(writer)
-        await service._release_writer_lock(writer)
-        probe = await (await other.execute("SELECT pg_try_advisory_lock(%s)", (digest,))).fetchone()
-        assert probe[0] is True
-    finally:
-        await other.close()
-        await service.close()
-
-
 async def test_external_contract_on_postgres(migrated, tmp_path):
-    service = MarketService(migrated, make_settings(tmp_path, external_capture=True))
+    service = MarketService(migrated, make_settings(tmp_path))
     await repair_round_trip(migrated, service)
     await check_stream_state(migrated, service)
     await service.escalate("EVT-1", [TOKEN])
     (run,) = await migrated.list("mkt.backfill_runs")
     assert run["status"] == "PENDING" and run["started_at_prec"] == "COLLECTION_ONLY"
     await service.close()
+
+
+async def test_ledger_is_configured_for_every_postgres_process(migrated):
+    budgets = SharedRequestBudgets()
+    assert budgets.configure(MemoryRepository(), SimpleNamespace()) is None and budgets.ledger is None
+    ledger = budgets.configure(migrated, SimpleNamespace())
+    assert budgets.ledger is ledger
+    await budgets.acquire("coinbase", 5, 1, host="api.exchange.coinbase.com")
+    await budgets.release(ledger)
+    assert budgets.ledger is None
+    with pytest.raises(RuntimeError, match="closed"):
+        await ledger.wait_s("coinbase|1.0|5.0", 5.0, 1.0, 1.0, None)
 
 
 class Instant:
@@ -473,7 +388,7 @@ class FakeLedger:
         self.blocks.append((host, until, reason))
 
 
-async def test_shared_ledger_closes_hosts_on_429_418_and_ip_weight(tmp_path, monkeypatch):
+async def test_shared_ledger_closes_hosts_on_429_and_418(tmp_path, monkeypatch):
     from tank.sources.rate_limits import shared_request_budgets
 
     ledger = FakeLedger()
@@ -485,25 +400,22 @@ async def test_shared_ledger_closes_hosts_on_429_418_and_ip_weight(tmp_path, mon
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
         service = MarketService(MemoryRepository(), make_settings(tmp_path), http=http)
-        url, params = "https://api.binance.com/api/v3/klines", {"symbol": "ABCUSDT", "limit": 3}
+        url, params = "https://api.llama.fi/summary/fees/abc", {"dataType": "dailyFees"}
         replies[:] = [httpx.Response(418, headers={"Retry-After": "120"})]
         with pytest.raises(RuntimeError, match="418"):
             await service._request_once("GET", url, params=params)
         assert not replies  # a ban is never asked again
         (host, until, reason) = ledger.blocks.pop()
-        assert host == "api.binance.com" and reason == "HTTP 418"
+        assert host == "api.llama.fi" and reason == "HTTP 418"
         assert 110 < (until - utcnow()).total_seconds() <= 120
         service._last_request.clear()
         replies[:] = [
             httpx.Response(429, headers={"Retry-After": "600"}),
-            httpx.Response(200, json=[], headers={"X-MBX-USED-WEIGHT-1M": "6000"}),
+            httpx.Response(200, json=[]),
         ]
         monkeypatch.setattr("tank.market.service.asyncio", Instant())  # skip the 60 s gate wait
         assert await service._request_once("GET", url, params=params) == []
-        assert [(host, reason) for host, _, reason in ledger.blocks] == [
-            ("api.binance.com", "HTTP 429"),
-            ("api.binance.com", "X-MBX-USED-WEIGHT-1M 6000"),
-        ]
+        assert [(host, reason) for host, _, reason in ledger.blocks] == [("api.llama.fi", "HTTP 429")]
         # Retry-After is clamped like the in-process gate's wait.
         assert 50 < (ledger.blocks[0][1] - utcnow()).total_seconds() <= 60
         await service.close()

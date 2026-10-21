@@ -18,3 +18,21 @@ def event_anchor(event):
             if selected.value:
                 return {"type": kind, **selected.fields("ts")}
     raise ValueError("Event has no verified exactT0,publicT1 orknown_to_us_at anchor")
+
+
+def capture_boundary_points(cutoff, anchor=None):
+    """The exact window bounds a snapshot at `cutoff` (and its anchor) splits bars at:
+    the cutoff, each analysis window's start and the window before it, and the anchor with
+    its mirrored pre-anchor bound."""
+    from datetime import timedelta
+
+    from tank.util import parse_time
+
+    end = parse_time(cutoff)
+    points = {end}
+    for minutes in (15, 60, 240, 1440):
+        points.update((end - timedelta(minutes=minutes), end - timedelta(minutes=2 * minutes)))
+    if anchor is not None:
+        at = parse_time(anchor.get("ts") if isinstance(anchor, dict) else anchor)
+        points.update((at, at - (end - at)))
+    return points

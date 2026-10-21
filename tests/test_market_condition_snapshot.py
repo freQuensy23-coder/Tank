@@ -13,45 +13,6 @@ from tank.util import iso, utcnow
 
 
 @pytest.mark.asyncio
-async def test_spot_light_loader_scopes_window_and_preserves_open_minute_segments(setup):
-    repo, settings, inst = setup
-    end = utcnow().replace(second=17, microsecond=0)
-    floor = end.replace(second=0)
-    await repo.put(
-        "mkt.flow_bars_1m",
-        "bar",
-        {
-            "instrument_id": inst["instrument_id"],
-            "minute_start": iso(floor),
-            "boundary_segments": [{"start": iso(floor), "end": iso(end), "complete": True}],
-        },
-    )
-    calls = []
-    original = repo.iter_range
-
-    async def ranges(collection, field, **kwargs):
-        calls.append((collection, field, kwargs))
-        async for row in original(collection, field, **kwargs):
-            yield row
-
-    repo.iter_range = ranges
-    async with httpx.AsyncClient() as http:
-        service = MarketService(repo, settings, http=http)
-        service._flush_flow = AsyncMock(side_effect=AssertionError("must not flush"))
-        service.flush_market = AsyncMock(side_effect=AssertionError("must not flush"))
-        result = await service.condition_snapshot(
-            inst["token_id"], end, requirements=[{"metric": "spot.cohort.direction", "window": "W15M"}]
-        )
-    assert not result["flow_bars"]
-    assert len(result["flow_segments"]) == 1
-    assert {c[0] for c in calls} == {"mkt.flow_bars_1m"}
-    flow = next(c for c in calls if c[0] == "mkt.flow_bars_1m")
-    assert flow[2]["start"] == (end - timedelta(minutes=15)).replace(second=0)
-    assert flow[2]["filters"] == {"instrument_id": inst["instrument_id"]}
-    assert "oi" not in result and "funding" not in result and "klines" not in result
-
-
-@pytest.mark.asyncio
 async def test_close_loader_reads_only_hour_ending_candle_and_reference_flow(setup):
     repo, settings, inst = setup
     calls = []
@@ -160,73 +121,6 @@ async def test_composite_reads_only_dependency_metadata_and_invalidates_old_poin
         third = await service.condition_snapshot(inst["token_id"], end, requirements=req)
     assert third["dependency_fingerprint"] != first["dependency_fingerprint"]
     assert "flow_bars" not in third and "oi" not in third
-
-
-@pytest.mark.asyncio
-async def test_real_postgres_loader_to_condition_compute_selective_read_footprint(setup):
-    import os
-
-    from psycopg.conninfo import conninfo_to_dict
-
-    from tank.analysis.truth import compute_condition_values
-    from tank.market import normalize
-    from tank.market.flow import FlowAccumulator
-    from tank.storage import PostgresRepository
-    from tank.util import new_id
-
-    dsn = os.getenv("TANK_TEST_DATABASE_URL")
-    if not dsn:
-        pytest.skip("Requires explicitly configured disposable QA PostgreSQL")
-    destination = conninfo_to_dict(dsn)
-    if destination.get("port") != "55437" or not destination.get("dbname", "").startswith("tank_"):
-        pytest.skip("Requires dedicated QA55437 tank_ database")
-    _, settings, original_inst = setup
-    inst = dict(original_inst, instrument_id=new_id("condition-pg"))
-    repo = PostgresRepository(dsn)
-    await repo.open()
-    await repo.migrate()
-    end = (utcnow() - timedelta(hours=2)).replace(second=0, microsecond=0)
-    start = end - timedelta(minutes=15)
-    flow = FlowAccumulator()
-    for minute in range(15):
-        flow.add(
-            normalize.trade(
-                inst,
-                {
-                    "a": minute + 1,
-                    "p": "12",
-                    "q": "2",
-                    "m": False,
-                    "T": int((start + timedelta(minutes=minute, seconds=10)).timestamp() * 1000),
-                },
-            )
-        )
-    flow.prove_range(inst["instrument_id"], start, end, complete=True, source="EXHAUSTED_REST_RANGE")
-    await repo.put_market_batch("mkt.flow_bars_1m", [flow.record(k, complete=True) for k in flow.bars])
-    calls = []
-    original_range = repo.iter_range
-
-    async def ranges(collection, field, **kwargs):
-        calls.append((collection, kwargs))
-        async for row in original_range(collection, field, **kwargs):
-            yield row
-
-    repo.iter_range = ranges
-    try:
-        async with httpx.AsyncClient() as http:
-            service = MarketService(repo, settings, http=http)
-            service.instruments = {inst["instrument_id"]: inst}
-            service.snapshot = AsyncMock(side_effect=AssertionError("No full snapshot"))
-            service.flush_market = AsyncMock(side_effect=AssertionError("No capture flush"))
-            requirements = [{"metric": "spot.cohort.direction", "window": "W15M"}]
-            packet = await service.condition_snapshot(inst["token_id"], end, requirements=requirements)
-            result = compute_condition_values(packet, requirements)
-        assert len(packet["flow_bars"]) == 15
-        assert result["spot"]["W15M"]["direction"] == "BUY"
-        assert {c[0] for c in calls} == {"mkt.flow_bars_1m"}
-        assert calls[0][1]["start"] == start
-    finally:
-        await repo.close()
 
 
 @pytest.mark.asyncio

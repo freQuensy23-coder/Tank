@@ -11,7 +11,7 @@ LEDGER_MAX_WAIT_S = 5.0
 
 
 class RequestLedger:
-    """ops.request_budget_ledger (migration 045): every process on this IP admits from the
+    """ops.request_budget_ledger (migration 046): every process on this IP admits from the
     same budgets, tank-capture included. One autocommit connection outside the pool: each
     admission is its own short transaction and no pooled connection waits on a budget."""
 
@@ -70,12 +70,11 @@ class SharedRequestBudgets:
         self.ledger = None
 
     def configure(self, repo, settings, *, owner="tank-core"):
-        """Admit from the PostgreSQL ledger while tank-capture runs or shadows this process
-        (TANK_EXTERNAL_CAPTURE, TANK_REQUEST_LEDGER); otherwise budgets stay in memory."""
+        """Admit from the PostgreSQL ledger shared with tank-capture; an in-memory repository
+        (tests) keeps budgets in memory."""
         from tank.storage import PostgresRepository
 
-        shared = getattr(settings, "external_capture", False) or getattr(settings, "request_ledger", False)
-        if not shared or not isinstance(repo, PostgresRepository):
+        if not isinstance(repo, PostgresRepository):
             return None
         self.ledger = RequestLedger(repo.database_url, owner)
         return self.ledger
