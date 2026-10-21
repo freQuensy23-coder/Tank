@@ -2017,3 +2017,68 @@ def test_price_markup_flag_keeps_measured_venue_when_composite_is_unavailable(
     assert result["move_class"] == "UNKNOWN"
     assert result["class_confidence"] == "LOW"
     assert derivatives["synchronized"] is None
+
+
+
+def _sync_cohort(end, spans_days, levels, usd_days=None):
+    """Synchronized cohort rows on a 5 min grid; venue i starts spans_days[i] before end and
+    carries USD for its last usd_days[venue] days (all of them by default)."""
+    cohort = []
+    for (venue, span), level in zip(spans_days.items(), levels):
+        iid = f"{venue}:perp_linear:BTCUSDT"
+        rows = [
+            {
+                "instrument_id": iid,
+                "ts": iso(end - timedelta(minutes=m)),
+                "oi_native": level(m),
+                "oi_usd": 2 * level(m) if m <= (usd_days or {}).get(venue, span) * 1440 else None,
+            }
+            for m in range(int(span * 1440) // 5 * 5, -1, -5)
+        ]
+        cohort.append(({"venue": venue, "instrument_id": iid}, rows, "PERP_LINEAR_SINGLE"))
+    return cohort
+
+
+def test_synchronized_oi_history_counts_each_past_window_over_venues_seen_at_both_bounds():
+    """03 §0/§5.4: OKX joined on 18 Oct, Binance and Bybit have months of base tier; the
+    composite's normal range comes from past windows over the venues observed at their bounds."""
+    from tank.analysis.truth import _composite_history, normal, synchronized_oi
+
+    end = parse_time("2026-10-21T03:00:00Z")
+    start = end - timedelta(minutes=15)
+    spans = {"binance": 10, "bybit": 10, "okx": 2.5}
+    levels = [lambda m: 100 + (m // 5) % 4, lambda m: 50 + (m // 5) % 3, lambda m: 30 + (m // 5) % 2]
+    usd_days = {"binance": 10, "bybit": 2.5, "okx": 2.5}  # Bybit rows gain a mark with ticker capture
+    sync = _sync_cohort(end, spans, levels, usd_days)
+    result = synchronized_oi(sync, start, end)
+    assert result["venues"] == ["binance", "bybit", "okx"]
+    native, usd = [], []
+    # Past windows end m minutes before end (before the window), each with its start stored.
+    for m in range(20, 10 * 1440 - 15 + 1, 5):
+        for days, out in ((spans, native), (usd_days, usd)):
+            present = [i for i, span in enumerate(days.values()) if m + 15 <= span * 1440]
+            out.append(sum(levels[i](m) for i in present) / sum(levels[i](m + 15) for i in present) - 1)
+    assert native != usd
+    assert result["native_normal_range"] == pytest.approx(normal(native))
+    assert result["usd_normal_range"] == pytest.approx(normal(usd))
+    assert result["native_oi_vs_normal"] is not None
+
+    # A venue joining the cohort is never an OI change: flat venues give flat history.
+    flat = _sync_cohort(end, spans, [lambda m: 100, lambda m: 50, lambda m: 1000])
+    stored = [[r for r in rows if parse_time(r["ts"]) < start] for _, rows, _ in flat]
+    hn, hu = _composite_history([([parse_time(r["ts"]) for r in rows], rows) for rows in stored], end - start)
+    assert hn and max(map(abs, hn)) == 0 and max(map(abs, hu)) == 0
+
+
+def test_synchronized_oi_history_stays_unavailable_under_seven_days():
+    from tank.analysis.truth import synchronized_oi
+
+    end = parse_time("2026-10-21T03:00:00Z")
+    start = end - timedelta(minutes=15)
+    sync = _sync_cohort(
+        end, {"binance": 6.9, "bybit": 6.9, "okx": 2.5}, [lambda m: 100 + m % 7, lambda m: 50, lambda m: 30]
+    )
+    result = synchronized_oi(sync, start, end)
+    assert result["venues"] == ["binance", "bybit", "okx"]
+    assert result["native_normal_range"] is None
+    assert result["oi_class"] is None

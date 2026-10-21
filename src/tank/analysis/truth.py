@@ -797,7 +797,7 @@ def _oi_split(rows):
     return hit[1:]
 
 
-def _oi_stats(rows, start, end, *, history_identity=None):
+def _oi_stats(rows, start, end, *, history_identity=None, venue_history=None):
     rows, _, ordered, ordered_times = _oi_split(rows)
     tolerance = float(parameter("oi_sync_tolerance_s", 60))
 
@@ -844,6 +844,8 @@ def _oi_stats(rows, start, end, *, history_identity=None):
     # within half the history's cadence (base tier: 300 s), never only an exact offset.
     window = end - start
     bytime = {_time(r): r for r in rows if start - timedelta(days=lookback_days()) <= _time(r) < start}
+    if venue_history is not None:
+        venue_history = [_history_slice(times, venue_rows, start) for times, venue_rows in venue_history]
     history_times = sorted(bytime)
     gaps = sorted((b - a).total_seconds() for a, b in zip(history_times, history_times[1:]) if b > a)
     pair_tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0)
@@ -851,7 +853,7 @@ def _oi_stats(rows, start, end, *, history_identity=None):
     dependency = _BASELINE_DEPENDENCY.get()
     history_key = (
         (
-            "oi",
+            "oi" if venue_history is None else "oi_composite",
             window.total_seconds(),
             pair_tolerance,
             parameter("history_min_days", 7),
@@ -860,6 +862,8 @@ def _oi_stats(rows, start, end, *, history_identity=None):
             if dependency is not None
             else history_fingerprint(
                 [(t, r.get("oi_native"), r.get("oi_usd")) for t, r in sorted(bytime.items())]
+                if venue_history is None
+                else [[(t, r.get("oi_native"), r.get("oi_usd")) for t, r in zip(*v)] for v in venue_history]
             ),
         )
         if cache is not None
@@ -869,7 +873,9 @@ def _oi_stats(rows, start, end, *, history_identity=None):
     if ranges is None:
         hn = []
         hu = []
-        if (
+        if venue_history is not None:
+            hn, hu = _composite_history(venue_history, window)
+        elif (
             bytime
             and (max(bytime) - min(bytime)).total_seconds() >= float(parameter("history_min_days", 7)) * 86400
         ):
@@ -975,6 +981,74 @@ def liquidation_side_evidence(rows, window_complete, coverage):
     return result
 
 
+def _history_slice(times, rows, start):
+    lo = bisect_left(times, start - timedelta(days=lookback_days()))
+    hi = bisect_left(times, start)
+    return times[lo:hi], rows[lo:hi]
+
+
+def _composite_history(venue_history, window):
+    """Past same-length changes of a synchronized composite (03 §0, §5.4).
+
+    venue_history holds each cohort venue's (times, rows) before the window. Each past window
+    sums, per measure, the venues observed at both of its bounds, the rule the event window
+    follows: native OI where the native value was observed, USD OI where the USD value was
+    (Bybit base-tier rows carry no mark before ticker capture). Demanding every current venue
+    at every past point cut the history to the youngest venue's: OKX OI capture began on
+    18 Oct 2026 against Binance and Bybit base tiers from July-August, so the three-venue BTC
+    composite stayed under the 7 days §0 needs. A venue joining or leaving the cohort is never
+    counted as an OI change.
+    """
+    series = []
+    for times, rows in venue_history:
+        gaps = sorted((b - a).total_seconds() for a, b in zip(times, times[1:]) if b > a)
+        # Same pairing tolerance as one venue's history: half its cadence, at least the sync tolerance.
+        tolerance = max(float(parameter("oi_sync_tolerance_s", 60)), gaps[len(gaps) // 2] / 2 if gaps else 0)
+        values = [(decimal(r.get("oi_native")), decimal(r.get("oi_usd"))) for r in rows]
+        series.append((times, values, tolerance))
+    history = sorted({t for times, _, _ in series for t in times})
+    # §0 "at least 7 days" is the stored history's span, as for one venue's series.
+    minimum = float(parameter("history_min_days", 7)) * 86400
+    if not history or (history[-1] - history[0]).total_seconds() < minimum:
+        return [], []
+
+    def nearest(times, values, tolerance, t):
+        i = bisect_left(times, t)
+        near = [
+            (abs((times[j] - t).total_seconds()), j)
+            for j in (i - 1, i)
+            if 0 <= j < len(times) and abs((times[j] - t).total_seconds()) <= tolerance
+        ]
+        return values[min(near)[1]] if near else None
+
+    hn, hu, native_ends, usd_ends = [], [], [], []
+    for t in history:
+        n0 = n1 = u0 = u1 = Decimal(0)
+        native = usd = 0
+        for times, values, tolerance in series:
+            old, new = nearest(times, values, tolerance, t - window), nearest(times, values, tolerance, t)
+            if old is None or new is None or old is new:
+                continue
+            if new[0] is not None and old[0]:
+                native += 1
+                n0, n1 = n0 + old[0], n1 + new[0]
+            if new[1] is not None and old[1]:
+                usd += 1
+                u0, u1 = u0 + old[1], u1 + new[1]
+        if native:
+            native_ends.append(t)
+            hn.append(float(n1 / n0 - 1))
+        if usd:
+            usd_ends.append(t)
+            hu.append(float(u1 / u0 - 1))
+
+    def stored(ends):
+        # The history a measure's pairs span, from the first pair's start bound to the last end.
+        return bool(ends) and (ends[-1] - ends[0] + window).total_seconds() >= minimum
+
+    return (hn if stored(native_ends) else []), (hu if stored(usd_ends) else [])
+
+
 def synchronized_oi(sync, start, end):
     admissible = []
     tolerance = float(parameter("oi_sync_tolerance_s", 60))
@@ -1016,7 +1090,11 @@ def synchronized_oi(sync, start, end):
                     dict(ts=iso(t), oi_native=_sum(selected, "oi_native"), oi_usd=_sum(selected, "oi_usd"))
                 )
         synchronized = _oi_stats(
-            combined, start, end, history_identity=tuple(sorted(p[0]["instrument_id"] for p in sync))
+            combined,
+            start,
+            end,
+            history_identity=tuple(sorted(p[0]["instrument_id"] for p in sync)),
+            venue_history=indexed,
         )
         if synchronized:
             synchronized["venues"] = [p["venue"] for p, _, _ in sync]
