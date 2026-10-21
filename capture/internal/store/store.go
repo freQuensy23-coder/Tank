@@ -1,7 +1,7 @@
 // Package store is the capture service's PostgreSQL side: typed market writes with the
 // exact semantics of tank.market_storage.put_market_batch, the reads the service resumes
-// and runs from, the single-writer advisory lock, notifications, the shadow schema and
-// the shared request-budget ledger.
+// and runs from, the single-writer advisory lock, notifications and the shared
+// request-budget ledger. The service writes mkt; a private copy schema isolates tests.
 package store
 
 import (
@@ -18,7 +18,7 @@ import (
 )
 
 // Migration is the schema version the service requires.
-const Migration = "045_capture_service.sql"
+const Migration = "046_capture_service.sql"
 
 // Written are the collections the capture service writes; they resolve to the written
 // schema (mkt live, the shadow schema otherwise). Everything else is read from mkt.
@@ -54,8 +54,8 @@ type Store struct {
 	statements sync.Map // collection -> upsert statement
 }
 
-// Open connects, requires migration 045 and, for a shadow schema, creates the shadow
-// copies of the written tables.
+// Open connects and requires migration 046. The service writes schema "mkt"; another
+// schema (tests) gets private copies of the written tables.
 func Open(ctx context.Context, databaseURL, schema string) (*Store, error) {
 	if !schemaName.MatchString(schema) {
 		return nil, fmt.Errorf("invalid schema name %q", schema)

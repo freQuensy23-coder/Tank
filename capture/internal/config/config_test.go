@@ -129,12 +129,8 @@ print(json.dumps({"ids": ids, "tokens": list({t["token_id"]: t for t in r["token
 	if len(c.APILimits) == 0 {
 		t.Error("api limits")
 	}
-	if c.Schema() != "mkt_shadow" || c.LockKey() != "tank:capture:shadow" {
-		t.Error("shadow is the default schema and lock")
-	}
-	c.Mode = Live
 	if c.Schema() != "mkt" || c.LockKey() != "tank:capture:writer" {
-		t.Error("live schema and lock")
+		t.Error("the service writes mkt under the single-writer lock")
 	}
 }
 
@@ -220,19 +216,14 @@ func TestSettingsFromEnvironmentAndSecret(t *testing.T) {
 	if s.DatabaseURL != "postgresql://tank:p%40ss%3Aw%2Frd%20%2B%25%C3%A9~_.-@postgres:5432/tank" {
 		t.Fatalf("secret URL %q", s.DatabaseURL)
 	}
-	if s.Mode != Shadow || s.HealthAddr != ":8791" || s.ConfigDir != dir || !strings.HasPrefix(s.CodeVersion, "tank-capture/") {
+	if s.HealthAddr != ":8791" || s.ConfigDir != dir || !strings.HasPrefix(s.CodeVersion, "tank-capture/") {
 		t.Fatalf("defaults %+v", s)
 	}
 	if !strings.HasPrefix(s.ConfigVersion, "uncommitted.") && !strings.Contains(s.ConfigVersion, "-dirty.") {
 		t.Fatalf("an untracked temporary config is not a clean commit: %q", s.ConfigVersion)
 	}
 	t.Setenv("TANK_DATABASE_URL", "postgresql://u@h/db")
-	t.Setenv("TANK_CAPTURE_MODE", "live")
-	if s, err = LoadSettings(); err != nil || s.DatabaseURL != "postgresql://u@h/db" || s.Mode != Live {
+	if s, err = LoadSettings(); err != nil || s.DatabaseURL != "postgresql://u@h/db" {
 		t.Fatalf("environment wins: %+v %v", s, err)
-	}
-	t.Setenv("TANK_CAPTURE_MODE", "both")
-	if _, err := LoadSettings(); err == nil {
-		t.Fatal("an unknown mode must fail")
 	}
 }

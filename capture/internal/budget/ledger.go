@@ -7,7 +7,7 @@ import (
 )
 
 // Ledger is the shared admission ledger: ops.request_budget_acquire and
-// ops.request_budget_block (migration 045). internal/store implements it on
+// ops.request_budget_block (migration 046). internal/store implements it on
 // PostgreSQL; MemoryLedger keeps the same semantics in one process.
 type Ledger interface {
 	// Acquire admits weight into the rolling window of bucket and records it (0), or

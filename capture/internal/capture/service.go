@@ -14,6 +14,7 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pipeline"
 	"github.com/freQuensy23-coder/Tank/capture/internal/points"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
+	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
 	"github.com/freQuensy23-coder/Tank/capture/internal/stream"
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
@@ -250,10 +251,15 @@ func (s *Service) tick(ctx context.Context) {
 	s.flush(ctx)
 }
 
-// flush writes the queued typed rows (one writer at a time).
+// flush writes the queued typed rows (one writer at a time). While the writer lock is
+// being re-acquired the rows stay queued: nothing is written without it, nothing dropped.
 func (s *Service) flush(ctx context.Context) {
 	s.flushMu.Lock()
 	defer s.flushMu.Unlock()
+	if s.opt.CanWrite != nil && !s.opt.CanWrite() {
+		s.flushErr.Store("writer lock not held: rows kept in memory")
+		return
+	}
 	if err := s.writer.Flush(ctx); err != nil {
 		s.flushErr.Store(err.Error())
 		s.log.Warn("market flush failed", "error", err)
@@ -505,6 +511,38 @@ func (s *Service) publishStreamsStopped() {
 	s.publishStreams()
 }
 
+// latePrintRevision handles a late print for a complete bar of a venue without REST trade
+// history, where the minute cannot be rebuilt. A print at or before the bar's last
+// counted print is a re-delivery (a reconnect replays recent prints) and changes nothing.
+// A newer one revises the bar: bar_version + 1, revised, still complete, with the print
+// recorded in capture_proof.revision.late_print. A complete bar is never downgraded.
+func (s *Service) latePrintRevision(key flow.Key, stored map[string]any, t *normalize.Trade, now time.Time) {
+	if last, err := pytime.Parse(pyval.Map(stored["last_trade"])["ts"]); err == nil && !t.TS.After(last) {
+		return
+	}
+	version := int64(1)
+	if v, err := pyval.Int(stored["bar_version"]); err == nil && v > 0 {
+		version = v
+	}
+	if known, ok := s.seal.Version(key); ok && known > version {
+		version = known
+	}
+	next := version + 1
+	row := copyRow(stored)
+	delete(row, "semantic_fingerprint")
+	row["bar_version"], row["revised"] = next, true
+	late := map[string]any{"trade_id": t.TradeID, "ts": pytime.ISO(t.TS), "price": t.Price.String(), "qty": t.Qty.String(), "side": t.Side}
+	row["capture_proof"] = map[string]any{
+		"sealed_by": text(pyval.Map(stored["capture_proof"])["sealed_by"]),
+		"revision": map[string]any{
+			"version": next, "reason": "LATE_PRINT_AFTER_SEAL", "observed_at": pytime.ISO(now),
+			"previous": flowSummary(stored), "late_print": late,
+		},
+	}
+	s.seal.Forget(key, next)
+	s.points.Put("mkt.flow_bars_1m", key.IID+":"+key.MinuteISO(), row)
+}
+
 // confirm is the second book path (03 §5.9) of a listed venue.
 func (s *Service) confirm(inst *venue.Instrument, row map[string]any) (map[string]any, error) {
 	ctx, cancel := context.WithTimeout(s.context(), 30*time.Second)
@@ -521,8 +559,8 @@ func (s *Service) context() context.Context {
 
 // lateMinute is a print for a minute the sealer no longer holds (or one before this
 // process's first connection): the minute is rebuilt over REST against its stored row,
-// once for a burst of late prints. Without REST trade history the stored bar is revised
-// incomplete instead.
+// once for a burst of late prints. Without REST trade history (Hyperliquid) a complete
+// bar is never downgraded: see latePrintRevision.
 func (s *Service) lateMinute(inst *venue.Instrument, t *normalize.Trade) {
 	key := flow.KeyOf(inst.ID, t.TS)
 	s.mu.Lock()
@@ -544,10 +582,7 @@ func (s *Service) lateMinute(inst *venue.Instrument, t *normalize.Trade) {
 			if err != nil || stored == nil || stored["complete"] != true {
 				return
 			}
-			row := copyRow(stored)
-			row["complete"], row["gap_reason"] = false, "LATE_PRINT_AFTER_SEAL"
-			delete(row, "semantic_fingerprint")
-			s.writeRevised(inst, key, row, stored, "LATE_PRINT", s.clock.Now(), true)
+			s.latePrintRevision(key, stored, t, s.clock.Now())
 			return
 		}
 		s.queueRepair(inst, span{minute, minute.Add(time.Minute)}, "LATE_PRINT", nil)

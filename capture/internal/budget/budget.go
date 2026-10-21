@@ -1,6 +1,6 @@
 // Package budget is one request budget per provider bucket and IP: the buckets
 // tank.market.rate_gate and MarketService._request_once charge, a ledger shared with
-// Tank core through PostgreSQL (ops.request_budget_acquire, migration 045), and the
+// Tank core through PostgreSQL (ops.request_budget_acquire, migration 046), and the
 // per-process admission in front of it (rate_gate.PriorityGate, the host start spacing
 // and SharedRequestBudgets' urgent yielding).
 package budget

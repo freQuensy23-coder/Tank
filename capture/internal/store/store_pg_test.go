@@ -568,3 +568,30 @@ func TestWriterFlush(t *testing.T) {
 		t.Fatalf("requeued %d", w.Pending())
 	}
 }
+
+// A terminated lock backend is replaced: the lock is held again on a new connection and
+// Lost stays open.
+func TestLockSurvivesTerminatedBackend(t *testing.T) {
+	fastLock(t)
+	s := open(t, "mkt_shadow_"+suffix())
+	ctx := context.Background()
+	l, err := s.Lock(ctx, "tank:capture:test:"+suffix())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Release()
+	l.mu.Lock()
+	first := l.conn.PID()
+	l.mu.Unlock()
+	if _, err := s.Pool.Exec(ctx, "SELECT pg_terminate_backend($1)", int64(first)); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "lock not re-acquired after its backend was terminated", func() bool {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		return l.Held() && l.conn.PID() != first
+	})
+	if lost(l) {
+		t.Fatal("a re-acquired lock must not report Lost")
+	}
+}

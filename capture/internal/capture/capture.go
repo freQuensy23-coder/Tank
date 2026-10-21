@@ -104,12 +104,12 @@ type Options struct {
 	Thresholds    map[string]any
 	ConfigVersion string
 	CodeVersion   string
-	// Writer names the rows this process claims or reports ("live" or "shadow").
+	// Writer names the rows this process claims or reports.
 	Writer string
-	// Shadow runs obligations core already runs, writing their results to the shadow
-	// schema only, and leaves capture requests to core's in-process capture.
-	Shadow bool
-	Log    *slog.Logger
+	// CanWrite reports whether the writer lock is held; while it is not, flushes keep the
+	// queued rows in memory (nil: always).
+	CanWrite func() bool
+	Log      *slog.Logger
 }
 
 // Threshold is thresholds.get(name, default) as a float.

@@ -9,7 +9,7 @@ import (
 )
 
 // PGLedger is the shared request budget in PostgreSQL (ops.request_budget_acquire and
-// ops.request_budget_block, migration 045): one rolling window per provider bucket for
+// ops.request_budget_block, migration 046): one rolling window per provider bucket for
 // every process on the IP.
 type PGLedger struct{ Pool *pgxpool.Pool }
 

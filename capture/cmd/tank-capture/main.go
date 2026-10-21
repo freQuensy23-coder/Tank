@@ -78,7 +78,7 @@ func run(log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log.Info("starting", "mode", cfg.Mode, "schema", cfg.Schema(), "config_version", cfg.ConfigVersion,
+	log.Info("starting", "schema", cfg.Schema(), "config_version", cfg.ConfigVersion,
 		"code_version", cfg.CodeVersion, "instruments", len(cfg.Instruments))
 	st, err := store.Open(ctx, cfg.DatabaseURL, cfg.Schema())
 	if err != nil {
@@ -98,15 +98,15 @@ func run(log *slog.Logger) error {
 	}
 	defer lock.Release()
 	log.Info("writer lock held", "key", cfg.LockKey())
-	owner := "tank-capture/" + cfg.Mode
+	owner := config.Writer
 	clock := capture.NewSystemClock()
 	gate := budget.NewGate(st.Ledger(), owner)
 	client := rest.NewClient(cfg.UserAgent, gate, clock.Now)
 	writer := store.NewWriter(st)
 	svc := capture.New(capture.Options{
 		Instruments: cfg.Instruments, Order: cfg.Order, Tokens: cfg.Tokens, Thresholds: cfg.Thresholds,
-		ConfigVersion: cfg.ConfigVersion, CodeVersion: cfg.CodeVersion, Writer: cfg.Mode,
-		Shadow: cfg.Mode == config.Shadow, Log: log,
+		ConfigVersion: cfg.ConfigVersion, CodeVersion: cfg.CodeVersion, Writer: config.Writer,
+		CanWrite: lock.Held, Log: log,
 	}, st, writer, capture.RESTVenues(client), dial(cfg.UserAgent), clock)
 	health.set(svc, lock)
 	runCtx, cancel := context.WithCancel(ctx)
@@ -123,7 +123,7 @@ func run(log *slog.Logger) error {
 	go func() {
 		select {
 		case <-lock.Lost():
-			log.Error("writer lock lost: stopping before writing without it")
+			log.Error("another writer holds the writer lock: stopping")
 			cancel()
 		case <-runCtx.Done():
 		}
@@ -140,7 +140,7 @@ func run(log *slog.Logger) error {
 	err = svc.Run(runCtx)
 	select {
 	case <-lock.Lost():
-		return errors.New("writer lock lost")
+		return errors.New("another writer holds the writer lock")
 	default:
 	}
 	return err
@@ -216,8 +216,11 @@ func (h *healthState) healthy() (bool, string) {
 	}
 	select {
 	case <-lock.Lost():
-		return false, "writer lock lost"
+		return false, "another writer holds the writer lock"
 	default:
+	}
+	if !lock.Held() {
+		return false, "re-acquiring the writer lock"
 	}
 	last := svc.LastFlush()
 	if last.IsZero() || time.Since(last) > healthStale {

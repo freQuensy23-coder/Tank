@@ -15,22 +15,14 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-var terminal = map[string]bool{"COMPLETE": true, "PARTIAL": true, "FAILED": true}
-
-// obligations runs the pre-event capture obligations core wrote (mkt.backfill_runs).
-// Live: the PENDING ones, and RUNNING ones a stopped writer left. Shadow: every recent
-// obligation, its result written to the shadow schema only.
+// obligations runs the pre-event capture obligations core wrote (mkt.backfill_runs):
+// the PENDING ones, and RUNNING ones a stopped writer left.
 func (s *Service) obligations(ctx context.Context) {
-	statuses := []string{"PENDING", "RUNNING"}
-	if s.opt.Shadow {
-		statuses = []string{"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"}
-	}
-	rows, err := s.store.BackfillRuns(ctx, statuses)
+	rows, err := s.store.BackfillRuns(ctx, []string{"PENDING", "RUNNING"})
 	if err != nil {
 		s.log.Warn("backfill runs unreadable", "error", err)
 		return
 	}
-	now := s.clock.Now()
 	for _, row := range rows {
 		id := text(row["backfill_id"])
 		s.mu.Lock()
@@ -38,18 +30,6 @@ func (s *Service) obligations(ctx context.Context) {
 		s.mu.Unlock()
 		if started || id == "" {
 			continue
-		}
-		if s.opt.Shadow {
-			at, err := pytime.Parse(row["started_at"])
-			if err != nil || at.Before(now.Add(-WindowAfter)) {
-				continue
-			}
-			if own, err := s.store.Get(ctx, "mkt.backfill_runs", id); err != nil || (own != nil && terminal[text(own["status"])]) {
-				s.mu.Lock()
-				s.obliged[id] = err == nil
-				s.mu.Unlock()
-				continue
-			}
 		}
 		s.mu.Lock()
 		s.obliged[id] = true
@@ -191,9 +171,6 @@ func (s *Service) tokenInstruments(token string) []*venue.Instrument {
 
 // requests runs the window repairs core asks for (mkt.capture_requests).
 func (s *Service) requests(ctx context.Context) {
-	if s.opt.Shadow {
-		return // core's in-process capture repairs its own windows
-	}
 	for ctx.Err() == nil {
 		row, err := s.store.ClaimRequest(ctx, s.opt.Writer, s.clock.Now())
 		if err != nil {

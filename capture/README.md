@@ -18,7 +18,7 @@ The interface is tables. There are no files between the two processes.
 | `mkt.capture_requests` | core creates `PENDING`, capture runs it | core | bounded window repair before a Market Truth run |
 | `ops.request_budget_ledger`, `ops.request_budget_blocks` | both | both | one request budget per provider bucket and IP |
 
-`src/tank/migrations/045_capture_service.sql` creates the new tables, the
+`src/tank/migrations/046_capture_service.sql` creates the new tables, the
 `bar_version`/`revised` flow bar columns, the `tank_capture` notifications and the
 budget functions. Apply it with `tank db migrate` before starting the service; the
 service refuses to start without it.
@@ -36,7 +36,6 @@ start it. Environment:
 |---|---|---|
 | `TANK_DATABASE_URL` | built from `/run/secrets/tank_db_password` | PostgreSQL URL (role `tank`) |
 | `TANK_CONFIG_DIR` | `/config` | the versioned configuration (`registry.yaml`, `semantics.yaml`, `thresholds.yaml`, `api_limits.yaml`, `sources.yaml`) |
-| `TANK_CAPTURE_MODE` | `shadow` | `live` writes `mkt.*`; `shadow` writes the same rows into `mkt_shadow.*` |
 | `TANK_CAPTURE_HEALTH_ADDR` | `:8791` | `GET /healthz` (200 when the writer lock is held and the last flush is recent), `GET /status` |
 
 Core keeps its in-process capture while `TANK_EXTERNAL_CAPTURE` is unset or false (the
@@ -60,11 +59,13 @@ which calls `/healthz` inside the container. The container is limited to 1 CPU a
 
 ## Single writer
 
-The live writer holds the session advisory lock `tank:capture:writer` (the key
-`tank.storage` derives: the first 8 bytes of its SHA-256, big-endian, signed) for its
-whole life on a dedicated connection. Core's in-process capture takes the same lock, so
-the two never write market rows at once. A lost lock connection stops the process; it
-never writes without the lock. Shadow mode uses `tank:capture:shadow`.
+tank-capture is the only writer of the market tables. It holds the session advisory
+lock `tank:capture:writer` (the key `tank.storage` derives: the first 8 bytes of its
+SHA-256, big-endian, signed) on a dedicated connection. When that connection fails, the
+lock is re-acquired on a new one with backoff while the streams keep running: flushes
+keep their rows in memory until it is held again, so nothing is written without the lock
+and nothing is dropped. Its own earlier session, still holding the lock on a half-open
+connection, is terminated. Only another process holding the lock stops the service.
 
 ## Restart
 
@@ -117,7 +118,7 @@ host for every process for `Retry-After`; a 418 closes it and is never retried; 
 | `cmd/tank-capture` | the service |
 | `cmd/capture-parity` | the parity harness binary (`scripts/capture/parity.py --go`) |
 | `internal/config` | configuration, settings and versions |
-| `internal/store` | PostgreSQL: typed writes with `tank.market_storage` semantics, reads, lock, notifications, shadow schema |
+| `internal/store` | PostgreSQL: typed writes with `tank.market_storage` semantics, reads, lock, notifications (a private schema isolates the PostgreSQL tests) |
 | `internal/budget` | the shared request ledger, per-host admission and venue request weights |
 | `internal/rest` | the venue REST adapters (`tank.market.adapters`) |
 | `internal/capture` | hot set, stream groups, the flow sealer, repairs, obligations, pollers, stream state |
@@ -135,16 +136,6 @@ The parity harness feeds the same recorded frames (`testdata/frames`) through th
 Python reference (`tank.market`) and the Go port and requires identical trades, rows,
 bars, fingerprints and watermarks. PostgreSQL tests run when `TANK_TEST_DATABASE_URL`
 is set.
-
-## Shadow comparison
-
-```
-uv run python scripts/capture/shadow_compare.py --since 2026-10-21T00:00:00Z --until 2026-10-22T00:00:00Z
-```
-
-compares `mkt_shadow.flow_bars_1m` with `mkt.flow_bars_1m` per minute and instrument
-(buy/sell quantity, trade counts, Σq², size buckets, completeness) and prints the result
-per venue. It exits 1 when a minute complete in both schemas differs: the rollout gate.
 
 ## Not in tank-capture
 

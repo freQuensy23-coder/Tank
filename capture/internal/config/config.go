@@ -24,18 +24,15 @@ const DefaultUserAgent = "TankV0/1.0 (operator contact not configured)"
 type Settings struct {
 	DatabaseURL   string
 	ConfigDir     string
-	Mode          string // "live" writes mkt.*, "shadow" writes mkt_shadow.*
 	HealthAddr    string
 	UserAgent     string
 	ConfigVersion string
 	CodeVersion   string
 }
 
-// Modes of the service.
-const (
-	Live   = "live"
-	Shadow = "shadow"
-)
+// Writer names the rows the service claims or reports (capture requests, the request
+// ledger): it is the only writer of the market tables.
+const Writer = "tank-capture"
 
 func env(name, fallback string) string {
 	if v, ok := os.LookupEnv(name); ok && v != "" {
@@ -84,12 +81,8 @@ func databaseURL() (string, error) {
 func LoadSettings() (Settings, error) {
 	s := Settings{
 		ConfigDir:  env("TANK_CONFIG_DIR", "/config"),
-		Mode:       env("TANK_CAPTURE_MODE", Shadow),
 		HealthAddr: env("TANK_CAPTURE_HEALTH_ADDR", ":8791"),
 		UserAgent:  DefaultUserAgent,
-	}
-	if s.Mode != Live && s.Mode != Shadow {
-		return s, fmt.Errorf("TANK_CAPTURE_MODE must be %q or %q, not %q", Live, Shadow, s.Mode)
 	}
 	url, err := databaseURL()
 	if err != nil {
@@ -257,19 +250,8 @@ func (c *Config) Threshold(name string, def float64) float64 {
 	return def
 }
 
-// Schema is the schema the service writes: mkt (live) or mkt_shadow (shadow).
-func (c *Config) Schema() string {
-	if c.Mode == Live {
-		return "mkt"
-	}
-	return "mkt_shadow"
-}
+// Schema is the schema the service writes: the market tables core reads.
+func (c *Config) Schema() string { return "mkt" }
 
-// LockKey is the advisory lock of the single writer of that schema. Core's in-process
-// capture takes the live key too.
-func (c *Config) LockKey() string {
-	if c.Mode == Live {
-		return "tank:capture:writer"
-	}
-	return "tank:capture:shadow"
-}
+// LockKey is the advisory lock of the single writer of the market tables.
+func (c *Config) LockKey() string { return "tank:capture:writer" }
