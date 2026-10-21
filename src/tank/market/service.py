@@ -12,7 +12,12 @@ from decimal import Decimal, localcontext
 
 import httpx
 
-from tank.market_storage import latest_market_trades, market_series_day_counts, sampled_market_history
+from tank.market_storage import (
+    latest_market_trades,
+    market_dependency_head,
+    market_series_day_counts,
+    sampled_market_history,
+)
 from tank.time_precision import Timestamp, chosen_boundary, collection_clock, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time, sha256, utcnow
 
@@ -48,6 +53,9 @@ WINDOW_BEFORE, WINDOW_AFTER = timedelta(hours=24), timedelta(hours=72)
 # the trailing REFERENCE_SPAN of spot (03 §5.7 reference venue) is repaired before anything else.
 REPAIR_CHUNK, REFERENCE_SPAN = timedelta(hours=1), timedelta(hours=24)
 PAGES_PER_FLUSH = 25
+# A reused dependency head is recomputed at least this often (retention deletes and other
+# processes are not in the write clock).
+HEAD_REUSE_S = 300
 # Rows read only from public exchange endpoints never contain a Tank secret.
 PUBLIC_MARKET = frozenset(
     {
@@ -123,6 +131,7 @@ class MarketService:
         # Earliest unrepaired checkpoint per instrument while its repair is running.
         self._pending_reconnects = {}
         self._repair_slots = asyncio.Semaphore(3)
+        self._condition_heads_memo = {}
         self.flow = FlowAccumulator()
         self.books = {}
         self.streams = {}
@@ -3023,6 +3032,46 @@ class MarketService:
                     cache.pop(next(iter(cache)))
             return series
 
+    async def _condition_heads(self, collection, field, start, cutoff, assembled_at, filters):
+        """The three dependency heads of a window in one round trip. A head counts only rows
+        recorded by its assembly clock, so for a later clock of the same window it is reused
+        while nothing was written to its scope since (one condition evaluation asks for the
+        same heads once per condition; prod r106 ran ~60-80 sequential heads per BTC pass)."""
+        orders = ("availability", "semantic_latest", "semantic_earliest")
+        key = (collection, field, tuple(sorted(filters.items())), iso(start), iso(cutoff))
+        scope = next(
+            ((name, filters[name]) for name in ("instrument_id", "token_id") if name in filters), (None, None)
+        )
+        written = getattr(self.repo, "_market_write_clock", {}).get((collection, *scope))
+        at = parse_time(assembled_at) if assembled_at is not None else None
+        memo = self._condition_heads_memo
+        hit = memo.get(key)
+        if (
+            hit is not None
+            and at is not None
+            and hit["at"] <= at
+            and (written is None or written <= hit["at"])
+            and time.monotonic() - hit["computed"] < HEAD_REUSE_S
+        ):
+            return hit["heads"]
+        found = await market_dependency_head(
+            self.repo,
+            collection,
+            field,
+            cutoff,
+            start=start,
+            filters=filters,
+            assembled_at=assembled_at,
+            orders=orders,
+        )
+        heads = [found[o] for o in orders]
+        if at is not None:
+            memo.pop(key, None)
+            memo[key] = {"at": at, "heads": heads, "computed": time.monotonic()}
+            if len(memo) > 4096:
+                memo.pop(next(iter(memo)))
+        return heads
+
     async def _condition_projected_history(
         self, collection, field, start, cutoff, assembled_at, *, fields, filters
     ):
@@ -3032,18 +3081,7 @@ class MarketService:
         fields = tuple(dict.fromkeys([*fields, field, "recorded_at"]))
         key = (collection, field, tuple(sorted(filters.items())), fields)
         cache = self.__dict__.setdefault("_condition_projections", {})
-        heads = [
-            await self.repo.market_dependency_head(
-                collection,
-                field,
-                cutoff,
-                start=start,
-                filters=filters,
-                assembled_at=assembled_at,
-                order=order,
-            )
-            for order in ("availability", "semantic_latest", "semantic_earliest")
-        ]
+        heads = await self._condition_heads(collection, field, start, cutoff, assembled_at, filters)
         locks = self.__dict__.setdefault("_condition_projection_locks", {})
         async with locks.setdefault(key, asyncio.Lock()):
             previous = cache.get(key)

@@ -8,7 +8,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
-from tank.util import iso, jsonable, parse_time
+from tank.util import iso, jsonable, parse_time, utcnow
 
 
 def encode(collection, record):
@@ -209,6 +209,20 @@ def _unproves(collection, old, new):
     )
 
 
+def _note_writes(self, collection, rows):
+    """When rows of a scope last changed: a dependency head that saw every row recorded by
+    its assembly clock stays valid for a later clock until its scope is written again."""
+    if not rows:
+        return
+    clock = self.__dict__.setdefault("_market_write_clock", {})
+    now = utcnow()
+    clock[collection, None, None] = now
+    for row in rows:
+        for scope in ("instrument_id", "token_id"):
+            if row.get(scope) is not None:
+                clock[collection, scope, row[scope]] = now
+
+
 async def _put_market_batch(self, collection, records, *, keys=None, _columns=None):
     # Forward migration import can target a historical typed schema. Ordinary
     # production writes always use the entire current explicit column contract.
@@ -277,6 +291,7 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
                         rows.pop(previous)
                     rows[key] = value
                     changed.append(value.copy())
+        _note_writes(self, collection, changed)
         return changed
     names = ["storage_key", *columns]
     arrays = []
@@ -355,7 +370,9 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
         )
     async with self.transaction():
         rows = await (await self._conn().execute(query, arrays)).fetchall()
-    return [decode(collection, r) for r in rows]
+    changed = [decode(collection, r) for r in rows]
+    _note_writes(self, collection, changed)
+    return changed
 
 
 async def latest_market_records(
@@ -487,8 +504,10 @@ async def market_dependency_head(
     instrument_ids=None,
     assembled_at=None,
     order="availability",
+    orders=None,
 ):
     """Availability or semantic-boundary head within a scope, returning metadata only.
+    With `orders`, every listed head comes from one round trip as {order: head}.
 
     A correction to an old point participates by its actual recorded_at, not by its
     position in semantic history. Unknown legacy availability is explicitly excluded.
@@ -498,12 +517,26 @@ async def market_dependency_head(
 
     from tank.storage import _exact_predicate
 
-    if order not in ("availability", "semantic_latest", "semantic_earliest"):
+    if any(o not in ("availability", "semantic_latest", "semantic_earliest") for o in orders or (order,)):
         raise ValueError("Unsupported market dependency head order")
+    if orders is not None and not hasattr(self, "_conn"):
+        return {
+            o: await market_dependency_head(
+                self,
+                collection,
+                semantic_field,
+                cutoff,
+                start=start,
+                filters=filters,
+                instrument_ids=instrument_ids,
+                assembled_at=assembled_at,
+                order=o,
+            )
+            for o in orders
+        }
     ascending = order == "semantic_earliest"
     columns = MARKET_COLUMNS.get(collection)
     semantic_field = MARKET_ALIASES.get(collection, {}).get(semantic_field, semantic_field)
-    order_field = "recorded_at" if order == "availability" else semantic_field
     if (
         columns is None
         or columns.get(semantic_field) != "timestamptz"
@@ -518,7 +551,7 @@ async def market_dependency_head(
             raise ValueError("instrument_ids must contain instrument identifier strings")
         instrument_ids = sorted(set(instrument_ids))
         if not instrument_ids:
-            return None
+            return None if orders is None else dict.fromkeys(orders)
         if "instrument_id" not in columns:
             raise ValueError(f"{collection} has no typed instrument_id")
     cutoff = parse_time(cutoff)
@@ -580,19 +613,28 @@ async def market_dependency_head(
         else:
             clauses.append(sql.SQL("instrument_id = ANY(%s::text[])"))
             args.append(instrument_ids)
-    query = sql.SQL(
-        "SELECT storage_key,recorded_at,semantic_fingerprint,{} FROM {} WHERE {} ORDER BY {} {},storage_key {} LIMIT 1"
-    ).format(
-        sql.Identifier(semantic_field),
-        sql.Identifier(*collection.split(".")),
-        sql.SQL(" AND ").join(clauses),
-        sql.Identifier(order_field),
-        sql.SQL("ASC" if ascending else "DESC"),
-        sql.SQL("ASC" if ascending else "DESC"),
-    )
+    wanted = [order] if orders is None else list(orders)
+
+    def head(o):
+        direction = sql.SQL("ASC" if o == "semantic_earliest" else "DESC")
+        return sql.SQL(
+            "(SELECT {} AS head,storage_key,recorded_at,semantic_fingerprint,{} FROM {} WHERE {}"
+            " ORDER BY {} {},storage_key {} LIMIT 1)"
+        ).format(
+            sql.Literal(o),
+            sql.Identifier(semantic_field),
+            sql.Identifier(*collection.split(".")),
+            sql.SQL(" AND ").join(clauses),
+            sql.Identifier("recorded_at" if o == "availability" else semantic_field),
+            direction,
+            direction,
+        )
+
+    query = sql.SQL(" UNION ALL ").join(head(o) for o in wanted)
     async with self.transaction():
-        row = await (await self._conn().execute(query, args)).fetchone()
-    return metadata(row) if row else None
+        rows = await (await self._conn().execute(query, args * len(wanted))).fetchall()
+    found = {row["head"]: metadata(row) for row in rows}
+    return found.get(order) if orders is None else {o: found.get(o) for o in wanted}
 
 
 async def iter_market_projection(

@@ -1995,3 +1995,64 @@ async def test_bucketed_oi_cadence_is_bounded_by_its_source(setup):
     assert oi["cadence_s_by_metric"]["bybit.linear.open-interest"] == 300.0
     assert oi["cadence_basis_by_metric"]["bybit.linear.open-interest"] == "SOURCE_BUCKET_300S"
     await service.close()
+
+
+@pytest.mark.asyncio
+async def test_condition_heads_are_reused_until_their_scope_is_written(setup, monkeypatch):
+    from tank.market import service as service_module
+    from tank.util import iso
+
+    repo, settings, inst = setup
+    service = MarketService(repo, settings)
+    iid = inst["instrument_id"]
+    now = utcnow().replace(microsecond=0)
+    row = {
+        "instrument_id": iid,
+        "token_id": "test:ABC",
+        "metric_key": "binance.usdm.openInterest",
+        "ts": iso(now - timedelta(minutes=5)),
+        "oi_native": "1",
+        "recorded_at": iso(now - timedelta(minutes=4)),
+    }
+    await repo.put_market_batch("mkt.oi_obs", [row])
+    calls = []
+    real = service_module.market_dependency_head
+
+    async def counted(*args, **kwargs):
+        calls.append(kwargs.get("orders"))
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(service_module, "market_dependency_head", counted)
+    window = ("mkt.oi_obs", "ts", now - timedelta(days=1), now)
+    assembled = utcnow()  # after the write: the head saw every row of its scope
+    first = await service._condition_heads(*window, iso(assembled), {"instrument_id": iid})
+    again = await service._condition_heads(*window, iso(assembled + timedelta(seconds=30)), {"instrument_id": iid})
+    assert (
+        first == again
+        and len(calls) == 1
+        and calls[0] == ("availability", "semantic_latest", "semantic_earliest")
+    )
+    singles = [
+        await real(
+            repo,
+            "mkt.oi_obs",
+            "ts",
+            now,
+            start=now - timedelta(days=1),
+            filters={"instrument_id": iid},
+            assembled_at=iso(assembled),
+            order=o,
+        )
+        for o in ("availability", "semantic_latest", "semantic_earliest")
+    ]
+    assert first == singles and first[0]["storage_key"]
+    await repo.put_market_batch(
+        "mkt.oi_obs", [dict(row, ts=iso(now - timedelta(minutes=1)), recorded_at=iso(utcnow()))]
+    )
+    later = await service._condition_heads(
+        *window, iso(utcnow() + timedelta(seconds=1)), {"instrument_id": iid}
+    )
+    assert len(calls) == 2 and later[1]["ts"] == iso(
+        now - timedelta(minutes=1)
+    )  # a write invalidates the reuse
+    await service.close()
