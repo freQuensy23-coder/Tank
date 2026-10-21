@@ -97,9 +97,6 @@ class SupplyCapture:
         self.lending_pool_catalog = catalog
         self.lending_pool_identities = {row["pool_id"]: row for row in catalog.get("pools", [])}
 
-    def instrument(self, token):
-        return {"instrument_id": "supply:" + token["token_id"], "token_id": token["token_id"]}
-
     async def record(self, token, kind, **fields):
         if self.settings.etherscan_api_key:
             fields = {
@@ -118,9 +115,7 @@ class SupplyCapture:
         return row
 
     async def request(self, token, kind, url, **kwargs):
-        raw = await self.market._request("GET", url, **kwargs)
-        await self.market._raw(self.instrument(token), kind, raw)
-        return raw
+        return await self.market._request("GET", url, **kwargs)
 
     async def resume_refresh_state(self, state, now):
         """Restore the last refresh of each step from stored observations, so a restart
@@ -196,8 +191,6 @@ class SupplyCapture:
             "https://api.etherscan.io/v2/api",
             params={"chainid": chainid, "apikey": self.settings.etherscan_api_key, **params},
         )
-        # Archive payload contains no API credentials (response only).
-        await self.market._raw(self.instrument(token), "etherscan_" + params.get("action", ""), raw)
         if raw.get("status") == "0" and raw.get("message") != "No transactions found":
             raise SemanticError("Etherscan request failed: " + str(raw.get("result")))
         if "error" in raw:

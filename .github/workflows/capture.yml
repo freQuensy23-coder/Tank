@@ -1,0 +1,138 @@
+name: capture
+
+# tank-capture (capture/README.md), the only exchange capture: Go vet and race tests, the
+# parity of the Go port with the goldens of the retired Python capture, and the core suites
+# that read what it writes.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/capture.yml
+      - capture/**
+      - compose.yaml
+      - scripts/capture/**
+      - src/tank/market/**
+      - src/tank/market_schema.py
+      - src/tank/market_storage.py
+      - src/tank/migrations/**
+      - src/tank/replay.py
+      - src/tank/runtime.py
+      - src/tank/settings.py
+      - src/tank/sources/rate_limits.py
+      - tests/test_capture*.py
+      - tests/test_external_capture.py
+      - tests/test_market_*.py
+      - tests/test_supply_capture.py
+      - uv.lock
+  push:
+    paths:
+      - .github/workflows/capture.yml
+      - capture/**
+      - compose.yaml
+      - scripts/capture/**
+      - src/tank/market/**
+      - src/tank/market_schema.py
+      - src/tank/market_storage.py
+      - src/tank/migrations/**
+      - src/tank/replay.py
+      - src/tank/runtime.py
+      - src/tank/settings.py
+      - src/tank/sources/rate_limits.py
+      - tests/test_capture*.py
+      - tests/test_external_capture.py
+      - tests/test_market_*.py
+      - tests/test_supply_capture.py
+      - uv.lock
+
+permissions:
+  contents: read
+
+concurrency:
+  group: capture-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"
+  # A disposable cluster of this job only; pytest accepts only tank_test* databases.
+  TANK_TEST_DATABASE_URL: postgresql://postgres@localhost:5432/tank_test
+
+jobs:
+  go:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: capture/go.mod
+          cache-dependency-path: capture/go.sum
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Migrated test database
+        run: |
+          uv sync
+          uv run python -c "import psycopg; psycopg.connect('postgresql://postgres@localhost:5432/postgres', autocommit=True).execute('CREATE DATABASE tank_test')"
+          TANK_DATABASE_URL="$TANK_TEST_DATABASE_URL" TANK_DATA_DIR="$RUNNER_TEMP/tank-data" uv run tank db migrate
+      - name: go vet
+        working-directory: capture
+        run: go vet ./...
+      - name: go test -race
+        working-directory: capture
+        run: go test -race ./...
+
+  parity:
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: capture/go.mod
+          cache-dependency-path: capture/go.sum
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - run: uv sync --extra dev
+      - name: Build capture-parity
+        working-directory: capture
+        run: go build -o bin/capture-parity ./cmd/capture-parity
+      - name: Parity with the goldens of the retired Python capture (frames and REST polls)
+        run: uv run python scripts/capture/parity.py --check --go capture/bin/capture-parity
+      - name: Go schema copy matches tank.market_schema
+        run: uv run python scripts/capture/gen_schema.py --check
+      - name: Test database
+        run: uv run python -c "import psycopg; psycopg.connect('postgresql://postgres@localhost:5432/postgres', autocommit=True).execute('CREATE DATABASE tank_test')"
+      - name: Core suites that read tank-capture's tables
+        run: >-
+          uv run pytest -q
+          tests/test_capture_parity.py
+          tests/test_external_capture.py
+          tests/test_market_service.py
+          tests/test_market_condition_snapshot.py
+          tests/test_market_snapshot_comparators.py
+          tests/test_market_sector_registry.py
+          tests/test_market_rate_gate.py
+          tests/test_supply_capture.py
+          tests/test_replay.py

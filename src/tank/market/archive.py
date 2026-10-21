@@ -1042,6 +1042,9 @@ async def fetch_archive(
     a [start, end) window limits the import to the whole minutes it touches."""
     import httpx
 
+    # tank-capture (capture/README.md) owns every exchange download, Binance Vision included;
+    # its archive bootstrap is the follow-up that retires this function.
+    raise RuntimeError("exchange downloads belong to tank-capture")
     if market is not None:
         await market.flush_market()
     own = http is None

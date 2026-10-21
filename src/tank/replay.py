@@ -629,20 +629,19 @@ class ReplayMarketReader:
             }
         manifests = (self.evidence_capture or {}).get("rebuild_manifests", [])
         if manifests:
-            from types import SimpleNamespace
 
             from tank.market.archive import TradeArchive
+            from tank.market.capture import capture_boundary_points
             from tank.market.flow import FlowAccumulator
-            from tank.market.service import MarketService
 
             instruments = [
                 row for row in self.inputs.registry.get("instruments", []) if row.get("token_id") == token_id
             ]
             ids = {row["instrument_id"] for row in instruments}
             boundary_flow = FlowAccumulator()
-            MarketService._register_capture_boundaries(
-                SimpleNamespace(flow=boundary_flow), ids, cutoff, anchor
-            )
+            points = capture_boundary_points(cutoff, anchor)
+            for iid in ids:
+                boundary_flow.register_boundaries(iid, points)
             for instrument in instruments:
                 iid = instrument["instrument_id"]
                 selected = [row for row in manifests if row["instrument_id"] == iid]
