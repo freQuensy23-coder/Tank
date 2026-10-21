@@ -224,6 +224,21 @@ def _unknown(dc):
     return label + ": " + str(reason).replace("_", " ").lower()
 
 
+def _main_unknown(outlook, decision, truth):
+    """§6.5: name the input that sets the confidence. "none recorded" only when
+    the overall confidence is HIGH (and Data Confidence records no limit)."""
+    dc = truth.get("data_confidence") or {}
+    if outlook.get("confidence") == "HIGH":
+        return _unknown(dc)
+    limiting = outlook.get("confidence_limiting") or decision.get("confidence_limiting") or {}
+    if limiting.get("text"):
+        return limiting["text"]
+    text = _unknown(dc)
+    if limiting.get("input") == "data" or text != "none recorded":
+        return text
+    return "n/a (limiting input not recorded)"
+
+
 def _why_content(value, label):
     return re.sub(r"^\s*" + re.escape(label) + r"\s*:\s*", "", str(value), flags=re.IGNORECASE)
 
@@ -640,7 +655,7 @@ def compose_card(
                 "WHAT CHANGES THE ACTION:\n" + "\n".join(conditions),
                 "",
                 f"CONFIDENCE: {_na(outlook.get('confidence'), 'confidence unavailable')} — main unknown: "
-                + _unknown(truth.get("data_confidence") or {}),
+                + _main_unknown(outlook, decision, truth),
             ]
     text = "\n".join(lines)
     if len(text) > max_chars:

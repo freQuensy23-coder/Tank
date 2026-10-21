@@ -926,6 +926,8 @@ async def test_delivery_order_wait_requeues_without_spending_network_attempts(
     clock = [base + timedelta(minutes=30)]
     for module in ("tank.util", "tank.storage", "tank.delivery", "tank.runtime"):
         monkeypatch.setattr(module + ".utcnow", lambda: clock[0])
+    # The lock wait is shortened; what is checked is the no-attempt deferral.
+    monkeypatch.setattr("tank.delivery.DELIVERY_LOCK_WAIT_S", 0.2)
     aid = new_id("alert")
     eid = new_id("event")
     settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")

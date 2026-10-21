@@ -878,3 +878,39 @@ def test_btc_priced_line_names_the_benchmark_instead_of_a_missing_net_move():
     values[4]["relative"]["windows"]["EVENT"] = {"r_raw": ".03", "r_btc_adj": None}
     assert "Priced: EARLY · EVENT 3.00% raw; n/a (not available) net BTC" in render(values)
 
+
+
+@pytest.mark.parametrize(
+    "data,certainty,move,expected",
+    [
+        ("HIGH", "MEDIUM", "SPOT_LED_ACCUMULATION", "Event certainty MEDIUM: not confirmed by a HIGH-certainty source"),
+        ("HIGH", "MEDIUM", "UNKNOWN", "Move class unresolved: no class eligible (UNKNOWN)"),  # msg 19
+        ("HIGH", "HIGH", "SPOT_LED_ACCUMULATION", "none recorded"),
+    ],
+)
+def test_confidence_names_the_limiting_input(data, certainty, move, expected):
+    """E2E #5 msg 19: CONFIDENCE LOW printed "none recorded". §6.5 sets confidence
+    as min(data, certainty, class); the card names the input at the minimum
+    (data -> certainty -> class), "none recorded" only when HIGH."""
+    from tank.analysis.decisions import DecisionEngine
+
+    truth = {
+        "token_id": "world:WLD",
+        "move_class": move,
+        "data_confidence": {"class": data},
+        "relative": {"repricing_band": "EARLY", "market_context": "NEUTRAL"},
+        "liquidity": {"liquidity_state": "NORMAL"},
+    }
+    decision = DecisionEngine().evaluate(
+        {"event_id": "e", "statement": "s", "event_state": "APPROVED", "state_verified": True},
+        {"class": "MAJOR", "certainty": certainty},
+        {"token_id": "world:WLD", "role": "PRIMARY", "credible": True, "capture_class": "DIRECT"},
+        truth,
+    )
+    values = card_inputs()
+    values[3].update(decision)
+    values[4].update(truth)
+    line = next(line for line in render(values).splitlines() if line.startswith("CONFIDENCE:"))
+    assert line.endswith("main unknown: " + expected), line
+    assert decision["confidence_limiting"]["input"] == (None if expected == "none recorded" else
+                                                        "certainty" if "certainty" in expected else "class")
