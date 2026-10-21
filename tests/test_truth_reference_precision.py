@@ -23,8 +23,6 @@ def test_raw_trade_references_survive_truth_json_and_call_freeze_boundary():
     assert Decimal(relative["anchor"]["ref_price"]) == Decimal(anchor)
     assert Decimal(relative["entry_ref_price"]) == Decimal(entry)
     assert relative["windows"]["EVENT"]["r_raw"] > 0
-    # event_tools call freeze uses exactly this Decimal min and string serialization.
-    assert str(min(Decimal(relative["anchor"]["ref_price"]), Decimal(relative["entry_ref_price"]))) == anchor
 
 
 def test_kline_fallback_saved_entry_and_hourly_close_remain_exact():

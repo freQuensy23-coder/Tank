@@ -2,9 +2,6 @@
 
 import copy
 import json
-import os
-import uuid
-from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import pytest
@@ -12,11 +9,12 @@ from test_agents_execution_barrier import config, idle
 from test_session_binding_concurrency import fixture_repo, seed
 
 from tank.agents.sessions import SessionService
-from tank.storage import MemoryRepository, PostgresRepository
 from tank.util import sha256
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
 @pytest.mark.parametrize(
     "bound,outcome",
     [
@@ -27,26 +25,9 @@ from tank.util import sha256
     ],
 )
 async def test_settled_turn_accepts_agent_choice_without_source_observation(
-    tmp_path, backend, outcome, bound
+    tmp_path, backend, outcome, bound, postgres_template
 ):
-    admin = None
-    database = None
-    if backend == "postgres":
-        import psycopg
-        from psycopg import sql
-
-        url = os.getenv("TANK_TEST_DATABASE_URL")
-        if not url:
-            pytest.skip("Disposable PostgreSQL administrator DSN required")
-        database = "tank_source_completion_" + uuid.uuid4().hex[:12]
-        admin = await psycopg.AsyncConnection.connect(url, autocommit=True)
-        await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
-        repo = await PostgresRepository(urlunsplit(urlsplit(url)._replace(path="/" + database))).open()
-    else:
-        repo = MemoryRepository()
-    try:
-        if admin:
-            await repo.migrate()
+    async with fixture_repo(backend, postgres_template) as repo:
         at = "2026-10-18T23:00:00Z"
         await repo.put(
             "ingest.source_items",
@@ -272,21 +253,18 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
                 assert not observations
                 if bound:
                     assert (await repo.get("evt.events", event_id))["lifecycle"] != "FAILED"
-    finally:
-        await repo.close()
-        if admin:
-            from psycopg import sql
-
-            await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database)))
-            await admin.close()
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_ignored_item_keeps_event_and_call_for_next_native_update(tmp_path, backend):
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_ignored_item_keeps_event_and_call_for_next_native_update(
+    tmp_path, backend, postgres_template
+):
     from tank.event_tools import EventToolService
     from tank.settings import Settings
 
-    async with fixture_repo(backend) as repo:
+    async with fixture_repo(backend, postgres_template) as repo:
         _session, extraction = await seed(repo)
         domain = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
         origin = await domain.dispatch("record_event", extraction, {"session_id": "s"})

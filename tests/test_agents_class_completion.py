@@ -1,4 +1,4 @@
-"""Native turn completion does not enforce class assessment or publication."""
+"""Legacy completion proofs do not enforce class assessment or publication."""
 
 import copy
 import json
@@ -14,12 +14,13 @@ from tank.event_tools import EventToolService
 from tank.settings import Settings
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
 @pytest.mark.parametrize(
     "case",
     [
-        "missing_exhaust",
-        "late_repair",
+        "no_assessment",
         "LOW",
         "MATERIAL",
         "SKIPPED",
@@ -30,8 +31,10 @@ from tank.settings import Settings
         "cache_revision",
     ],
 )
-async def test_new_origin_completion_does_not_require_class_or_card(tmp_path, backend, case):
-    async with fixture_repo(backend) as repo:
+async def test_legacy_origin_completion_does_not_require_class_or_card(
+    tmp_path, backend, case, postgres_template
+):
+    async with fixture_repo(backend, postgres_template) as repo:
         session, args = await seed(repo)
         session["message_log"][0]["body"] = {"type": "user.message", "content": []}
         await repo.put("ops.agent_sessions", "s", session)

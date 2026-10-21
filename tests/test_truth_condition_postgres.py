@@ -1,41 +1,36 @@
 """Disposable QA PostgreSQL proof: selective market loader → truth, bounded SQL and no MTA writes."""
 
 import os
-import uuid
 from copy import deepcopy
 from datetime import timedelta
 from decimal import Decimal
+from math import sin
 from pathlib import Path
 from runpy import run_path
 from types import SimpleNamespace
-from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import pytest
 
 from tank.analysis.truth import MarketTruthService, compute_market_truth
 from tank.market.service import MarketService
-from tank.storage import PostgresRepository
 from tank.util import iso, parse_time
+
+pytestmark = [pytest.mark.integration, pytest.mark.postgres]
 
 
 @pytest.mark.asyncio
-async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(tmp_path, monkeypatch):
-    import psycopg
-    from psycopg import sql
+async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
+    tmp_path, monkeypatch, postgres_template
+):
+    from psycopg.conninfo import conninfo_to_dict
 
     dsn = os.getenv("TANK_TEST_DATABASE_URL")
     if not dsn:
-        pytest.skip("Requires approved isolated QA PostgreSQL admin on127.0.0.1:55437")
-    parsed = urlsplit(dsn)
-    if parsed.hostname != "127.0.0.1" or parsed.port != 55437 or parsed.path != "/postgres":
-        pytest.skip("Only isolated QA admin accepted; creates and drops own database")
-    name = "tank_truth_condition_20261019_" + uuid.uuid4().hex[:10]
-    admin = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
-    await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-    repo = await PostgresRepository(urlunsplit(parsed._replace(path="/" + name))).open()
-    try:
-        await repo.migrate()
+        pytest.skip("Requires an isolated tank_test* PostgreSQL database with CREATEDB")
+    if not conninfo_to_dict(dsn).get("dbname", "").startswith("tank_test"):
+        pytest.fail("TANK_TEST_DATABASE_URL must select an isolated tank_test* database")
+    async with postgres_template.repository(dsn) as repo:
         packet = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
             "synthetic_start_snapshot"
         ]()
@@ -63,6 +58,10 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             ("A:spot:BTC", "BTC", "binance"),
         ):
             for minute in range(8 * 1440, 0, -1):
+                # Sample the same bounded token history as the source seed at
+                # one-minute resolution. Flat token history makes the price
+                # normal range unavailable, so the required class cannot resolve.
+                price = "100" if token == "BTC" else str(100 * (1 + 0.02 * sin((1 - minute / 60) / 6)))
                 packet["klines"].append(
                     dict(
                         instrument_id=iid,
@@ -72,8 +71,8 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
                         open_time=iso(anchor_time - timedelta(minutes=minute)),
                         interval_s=60,
                         complete=True,
-                        o="100",
-                        c="100",
+                        o=price,
+                        c=price,
                         volume_native="1000",
                         quote_volume="100000",
                         quote_volume_usd="100000",
@@ -245,7 +244,7 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
         async with httpx.AsyncClient() as http:
             market = MarketService(repo, settings, http=http)
             monkeypatch.setattr(market, "snapshot", forbidden)
-            monkeypatch.setattr(market, "_flush_flow", forbidden)
+            monkeypatch.setattr(market, "_put", forbidden)
             monkeypatch.setattr(market, "flush_market", forbidden)
             truth = MarketTruthService(repo, settings, market)
             ordinary = [
@@ -332,7 +331,3 @@ async def test_disposable_postgres_selective_condition_inputs_and_sql_footprint(
             assert (
                 await (await repo._conn().execute("SELECT COUNT(*) AS n FROM ana.market_truth")).fetchone()
             )["n"] == 0
-    finally:
-        await repo.close()
-        await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
-        await admin.close()

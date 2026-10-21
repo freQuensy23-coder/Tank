@@ -1,9 +1,7 @@
 """Regressions from authenticated Etherscan coverage probes, using synthetic responses."""
 
 import os
-import uuid
 from decimal import Decimal
-from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import pytest
@@ -12,7 +10,7 @@ import yaml
 from tank.market.service import MarketService
 from tank.market.supply import SupplyCapture
 from tank.settings import Settings
-from tank.storage import MemoryRepository, PostgresRepository
+from tank.storage import MemoryRepository
 
 
 def lending_market(tmp_path, transport, *, catalog=True, repo=None, tokens=None):
@@ -148,34 +146,18 @@ async def test_lending_invalid_free_endpoint_schema_is_not_cached(tmp_path):
         await market.http.aclose()
 
 
-@pytest.fixture(params=["memory", "postgres"])
-async def lending_repository(request):
+@pytest.fixture(
+    params=["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def lending_repository(request, postgres_template):
     if request.param == "memory":
         yield await MemoryRepository().open()
         return
     dsn = os.getenv("TANK_TEST_DATABASE_URL")
     if not dsn:
         pytest.skip("Requires isolated PostgreSQL; creates and drops its own lending proof database")
-    import psycopg
-    from psycopg import sql
-
-    name = "tank_lending_boundary_" + uuid.uuid4().hex[:12]
-    admin = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
-    repo = None
-    created = False
-    try:
-        await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-        created = True
-        target = urlunsplit(urlsplit(dsn)._replace(path="/" + name))
-        repo = await PostgresRepository(target).open()
-        await repo.migrate()
+    async with postgres_template.repository(dsn) as repo:
         yield repo
-    finally:
-        if repo is not None:
-            await repo.close()
-        if created:
-            await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
-        await admin.close()
 
 
 async def test_lending_collect_flush_typed_storage_and_22_token_cache(tmp_path, lending_repository):

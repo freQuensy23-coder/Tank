@@ -343,6 +343,15 @@ class MemoryRepository(QueueMixin):
                 self._mutex.release()
 
     @asynccontextmanager
+    async def _read(self):
+        """Read consistent state without a write transaction's rollback snapshot."""
+        if self._owner is asyncio.current_task():
+            yield self
+        else:
+            async with self._mutex:
+                yield self
+
+    @asynccontextmanager
     async def lock(self, key):
         """Task-owned advisory exclusion, independent of explicit transaction scope.
 
@@ -409,14 +418,14 @@ class MemoryRepository(QueueMixin):
 
     async def get(self, collection, key):
         _table(collection)
-        async with self.transaction():
+        async with self._read():
             return copy.deepcopy(self._data.get(collection, {}).get(str(key)))
 
     async def list(self, collection, *, filters=None, limit=1000):
         _table(collection)
         if limit < 0:
             raise ValueError("limit must be nonnegative")
-        async with self.transaction():
+        async with self._read():
             return copy.deepcopy(
                 [
                     r
@@ -1802,7 +1811,7 @@ async def _iter_all(self, collection, *, filters=None, batch_size=1000):
                 rows = await (await self._conn().execute(query, [*args, batch_size])).fetchall()
             page = [(r["storage_key"], _read_record(collection, r)) for r in rows]
         else:
-            async with self.transaction():
+            async with self._read():
                 page = []
                 for key, row in sorted(self._data.get(collection, {}).items()):
                     if after is not None and key <= after:

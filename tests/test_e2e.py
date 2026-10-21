@@ -16,6 +16,8 @@ from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import ImmutableRecordError, MemoryRepository
 
+pytestmark = [pytest.mark.integration]
+
 
 def _native_session(session_id, agent_id="synthetic"):
     """Native OpenMA session response with its resolved, versioned agent bytes."""
@@ -251,27 +253,14 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path):
 
 
 @pytest.fixture
-async def isolated_e2e_database():
+async def isolated_e2e_database(postgres_template):
     import os
-    import uuid
-
-    import psycopg
-    from psycopg import sql
-    from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
     source = os.environ.get("TANK_E2E_DATABASE_URL")
     if not source:
         pytest.skip("requires disposable PostgreSQL16 admin test connection")
-    admin = await psycopg.AsyncConnection.connect(source, autocommit=True)
-    name = "tank_sse_" + uuid.uuid4().hex[:12]
-    await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-    params = conninfo_to_dict(source)
-    params["dbname"] = name
-    try:
-        yield make_conninfo(**params)
-    finally:
-        await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
-        await admin.close()
+    async with postgres_template.repository(source) as repo:
+        yield repo
 
 
 @pytest.mark.skipif(
@@ -279,10 +268,12 @@ async def isolated_e2e_database():
     reason="set disposable PostgreSQL16 TANK_E2E_DATABASE_URL",
 )
 @pytest.mark.parametrize("complete_market", [False, True])
+@pytest.mark.postgres
 async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch, isolated_e2e_database):
     """Whole synthetic call graph on PostgreSQL, including validated publication."""
     import importlib
     from datetime import datetime
+    from functools import cache
 
     from tank.analysis.truth import MarketTruthService
     from tank.event_tools import LAYERS
@@ -351,15 +342,13 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
     settings = TestSettings(
         **_fake_gateway_settings(tmp_path),
         data_dir=tmp_path,
-        database_url=isolated_e2e_database,
+        database_url=isolated_e2e_database.database_url,
         jev_provider="openrouter",
         openrouter_api_key="mock",
         telegram_token="mock",
         telegram_alerts_chat="mock",
     )
-    repo = PostgresRepository(settings.database_url)
-    await repo.open()
-    await repo.migrate()
+    repo = isolated_e2e_database
     sid = new_id("synthetic-session")
     feed_guid = sid
     denying = False
@@ -414,17 +403,18 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 900 + len(sends)}})
         raise AssertionError(str(req.url))
 
+    @cache
+    def canonical_snapshot():
+        from test_truth_start_fixture import synthetic_start_snapshot
+
+        return synthetic_start_snapshot()
+
     class CapturedMarket:
         async def snapshot(self, token_id, cutoff, anchor=None):
             if complete_market:
-                import runpy
-                from pathlib import Path
-
                 from tank.util import parse_time
 
-                synthetic = runpy.run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
-                    "synthetic_start_snapshot"
-                ]()
+                synthetic = canonical_snapshot()
                 delta = parse_time(cutoff) - parse_time(synthetic["cutoff"])
 
                 def shift(value):
@@ -552,7 +542,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
 
                     worker = asyncio.create_task(market_jobs())
                     try:
-                        await asyncio.wait_for(session.stream(sid), 5)
+                        await session.stream(sid)
                     finally:
                         worker.cancel()
                         worker_results = await asyncio.gather(worker, return_exceptions=True)
@@ -805,27 +795,23 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
     not __import__("os").environ.get("TANK_E2E_DATABASE_URL"),
     reason="requires disposable PostgreSQL16 admin connection",
 )
-async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, caplog):
+@pytest.mark.postgres
+async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, caplog, isolated_e2e_database):
     """Only external wire inputs are fed; Runtime's eight workers perform every stage."""
     import asyncio
     import importlib
-    import os
-    import uuid
-
-    import psycopg
-    from psycopg import sql
-    from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
     from tank.analysis.truth import MarketTruthService
     from tank.event_tools import LAYERS
     from tank.runtime import Runtime
     from tank.scheduler import Scheduler
-    from tank.storage import PostgresRepository
     from tank.util import iso
 
-    clock = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
-    if clock.hour == 23:
-        pytest.skip("nightly backup window integration tested separately")
+    repo = isolated_e2e_database
+    # Queue expiry is evaluated with PostgreSQL's clock; domain timestamps share it.
+    async with repo.transaction():
+        clock = (await (await repo._conn().execute("SELECT clock_timestamp() AS clock")).fetchone())["clock"]
+    backup_clock = clock.replace(hour=12, minute=0, second=0, microsecond=0)
     for name in (
         "tank.util",
         "tank.storage",
@@ -842,14 +828,6 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
         module = importlib.import_module(name)
         if hasattr(module, "utcnow"):
             monkeypatch.setattr(module, "utcnow", lambda: clock)
-    params = conninfo_to_dict(os.environ["TANK_E2E_DATABASE_URL"])
-    dbname = "tank_autonomous_" + uuid.uuid4().hex[:12]
-    admin = await psycopg.AsyncConnection.connect(os.environ["TANK_E2E_DATABASE_URL"], autocommit=True)
-    await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(dbname)))
-    params["dbname"] = dbname
-    repo = PostgresRepository(make_conninfo(**params))
-    await repo.open()
-    await repo.migrate()
     config = {
         "sources": {
             "sources": [
@@ -897,7 +875,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
     settings = TestSettings(
         **_fake_gateway_settings(tmp_path),
         data_dir=tmp_path / "data",
-        database_url=make_conninfo(**params),
+        database_url=repo.database_url,
         jev_provider="openrouter",
         openrouter_api_key="mock",
         telegram_token="mock",
@@ -909,8 +887,18 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
         code_version="synthetic-test",
         shutdown_grace_s=3,
     )
+    assert backup_clock.hour < settings.backup_hour_utc, "Synthetic backup clock must precede its window"
     settings.backup_dir.mkdir()
     settings.data_dir.mkdir()
+    backup_results = []
+
+    class FixtureScheduler(Scheduler):
+        async def maintenance(self, now, **kwargs):
+            # Scope the chosen noon clock to the actual backup boundary only.
+            result = await super().maintenance(backup_clock, **kwargs)
+            backup_results.append((now, result))
+            return result
+
     text = "Binance approved the synthetic autonomous $T listing."
     timestamp = iso(clock - __import__("datetime").timedelta(minutes=1))
     queue = asyncio.Queue()
@@ -1236,7 +1224,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                 event_tools=tools,
                 sessions=sessions,
                 delivery=delivery,
-                scheduler=Scheduler(repo, settings, market, truth),
+                scheduler=FixtureScheduler(repo, settings, market, truth),
             )
             runtime_task = asyncio.create_task(runtime.run(stop))
             try:
@@ -1280,6 +1268,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                     await asyncio.sleep(0.01)
             stop.set()
             await asyncio.wait_for(runtime_task, 12)
+            assert backup_results and all(result["status"] == "deferred" for _, result in backup_results)
             assert [event["name"] for event in wire] == [
                 "record_event",
                 "set_assessment",
@@ -1326,6 +1315,4 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
             runtime_task.cancel()
             await asyncio.gather(runtime_task, return_exceptions=True)
         await repo.close()
-        await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(dbname)))
-        await admin.close()
         logging.getLogger("tank.runtime").removeFilter(error_capture)

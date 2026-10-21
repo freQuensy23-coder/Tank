@@ -11,6 +11,7 @@ from tank.storage import MemoryRepository
 from tank.util import iso, parse_time
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("open_call,expected", [(True, "ARMED"), (False, "FIRED")])
 async def test_concentrated_sell_only_fires_weaker_watch_downgrade(open_call, expected):
@@ -138,6 +139,7 @@ async def fire_generated(condition, event, truth_rows):
     return await repo.get("ana.watch_conditions", condition["cond_id"])
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_watch_anchor_fired_by_actual_evaluator_prevents_new_start():
     from test_decisions import inputs

@@ -171,7 +171,7 @@ async def test_fundamentals_use_registered_slugs_only_and_partial_holders_revenu
 async def test_market_transport_and_recursive_metadata_never_persist_api_key(setup, secret_name):
     from tank.market.supply import SupplyCapture
 
-    repo, settings, inst = setup
+    repo, settings, _inst = setup
     secret = "secret-test-provider-key"
     setattr(settings, secret_name, secret)
 
@@ -195,9 +195,13 @@ async def test_market_transport_and_recursive_metadata_never_persist_api_key(set
             }
         ],
     )
-    assert secret not in str(await repo.list("mkt.supply_obs"))
-    await service._raw(inst, "sensitive_response", {"nested": [{"error": secret}]})
     await service.flush_market()
+    persisted = await repo.list("mkt.supply_obs")
+    assert len(persisted) == 1
+    assert secret not in str(persisted)
+    assert persisted[0]["coverage_errors"] == [
+        {"reason": "nested url?apikey=[REDACTED]", "context": {"key": "[REDACTED]"}}
+    ]
     assert not (settings.data_dir / "raw/market_frames").exists()
     await http.aclose()
 
@@ -505,73 +509,31 @@ async def test_hot_expiry_protection_is_scoped_to_event_and_token(setup):
 
 
 @pytest.mark.asyncio
-async def test_each_rate_limit_retry_consumes_shared_provider_budget(setup, monkeypatch):
-    from tank.sources.rate_limits import shared_request_budgets
-
+@pytest.mark.parametrize(
+    "method,url,kwargs",
+    [
+        ("GET", "https://api.binance.com/api/v3/aggTrades", {"params": {"symbol": "BTCUSDT"}}),
+        (
+            "POST",
+            "https://api.hyperliquid.xyz/info",
+            {"json": {"type": "fundingHistory", "coin": "BTC", "startTime": 0}},
+        ),
+        ("GET", "https://api.binance.com/api/v3/depth", {"params": {"limit": 1000}, "_priority": 2}),
+    ],
+)
+async def test_exchange_rest_is_rejected_before_python_http(setup, method, url, kwargs):
     repo, settings, _ = setup
-    charged = []
     requests = []
 
-    async def acquire(key, capacity, window_s, *, weight=1, priority=0, host=None):
-        charged.append(weight)
-
-    async def no_sleep(seconds):
-        return None
-
-    def respond(request):
+    def record(request):
         requests.append(request)
-        return (
-            httpx.Response(429, headers={"Retry-After": "1"})
-            if len(requests) == 1
-            else httpx.Response(200, json=[])
-        )
+        return httpx.Response(200, json=[])
 
-    monkeypatch.setattr(shared_request_budgets, "acquire", acquire)
-    monkeypatch.setattr("tank.market.service.asyncio.sleep", no_sleep)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(record)) as client:
         service = MarketService(repo, settings, http=client)
-        await service._request(
-            "GET", "https://api.binance.com/api/v3/aggTrades", params={"symbol": "BTCUSDT"}
-        )
-    assert len(requests) == 2 and charged == [4, 4]
-
-
-@pytest.mark.asyncio
-async def test_hyperliquid_settled_cache_is_exact_range_and_settlement_period_scoped(setup, monkeypatch):
-    from tank.sources.rate_limits import shared_request_budgets
-
-    repo, settings, _ = setup
-    calls = []
-    now = ["2026-01-01T01:10:00Z"]
-
-    async def acquire(*args, **kwargs):
-        pass
-
-    def stamp(value=None):
-        from tank.util import iso
-
-        return iso(value) if value is not None else now[0]
-
-    def respond(request):
-        calls.append(request)
-        return httpx.Response(200, json=[{"time": 1767225600000, "fundingRate": ".001"}])
-
-    monkeypatch.setattr(shared_request_budgets, "acquire", acquire)
-    monkeypatch.setattr("tank.market.service.iso", stamp)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
-        service = MarketService(repo, settings, http=client)
-        first = {"type": "fundingHistory", "coin": "BTC", "startTime": 0}
-        a = await service._request("POST", "https://api.hyperliquid.xyz/info", json=first)
-        now[0] = "2026-01-01T01:30:00Z"
-        b = await service._request("POST", "https://api.hyperliquid.xyz/info", json=first)
-        assert len(calls) == 1 and a[0]["_capture_observed_at"] == b[0]["_capture_observed_at"]
-        await service._request(
-            "POST", "https://api.hyperliquid.xyz/info", json={**first, "startTime": 3600000}
-        )
-        assert len(calls) == 2
-        now[0] = "2026-01-01T02:00:00Z"
-        c = await service._request("POST", "https://api.hyperliquid.xyz/info", json=first)
-        assert len(calls) == 3 and c[0]["_capture_observed_at"] == now[0]
+        with pytest.raises(RuntimeError, match="exchange REST belongs to tank-capture"):
+            await service._request(method, url, **kwargs)
+    assert requests == []
 
 
 @pytest.mark.asyncio
@@ -603,44 +565,6 @@ async def test_capture_changes_are_durable_bounded_and_stable(setup):
     assert again[0]["change_id"] == changes[0]["change_id"]
     await service.close()
     await restarted.close()
-
-
-@pytest.mark.asyncio
-async def test_optional_weight_budget_wait_does_not_block_baseline_http(setup, monkeypatch):
-    import asyncio
-
-    from tank.sources.rate_limits import shared_request_budgets
-
-    repo, settings, _ = setup
-    waiting = asyncio.Event()
-    release = asyncio.Event()
-    requests = []
-
-    async def acquire(key, capacity, window_s, *, weight=1, priority=0, host=None):
-        if weight == 50:
-            waiting.set()
-            await release.wait()
-
-    def respond(request):
-        requests.append(request.url.path)
-        return httpx.Response(200, json=[])
-
-    monkeypatch.setattr(shared_request_budgets, "acquire", acquire)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
-        service = MarketService(repo, settings, http=client)
-        optional = asyncio.create_task(
-            service._request(
-                "GET", "https://api.binance.com/api/v3/depth", params={"limit": 1000}, _priority=2
-            )
-        )
-        await waiting.wait()
-        await asyncio.wait_for(
-            service._request("GET", "https://api.binance.com/api/v3/klines", params={"limit": 3}), 0.5
-        )
-        assert requests == ["/api/v3/klines"]
-        release.set()
-        await optional
-    assert requests == ["/api/v3/klines", "/api/v3/depth"]
 
 
 @pytest.mark.asyncio
@@ -917,11 +841,14 @@ async def test_snapshot_never_queues_behind_a_running_flush(setup):
         return await real(**kwargs)
 
     service.flush_market = counted
-    async with service._market_flush_lock:  # another task is flushing (and may wait for a connection)
-        await asyncio.wait_for(service.snapshot(inst["token_id"], utcnow()), 10)
+    # Capture owns exchange writes; this reader must never flush, with or without
+    # a concurrent Python fundamentals flush.
+    async with service._market_flush_lock:
+        locked = await asyncio.wait_for(service.snapshot(inst["token_id"], utcnow()), 1)
     assert flushes == []
-    await service.snapshot(inst["token_id"], utcnow())
-    assert len(flushes) == 1
+    unlocked = await service.snapshot(inst["token_id"], utcnow())
+    assert flushes == []
+    assert locked["token_id"] == unlocked["token_id"] == inst["token_id"]
     await service.close()
 
 
@@ -1015,43 +942,6 @@ async def test_reaction_snapshot_reads_books_and_tickers_only_at_the_window_boun
     assert snapshot["tickers"] and all(inside(parse_time(t["ts"])) for t in snapshot["tickers"])
     full = await service.snapshot(inst["token_id"], iso(cutoff), anchor={"type": "T1", "ts": iso(anchor)})
     assert len(full["books"]) > 10 * len(snapshot["books"])
-    await http.aclose()
-
-
-@pytest.mark.asyncio
-async def test_live_bars_flush_ahead_of_a_large_backfill_batch(setup):
-    from tank.market import service as service_module
-
-    repo, settings, _inst = setup
-    http = httpx.AsyncClient()
-    service = MarketService(repo, settings, http=http)
-    service._pending_market = {
-        "mkt.klines_1m": {f"k{i}": {"i": i} for i in range(service_module.FLUSH_ROWS * 2 + 1)},
-        "mkt.tickers_24h": {"t0": {"t": 0}},
-    }
-    writes = []
-
-    async def put(collection, records, keys=None):
-        writes.append((collection, len(records)))
-        if len(writes) == 2:  # a live bar closes while the first kline chunk is written
-            service._pending_market.setdefault("mkt.flow_bars_1m", {})["f0"] = {"f": 0}
-        if collection == "mkt.klines_1m" and len(writes) == 5:
-            raise RuntimeError("pool timeout")
-        return records
-
-    service.repo = type("Repo", (), {"put_market_batch": staticmethod(put)})()
-    with pytest.raises(RuntimeError):
-        await service.flush_market(raw=False)
-    rows = service_module.FLUSH_ROWS
-    assert writes == [
-        ("mkt.tickers_24h", 1),
-        ("mkt.klines_1m", rows),
-        ("mkt.flow_bars_1m", 1),
-        ("mkt.klines_1m", rows),
-        ("mkt.klines_1m", 1),
-    ]
-    assert list(service._pending_market) == ["mkt.klines_1m"]
-    assert list(service._pending_market["mkt.klines_1m"]) == [f"k{rows * 2}"]
     await http.aclose()
 
 
@@ -1171,10 +1061,14 @@ async def test_past_day_kline_counts_survive_a_restart_unless_their_day_was_rewr
     counted.clear()
     assert (await restarted._series_counts([iid], start, utcnow(), iso()))[iid] == 16
     assert counted == [(today - timedelta(days=2), today - timedelta(days=1))]
-    # A kline write that lands evicts its day again.
-    restarted._pending_market = {"mkt.klines_1m": {"k": kline(today - timedelta(days=1), iso())}}
-    await restarted.flush_market(raw=False)
+    # A newly recorded capture row is detected by the reader's external-write
+    # poll, rather than by a retired in-process exchange flush.
+    checked = utcnow()
+    appended = today - timedelta(days=1) + timedelta(minutes=10)
+    await repo.put_market_batch("mkt.klines_1m", [kline(appended, iso())], keys=[iid + ":" + iso(appended)])
+    await restarted._evict_recorded_days(checked)
     assert (iid, today - timedelta(days=1)) not in restarted._kline_day_counts
+    assert (await restarted._series_counts([iid], start, utcnow(), iso()))[iid] == 17
 
 
 @pytest.mark.asyncio

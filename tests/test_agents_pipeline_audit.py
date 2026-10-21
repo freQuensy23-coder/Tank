@@ -121,6 +121,7 @@ async def test_new_item_routes_without_reservation_state():
     assert routed["route"] == {"decision": "NEW_SESSION", "event_id": None, "p_same": None}
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("same,decision", [(0.95, "ADDED"), (0.1, "NEW_SESSION")])
 async def test_pending_extraction_is_not_a_candidate_then_real_event_is_scored(same, decision):
@@ -205,6 +206,7 @@ def test_explicit_token_identity_expands_to_its_entity():
     )
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_official_repost_promotion_during_filter_request_preserves_latest_item():
     opts, _ = options()

@@ -3,7 +3,6 @@
 import asyncio
 import base64
 import json
-import os
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -54,6 +53,7 @@ async def gateway(tmp_path, handler, *, expired=False):
 PAYLOAD = {"model": "gpt-6.1-sol", "input": "audit", "stream": True}
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("authorization", [b"Bearer WRONG", b"Bearer \xff"])
 async def test_auth_rejected_before_unfinished_request_body(tmp_path, authorization):
     def forbidden(request):
@@ -75,6 +75,7 @@ async def test_auth_rejected_before_unfinished_request_body(tmp_path, authorizat
             await writer.wait_closed()
 
 
+@pytest.mark.integration
 async def test_concurrent_stale_401_does_not_rotate_new_refresh_again(tmp_path):
     old = fake_jwt()
     new = fake_jwt(4102444801)
@@ -110,6 +111,7 @@ async def test_concurrent_stale_401_does_not_rotate_new_refresh_again(tmp_path):
         assert refreshes == 1
 
 
+@pytest.mark.integration
 async def test_cancelled_refresh_caller_still_persists_provider_rotation(tmp_path):
     exchange_started, exchange_finish = asyncio.Event(), asyncio.Event()
 
@@ -133,6 +135,7 @@ async def test_cancelled_refresh_caller_still_persists_provider_rotation(tmp_pat
         assert json.loads(path.read_text())["tokens"]["refresh_token"] == "AUDIT_REFRESH_ROTATED"
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("expiry", ["bad", True, -1, 1, float("nan"), float("inf")])
 async def test_bad_refresh_expiry_cannot_overwrite_valid_auth_document(tmp_path, expiry):
     def provider(request):
@@ -145,6 +148,7 @@ async def test_bad_refresh_expiry_cannot_overwrite_valid_auth_document(tmp_path,
         assert json.loads(path.read_text()) == original
 
 
+@pytest.mark.integration
 async def test_refresh_redirect_does_not_forward_credentials_or_location(tmp_path):
     calls = []
 
@@ -162,6 +166,7 @@ async def test_refresh_redirect_does_not_forward_credentials_or_location(tmp_pat
         assert json.loads(path.read_text()) == original
 
 
+@pytest.mark.integration
 async def test_provider_cookie_jar_and_hop_headers_never_cross_boundary(tmp_path, monkeypatch):
     monkeypatch.setenv("HTTPS_PROXY", "http://FAKE_PROXY_CREDENTIAL:FAKE_PASSWORD@127.0.0.1:1")
 
@@ -193,6 +198,7 @@ async def test_provider_cookie_jar_and_hop_headers_never_cross_boundary(tmp_path
         assert "set-cookie" not in reply.headers and "x-audit-hop" not in reply.headers
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("data", [b"123", b'"AUDIT_REFRESH_OLD"', b"{", b"\xff"])
 async def test_malformed_nonstream_sse_fails_without_credentials_in_logs(tmp_path, caplog, data):
     def provider(request):
@@ -206,6 +212,7 @@ async def test_malformed_nonstream_sse_fails_without_credentials_in_logs(tmp_pat
         assert "AUDIT_REFRESH_OLD" not in reply.text + caplog.text
 
 
+@pytest.mark.integration
 async def test_upstream_close_exception_cannot_print_oauth_credentials(tmp_path, caplog):
     class BrokenClose(httpx.AsyncByteStream):
         async def __aiter__(self):
@@ -223,6 +230,7 @@ async def test_upstream_close_exception_cannot_print_oauth_credentials(tmp_path,
         assert "AUDIT_REFRESH_OLD" not in reply.text + caplog.text
 
 
+@pytest.mark.integration
 async def test_supervisor_reload_rebinds_actual_gateway_and_shutdown_closes_port(tmp_path):
     from tank.runtime import RuntimeSupervisor
 
@@ -314,17 +322,15 @@ async def test_supervisor_reload_rebinds_actual_gateway_and_shutdown_closes_port
         await asyncio.open_connection("127.0.0.1", port)
 
 
+@pytest.mark.integration
+@pytest.mark.node
+@pytest.mark.process
 async def test_actual_pinned_pi_library_through_gateway_offline(tmp_path):
-    """Optional dependency probe; install pi-ai1.1.0 externally, never vendored."""
-    package = Path(
-        os.environ.get(
-            "TANK_AUDIT_PI_PACKAGE", "/tmp/tank-gateway-pi-audit/node_modules/@earendil-works/pi-ai"
-        )
-    )
-    if not (package / "package.json").exists() or not shutil.which("node"):
-        pytest.skip(
-            "Set TANK_AUDIT_PI_PACKAGE to installed @earendil-works/pi-ai1.1.0 to run actual-library probe"
-        )
+    """Locked pi-ai1.1.0 transport against the synthetic, loopback-only gateway."""
+    package = Path(__file__).resolve().parent / "node-gateway/node_modules/@earendil-works/pi-ai"
+    assert (package / "package.json").is_file(), "Run npm ci --prefix tests/node-gateway --ignore-scripts"
+    node = shutil.which("node")
+    assert node is not None, "The actual pi transport integration requires Node.js22"
     assert json.loads((package / "package.json").read_text())["version"] == "1.1.0"
     observed = []
 
@@ -399,7 +405,7 @@ console.log(JSON.stringify({status:'PASS',calls,event_types:types}));
         script = tmp_path / "actual-pi-probe.mjs"
         script.write_text(code)
         process = await asyncio.create_subprocess_exec(
-            "node",
+            node,
             str(script),
             str(package),
             base,

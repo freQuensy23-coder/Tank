@@ -12,12 +12,77 @@ import { resolveNodeManagedSkillMounts, NodeManagedSessionInputPreparer } from '
 const bytes = (s: string) => new TextEncoder().encode(s);
 const base = '/workspace/.openma/skills/skill_inputs/1792364806411000/';
 function session() { return { id:'skill-path-qualification', agent:{id:'agent',name:'Verifier',description:null,model:{id:'model'},mcpServers:[],multiagent:null,skills:[{type:'custom',skillId:'skill_inputs',version:'1792364806411000'}],system:null,tools:[],version:1}, resources:[],metadata:{},createdAt:'2026-10-19T00:00:00Z',updatedAt:'2026-10-19T00:00:00Z' } as any; }
-function source(archive: Uint8Array) { return {retrieveSkillVersion: vi.fn(async()=>({type:'found',version:{version:'1792364806411000',name:'A different metadata name',description:''}})),downloadSkillVersion:vi.fn(async()=>({type:'found',file:{content:archive}})),listSkillVersions:vi.fn()}; }
+function source(archive: Uint8Array) { return {retrieveSkillVersion: vi.fn(async()=>({type:'found',version:{version:'1792364806411000',name:'tank-data',description:''}})),downloadSkillVersion:vi.fn(async()=>({type:'found',file:{content:archive}})),listSkillVersions:vi.fn()}; }
+const worker = readFileSync(new URL('../../../packages/control-plane-node/src/lib/node-managed-skill-aliases.py', import.meta.url), 'utf8');
 async function materialized(archive: Uint8Array) {
-  const files = new Map<string,Uint8Array>();
-  const sandbox = {exec:async()=>'', setEnvVars:async()=>{},writeFileBytes:async(path:string,b:Uint8Array)=>{files.set(path,b);return path;}} as any;
+  // Model only the guest filesystem boundary. The real preparer, stable plan and
+  // batch encoder run; observed files come from their emitted ZIP bytes.
+  const files = new Map<string,Uint8Array>(), staged = new Map<string,string>();
+  const binding = {name:'tank-data',skill_id:'skill_inputs',version:'1792364806411000',
+    archive_sha256:createHash('sha256').update(archive).digest('hex')};
+  const quote = (value:string) => "'" + value.replaceAll("'", "'\\''") + "'";
+  const prefix = 'python3 -c ' + quote(worker) + ' ';
+  let checked = false, claimed = false;
+  const sandbox = {
+    setEnvVars:async()=>{},
+    writeFileBytes:async(path:string, bytes:Uint8Array)=>{
+      expect(staged.has(path)).toBe(true);
+      expect(files.has(path)).toBe(false);
+      expect(createHash('sha256').update(bytes).digest('hex')).toBe(staged.get(path));
+      files.set(path, bytes);return path;
+    },
+    exec:async(command:string, timeout:number)=>{
+      if(command==='mkdir -p /mnt/session/outputs'){
+        expect(timeout).toBe(30000);return 'exit=0\n';
+      }
+      if(!command.startsWith(prefix))throw Error('Unexpected skill worker source');
+      const args=command.slice(prefix.length);
+      const claim=/^(check|claim) '([A-Za-z0-9+/=]+)'$/u.exec(args);
+      if(claim){
+        expect(timeout).toBe(30000);
+        expect(JSON.parse(Buffer.from(claim[2]!,'base64').toString())).toEqual([binding]);
+        if(claim[1]==='check')checked=true;
+        else {expect(checked).toBe(true);claimed=true;}
+        return 'exit=0\nTANK_STABLE_SKILL_BINDINGS_OK\n';
+      }
+      const batch=/^(stage|materialize|discard) '(\/tmp\/\.openma-skills-[0-9a-f]{32}\/([0-9a-f]{64})\.zip)' '([0-9a-f]{64})'$/u.exec(args);
+      if(!batch)throw Error('Unexpected skill worker arguments');
+      const [,operation,path,pathDigest,digest]=batch;
+      expect(pathDigest).toBe(digest);expect(claimed).toBe(true);
+      expect(timeout).toBe(operation==='materialize'?120000:30000);
+      if(operation==='stage'){
+        expect(staged.has(path!)).toBe(false);expect(files.has(path!)).toBe(false);
+        staged.set(path!,digest!);return 'exit=0\nTANK_STABLE_SKILL_STAGE_OK\n';
+      }
+      expect(staged.get(path!)).toBe(digest);
+      if(operation==='discard'){
+        files.delete(path!);staged.delete(path!);return 'exit=0\nTANK_STABLE_SKILL_DISCARD_OK\n';
+      }
+      const encoded=files.get(path!);expect(encoded).toBeDefined();
+      expect(createHash('sha256').update(encoded!).digest('hex')).toBe(digest);
+      const entries=unzipSync(encoded!);
+      expect(JSON.parse(Buffer.from(entries['__tank_skill_batch__.json']!).toString())).toEqual({
+        version:1,scopes:[{binding,canonical_root:base}],
+      });
+      const original=unzipSync(archive), expected=new Map<string,Uint8Array>();
+      const directory=Object.hasOwn(original,'tank-data/SKILL.md')?'tank-data/':'';
+      for(const [name,bytes] of Object.entries(original))if(!name.endsWith('/')){
+        expected.set(base+name,bytes);
+        expected.set('/home/user/.skills/tank-data/'+name.slice(directory.length),bytes);
+      }
+      expect(Object.keys(entries).sort()).toEqual([
+        '__tank_skill_batch__.json',...[...expected.keys()].map(name=>name.slice(1)),
+      ].sort());
+      for(const [name,bytes] of expected){
+        expect(entries[name.slice(1)]).toEqual(bytes);
+        files.set(name,entries[name.slice(1)]!);
+      }
+      files.delete(path!);staged.delete(path!);return 'exit=0\nTANK_STABLE_SKILL_FILES_OK\n';
+    },
+  };
   const preparer = new NodeManagedSessionInputPreparer({sharedOutputs:true,files:{} as any,skillVersions:source(archive) as any,repositoryCredentials:{} as any,memorySnapshots:{} as any});
-  await preparer.prepare({workspaceId:'default',session:session(),sandbox});
+  await preparer.prepare({workspaceId:'default',session:session(),sandbox:sandbox as any});
+  expect(checked && claimed).toBe(true);expect(staged.size).toBe(0);
   return files;
 }
 describe('archive manifest and canonical skill exposure',()=>{
@@ -36,8 +101,9 @@ describe('archive manifest and canonical skill exposure',()=>{
     expect(files.has(base+'SKILL.md')).toBe(false);expect(mount.body).toBe(selected==='progressive'?undefined:m.body);
   });
   it('supports a safe unprefixed root archive without adding a metadata-name directory',async()=>{
-    const archive=zipSync({'SKILL.md':bytes('root skill'),'references/guide.md':bytes('guide')});mode.value='progressive';
-    const [mount]=await resolveNodeManagedSkillMounts(session(),source(archive) as any);expect(mount.mountRoot).toBe(base);expect((await materialized(archive)).get(base+'SKILL.md')).toEqual(bytes('root skill'));
+    const body='---\nname: tank-data\ndescription: Root skill\n---\nroot skill';
+    const archive=zipSync({'SKILL.md':bytes(body),'references/guide.md':bytes('guide')});mode.value='progressive';
+    const [mount]=await resolveNodeManagedSkillMounts(session(),source(archive) as any);expect(mount.mountRoot).toBe(base);expect((await materialized(archive)).get(base+'SKILL.md')).toEqual(bytes(body));
   });
   it('supports requested latest mount identity while resolving a concrete archive version',async()=>{
     const s=session();s.agent.skills[0].version='latest';const src=source(registered);src.listSkillVersions=vi.fn(async()=>({type:'page',page:{versions:[{version:'1792364806411000',name:'tank-data',description:''}]}})) as any;

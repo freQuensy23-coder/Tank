@@ -311,6 +311,8 @@ async def ledger_rows(repo):
         ).fetchall()
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
 async def test_request_ledger_is_one_budget_for_every_process(migrated):
     first, second = SharedRequestBudgets(), SharedRequestBudgets()
     first.ledger = RequestLedger(migrated.database_url, "first")
@@ -341,6 +343,8 @@ async def test_request_ledger_is_one_budget_for_every_process(migrated):
     assert first.ledger is None and second.ledger is None
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
 async def test_external_contract_on_postgres(migrated, tmp_path):
     service = MarketService(migrated, make_settings(tmp_path))
     await repair_round_trip(migrated, service)
@@ -351,6 +355,8 @@ async def test_external_contract_on_postgres(migrated, tmp_path):
     await service.close()
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
 async def test_ledger_is_configured_for_every_postgres_process(migrated):
     budgets = SharedRequestBudgets()
     assert budgets.configure(MemoryRepository(), SimpleNamespace()) is None and budgets.ledger is None
@@ -366,12 +372,17 @@ async def test_ledger_is_configured_for_every_postgres_process(migrated):
 class Instant:
     """asyncio for the service module, without the waits of its request gate."""
 
+    def __init__(self):
+        self.elapsed = 0.0
+
     def __getattr__(self, name):
         return getattr(asyncio, name)
 
-    @staticmethod
-    async def sleep(seconds):
-        return None
+    def monotonic(self):
+        return time.monotonic() + self.elapsed
+
+    async def sleep(self, seconds):
+        self.elapsed += seconds
 
 
 class FakeLedger:
@@ -410,7 +421,9 @@ async def test_shared_ledger_closes_hosts_on_429_and_418(tmp_path, monkeypatch):
             httpx.Response(429, headers={"Retry-After": "600"}),
             httpx.Response(200, json=[]),
         ]
-        monkeypatch.setattr("tank.market.service.asyncio", Instant())  # skip the 60 s gate wait
+        clock = Instant()
+        monkeypatch.setattr("tank.market.service.asyncio", clock)
+        monkeypatch.setattr("tank.market.service.time", SimpleNamespace(monotonic=clock.monotonic))
         assert await service._request_once("GET", url, params=params) == []
         assert [(host, reason) for host, _, reason in ledger.blocks] == [("api.llama.fi", "HTTP 429")]
         # Retry-After is clamped like the in-process gate's wait.

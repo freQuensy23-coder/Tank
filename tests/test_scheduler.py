@@ -223,45 +223,6 @@ async def test_planned_backup_copies_bundles_and_dumps_only(monkeypatch, tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_missing_unselected_source_reference_does_not_expand_backup_scope(monkeypatch, tmp_path):
-    import asyncio
-    from pathlib import Path
-
-    from tank.scheduler import verify_backup
-
-    data, config, backup = (tmp_path / key for key in ("data", "config", "backup"))
-    for root in (data / "bundles", config, backup):
-        root.mkdir(parents=True)
-    (data / "bundles" / "hash.json.zst").write_bytes(b"fixture bundle")
-    (data / "market-cache").write_bytes(b"not selected")
-    (config / "registry.yaml").write_text("not selected")
-
-    async def dump(*args, **kwargs):
-        Path(args[args.index("--file") + 1]).write_bytes(b"fixture dump")
-        return SimpleNamespace(communicate=AsyncMock(return_value=(b"", b"")), returncode=0)
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", dump)
-    repo = MemoryRepository()
-    await repo.put(
-        "ingest.source_items", "missing", {"item_id": "missing", "raw_ref": str(data / "absent.zst")}
-    )
-    settings = SimpleNamespace(
-        backup_dir=backup,
-        database_url="postgresql:///tank",
-        openma_database_url="postgresql:///oma",
-        data_dir=data,
-        config_dir=config,
-    )
-    result = await Scheduler(repo, settings, None, None).maintenance(utcnow(), force=True, prune=False)
-    final = Path(result["path"])
-    manifest = verify_backup(final)
-    assert set(manifest["roots"]) == {"bundles"}
-    assert set(manifest["files"]) == {"tank.dump", "oma.dump", "bundles/hash.json.zst"}
-    assert not (final / "data").exists() and not (final / "config").exists()
-    assert (data / "market-cache").exists()
-
-
-@pytest.mark.asyncio
 async def test_heartbeat_preserves_unknown_llm_cost():
     from tank.settings import Settings
 

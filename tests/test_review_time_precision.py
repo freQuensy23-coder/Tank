@@ -95,22 +95,20 @@ def test_review_label_and_scout_human_action_use_collection_clock(monkeypatch):
     assert asyncio.run(repo.get("scout.expansion_proposals", "p"))["decided_at_prec"] == "COLLECTION_ONLY"
 
 
+@pytest.mark.integration
+@pytest.mark.postgres
 @pytest.mark.asyncio
-async def test_postgres_completed_outcome_preserves_precision_and_typed_local_clock():
+async def test_postgres_completed_outcome_preserves_precision_and_typed_local_clock(postgres_template):
     import os
 
-    from tank.storage import PostgresRepository
     from tank.util import iso, new_id
 
     url = os.getenv("TANK_TEST_DATABASE_URL")
     if not url:
         pytest.skip("requires caller-owned isolated PostgreSQL test database")
-    repo = PostgresRepository(url)
-    await repo.open()
-    await repo.migrate()
-    prefix = new_id("time-review")
-    start = parse_time("2026-10-01T00:00:00Z")
-    try:
+    async with postgres_template.repository(url) as repo:
+        prefix = new_id("time-review")
+        start = parse_time("2026-10-01T00:00:00Z")
         for minute in range(60):
             await put_flow(
                 repo,
@@ -139,5 +137,3 @@ async def test_postgres_completed_outcome_preserves_precision_and_typed_local_cl
         assert result["status"] == "COMPLETED"
         assert result["start_prec"] == result["end_prec"] == "BUCKET(1m)"
         assert result["computed_at_prec"] == "COLLECTION_ONLY"
-    finally:
-        await repo.close()

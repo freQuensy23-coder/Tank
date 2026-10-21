@@ -1,0 +1,990 @@
+{
+  "schema": 1,
+  "data_files": 195,
+  "total_files": 196,
+  "archive_sha256": "7a48963ed6f932917ba38dd7074a2ad79c7fba4680021ad71882641a8d8d577b",
+  "archive_bytes": 2757657,
+  "provenance": "Exact existing retained captures and unchanged results.json from the isolated 2026-10-21 test audit. No new source requests, synthetic inputs or expectation regeneration.",
+  "files": [
+    {
+      "path": "data/bybit_oi_5m_WLDUSDT.json",
+      "bytes": 2848350,
+      "sha256": "d48c7826f1984925f94df2c13329de5f9031764972f6f99566940104a3edfe17"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-06-24.zip",
+      "bytes": 11113,
+      "sha256": "71ea04f52a118fcaa3e4b6fe973961800119a51d7a8dd829b713a06d17803aa9"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-06-25.zip",
+      "bytes": 11107,
+      "sha256": "5a9578d8762be1fb68c576c05e7f00dbe01a74e8651cd899da8ab3c2354dd06a"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-06-26.zip",
+      "bytes": 11123,
+      "sha256": "ca18b7d3fc6e2d97ac37a1c8a61b93a155e13d11d4841609964794033b7b598d"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-06-27.zip",
+      "bytes": 10965,
+      "sha256": "f20f433ac41d1c8b1a8c5e1e1dc441f47a9ad7235f85c85674a856467ed25dab"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-06-28.zip",
+      "bytes": 11250,
+      "sha256": "69aeac14694b9ff1ed8b0afc02097aa30d0f41b4429355d7c1750625230b25fc"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-06-29.zip",
+      "bytes": 11064,
+      "sha256": "6a04a468b8c5909463ff0e320d45bf97c620c17bcead718375e333bb6bed48a2"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-06-30.zip",
+      "bytes": 11044,
+      "sha256": "655dbb67c66458ada7fa635f439616e1b46acd22002667a7c511a4aab55f09cb"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-01.zip",
+      "bytes": 11139,
+      "sha256": "2fbff4d63a9f58037e809fb332836bc672211710f62c42bbb186db055a369851"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-02.zip",
+      "bytes": 11282,
+      "sha256": "8734176ea046f0b7f55712f52bd54d9e9cfbf5e0c8e5a09d2291ccd943a36ade"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-03.zip",
+      "bytes": 11191,
+      "sha256": "0a1ab2e927915e0fb0da9148d94dc57ed03259669f86c14adb8890d33ab0f5f2"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-04.zip",
+      "bytes": 11198,
+      "sha256": "e82efeeea62677111b2de79429eecc620f6fb0ec5aa43da1a71f31de4a1ca3bc"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-05.zip",
+      "bytes": 11478,
+      "sha256": "50a6ef19a1a0e5d7d2fbbe32c0359bc7324a8adaa76582cde3b4b1f75362ffc0"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-06.zip",
+      "bytes": 11155,
+      "sha256": "3170065b7f74ef683496413097b63bc2bec00d698f8d43e0d09a0011c0c3cb92"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-07.zip",
+      "bytes": 11179,
+      "sha256": "babec3b40efc88158f2c8ae3c8e55843327355ad9a351422a7ab0dae95739b29"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-08.zip",
+      "bytes": 11401,
+      "sha256": "c0d0506049b780d33cfd1e7a08996c21dd29ab8879c90bb01902df5f063a271d"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-09.zip",
+      "bytes": 11492,
+      "sha256": "a42b741ba207f824cbdd65a0acad017e8a7c87bf10665568ef157c44b4b68626"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-10.zip",
+      "bytes": 11127,
+      "sha256": "aab0c7b23b535adf6f7e2c75fa4d09f12894675048a0df1c5f49562c832f387f"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-11.zip",
+      "bytes": 11161,
+      "sha256": "eaa846bfc28743eb58e80e3ba9af15e9d6be1b10ab1ef25f5d46eb56db077640"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-12.zip",
+      "bytes": 11130,
+      "sha256": "2a523fce03c632f727f43be68ef651cb2bd2992b77a5ef0f654b87368d772798"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-13.zip",
+      "bytes": 11277,
+      "sha256": "798aae75d879eb424a3c6adee12a097ccce610ec475c35b3eb39e5b877b7c14c"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-14.zip",
+      "bytes": 11178,
+      "sha256": "2bdc8a88e1cc7d21270516098998b401e7bd9348cfc46b96f53a05a308cb94a4"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-15.zip",
+      "bytes": 11387,
+      "sha256": "fe0bbc00f6f625c2da280f34ee6a66baf1c102090545bfbb2eefd4945e6ce8d9"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-16.zip",
+      "bytes": 11409,
+      "sha256": "fc07a22445e391fba2547d8aa805e6cd87416e80b38e07e3a24d1b163de096fd"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-17.zip",
+      "bytes": 11356,
+      "sha256": "5ba6f7161e952cc1fa9ecb368cf6c53a4d2908cbe63357f5da7db6f1b856d6d5"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-18.zip",
+      "bytes": 11441,
+      "sha256": "fe5897cf5ac22677aacdbfa57d228272a1adb9dee5e11efe60585cf724cb5c27"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-19.zip",
+      "bytes": 11259,
+      "sha256": "1f8abc419829b4adb5c2f6b39577d260578e32b3c764203a5cadc851888b7898"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-20.zip",
+      "bytes": 11338,
+      "sha256": "401d7c03819a64a15a89d09a58a2370b036ceaee86abd2e38ecd80572909031f"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-21.zip",
+      "bytes": 11516,
+      "sha256": "ac44f2615a074ac1758c4c86c7fdab2c309beae38b65ceca5b2d23a04507f1e4"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-22.zip",
+      "bytes": 11377,
+      "sha256": "dc3f6523004274b6453abdac1c523ff549f99c731b4c903926f85ecbeadeaf31"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-23.zip",
+      "bytes": 11348,
+      "sha256": "84a948c8ad1421b6541433e769a7dc6e47f13bf37021f353e29daadffbf3a0a9"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-24.zip",
+      "bytes": 11368,
+      "sha256": "cccbc02d0adb3617528330317f302f8a5f2aa517924ed4969c91a65bb183ce35"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-25.zip",
+      "bytes": 11210,
+      "sha256": "2f6e37ff498d3253a1fdc71772dbaec9d31eb91c00783ef67dac3e2ad0a756c3"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-26.zip",
+      "bytes": 11308,
+      "sha256": "753a8bb055e1e1d4f724b5d69c8506eb57c8538c0a2d7e06396ca1c5eedf17c1"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-27.zip",
+      "bytes": 11425,
+      "sha256": "4146d30f9b6d8613529662a125db7856e89f931eea7dcbbc8dc1d248b4d4d077"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-28.zip",
+      "bytes": 11312,
+      "sha256": "fc5f58606aede59658da30bf7f4dbde38e0e44dc6327bc1e26edfa3283e1abc4"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-29.zip",
+      "bytes": 11353,
+      "sha256": "c2ab338ea792f0f19986f81ca6893a6f7dd6e22e3f741a7023c704818d7707fe"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-30.zip",
+      "bytes": 11493,
+      "sha256": "fc02b2bb8357b3be4b07479bbca03eb3953b73a208c3e58e720652ef09abff55"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-07-31.zip",
+      "bytes": 11380,
+      "sha256": "52de2a653ef7754365f730e54f0c7155cc7b0ba6c8c81e5ff6c7c0e27e5e421e"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-01.zip",
+      "bytes": 11264,
+      "sha256": "e014f3ac2a0f0c3eeab0ef352bde18da78ae9a0cd5e8d159daefdcc3faf72a1c"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-02.zip",
+      "bytes": 11301,
+      "sha256": "ac41eb932fe70137079699fef9b90dc6792b20caa405d28c03f521e4aa4ad9d4"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-03.zip",
+      "bytes": 11235,
+      "sha256": "654c2c29bb5704cd48e5ac2c5be7998854383a106b1b641b4d39cc13d51e0189"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-04.zip",
+      "bytes": 11231,
+      "sha256": "c146cd25fbc59a1daeeb12f0b86f56e39be59e69f532de01405a2e69498e5eb8"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-05.zip",
+      "bytes": 11219,
+      "sha256": "8ef9306861ea4b3568b077c263496dcb87a7c0d34e1e1b91f44048290bd2883d"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-06.zip",
+      "bytes": 11239,
+      "sha256": "9f1e24ec6e264c337f1fcda0d9361afed6a0e5a9b9868e7d75e710f7bcde55c4"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-07.zip",
+      "bytes": 11265,
+      "sha256": "01f381d96b5595215456f23c2d03dba62da6595221ecbcc74b99849d0f54193e"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-08.zip",
+      "bytes": 10962,
+      "sha256": "156e4c46131c561fc3e749fc213730b6e01c2db3c528ae7d48595f2ccd3a096e"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-09.zip",
+      "bytes": 11090,
+      "sha256": "b83f29106734ed3718d09b05bd431c4896648e1cd39cdad41ac5f1d5b803e723"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-10.zip",
+      "bytes": 11135,
+      "sha256": "2e7c3ced22bd1cd2e488363c4740a0e5513e5f38378618dee8d8e23d6b9ac153"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-11.zip",
+      "bytes": 11374,
+      "sha256": "4cb62e53dc497cc5ec212fe1a031aa49e1171c9a978e5fb14625aa78502cc466"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-12.zip",
+      "bytes": 11431,
+      "sha256": "670d4192450086d432f9ce1c64b55975a75a03db400223e0fea3671a04ab3b4d"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-13.zip",
+      "bytes": 11089,
+      "sha256": "184dc7401ffe3e9e1710c4aaf81e30eea5aff658267054926076e878cb1df749"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-14.zip",
+      "bytes": 11302,
+      "sha256": "0a91dc76d940920d99db5eed5031bebb8eb66407c6c327f8b8612ef6564acde6"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-15.zip",
+      "bytes": 11352,
+      "sha256": "2b97588887018b77381f5ba9b2a595d50b751c4596a83c72a0067e96c66432ef"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-16.zip",
+      "bytes": 11157,
+      "sha256": "46a9ba3cd02be18b86681fa80e52951f17794465a367609d2e3976eda6b32d5d"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-17.zip",
+      "bytes": 11476,
+      "sha256": "672dd133e3db560e13275e5ef8ef98b5a832c53a6a45af502620e43eb0724a99"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-18.zip",
+      "bytes": 11386,
+      "sha256": "ff0ab6f2666eacc1f5ed2aa93b224a94418200fa0372d7b2723c2c3d96748d3d"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-19.zip",
+      "bytes": 11783,
+      "sha256": "244678d4ef38a48067074565dff3dc950c019606301848bf957e97ef39e8fefd"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-20.zip",
+      "bytes": 11700,
+      "sha256": "4b2c0f510c2d83b6927765b3fbbb622a1010e6f89d2a8235b095782c3c01761f"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-21.zip",
+      "bytes": 11726,
+      "sha256": "2cd953f25f812fcad43816cc9de2d87c854cca35c0ce1a8a44e9f280e26411ba"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-22.zip",
+      "bytes": 11871,
+      "sha256": "8075ce1f49f31921b6d9ee4d86b0ecc88a924d4987a8738b079e7ef60fda266a"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-23.zip",
+      "bytes": 11576,
+      "sha256": "1d08446f6f1fff848ae750f756b4b9a6e181d3dbb1839affe5b58e617a252a9c"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-24.zip",
+      "bytes": 11597,
+      "sha256": "d60e29b65b5738ff78dcc5339425737faab11f7b47681affbb2e15ca0b978ca6"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-25.zip",
+      "bytes": 11725,
+      "sha256": "4fd2b48641cacb8491ede9e1e9aab5e0457f706c79cdd23f64e9d09512257fab"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-26.zip",
+      "bytes": 11379,
+      "sha256": "8c08849b76b08317b8c7605d40d14fb12cc117fbb2cadb99e11950a0221f8b3c"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-27.zip",
+      "bytes": 11568,
+      "sha256": "420b31a47542d52ba6629634249b239c3ff7fe6ce1c49bf29fb23edb5463e374"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-28.zip",
+      "bytes": 11675,
+      "sha256": "95a0f735a091451ebc723cbf6ee653997579dedb77bfbb51ea4f46062392babc"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-29.zip",
+      "bytes": 11495,
+      "sha256": "837d90c136b881731b217a81946cfbc394743b5bd7cb6a76b0d2ec3a385869af"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-30.zip",
+      "bytes": 11330,
+      "sha256": "e804f343ef6b91d00532cea91cc4dfe415ad64430eb3d90dc5b52f50b5068d9d"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-08-31.zip",
+      "bytes": 11412,
+      "sha256": "646b5da97bf9c4e8fa72e339e1fb66e3f32bc02e384884915351972c833e0f6b"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-01.zip",
+      "bytes": 11447,
+      "sha256": "cccf6829a73fd58d74c551fac000b3eec49496b6e025fc8b4d9c36f78c607b89"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-02.zip",
+      "bytes": 11269,
+      "sha256": "1877d13dc9b0fca42191c08b6a4e09e8b198c1711bffbbba764ee7f87677995e"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-03.zip",
+      "bytes": 11555,
+      "sha256": "e3b7314478840e460faad12be8d3fa897cc3621fcc4cbdef428a36c5db3e27d8"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-04.zip",
+      "bytes": 11583,
+      "sha256": "9d8db1ff674cbd734e0456815539cb0f313e75c97e1e20203c349faab4835eb1"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-05.zip",
+      "bytes": 11536,
+      "sha256": "7d54b287a2cabf49a0b8e6cdc1c43b4c4a809d7a6aa408b59e9baa62ca438e3e"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-06.zip",
+      "bytes": 11595,
+      "sha256": "1bb22631b0ca847fc52b685f0d0a2f60c221feca93f462002c9e7c1c97b03e8d"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-07.zip",
+      "bytes": 11652,
+      "sha256": "87d5a3ce079a67cb2cf1546d032f779f595b2a46aa04a98c99923de7f91dc69f"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-08.zip",
+      "bytes": 11662,
+      "sha256": "8d08379c9ee71cc7318a13b1ea7ba95abff94976c8f164011eb75d0e146da05b"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-09.zip",
+      "bytes": 11700,
+      "sha256": "6d0aa289523d0323e55cd34d4858ba9e6aa3389c895bf8d49e26cae6b342bfc9"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-10.zip",
+      "bytes": 11728,
+      "sha256": "f4a7f5ecebfc2ed527f160bdf3f3e3ee8fcc20603c6843d01a557e8359ee545c"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-11.zip",
+      "bytes": 11660,
+      "sha256": "531f45dfa4605d1551d814dcab601a9992f0bf38dade8f75a523f99d0092eede"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-12.zip",
+      "bytes": 11345,
+      "sha256": "f4a56547e683e1481b0295c1da007c725e757ca77b3ee533c2b88a5763deb16e"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-13.zip",
+      "bytes": 11484,
+      "sha256": "e2921f4a324b1a3e4954250e790d71d4540688cf9dc4511da457f0ceeef0e162"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-14.zip",
+      "bytes": 11632,
+      "sha256": "4d95f569c242a734ddc8578ea0110ec944024ed6e8804cc2ab45a527f3875457"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-15.zip",
+      "bytes": 11625,
+      "sha256": "434408d2e9611d26413a04c1c4d3dd6f64c1967ba08554327188c86038bda490"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-16.zip",
+      "bytes": 11657,
+      "sha256": "1877cc9b2e8a421d7fcd8fedd74125913035af9270ef5c0b779654c3cdd755ba"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-17.zip",
+      "bytes": 11708,
+      "sha256": "231ed17e0710e0673c79792f7dd397b564eb254d5f3a0a0119c9874f95e5e35c"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-18.zip",
+      "bytes": 12070,
+      "sha256": "05138702c01ea91f552ad00217dbc907d46ea952870f10ee78be5c526ece7299"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-19.zip",
+      "bytes": 12027,
+      "sha256": "8fe729a59dce0732eef7a47a82a8968a10c2aebfdf9bee29a93fccfe31be6000"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-20.zip",
+      "bytes": 11889,
+      "sha256": "354f5feba12daafd2802838bc6183e691ff667c32db7afd8f2769495d5e9ddd5"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-21.zip",
+      "bytes": 12088,
+      "sha256": "44a83b4cef84e39f8e6070e6760dd378239ec081664051d77ec0a7ae594b554b"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-22.zip",
+      "bytes": 11967,
+      "sha256": "baeebaf78433d4a43c16c4df33bb6eae1a00496bfc772244adf74fda12a2ab83"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-23.zip",
+      "bytes": 11919,
+      "sha256": "2c4108dd8aa5098f9cde545e362443265abeed033a93d633b55064cb77abf513"
+    },
+    {
+      "path": "data/metrics/ONDOUSDT-2026-09-24.zip",
+      "bytes": 12332,
+      "sha256": "70d662486aa88bb83a614fa181f7b9c9df846a403cc49f89f0d87d779b91b026"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-06-25.zip",
+      "bytes": 10132,
+      "sha256": "d9cb3bd131fab61bf1300e3b62c78aba34b7e1b921e3de8bb93e763a91e3a70d"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-06-26.zip",
+      "bytes": 10228,
+      "sha256": "d3104baa1c4e352f9cbd5ea91c4a5ff73975978a4975e1dcfbd335134dbea645"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-06-27.zip",
+      "bytes": 10214,
+      "sha256": "8463e696df4782c047a0cbb213c9d402de96167e2f3cd034a8f8e68ccd9cc389"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-06-28.zip",
+      "bytes": 10266,
+      "sha256": "f4f380e39d572daf2dd55bf22464cfae332eeee58842cb0ac2025d81522fb08d"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-06-29.zip",
+      "bytes": 10056,
+      "sha256": "be6cc74a9adcd841dba2137c026f1ca7da3a6c75ec09cdcbd0026df9b5c08467"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-06-30.zip",
+      "bytes": 10189,
+      "sha256": "688149d191c95d1488fa8c97023a7750e70de800faf439893d852b1f36c064ae"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-01.zip",
+      "bytes": 10172,
+      "sha256": "bde23ba4a45d850aadef4bfce9a3852f8e1994e1cf94ca43bccb2d2519ac990d"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-02.zip",
+      "bytes": 10210,
+      "sha256": "f3d7248c4d5e3185c8601da482bb0c54bc4c7b5ca77c59b2c19fd7b85ba299ef"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-03.zip",
+      "bytes": 9845,
+      "sha256": "6fd4483eac28bd20e13f2072e6644336ba2a9927fa0f59ab6474e4a45558580f"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-04.zip",
+      "bytes": 9977,
+      "sha256": "692aa8a68ce9cedf1c38fb8ca3f433c50ebd07c189831af645981b61661ac51c"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-05.zip",
+      "bytes": 10300,
+      "sha256": "bbfa6b75c9e9547e086cde959a8b788ed55591066403b6b045fcbcfcd1b00fe9"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-06.zip",
+      "bytes": 10103,
+      "sha256": "0dd61e4d94439c055153d46465e64b6d184af40d054a99dff33f718de9baa1fa"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-07.zip",
+      "bytes": 10104,
+      "sha256": "cb1063e60970254e9e4bfdccadcf67891e7596524e2477585ee0d297e8702f0b"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-08.zip",
+      "bytes": 10395,
+      "sha256": "535c2ec97c582a41d3db579802c9c2092fd14e5a0d9552d08952d954b035c2d9"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-09.zip",
+      "bytes": 10425,
+      "sha256": "09f46f224341a4ba9c617b73e7e0d0ed65bb4ab15f40732bc0e8cb42207a828b"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-10.zip",
+      "bytes": 10089,
+      "sha256": "5a178aa9acccf74317f35afa8f5268f6bf6565372021f0af85bdfebcf9b33515"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-11.zip",
+      "bytes": 9880,
+      "sha256": "3b6e6324f5a88b1d05908e955eaa363ce7b52e899faf14d53051f05d048e85df"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-12.zip",
+      "bytes": 10122,
+      "sha256": "b167a0549b98c0db31bfd3ab3f3735eeca58197c18a9d689e57713a27c72769f"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-13.zip",
+      "bytes": 10225,
+      "sha256": "b700bdac4a90ab8697bb3972c6b1207b99cc07c4f3726423ef630101af8cbc03"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-14.zip",
+      "bytes": 10216,
+      "sha256": "e589543738ee9098d9a1970f2928637d045de919fec7e2396e05bdd949ee442c"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-15.zip",
+      "bytes": 10186,
+      "sha256": "27b426a4c059a9129c2610ba842ab07f0d75f9a4aee84a23ca403cb77f1c874a"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-16.zip",
+      "bytes": 10235,
+      "sha256": "42ba1efc3f9108939ee4c13ab933cc96b198f2dbcacf9802bfa936dcaa17fd25"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-17.zip",
+      "bytes": 10295,
+      "sha256": "b891dec3e860436dc89ff6a8a1fbb3d745d6bd274687da416a0ee7a99dca97e2"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-18.zip",
+      "bytes": 10146,
+      "sha256": "9dccb66e2e7167fcf6184d756bf803f3a3dcfdb0a19caae8a949c2b5ba636945"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-19.zip",
+      "bytes": 9970,
+      "sha256": "fdd8528f6b03010348d1f2f96d9bacdaa003f0eb9112d1993d7397abf9a31c78"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-20.zip",
+      "bytes": 10182,
+      "sha256": "506201da9b754c9d873383c6f3c0ac78a0400cce2ec54eb121bbebc0f1bd4c70"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-21.zip",
+      "bytes": 10244,
+      "sha256": "358b6bb935216d201e113d38c56be7b6c692a5320106d5ad77206b2b2754c825"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-22.zip",
+      "bytes": 9929,
+      "sha256": "e9888b3728320f046e692327f9ab25237d3a832839c47db944d352f413ac6168"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-23.zip",
+      "bytes": 10006,
+      "sha256": "0e9ae1d879b8ef63f188b8851fa832cc7b9f1f1e1b4c5a73c235409e0a3aaf03"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-24.zip",
+      "bytes": 10099,
+      "sha256": "5426216f8d12521009e5b0f8db1988e8c5e9ea732ae802fbdfe4622c67109ec0"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-25.zip",
+      "bytes": 9903,
+      "sha256": "92cfe5c7ca3a983ad3d7b6200cea124611095bd3b1451a4ab957cf2d6aee3519"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-26.zip",
+      "bytes": 10169,
+      "sha256": "7415b02877258290e4238b4a96d9dc896e482de05a3fcfd77cab8239cf30a91f"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-27.zip",
+      "bytes": 10227,
+      "sha256": "8c141171e0fd49072ac920282d0f4b6998905d7b202aeeba8f99a47206228fa6"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-28.zip",
+      "bytes": 10139,
+      "sha256": "ed1b918a9400f375644f1293bb1449b7b39190c5bc7fece50fb06958b9f20b29"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-29.zip",
+      "bytes": 10163,
+      "sha256": "247a711e4ca0183b503c20f4245dcdecfa8b051d07c60a3f3bf2659c912ebb8e"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-30.zip",
+      "bytes": 10155,
+      "sha256": "2000e8dc2f6c366e2ef706fbc596ffa4c7a418d894a51a170d829d3c1ee976d1"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-07-31.zip",
+      "bytes": 10056,
+      "sha256": "a69aac3ef5a7839c8bc5381c8c79be75a9787c54d1e632b34804334ae4987f62"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-01.zip",
+      "bytes": 10162,
+      "sha256": "f04cb6f0dfd957772a16ea3d1ed44c00848092e5e0627d15ec16074d845b4d76"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-02.zip",
+      "bytes": 9880,
+      "sha256": "de9abfd5a0b833896f0c59725b0d60c980c2eed7455ad60c6558128d3de0b8d7"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-03.zip",
+      "bytes": 10325,
+      "sha256": "13793e4ace4abe70c93d9831249081e20f8f2cdb046ae425728236019d61114c"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-04.zip",
+      "bytes": 10251,
+      "sha256": "3e31c0a58aa70f0ab8ccb63df71f3000f4c4df16d5da76a2ff7b44094f0f0908"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-05.zip",
+      "bytes": 10110,
+      "sha256": "7a883afdfe72a1b289051a5af3c917087d1aa9acd9d08ee59fed803733be5122"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-06.zip",
+      "bytes": 10026,
+      "sha256": "5dc3650e862c21082a66e42f76ed473aa53f3063a0dfa933749b467812a7313f"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-07.zip",
+      "bytes": 9913,
+      "sha256": "cb2fa1b198e64295f8fb5d8f3b37a2922732949038b7b9a2594aa3a8e1867beb"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-08.zip",
+      "bytes": 9896,
+      "sha256": "ebb3cc0c5734619adc1f4e5cb158aa3db1f0ec5f8be0d7c647897c2b251cee73"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-09.zip",
+      "bytes": 9819,
+      "sha256": "4aaa6e909460c7c44973c01f12b344368b26374fa92c92231d7dd598f43f62e9"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-10.zip",
+      "bytes": 10085,
+      "sha256": "9f0fb14e493eabcfb8a7dccf2872200cee051992580daa50de2579c73df5eb7a"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-11.zip",
+      "bytes": 10425,
+      "sha256": "b186a4e77cfe6dd29a0c245afc700bab6185ec4dfd42c48f6e1f641067e6d2cd"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-12.zip",
+      "bytes": 10473,
+      "sha256": "ddfc2952272cf5648c8a69195d48c2f38594e827a80bd93ff231ddcf8c85672d"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-13.zip",
+      "bytes": 10100,
+      "sha256": "73e3f5cb18dbb7b4e1e3192aabbc61366fd752ea684664377f43bcf23bc496ce"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-14.zip",
+      "bytes": 9901,
+      "sha256": "e439d59159b04e1a0e4bb4a710962bfa5af70376a6e0d739c3749778e06964e9"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-15.zip",
+      "bytes": 9770,
+      "sha256": "3df7c77f617fbb9a54c1c2e37e2405b38d8bfd153ebe588a81440b5948dee168"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-16.zip",
+      "bytes": 9847,
+      "sha256": "00b7c420b4f53de8067c31e1c267be78f02434d9ca48fc3eb2e809711346a104"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-17.zip",
+      "bytes": 10514,
+      "sha256": "d4081a76838767569112bd0cedbd1ac91d1d42a15114badf9661d5b586b5a996"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-18.zip",
+      "bytes": 10350,
+      "sha256": "00737052346bd6635713969940cff8fb270d31b29e9a42573df17cf42d1c8623"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-19.zip",
+      "bytes": 10529,
+      "sha256": "53833cc0d15f39352e5c500dfa39fb3747ac7394db9d5fa5dc0b3f17d4e3af39"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-20.zip",
+      "bytes": 10454,
+      "sha256": "d21df34c7599cf585a4d085882f16ea2cc33d2dc7f588e8bb3a669fc36a7d4eb"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-21.zip",
+      "bytes": 10425,
+      "sha256": "5a9d44e7790dfd2750543aa932a427f4b32d1d6e0bb87d99e781a486b4a39152"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-22.zip",
+      "bytes": 10626,
+      "sha256": "452da17509ffeae46d69cc95ea6621cc23e5e74b3cae6a82660250a5e2052bbc"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-23.zip",
+      "bytes": 10543,
+      "sha256": "18daabaf1bab2f516ce811f451878b3aaff0ad88dbab4d7006cac354feaa22bf"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-24.zip",
+      "bytes": 10809,
+      "sha256": "56bd7843adfdd4115706682a766b5244cc09ea8772bfa4eefc618ccaf3230a80"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-25.zip",
+      "bytes": 10427,
+      "sha256": "ff5bd58d67fc1570907ea8e1e99e5193a38fb5d89e531745b27162ac01226ee2"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-26.zip",
+      "bytes": 10507,
+      "sha256": "b6e876ea8415d509885e682bc602513215cc5ceb2e5257d4c5ee19d48c6541a9"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-27.zip",
+      "bytes": 10320,
+      "sha256": "c10bbaca30770c35a786b1393617dc82d95b4fcdf0e843ee634131e02a207700"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-28.zip",
+      "bytes": 10364,
+      "sha256": "324f38c1a54211fda0cc47e847292c825de7094a54ec1780877acd9ec64d0f31"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-29.zip",
+      "bytes": 10176,
+      "sha256": "ddfc6401451c08afd85cdb002abde1d40416edc0b9f27b9272533177790e9b96"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-30.zip",
+      "bytes": 9946,
+      "sha256": "502ea903787e6d2c99cce086e3e110f8849343244b42c3395a97398bd720752e"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-08-31.zip",
+      "bytes": 10382,
+      "sha256": "f9d230003cca6246f88a2bf427e30b50f6bb7e8e46c10c165832aa1d03be0511"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-01.zip",
+      "bytes": 10505,
+      "sha256": "a1fef539845e9ac0a776fe7626975dad6019aa29640bf68496a8d5c425b251e1"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-02.zip",
+      "bytes": 10648,
+      "sha256": "28c61ef979625bd86f29290162d6cc811dfe3536484860b4657ca8a2d262262b"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-03.zip",
+      "bytes": 10467,
+      "sha256": "e284c1bfe0a9bb3e61cde02d000eb746705f568ba8b9a2923a75eb03e20f3f2f"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-04.zip",
+      "bytes": 10406,
+      "sha256": "d7744f2ebb6b846918a0dff3f5877d1cc66687c47c8fd9f113828af02812ed01"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-05.zip",
+      "bytes": 10115,
+      "sha256": "e87dd22b61b50e13e08e12e33b4fbed9316046c6231e30056444ae92f01f6fff"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-06.zip",
+      "bytes": 10300,
+      "sha256": "609432f9dc6078d4702beedabfb9787b155b98b5cb93ce4068e874455757e807"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-07.zip",
+      "bytes": 10472,
+      "sha256": "a3fdaa7cacf4148d19293793cfe02f242786d73800e7307a2d0fd292e0c1b134"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-08.zip",
+      "bytes": 10508,
+      "sha256": "277679b4bf880f79f26c2a70f2f0f836f396e665a022cfacec69e716bb6a1235"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-09.zip",
+      "bytes": 10580,
+      "sha256": "f7b81e1c6a111fb536b3fd5cb18a518ea657b4e59be1a74d72e8823b5b127db7"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-10.zip",
+      "bytes": 10369,
+      "sha256": "b1d18f4c21aa780b31bc5057bb58f37892b7b80ecc52e5564b95ba03979264ce"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-11.zip",
+      "bytes": 10357,
+      "sha256": "6405b3a9e100f21d0b5ce704b9084e9144fbebfdf0fc13a11bc46ff586111e07"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-12.zip",
+      "bytes": 10182,
+      "sha256": "5cd280218e53207966bc45a82b844c6e87a42e0fe3237542a497eab7ba83bc84"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-13.zip",
+      "bytes": 10387,
+      "sha256": "1691361bff783e529686499b11b27f6a4abcfa8c3ff97133a5b1e5fcce1fcbf1"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-14.zip",
+      "bytes": 10556,
+      "sha256": "a69a274bb472b6579a783d8865f0f7e7670511f88020e446be5a785d85bcddc3"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-15.zip",
+      "bytes": 10652,
+      "sha256": "3e01c5e6b38ac2cd776e7b2291b065eed476540e5b255057fc1f48c9dc2881b1"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-16.zip",
+      "bytes": 10724,
+      "sha256": "d359d534f77bf081d85df4f33cbbacbbb718dab02a3dc315ba7f962a59efd65c"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-17.zip",
+      "bytes": 10446,
+      "sha256": "e7b0814a702213c06109c654c4f4e09fa0050ce85a4c7a7aed112fc111d7a4fe"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-18.zip",
+      "bytes": 10640,
+      "sha256": "3a9f23e38a804cae123e8aea266fcd00c23e67573f7f713892e8d07e818ec95c"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-19.zip",
+      "bytes": 10604,
+      "sha256": "c41061a11d095c0cb9a91433950118daecccf6c02e71b4c19f6be48aa7153260"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-20.zip",
+      "bytes": 10531,
+      "sha256": "6cc8807812315f4d4fb902545ffc2635e171f84c478a4b936d23a11838844c4c"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-21.zip",
+      "bytes": 10784,
+      "sha256": "37bc89427d366453b976fe4b5b0a67824dedbb3fec99476a3d31bd7496bcd456"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-22.zip",
+      "bytes": 10942,
+      "sha256": "04be25cf26e89ce89ac78c1dfd827400e7f295d37704f60e59958dd0f0f7784f"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-23.zip",
+      "bytes": 10776,
+      "sha256": "ac8e6375d2620382528afff21787f70c425db2aefd7d1b0760dc88dfb89ac8e1"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-24.zip",
+      "bytes": 11078,
+      "sha256": "5489567839776fff06f6236efa2b349d9c651f03d0b8d71a9140921cf63a9c76"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-25.zip",
+      "bytes": 11302,
+      "sha256": "cc80c987fbeafa74aac1198ca303ec544481f429340aee7763e85dd8b6631ae0"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-26.zip",
+      "bytes": 11132,
+      "sha256": "9a5ed5450d9592a6c4570d198dd47f536dd750a02f12ed12cc40de0a5313b25e"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-27.zip",
+      "bytes": 11466,
+      "sha256": "83b36c5f30ff00b18ce69d4699e0f4f408cbe03aa11938bf33b16d9ad147162b"
+    },
+    {
+      "path": "data/metrics/QNTUSDT-2026-09-28.zip",
+      "bytes": 11324,
+      "sha256": "77ce4eb91dbfaa5d8cd5fd60aa5de2a845eb9b3a770c1e32419bea81db03cc55"
+    },
+    {
+      "path": "data/rest_openInterestHist_fixtures.json",
+      "bytes": 103335,
+      "sha256": "67e4afd8ee1e43e348344668a933b66b3e2490e02bd62b1ce5244d8205a88f45"
+    },
+    {
+      "path": "data/spot_15m_BTCUSDT_0924.json",
+      "bytes": 18232,
+      "sha256": "6b4de748a75954685251fd68f6bf93827268af1171fc711865a85d424e6c7134"
+    },
+    {
+      "path": "data/spot_15m_QNTUSDT_0924.json",
+      "bytes": 16397,
+      "sha256": "6421d6ccc8648f057e8cf2d5505917b362df9eab7dd2c8160c0ce8a34b7e4af3"
+    },
+    {
+      "path": "data/spot_1h_BTCUSDT.json",
+      "bytes": 589774,
+      "sha256": "1e5e8dd939833b0806b3072e3c1ac1f602dcae4da27f320d38b5d33acf80c66c"
+    },
+    {
+      "path": "data/spot_1h_QNTUSDT.json",
+      "bytes": 529081,
+      "sha256": "8782465ef4bea42c1475b579ba8c877ed0ea4552fdb29a80d8dfb9d7c19372f4"
+    },
+    {
+      "path": "results.json",
+      "bytes": 3258,
+      "sha256": "11439a6ab6f15f83da089aa242f5333936fa6e8bcce7111ebc8d3f5a9a913444"
+    }
+  ]
+}
