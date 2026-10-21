@@ -365,10 +365,290 @@
     "text"
    ]
   ],
+  "mkt.capture_requests": [
+   [
+    "budget_s",
+    "numeric"
+   ],
+   [
+    "code_version",
+    "text"
+   ],
+   [
+    "config_version",
+    "text"
+   ],
+   [
+    "deadline",
+    "timestamptz"
+   ],
+   [
+    "deadline_prec",
+    "text"
+   ],
+   [
+    "deadline_prec_reason",
+    "text"
+   ],
+   [
+    "end",
+    "timestamptz"
+   ],
+   [
+    "end_prec",
+    "text"
+   ],
+   [
+    "end_prec_reason",
+    "text"
+   ],
+   [
+    "event_id",
+    "text"
+   ],
+   [
+    "finished_at",
+    "timestamptz"
+   ],
+   [
+    "finished_at_prec",
+    "text"
+   ],
+   [
+    "finished_at_prec_reason",
+    "text"
+   ],
+   [
+    "kind",
+    "text"
+   ],
+   [
+    "reason",
+    "text"
+   ],
+   [
+    "recorded_at",
+    "timestamptz"
+   ],
+   [
+    "recorded_at_prec",
+    "text"
+   ],
+   [
+    "recorded_at_prec_reason",
+    "text"
+   ],
+   [
+    "request_id",
+    "text"
+   ],
+   [
+    "requested_at",
+    "timestamptz"
+   ],
+   [
+    "requested_at_prec",
+    "text"
+   ],
+   [
+    "requested_at_prec_reason",
+    "text"
+   ],
+   [
+    "start",
+    "timestamptz"
+   ],
+   [
+    "start_prec",
+    "text"
+   ],
+   [
+    "start_prec_reason",
+    "text"
+   ],
+   [
+    "started_at",
+    "timestamptz"
+   ],
+   [
+    "started_at_prec",
+    "text"
+   ],
+   [
+    "started_at_prec_reason",
+    "text"
+   ],
+   [
+    "status",
+    "text"
+   ],
+   [
+    "token_id",
+    "text"
+   ],
+   [
+    "writer",
+    "text"
+   ],
+   [
+    "result",
+    "jsonb"
+   ],
+   [
+    "semantic_fingerprint",
+    "text"
+   ]
+  ],
+  "mkt.capture_streams": [
+   [
+    "code_version",
+    "text"
+   ],
+   [
+    "config_version",
+    "text"
+   ],
+   [
+    "connected_since",
+    "timestamptz"
+   ],
+   [
+    "connected_since_prec",
+    "text"
+   ],
+   [
+    "connected_since_prec_reason",
+    "text"
+   ],
+   [
+    "endpoint",
+    "text"
+   ],
+   [
+    "instrument_id",
+    "text"
+   ],
+   [
+    "last_message_at",
+    "timestamptz"
+   ],
+   [
+    "last_message_at_prec",
+    "text"
+   ],
+   [
+    "last_message_at_prec_reason",
+    "text"
+   ],
+   [
+    "last_trade_id",
+    "text"
+   ],
+   [
+    "last_trade_ts",
+    "timestamptz"
+   ],
+   [
+    "last_trade_ts_prec",
+    "text"
+   ],
+   [
+    "last_trade_ts_prec_reason",
+    "text"
+   ],
+   [
+    "market_type",
+    "text"
+   ],
+   [
+    "recorded_at",
+    "timestamptz"
+   ],
+   [
+    "recorded_at_prec",
+    "text"
+   ],
+   [
+    "recorded_at_prec_reason",
+    "text"
+   ],
+   [
+    "sealed_through",
+    "timestamptz"
+   ],
+   [
+    "sealed_through_prec",
+    "text"
+   ],
+   [
+    "sealed_through_prec_reason",
+    "text"
+   ],
+   [
+    "state",
+    "text"
+   ],
+   [
+    "stream",
+    "text"
+   ],
+   [
+    "token_id",
+    "text"
+   ],
+   [
+    "updated_at",
+    "timestamptz"
+   ],
+   [
+    "updated_at_prec",
+    "text"
+   ],
+   [
+    "updated_at_prec_reason",
+    "text"
+   ],
+   [
+    "venue",
+    "text"
+   ],
+   [
+    "watermark_ts",
+    "timestamptz"
+   ],
+   [
+    "watermark_ts_prec",
+    "text"
+   ],
+   [
+    "watermark_ts_prec_reason",
+    "text"
+   ],
+   [
+    "writer",
+    "text"
+   ],
+   [
+    "detail",
+    "jsonb"
+   ],
+   [
+    "recent_polls",
+    "jsonb"
+   ],
+   [
+    "semantic_fingerprint",
+    "text"
+   ]
+  ],
   "mkt.flow_bars_1m": [
    [
     "backfill_verified",
     "boolean"
+   ],
+   [
+    "bar_version",
+    "bigint"
    ],
    [
     "buy_qty",
@@ -485,6 +765,10 @@
    [
     "recorded_at_prec_reason",
     "text"
+   ],
+   [
+    "revised",
+    "boolean"
    ],
    [
     "sell_qty",
@@ -1665,6 +1949,13 @@
   "mkt.capture_gaps": [
    "gap_id"
   ],
+  "mkt.capture_requests": [
+   "request_id"
+  ],
+  "mkt.capture_streams": [
+   "instrument_id",
+   "stream"
+  ],
   "mkt.flow_bars_1m": [
    "instrument_id",
    "minute_start"
@@ -1729,6 +2020,13 @@
   ],
   "mkt.capture_gaps": [
    "gap_id"
+  ],
+  "mkt.capture_requests": [
+   "request_id"
+  ],
+  "mkt.capture_streams": [
+   "instrument_id",
+   "stream"
   ],
   "mkt.flow_bars_1m": [
    "instrument_id",
