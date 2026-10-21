@@ -53,6 +53,8 @@ WINDOW_BEFORE, WINDOW_AFTER = timedelta(hours=24), timedelta(hours=72)
 # the trailing REFERENCE_SPAN of spot (03 §5.7 reference venue) is repaired before anything else.
 REPAIR_CHUNK, REFERENCE_SPAN = timedelta(hours=1), timedelta(hours=24)
 PAGES_PER_FLUSH = 25
+# Requests in flight per venue host (Kraken: 1).
+HOST_IN_FLIGHT = 4
 # A reused dependency head is recomputed at least this often (retention deletes and other
 # processes are not in the write clock).
 HEAD_REUSE_S = 300
@@ -544,7 +546,11 @@ class MarketService:
             if host == "api.etherscan.io"
             else 0.08
         )
-        lock = self._request_locks.setdefault(host, PriorityGate())
+        # Several requests in flight per host (Kraken's 1 req/s counter stays serial); request
+        # starts are still spaced by the host interval and every venue budget still applies.
+        lock = self._request_locks.setdefault(
+            host, PriorityGate(1 if host == "api.kraken.com" else HOST_IN_FLIGHT)
+        )
 
         async def admit_budget():
             from tank.sources.rate_limits import shared_request_budgets
@@ -585,17 +591,22 @@ class MarketService:
             # a newly ready cheap baseline request can still be served first.
             await admit_budget()
             async with lock.enter(priority):
-                remaining = interval - (time.monotonic() - self._last_request.get(host, 0))
-                if remaining > 0:
-                    await asyncio.sleep(remaining)
+                # Reserve the next start slot before sleeping: concurrent holders never burst.
+                now = time.monotonic()
+                start = max(now, self._last_request.get(host, 0) + interval)
+                self._last_request[host] = start
+                if start > now:
+                    await asyncio.sleep(start - now)
                 try:
                     response = await self.http.request(method, url, **kwargs)
                 except httpx.HTTPError as exc:
                     raise RuntimeError(f"{host}: {type(exc).__name__}") from None
-                self._last_request[host] = time.monotonic()
+                self._last_request[host] = max(self._last_request[host], time.monotonic())
                 if response.status_code in (418, 429):
                     delay = float(response.headers.get("Retry-After", "60"))
-                    self._last_request[host] = time.monotonic() + min(max(delay, 1), 60)
+                    self._last_request[host] = max(
+                        self._last_request[host], time.monotonic() + min(max(delay, 1), 60)
+                    )
                     continue
                 if response.is_error:
                     # The venue's error code/message is the gap evidence (bodies carry no credentials).
@@ -604,7 +615,7 @@ class MarketService:
                 # separately enforces its own half via shared_request_budgets.
                 weight = response.headers.get("X-MBX-USED-WEIGHT-1M")
                 if weight and int(weight) >= (2400 if host == "fapi.binance.com" else 6000):
-                    self._last_request[host] = time.monotonic() + 60
+                    self._last_request[host] = max(self._last_request[host], time.monotonic() + 60)
                 # JSON floats must never enter native quantity or monetary arithmetic.
                 return json.loads(response.content, parse_float=Decimal)
         raise RuntimeError(f"{host}: rate limited after bounded retries")

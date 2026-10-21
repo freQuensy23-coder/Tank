@@ -7,8 +7,11 @@ from itertools import count
 
 
 class PriorityGate:
-    def __init__(self):
-        self.busy = False
+    """At most `capacity` holders at once; waiters are admitted lowest priority number first."""
+
+    def __init__(self, capacity=1):
+        self.capacity = capacity
+        self.active = 0
         self.waiters = []
         self.sequence = count()
 
@@ -16,14 +19,13 @@ class PriorityGate:
         while self.waiters:
             _, _, future = heapq.heappop(self.waiters)
             if not future.done():
-                future.set_result(True)
+                future.set_result(True)  # the slot passes to this waiter
                 return
-        self.busy = False
+        self.active -= 1
 
     @asynccontextmanager
     async def enter(self, priority=0):
-        future = None
-        if self.busy:
+        if self.active >= self.capacity:
             future = asyncio.get_running_loop().create_future()
             heapq.heappush(self.waiters, (priority, next(self.sequence), future))
             try:
@@ -35,7 +37,7 @@ class PriorityGate:
                     future.cancel()
                 raise
         else:
-            self.busy = True
+            self.active += 1
         try:
             yield
         finally:
