@@ -113,7 +113,7 @@ async function entrypointFixture(t, options = {}) {
   });
   t.mock.method(process, "exit", (code) => exits.push(code));
 
-  const moduleUrl = new URL("./openma_entrypoint.mjs", import.meta.url);
+  const moduleUrl = new URL("../vendor/openma/tank-deploy/openma_entrypoint.mjs", import.meta.url);
   moduleUrl.searchParams.set("fixture", String(++fixtureNumber));
   const { main } = await import(moduleUrl.href);
   return { main, reads, resolutions, spawns, kills, exits, child, secrets };

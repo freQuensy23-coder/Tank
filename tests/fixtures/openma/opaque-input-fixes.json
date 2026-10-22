@@ -1,0 +1,23 @@
+[
+  {
+    "path": "packages/managed-agents-adapters-runtime/src/index.ts",
+    "sha256": "e2e01a8205d137a286c67e2d02f6440b0a3b8e7da7250354f92baea869e9adca",
+    "old": "function camelCaseRuntimeValue(value: unknown): unknown {",
+    "new": "// Tool/application JSON is opaque. Only protocol envelopes use case mapping.\nconst OPAQUE_RUNTIME_VALUE_KEYS = new Set([\n  \"input\", \"arguments\", \"metadata\", \"input_schema\", \"inputSchema\",\n  \"schema\", \"parameters\", \"provider_options\", \"providerOptions\",\n  \"output\", \"result\", \"json\",\n]);\n\nfunction camelCaseRuntimeValue(value: unknown): unknown {",
+    "count": 1
+  },
+  {
+    "path": "packages/managed-agents-adapters-runtime/src/index.ts",
+    "sha256": "e2e01a8205d137a286c67e2d02f6440b0a3b8e7da7250354f92baea869e9adca",
+    "old": "      camelCaseRuntimeValue(item),",
+    "new": "      OPAQUE_RUNTIME_VALUE_KEYS.has(key) ? item : camelCaseRuntimeValue(item),",
+    "count": 1
+  },
+  {
+    "path": "packages/managed-agents-adapters-runtime/src/index.ts",
+    "sha256": "e2e01a8205d137a286c67e2d02f6440b0a3b8e7da7250354f92baea869e9adca",
+    "old": "      snakeCaseRuntimeValue(item),",
+    "new": "      OPAQUE_RUNTIME_VALUE_KEYS.has(key) ? item : snakeCaseRuntimeValue(item),",
+    "count": 1
+  }
+]
