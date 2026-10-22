@@ -1826,3 +1826,57 @@ async def test_too_large_file_in_a_pair_settles_both_messages():
     assert (await repo.get("ops.telegram_messages", f"{USER}:101"))["status"] == "IGNORED"
     texts = [body["text"] for body in telegram.sent]
     assert texts == [TOO_LARGE_TEXT] and HINT_TEXT not in texts
+
+
+@pytest.mark.asyncio
+async def test_legacy_card_deliveries_stop_matching_after_the_alerts_chat_changes():
+    repo = MemoryRepository()
+    await seed(repo)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(FakeTelegram())) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        assert (await inbox.reply_target(ALERTS, {"message_id": 55}))["session_id"] == "ses_1"
+        moved = TelegramInbox(
+            repo,
+            SimpleNamespace(
+                telegram_token="test", telegram_alerts_chat="-100777", telegram_ops_chat="-100600"
+            ),
+            http=http,
+        )
+        assert await moved.reply_target("-100777", {"message_id": 55}) is None
+
+
+@pytest.mark.asyncio
+async def test_paired_size_notice_failure_keeps_both_messages_retryable():
+    from tank.telegram_inbox import TOO_LARGE_TEXT
+
+    repo = MemoryRepository()
+    await seed(repo)
+    comment = message(
+        110, date=1_800_018_000, caption="Файл", document={"file_id": "huge", "file_name": "b.bin"}
+    )
+    forward = message(
+        111,
+        date=1_800_018_000,
+        text="AAVE exploit card",
+        forward_origin={"type": "user", "sender_user": {"id": BOT}, "date": 1_800_000_000},
+    )
+    telegram = FakeTelegram([{"update_id": 1, "message": comment}, {"update_id": 2, "message": forward}])
+    outage = {"left": 1}
+    original = telegram.__call__
+
+    def flaky(request):
+        if request.url.path.endswith("/sendMessage") and outage["left"]:
+            outage["left"] -= 1
+            return httpx.Response(502, json={"ok": False})
+        return original(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        await inbox.poll(timeout=0)
+        await inbox.sweep(now=1_800_018_100)
+        assert (await repo.get("ops.telegram_messages", f"{USER}:111"))["status"] == "RECEIVED"
+        for step in range(1, 4):
+            await inbox.sweep(now=1_800_018_100 + step * 400)
+    assert [body["text"] for body in telegram.sent] == [TOO_LARGE_TEXT]
+    assert (await repo.get("ops.telegram_messages", f"{USER}:110"))["status"] == "IGNORED"
+    assert (await repo.get("ops.telegram_messages", f"{USER}:111"))["status"] == "IGNORED"

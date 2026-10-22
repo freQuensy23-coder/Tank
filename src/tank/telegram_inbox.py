@@ -26,6 +26,7 @@ from tank.util import new_id, parse_time, sha256, utcnow
 log = logging.getLogger(__name__)
 
 CURSOR_KEY = "telegram:bot-updates"
+LEGACY_CHAT_KEY = "telegram:legacy-alerts-chat"
 FILE_RETENTION = timedelta(days=30)
 MAX_MESSAGE_ATTEMPTS = 5
 RETRY_BASE_S = 15
@@ -229,6 +230,7 @@ class TelegramInbox:
         if not self.enabled:
             await stop.wait()
             return
+        await self.legacy_chat()
         while not stop.is_set():
             try:
                 waiting = [
@@ -276,6 +278,18 @@ class TelegramInbox:
     async def close(self):
         if self.owns_http:
             await self.http.aclose()
+
+    async def legacy_chat(self):
+        """The alerts chat at upgrade time; card deliveries recorded before chat_id belong to it."""
+        state = await self.repo.get("ops.source_checkpoints", LEGACY_CHAT_KEY)
+        if state is None:
+            state = {
+                "source_id": LEGACY_CHAT_KEY,
+                "cursor": str(self.settings.telegram_alerts_chat),
+                **collection_clock(utcnow()).fields("updated_at"),
+            }
+            await self.repo.put("ops.source_checkpoints", LEGACY_CHAT_KEY, state)
+        return state["cursor"]
 
     async def bot(self):
         if self.bot_id is None:
@@ -437,8 +451,8 @@ class TelegramInbox:
             try:
                 await self.question(companion, target, forwarded=row)
             except FileTooLarge:
-                await self.mark(row, "IGNORED", reason="FILE_TOO_LARGE", paired_with=companion["message_id"])
                 await self.notice(companion, TOO_LARGE_TEXT, "IGNORED", reason="FILE_TOO_LARGE")
+                await self.mark(row, "IGNORED", reason="FILE_TOO_LARGE", paired_with=companion["message_id"])
                 return
             await self.mark(
                 row,
@@ -556,8 +570,10 @@ class TelegramInbox:
     async def reply_target(self, chat_id, reply):
         ref = str(reply["message_id"])
         if str(chat_id) == str(self.settings.telegram_alerts_chat):
+            legacy = await self.legacy_chat()
             for delivery in await self.sent(CARD_CHANNEL, message_ref=ref):
-                if delivery.get("chat_id") not in (None, str(chat_id)):
+                scope = delivery.get("chat_id") or legacy
+                if scope != str(chat_id):
                     continue
                 return await self.card_target(delivery)
         for delivery in await self.sent(ANSWER_CHANNEL, message_ref=ref, chat_id=str(chat_id)):
