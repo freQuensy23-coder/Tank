@@ -20,11 +20,11 @@ RUN --mount=type=cache,id=tank-uv,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
 FROM scratch AS browser-installer
-COPY --from=dependencies /opt/tank/venv/lib/python3.12/site-packages/playwright /playwright
+COPY --from=dependencies /opt/tank/venv/lib/python3.13/site-packages/playwright /playwright
 
 FROM runtime-base AS runtime
-RUN --mount=type=bind,from=browser-installer,target=/opt/tank/venv/lib/python3.12/site-packages \
-    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/opt/tank/venv/lib/python3.12/site-packages \
+RUN --mount=type=bind,from=browser-installer,target=/opt/tank/venv/lib/python3.13/site-packages \
+    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/opt/tank/venv/lib/python3.13/site-packages \
     /usr/local/bin/python -m playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=dependencies /opt/tank/venv /opt/tank/venv
