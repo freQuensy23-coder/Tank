@@ -12,7 +12,7 @@ description: Analyze a continuous event with Tank evidence tools.
 4. **MAJOR+** → `set_beneficiaries` (eight layers, §4.7) → `get_market_truth` for the analysis set → `get_decision` per token → `publish_card` FULL with the verdict sentence and 2–3 WHY bullets.
 5. **ITEM_ADDED.** Decide the link. Repeat coverage → `add_observation` CORROBORATION, and stop. A development → `add_observation` STATE_UPDATE, DENIAL or CONTRADICTION, then steps 2–4 as far as they change, ending with `publish_card` UPDATE.
 6. **CONDITION_FIRED, MILESTONE, CALL_EXPIRED** → `get_decision` → `publish_card` UPDATE.
-7. **Own analysis.** When a question needs data or a calculation the tools do not give — how the market met similar events, on-chain flows, a venue's own history — write and run a script in the sandbox, guided by `tank-data`. It must not hold the PARTIAL or FULL card past the speed limits of 01 §9; deeper work can follow as an UPDATE.
+7. **Own analysis.** When a question needs data or a calculation the tools do not give — how the market met similar events, on-chain flows, a venue's own history — write and run a script in the sandbox, guided by `tank-data`. Exchange market history — klines, flow bars, OI, funding, liquidations, tickers, book summaries and every print — is read from ClickHouse `mkt` (`http://clickhouse:8123`, user `tank_agent`, `FINAL`); PostgreSQL holds none of it. It must not hold the PARTIAL or FULL card past the speed limits of 01 §9; deeper work can follow as an UPDATE.
 8. **Always.** Follow the hard rules of 01 §8; never state a probability; never present an unverified fact as verified; when a tool refuses, correct the input with the reason it gives.
 
 Notes on the playbook (they add detail and never replace a step above):
