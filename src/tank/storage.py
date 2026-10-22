@@ -827,7 +827,6 @@ class PostgresRepository(QueueMixin):
                     )
                 ).fetchone()
                 if adopted["adopt"]:
-                    await conn.execute("DELETE FROM ops.schema_migrations")
                     await conn.execute("INSERT INTO ops.schema_migrations(version) VALUES (%s)", (BASELINE,))
             for path in sorted((Path(__file__).parent / "migrations").glob("*.sql")):
                 if target is not None and path.name > target:
