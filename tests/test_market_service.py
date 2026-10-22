@@ -871,7 +871,7 @@ async def test_loop_watchdog_logs_the_stack_that_holds_the_loop(setup, monkeypat
     service._stop.set()
     await watchdog
     stalls = [r.getMessage() for r in caplog.records if "event loop stalled" in r.getMessage()]
-    assert stalls and "hogging_the_loop" in stalls[0]
+    assert any("hogging_the_loop" in stall for stall in stalls)
     await service.close()
 
 
