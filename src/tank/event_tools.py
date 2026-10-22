@@ -49,7 +49,6 @@ IMPLEMENTATION = dict(zip(STATES, [0, 4, 6, 6, 7, 8, 10], strict=False))
 
 
 def _word(term, text):
-    import re
 
     return bool(term) and re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", text, re.IGNORECASE)
 
@@ -115,6 +114,28 @@ READ_TOOLS = frozenset(
         "get_token_facts",
         "web_search",
         "fetch_page",
+    }
+)
+AGENT_WATCH_METRICS = frozenset(
+    {
+        "event.state",
+        "event.contradiction_fatal",
+        "spot.cohort.direction",
+        "spot.cohort.cwb_buy",
+        "spot.cohort.cwb_sell",
+        "spot.classification",
+        "deriv.native_oi_chg_pct",
+        "deriv.native_oi_vs_normal",
+        "deriv.oi_class",
+        "deriv.funding_vs_normal",
+        "mt.move_class",
+        "mt.divergence_state",
+        "dc.class",
+        "price.repricing_band",
+        "price.close_vs_level",
+        "price.vs_anchor_pct",
+        "liq.depth_p1_vs_pre",
+        "liq.spread_ratio",
     }
 )
 CATEGORICAL_WATCH_METRICS = frozenset(
@@ -2459,8 +2480,11 @@ class EventToolService:
             raise ValueError("ARM requires token as a registry token_id or ticker")
         leaves = []
         for leaf in a.get("conditions") or []:
-            if not re.fullmatch(r"[a-z_][a-z0-9_]*(\.[a-z0-9_]+)+", leaf["metric"]):
-                raise ValueError("metric must be a dotted lowercase metric name")
+            if leaf["metric"] not in AGENT_WATCH_METRICS:
+                raise ValueError(
+                    "metric is not evaluated by the watch scheduler; use one of "
+                    + ", ".join(sorted(AGENT_WATCH_METRICS))
+                )
             if leaf["metric"].startswith(("event.", "milestone.")) and leaf.get("persist_count", 1) > 1:
                 raise ValueError(
                     "event.* and milestone.* conditions fire on the first match; omit persist_count"
@@ -2487,6 +2511,11 @@ class EventToolService:
             )
         if not leaves:
             raise ValueError("ARM requires at least one condition")
+        market_windows = {
+            leaf["window"] for leaf in leaves if not leaf["metric"].startswith(("event.", "milestone."))
+        }
+        if len(market_windows) > 1:
+            raise ValueError("All market conditions of one rule must use the same window")
         condition = {
             "cond_id": new_id("CND"),
             "event_id": eid,

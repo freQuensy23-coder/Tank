@@ -382,14 +382,17 @@ class Runtime:
         intake_stop, market_stop, sessions_stop, workers_stop = [asyncio.Event() for _ in range(4)]
         producers = [
             asyncio.create_task(self.supervise(name, service, intake_stop), name=name)
-            for name, service in [("sources", self.sources), ("scheduler", self.scheduler)]
+            for name, service in [
+                ("sources", self.sources),
+                ("scheduler", self.scheduler),
+                *([("telegram", self.inbox)] if getattr(self, "inbox", None) else []),
+            ]
         ]
         support = [
             asyncio.create_task(self.supervise(name, service, flag), name=name)
             for name, service, flag in [
                 ("market", self.market, market_stop),
                 ("sessions", self.sessions, sessions_stop),
-                *([("telegram", self.inbox, sessions_stop)] if getattr(self, "inbox", None) else []),
             ]
         ]
         workers = [asyncio.create_task(self.worker(workers_stop, n), name=f"worker-{n}") for n in range(8)]

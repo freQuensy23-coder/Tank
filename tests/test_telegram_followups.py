@@ -742,7 +742,7 @@ async def test_agent_watch_rules_arm_disarm_and_survive_decision_reconciliation(
         {},
     )
     assert (await repo.get("ana.watch_conditions", condition["cond_id"]))["status"] == "ARMED"
-    with pytest.raises(ValueError, match="dotted"):
+    with pytest.raises(ValueError, match="not evaluated"):
         await tools.set_watch_condition(
             {
                 "event_id": "evt_1",
@@ -886,7 +886,7 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
     assert (
         "Посчитай по этому файлу" in text
         and item["file_key"] in text
-        and "/workspace/uploads/my_data.csv" in text
+        and f"/workspace/uploads/{item['file_key'][-8:]}-my_data.csv" in text
     )
 
 
@@ -1077,7 +1077,7 @@ async def test_event_scoped_watches_refuse_persistence():
                 "action": "ARM",
                 "token": "bitcoin:BTC",
                 "conditions": [
-                    {"metric": "milestone.outcome", "op": "==", "value": "VERIFIED", "persist_count": 2}
+                    {"metric": "event.state", "op": "==", "value": "CONFIRMED", "persist_count": 2}
                 ],
             },
             {},
@@ -1245,3 +1245,113 @@ def test_update_tools_republishes_when_a_tool_definition_changes(tmp_path):
         result = module.update_tools(config, client=client)
     assert result["status"] == "UPDATED" and result["removed"] == ["retired_tool"]
     assert result["changed"] == [stale[-2]["name"]] and result["added"] == []
+
+
+@pytest.mark.asyncio
+async def test_two_forwards_with_one_comment_are_not_guessed():
+    repo = MemoryRepository()
+    await seed(repo)
+    comment = message(80, date=1_800_011_000, text="Что это значит?")
+    first = message(
+        81,
+        date=1_800_011_000,
+        text="AAVE exploit card",
+        forward_origin={"type": "user", "sender_user": {"id": BOT}, "date": 1_800_000_000},
+    )
+    second = message(
+        82,
+        date=1_800_011_001,
+        text="AAVE exploit card",
+        forward_origin={"type": "user", "sender_user": {"id": BOT}, "date": 1_800_000_000},
+    )
+    telegram = FakeTelegram(
+        [{"update_id": n, "message": m} for n, m in enumerate([comment, first, second], 1)]
+    )
+    await run_inbox(repo, telegram, now=1_800_011_100)
+    assert not await repo.get("out.user_questions", question_id_for(USER, 80))
+    assert [body["text"] for body in telegram.sent].count(PROMPT_TEXT) == 2
+
+
+@pytest.mark.asyncio
+async def test_prompt_is_resent_after_a_definite_telegram_rejection():
+    repo = MemoryRepository()
+    await seed(repo)
+    forward = message(
+        83,
+        date=1_800_012_000,
+        text="AAVE exploit card",
+        forward_origin={"type": "user", "sender_user": {"id": BOT}, "date": 1_800_000_000},
+    )
+    telegram = FakeTelegram([{"update_id": 1, "message": forward}])
+    outage = {"left": 1}
+    original = telegram.__call__
+
+    def flaky(request):
+        if request.url.path.endswith("/sendMessage") and outage["left"]:
+            outage["left"] -= 1
+            return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 1}})
+        return original(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        await inbox.poll(timeout=0)
+        with pytest.raises(RuntimeError):
+            await inbox.sweep(now=1_800_012_100)
+        await inbox.sweep(now=1_800_012_101)
+    assert [body["text"] for body in telegram.sent] == [PROMPT_TEXT]
+    assert (await repo.get("ops.telegram_messages", f"{USER}:83"))["status"] == "PROMPTED"
+
+
+@pytest.mark.asyncio
+async def test_reader_files_expire_after_thirty_days():
+    from datetime import timedelta
+
+    from tank.util import iso, utcnow
+
+    repo = MemoryRepository()
+    await repo.put(
+        "ops.telegram_files",
+        "old",
+        {"file_key": "old", "question_id": "q", "stored_at": iso(utcnow() - timedelta(days=31))},
+    )
+    await repo.put(
+        "ops.telegram_files", "new", {"file_key": "new", "question_id": "q", "stored_at": iso(utcnow())}
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(FakeTelegram())) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        assert await inbox.prune_files() == 1
+    assert await repo.get("ops.telegram_files", "new") and not await repo.get("ops.telegram_files", "old")
+
+
+@pytest.mark.asyncio
+async def test_watch_rules_refuse_mixed_windows_and_unevaluated_metrics():
+    from tank.event_tools import EventToolService
+
+    repo = MemoryRepository()
+    await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
+    tools = object.__new__(EventToolService)
+    tools.repo = repo
+    tools.settings = SimpleNamespace(config_version="c", code_version="v")
+    base = {"event_id": "evt_1", "action": "ARM", "token": "bitcoin:BTC"}
+    with pytest.raises(ValueError, match="same window"):
+        await tools.set_watch_condition(
+            {
+                **base,
+                "conditions": [
+                    {
+                        "metric": "spot.cohort.cwb_buy",
+                        "op": ">",
+                        "value": 0.6,
+                        "window": "W15M",
+                        "persist_count": 2,
+                    },
+                    {"metric": "deriv.native_oi_chg_pct", "op": ">", "value": 3, "window": "W1H"},
+                ],
+            },
+            {},
+        )
+    for metric in ("milestone.outcome", "relative.windows.EVENT.r_raw"):
+        with pytest.raises(ValueError, match="not evaluated"):
+            await tools.set_watch_condition(
+                {**base, "conditions": [{"metric": metric, "op": "==", "value": 1}]}, {}
+            )

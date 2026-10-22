@@ -26,6 +26,8 @@ from tank.util import new_id, parse_time, sha256, utcnow
 log = logging.getLogger(__name__)
 
 CURSOR_KEY = "telegram:bot-updates"
+FILE_RETENTION = timedelta(days=30)
+PRUNE_INTERVAL_S = 3600
 POLL_TIMEOUT_S = 20
 PAIR_WINDOW_S = 10
 FORWARD_MATCH_S = 30
@@ -82,7 +84,7 @@ def question_message(question):
             f"Пользователь приложил файл {item['filename']} ({item['size']} байт). Положить его в /workspace: "
             f'mkdir -p /workspace/uploads && psql "$TANK_DB_URL" -Atc '
             f"\"select document->>'content_base64' from ops.telegram_files where storage_key='{item['file_key']}'\" "
-            f"| base64 -d > '/workspace/uploads/{item['filename']}'"
+            f"| base64 -d > '/workspace/uploads/{item['file_key'][-8:]}-{item['filename']}'"
         )
     lines.append(
         "Твоё последнее сообщение в этом ходе уйдёт пользователю ответом в Telegram; "
@@ -157,6 +159,7 @@ class TelegramInbox:
         self.owns_http = http is None
         self.bot_id = None
         self.members = {}
+        self.next_prune = 0.0
 
     @property
     def enabled(self):
@@ -209,12 +212,27 @@ class TelegramInbox:
                 ]
                 await self.poll(timeout=2 if waiting else POLL_TIMEOUT_S)
                 await self.sweep()
+                if time.monotonic() >= self.next_prune:
+                    await self.prune_files()
+                    self.next_prune = time.monotonic() + PRUNE_INTERVAL_S
             except asyncio.CancelledError:
                 raise
             except Exception:
                 log.exception("Telegram inbox cycle failed")
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), timeout=5)
+
+    async def prune_files(self, now=None):
+        """Reader attachments are kept 30 days, so follow-ups never grow the database without bound."""
+        cutoff = (now or utcnow()) - FILE_RETENTION
+        expired = [
+            row["file_key"]
+            async for row in self.repo.iter_all("ops.telegram_files")
+            if parse_time(row["stored_at"]) < cutoff
+        ]
+        for key in expired:
+            await self.repo.delete("ops.telegram_files", key)
+        return len(expired)
 
     async def close(self):
         if self.owns_http:
@@ -328,7 +346,7 @@ class TelegramInbox:
         reply = message.get("reply_to_message") or {}
         age = now - message.get("date", now)
         if message.get("forward_origin"):
-            companion = await self.companion(row, forwarded=True)
+            companion = await self.pair(row)
             if companion is None and age < PAIR_WINDOW_S:
                 return
             target = await self.forwarded_target(message, bot)
@@ -372,7 +390,7 @@ class TelegramInbox:
     async def companion(self, row, *, forwarded):
         """The comment sent with a forward (or the forward sent with a comment) by the same user."""
         date = row["message"].get("date", 0)
-        best = None
+        candidates = []
         async for other in self.repo.iter_all(
             "ops.telegram_messages", filters={"chat_id": row["chat_id"], "user_id": row["user_id"]}
         ):
@@ -383,10 +401,17 @@ class TelegramInbox:
                 continue
             if forwarded and not (body.get("text") or body.get("caption") or media(body)):
                 continue
-            distance = abs(body.get("date", 0) - date)
-            if distance <= PAIR_WINDOW_S and (best is None or distance < best[0]):
-                best = (distance, other)
-        return best[1] if best else None
+            if abs(body.get("date", 0) - date) <= PAIR_WINDOW_S:
+                candidates.append(other)
+        return candidates[0] if len(candidates) == 1 else None
+
+    async def pair(self, forward):
+        """The comment of a forward, only when each is the other's single candidate in the window."""
+        comment = await self.companion(forward, forwarded=True)
+        if comment is None:
+            return None
+        back = await self.companion(comment, forwarded=False)
+        return comment if back is not None and back["message_id"] == forward["message_id"] else None
 
     async def sent(self, channel, **filters):
         return [
@@ -563,7 +588,9 @@ class TelegramInbox:
         for row in ledger:
             if row["status"] == "SENT":
                 return {"sent": True, "message_id": row["message_ref"], "duplicate": True}
-        if ledger:
+        if sum(row["status"] == "GENERATED" for row in ledger) > sum(
+            row["status"] == "FAILED" for row in ledger
+        ):
             return {
                 "sent": "UNKNOWN",
                 "reason": "An earlier attempt of this call was interrupted after sending started; it may already have arrived. Call again to resend.",
@@ -585,13 +612,33 @@ class TelegramInbox:
             },
             immutable=True,
         )
-        result = await self.send_document(
-            question["chat_id"],
-            filename,
-            content,
-            caption=caption,
-            reply_to=question.get("reply_to_message_id"),
-        )
+        try:
+            result = await self.send_document(
+                question["chat_id"],
+                filename,
+                content,
+                caption=caption,
+                reply_to=question.get("reply_to_message_id"),
+            )
+        except RuntimeError:
+            await self.repo.put(
+                "out.deliveries",
+                new_id("delivery"),
+                {
+                    "channel": ANSWER_CHANNEL,
+                    "question_id": question_id,
+                    "session_id": question["session_id"],
+                    "purpose": "ATTACHMENT",
+                    "call_id": call_id,
+                    "chat_id": question["chat_id"],
+                    "status": "FAILED",
+                    "attempt": 1,
+                    "filename": filename,
+                    **collection_clock(utcnow()).fields("at"),
+                },
+                immutable=True,
+            )
+            raise
         await self.repo.put(
             "out.deliveries",
             new_id("delivery"),
@@ -650,7 +697,11 @@ class TelegramInbox:
                 filters={"question_id": question_id, "channel": ANSWER_CHANNEL, "purpose": "PROMPT"},
             )
         ]
-        if not prior:
+        sent = any(row["status"] == "SENT" for row in prior)
+        unresolved = sum(row["status"] == "GENERATED" for row in prior) > sum(
+            row["status"] == "FAILED" for row in prior
+        )
+        if not sent and not unresolved:
             ledger = {
                 "channel": ANSWER_CHANNEL,
                 "question_id": question_id,
@@ -666,7 +717,16 @@ class TelegramInbox:
                 {**ledger, "status": "GENERATED", **collection_clock(utcnow()).fields("at")},
                 immutable=True,
             )
-            result = await self.send(row["chat_id"], PROMPT_TEXT, row["message_id"])
+            try:
+                result = await self.send(row["chat_id"], PROMPT_TEXT, row["message_id"])
+            except RuntimeError:
+                await self.repo.put(
+                    "out.deliveries",
+                    new_id("delivery"),
+                    {**ledger, "status": "FAILED", **collection_clock(utcnow()).fields("at")},
+                    immutable=True,
+                )
+                raise
             await self.repo.put(
                 "out.deliveries",
                 new_id("delivery"),
@@ -701,6 +761,7 @@ class TelegramInbox:
                     "ops.telegram_files",
                     key,
                     {
+                        "file_key": key,
                         "question_id": question_id,
                         "session_id": session_id,
                         "filename": item["filename"],
@@ -710,7 +771,6 @@ class TelegramInbox:
                         "content_base64": base64.b64encode(content).decode(),
                         **collection_clock(utcnow()).fields("stored_at"),
                     },
-                    immutable=True,
                 )
                 item["size"] = len(content)
             stored.append(
