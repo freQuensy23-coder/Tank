@@ -38,22 +38,39 @@ def session_settings():
 
 
 class FakeTelegram:
-    def __init__(self, updates=(), member="member", is_member=None):
+    def __init__(self, updates=(), member="member", is_member=None, member_error=None):
         self.updates = list(updates)
         self.sent = []
         self.member = member
         self.is_member = is_member
+        self.member_error = member_error
+        self.files = {}
         self.next_id = 1000
 
     def __call__(self, request):
+        if request.url.path.startswith("/file/"):
+            return httpx.Response(200, content=self.files[request.url.path.rsplit("/", 1)[-1]])
         method = request.url.path.rsplit("/", 1)[-1]
         body = json.loads(request.content or b"{}")
+        if method == "getFile":
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "result": {
+                        "file_path": "docs/" + body["file_id"],
+                        "file_size": len(self.files[body["file_id"]]),
+                    },
+                },
+            )
         if method == "getMe":
             return httpx.Response(200, json={"ok": True, "result": {"id": BOT}})
         if method == "getUpdates":
             ready = [row for row in self.updates if row["update_id"] >= body.get("offset", 0)]
             return httpx.Response(200, json={"ok": True, "result": ready})
         if method == "getChatMember":
+            if self.member_error:
+                return httpx.Response(self.member_error, json={"ok": False, "parameters": {"retry_after": 1}})
             result = {"status": self.member}
             if self.is_member is not None:
                 result["is_member"] = self.is_member
@@ -769,3 +786,182 @@ def test_update_tools_publishes_a_new_agent_version_only_when_tools_are_missing(
     assert first["status"] == "UPDATED" and "send_telegram_file" in first["added"]
     assert second == {"status": "CURRENT", "agent_version": 4}
     assert posts[0]["version"] == 3 and "set_watch_condition" in names
+
+
+async def asked(repo, telegram, message_id=20, text="Почему не шорт?"):
+    reply = message(
+        message_id,
+        date=1_800_001_000 + message_id,
+        text=text,
+        chat=int(ALERTS),
+        chat_type="supergroup",
+        reply_to_message={"message_id": 55, "from": {"id": BOT}},
+    )
+    telegram.updates.append({"update_id": message_id, "message": reply})
+    await run_inbox(repo, telegram, now=1_800_001_001 + message_id)
+    return question_id_for(ALERTS, message_id)
+
+
+@pytest.mark.asyncio
+async def test_reply_to_the_readers_own_follow_up_continues_the_same_session():
+    repo = MemoryRepository()
+    await seed(repo)
+    telegram = FakeTelegram()
+    await asked(repo, telegram)
+    again = message(
+        21,
+        date=1_800_001_100,
+        text="И ещё вопрос",
+        chat=int(ALERTS),
+        chat_type="supergroup",
+        reply_to_message={"message_id": 20, "from": {"id": USER}},
+    )
+    telegram.updates.append({"update_id": 21, "message": again})
+    await run_inbox(repo, telegram, now=1_800_001_101)
+    question = await repo.get("out.user_questions", question_id_for(ALERTS, 21))
+    assert question["session_id"] == "ses_1" and question["reference"]["kind"] == "USER_MESSAGE"
+    assert question["reference"]["text"] == "Почему не шорт?"
+
+
+@pytest.mark.asyncio
+async def test_forward_of_own_follow_up_continues_its_session_and_hidden_senders_are_rejected():
+    repo = MemoryRepository()
+    await seed(repo)
+    telegram = FakeTelegram()
+    await asked(repo, telegram)
+    comment = message(30, date=1_800_002_000, text="Уточню")
+    own = message(
+        31,
+        date=1_800_002_000,
+        text="Почему не шорт?",
+        forward_origin={"type": "user", "sender_user": {"id": USER}, "date": 1_800_001_020},
+    )
+    hidden_comment = message(32, date=1_800_003_000, text="?")
+    hidden = message(
+        33,
+        date=1_800_003_000,
+        text="AAVE exploit card",
+        forward_origin={"type": "hidden_user", "sender_user_name": "x", "date": 1_800_000_000},
+    )
+    telegram.updates += [
+        {"update_id": 30, "message": comment},
+        {"update_id": 31, "message": own},
+        {"update_id": 32, "message": hidden_comment},
+        {"update_id": 33, "message": hidden},
+    ]
+    await run_inbox(repo, telegram, now=1_800_003_001)
+    assert (await repo.get("out.user_questions", question_id_for(USER, 30)))["session_id"] == "ses_1"
+    assert (await repo.get("ops.telegram_messages", f"{USER}:33"))["status"] == "UNMATCHED"
+    assert not await repo.get("out.user_questions", question_id_for(USER, 32))
+
+
+@pytest.mark.asyncio
+async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_message():
+    import base64
+
+    from tank.telegram_inbox import question_message
+
+    repo = MemoryRepository()
+    await seed(repo)
+    telegram = FakeTelegram()
+    telegram.files["doc_1"] = b"col\n1\n"
+    upload = message(
+        40,
+        date=1_800_004_000,
+        chat=int(ALERTS),
+        chat_type="supergroup",
+        caption="Посчитай по этому файлу",
+        document={"file_id": "doc_1", "file_unique_id": "u1", "file_name": "my data.csv", "file_size": 6},
+        reply_to_message={"message_id": 55, "from": {"id": BOT}},
+    )
+    telegram.updates.append({"update_id": 40, "message": upload})
+    await run_inbox(repo, telegram, now=1_800_004_001)
+    question = await repo.get("out.user_questions", question_id_for(ALERTS, 40))
+    item = question["attachments"][0]
+    stored = await repo.get("ops.telegram_files", item["file_key"])
+    assert base64.b64decode(stored["content_base64"]) == b"col\n1\n" and item["filename"] == "my_data.csv"
+    text = question_message(question)
+    assert (
+        "Посчитай по этому файлу" in text
+        and item["file_key"] in text
+        and "/workspace/uploads/my_data.csv" in text
+    )
+
+
+@pytest.mark.asyncio
+async def test_files_over_20_mb_are_refused_with_a_notice():
+    from tank.telegram_inbox import TOO_LARGE_TEXT
+
+    repo = MemoryRepository()
+    await seed(repo)
+    big = message(
+        41,
+        date=1_800_005_000,
+        chat=int(ALERTS),
+        chat_type="supergroup",
+        caption="?",
+        document={"file_id": "big", "file_name": "a.zip", "file_size": 21 * 1024 * 1024},
+        reply_to_message={"message_id": 55, "from": {"id": BOT}},
+    )
+    telegram = FakeTelegram([{"update_id": 1, "message": big}])
+    await run_inbox(repo, telegram, now=1_800_005_001)
+    assert telegram.sent[0]["text"] == TOO_LARGE_TEXT
+    assert not await repo.get("out.user_questions", question_id_for(ALERTS, 41))
+
+
+@pytest.mark.asyncio
+async def test_transient_membership_failure_retries_instead_of_ignoring():
+    repo = MemoryRepository()
+    await seed(repo)
+    question = message(
+        42, date=1_800_006_000, text="?", reply_to_message={"message_id": 55, "from": {"id": BOT}}
+    )
+    telegram = FakeTelegram([{"update_id": 1, "message": question}], member_error=429)
+    with pytest.raises(RuntimeError):
+        await run_inbox(repo, telegram, now=1_800_006_001)
+    assert (await repo.get("ops.telegram_messages", f"{USER}:42"))["status"] == "RECEIVED"
+
+
+@pytest.mark.asyncio
+async def test_numeric_watch_comparisons_need_numbers():
+    from tank.event_tools import EventToolService
+
+    repo = MemoryRepository()
+    await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
+    tools = object.__new__(EventToolService)
+    tools.repo = repo
+    tools.settings = SimpleNamespace(config_version="c", code_version="v")
+    with pytest.raises(ValueError, match="numeric"):
+        await tools.set_watch_condition(
+            {
+                "event_id": "evt_1",
+                "action": "ARM",
+                "token": "bitcoin:BTC",
+                "conditions": [{"metric": "dc.class", "op": ">", "value": "HIGH"}],
+            },
+            {},
+        )
+
+
+def test_reopening_fails_queued_follow_ups_of_the_failed_session():
+    service = object.__new__(SessionService)
+    service.clock_timestamp = lambda: __import__("tank.time_precision", fromlist=["x"]).collection_clock()
+    session = {
+        "status": "FAILED",
+        "message_log": [
+            {
+                "message_id": "old_q",
+                "payload": {"kind": "USER_QUESTION", "question_id": "q0"},
+                "turn_status": "PENDING",
+            },
+            {
+                "message_id": "new_q",
+                "payload": {"kind": "USER_QUESTION", "question_id": "q1"},
+                "turn_status": "ACCEPTING",
+            },
+        ],
+    }
+    service.reopen_for_question(session, {"question_id": "q1"}, "new_q")
+    assert session["message_log"][0]["turn_status"] == "FAILED"
+    assert session["message_log"][1]["turn_status"] == "ACCEPTING"
+    assert session["retired_message_ids"] == ["old_q"] and session["status"] == "OPEN"

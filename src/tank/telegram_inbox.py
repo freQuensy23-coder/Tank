@@ -6,7 +6,9 @@ native session and the agent's final message of that turn is sent back as the an
 """
 
 import asyncio
+import base64
 import contextlib
+import hashlib
 import html
 import json
 import logging
@@ -63,17 +65,52 @@ def chunks(text, limit=MESSAGE_LIMIT):
 
 REFERENCE_LIMIT = 1024
 DOCUMENT_LIMIT = 45 * 1024 * 1024
+UPLOAD_LIMIT = 20 * 1024 * 1024
+TOO_LARGE_TEXT = "Файл больше 20 МБ, Telegram не даёт боту его скачать. Пришлите файл поменьше."
+MEDIA_KINDS = ("document", "photo", "video", "audio", "voice", "animation")
 
 
 def question_message(question):
-    """The follow-up as the agent reads it: the referenced Telegram text and the reader's words."""
+    """The follow-up as the agent reads it: the referenced Telegram text, the reader's words and files."""
     reference = ((question.get("reference") or {}).get("text") or "")[:REFERENCE_LIMIT]
-    return (
-        f"Пришёл фоллоуап через Telegram на сообщение с текстом:\n{reference}\n\n"
-        f"{question.get('text', '')}\n\n"
+    lines = [
+        f"Пришёл фоллоуап через Telegram на сообщение с текстом:\n{reference}",
+        question.get("text") or "(без текста)",
+    ]
+    for item in question.get("attachments") or []:
+        lines.append(
+            f"Пользователь приложил файл {item['filename']} ({item['size']} байт). Положить его в /workspace: "
+            f'mkdir -p /workspace/uploads && psql "$TANK_DB_URL" -Atc '
+            f"\"select document->>'content_base64' from ops.telegram_files where storage_key='{item['file_key']}'\" "
+            f"| base64 -d > '/workspace/uploads/{item['filename']}'"
+        )
+    lines.append(
         "Твоё последнее сообщение в этом ходе уйдёт пользователю ответом в Telegram; "
         "файл можно отправить тулом send_telegram_file."
     )
+    return "\n\n".join(lines)
+
+
+def media(message):
+    """The single file a Telegram message carries, if any: the largest photo size or the document."""
+    for kind in MEDIA_KINDS:
+        value = message.get(kind)
+        if not value:
+            continue
+        item = max(value, key=lambda size: size.get("file_size", 0)) if kind == "photo" else value
+        extension = {"photo": ".jpg", "voice": ".ogg", "video": ".mp4", "animation": ".mp4"}.get(kind, "")
+        name = item.get("file_name") or f"{kind}-{message['message_id']}{extension}"
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._") or f"file-{message['message_id']}"
+        return {
+            "kind": kind,
+            "file_id": item["file_id"],
+            "file_unique_id": item.get("file_unique_id", item["file_id"]),
+            "filename": safe[:120],
+            "mime": item.get("mime_type")
+            or ("image/jpeg" if kind == "photo" else "application/octet-stream"),
+            "size": int(item.get("file_size") or 0),
+        }
+    return None
 
 
 def question_id_for(chat_id, message_id):
@@ -133,8 +170,21 @@ class TelegramInbox:
             retry = (data.get("parameters") or {}).get("retry_after", 1)
             error = RuntimeError(f"Telegram {method} rejected (HTTP {response.status_code})")
             error.retry_after = retry
+            error.status = response.status_code
             raise error
         return data["result"]
+
+    async def download(self, file_id):
+        info = await self.call("getFile", {"file_id": file_id})
+        if int(info.get("file_size") or 0) > UPLOAD_LIMIT:
+            raise ValueError("Telegram file exceeds 20 MB")
+        response = await self.http.get(
+            f"https://api.telegram.org/file/bot{self.settings.telegram_token}/{info['file_path']}"
+        )
+        response.raise_for_status()
+        if len(response.content) > UPLOAD_LIMIT:
+            raise ValueError("Telegram file exceeds 20 MB")
+        return response.content
 
     async def run(self, stop):
         if not self.enabled:
@@ -243,7 +293,9 @@ class TelegramInbox:
             allowed = member.get("status") in MEMBER_STATUSES or (
                 member.get("status") == "restricted" and member.get("is_member") is True
             )
-        except RuntimeError:
+        except RuntimeError as error:
+            if getattr(error, "status", None) not in (400, 403):
+                raise
             allowed = False
         self.members[user] = (allowed, time.monotonic() + MEMBER_CACHE_S)
         return allowed
@@ -255,6 +307,11 @@ class TelegramInbox:
             return
         bot = await self.bot()
         text = message.get("text") or message.get("caption") or ""
+        attachment = media(message)
+        if attachment and attachment["size"] > UPLOAD_LIMIT:
+            await self.notice(row, TOO_LARGE_TEXT)
+            await self.mark(row, "IGNORED", reason="FILE_TOO_LARGE")
+            return
         reply = message.get("reply_to_message") or {}
         age = now - message.get("date", now)
         if message.get("forward_origin"):
@@ -272,17 +329,24 @@ class TelegramInbox:
                 await self.prompt(row, target)
                 return
             await self.question(companion, target, forwarded=row)
-            await self.mark(row, "PAIRED", paired_with=companion["message_id"])
+            await self.mark(
+                row,
+                "PAIRED",
+                paired_with=companion["message_id"],
+                session_id=target["session_id"],
+                event_id=target.get("event_id"),
+            )
             return
-        if reply and (reply.get("from") or {}).get("id") == bot and text:
+        if reply and (text or attachment):
             target = await self.reply_target(message["chat"]["id"], reply)
-            if target is None:
+            if target is not None:
+                await self.question(row, target)
+                return
+            if (reply.get("from") or {}).get("id") == bot:
                 await self.notice(row, NO_SESSION_TEXT)
                 await self.mark(row, "UNMATCHED")
                 return
-            await self.question(row, target)
-            return
-        if message["chat"].get("type") != "private" or not text:
+        if message["chat"].get("type") != "private" or not (text or attachment):
             await self.mark(row, "IGNORED", reason="NOT_A_QUESTION")
             return
         if await self.companion(row, forwarded=False) is not None:
@@ -304,7 +368,7 @@ class TelegramInbox:
                 continue
             if bool(body.get("forward_origin")) == forwarded or body.get("reply_to_message"):
                 continue
-            if forwarded and not (body.get("text") or body.get("caption")):
+            if forwarded and not (body.get("text") or body.get("caption") or media(body)):
                 continue
             distance = abs(body.get("date", 0) - date)
             if distance <= PAIR_WINDOW_S and (best is None or distance < best[0]):
@@ -371,19 +435,42 @@ class TelegramInbox:
                 return await self.card_target(delivery)
         for delivery in await self.sent(ANSWER_CHANNEL, message_ref=ref, chat_id=str(chat_id)):
             return await self.answer_target(delivery)
-        return None
+        own = await self.repo.get("ops.telegram_messages", f"{chat_id}:{ref}")
+        return self.message_target(own)
+
+    @staticmethod
+    def message_target(row):
+        """A reader message that already went to a session (question, its forward or file) targets it too."""
+        if not row or not row.get("session_id"):
+            return None
+        body = row["message"]
+        return {
+            "kind": "USER_MESSAGE",
+            "session_id": row["session_id"],
+            "event_id": row.get("event_id"),
+            "question_id": row.get("question_id"),
+            "text": body.get("text") or body.get("caption") or (media(body) or {}).get("filename"),
+        }
 
     async def forwarded_target(self, message, bot):
         origin = message["forward_origin"]
-        if origin.get("type") == "user" and (origin.get("sender_user") or {}).get("id") != bot:
-            return None
         if origin.get("type") in {"chat", "channel"}:
             chat = (origin.get("sender_chat") or origin.get("chat") or {}).get("id")
             if str(chat) == str(self.settings.telegram_alerts_chat) and origin.get("message_id"):
                 return await self.reply_target(chat, {"message_id": origin["message_id"]})
             return None
+        if origin.get("type") != "user":
+            return None
         date = origin.get("date")
+        sender = (origin.get("sender_user") or {}).get("id")
         if date is None:
+            return None
+        if sender is not None and sender == (message.get("from") or {}).get("id"):
+            async for row in self.repo.iter_all("ops.telegram_messages", filters={"user_id": str(sender)}):
+                if row["message"].get("date") == date and row.get("session_id"):
+                    return self.message_target(row)
+            return None
+        if sender != bot:
             return None
         text = plain(message.get("text") or message.get("caption") or "")
         start = datetime.fromtimestamp(date - FORWARD_MATCH_S, UTC)
@@ -525,11 +612,51 @@ class TelegramInbox:
             },
             immutable=True,
         )
-        await self.mark(row, "PROMPTED", question_id=question_id)
+        await self.mark(
+            row,
+            "PROMPTED",
+            question_id=question_id,
+            session_id=target["session_id"],
+            event_id=target.get("event_id"),
+        )
+
+    async def attachments(self, row, question_id, session_id, *messages):
+        """Download each attached file (at most 20 MB) into ops.telegram_files for the session."""
+        stored = []
+        for message in messages:
+            item = media(message) if message else None
+            if item is None:
+                continue
+            key = "tgf_" + sha256({"question_id": question_id, "file": item["file_unique_id"]})[:32]
+            if not await self.repo.get("ops.telegram_files", key):
+                content = await self.download(item["file_id"])
+                await self.repo.put(
+                    "ops.telegram_files",
+                    key,
+                    {
+                        "question_id": question_id,
+                        "session_id": session_id,
+                        "filename": item["filename"],
+                        "mime": item["mime"],
+                        "size": len(content),
+                        "sha256": hashlib.sha256(content).hexdigest(),
+                        "content_base64": base64.b64encode(content).decode(),
+                        **collection_clock(utcnow()).fields("stored_at"),
+                    },
+                    immutable=True,
+                )
+                item["size"] = len(content)
+            stored.append(
+                {"file_key": key, "filename": item["filename"], "mime": item["mime"], "size": item["size"]}
+            )
+        return stored
 
     async def question(self, row, target, *, forwarded=None):
         message = row["message"]
         question_id = question_id_for(row["chat_id"], row["message_id"])
+        files = await self.attachments(
+            row, question_id, target["session_id"], message, forwarded["message"] if forwarded else None
+        )
         if not await self.repo.get("out.user_questions", question_id):
             await self.repo.put(
                 "out.user_questions",
@@ -545,6 +672,7 @@ class TelegramInbox:
                     "reply_to_message_id": row["message_id"],
                     "forwarded_message_id": forwarded["message_id"] if forwarded else None,
                     "reference": target,
+                    "attachments": files,
                     "telegram_date": message.get("date"),
                     **collection_clock(utcnow()).fields("asked_at"),
                 },
@@ -556,7 +684,13 @@ class TelegramInbox:
             priority=0,
             expires_at=offset_schedule(collection_clock(utcnow()), timedelta(days=1)),
         )
-        await self.mark(row, "QUESTION", question_id=question_id)
+        await self.mark(
+            row,
+            "QUESTION",
+            question_id=question_id,
+            session_id=target["session_id"],
+            event_id=target.get("event_id"),
+        )
         with contextlib.suppress(RuntimeError, httpx.HTTPError):
             await self.call("sendChatAction", {"chat_id": row["chat_id"], "action": "typing"})
 

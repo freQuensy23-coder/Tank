@@ -6,7 +6,7 @@ import os
 import re
 from contextlib import AsyncExitStack, suppress
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlparse
 
@@ -2447,6 +2447,13 @@ class EventToolService:
                 raise ValueError("metric must be a dotted lowercase metric name")
             if leaf["op"] == "in" and not isinstance(leaf["value"], list):
                 raise ValueError("op in requires a list value")
+            if leaf["op"] in (">", ">=", "<", "<="):
+                try:
+                    number = Decimal(str(leaf["value"]))
+                except InvalidOperation:
+                    number = None
+                if isinstance(leaf["value"], bool) or number is None or not number.is_finite():
+                    raise ValueError(f"op {leaf['op']} requires a numeric value")
             leaves.append(
                 {
                     "metric": leaf["metric"],

@@ -370,11 +370,12 @@ class SessionService:
         """Under the session lock: reopen a FAILED session and retire its unfinished turns, never this one."""
         retired = set(session.get("retired_message_ids", []))
         if session.get("status") == "FAILED":
-            retired.update(
-                row["message_id"]
-                for row in session.get("message_log", [])
-                if row.get("turn_status") != "DONE"
-            )
+            for row in session.get("message_log", []):
+                if row.get("turn_status") == "DONE" or row["message_id"] == key:
+                    continue
+                retired.add(row["message_id"])
+                if row.get("payload", {}).get("kind") == "USER_QUESTION":
+                    row["turn_status"] = "FAILED"
             session.setdefault("reopened", []).append(
                 {
                     "question_id": payload["question_id"],
