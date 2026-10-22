@@ -27,6 +27,8 @@ log = logging.getLogger(__name__)
 
 CURSOR_KEY = "telegram:bot-updates"
 FILE_RETENTION = timedelta(days=30)
+MAX_MESSAGE_ATTEMPTS = 5
+RETRY_BASE_S = 15
 PRUNE_INTERVAL_S = 3600
 POLL_TIMEOUT_S = 20
 PAIR_WINDOW_S = 10
@@ -260,9 +262,10 @@ class TelegramInbox:
         old = [
             f"{row['chat_id']}:{row['message_id']}"
             async for row in self.repo.iter_metadata(
-                "ops.telegram_messages", ("chat_id", "message_id", "status", "received_at")
+                "ops.telegram_messages", ("chat_id", "message_id", "status", "session_id", "received_at")
             )
             if row.get("status") != "RECEIVED"
+            and not row.get("session_id")
             and row.get("received_at")
             and parse_time(row["received_at"]) < cutoff
         ]
@@ -335,12 +338,37 @@ class TelegramInbox:
         ]
         rows.sort(key=lambda row: (row["message"].get("date", 0), row["message_id"]))
         for row in rows:
+            if row.get("retry_at", 0) > now:
+                continue
             current = await self.repo.get("ops.telegram_messages", f"{row['chat_id']}:{row['message_id']}")
-            if current and current["status"] == "RECEIVED":
+            if not current or current["status"] != "RECEIVED":
+                continue
+            try:
                 try:
                     await self.handle(current, now)
                 except FileTooLarge:
                     await self.notice(current, TOO_LARGE_TEXT, "IGNORED", reason="FILE_TOO_LARGE")
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                await self.defer(current, error, now)
+
+    async def defer(self, row, error, now):
+        """One failing message waits with backoff and gives up after five tries; the sweep goes on."""
+        log.warning(
+            "Telegram message %s:%s failed: %s", row["chat_id"], row["message_id"], type(error).__name__
+        )
+        key = f"{row['chat_id']}:{row['message_id']}"
+        current = await self.repo.get("ops.telegram_messages", key)
+        if not current or current["status"] != "RECEIVED":
+            return
+        attempts = int(current.get("attempts", 0)) + 1
+        current.update(attempts=attempts, last_error=type(error).__name__)
+        if attempts >= MAX_MESSAGE_ATTEMPTS:
+            current.update(status="FAILED", **collection_clock(utcnow()).fields("handled_at"))
+        else:
+            current["retry_at"] = now + min(300, RETRY_BASE_S * 2 ** (attempts - 1))
+        await self.repo.put("ops.telegram_messages", key, current)
 
     async def authorized(self, message):
         chat = message["chat"]

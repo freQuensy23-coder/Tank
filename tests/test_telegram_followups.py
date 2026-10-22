@@ -282,6 +282,8 @@ def openma(posts, history):
         if request.url.path.endswith("/events"):
             ordered = history[::-1] if request.url.params.get("order") == "desc" else history
             return httpx.Response(200, json={"data": ordered, "next_page": None})
+        if request.url.path.startswith("/v1/sessions/") and request.url.path.count("/") == 3:
+            return httpx.Response(200, json={"id": request.url.path.rsplit("/", 1)[-1], "status": "idle"})
         raise AssertionError(request.url.path)
 
     return handler
@@ -539,6 +541,8 @@ async def test_first_question_is_answered_while_a_second_is_still_running():
         if request.method == "POST":
             posts.append(json.loads(request.content))
             return httpx.Response(200, json={"data": [{"id": next(ids)}]})
+        if not request.url.path.endswith("/events"):
+            return httpx.Response(200, json={"id": "ses_1", "status": "idle"})
         ordered = history[::-1] if request.url.params.get("order") == "desc" else history
         return httpx.Response(200, json={"data": ordered, "next_page": None})
 
@@ -922,9 +926,9 @@ async def test_transient_membership_failure_retries_instead_of_ignoring():
         42, date=1_800_006_000, text="?", reply_to_message={"message_id": 55, "from": {"id": BOT}}
     )
     telegram = FakeTelegram([{"update_id": 1, "message": question}], member_error=429)
-    with pytest.raises(RuntimeError):
-        await run_inbox(repo, telegram, now=1_800_006_001)
-    assert (await repo.get("ops.telegram_messages", f"{USER}:42"))["status"] == "RECEIVED"
+    await run_inbox(repo, telegram, now=1_800_006_001)
+    row = await repo.get("ops.telegram_messages", f"{USER}:42")
+    assert row["status"] == "RECEIVED" and row["attempts"] == 1 and row["retry_at"] > 1_800_006_001
 
 
 @pytest.mark.asyncio
@@ -1298,9 +1302,8 @@ async def test_prompt_is_resent_after_a_definite_telegram_rejection():
     async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:
         inbox = TelegramInbox(repo, inbox_settings(), http=http)
         await inbox.poll(timeout=0)
-        with pytest.raises(RuntimeError):
-            await inbox.sweep(now=1_800_012_100)
-        await inbox.sweep(now=1_800_012_101)
+        await inbox.sweep(now=1_800_012_100)
+        await inbox.sweep(now=1_800_012_200)
     assert [body["text"] for body in telegram.sent] == [PROMPT_TEXT]
     assert (await repo.get("ops.telegram_messages", f"{USER}:83"))["status"] == "PROMPTED"
 
@@ -1650,11 +1653,10 @@ async def test_notice_is_retried_after_a_transient_failure_and_sent_once():
     async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:
         inbox = TelegramInbox(repo, inbox_settings(), http=http)
         await inbox.poll(timeout=0)
-        with pytest.raises(RuntimeError):
-            await inbox.sweep(now=1_800_015_100)
+        await inbox.sweep(now=1_800_015_100)
         assert (await repo.get("ops.telegram_messages", f"{USER}:97"))["status"] == "RECEIVED"
-        await inbox.sweep(now=1_800_015_101)
-        await inbox.sweep(now=1_800_015_102)
+        await inbox.sweep(now=1_800_015_200)
+        await inbox.sweep(now=1_800_015_300)
     assert [body["text"] for body in telegram.sent] == [HINT_TEXT]
     assert (await repo.get("ops.telegram_messages", f"{USER}:97"))["status"] == "IGNORED"
 
@@ -1686,3 +1688,79 @@ async def test_watch_mutation_hydrates_prompt_provenance_first():
         service = SessionService(repo, session_settings(), dispatch, http=http)
         result = await service.invoke_tool(session, "set_watch_condition", {"event_id": "evt_1"}, "call_w")
     assert calls == ["/v1/sessions/ses_1"] and len(result["prompt_version"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_one_permanently_failing_message_never_blocks_the_others():
+    repo = MemoryRepository()
+    await seed(repo)
+    lonely = message(98, date=1_800_016_000, text="просто текст")
+    reply = message(
+        99,
+        date=1_800_016_001,
+        text="Почему?",
+        chat=int(ALERTS),
+        chat_type="supergroup",
+        reply_to_message={"message_id": 55, "from": {"id": BOT}},
+    )
+    telegram = FakeTelegram([{"update_id": 1, "message": lonely}, {"update_id": 2, "message": reply}])
+    original = telegram.__call__
+
+    def blocked(request):
+        if request.url.path.endswith("/sendMessage") and json.loads(request.content)["chat_id"] == str(USER):
+            return httpx.Response(
+                403, json={"ok": False, "description": "Forbidden: bot was blocked by the user"}
+            )
+        return original(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(blocked)) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        await inbox.poll(timeout=0)
+        for step in range(6):
+            await inbox.sweep(now=1_800_016_100 + step * 400)
+    assert await repo.get("out.user_questions", question_id_for(ALERTS, 99))
+    assert (await repo.get("ops.telegram_messages", f"{USER}:98"))["status"] == "FAILED"
+
+
+@pytest.mark.asyncio
+async def test_handled_messages_bound_to_a_session_survive_pruning():
+    from datetime import timedelta
+
+    from tank.util import iso, utcnow
+
+    repo = MemoryRepository()
+    old = iso(utcnow() - timedelta(days=40))
+    for message_id, session_id in ((1, "ses_1"), (2, None)):
+        await repo.put(
+            "ops.telegram_messages",
+            f"{USER}:{message_id}",
+            {
+                "chat_id": str(USER),
+                "message_id": message_id,
+                "user_id": str(USER),
+                "status": "QUESTION",
+                "session_id": session_id,
+                "received_at": old,
+                "message": {"message_id": message_id, "date": 1},
+            },
+        )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(FakeTelegram())) as http:
+        await TelegramInbox(repo, inbox_settings(), http=http).prune_files()
+    assert await repo.get("ops.telegram_messages", f"{USER}:1")
+    assert not await repo.get("ops.telegram_messages", f"{USER}:2")
+
+
+@pytest.mark.asyncio
+async def test_question_to_a_remotely_terminated_session_answers_no_session():
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+
+    def handler(request):
+        return httpx.Response(200, json={"id": "ses_1", "status": "terminated"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
+        assert await service.send_message(payload) is None
+    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "NO_SESSION"
+    assert (await repo.get("ops.agent_sessions", "ses_1"))["remote_state"]["status"] == "terminated"

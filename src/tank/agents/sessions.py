@@ -366,6 +366,20 @@ class SessionService:
         if session.get("status") == "ENDED":
             await record_answer(self.repo, question_id, None, status="ARCHIVED")
             return False
+        remote = await self.request("GET", f"sessions/{session['session_id']}")
+        remote = remote.get("data", remote)
+        if remote.get("status") == "terminated" or remote.get("archived_at"):
+            async with self.repo.lock("session:" + session["session_id"]):
+                current = await self.repo.get("ops.agent_sessions", session["session_id"])
+                current["remote_state"] = {
+                    "status": remote.get("status"),
+                    "archived_at": remote.get("archived_at"),
+                    **self.clock_timestamp().fields("checked_at"),
+                }
+                await self.repo.put("ops.agent_sessions", session["session_id"], current)
+            status = "NO_SESSION" if remote.get("status") == "terminated" else "ARCHIVED"
+            await record_answer(self.repo, question_id, None, status=status)
+            return False
         return True
 
     def reopen_for_question(self, session, payload, key):
