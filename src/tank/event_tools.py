@@ -3,6 +3,7 @@
 import asyncio
 import copy
 import os
+import re
 from contextlib import AsyncExitStack, suppress
 from datetime import timedelta
 from decimal import Decimal
@@ -327,6 +328,7 @@ class EventToolService:
         "schedule_milestone",
         "propose_pattern",
         "record_review",
+        "set_watch_condition",
     }
 
     def __init__(
@@ -385,7 +387,12 @@ class EventToolService:
         """V3 for token arguments: a ticker or $TICKER becomes its registry
         token_id ("BTC" -> "bitcoin:BTC"). Other values pass unchanged; a tool
         that cannot use them names the token and the expected form."""
-        fields = {"get_decision": "token", "get_token_facts": "token", "get_market_truth": "tokens"}
+        fields = {
+            "get_decision": "token",
+            "get_token_facts": "token",
+            "get_market_truth": "tokens",
+            "set_watch_condition": "token",
+        }
         field = fields.get(tool)
         if field is None or field not in arguments:
             return arguments
@@ -419,6 +426,7 @@ class EventToolService:
             "get_decision",
             "publish_card",
             "schedule_milestone",
+            "set_watch_condition",
         }
         analyst = context.get("role") == "analyst" or (
             context.get("session_id") and context.get("role") not in {"system", "scout"}
@@ -509,6 +517,7 @@ class EventToolService:
             "publish_card",
             "schedule_milestone",
             "get_decision",
+            "set_watch_condition",
         }:
             async with AsyncExitStack() as locks:
                 if tool == "record_event" and ctx.get("session_id"):
@@ -2395,7 +2404,7 @@ class EventToolService:
             reconciled.append(condition)
             await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
         for old in existing:
-            if old["cond_id"] not in used and old.get("status") == "ARMED":
+            if old["cond_id"] not in used and old.get("status") == "ARMED" and not old.get("agent_defined"):
                 old.update(
                     status="CANCELLED",
                     **collection_clock(now).fields("cancelled_at"),
@@ -2409,6 +2418,64 @@ class EventToolService:
                 role.lower(): [condition["cond_id"] for condition in reconciled if condition["role"] == role]
                 for role in ["UPGRADE", "DOWNGRADE"]
             }
+
+    async def set_watch_condition(self, a, c):
+        """Arm an agent monitoring rule (role AGENT) or disarm any ARMED rule of the event."""
+        eid = a["event_id"]
+        await self.require("evt.events", eid)
+        now = utcnow()
+        if a["action"] == "DISARM":
+            condition = await self.repo.get("ana.watch_conditions", a.get("cond_id") or "")
+            if condition is None or condition.get("event_id") != eid:
+                raise ValueError("cond_id does not name a watch condition of this event")
+            if condition.get("status") != "ARMED":
+                return {"accepted": False, "reason": "NOT_ARMED", "status": condition.get("status")}
+            condition.update(
+                status="CANCELLED",
+                cancelled_by="AGENT",
+                cancel_provenance=self.provenance(c),
+                **collection_clock(now).fields("cancelled_at"),
+            )
+            await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
+            return {"accepted": True, "cond_id": condition["cond_id"], "status": "CANCELLED"}
+        token = a.get("token")
+        if not isinstance(token, str) or ":" not in token:
+            raise ValueError("ARM requires token as a registry token_id or ticker")
+        leaves = []
+        for leaf in a.get("conditions") or []:
+            if not re.fullmatch(r"[a-z_][a-z0-9_]*(\.[a-z0-9_]+)+", leaf["metric"]):
+                raise ValueError("metric must be a dotted lowercase metric name")
+            if leaf["op"] == "in" and not isinstance(leaf["value"], list):
+                raise ValueError("op in requires a list value")
+            leaves.append(
+                {
+                    "metric": leaf["metric"],
+                    "window": leaf.get("window", "W1H"),
+                    "op": leaf["op"],
+                    "value": leaf["value"],
+                    "persist": {"count": leaf.get("persist_count", 1), "unit": "consecutive_windows"},
+                }
+            )
+        if not leaves:
+            raise ValueError("ARM requires at least one condition")
+        condition = {
+            "cond_id": new_id("CND"),
+            "event_id": eid,
+            "token_id": token,
+            "role": "AGENT",
+            "human_text": a.get("text") or "",
+            "expr": leaves[0] if len(leaves) == 1 else {"all": leaves},
+            "status": "ARMED",
+            "agent_defined": True,
+            "created_by": "AGENT",
+            **collection_clock(now).fields("created_at"),
+            **offset_schedule(
+                collection_clock(now), timedelta(hours=int(a.get("expires_in_hours", 72)))
+            ).fields("expires_at"),
+            **self.provenance(c),
+        }
+        await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
+        return {"accepted": True, "condition": condition}
 
     async def publish_card(self, a, c):
         from tank.analysis.cards import (

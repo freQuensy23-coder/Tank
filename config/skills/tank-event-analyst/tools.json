@@ -2287,5 +2287,112 @@
         "evidence"
       ]
     }
+  },
+  {
+    "name": "send_telegram_file",
+    "description": "Send a file to the Telegram reader whose follow-up question you are answering, as a reply in that thread. Write the file to /mnt/session/outputs/<filename> first (plain name, no subdirectories, at most 45 MB), then call this tool with the filename and an optional caption. Only available while answering a Telegram follow-up; your final message is still sent as the text answer.",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "filename": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^/\\\\]+$"
+        },
+        "caption": {
+          "type": "string",
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "filename"
+      ]
+    }
+  },
+  {
+    "name": "set_watch_condition",
+    "description": "Change the monitoring rules of this session's event. ARM adds your own rule for a token: Tank evaluates it every minute and, when it holds for persist_count consecutive windows, sends you CONDITION_FIRED in this session. All listed conditions must hold together. Agent rules have role AGENT, never change deterministic decisions, and expire after expires_in_hours (default 72, at most 168). DISARM cancels an ARMED rule of the event by cond_id; get_decision may later re-arm its own deterministic rules. Metrics: spot.cohort.direction, spot.cohort.cwb_buy, spot.cohort.cwb_sell, spot.classification, deriv.native_oi_chg_pct, deriv.native_oi_vs_normal, deriv.oi_class, deriv.funding_vs_normal, mt.move_class, mt.divergence_state, dc.class, price.repricing_band, price.close_vs_level, price.vs_anchor_pct, liq.depth_p1_vs_pre, liq.spread_ratio, event.state, event.contradiction_fatal, milestone.outcome, or a dotted Market Truth path. Windows: W15M, W1H (default), W4H, W24H.",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "event_id": {
+          "type": "string"
+        },
+        "action": {
+          "enum": [
+            "ARM",
+            "DISARM"
+          ]
+        },
+        "cond_id": {
+          "type": "string"
+        },
+        "token": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "conditions": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "metric": {
+                "type": "string",
+                "minLength": 3,
+                "maxLength": 120
+              },
+              "op": {
+                "enum": [
+                  "==",
+                  "!=",
+                  ">",
+                  ">=",
+                  "<",
+                  "<=",
+                  "in"
+                ]
+              },
+              "value": {},
+              "window": {
+                "enum": [
+                  "W15M",
+                  "W1H",
+                  "W4H",
+                  "W24H"
+                ]
+              },
+              "persist_count": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 24
+              }
+            },
+            "required": [
+              "metric",
+              "op",
+              "value"
+            ]
+          }
+        },
+        "expires_in_hours": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 168
+        }
+      },
+      "required": [
+        "event_id",
+        "action"
+      ]
+    }
   }
 ]

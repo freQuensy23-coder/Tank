@@ -8,6 +8,7 @@ native session and the agent's final message of that turn is sent back as the an
 import asyncio
 import contextlib
 import html
+import json
 import logging
 import re
 import time
@@ -31,15 +32,6 @@ MESSAGE_LIMIT = 4000
 ANSWER_CHANNEL = "telegram:answer"
 CARD_CHANNEL = "telegram:alerts"
 MEMBER_STATUSES = {"creator", "administrator", "member"}
-
-QUESTION_INSTRUCTIONS = (
-    "A reader of Tank's Telegram output asks a follow-up question about this session's event. "
-    "Answer that question. You keep this session's full context, workspace files and tools; use "
-    "them when the answer needs fresh data or verification. Reply in the language of the question. "
-    "Your final assistant message is sent verbatim to the reader in Telegram as plain text, so make "
-    "it a complete, self-contained answer without Markdown tables. Do not publish a card or change "
-    "the event only to answer; do so only when the question reveals that the event state must change."
-)
 
 NO_SESSION_TEXT = (
     "Не нашёл сессию для этого сообщения. Ответьте на карточку Tank или перешлите её боту вместе с вопросом."
@@ -67,6 +59,21 @@ def chunks(text, limit=MESSAGE_LIMIT):
     if rest:
         parts.append(rest)
     return parts or [EMPTY_TEXT]
+
+
+REFERENCE_LIMIT = 1024
+DOCUMENT_LIMIT = 45 * 1024 * 1024
+
+
+def question_message(question):
+    """The follow-up as the agent reads it: the referenced Telegram text and the reader's words."""
+    reference = ((question.get("reference") or {}).get("text") or "")[:REFERENCE_LIMIT]
+    return (
+        f"Пришёл фоллоуап через Telegram на сообщение с текстом:\n{reference}\n\n"
+        f"{question.get('text', '')}\n\n"
+        "Твоё последнее сообщение в этом ходе уйдёт пользователю ответом в Telegram; "
+        "файл можно отправить тулом send_telegram_file."
+    )
 
 
 def question_id_for(chat_id, message_id):
@@ -407,6 +414,74 @@ class TelegramInbox:
         if reply_to is not None:
             body["reply_parameters"] = {"message_id": int(reply_to), "allow_sending_without_reply": True}
         return await self.call("sendMessage", body)
+
+    async def send_document(self, chat_id, filename, content, *, caption=None, reply_to=None):
+        data = {"chat_id": str(chat_id)}
+        if caption:
+            data["caption"] = caption[:1024]
+        if reply_to is not None:
+            data["reply_parameters"] = json.dumps(
+                {"message_id": int(reply_to), "allow_sending_without_reply": True}
+            )
+        response = await self.http.post(
+            self.url("sendDocument"), data=data, files={"document": (filename, content)}
+        )
+        body = response.json()
+        if response.status_code != 200 or not body.get("ok"):
+            error = RuntimeError(f"Telegram sendDocument rejected (HTTP {response.status_code})")
+            error.retry_after = (body.get("parameters") or {}).get("retry_after", 1)
+            raise error
+        return body["result"]
+
+    async def send_session_file(self, question_id, call_id, filename, content, caption=None):
+        """Deliver an agent file as a reply in the follow-up thread, once per tool call."""
+        question = await self.repo.get("out.user_questions", question_id)
+        if question is None:
+            raise ValueError("Follow-up question does not exist")
+        async for row in self.repo.iter_all(
+            "out.deliveries",
+            filters={
+                "question_id": question_id,
+                "channel": ANSWER_CHANNEL,
+                "call_id": call_id,
+                "status": "SENT",
+            },
+        ):
+            return {"sent": True, "message_id": row["message_ref"], "duplicate": True}
+        result = await self.send_document(
+            question["chat_id"],
+            filename,
+            content,
+            caption=caption,
+            reply_to=question.get("reply_to_message_id"),
+        )
+        await self.repo.put(
+            "out.deliveries",
+            new_id("delivery"),
+            {
+                "channel": ANSWER_CHANNEL,
+                "question_id": question_id,
+                "session_id": question["session_id"],
+                "purpose": "ATTACHMENT",
+                "call_id": call_id,
+                "chat_id": question["chat_id"],
+                "status": "SENT",
+                "attempt": 1,
+                "message_ref": str(result["message_id"]),
+                "telegram_date": result.get("date"),
+                "text": caption or filename,
+                "filename": filename,
+                "bytes": len(content),
+                **collection_clock(utcnow()).fields("at"),
+            },
+            immutable=True,
+        )
+        return {
+            "sent": True,
+            "message_id": str(result["message_id"]),
+            "filename": filename,
+            "bytes": len(content),
+        }
 
     async def notice(self, row, text):
         try:

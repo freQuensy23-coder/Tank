@@ -99,6 +99,8 @@ class Runtime:
 
             inbox = TelegramInbox(repo, settings)
         self.inbox = inbox
+        if hasattr(self.sessions, "telegram"):
+            self.sessions.telegram = inbox
         self.scheduler = scheduler or Scheduler(repo, settings, market, truth)
         if hasattr(self.event_tools, "scheduler"):
             self.event_tools.scheduler = self.scheduler

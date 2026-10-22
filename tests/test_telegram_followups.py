@@ -247,7 +247,7 @@ async def ask(repo, session_status="OPEN"):
             "text": "Почему не шорт?",
             "chat_id": str(USER),
             "reply_to_message_id": 9,
-            "reference": {"kind": "CARD", "alert_id": "a", "version": 1},
+            "reference": {"kind": "CARD", "alert_id": "a", "version": 1, "text": "Карточка AAVE " * 200},
         },
     )
     return question_id
@@ -297,9 +297,9 @@ async def test_question_goes_into_the_same_session_and_final_turn_text_becomes_t
         await service.send_message(payload)
         path, body = posts[0]
         assert path == "/v1/sessions/ses_1/events"
-        content = json.loads(body["events"][0]["content"][0]["text"])
-        assert content["question"]["text"] == "Почему не шорт?"
-        assert "final assistant message" in content["question"]["instructions"]
+        text = body["events"][0]["content"][0]["text"]
+        assert "Пришёл фоллоуап через Telegram" in text and "Почему не шорт?" in text
+        assert "question_id" not in text and "{" not in text
         session = await repo.get("ops.agent_sessions", "ses_1")
         answers = await service.turn_answers(session)
         assert answers[session["message_log"][-1]["message_id"]] == {
@@ -614,3 +614,158 @@ async def test_answer_ledger_rows_satisfy_the_delivery_schema_and_route_replies(
         assert [row["text"] for row in telegram.sent] == ["Ответ."]
         assert target["session_id"] == "ses_pg" and target["kind"] == "ANSWER"
         assert (await repo.get("out.user_questions", "q_pg"))["status"] == "DELIVERED"
+
+
+def test_question_message_is_plain_text_with_truncated_reference():
+    from tank.telegram_inbox import question_message
+
+    text = question_message({"text": "А дальше?", "reference": {"text": "x" * 5000}})
+    assert text.count("x") == 1024 and text.index("А дальше?") > text.index("x")
+
+
+@pytest.mark.asyncio
+async def test_send_telegram_file_replies_with_the_session_output_once():
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
+    session["message_log"].append({"message_id": "mq", "payload": payload, "turn_status": "RUNNING"})
+    session["active_message_id"] = "mq"
+    await repo.put("ops.agent_sessions", "ses_1", session)
+    documents = []
+
+    def handler(request):
+        if request.url.host == "oma":
+            assert request.url.path == "/v1/sessions/ses_1/outputs/report.pdf"
+            return httpx.Response(200, content=b"%PDF-1.7 tank")
+        assert request.url.path.endswith("/sendDocument")
+        documents.append(request.content)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 3001, "date": 1_800_000_000}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        service.telegram = TelegramInbox(repo, inbox_settings(), http=http)
+        first = await service.invoke_tool(session, "send_telegram_file", {"filename": "report.pdf"}, "call_1")
+        again = await service.invoke_tool(session, "send_telegram_file", {"filename": "report.pdf"}, "call_1")
+        target = await service.telegram.reply_target(USER, {"message_id": 3001})
+    assert first["sent"] and again["duplicate"] and len(documents) == 1
+    assert b"%PDF-1.7 tank" in documents[0] and b'"message_id": 9' in documents[0]
+    assert target["session_id"] == "ses_1"
+
+
+@pytest.mark.asyncio
+async def test_send_telegram_file_outside_a_follow_up_is_refused():
+    repo = MemoryRepository()
+    await seed(repo)
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(openma([], []))) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        service.telegram = TelegramInbox(repo, inbox_settings(), http=http)
+        with pytest.raises(ValueError, match="only while answering"):
+            await service.invoke_tool(session, "send_telegram_file", {"filename": "a.pdf"}, "call_2")
+
+
+@pytest.mark.asyncio
+async def test_idle_session_receives_the_current_tools_once():
+    repo = MemoryRepository()
+    await seed(repo)
+    custom = [{"name": "send_telegram_file", "description": "d", "input_schema": {"type": "object"}}]
+    settings = session_settings()
+    settings.read_config_json = lambda relative: custom
+    requests = []
+
+    def handler(request):
+        requests.append((request.method, request.url.path, json.loads(request.content or b"{}")))
+        if request.method == "GET":
+            return httpx.Response(200, json={"id": "ses_1", "agent": {"id": "agt_1"}})
+        return httpx.Response(200, json={})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, settings, None, http=http)
+        await service.sync_tools("ses_1")
+        await service.sync_tools("ses_1")
+    posts = [row for row in requests if row[0] == "POST"]
+    assert len(posts) == 1 and posts[0][1] == "/v1/sessions/ses_1"
+    names = [tool.get("name") for tool in posts[0][2]["agent"]["tools"]]
+    assert (
+        names[-1] == "send_telegram_file"
+        and posts[0][2]["agent"]["tools"][0]["type"] == "agent_toolset_20260401"
+    )
+    assert (await repo.get("ops.agent_sessions", "ses_1"))["tools_sha256"]
+
+
+@pytest.mark.asyncio
+async def test_agent_watch_rules_arm_disarm_and_survive_decision_reconciliation():
+    from tank.event_tools import EventToolService
+
+    repo = MemoryRepository()
+    await repo.put("evt.events", "evt_1", {"event_id": "evt_1", "lifecycle": "MONITORING"})
+    tools = object.__new__(EventToolService)
+    tools.repo = repo
+    tools.settings = SimpleNamespace(config_version="c", code_version="v")
+    armed = await tools.set_watch_condition(
+        {
+            "event_id": "evt_1",
+            "action": "ARM",
+            "token": "bitcoin:BTC",
+            "text": "Wake me if OI jumps",
+            "conditions": [{"metric": "deriv.native_oi_chg_pct", "op": ">", "value": 5, "persist_count": 2}],
+            "expires_in_hours": 24,
+        },
+        {"session_id": "ses_1"},
+    )
+    condition = armed["condition"]
+    assert condition["role"] == "AGENT" and condition["expr"]["persist"]["count"] == 2
+    await tools.reconcile_conditions(
+        {"dec_id": "dec_1", "event_id": "evt_1", "token_id": "bitcoin:BTC", "conditions": []},
+        [await repo.get("ana.watch_conditions", condition["cond_id"])],
+        [],
+        {},
+    )
+    assert (await repo.get("ana.watch_conditions", condition["cond_id"]))["status"] == "ARMED"
+    with pytest.raises(ValueError, match="dotted"):
+        await tools.set_watch_condition(
+            {
+                "event_id": "evt_1",
+                "action": "ARM",
+                "token": "bitcoin:BTC",
+                "conditions": [{"metric": "DROP TABLE", "op": ">", "value": 1}],
+            },
+            {},
+        )
+    disarmed = await tools.set_watch_condition(
+        {"event_id": "evt_1", "action": "DISARM", "cond_id": condition["cond_id"]}, {}
+    )
+    assert disarmed["status"] == "CANCELLED"
+    assert (await repo.get("ana.watch_conditions", condition["cond_id"]))["cancelled_by"] == "AGENT"
+
+
+def test_update_tools_publishes_a_new_agent_version_only_when_tools_are_missing(tmp_path):
+    import importlib.util
+    import shutil
+    from pathlib import Path
+
+    root = Path(__file__).parents[1]
+    spec = importlib.util.spec_from_file_location("prepare_openma", root / "deploy/prepare_openma.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    config = tmp_path / "config"
+    shutil.copytree(root / "config/skills/tank-event-analyst", config / "skills/tank-event-analyst")
+    (config / "openma.yaml").write_text("agent_id: agt_1\n")
+    names = [tool["name"] for tool in module.analyst_tools(config) if tool.get("type") == "custom"]
+    posts = []
+    state = {"tools": [{"type": "custom", "name": "get_item"}], "version": 3}
+
+    def handler(request):
+        if request.method == "POST":
+            body = json.loads(request.content)
+            posts.append(body)
+            state.update(tools=body["tools"], version=body["version"] + 1)
+        return httpx.Response(200, json={"id": "agt_1", **state})
+
+    with httpx.Client(base_url="http://oma", transport=httpx.MockTransport(handler)) as client:
+        first = module.update_tools(config, client=client)
+        second = module.update_tools(config, client=client)
+    assert first["status"] == "UPDATED" and "send_telegram_file" in first["added"]
+    assert second == {"status": "CURRENT", "agent_version": 4}
+    assert posts[0]["version"] == 3 and "set_watch_condition" in names

@@ -170,10 +170,60 @@ def prepare(config, output, *, apply=False, client=None):
     return {"status": "REGISTERED_REVIEW_IDS", "sessions_created": 0}
 
 
+def analyst_tools(config):
+    tools = json.loads((Path(config) / "skills" / "tank-event-analyst" / "tools.json").read_text())
+    return [
+        {
+            "type": "agent_toolset_20260401",
+            "default_config": {"enabled": True},
+            "configs": [
+                {"name": n, "enabled": False}
+                for n in ["web_search", "web_fetch", "schedule", "cancel_schedule", "list_schedules"]
+            ]
+            + [{"name": "browser", "enabled": True}],
+        }
+    ] + [dict(type="custom", **x) for x in tools]
+
+
+def update_tools(config, *, client=None):
+    """Publish a new analyst agent version whose tools match tools.json; sessions start from it."""
+    settings = yaml.safe_load((Path(config) / "openma.yaml").read_text())
+    owns = client is None
+    if owns:
+        client = httpx.Client(
+            base_url=os.environ.get("TANK_OPENMA_URL", "http://openma:8787"),
+            headers={"x-api-key": secret("oma_api_key")},
+            timeout=60,
+        )
+    client.headers.update({"anthropic-beta": "managed-agents-2026-04-01"})
+    try:
+        current = client.get("/v1/agents/" + settings["agent_id"])
+        current.raise_for_status()
+        agent = current.json().get("data", current.json())
+        wanted = analyst_tools(config)
+        names = {tool.get("name") for tool in agent.get("tools", []) if tool.get("type") == "custom"}
+        missing = sorted({tool["name"] for tool in wanted if tool.get("type") == "custom"} - names)
+        if not missing:
+            return {"status": "CURRENT", "agent_version": agent.get("version")}
+        response = client.post(
+            "/v1/agents/" + settings["agent_id"], json={"tools": wanted, "version": agent["version"]}
+        )
+        response.raise_for_status()
+        updated = response.json().get("data", response.json())
+        return {"status": "UPDATED", "agent_version": updated.get("version"), "added": missing}
+    finally:
+        if owns:
+            client.close()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=Path, default=Path("/config"))
     parser.add_argument("--output", type=Path, default=Path("/data/deployment"))
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--update-tools", action="store_true")
     args = parser.parse_args()
-    print(json.dumps(prepare(args.config, args.output, apply=args.apply)))
+    if args.update_tools:
+        print(json.dumps(update_tools(args.config)))
+    else:
+        print(json.dumps(prepare(args.config, args.output, apply=args.apply)))

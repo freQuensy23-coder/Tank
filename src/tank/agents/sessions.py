@@ -19,7 +19,7 @@ from tank.agents import workflow
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
-from tank.telegram_inbox import QUESTION_INSTRUCTIONS, record_answer
+from tank.telegram_inbox import DOCUMENT_LIMIT, question_message, record_answer
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, iso, sha256
 
@@ -120,6 +120,7 @@ class SessionService:
         self.pending_seq = {}
         self.seen_events = {}
         self.closed = False
+        self.telegram = None
 
     def clock_timestamp(self):
 
@@ -388,17 +389,94 @@ class SessionService:
         if retired or "retired_message_ids" in session:
             session["retired_message_ids"] = sorted(retired)
 
-    async def question_context(self, question_id):
-        question = await self.repo.get("out.user_questions", question_id)
-        if question is None:
-            raise KeyError(question_id)
-        return {
-            "instructions": QUESTION_INSTRUCTIONS,
-            "question_id": question_id,
-            "text": question.get("text", ""),
-            "asked_at": question.get("asked_at"),
-            "in_reply_to": question.get("reference"),
-        }
+    def analyst_tools(self):
+        """The current analyst toolset: built-ins plus the custom tools of config/skills."""
+        reader = getattr(self.settings, "read_config_json", None)
+        if reader is None:
+            return None
+        custom = reader("skills/tank-event-analyst/tools.json")
+        return [
+            {
+                "type": "agent_toolset_20260401",
+                "default_config": {"enabled": True},
+                "configs": [
+                    {"name": name, "enabled": False}
+                    for name in ["web_search", "web_fetch", "schedule", "cancel_schedule", "list_schedules"]
+                ]
+                + [{"name": "browser", "enabled": True}],
+            }
+        ] + [dict(type="custom", **tool) for tool in custom]
+
+    async def sync_tools(self, sid):
+        """Before a follow-up, give an idle analyst session the current tools, so old sessions gain new ones."""
+        if getattr(self.settings, "replay", False):
+            return
+        session = await self.repo.get("ops.agent_sessions", sid)
+        if (
+            session is None
+            or session.get("proposal_id")
+            or session.get("active_message_id")
+            or session.get("runtime_status") in BUSY_RUNTIME_STATES
+        ):
+            return
+        tools = self.analyst_tools()
+        if not tools or session.get("tools_sha256") == sha256(tools):
+            return
+        try:
+            await self.request("POST", f"sessions/{sid}", json={"agent": {"tools": tools}})
+            remote = await self.request("GET", f"sessions/{sid}")
+        except httpx.HTTPStatusError:
+            return
+        remote = remote.get("data", remote)
+        descriptor = self.agent_provenance(remote, {}, session.get("agent_id"))
+        async with self.repo.lock("session:" + sid):
+            current = await self.repo.get("ops.agent_sessions", sid)
+            if descriptor.get("prompt_version"):
+                current.update(
+                    {
+                        key: value
+                        for key, value in descriptor.items()
+                        if key not in ("agent_id", "prompt_label")
+                    }
+                )
+            current["tools_sha256"] = sha256(tools)
+            current.update(self.clock_timestamp().fields("tools_synced_at"))
+            await self.repo.put("ops.agent_sessions", sid, current)
+
+    async def send_file(self, session, arguments, call_id):
+        """send_telegram_file: read an output of this session and reply with it to the active follow-up."""
+        active = next(
+            (
+                row
+                for row in session.get("message_log", [])
+                if row["message_id"] == session.get("active_message_id")
+            ),
+            None,
+        )
+        payload = (active or {}).get("payload") or {}
+        if payload.get("kind") != "USER_QUESTION" or getattr(self, "telegram", None) is None:
+            raise ValueError("send_telegram_file is available only while answering a Telegram follow-up")
+        filename = arguments.get("filename")
+        if not isinstance(filename, str) or not filename or "/" in filename or "\\" in filename:
+            raise ValueError("filename must be a plain name inside /mnt/session/outputs")
+        content = None
+        for _ in range(10):
+            response = await self.http.get(
+                self.url(f"sessions/{session['session_id']}/outputs/{filename}"), headers=self.headers()
+            )
+            if response.status_code == 200:
+                content = response.content
+                break
+            if response.status_code != 404:
+                response.raise_for_status()
+            await asyncio.sleep(1)
+        if content is None:
+            raise ValueError(f"/mnt/session/outputs/{filename} was not found in this session")
+        if len(content) > DOCUMENT_LIMIT:
+            raise ValueError("File exceeds the 45 MB Telegram bot limit")
+        return await self.telegram.send_session_file(
+            payload["question_id"], call_id, filename, content, arguments.get("caption")
+        )
 
     async def send_message(self, payload):
         if payload.get("kind") == "USER_QUESTION" and not await self.continuable(payload):
@@ -415,6 +493,8 @@ class SessionService:
         async with self.repo.lock("session-mapping:" + str(mapping_identity)):
             session = await self.resolve(payload)
         sid, key = session["session_id"], sha256(payload)
+        if payload.get("kind") == "USER_QUESTION":
+            await self.sync_tools(sid)
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             async with self.repo.lock("session:" + sid):
                 session = await self.repo.get("ops.agent_sessions", sid)
@@ -432,8 +512,6 @@ class SessionService:
                 )
                 if intent is None:
                     content = {"message": payload, "item": item}
-                    if payload.get("question_id"):
-                        content["question"] = await self.question_context(payload["question_id"])
                     if payload.get("proposal_id"):
                         content["proposal"] = await self.repo.get(
                             "scout.expansion_proposals", payload["proposal_id"]
@@ -443,9 +521,15 @@ class SessionService:
                             async for row in self.repo.iter_all("scout.expansion_proposals")
                             if not row.get("human_action")
                         ]
+                    text = canonical_json(content)
+                    if payload.get("question_id"):
+                        question = await self.repo.get("out.user_questions", payload["question_id"])
+                        if question is None:
+                            raise KeyError(payload["question_id"])
+                        text = question_message(question)
                     body = {
                         "type": "user.message",
-                        "content": [{"type": "text", "text": canonical_json(content)}],
+                        "content": [{"type": "text", "text": text}],
                     }
                     intent = {
                         "message_id": key,
@@ -1027,6 +1111,8 @@ class SessionService:
             "record_review",
         }:
             await self.hydrate_prompt_provenance(session)
+        if tool == "send_telegram_file" and not session.get("proposal_id"):
+            return await self.send_file(session, arguments, call_id)
         if session.get("proposal_id") and tool not in ("web_search", "search_tank_items", "record_review"):
             raise ValueError("Scout tool is outside reviewer permissions")
         if getattr(self.settings, "replay", False) and tool in ("web_search", "fetch_page"):
@@ -1103,7 +1189,8 @@ class SessionService:
         decision_prepared_condition_ids = None
         if (
             not credential_reason
-            and event["name"] in {"get_market_truth", "get_decision", "web_search", "fetch_page"}
+            and event["name"]
+            in {"get_market_truth", "get_decision", "web_search", "fetch_page", "send_telegram_file"}
             and (not prior or prior.get("status") not in ("DONE", "REFUSED", "ERROR"))
         ):
             try:
