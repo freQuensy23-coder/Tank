@@ -117,6 +117,22 @@ READ_TOOLS = frozenset(
         "fetch_page",
     }
 )
+CATEGORICAL_WATCH_METRICS = frozenset(
+    {
+        "event.state",
+        "event.contradiction_fatal",
+        "milestone.outcome",
+        "spot.cohort.direction",
+        "spot.classification",
+        "deriv.native_oi_vs_normal",
+        "deriv.oi_class",
+        "deriv.funding_vs_normal",
+        "mt.move_class",
+        "mt.divergence_state",
+        "dc.class",
+        "price.repricing_band",
+    }
+)
 SERIES_KEEP = 7
 
 
@@ -2451,6 +2467,8 @@ class EventToolService:
                 )
             if leaf["op"] == "in" and not isinstance(leaf["value"], list):
                 raise ValueError("op in requires a list value")
+            if leaf["op"] in (">", ">=", "<", "<=") and leaf["metric"] in CATEGORICAL_WATCH_METRICS:
+                raise ValueError(f"{leaf['metric']} is categorical; use ==, != or in")
             if leaf["op"] in (">", ">=", "<", "<="):
                 try:
                     number = Decimal(str(leaf["value"]))

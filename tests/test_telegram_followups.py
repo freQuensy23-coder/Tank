@@ -939,7 +939,7 @@ async def test_numeric_watch_comparisons_need_numbers():
                 "event_id": "evt_1",
                 "action": "ARM",
                 "token": "bitcoin:BTC",
-                "conditions": [{"metric": "dc.class", "op": ">", "value": "HIGH"}],
+                "conditions": [{"metric": "deriv.native_oi_chg_pct", "op": ">", "value": "HIGH"}],
             },
             {},
         )
@@ -1082,3 +1082,106 @@ async def test_event_scoped_watches_refuse_persistence():
             },
             {},
         )
+
+
+def test_ordered_comparison_on_a_non_number_never_matches():
+    from tank.scheduler import compare
+
+    assert compare("ANALYZING", ">", 1) is False and compare("2", ">", 1) is True
+
+
+@pytest.mark.asyncio
+async def test_ordered_watch_on_categorical_metric_is_refused():
+    from tank.event_tools import EventToolService
+
+    repo = MemoryRepository()
+    await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
+    tools = object.__new__(EventToolService)
+    tools.repo = repo
+    tools.settings = SimpleNamespace(config_version="c", code_version="v")
+    with pytest.raises(ValueError, match="categorical"):
+        await tools.set_watch_condition(
+            {
+                "event_id": "evt_1",
+                "action": "ARM",
+                "token": "bitcoin:BTC",
+                "conditions": [{"metric": "event.state", "op": ">", "value": 1}],
+            },
+            {},
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status,raises", [(503, True), (429, True), (400, False)])
+async def test_tool_sync_retries_transient_rejections_only(status, raises):
+    repo = MemoryRepository()
+    await seed(repo)
+    settings = session_settings()
+    settings.read_config_json = lambda relative: [
+        {"name": "x", "description": "d", "input_schema": {"type": "object"}}
+    ]
+
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(status, json={}))
+    ) as http:
+        service = SessionService(repo, settings, None, http=http)
+        if raises:
+            with pytest.raises(httpx.HTTPStatusError):
+                await service.sync_tools("ses_1")
+        else:
+            await service.sync_tools("ses_1")
+    assert not (await repo.get("ops.agent_sessions", "ses_1")).get("tools_sha256")
+
+
+@pytest.mark.asyncio
+async def test_interrupted_file_send_is_not_repeated_blindly():
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    await repo.put(
+        "out.deliveries",
+        "intent",
+        {
+            "channel": "telegram:answer",
+            "question_id": question_id,
+            "call_id": "call_x",
+            "status": "GENERATED",
+            "attempt": 1,
+            "at": "2027-01-15T08:00:00Z",
+        },
+        immutable=True,
+    )
+    telegram = FakeTelegram()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        result = await inbox.send_session_file(question_id, "call_x", "a.pdf", b"x")
+    assert result["sent"] == "UNKNOWN" and telegram.sent == []
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_forward_of_own_messages_is_refused():
+    repo = MemoryRepository()
+    await seed(repo)
+    for message_id, session_id in ((60, "ses_1"), (61, "ses_2")):
+        await repo.put(
+            "ops.telegram_messages",
+            f"{USER}:{message_id}",
+            {
+                "chat_id": str(USER),
+                "message_id": message_id,
+                "user_id": str(USER),
+                "status": "QUESTION",
+                "session_id": session_id,
+                "message": message(message_id, date=1_800_008_000, text="одно и то же"),
+            },
+        )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(FakeTelegram())) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        forward = message(
+            62,
+            date=1_800_009_000,
+            text="одно и то же",
+            forward_origin={"type": "user", "sender_user": {"id": USER}, "date": 1_800_008_000},
+        )
+        assert await inbox.forwarded_target(forward, BOT) is None
+        forward["text"] = "другое"
+        assert await inbox.forwarded_target(forward, BOT) is None

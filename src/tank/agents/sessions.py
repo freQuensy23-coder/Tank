@@ -427,7 +427,9 @@ class SessionService:
         try:
             await self.request("POST", f"sessions/{sid}", json={"agent": {"tools": tools}})
             remote = await self.request("GET", f"sessions/{sid}")
-        except httpx.HTTPStatusError:
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code == 429 or error.response.status_code >= 500:
+                raise
             return
         remote = remote.get("data", remote)
         descriptor = self.agent_provenance(remote, {}, session.get("agent_id"))

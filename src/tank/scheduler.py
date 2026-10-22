@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import logging
 from datetime import UTC, timedelta
-from decimal import Decimal, localcontext
+from decimal import Decimal, InvalidOperation, localcontext
 
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, new_id, parse_time, utcnow
@@ -63,7 +63,12 @@ def compare(actual, op, target):
         if actual is None:
             return False
     if op in (">", ">=", "<", "<="):
-        a, b = Decimal(str(actual)), Decimal(str(target))
+        try:
+            a, b = Decimal(str(actual)), Decimal(str(target))
+        except InvalidOperation:
+            return False
+        if not (a.is_finite() and b.is_finite()):
+            return False
         return {">": a > b, ">=": a >= b, "<": a < b, "<=": a <= b}[op]
     if op == "==":
         return actual == target

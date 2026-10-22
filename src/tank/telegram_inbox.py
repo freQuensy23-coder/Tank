@@ -479,10 +479,22 @@ class TelegramInbox:
         if date is None:
             return None
         if sender is not None and sender == (message.get("from") or {}).get("id"):
-            async for row in self.repo.iter_all("ops.telegram_messages", filters={"user_id": str(sender)}):
-                if row["message"].get("date") == date and row.get("session_id"):
-                    return self.message_target(row)
-            return None
+            text = plain(message.get("text") or message.get("caption") or "")
+            matches = [
+                row
+                async for row in self.repo.iter_all("ops.telegram_messages", filters={"user_id": str(sender)})
+                if row["message"].get("date") == date
+                and row.get("session_id")
+                and row["message_id"] != message["message_id"]
+            ]
+            exact = [
+                row
+                for row in matches
+                if plain(row["message"].get("text") or row["message"].get("caption") or "") == text
+            ] or matches
+            if len({row["session_id"] for row in exact}) != 1:
+                return None
+            return self.message_target(exact[0])
         if sender != bot:
             return None
         text = plain(message.get("text") or message.get("caption") or "")
@@ -541,16 +553,38 @@ class TelegramInbox:
         question = await self.repo.get("out.user_questions", question_id)
         if question is None:
             raise ValueError("Follow-up question does not exist")
-        async for row in self.repo.iter_all(
+        ledger = [
+            row
+            async for row in self.repo.iter_all(
+                "out.deliveries",
+                filters={"question_id": question_id, "channel": ANSWER_CHANNEL, "call_id": call_id},
+            )
+        ]
+        for row in ledger:
+            if row["status"] == "SENT":
+                return {"sent": True, "message_id": row["message_ref"], "duplicate": True}
+        if ledger:
+            return {
+                "sent": "UNKNOWN",
+                "reason": "An earlier attempt of this call was interrupted after sending started; it may already have arrived. Call again to resend.",
+            }
+        await self.repo.put(
             "out.deliveries",
-            filters={
-                "question_id": question_id,
+            new_id("delivery"),
+            {
                 "channel": ANSWER_CHANNEL,
+                "question_id": question_id,
+                "session_id": question["session_id"],
+                "purpose": "ATTACHMENT",
                 "call_id": call_id,
-                "status": "SENT",
+                "chat_id": question["chat_id"],
+                "status": "GENERATED",
+                "attempt": 1,
+                "filename": filename,
+                **collection_clock(utcnow()).fields("at"),
             },
-        ):
-            return {"sent": True, "message_id": row["message_ref"], "duplicate": True}
+            immutable=True,
+        )
         result = await self.send_document(
             question["chat_id"],
             filename,
