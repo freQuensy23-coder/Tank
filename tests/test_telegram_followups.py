@@ -1612,3 +1612,77 @@ async def test_watch_token_must_exist_in_the_registry():
     with pytest.raises(ValueError, match="not a registry token"):
         await tools.set_watch_condition({**arm, "token": "bitcoin:BTX"}, {})
     assert (await tools.set_watch_condition({**arm, "token": "bitcoin:BTC"}, {}))["accepted"]
+
+
+def test_captions_are_cut_by_utf16_length_and_photos_fall_back_to_dimensions():
+    from tank.telegram_inbox import media, utf16_length, utf16_prefix
+
+    assert utf16_length(utf16_prefix("😀" * 900, 1024)) == 1024
+    photo = media(
+        {
+            "message_id": 1,
+            "photo": [
+                {"file_id": "thumb", "width": 90, "height": 90},
+                {"file_id": "full", "width": 1280, "height": 960},
+            ],
+        }
+    )
+    assert photo["file_id"] == "full"
+
+
+@pytest.mark.asyncio
+async def test_notice_is_retried_after_a_transient_failure_and_sent_once():
+    from tank.telegram_inbox import HINT_TEXT
+
+    repo = MemoryRepository()
+    await seed(repo)
+    lonely = message(97, date=1_800_015_000, text="просто текст")
+    telegram = FakeTelegram([{"update_id": 1, "message": lonely}])
+    outage = {"left": 1}
+    original = telegram.__call__
+
+    def flaky(request):
+        if request.url.path.endswith("/sendMessage") and outage["left"]:
+            outage["left"] -= 1
+            return httpx.Response(503, json={"ok": False})
+        return original(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        await inbox.poll(timeout=0)
+        with pytest.raises(RuntimeError):
+            await inbox.sweep(now=1_800_015_100)
+        assert (await repo.get("ops.telegram_messages", f"{USER}:97"))["status"] == "RECEIVED"
+        await inbox.sweep(now=1_800_015_101)
+        await inbox.sweep(now=1_800_015_102)
+    assert [body["text"] for body in telegram.sent] == [HINT_TEXT]
+    assert (await repo.get("ops.telegram_messages", f"{USER}:97"))["status"] == "IGNORED"
+
+
+@pytest.mark.asyncio
+async def test_watch_mutation_hydrates_prompt_provenance_first():
+    repo = MemoryRepository()
+    await seed(repo)
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    session.pop("prompt_version_basis")
+    session["prompt_version"] = "legacy-label"
+    await repo.put("ops.agent_sessions", "ses_1", session)
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        return httpx.Response(
+            200,
+            json={
+                "id": "ses_1",
+                "agent": {"id": "agt_1", "system": "s", "skills": [], "tools": [], "model": {"id": "m"}},
+            },
+        )
+
+    async def dispatch(tool, arguments, context):
+        return {"tool": tool, "prompt_version": context["prompt_version"]}
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, session_settings(), dispatch, http=http)
+        result = await service.invoke_tool(session, "set_watch_condition", {"event_id": "evt_1"}, "call_w")
+    assert calls == ["/v1/sessions/ses_1"] and len(result["prompt_version"]) == 64

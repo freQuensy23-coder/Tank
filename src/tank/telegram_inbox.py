@@ -56,17 +56,23 @@ def utf16_length(text):
     return len(text.encode("utf-16-le")) // 2
 
 
+def utf16_prefix(text, limit):
+    """The longest prefix of text that fits in limit UTF-16 code units."""
+    low, high = 0, len(text)
+    while low < high:
+        middle = (low + high + 1) // 2
+        if utf16_length(text[:middle]) <= limit:
+            low = middle
+        else:
+            high = middle - 1
+    return text[:low]
+
+
 def chunks(text, limit=MESSAGE_LIMIT):
     parts = []
     rest = text.strip()
     while utf16_length(rest) > limit:
-        low, high = 1, len(rest)
-        while low < high:
-            middle = (low + high + 1) // 2
-            if utf16_length(rest[:middle]) <= limit:
-                low = middle
-            else:
-                high = middle - 1
+        low = max(1, len(utf16_prefix(rest, limit)))
         cut = rest.rfind("\n", 0, low)
         if cut < low // 2:
             cut = low
@@ -115,7 +121,14 @@ def media(message):
         value = message.get(kind)
         if not value:
             continue
-        item = max(value, key=lambda size: size.get("file_size", 0)) if kind == "photo" else value
+        item = (
+            max(
+                value,
+                key=lambda size: (size.get("file_size") or 0, size.get("width", 0) * size.get("height", 0)),
+            )
+            if kind == "photo"
+            else value
+        )
         extension = {"photo": ".jpg", "voice": ".ogg", "video": ".mp4", "animation": ".mp4"}.get(kind, "")
         name = item.get("file_name") or f"{kind}-{message['message_id']}{extension}"
         safe = re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._") or f"file-{message['message_id']}"
@@ -327,8 +340,7 @@ class TelegramInbox:
                 try:
                     await self.handle(current, now)
                 except FileTooLarge:
-                    await self.mark(current, "IGNORED", reason="FILE_TOO_LARGE")
-                    await self.notice(current, TOO_LARGE_TEXT)
+                    await self.notice(current, TOO_LARGE_TEXT, "IGNORED", reason="FILE_TOO_LARGE")
 
     async def authorized(self, message):
         chat = message["chat"]
@@ -365,8 +377,7 @@ class TelegramInbox:
         text = message.get("text") or message.get("caption") or ""
         attachment = media(message)
         if attachment and attachment["size"] > UPLOAD_LIMIT:
-            await self.mark(row, "IGNORED", reason="FILE_TOO_LARGE")
-            await self.notice(row, TOO_LARGE_TEXT)
+            await self.notice(row, TOO_LARGE_TEXT, "IGNORED", reason="FILE_TOO_LARGE")
             return
         reply = message.get("reply_to_message") or {}
         age = now - message.get("date", now)
@@ -388,8 +399,7 @@ class TelegramInbox:
                 return
             target = await self.forwarded_target(message, bot)
             if target is None:
-                await self.mark(row, "UNMATCHED")
-                await self.notice(row, NO_SESSION_TEXT)
+                await self.notice(row, NO_SESSION_TEXT, "UNMATCHED")
                 if companion:
                     await self.mark(companion, "PAIRED", paired_with=row["message_id"])
                 return
@@ -411,8 +421,7 @@ class TelegramInbox:
                 await self.question(row, target)
                 return
             if (reply.get("from") or {}).get("id") == bot:
-                await self.mark(row, "UNMATCHED")
-                await self.notice(row, NO_SESSION_TEXT)
+                await self.notice(row, NO_SESSION_TEXT, "UNMATCHED")
                 return
         if message["chat"].get("type") != "private" or not (text or attachment):
             await self.mark(row, "IGNORED", reason="NOT_A_QUESTION")
@@ -421,8 +430,7 @@ class TelegramInbox:
             return
         if age < PAIR_WINDOW_S:
             return
-        await self.mark(row, "IGNORED", reason="NO_REFERENCE")
-        await self.notice(row, HINT_TEXT)
+        await self.notice(row, HINT_TEXT, "IGNORED", reason="NO_REFERENCE")
 
     async def companion(self, row, *, forwarded):
         """The comment sent with a forward (or the forward sent with a comment) by the same user."""
@@ -609,7 +617,7 @@ class TelegramInbox:
     async def send_document(self, chat_id, filename, content, *, caption=None, reply_to=None):
         data = {"chat_id": str(chat_id)}
         if caption:
-            data["caption"] = caption[:1024]
+            data["caption"] = utf16_prefix(caption, 1024)
         if reply_to is not None:
             data["reply_parameters"] = json.dumps(
                 {"message_id": int(reply_to), "allow_sending_without_reply": True}
@@ -718,11 +726,56 @@ class TelegramInbox:
             "bytes": len(content),
         }
 
-    async def notice(self, row, text):
-        try:
-            await self.send(row["chat_id"], text, row["message_id"])
-        except (RuntimeError, httpx.HTTPError):
-            log.warning("Telegram notice to %s failed", row["chat_id"])
+    async def notice(self, row, text, status, **extra):
+        """Reply with a notice at most once, then settle the input; a rejected send stays retryable."""
+        key = question_id_for(row["chat_id"], row["message_id"])
+        ledger = [
+            delivery
+            async for delivery in self.repo.iter_all(
+                "out.deliveries", filters={"question_id": key, "channel": ANSWER_CHANNEL, "purpose": "NOTICE"}
+            )
+        ]
+        settled = any(delivery["status"] == "SENT" for delivery in ledger) or sum(
+            delivery["status"] == "GENERATED" for delivery in ledger
+        ) > sum(delivery["status"] == "FAILED" for delivery in ledger)
+        if not settled:
+            base = {
+                "channel": ANSWER_CHANNEL,
+                "question_id": key,
+                "purpose": "NOTICE",
+                "chat_id": row["chat_id"],
+                "attempt": 1,
+                "text": text,
+            }
+            await self.repo.put(
+                "out.deliveries",
+                new_id("delivery"),
+                {**base, "status": "GENERATED", **collection_clock(utcnow()).fields("at")},
+                immutable=True,
+            )
+            try:
+                result = await self.send(row["chat_id"], text, row["message_id"])
+            except RuntimeError:
+                await self.repo.put(
+                    "out.deliveries",
+                    new_id("delivery"),
+                    {**base, "status": "FAILED", **collection_clock(utcnow()).fields("at")},
+                    immutable=True,
+                )
+                raise
+            await self.repo.put(
+                "out.deliveries",
+                new_id("delivery"),
+                {
+                    **base,
+                    "status": "SENT",
+                    "message_ref": str(result["message_id"]),
+                    "telegram_date": result.get("date"),
+                    **collection_clock(utcnow()).fields("at"),
+                },
+                immutable=True,
+            )
+        await self.mark(row, status, **extra)
 
     async def prompt(self, row, target):
         """Ask for the question; a reply to this prompt continues the referenced session."""

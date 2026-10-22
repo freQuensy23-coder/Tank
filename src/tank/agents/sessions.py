@@ -1155,6 +1155,7 @@ class SessionService:
             "publish_card",
             "publish_update",
             "record_review",
+            "set_watch_condition",
         }:
             await self.hydrate_prompt_provenance(session)
         if tool == "send_telegram_file" and not session.get("proposal_id"):
