@@ -100,8 +100,16 @@ jobs:
         include:
           - image: tank
             context: .
+            file: Dockerfile
           - image: tank-capture
             context: ./capture
+            file: capture/Dockerfile
+          - image: tank-openma
+            context: ./vendor/openma
+            file: vendor/openma/Dockerfile
+          - image: tank-sandbox
+            context: .
+            file: deploy/sandbox.Dockerfile
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -125,6 +133,7 @@ jobs:
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
           push: ${{ github.event_name == 'push' }}
           build-args: GIT_SHA=${{ github.sha }}
           labels: |
