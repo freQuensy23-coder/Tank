@@ -1,0 +1,166 @@
+# @openma/cli
+
+## 0.6.5
+
+### Patch Changes
+
+- 57906b3: Pi harness skill mounting strategies (`skill_mount`: `progressive` default, `budgeted`, `tool`, `inline`) replace default full SKILL.md system-prompt inlining for default/Pi harnesses. Deferred skills in `budgeted` mode are discoverable via `tool_search`; `tool` mode adds a `skill` loader tool.
+
+## 0.6.4
+
+### Patch Changes
+
+- 38f58cb: Pi agent-core is the default harness; legacy `ai-sdk` remains available but deprecated (one-time `session.warning` per session). Agents accept compaction via `_oma.context_management` (Anthropic Messages shape) or `_oma.model_settings` (OpenAI Agents SDK shape); conflicting dual definitions are rejected at save time. MCP tool results preserve content blocks on the wire. Agent `max_tokens` above the catalog window is accepted with a warning; pi-ai clamps output per request.
+- 2f7c08d: Document agent metadata for deferred MCP `tool_search`: `tool_search` (`auto` | `on` | `off`, default `auto`), optional `tool_search_limit`, `tool_search_auto_threshold`, and `tool_search_always_load`. Backward compatible — omitting `tool_search` keeps automatic exposure when MCP tool definitions exceed a fraction of the model context window.
+
+## 0.6.3
+
+### Patch Changes
+
+- 7d3bbf5: Emit `bundle_dir` and `fresh` on `session.ready` after a fresh ACP spawn so the cloud harness can locate the platform bundle without guessing scratch paths.
+
+## 0.6.2
+
+### Patch Changes
+
+- 6a5c715: Honor an optional session.start cwd as the ACP process directory while writing the bundle to the daemon scratch directory.
+
+## 0.6.1
+
+### Patch Changes
+
+- a011976: Prevent idle sleep while the local daemon is available, release the power assertion during shutdown, and retry unavailable platform helpers without interrupting tasks.
+
+## 0.6.0
+
+### Minor Changes
+
+- 68d2772: Align CLI requests with the Managed Agents and OMA API namespaces, and run daemon sessions through the shared managed runtime.
+
+### Patch Changes
+
+- 7629a91: Expose typed Model Card management and Pi provider metadata through the SDK,
+  align model catalog discovery across Node and Cloudflare, and document the
+  runtime semantics of effort, speed, and custom Pi model configuration.
+- f0c9aed: Preserve ACP completion token usage when relaying sessions and return the complete agents page in JSON mode, including empty results and pagination metadata.
+- fc24017: Include the underlying network error code in CLI fetch failures.
+- 2b6f7bf: Update the shared runtime so ACP sessions can start without the optional steering extension. Reject unsupported active-turn steering at invocation instead of blocking ordinary prompts.
+- 2b6f7bf: Consume the versioned OpenMA common local runtime for ACP sessions, connection lifecycle and owned-host shutdown. Keep CLI credentials, signals and filesystem adapters outside the shared kernel.
+- 2b6f7bf: Share daemon connection lifecycle with the desktop host, reconnect silent links without replaying user input, and preserve single execution ownership on attachment conflicts.
+
+  Separate owned daemon drain and cleanup from CLI process signals, preserve the output connection until sessions finish, reject new turns during shutdown, and report shutdown failures after cleanup.
+
+## 0.6.0-beta.2
+
+### Patch Changes
+
+- f0c9aed: Preserve ACP completion token usage when relaying sessions and return the complete agents page in JSON mode, including empty results and pagination metadata.
+- fc24017: Include the underlying network error code in CLI fetch failures.
+- 2b6f7bf: Update the shared runtime so ACP sessions can start without the optional steering extension. Reject unsupported active-turn steering at invocation instead of blocking ordinary prompts.
+- 2b6f7bf: Consume the versioned OpenMA common local runtime for ACP sessions, connection lifecycle and owned-host shutdown. Keep CLI credentials, signals and filesystem adapters outside the shared kernel.
+- 2b6f7bf: Share daemon connection lifecycle with the desktop host, reconnect silent links without replaying user input, and preserve single execution ownership on attachment conflicts.
+
+  Separate owned daemon drain and cleanup from CLI process signals, preserve the output connection until sessions finish, reject new turns during shutdown, and report shutdown failures after cleanup.
+
+## 0.6.0-beta.1
+
+### Patch Changes
+
+- 7629a91: Expose typed Model Card management and Pi provider metadata through the SDK,
+  align model catalog discovery across Node and Cloudflare, and document the
+  runtime semantics of effort, speed, and custom Pi model configuration.
+
+## 0.6.0-beta.0
+
+### Minor Changes
+
+- 68d2772: Align CLI requests with the Managed Agents and OMA API namespaces, and run daemon sessions through the shared managed runtime.
+
+## 0.5.1
+
+### Patch Changes
+
+- aecc66e: Send bridge setup requests directly to the app origin so the runtime exchange POST is not rewritten by an apex redirect.
+
+## 0.5.0
+
+### Minor Changes
+
+- [#103](https://github.com/openma-ai/open-managed-agents/pull/103) [`85c2e1c`](https://github.com/openma-ai/open-managed-agents/commit/85c2e1c359f774a3dbafcc45a6e7875ebba55ff2) Thanks [@hrhrng](https://github.com/hrhrng)! - `oma bridge` daemon now serves multiple tenants from a single process.
+  One daemon is authorized for every workspace the user is a member of;
+  each spawned ACP child gets the per-tenant `oma_*` key matching the
+  session's workspace.
+  - `oma bridge setup` requests the multi-tenant `/exchange` shape and
+    writes a `CredentialsV2` file (`{v:2, tenants:[…], …}`). Old v1
+    creds files (`agentApiKey` at the top level) auto-migrate on next
+    daemon start — calls `GET /agents/runtime/me` to pull the tenant
+    list, falls back to a placeholder workspace if the server is
+    unreachable so the daemon still runs offline.
+  - `oma bridge refresh` (new) re-syncs the daemon's credentials with
+    the user's current memberships. Adds keys for new workspaces, soft-
+    revokes keys for removed ones, then `SIGHUP`s the running daemon
+    so the change takes effect without a restart.
+  - `SessionManager` looks up the right `oma_*` key per session by the
+    inbound `session.start`'s `tenant_id`. Every outbound message the
+    daemon sends carries `tenant_id` so the server can validate it
+    against the runtime's authorized set.
+
+  Backward-compatible: v1 daemons keep working against the new server
+  shape (server returns the legacy `{runtime_id, token, agent_api_key}`
+  when the request doesn't set `multi_tenant: true`). The workaround
+  for multi-tenant — running multiple `OMA_PROFILE=…` daemons side by
+  side — still works for separate server environments.
+
+### Patch Changes
+
+- [`31f7fbf`](https://github.com/openma-ai/open-managed-agents/commit/31f7fbf67305f44831a379d9149bcf0c6a8d9c00) Thanks [@hrhrng](https://github.com/hrhrng)! - `oma bridge setup` now exits cleanly after "Done." instead of hanging
+  for ~5 minutes on idle keep-alive HTTP sockets from the registry CDN
+  fetch and the runtime-token probe. Daemon was already started by
+  launchd / systemd / Task Scheduler — only the foreground setup process
+  itself was waiting on the undici dispatcher to time out its sockets.
+  Force-exits at end of runSetup, matching how npm / pnpm / gh handle
+  the same constraint in their CLI commands.
+
+  Adds an opt-in `OMA_DEBUG_HANDLES=1` env var that prints active
+  handles + requests every 2s — useful for diagnosing future "process
+  won't exit" regressions without redeploying.
+
+## 0.4.1
+
+### Patch Changes
+
+- [#41](https://github.com/openma-ai/open-managed-agents/pull/41) [`e370a4a`](https://github.com/openma-ai/open-managed-agents/commit/e370a4ab550ca18a37e27761695fb9bbd2e8bdb7) Thanks [@hrhrng](https://github.com/hrhrng)! - `oma bridge setup` now exits cleanly after "Done." instead of hanging
+  for ~5 minutes on idle keep-alive HTTP sockets from the registry CDN
+  fetch and the runtime-token probe. Daemon was already started by
+  launchd / systemd / Task Scheduler — only the foreground setup process
+  itself was waiting on the undici dispatcher to time out its sockets.
+  Force-exits at end of runSetup, matching how npm / pnpm / gh handle
+  the same constraint in their CLI commands.
+
+  Adds an opt-in `OMA_DEBUG_HANDLES=1` env var that prints active
+  handles + requests every 2s — useful for diagnosing future "process
+  won't exit" regressions without redeploying.
+
+## 0.4.0
+
+### Minor Changes
+
+- [`4df9a0e`](https://github.com/openma-ai/open-managed-agents/commit/4df9a0e677eb1712688134fc140edb6d0db3969a) Thanks [@hrhrng](https://github.com/hrhrng)! - Bridge: expand local ACP agent support to the full official registry,
+  add cross-platform service install (launchd / systemd / Task Scheduler,
+  all no-admin), and wire end-to-end conversation recovery so daemon
+  restarts no longer drop context. `oma bridge setup` is now the single
+  command on every platform — installs the system service, starts the
+  daemon, and audits + offers ACP wrappers for install (npm packages or
+  GitHub release tarballs). Includes `OMA_PROFILE` for prod/staging
+  side-by-side daemons (default behavior unchanged for current users).
+
+  Fixes a multi-profile bug where the launchd-spawned daemon silently
+  dropped `OMA_PROFILE` and read the default profile's credentials,
+  causing the "wrong" daemon to compete for the WS attach slot.
+
+## 0.3.2
+
+### Patch Changes
+
+- [`018b647`](https://github.com/openma-ai/open-managed-agents/commit/018b647536eb5d1398510fcc37f6c65447a801fd) Thanks [@hrhrng](https://github.com/hrhrng)! - Add Bridge subcommand section to top-level `oma` help so `setup`, `daemon`,
+  `status`, `uninstall` are discoverable without grepping or guessing.

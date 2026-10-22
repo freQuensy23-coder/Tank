@@ -125,24 +125,6 @@ def test_config_identity_manifest_matches_runtime_algorithm(tmp_path):
     assert module("prepare_config").prepare_config(config)["git_dirty"] is True
 
 
-def test_overlay_refuses_changed_pinned_source(tmp_path, monkeypatch):
-    prep = module("prepare_openma_source")
-
-    class Result:
-        stdout = prep.PIN
-
-    monkeypatch.setattr(prep.subprocess, "run", lambda *a, **k: Result())
-    source = tmp_path / "source"
-    source.mkdir()
-    hashes = json.loads((ROOT / "deploy" / "openma-source-hashes.json").read_text())
-    for path in hashes:
-        p = source / path
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("changed source")
-    with pytest.raises(ValueError, match="hash mismatch"):
-        prep.prepare(source, tmp_path / "dest")
-
-
 def test_network_hba_confines_roles_and_rejects_broad_or_guessed_defaults(tmp_path):
     helper = module("prepare_network")
     text = helper.prepare("172.29.0.0/24", "10.21.0.0/24", tmp_path / "hba")
@@ -185,7 +167,7 @@ def test_sandbox_route_defaults_and_validated_isolated_override():
     if node is None:
         pytest.skip("Node executable required for actual deployment entrypoint contract")
     script = """
-import {sandboxDatabaseRoute} from './deploy/openma_entrypoint.mjs';
+import {sandboxDatabaseRoute} from './vendor/openma/tank-deploy/openma_entrypoint.mjs';
 const readSecret = name => {if(name!=='tank_agent_db_password')throw Error('wrong secret');return 'synthetic:p@ss';};
 const defaults=sandboxDatabaseRoute({},readSecret);
 const isolated=sandboxDatabaseRoute({TANK_SANDBOX_DATABASE_NAME:'tank_integration_extract_20261018',TANK_SANDBOX_DATABASE_ROLE:'tank_integration_extract_agent'},readSecret);
@@ -216,7 +198,7 @@ def test_replay_route_resolves_only_declared_private_service_for_l4_acl():
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node executable required")
-    script = """import {replayDatabaseRoute} from './deploy/openma_entrypoint.mjs';
+    script = """import {replayDatabaseRoute} from './vendor/openma/tank-deploy/openma_entrypoint.mjs';
 let called=false;
 const resolved=await replayDatabaseRoute(()=> 'synthetic',async(host,opts)=>{if(host!=='postgres'||opts.family!==4)throw Error('wrong host');called=true;return {address:'172.30.42.2'};});
 let denied=0;for(const address of ['8.8.8.8','0.0.0.0','127.0.0.1','::1'])try{await replayDatabaseRoute(()=> 'synthetic',async()=>({address}));}catch{denied++;}

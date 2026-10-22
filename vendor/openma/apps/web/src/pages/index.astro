@@ -1,0 +1,285 @@
+---
+import SdkExamples from "../components/SdkExamples.astro";
+import Architecture from "../components/Architecture.astro";
+import Base from "../layouts/Base.astro";
+import { getCollection } from "astro:content";
+import { softwareApplicationSchema } from "../lib/seo";
+import PricingCard from "../components/PricingCard.astro";
+import BlogPostCard from "../components/BlogPostCard.astro";
+
+const posts = (await getCollection("blog", ({ data }) => !data.draft))
+  .sort((a, b) => b.data.publishedAt.valueOf() - a.data.publishedAt.valueOf())
+  .slice(0, 3);
+
+function formatDate(d: Date) {
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+
+// SoftwareApplication is the homepage-only schema — anchors the
+// "Open Managed Agents" entity in Google's knowledge graph and makes
+// the page eligible for software-style rich snippets (price, license).
+const schemas = [softwareApplicationSchema()];
+---
+
+<Base
+  title="OpenMA: Claude Managed Agents & OpenAI Agents API"
+  description="Open Managed Agents with Claude Managed Agents and OpenAI Agents API compatibility. Hosted or self-hosted, with your choice of models, harnesses and sandboxes."
+  canonical="/"
+  keywords="open managed agents, openai agent api, openai agents api, openai agents api alternative, self-hosted openai agents, claude managed agents, claude managed agents alternative, open-source agent platform, subagents, acp, mcp, byok, claude tag alternative"
+  schemas={schemas}
+>
+  <!-- Hero -->
+  <section class="border-b border-[var(--color-border)]">
+    <div class="site-container site-hero">
+      <h1 class="font-display text-4xl sm:text-5xl md:text-6xl font-bold tracking-tight">
+        Open Managed Agents
+      </h1>
+      <p class="mt-6 text-xl md:text-2xl text-[var(--color-fg-muted)]">
+        Run Claude and OpenAI agents on your own infrastructure.
+      </p>
+      <p class="hero-description">
+        Use the SDKs you know. OpenMA supports Claude Managed Agents and
+        OpenAI Agents API, with sessions, tools and recovery built in.
+        Bring your own model keys and continue your work through Backchat,
+        OMA CLI or your application.
+      </p>
+      <div class="mt-8 flex items-center gap-3 flex-wrap">
+        <a
+          href="/deploy/"
+          class="site-button site-button-primary"
+          >Set up OpenMA</a
+        >
+        <a
+          href="https://github.com/openma-ai/open-managed-agents"
+          target="_blank" rel="noopener noreferrer"
+          class="site-button"
+          >View on GitHub</a
+        >
+        <a
+          href="https://app.openma.dev/login"
+          class="site-button"
+          >Try the hosted version</a
+        >
+      </div>
+      <p class="mt-4 text-sm text-[var(--color-fg-subtle)]">Open source · Apache 2.0 · Hosted or self-hosted</p>
+      <p class="mt-3 text-sm text-[var(--color-fg-muted)]">
+        <a href="#openai-agents-api">Connect your SDK</a>
+      </p>
+    </div>
+  </section>
+
+  <section class="border-y border-[var(--color-border)] bg-[var(--color-bg-surface)]" aria-labelledby="how-it-works" data-reveal>
+    <div class="site-container py-16">
+      <h2 id="how-it-works" class="font-display text-3xl font-bold mb-4">How OpenMA runs a task.</h2>
+      <p class="text-[var(--color-fg-muted)] max-w-2xl leading-relaxed">
+        Clients connect to OpenMA for sessions and orchestration. The harness
+        runs the agent loop; the sandbox provides an execution environment.
+        Your cloud choice determines where the platform is deployed.
+      </p>
+      <Architecture />
+      <div class="architecture-start">
+        <div>
+          <h3>Start with a working deployment.</h3>
+          <p>Use the hosted service, or follow the setup guide to run OpenMA yourself.</p>
+        </div>
+        <div class="flex flex-wrap gap-3">
+          <a class="site-button site-button-primary" href="/deploy/">Set up OpenMA</a>
+          <a class="site-button" href="https://app.openma.dev/login">Try hosted</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="ecosystem" class="site-container py-16" aria-labelledby="ecosystem-title">
+    <div class="ecosystem-heading">
+      <h2 id="ecosystem-title" class="font-display">Where OpenMA fits.</h2>
+      <p>OpenMA coordinates sessions and execution across the agent ecosystem. Harnesses, sandboxes and cloud infrastructure connect through adapters, so each part can evolve independently.</p>
+    </div>
+  <div class="ecosystem-choices" aria-label="Ecosystem compatibility">
+    <div><h3>Any sandbox</h3><p>Choose where code executes. Connect a sandbox provider through OpenMA’s execution interfaces.</p><p class="choice-examples">LiteBox · E2B · Daytona · BoxRun</p></div>
+    <div><h3>Any harness</h3><p>Choose the agent loop. Use a built-in harness, connect an ACP agent or implement your own.</p><p class="choice-examples">Default · Pi · ACP adapters</p></div>
+    <div><h3>Any cloud</h3><p>Choose where you host the platform. Run Node and Docker on your infrastructure, or use a supported cloud deployment.</p><p class="choice-examples">Self-hosted Node · Cloudflare · Hosted OpenMA</p></div>
+    <p class="choices-note">An extensible ecosystem, with concrete integrations. Available features depend on the harness, sandbox adapter and deployment. <a href="/deploy/">Explore supported setups</a>.</p>
+  </div>
+
+    <h3 class="ecosystem-projects-title">Tools built around the platform</h3>
+    <dl class="ecosystem-products">
+      <div>
+        <dt><a href="https://github.com/openma-ai/open-managed-agents">OpenMA</a><span>Agent platform</span></dt>
+        <dd>Manage agents, tenant sessions, credentials and execution. Use the hosted service or run it yourself.</dd>
+        <dd><a class="site-button" href="/deploy/">Set up OpenMA</a></dd>
+      </div>
+      <div>
+        <dt><a href="https://backchat.openma.ai">Backchat</a><span>Desktop app</span></dt>
+        <dd>Work with local agents and continue OpenMA tenant sessions from one desktop sidebar.</dd>
+        <dd><a class="site-button" href="https://backchat.openma.ai">Explore Backchat</a></dd>
+      </div>
+      <div>
+        <dt><a href="https://github.com/openma-ai/open-managed-agents/tree/main/packages/cli">OMA CLI &amp; SDK</a><span>Developer tools</span></dt>
+        <dd>Connect from your terminal or build OpenMA into your own application with the TypeScript SDK.</dd>
+        <dd><a class="site-button" href="https://github.com/openma-ai/open-managed-agents/tree/main/packages/sdk">Use the SDK</a></dd>
+      </div>
+      <div>
+        <dt><a href="https://github.com/openma-ai/deepseek-harness-acp">DeepSeek ACP</a><span>Agent adapter</span></dt>
+        <dd>Our DeepSeek adapter brings DeepSeek into ACP-compatible clients, including Backchat and OpenMA.</dd>
+        <dd><a class="site-button" href="https://github.com/openma-ai/deepseek-harness-acp">Explore the adapter</a></dd>
+      </div>
+    </dl>
+    <div class="ecosystem-protocols">
+      <div><h3>ACP connects agents</h3><p>Run compatible agents through the Agent Client Protocol. Available features depend on each agent’s capabilities.</p></div>
+      <div><h3>MCP connects tools</h3><p>Give agents access to your services and tools through the Model Context Protocol.</p></div>
+      <div><h3>SDKs connect your app</h3><p>Use the OpenMA SDK, or supported Claude and OpenAI API surfaces. <a href="#openai-agents-api">See compatibility details</a>.</p></div>
+    </div>
+  </section>
+
+  <section class="backchat-section" aria-labelledby="backchat-title">
+    <div class="site-container backchat-layout">
+      <div>
+        <h2 id="backchat-title">Continue the conversation in Backchat.</h2>
+        <p>A desktop home for your agents. Connect your OpenMA account, browse tenant sessions, and pick up a task from your desktop.</p>
+        <a class="site-button site-button-primary" href="https://backchat.openma.ai">Explore Backchat <span aria-hidden="true" class="ml-2">↗</span></a>
+      </div>
+      <div class="backchat-details">
+        <h3>Local work. Shared conversations.</h3>
+        <p>Keep local sessions alongside your OpenMA tenants in one sidebar.</p>
+        <h3>Pick up where your agent left off.</h3>
+        <p>Continue an OpenMA session in Backchat and keep the conversation in sync.</p>
+        <a href="https://backchat.openma.ai/#download" class="site-button">Get Backchat for macOS</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- API compatibility -->
+  <section id="openai-agents-api" class="site-container py-16" data-reveal>
+    <h2 class="font-display text-3xl font-bold mb-4">Connect the SDK you already use</h2>
+    <p class="text-[var(--color-fg-muted)] leading-relaxed mb-4">
+      OpenMA supports Claude Managed Agents and OpenAI Agents API. Start with
+      <a href="/deploy/">a deployment</a>, add your model key, and connect your
+      application. Both examples connect to hosted OpenMA.
+    </p>
+    <SdkExamples />
+    <p class="text-[var(--color-fg-muted)] leading-relaxed mb-4">
+      On self-hosted Node, let an agent hand off subtasks to other agents that share its files.
+      Each child keeps its own conversation, and you can follow up or stop it.
+      Children cannot create further children.
+    </p>
+    <p class="text-[var(--color-fg-muted)] leading-relaxed mb-4">
+      Hosted OpenMA supports sandbox-free OpenAI sessions. Dynamic subagent controls
+      currently require Node; advanced environment and plugin settings remain unsupported.
+      <a href="https://github.com/openma-ai/open-managed-agents/blob/main/docs/openai-agents-compatibility-status.md">Check supported features before migrating</a>.
+    </p>
+    <p class="text-[var(--color-fg-muted)] leading-relaxed">
+      <a href="https://github.com/openma-ai/open-managed-agents#openai-agents-api-quickstart">Read the OpenAI SDK setup guide</a>
+      or <a href="https://docs.openma.dev/quickstart/">get started with Claude Managed Agents</a>.
+    </p>
+  </section>
+
+  <section class="border-t border-[var(--color-border)] bg-[var(--color-bg-surface)]" data-reveal>
+    <div class="site-container py-16">
+      <h2 class="font-display text-3xl font-bold mb-4">Choose how you run OpenMA.</h2>
+      <p class="text-[var(--color-fg-muted)] leading-relaxed mb-6 max-w-2xl">
+        Use the hosted service or self-host with Node and Docker. Start with
+        SQLite, then connect Postgres and S3 when your deployment needs them.
+        Your agent execution environment is a separate choice: local runtime or cloud sandbox.
+      </p>
+      <p class="text-[var(--color-fg-muted)] leading-relaxed max-w-2xl">
+        Both Node and Cloudflare expose the Claude Managed Agents and OpenAI Agents APIs. <a href="/deploy/">Compare deployment options</a>.
+      </p>
+    </div>
+  </section>
+
+  <!-- Pricing teaser (kept — relevant to hosted CTA) -->
+  <section class="border-y border-[var(--color-border)] bg-[var(--color-bg-surface)]" data-reveal>
+    <div class="site-container py-16">
+      <h2 class="font-display text-3xl font-bold text-center mb-2">Hosted pricing (optional)</h2>
+      <p class="text-center text-[var(--color-fg-muted)] mb-12 max-w-2xl mx-auto">
+        Self-host is free forever. The hosted service at openma.dev is for
+        teams who'd rather not run the infra themselves. BYOK for the LLM —
+        we only charge for sandbox compute.
+      </p>
+      <div class="grid md:grid-cols-3 gap-6">
+        <PricingCard
+          name="Free"
+          price="$0"
+          features={[
+            "$1 one-time trial credit",
+            "localRuntime unlimited",
+            "All integrations included",
+          ]}
+        />
+        <PricingCard
+          name="Pro"
+          price="$20"
+          badge="Most popular"
+          features={[
+            '<strong class="text-[var(--color-fg)]">$22</strong> credit (10% bonus)',
+            "~73 hours cloud sandbox",
+            "Auto-renewing wallet top-up",
+          ]}
+        />
+        <PricingCard
+          name="Max"
+          price="$100"
+          features={[
+            '<strong class="text-[var(--color-fg)]">$120</strong> credit (20% bonus)',
+            "~400 hours cloud sandbox",
+            "Priority email support",
+          ]}
+        />
+      </div>
+      <p class="text-center text-xs text-[var(--color-fg-subtle)] mt-8">
+        Self-host always remains free. Hosted is one packaging of the same
+        Apache 2.0 codebase.
+      </p>
+    </div>
+  </section>
+
+  <!-- Recent blog -->
+  {posts.length > 0 && (
+    <section class="site-container py-16" data-reveal>
+      <div class="flex items-end justify-between mb-8">
+        <h2 class="font-display text-2xl font-bold">From the blog</h2>
+        <a href="/blog/" class="text-sm py-2 px-2 -mx-2 rounded hover:bg-[var(--color-bg-surface)]">All posts →</a>
+      </div>
+      <div class="grid md:grid-cols-3 gap-6">
+        {posts.map((post) => (
+          <BlogPostCard
+            href={`/blog/${post.id}/`}
+            date={formatDate(post.data.publishedAt)}
+            title={post.data.title}
+            description={post.data.description}
+          />
+        ))}
+      </div>
+    </section>
+  )}
+
+  <!-- Get started -->
+  <section class="border-t border-[var(--color-border)]" data-reveal>
+    <div class="max-w-3xl mx-auto px-4 py-16 text-center">
+      <h2 class="font-display text-3xl font-bold mb-3">Get started</h2>
+      <p class="text-[var(--color-fg-muted)] mb-6">
+        Self-host: clone the repo, set <code class="font-mono text-sm">ANTHROPIC_API_KEY</code>,
+        <code class="font-mono text-sm">docker compose up</code>. Hosted: sign in, BYOK, ship.
+      </p>
+      <div class="flex items-center justify-center gap-3 flex-wrap">
+        <a
+          href="https://github.com/openma-ai/open-managed-agents"
+          target="_blank" rel="noopener noreferrer"
+          class="site-button"
+          >Clone the repo</a
+        >
+        <a
+          href="https://docs.openma.dev"
+          class="site-button"
+          >Read the docs</a
+        >
+        <a
+          href="https://app.openma.dev/login"
+          class="site-button"
+          >Try hosted</a
+        >
+      </div>
+    </div>
+  </section>
+</Base>

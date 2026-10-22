@@ -1,0 +1,254 @@
+@import "tailwindcss";
+@import "@openma/common/brand/website.css";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: var(--site-font-sans);
+  --font-display: var(--site-font-sans);
+  --font-mono: var(--site-mono);
+  --color-bg: var(--site-page);
+  --color-bg-sidebar: var(--site-surface-muted);
+  --color-bg-surface: var(--site-surface);
+  --color-bg-bubble: var(--site-surface-raised);
+  --color-fg: var(--site-ink);
+  --color-fg-muted: var(--site-ink-soft);
+  --color-fg-subtle: var(--site-muted);
+  --color-border: var(--site-line);
+  --color-border-strong: var(--site-line-strong);
+  --color-brand: var(--site-brand);
+  --color-brand-hover: var(--site-brand-hover);
+  --color-brand-subtle: var(--site-surface-muted);
+  --color-brand-fg: var(--site-brand-ink);
+}
+
+html {
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  /* Smooth-scroll for in-page anchors (header is sticky, so we need
+     the scroll-margin so anchors clear it). */
+  scroll-behavior: smooth;
+}
+
+/* Anchor targets clear the sticky header (h-13 at desktop). Anything
+   you can scroll to via #anchor should set this — applied broadly
+   here so we don't need per-element scroll-margin. */
+:where(h1, h2, h3, h4, [id]) {
+  scroll-margin-top: 5rem;
+}
+
+/* Sticky-header polish: small shadow once the page leaves the top. JS
+   toggles [data-scrolled] in Base.astro. The base header has a
+   backdrop-blur so content scrolls behind it gracefully. */
+[data-site-header] {
+  transition: box-shadow 200ms ease-out, border-color 200ms ease-out;
+}
+[data-site-header][data-scrolled] {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.04);
+  border-bottom-color: var(--color-border-strong);
+}
+.dark [data-site-header][data-scrolled] {
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+/* Section reveal: starts faded + nudged down, fades in once it enters
+   the viewport. IntersectionObserver in Base.astro adds .is-visible.
+   Pages opt in by adding `data-reveal` to a section. Gated behind
+   html.js so a JS-disabled or pre-hydration render shows the content
+   normally instead of stuck-invisible. Also off for reduced-motion. */
+@media (prefers-reduced-motion: no-preference) {
+  html.js [data-reveal] {
+    opacity: 0;
+    transform: translateY(16px);
+    transition: opacity 600ms ease-out, transform 600ms ease-out;
+    will-change: opacity, transform;
+  }
+  html.js [data-reveal].is-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Card hover-lift — applies to anything tagged data-lift (FeatureCard,
+   PricingCard, BlogPostCard). Cheap GPU transform, no layout cost. */
+[data-lift] {
+  transition: transform 180ms ease-out, box-shadow 180ms ease-out, border-color 180ms ease-out;
+  will-change: transform;
+}
+[data-lift]:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px -10px rgba(0, 0, 0, 0.12);
+}
+.dark [data-lift]:hover {
+  box-shadow: 0 8px 24px -10px rgba(0, 0, 0, 0.6);
+}
+
+/* Anchor defaults — color is `inherit` by default so nav/breadcrumb/
+   footer links pick up the surrounding text color instead of being
+   loud-red everywhere. The body-link coral is opt-in via the prose
+   selector below — only links inside paragraphs / lists / table cells
+   / blockquotes get colored + underlined. */
+@layer base {
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+  a:hover {
+    text-decoration: underline;
+  }
+}
+
+/* Inline body links: text inherits fg (passes AA-normal at 14:1+), brand
+   coral lives on the underline + hover state. Decoration colors aren't
+   subject to WCAG 1.4.3, so we get visible brand presence without using
+   coral as the readable text color (which would fail 4.5:1 on white). */
+:where(p, li, dd, td, blockquote) a {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-color: var(--color-brand);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  transition: color 120ms ease-out, text-decoration-color 120ms ease-out;
+}
+:where(p, li, dd, td, blockquote) a:hover {
+  color: var(--color-brand);
+  text-decoration-color: var(--color-brand-hover);
+}
+
+/* Brand-colored focus ring on every interactive element. The site had no
+   focus-visible styling before — keyboard users on a public marketing
+   site couldn't see where focus was. */
+a:focus-visible,
+button:focus-visible,
+summary:focus-visible,
+[role="button"]:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Reduced-motion users get instant transitions. Any future animation
+   we add will inherit this guard. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Markdown rendered prose (blog posts). Tailwind's typography plugin would
+   give richer defaults; keeping minimal here to avoid an extra dep. */
+.prose {
+  max-width: 70ch;
+  line-height: 1.7;
+}
+.prose h1 { font-family: var(--font-display); font-size: 2rem; font-weight: 700; margin-top: 2.5rem; margin-bottom: 1rem; }
+.prose h2 { font-family: var(--font-display); font-size: 1.5rem; font-weight: 600; margin-top: 2rem; margin-bottom: 0.75rem; }
+.prose h3 { font-size: 1.2rem; font-weight: 600; margin-top: 1.5rem; margin-bottom: 0.5rem; }
+.prose p { margin: 1rem 0; }
+.prose ul, .prose ol { margin: 1rem 0; padding-left: 1.5rem; }
+.prose li { margin: 0.25rem 0; }
+.prose code {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  background: var(--color-bg-surface);
+  padding: 0.125rem 0.35rem;
+  border-radius: 0.25rem;
+}
+.prose pre {
+  background: var(--color-bg-surface);
+  padding: 1rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  margin: 1rem 0;
+  font-family: var(--font-mono);
+  font-size: 0.875rem;
+}
+.prose pre code { background: none; padding: 0; }
+.prose blockquote {
+  border-left: 3px solid var(--color-brand);
+  padding-left: 1rem;
+  color: var(--color-fg-muted);
+  font-style: italic;
+  margin: 1rem 0;
+}
+.prose img {
+  max-width: 100%;
+  border-radius: 0.5rem;
+  margin: 1.5rem 0;
+}
+
+/* Public websites share the Backchat marketing theme. */
+.site-container { width: min(var(--site-max), calc(100% - 48px)); margin-inline: auto; }
+[data-site-header] > .site-container { min-height: 64px; }
+[data-site-header] nav a, footer nav a { min-height: 44px; display: inline-flex; align-items: center; }
+[data-theme-toggle], [data-mobile-menu] > summary { min-width: 44px; min-height: 44px; }
+.site-hero { padding-block: 88px 96px; }
+.site-hero h1 { max-width: 1000px; font-size: clamp(44px, 5.4vw, 78px); font-weight: 580; line-height: 1.06; letter-spacing: -.04em; }
+.site-hero .hero-description { max-width: 680px; font-size: 18px; line-height: 1.65; color: var(--site-ink-soft); margin-top: 28px; }
+.site-button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 11px 17px; border: 1px solid var(--site-line); border-radius: var(--site-radius-control); font-size: 14px; font-weight: 580; background: var(--site-surface); color: var(--site-ink); transition: background var(--site-duration) var(--site-ease); }
+.site-button:hover { text-decoration: none; background: var(--site-surface-muted); }
+.site-button-primary { background: var(--site-brand); color: var(--site-brand-ink); border-color: transparent; }
+.site-button-primary:hover { background: var(--site-brand-hover); }
+main .py-16 { padding-block: var(--site-section-space); }
+main h2.font-display { font-size: clamp(30px, 3.3vw, 44px); line-height: 1.15; font-weight: 580; letter-spacing: -.03em; }
+[data-lift] { border-radius: var(--site-radius-panel); background: var(--site-surface); }
+.backchat-section { border-block: 1px solid var(--site-line); background: var(--site-surface); }
+.backchat-layout { display: grid; grid-template-columns: 1.2fr 1fr; gap: 64px; align-items: center; padding-block: var(--site-section-space); }
+.backchat-layout h2 { font-size: clamp(32px, 3.5vw, 48px); line-height: 1.12; font-weight: 580; letter-spacing: -.03em; max-width: 560px; }
+.backchat-layout p { color: var(--site-ink-soft); line-height: 1.7; margin-block: 20px 26px; max-width: 520px; }
+.backchat-details { border-left: 1px solid var(--site-line); padding-left: 40px; }
+.backchat-details h3 { font-size: 18px; font-weight: 580; }
+.backchat-details p { margin-block: 8px 24px; font-size: 15px; }
+:where(p, li, dd, td, blockquote) a:hover { color: var(--site-ink); }
+@media (max-width: 767px) {
+  .site-container { width: calc(100% - 40px); }
+  .site-hero { padding-block: 56px 64px; }
+  main .py-16 { padding-block: 64px; }
+  .backchat-layout { grid-template-columns: 1fr; gap: 32px; padding-block: 64px; }
+  .backchat-details { padding-left: 0; border-left: 0; }
+}
+
+main .grid > * { min-width: 0; }
+::selection { background: var(--site-brand); color: var(--site-brand-ink); }
+
+.architecture-start { display: flex; justify-content: space-between; align-items: center; gap: 32px; border-top: 1px solid var(--site-line); padding-top: 32px; margin-top: 40px; }
+.architecture-start h3 { font-size: 18px; font-weight: 580; }
+.architecture-start p { margin-top: 8px; color: var(--site-ink-soft); font-size: 15px; line-height: 1.6; }
+@media (max-width: 700px) { .architecture-start { align-items: flex-start; flex-direction: column; gap: 24px; } }
+
+.ecosystem-heading { display: grid; grid-template-columns: 1.25fr 1fr; gap: 64px; align-items: end; margin-bottom: 44px; }
+.ecosystem-heading > p { color: var(--site-ink-soft); line-height: 1.7; max-width: 440px; }
+.ecosystem-products > div { display: grid; grid-template-columns: 1fr 1.6fr auto; gap: 40px; align-items: center; padding-block: 28px; border-top: 1px solid var(--site-line); }
+.ecosystem-products dt > a { font-size: 22px; font-weight: 580; letter-spacing: -.025em; }
+.ecosystem-products dt > span { display: block; color: var(--site-muted); font-size: 13px; margin-top: 6px; }
+.ecosystem-products dd { color: var(--site-ink-soft); font-size: 15px; line-height: 1.7; }
+.ecosystem-products dd > .site-button { text-decoration: none; }
+.ecosystem-protocols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 40px; padding-top: 40px; border-top: 1px solid var(--site-line); }
+.ecosystem-protocols h3 { font-size: 16px; font-weight: 580; margin-bottom: 10px; }
+.ecosystem-protocols p { color: var(--site-ink-soft); font-size: 14px; line-height: 1.7; }
+@media (max-width: 700px) {
+  .ecosystem-heading, .ecosystem-products > div, .ecosystem-protocols { grid-template-columns: 1fr; gap: 20px; }
+  .ecosystem-heading { margin-bottom: 32px; }
+  .ecosystem-protocols { gap: 28px; }
+}
+
+.ecosystem-choices { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 48px; padding-block: 64px; }
+.ecosystem-choices h3 { font-size: 24px; font-weight: 580; letter-spacing: -.025em; margin-bottom: 16px; }
+.ecosystem-choices p { color: var(--site-ink-soft); font-size: 15px; line-height: 1.7; }
+.ecosystem-choices .choice-examples { margin-top: 20px; color: var(--site-muted); font-size: 13px; }
+.ecosystem-choices .choices-note { grid-column: 1 / -1; font-size: 13px; color: var(--site-muted); padding-top: 24px; border-top: 1px solid var(--site-line); }
+@media (max-width: 700px) { .ecosystem-choices { grid-template-columns: 1fr; gap: 32px; } }
+
+#ecosystem .ecosystem-choices { padding-block: 0 48px; }
+.ecosystem-projects-title { font-size: 24px; font-weight: 580; letter-spacing: -.025em; margin-bottom: 28px; }
+
+[data-site-header] > .site-container { height: 76px; padding-block: 0; }

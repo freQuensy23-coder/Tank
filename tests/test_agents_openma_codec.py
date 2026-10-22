@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def run_codec(tmp_path, patched):
     source = (ROOT / "tests/fixtures/openma/runtime-codec.ts").read_text()
     if patched:
-        for patch in json.loads((ROOT / "deploy/openma-opaque-input-fixes.json").read_text()):
+        for patch in json.loads((ROOT / "tests/fixtures/openma/opaque-input-fixes.json").read_text()):
             assert source.count(patch["old"]) == patch["count"]
             source = source.replace(patch["old"], patch["new"])
     source += """

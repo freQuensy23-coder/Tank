@@ -1,0 +1,375 @@
+---
+title: Operations
+description: Day-2 concerns for self-hosters — custom domains, observability, multi-tenancy, backups, upgrades, troubleshooting.
+---
+
+import { Aside, Tabs, TabItem, LinkCard } from '@astrojs/starlight/components';
+
+After the deploy works, here's what you need to know to run it.
+
+## Custom domains
+
+Routes are declared in each `wrangler.jsonc`:
+
+```jsonc
+"routes": [
+  { "pattern": "app.yourdomain.com", "custom_domain": true }
+]
+```
+
+When you deploy with `custom_domain: true`, Cloudflare:
+
+1. Auto-creates a DNS record on the zone.
+2. Provisions a TLS cert (~1 min on first deploy).
+3. Routes traffic to the Worker.
+
+If the cert doesn't provision, the zone may not be fully on Cloudflare. Fix the zone, redeploy.
+
+For staging, the `[env.staging]` blocks point at `*.staging.yourdomain.com` — same mechanism.
+
+## Observability
+
+### Logs
+
+Every Worker has `observability: { enabled: true }` set, so logs ship to Cloudflare Logs by default. View live with:
+
+```bash
+npx wrangler tail managed-agents
+npx wrangler tail openma-agent
+npx wrangler tail managed-agents-integrations
+```
+
+Logs are **structured JSON** for things you'd want to query (silent catches, integration dispatches). Plain `console.log` for ad-hoc.
+
+### Analytics Engine
+
+The platform writes to an Analytics Engine dataset (`oma_events`) for high-cardinality events:
+
+- Silent catches (caught errors that didn't surface to the user)
+- Session lifecycle transitions
+- Tool call success/failure
+- Integration dispatches
+
+Query from the dashboard or with the GraphQL API. Useful for "are silent failures spiking?" and "which tool errors most often?".
+
+### Metrics
+
+Workers metrics (requests, CPU time, errors) are in the Cloudflare dashboard per Worker. DO metrics (active instances, storage) are under Durable Objects.
+
+## Cost attribution
+
+Cost reporting is a provider Port, not a Cloudflare-shaped core service. Every
+adapter returns the same evidence fields:
+
+| Field | Meaning |
+|---|---|
+| `source` | `provider_billed`, `provider_metered`, `openma_metered`, or `estimated` |
+| `granularity` | Narrowest scope the source can prove, such as account, project, environment, runtime, or session |
+| `is_invoice_grade` | Whether the result can be treated as a finalized invoice value |
+| `data_completeness` | `complete`, `partial`, or `unavailable`; unavailable data is never coerced to zero |
+| `reconciled_at` | Time at which provider data was last read |
+
+The Cloudflare adapter first queries the account billable-usage API and splits
+long periods into provider-supported windows. If every row contains one
+currency and a billed cost, that value becomes `total_cost`. Cloudflare still
+documents this API as alpha, so the adapter keeps `is_invoice_grade: false`.
+When cost fields or API authorization are unavailable, the adapter falls back
+to the configured Cloudflare price card and returns the result only as
+`total_estimated_cost`. A failed Analytics dataset makes the estimate partial
+and therefore leaves the total null instead of under-reporting it.
+
+`GET /v1/oma/cost_report` and its `/pricing` sub-resource expose deployment-wide
+provider data. They therefore accept only the operator `API_KEY`, via
+`x-api-key` or `Authorization: Bearer`; an ordinary tenant credential cannot
+read account spend or modify the fallback price card. Price-card updates are
+strict: unknown services/rates, negative values, and non-numeric values return
+`400` instead of being silently stored.
+
+There are two intentionally separate ledgers:
+
+- Provider cost is the reconciliation source for infrastructure spend at the
+  scope the provider exposes.
+- OpenMA runtime usage is the real-time source for limits and finer-grained
+  tenant/session allocation. It does not become provider invoice data merely
+  because a rate card is applied.
+
+Current adapter status:
+
+| Provider family | Source and boundary | Current state |
+|---|---|---|
+| Cloudflare | FOCUS billable usage; Analytics price-card fallback remains `estimated` | Implemented in an isolated adapter package |
+| Vercel | FOCUS 1.3 JSONL billing charges, account scope, one-year requests automatically split | Implemented in an isolated adapter package |
+| Blaxel | Billing Explorer totals and resource rows, account/workspace/resource scopes | Implemented in an isolated adapter package |
+| Modal | The official TypeScript SDK does not currently expose billing reports | Not implemented; use the OpenMA runtime ledger when an estimate is sufficient |
+| Daytona / E2B / Sprites / Superserve | No stable documented billed-cost API used by OpenMA | Use the OpenMA runtime ledger adapter |
+| Node / Docker / LiteBox / BoxRun | Versioned operator rate card over OpenMA runtime events | Implemented by the runtime ledger adapter |
+
+Provider adapters are registered through `CostAttributionRegistry`, so adding
+or replacing one does not change the API provenance shape. Provider-only
+dimensions stay in the adapter payload rather than leaking into the Port.
+
+Each adapter lives in `packages/cost-attribution-*`. Provider credentials and
+SDKs stop at that package boundary; the default workspace does not install an
+optional provider SDK transitively. Cloudflare and Vercel preserve their FOCUS
+rows verbatim. Blaxel retains its documented native rows and does not pretend
+those rows conform to FOCUS.
+
+### Provider boundaries and failure semantics
+
+- Vercel's response is streamed JSONL. Malformed rows fail the query; a
+  successful empty stream is a complete USD total of zero. Mixed currencies
+  produce `partial` with `total_cost: null`.
+- Blaxel repeats its full-window summary on every cursor page. OpenMA records
+  that total once, rejects missing/repeated cursors, and fails if the summary
+  changes during pagination. Workspace filtering/grouping is account-admin
+  only and a provider `403` remains a failure.
+- The runtime ledger returns a monetary total only when every observed metric
+  has a valid rate in one currency. Missing rates and mixed currencies are
+  partial, never zero-filled.
+- These APIs are read-only and create no provider resources, so a successful or
+  failed report has no cleanup side effects. Caller cancellation is propagated
+  to provider HTTP/SDK work; the SQL ledger checks cancellation around its read.
+- `CostAttributionError` separates invalid query/scope, authentication,
+  permission, provider availability, malformed response, pagination invariant,
+  and incomplete rate-card failures. Only availability/rate-limit failures are
+  retryable; no error includes a provider credential.
+
+For Node, Docker, LiteBox, BoxRun, or a provider without a documented cost API,
+compose `createRuntimeUsageReader(services.usage)` into the runtime adapter.
+The historical ledger includes acknowledged rows, is indexed by tenant and
+time, and remains storage-independent across D1, SQLite, and Postgres.
+
+Run the deterministic contract suite as part of `pnpm test`. To probe real
+provider accounts and write a private evidence artifact:
+
+```bash
+pnpm test:certification:cost -- --allow-missing
+```
+
+The command reports one of `PASS`, `FAIL`, or `NOT_RUN_NO_CREDENTIAL` for each
+provider and writes `artifacts/certification/cost-attribution-certification.json`
+with mode `0600`. Remove `--allow-missing` for a release gate. Expected secrets
+are `CLOUDFLARE_API_TOKEN` plus `CLOUDFLARE_ACCOUNT_ID`, `VERCEL_TOKEN` plus
+`VERCEL_TEAM_ID`, and `BL_API_KEY` plus `BL_ACCOUNT_ID`. Reports and
+diagnostics redact credential values.
+
+## Multi-tenancy
+
+By default, openma is **multi-tenant on a single D1**. Every user gets a `tenant_id` row; every query is scoped by it. Adequate for most teams.
+
+The codebase has two distinct mechanisms for stricter isolation; they solve different problems:
+
+### Per-tenant DB isolation (rare)
+
+For B2B SaaS use cases where each customer needs its own D1 (compliance, "noisy-neighbor" insulation, per-customer backups):
+
+```bash
+npx wrangler secret put PER_TENANT_DB_ENABLED   # set to "true"
+npx wrangler secret put STORE_BACKENDS          # JSON config of backends
+```
+
+See `packages/storage/README.md` for the full config schema. This is independent of the multi-shard scaling below.
+
+### Multi-shard scaling
+
+If your deployment outgrows a single D1 (D1 has a 10 GB / 50K-row limits per database), you can fan out across N MAIN_DB shards. The shard router lives in `ROUTER_DB`; per-tenant data lands on whichever shard `tenant_shard` says owns the tenant.
+
+Activation is config-only — the wrangler files ship with `env.production` overlays that bind 4 sharded auth DBs (used by openma.dev's hosted prod). To enable for your own deployment:
+
+1. Provision the additional D1s: `wrangler d1 create openma-router`, `wrangler d1 create openma-auth-shard-01..03`
+2. Patch the IDs into `env.production` blocks of `apps/{main,agent,integrations}/wrangler.jsonc` (replacing openma.dev's IDs)
+3. Apply migrations to each shard:
+   ```bash
+   wrangler d1 migrations apply openma-auth-shard-01 --remote --config apps/main/wrangler.jsonc
+   wrangler d1 migrations apply openma-auth-shard-02 --remote --config apps/main/wrangler.jsonc
+   wrangler d1 migrations apply openma-auth-shard-03 --remote --config apps/main/wrangler.jsonc
+   wrangler d1 migrations apply openma-router        --remote --config apps/main/wrangler.jsonc
+   ```
+4. Seed the shard pool:
+   ```bash
+   wrangler d1 execute openma-router --remote --command \
+     "INSERT INTO shard_pool (binding_name, status, tenant_count) VALUES \
+      ('AUTH_DB_00', 'open', 0), \
+      ('AUTH_DB_01', 'open', 0), \
+      ('AUTH_DB_02', 'open', 0), \
+      ('AUTH_DB_03', 'open', 0);"
+   ```
+5. Deploy with `--env production`:
+   ```bash
+   npx wrangler deploy --config apps/main/wrangler.jsonc --env production
+   # repeat for agent, integrations
+   ```
+
+Auto-detection in `packages/services/src/index.ts:buildCfTenantDbProvider` activates the multi-shard router as soon as `AUTH_DB_01` is bound. New signups are assigned to the least-loaded open shard.
+
+Existing tenants stay on their assigned shard; there's no automatic rebalancing tool today.
+
+## Database backups
+
+D1 supports point-in-time recovery on Workers Paid. Enable in the Cloudflare dashboard → D1 → your database → Backups.
+
+R2 has versioning; enable per bucket in the dashboard if your skill files are mutable and you want history.
+
+## Upgrades
+
+Pull `main`, install, redeploy:
+
+```bash
+git pull
+pnpm install
+npx wrangler d1 migrations apply openma-auth         --remote --config apps/main/wrangler.jsonc
+npx wrangler d1 migrations apply openma-integrations --remote --config apps/main/wrangler.jsonc
+npx wrangler deploy --config apps/main/wrangler.jsonc
+npx wrangler deploy --config apps/agent/wrangler.jsonc
+npx wrangler deploy --config apps/integrations/wrangler.jsonc
+```
+
+Migrations are forward-only and additive by convention; rollbacks are not supported. Test against staging first if you have one.
+
+### Migration baseline (one-time)
+
+The migration history was squashed to a single `0001_consolidated.sql` per D1. Older deploys that already ran the historical 0001-0017 files have those filenames stamped in `d1_migrations`. To stop wrangler from re-applying the new consolidated file on existing deployments, run once:
+
+```bash
+./scripts/stamp-baseline-existing-deploy.sh production
+# or: ./scripts/stamp-baseline-existing-deploy.sh staging
+```
+
+The script INSERTs the consolidated filename into each D1's `d1_migrations` table so wrangler treats it as already applied. Safe to re-run; uses `INSERT OR IGNORE`.
+
+A **fresh self-hoster does NOT run this** — `setup-cf.sh` applies the consolidated file as the very first migration, and wrangler stamps it normally.
+
+The historical migration files are kept under `apps/main/migrations/_archive/` (and same for `migrations-integrations/`, `migrations-router/`) for git-blame reference. They're not applied.
+
+## Sandbox isolation
+
+Every session gets its own Cloudflare Container instance via the `SANDBOX` Durable Object class. Sessions never share container state. The container's outbound network goes through openma's egress proxy; secrets (Vault entries) are injected per-host so the model never sees raw credentials.
+
+If you want to restrict outbound destinations, edit `apps/agent/src/sandbox/proxy.ts` to add allowlist rules.
+
+## Retention and deletion guarantees
+
+Retention is split by artifact class; a provider's runtime retention is never
+treated as durable storage:
+
+| Artifact | Default behavior | Who owns the policy |
+|---|---|---|
+| Session-scoped file metadata and blobs | `DELETE /v1/sessions/:id` stops the runtime and then performs a tenant-scoped, best-effort cascade; a failed blob delete is logged for reconciliation | OpenMA cleanup hook + operator reconciliation |
+| Session output prefix | The same delete path removes objects under the tenant/session output prefix; listing and deletion are paginated | OpenMA cleanup hook + bucket lifecycle backstop |
+| Native harness state / workspace checkpoint | Published as an immutable checkpoint candidate; only the active fenced candidate is used for restore | Selected Runtime Host provider |
+| Backup objects | Cloudflare SDK uploads carry a seven-day TTL by default; self-host adapters must configure an equivalent object-store lifecycle | Provider/operator |
+| SessionDO event and stream rows | Durable for the life of the SessionDO; no automatic row TTL is enabled yet | Explicit maintenance job (not implicit request code) |
+| Memory versions | Daily 03:00 UTC retention sweep keeps the newest version and prunes older versions after 30 days | Scheduler (`croner` on Node, Wrangler cron on CF) |
+
+Deletion is intentionally best-effort after the session row is removed. The
+cleanup hook is tenant-scoped and idempotent, so a retry/reconciliation pass
+cannot remove another tenant's files even when opaque session IDs collide.
+The runtime is stopped before cleanup starts; a provider that cannot prove a
+hard stop must keep the resource fenced and report the orphan instead of
+reusing it.
+
+For self-host deployments, the scheduler starts with the main process and is
+stopped during graceful shutdown. For Cloudflare, the main Worker receives a
+per-minute cron tick and dispatches the same jobs with `waitUntil`; use
+`wrangler dev --test-scheduled` to exercise a tick locally.
+
+## Common troubleshooting
+
+### "1010 Cloudflare Browser Integrity" on POST
+
+CF Bot Fight Mode is rejecting the request. Either:
+- Add a browser-shaped User-Agent header on your client, or
+- Lower Bot Fight Mode for the affected hostname in the dashboard.
+
+This bites self-hosters using `curl` from automation against `*.openma.dev` defaults; the User-Agent path is recorded in the [project memory](/contribute/) for hosted use.
+
+### "Migration failed" on first deploy
+
+Make sure you ran `wrangler d1 migrations apply openma-auth --remote` before `pnpm deploy`. The deploy script doesn't re-apply migrations.
+
+### Container fails to start
+
+Check `wrangler tail openma-agent` for the actual error. Common causes:
+- The base image listed in your Environment doesn't exist or isn't pullable.
+- A package in the Environment's install list doesn't exist (typo'd `pip` package).
+- You're past the Containers free quota — upgrade in the dashboard.
+
+### OAuth callback 404
+
+You probably set the redirect URL on the third-party to a host that doesn't match your `apps/integrations/wrangler.jsonc → routes`. They must match exactly.
+
+### Webhook signature verification fails
+
+Your `LINEAR_WEBHOOK_SECRET` / `GITHUB_WEBHOOK_SECRET` / `SLACK_SIGNING_SECRET` is wrong, or wasn't set on the integrations Worker. Verify with:
+```bash
+npx wrangler secret list -c apps/integrations/wrangler.jsonc
+```
+
+## Known long-tail items
+
+These aren't bugs in the "user-visible breakage" sense, but they're worth
+having on the radar so a long-running deploy doesn't drift into one.
+
+### SQL growth inside SessionDO
+
+The DO writes one row to the `events` table per trajectory event. Events
+larger than 500 KB spill to the R2 `FILES_BUCKET` with an `_spilled`
+reference, but small events accumulate in SQL forever — there's no
+pruning. CF's Durable Object SQLite quota is 10 GB per DO, which leaves
+room for roughly 10M events at ~1 KB each. A single session would have
+to run ~100 000 turns to come close. Same shape applies to the `streams`
+table: `finalize` flips the row's status, doesn't delete it. Quantity
+is small (one row per LLM call) but it's also unbounded.
+
+If you run multi-day persistent sessions in production, plan a periodic
+prune of `events` rows older than the retention window you actually
+need, and configure an R2 lifecycle rule on `managed-agents-files` so
+spilled blobs from extinct sessions don't sit in storage forever.
+
+### Container OOM
+
+Sandbox containers default to `instance_type: standard-1` (1 vCPU, 4 GB
+RAM, 4 GB disk). Heavy `pip install` of ML libraries, large data files
+loaded into pandas, or anything that mmap's a multi-GB blob will OOM.
+The container exits, which triggers `onActivityExpired` →
+`snapshotWorkspaceNow` → `super.onActivityExpired` → graceful stop;
+the next session warmup picks up the most recent backup.
+
+If your workload routinely OOMs, bump `instance_type` to `standard-2`
+(2 vCPU, 8 GB RAM) or `standard-4` (4 vCPU, 16 GB RAM) in
+`apps/agent/wrangler.template.jsonc`. Watch the `containers` dataset
+in observability for `Container exited (code: 137)` (SIGKILL, usually
+OOM) vs `Container exited (code: 0)` (graceful sleepAfter).
+
+### R2 bucket lifecycles
+
+The `managed-agents-backups` bucket's per-object TTL is set by the SDK
+at upload time (7 days by default — `BACKUP_TTL_SEC` in
+`apps/agent/src/oma-sandbox.ts`), so old backups age out cleanly.
+`managed-agents-files` (event spillover, vault audit blobs) and
+`managed-agents-memory` (memory-store content) have no automatic TTL.
+For long-running deploys, attach an R2 lifecycle rule with whatever
+retention you actually need — Cloudflare's R2 dashboard lets you
+configure these per-bucket without code changes.
+
+### LLM stream chunks > 500 KB
+
+A single chunk that crosses the spillover threshold ends up in R2
+rather than SQL, which is fine, but the `chunks_json` array still has
+to fit in one row. If a chunk ever exceeds the SQLite row size limit
+(~1 GB on Workers) the stream finalize will fail. We've never seen
+this in practice — typical model output is line-by-line — but if you
+build a tool that streams huge blobs through the LLM, slice them.
+
+## Where to go next
+
+<LinkCard
+  title="Configuration reference"
+  href="/reference/configuration/"
+  description="All env vars and binding shapes in one place."
+/>
+<LinkCard
+  title="Glossary"
+  href="/reference/glossary/"
+  description="Every term, alphabetized, with cross-links."
+/>

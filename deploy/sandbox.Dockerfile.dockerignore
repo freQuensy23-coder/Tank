@@ -1,0 +1,5 @@
+**
+!deploy/sandbox.Dockerfile
+!deploy/sandbox.Dockerfile.dockerignore
+!deploy/openma_browser/browser-worker.py
+!deploy/openma_browser/prepare-font-cache.py

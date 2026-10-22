@@ -1,8 +1,0 @@
-{
-  "packages/control-plane-node/src/lib/node-managed-agent-codec.ts": [
-    {
-      "before": "    system: agent.system ?? \"\",\n    tools: agent.tools.map(legacyTool),\n",
-      "after": "    system: agent.system ?? \"\",\n    // Tank (HLD 02 \u00a75): the session agent snapshot carries no metadata, so the\n    // node harness always fell back to progressive skill exposure. Inline the\n    // registered skills into the system prompt at session start.\n    metadata: { skill_mount: \"inline\" },\n    tools: agent.tools.map(legacyTool),\n"
-    }
-  ]
-}

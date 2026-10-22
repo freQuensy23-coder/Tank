@@ -1,0 +1,1138 @@
+{
+  "upstream_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+  "overlay": "tank8-replay-sealed",
+  "boxlite_sdk_version": "0.10.6",
+  "boxlite_sdk_patch": {
+    "sdk_version": "0.10.6",
+    "pnpm_version": "11.0.8",
+    "upstream_openma_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+    "source_sha256": {
+      "pnpm-lock.yaml": "6d5b4aee16af9210f0e5d7f5071e8e1ec916d77ee81f9d6c1e4e8768e00fb822",
+      "pnpm-workspace.yaml": "2316fdc7c95fad20758ef6aea06c194a508b98c49ccb597977188afd536b7461"
+    },
+    "workspace_append": "\n# Tank observed-runtime compatibility pin; upstream OpenMA source commit is unchanged.\noverrides:\n  '@boxlite-ai/boxlite': '0.10.6'\n",
+    "lockfile_asset": "openma-pnpm-lock.yaml",
+    "lockfile_sha256": "8db697971714ee04b538d90653a370f1ce25cc792f7304da1c57ebff276aa128",
+    "policy": "Candidate runtime compatibility repair for reproduced mounted-boot and static-loader failures; no production adoption implied",
+    "native_host_security": {
+      "jailerEnabled": false,
+      "seccompEnabled": false
+    },
+    "security_basis": "Explicitly retain measured BoxLite0.9 Linux native defaults; outer Docker default seccomp/AppArmor remain enabled"
+  },
+  "boxlite_runtime": {
+    "status": "UNQUALIFIED_REPLAY_DNS_CANDIDATE",
+    "architecture": "amd64",
+    "source": {
+      "repository": "https://github.com/boxlite-ai/boxlite.git",
+      "version": "0.10.6",
+      "commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+      "libkrun_commit": "e12b9b3780ffa8df9f3e1797b217d13453479167",
+      "Cargo.lock": "720f5f70fdd48ca15d170d8ba8bf61832378e8615dadfb12a84b55761b571149",
+      "libkrun_Cargo.lock": "353fe6bb081d1cd4b4e24aa4ef323319709543c65b7304e015320a563688d3c2",
+      "gvproxy_go.sum": "84dddcab5d612e04cac72c140477a7eeeb8ec01088f237f1dd0de157d9217c47",
+      "source_tracked_diff": "clean pinned baseline; exact reviewed replay DNS overlay retained unchanged through compilation"
+    },
+    "official_runtime": {
+      "url": "https://github.com/boxlite-ai/boxlite/releases/download/v0.10.6/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz",
+      "archive_sha256": "241171320f008c86d2f4af95ed6690edf93417ade956a196b2c3e366e4857e1b",
+      "size": 28133546
+    },
+    "original_files": {
+      "guest-resize2fs": "0a2c15cb20fa3e369a02e9712c611037a89236bc52ad109daf02c3d33a19ee97",
+      "boxlite-shim": "fb836e52ea6f29c4c66c78cffa476e010a1e88404971dfc45cc27bd0302ba9b5",
+      "libkrunfw.so.5": "953201c0c367070946a2f99695cb50dbb8980d97e416964bfa3fb1e9d1f15f69",
+      "boxlite-guest": "5e7d1415307e46dfb2dd690c118e63ebd7d62189777ded62b710929d01fb059e",
+      "mke2fs": "6898e063cdda9c004b7180b8ab6b06d14f06828ecf1708a5d8c12020f543add4",
+      "bwrap": "3ca262bcd5a1640d43adcd207a03e1834dd91e1bd6a2bb47b3d0aa47a2dc9c72",
+      "guest-mke2fs": "3a8cda1b1e6ba7c1e740f3d49e58155485c37f344b33851d95e68e1980f3922c",
+      "debugfs": "578ec8385c4e92cad16629a7ef2d25ade4bbdb2ef5c5a4e80e3124b0736e6712"
+    },
+    "files": {
+      "boxlite-guest": "5e7d1415307e46dfb2dd690c118e63ebd7d62189777ded62b710929d01fb059e",
+      "boxlite-shim": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+      "bwrap": "3ca262bcd5a1640d43adcd207a03e1834dd91e1bd6a2bb47b3d0aa47a2dc9c72",
+      "debugfs": "578ec8385c4e92cad16629a7ef2d25ade4bbdb2ef5c5a4e80e3124b0736e6712",
+      "guest-mke2fs": "3a8cda1b1e6ba7c1e740f3d49e58155485c37f344b33851d95e68e1980f3922c",
+      "guest-resize2fs": "0a2c15cb20fa3e369a02e9712c611037a89236bc52ad109daf02c3d33a19ee97",
+      "libkrunfw.so.5": "953201c0c367070946a2f99695cb50dbb8980d97e416964bfa3fb1e9d1f15f69",
+      "mke2fs": "6898e063cdda9c004b7180b8ab6b06d14f06828ecf1708a5d8c12020f543add4"
+    },
+    "shim_sha256": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+    "elf": {
+      "architecture": "x86_64",
+      "interpreter": "/lib64/ld-linux-x86-64.so.2",
+      "needed": [
+        "libgcc_s.so.1",
+        "libm.so.6",
+        "libc.so.6",
+        "ld-linux-x86-64.so.2"
+      ],
+      "RUNPATH": "$ORIGIN",
+      "highest_required_glibc": "2.34",
+      "build_system_glibc": "2.36",
+      "shipped_libc_or_loader": false
+    },
+    "previous_runtime": {
+      "shim_sha256": "fb836e52ea6f29c4c66c78cffa476e010a1e88404971dfc45cc27bd0302ba9b5",
+      "provenance_sha256": null,
+      "official_archive_sha256": "241171320f008c86d2f4af95ed6690edf93417ade956a196b2c3e366e4857e1b"
+    },
+    "native_dns_patch": {
+      "upstream_boxlite_commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+      "dependency": "github.com/containers/gvisor-tap-vsock@v0.8.7",
+      "dependency_sum": "h1:mFMMU5CIXO9sbtsgECc90loUHx15km3AN6Zuhg3X4qM=",
+      "original_bridge_sha256": {
+        "main.go": "14b73c01d2ed7d8ee8d9bd610ffcb8b3f9e6d330c17e3c649cb00e81ab6308c7",
+        "go.mod": "a5d0a73c4da38777c8bc84222933ebe50636758b9996504611b96ff70eecda0e",
+        "go.sum": "84dddcab5d612e04cac72c140477a7eeeb8ec01088f237f1dd0de157d9217c47"
+      },
+      "original_dependency_sha256": {
+        "pkg/types/configuration.go": "24257bff47a0dd21e248869336dd1b55ed1fda77c78f95d5f49634bf950ea2ce",
+        "pkg/virtualnetwork/services.go": "1c6970a236d9ddbe1d341a1ca8eebeef9647d5980e42ef7d9771a5b58c259410",
+        "pkg/services/dns/dns.go": "6b89d79e05aacceecd3e7fcd87270e505ecf1226ad8a6c4885e6afd5632a4e5c",
+        "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      "patched_sha256": {
+        "src/deps/libgvproxy-sys/gvproxy-bridge/main.go": "cf63ea0c3404a7a95bc3386e40a2f90005ef316a3a2286114e4c302b202e1514",
+        "src/deps/libgvproxy-sys/gvproxy-bridge/go.mod": "76b83a7d13d485a5dbba8b87e080723d2804f433c726e49dafbabc149cb58747",
+        "src/deps/libgvproxy-sys/gvproxy-bridge/tank_dns_policy.go": "fff7de075555223525b503dfabd6c3cd7244ef0d8a295043adc81d3cf6029268",
+        "src/deps/libgvproxy-sys/gvproxy-bridge/tank_dns_policy_test.go": "f0e6afe1982a21322db5e753870ce7320479e8c5833314d01af306bf5d8bb418",
+        "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/types/configuration.go": "b65257e1a91e98e95bae8838494170ab7dbd8597a30083eea0ce20724795896d",
+        "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/virtualnetwork/services.go": "f86e1240e30f6534f7aa3436e02a20f986d38c058b52999de4041b9d3cfa6ce5",
+        "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/services/dns/dns.go": "f02cb1778c9fd26c14ba2b6b89c171c83a72dfe0afdeb5b99c47658305be90db",
+        "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/services/dns/tank_policy_test.go": "a39db84415c0e2dfe830503f057ec8fbb097a995479726b32cc9a37762bc6d18"
+      },
+      "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+      "sdk_abi_changed": false,
+      "native_qualification": "NOT_RUN"
+    },
+    "build": {
+      "image_sha256": "a9cf14be68be815f5cacb03054e2dae2aacbd62b29d606775a56199e9e278b8a",
+      "source_overlay": "deploy/boxlite/v0.10.6/replay-dns",
+      "link_flags": "same upstream static relocation flags; -crt-static",
+      "sdk_abi_changed": false
+    },
+    "build_evidence_sha256": {
+      "SHA256SUMS": "6bbd1f6024fd6573d587d36e78aee6513b2ae96c194ee0f7a925d5fcfba1caae",
+      "boxlite-shim": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+      "bridge-tests.log": "fe216788a3c1c6743798bb652574899dfa412dc226f003cb872e010c5b8c46a9",
+      "build-packages.txt": "e69299bbeae5f0f6a588b85547b30493ea04fce22e33c185c027a0c8234fcb7e",
+      "dns-tests.log": "4adf6e922c27843fc3d2f0572f95fed4aa34d230795ebdebd6f3419e54600ee4",
+      "dynamic.txt": "9d7bb6b42b4fdb96bdcdaadaaab3a6ba19fcab857463899c41375ccc8de093ec",
+      "file.txt": "ca4c497918bc2fc898511739ee5ac8cd8b5df8df8a2f888e5c0e8a2d1eacf4c3",
+      "glibc-version.txt": "d413ead7ce9065771e2e436981fabd86519efcf109a71c81ffa37dd397fa825b",
+      "go-version.txt": "72fbd1d67ca459621672bbf30387af1e39868899b7092da85d764dc5708a3702",
+      "ldd.txt": "f40dea762341b7dd7cfe57d9ebdd1796637cd3be87156b6eb0f1a4fe513546e9",
+      "module-download.json": "f0beb2abf6beaa7970794c360481af311e6a4926485dcad1f7a1a33906933750",
+      "patch-receipt.json": "5bb1ca1b571ca209b6205bcc50d02f56a5f2e5bfa411f903b5326cc33cafe5ba",
+      "program-headers.txt": "3fd7492b7c5f695e4643acd3f2e36054411fd42af69ba2acd94c9bd11c92a1d5",
+      "rustc-version.txt": "938db28b83089ab88301ca425f99fa1d8b61ee66e0371babe1db6373ae9810a3",
+      "source-diff-stat.txt": "7fe2dc72ac51b9d4ce4bd5d39c57b807a856f9a52ceb16a457762a46110443a5",
+      "source.patch": "8b06e3d9597070d5f1d0fa6bb7f44af3a15fcd5913b03d0b7637b46a6e72532f",
+      "submodules.txt": "f4e7bfd246c0e0a01f629d52104737b986c541307ab65089d7fae6d337cefa26",
+      "versions.txt": "d00a0292068f98fbf0af7811f9875c7e3607938b7bb334ad801519c992cc0629"
+    },
+    "build_phase_receipts_sha256": {
+      "build-2-receipt.json": "5e1b31ef7f72e08971d0bd2225bdc955a57d71abc4c494f7ff7431d3bf14cb9d",
+      "build-receipt.json": "de6bcd31682283160055aeb771f7f63945418c8895e277ab4472e3ffc6687bd3",
+      "prepare-receipt.json": "07a623087df59505c526801d7c4866afd2937b95aee7096c1b6625306dc67699",
+      "test-2-receipt.json": "ef243528737f09699e31c7a34da8cb6c1effc2f70ef6ba6aa22a3df7d0cb22db",
+      "test-receipt.json": "02ed34cd3698f79b0360a33235d20fe3519b077591026445d297316f51524c88"
+    },
+    "qualification": {
+      "required_for_this_artifact": true,
+      "native": "NOT_RUN",
+      "production_adoption": false,
+      "inherited_hardware_results": false
+    },
+    "build_contract": {
+      "schema": "tank.boxlite-local-build.v1",
+      "evidence_sha256": {
+        "build-receipt.json": "5e1b31ef7f72e08971d0bd2225bdc955a57d71abc4c494f7ff7431d3bf14cb9d",
+        "test-receipt.json": "ef243528737f09699e31c7a34da8cb6c1effc2f70ef6ba6aa22a3df7d0cb22db",
+        "source.patch": "8b06e3d9597070d5f1d0fa6bb7f44af3a15fcd5913b03d0b7637b46a6e72532f",
+        "patch-receipt.json": "5bb1ca1b571ca209b6205bcc50d02f56a5f2e5bfa411f903b5326cc33cafe5ba",
+        "go-version.txt": "72fbd1d67ca459621672bbf30387af1e39868899b7092da85d764dc5708a3702",
+        "rustc-version.txt": "938db28b83089ab88301ca425f99fa1d8b61ee66e0371babe1db6373ae9810a3",
+        "glibc-version.txt": "d413ead7ce9065771e2e436981fabd86519efcf109a71c81ffa37dd397fa825b",
+        "submodules.txt": "f4e7bfd246c0e0a01f629d52104737b986c541307ab65089d7fae6d337cefa26"
+      },
+      "trust": "Locally built operator artifact; evidence hashes are not third-party signed attestation"
+    }
+  },
+  "sandbox_browser": {
+    "engine": "pinned Playwright default Chromium headless shell; no fallback",
+    "worker_sha256": "8e3881b1e4de68a0f53c88321adc48691bd2d8f44f6e915b8843062c3c49a988",
+    "cache_preparer_sha256": "3bacdfb0a29d0679bf18a3b224646c066221dcf5aaf8252c030136fc471c8d2f",
+    "image_manifest": "/opt/tank/browser-font-cache.json",
+    "rpc_budget_s": 75,
+    "rpc_response_receipt_budget_s": 80,
+    "sandbox_exec_budget_s": 90
+  },
+  "entrypoint_sha256": "48e5bf5eb78706c3a939b954fcdcbedd6ecde0fef1f2b7f022a2abddb8ec2898",
+  "dockerfile_sha256": "39ff26b148b1d22b0ed47e1dedafbd12256b12666fc41974bb8881a0c57e8a91",
+  "source_hashes": {
+    "packages/sandbox-adapter-litebox/src/litebox.ts": "6becdfdbeb66b94903677a81963d30e1acf6b2a0711be414a982dd8ed064b51c",
+    "packages/control-plane-node/src/modules/node-foundation.ts": "670d021bbecdf97018931511ad9134b80d96078f498c8af14034c9a4a09313ca",
+    "packages/control-plane-node/src/modules/node-managed.ts": "61dee1b2fb58ae245c1032003f003f513ecfbfbdb03025dc16d334beb5c6929b",
+    "packages/control-plane-node/src/registry.ts": "a409f0ca7b158f2ad2585cf025d838d1535adb361ba4f9d3c0067e859223ad70",
+    "packages/session-runtime-sql/src/coordination.ts": "a30aec208005cd0514458bf11a79ab0c6a1eea53fcbe65a2d486e02ec6e25a68",
+    "packages/session-event-store-sql/src/index.ts": "b6c3f1c54fd037147c391d4597b91fbd53e71eed134cfe4ffb8287f33ec3bf38",
+    "packages/control-plane-node/src/lib/node-managed-workspace-checkpoints.ts": "3b96f352b16d1578e1d3f5f2d30082b40200f9b52ba633a6edc116cf91d9bf42",
+    "packages/agents-store/src/adapters/sql-agent-repo.ts": "b3d1190a5eed96c8f3271571fe7b683cdc87062d057ff706788564f0c0e80368",
+    "packages/environments-store/src/adapters/sql-environment-repo.ts": "5a1cfa89a86ec2b8e30668be154ee97815d1127269bf1c01cce583225b8912eb",
+    "packages/sessions-store/src/adapters/sql-session-repo.ts": "622290725c218fb54ada8dbb2be32be0bb00c91bd6bf1e8185ddcd36a12c07c2",
+    "packages/credentials-store/src/adapters/sql-credential-repo.ts": "dfcceff73f74150f7b2d615be0fca638440290118dc667bdbf6a0bd813a9d1d6",
+    "packages/dreams-store/src/adapters/sql-dream-repo.ts": "7ad4842c37deec4a3db7606ba57202821c585e8fbbd1e49404884ac3b1951d4a",
+    "packages/evals-store/src/adapters/sql-eval-run-repo.ts": "3c1953c0e4c5b4888704cb97e6fe31fd04fdbf0495ee4a8d7a3e6a9bcc44bef4",
+    "packages/files-store/src/adapters/sql-file-repo.ts": "d356d9273bc8d79f9c8f650a082d2c84acfb7c04966ab2985d6eb9ced967d017",
+    "packages/memory-store/src/adapters/sql-memory-repo.ts": "10fddc992f41b30fb557327caba7b368066d9f66564f98c56a183a39ea52e244",
+    "packages/memory-store/src/adapters/sql-store-repo.ts": "e312914049a23b1ee7120e266d881a3855f3b80360180478c40d43f148c5e122",
+    "packages/memory-store/src/adapters/sql-version-repo.ts": "21c05b88c4e81ac1f0a35417b679fb46c842e5fac8ab938cc1bcdd3596161634",
+    "packages/vaults-store/src/adapters/sql-vault-repo.ts": "840d4d2e9ccef8289068a27cfe7643021d13151831907a5b12713914e04cb921",
+    "packages/control-plane-node/src/modules/node-runtime.ts": "53ffcdf4d9ed514c7130e23d025d6fe2290becb6c6bd2bc349f5a88f59bd28dc",
+    "packages/managed-agents-api/src/contracts/agent-input-components.ts": "fd0e517cdbfc6e1f054af6a5ab99b248a4d14df07ec84e3ac1e1c13976d48b8f",
+    "packages/managed-agents-api/src/contracts/agent-response-components.ts": "ae31b0aaa81f325f6d0443b85f84c539ca42622b1345f431b1f43b197c5c4388",
+    "packages/managed-agents-domain/src/agents/definition.ts": "005d3866b816197efe251ef8b41f5d0ab3c7c51081dd47675a868d96d0f18726",
+    "packages/managed-agents-application/src/agents/definition-resolution.ts": "3d74b9bbd25502ea7998f59d4375bc533527dcce37fde6cc10e6b8bcb891ec64",
+    "packages/managed-agents-api/src/mappers/agent-definition.ts": "2dbcd6f11e016d1d17ca40c43949bda9bda63369d8feaf2b7c4197cb7867123b",
+    "packages/managed-agents-api/src/contracts/agents.ts": "7725cfd0b0a12ae04e7518a90dd86422d26004ac003e9d8437b1526992086a7a",
+    "apps/agent/src/harness/tools.ts": "313c95b191a36d19d39d226667f13be5a36ae78824066d393efa312b0c04d579",
+    "packages/browser-harness/src/index.ts": "a6b8f640744563b61563b63b0fcf4a6fa1e4ccb4345ddf382382d4ab465b9213",
+    "packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts": "6110e8c3ebec6d9beb9690910a19d55d4e81bbd70b6e695f76d444d093f037ac",
+    "packages/managed-agents-adapters-runtime/src/index.ts": "e2e01a8205d137a286c67e2d02f6440b0a3b8e7da7250354f92baea869e9adca",
+    "pnpm-lock.yaml": "6d5b4aee16af9210f0e5d7f5071e8e1ec916d77ee81f9d6c1e4e8768e00fb822",
+    "pnpm-workspace.yaml": "2316fdc7c95fad20758ef6aea06c194a508b98c49ccb597977188afd536b7461",
+    "packages/sandbox-adapter-litebox/src/index.ts": "9d7fd5012c120eae398a57773c9ac4092719b729f3388a769d9cccaaa9d68a8d",
+    "packages/sandbox-adapter-litebox/test/litebox.test.ts": "7cac970a5049c5a4fca588eba6552bd9ec8ee48c67a58b907ccac1cf6a29bfa4",
+    "packages/control-plane-node/src/lib/node-managed-session-inputs.ts": "93bb57eb4deb6681a81e00dc887f5ca4efdeb8214fd8a8a678f313c03939127b"
+  },
+  "patched_file_hashes": {
+    "apps/agent/src/harness/tools.ts": "b3b7c4f3bc26fabb1395a841c3396e63198ba1d5e0c7f746ff220c9a06a8da5d",
+    "packages/agents-store/src/adapters/sql-agent-repo.ts": "d011b9e5c6d5f20aaf80c4a6f90f37a868f0bbc7fc095e8190fc476fd5760a35",
+    "packages/browser-harness/src/index.ts": "1f3e1c6f75f1b620abdeeb2876cd5ae946f658de0824f0fb2ef8b51fbe37c6e4",
+    "packages/control-plane-node/package.json": "0da7af39f3da70db4206b12cae6d171da69d97cbb18616a7c47d8b78fde4d809",
+    "packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts": "d044bf3cc62f8a8fadb659acba4661daaf79b1485961b2b5b1d42d9cb273a7b9",
+    "packages/control-plane-node/src/lib/node-managed-session-inputs.ts": "776848d050f96c84317bd69d85aeb55467dae9a3523019fdc02cfd9562e4b2ba",
+    "packages/control-plane-node/src/lib/node-managed-session-runner.ts": "3a56b0977b8f5c1a6512b64c039f64ee4eff9c2de84693157a5e12e2eac15172",
+    "packages/control-plane-node/src/lib/node-managed-workspace-checkpoints.ts": "b3062e65c14ae99bd137c1ef690cee516c390cf9744d8133d7435c7d5b9938cb",
+    "packages/control-plane-node/src/modules/node-foundation.ts": "2946e3d1b449efdf8d0e4f859dda71a0fa3cea1e3cb1ec6045474e6864d4118b",
+    "packages/control-plane-node/src/modules/node-managed.ts": "cdddaf02fc32eba97344ca220860f42ec60330e46d3cf91e73a89182df4c756b",
+    "packages/control-plane-node/src/modules/node-runtime.ts": "5577e3ce54a009e5d73d237039b4023547da982256f475e8857454e401fc12da",
+    "packages/control-plane-node/src/registry.ts": "c2537b5d10c884ae64011ddc5d2e1a951dc5d1d90385b325e787213131598294",
+    "packages/credentials-store/src/adapters/sql-credential-repo.ts": "ed2a04d334643e450fbf94f96865394404e327c28369aae6ecbb61879a1b2232",
+    "packages/dreams-store/src/adapters/sql-dream-repo.ts": "65b35c1d0d62300e66ea88f13ea7595d2b3f517c1a46c7d8f4a5dcb711646cad",
+    "packages/environments-store/src/adapters/sql-environment-repo.ts": "0c99dc14d30695202b884e3494c51c51388f817f0ba9e0aee054324a3c23e7be",
+    "packages/evals-store/src/adapters/sql-eval-run-repo.ts": "060c1b053fa9102bd7cf998108cbea91651a592eb876133bc60289f94724130b",
+    "packages/files-store/src/adapters/sql-file-repo.ts": "c31384edc3719503b7b5f29541667ff3bff83e6d545a43690dba3ff6f09cc8f3",
+    "packages/managed-agents-adapters-runtime/src/index.ts": "4f7431d8f036f27108437bbbbcb34953293a2139940726c0f354e1423357fb7f",
+    "packages/managed-agents-api/src/contracts/agent-input-components.ts": "b127ddfd8ffa9310c5e7e002fa754cf4d0cb36d8382b531b89966029510845b6",
+    "packages/managed-agents-api/src/contracts/agent-response-components.ts": "b7c5baf65f725fe18be44a4547a81c36f0cb919342f12f156a8f757e27dcb0a9",
+    "packages/managed-agents-api/src/contracts/agents.ts": "b092b5cf08587d88708f42cf350050c8431379820e8921ede3b713b32ad536b2",
+    "packages/managed-agents-api/src/mappers/agent-definition.ts": "04cd1cb308a18c909f1cd3b014b2fdb125434ff8cc5b134041161f05579416d0",
+    "packages/managed-agents-application/src/agents/definition-resolution.ts": "161f473dd8b6b2b991b8eecc40e2019451a735ae6473f018b9257f46ee4189b5",
+    "packages/managed-agents-domain/src/agents/definition.ts": "7059d6eecd693de2624e05c268406401bd65069d686f1d22981cde7b81cb894d",
+    "packages/memory-store/src/adapters/sql-memory-repo.ts": "966d8022ff77756ee694c033387a67ce1bfce02ff7db7fa4a978d9868273cdab",
+    "packages/memory-store/src/adapters/sql-store-repo.ts": "378356c44b85991bc9a0d5b761366c3acd861b474f69dfe2de9e94d501180dd3",
+    "packages/memory-store/src/adapters/sql-version-repo.ts": "fdaa836161480555bcc761ef405606f4afc5fcd865e3a16d52b197f9b6763502",
+    "packages/sandbox-adapter-litebox/src/index.ts": "d6098f2f309f75ebfcf65d88eee6f6f9c708c2af9a2dc6c1e7fe42e93b4ea8dd",
+    "packages/sandbox-adapter-litebox/src/litebox.ts": "de3acae49e3e71886386ce2a70ce5adc798d800f722d83c05f85ffe3edafe894",
+    "packages/sandbox-adapter-litebox/test/litebox.test.ts": "a43d226f3f7feb00e14f19fba46e41202757ae9c22ee7ab13ade85a5d1173f7e",
+    "packages/session-event-store-sql/src/index.ts": "ec917dc3ed2a2760f2004f398fbe4dedb8e7fb427df53bea3580fdba56c5d3e5",
+    "packages/session-runtime-sql/src/coordination.ts": "f3856ddc5fab7bf483608577161dd27e57498cecb545383645b64c9e029c65c2",
+    "packages/sessions-store/src/adapters/sql-session-repo.ts": "436742a248e1cc8f40aef0ce2c8a9b3b3cb40cf325d7d5cb4c64e0b88760c077",
+    "packages/vaults-store/src/adapters/sql-vault-repo.ts": "1a5092e9a9efab726bba6f078d6e101944230f492f4473b54f3eb9efc1259974",
+    "pnpm-lock.yaml": "85fff8559737ce2e7313cd18b21f9770a24591d211c84a23c1f97dbd8581fecc",
+    "pnpm-workspace.yaml": "280eeb1cf424dec6b8a03173813f83db2350b9f8aabd3f1e315804e6087ca711",
+    "packages/session-runtime-sql/package.json": "1d585110451ad996901d4f0f509064286fde95d16d3eee64431a127c0fc1ef88",
+    "packages/session-runtime-contract/package.json": "515a5baf3a25317e6cb34fbb601163a619fc1c638769057fb42e07ec1fb9f9d2",
+    "packages/session-runtime-contract/src/history.ts": "5df3895ee215284548064b5f75de6175bfa41f26e7b59ea89946ede4956fd9ef",
+    "packages/session-runtime-contract/src/coordination.ts": "60caf26ff1404bfee6d5210abd7224bf72f03ad2552b8022d4fc6efe55c0530b",
+    "packages/managed-agents-application/src/session-execution/application.ts": "0d2fa3165eaa341ebb74785df365cae454e0ab02b29cc916f227a11942393a52",
+    "packages/managed-agents-adapters-sql/src/session-runtime-projection-sql-persistence.ts": "b8ef2a35759ba7bceaad591ea43ce268b563e1d6097551af1ecb320d1154208d",
+    "packages/control-plane-node/src/lib/node-managed-harness-runtime.ts": "42df88fbb28b07b137df2a61ff0aa76fe686bb792998bd231d95e91972b2ab79",
+    "packages/control-plane-node/src/lib/node-session-execution-worker.ts": "ed9faf75de150e24813f99381749394e61b47c9145f6cb3f5b683bd7ac42c152",
+    "packages/control-plane-node/src/lib/node-managed-session-runtime.ts": "87291a579358a0043d93a54a6bd8684bea6eb75ba0364ae7e8d986217333368f",
+    "docs/adr/0006-session-execution-authority.md": "30bc3d297b56e295975e8d13d29b9c946bf6cf180cfb425ddc22325e2a85cf69",
+    "apps/agent/src/harness/default-loop.ts": "59aa7ab7e45db11446fd467f61e843b5a866e0f66c2f8fce0cdf0013c65e314b",
+    "packages/control-plane-node/src/lib/node-managed-agent-codec.ts": "98c52e43d14b0690732a015c0bd364d162637357defd66a62f3e5655f3f51690",
+    "packages/managed-agents-domain/src/sessions/event.ts": "7a435f63b763baa020b7770b9d02463fc34acac52869daf23864a2aa30231828",
+    "packages/managed-agents-adapters-sql/src/session-event-polling-stream.ts": "59056fa760322e485ff3d19b7c3c04ecf770f02aa0402a8d1728744922242d41",
+    "packages/managed-agents-adapters-sql/src/session-event-replicated-stream.ts": "024f2f4a8c1287cfdc8375a7763e641ae9efe756673962b606bde654a61e3c44",
+    "packages/managed-agents-api/src/contracts/session-events.ts": "9f40c44949cbe3acd7bf2e197e46d26bdfe62bfc6a2f1555fabdf15af8be3cea",
+    "packages/managed-agents-api/src/mappers/session-events.ts": "102ee34180005ed7f3fb65d816d5abc824ece571fb5aaa78f82c779c9ef09789",
+    "packages/managed-agents-api/src/managed-sessions-api.ts": "ad5ddfb067147c9e594e48afe0f4d2555aadfa95959e8d762d98f3a6fabf8c6e",
+    "packages/control-plane-node/src/modules/node-http.ts": "08423097e4cb8eb86c6b4dc00f1acfadf1be13b46d2028f4c543affc7f52e842"
+  },
+  "added_file_hashes": {
+    "apps/agent/src/harness/sandbox-browser.ts": "d5395c7bf669a0fe626c0d27fbf4f0e2060892879df803fdf98ed342747a69eb",
+    "apps/main-node/test/fixtures/tank-registered-skill.zip": "c6d0d6c0eb69b355069ca6c954ff5f477e1003cf47fa73257fb5cfc7765cbe20",
+    "apps/main-node/test/tank-skill-archive.test.ts": "56deb46c54ac36a1a89640e235981ee5f47b7b946fa8157acef9714d1b6ab363",
+    "packages/browser-harness/test/tank-sandbox.test.ts": "4e94532ed1a52bd8e8c70137c339ce8a0b9a5254a582b170e0622003756e5ae3",
+    "packages/control-plane-node/src/lib/node-managed-skill-manifest.ts": "2ff175a9e795ea381ce6625c679c2045ba42aee1f8a905b5bfeba5ab38c9859c",
+    "packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts": "ce1a3cfc3db0c8939289be02615d52a419e9fca6fcc29a33e9dfd8a4c4478f14",
+    "packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts": "5c272de72bc4289db4c138d7e114cbfad84163d1df19a8d5978a210e8c25ff52",
+    "packages/control-plane-node/src/lib/tank-retained/replay-attachment.ts": "18847f3ef29f34259d8fd504acf5f8cfcc16636b609a5b3bc7be8cd23487ea46",
+    "packages/control-plane-node/src/lib/tank-retained/retained-session.ts": "57553be1a6716aa0395b851c71d0ec8aac06c16236c2c54d968e3699d4fd832d",
+    "packages/sandbox-adapter-litebox/src/tank-replay-evidence.ts": "4850cafe8c8d209d1f8d7b6e7db4cceb08e437d13a109153a786feb9d0444601",
+    "packages/sandbox-adapter-litebox/test/tank-network.test.ts": "b15274be21b6e609b9004df40f25f7a5fbeab35dec3fcc71d18796b9a777a82b",
+    "packages/control-plane-node/src/lib/node-managed-stable-skills.ts": "44a2ab8688f7abcbdf51489dc05775efa7191c1a58679abd60fd5c7be5f22dd4",
+    "packages/control-plane-node/src/lib/node-managed-skill-aliases.py": "c3d2c932acb5a48e4208e85a4f802856bd9f8420cada6aa84b27aaa47b598141",
+    "packages/control-plane-node/src/lib/tank-retained/guest-file-io.ts": "d149658b6e95b2aae3690a9538f9a52a7123cdab18d77ebf788e36cfcb4360bc",
+    "packages/control-plane-node/src/lib/tank-retained/guest-file-worker.ts": "5381ce39bd0bdc62db18df95aa04e0a5411972b12482d07fc9cf7f3f1605cc28",
+    "packages/session-runtime-contract/src/continuation.ts": "17b8acdfe263b6f433013bb962ee8947b2e02207ebd38dfc3504d024e963047a",
+    "packages/session-runtime-sql/src/continuation.ts": "6ab25a6e2a697276bab0de548d7d7e0b38c33dbb89d5f3b04020d49b98157a06",
+    "packages/managed-agents-api/src/routes/session-executions.ts": "cad3086d5b06d1b335e7f554b36d950e5908e73f47e53e4dc5ba09be7475dbc4",
+    "packages/control-plane-node/src/lib/node-session-execution-status.ts": "952af24c214b778c4b498ba422726e725ec7adaacd8a75fa94134d1b5e761e87"
+  },
+  "changes": [
+    "PostgreSQL typed nullable guards and bigint epoch boundaries",
+    "opaque tool/application JSON preserved across runtime protocol envelope case mapping",
+    "canonical tool schemas/domain/mappers preserve browser and scheduling controls",
+    "browser tools execute through per-session SandboxPort and VM-local Unix-socket Playwright worker",
+    "network policy passed from selected environment to BoxLite",
+    "native skill descriptors resolve the validated unique manifest directory from compiled ZIPs in every exposure mode",
+    "sandbox Python3.12 image supplied with SANDBOX_IMAGE",
+    "curated read-only DB/API credentials only; replay excludes API keys",
+    "Node24 required by pinned pnpm11, upstream Dockerfile used Node22"
+  ],
+  "manifest_stage": "tank-deployment-composite-v1",
+  "base_stage_provenance": {
+    "manifest_sha256": "6ddaf2106c24c2b52c8ef79ff68c633b009873f15ae997a97e16057aab0eb751",
+    "manifest": {
+      "upstream_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+      "overlay": "tank8-replay-sealed",
+      "boxlite_sdk_version": "0.10.6",
+      "boxlite_sdk_patch": {
+        "sdk_version": "0.10.6",
+        "pnpm_version": "11.0.8",
+        "upstream_openma_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+        "source_sha256": {
+          "pnpm-lock.yaml": "6d5b4aee16af9210f0e5d7f5071e8e1ec916d77ee81f9d6c1e4e8768e00fb822",
+          "pnpm-workspace.yaml": "2316fdc7c95fad20758ef6aea06c194a508b98c49ccb597977188afd536b7461"
+        },
+        "workspace_append": "\n# Tank observed-runtime compatibility pin; upstream OpenMA source commit is unchanged.\noverrides:\n  '@boxlite-ai/boxlite': '0.10.6'\n",
+        "lockfile_asset": "openma-pnpm-lock.yaml",
+        "lockfile_sha256": "8db697971714ee04b538d90653a370f1ce25cc792f7304da1c57ebff276aa128",
+        "policy": "Candidate runtime compatibility repair for reproduced mounted-boot and static-loader failures; no production adoption implied",
+        "native_host_security": {
+          "jailerEnabled": false,
+          "seccompEnabled": false
+        },
+        "security_basis": "Explicitly retain measured BoxLite0.9 Linux native defaults; outer Docker default seccomp/AppArmor remain enabled"
+      },
+      "boxlite_runtime": {
+        "status": "UNQUALIFIED_REPLAY_DNS_CANDIDATE",
+        "architecture": "amd64",
+        "source": {
+          "repository": "https://github.com/boxlite-ai/boxlite.git",
+          "version": "0.10.6",
+          "commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+          "libkrun_commit": "e12b9b3780ffa8df9f3e1797b217d13453479167",
+          "Cargo.lock": "720f5f70fdd48ca15d170d8ba8bf61832378e8615dadfb12a84b55761b571149",
+          "libkrun_Cargo.lock": "353fe6bb081d1cd4b4e24aa4ef323319709543c65b7304e015320a563688d3c2",
+          "gvproxy_go.sum": "84dddcab5d612e04cac72c140477a7eeeb8ec01088f237f1dd0de157d9217c47",
+          "source_tracked_diff": "clean pinned baseline; exact reviewed replay DNS overlay retained unchanged through compilation"
+        },
+        "official_runtime": {
+          "url": "https://github.com/boxlite-ai/boxlite/releases/download/v0.10.6/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz",
+          "archive_sha256": "241171320f008c86d2f4af95ed6690edf93417ade956a196b2c3e366e4857e1b",
+          "size": 28133546
+        },
+        "original_files": {
+          "guest-resize2fs": "0a2c15cb20fa3e369a02e9712c611037a89236bc52ad109daf02c3d33a19ee97",
+          "boxlite-shim": "fb836e52ea6f29c4c66c78cffa476e010a1e88404971dfc45cc27bd0302ba9b5",
+          "libkrunfw.so.5": "953201c0c367070946a2f99695cb50dbb8980d97e416964bfa3fb1e9d1f15f69",
+          "boxlite-guest": "5e7d1415307e46dfb2dd690c118e63ebd7d62189777ded62b710929d01fb059e",
+          "mke2fs": "6898e063cdda9c004b7180b8ab6b06d14f06828ecf1708a5d8c12020f543add4",
+          "bwrap": "3ca262bcd5a1640d43adcd207a03e1834dd91e1bd6a2bb47b3d0aa47a2dc9c72",
+          "guest-mke2fs": "3a8cda1b1e6ba7c1e740f3d49e58155485c37f344b33851d95e68e1980f3922c",
+          "debugfs": "578ec8385c4e92cad16629a7ef2d25ade4bbdb2ef5c5a4e80e3124b0736e6712"
+        },
+        "files": {
+          "boxlite-guest": "5e7d1415307e46dfb2dd690c118e63ebd7d62189777ded62b710929d01fb059e",
+          "boxlite-shim": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+          "bwrap": "3ca262bcd5a1640d43adcd207a03e1834dd91e1bd6a2bb47b3d0aa47a2dc9c72",
+          "debugfs": "578ec8385c4e92cad16629a7ef2d25ade4bbdb2ef5c5a4e80e3124b0736e6712",
+          "guest-mke2fs": "3a8cda1b1e6ba7c1e740f3d49e58155485c37f344b33851d95e68e1980f3922c",
+          "guest-resize2fs": "0a2c15cb20fa3e369a02e9712c611037a89236bc52ad109daf02c3d33a19ee97",
+          "libkrunfw.so.5": "953201c0c367070946a2f99695cb50dbb8980d97e416964bfa3fb1e9d1f15f69",
+          "mke2fs": "6898e063cdda9c004b7180b8ab6b06d14f06828ecf1708a5d8c12020f543add4"
+        },
+        "shim_sha256": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+        "elf": {
+          "architecture": "x86_64",
+          "interpreter": "/lib64/ld-linux-x86-64.so.2",
+          "needed": [
+            "libgcc_s.so.1",
+            "libm.so.6",
+            "libc.so.6",
+            "ld-linux-x86-64.so.2"
+          ],
+          "RUNPATH": "$ORIGIN",
+          "highest_required_glibc": "2.34",
+          "build_system_glibc": "2.36",
+          "shipped_libc_or_loader": false
+        },
+        "previous_runtime": {
+          "shim_sha256": "fb836e52ea6f29c4c66c78cffa476e010a1e88404971dfc45cc27bd0302ba9b5",
+          "provenance_sha256": null,
+          "official_archive_sha256": "241171320f008c86d2f4af95ed6690edf93417ade956a196b2c3e366e4857e1b"
+        },
+        "native_dns_patch": {
+          "upstream_boxlite_commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+          "dependency": "github.com/containers/gvisor-tap-vsock@v0.8.7",
+          "dependency_sum": "h1:mFMMU5CIXO9sbtsgECc90loUHx15km3AN6Zuhg3X4qM=",
+          "original_bridge_sha256": {
+            "main.go": "14b73c01d2ed7d8ee8d9bd610ffcb8b3f9e6d330c17e3c649cb00e81ab6308c7",
+            "go.mod": "a5d0a73c4da38777c8bc84222933ebe50636758b9996504611b96ff70eecda0e",
+            "go.sum": "84dddcab5d612e04cac72c140477a7eeeb8ec01088f237f1dd0de157d9217c47"
+          },
+          "original_dependency_sha256": {
+            "pkg/types/configuration.go": "24257bff47a0dd21e248869336dd1b55ed1fda77c78f95d5f49634bf950ea2ce",
+            "pkg/virtualnetwork/services.go": "1c6970a236d9ddbe1d341a1ca8eebeef9647d5980e42ef7d9771a5b58c259410",
+            "pkg/services/dns/dns.go": "6b89d79e05aacceecd3e7fcd87270e505ecf1226ad8a6c4885e6afd5632a4e5c",
+            "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          "patched_sha256": {
+            "src/deps/libgvproxy-sys/gvproxy-bridge/main.go": "cf63ea0c3404a7a95bc3386e40a2f90005ef316a3a2286114e4c302b202e1514",
+            "src/deps/libgvproxy-sys/gvproxy-bridge/go.mod": "76b83a7d13d485a5dbba8b87e080723d2804f433c726e49dafbabc149cb58747",
+            "src/deps/libgvproxy-sys/gvproxy-bridge/tank_dns_policy.go": "fff7de075555223525b503dfabd6c3cd7244ef0d8a295043adc81d3cf6029268",
+            "src/deps/libgvproxy-sys/gvproxy-bridge/tank_dns_policy_test.go": "f0e6afe1982a21322db5e753870ce7320479e8c5833314d01af306bf5d8bb418",
+            "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/types/configuration.go": "b65257e1a91e98e95bae8838494170ab7dbd8597a30083eea0ce20724795896d",
+            "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/virtualnetwork/services.go": "f86e1240e30f6534f7aa3436e02a20f986d38c058b52999de4041b9d3cfa6ce5",
+            "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/services/dns/dns.go": "f02cb1778c9fd26c14ba2b6b89c171c83a72dfe0afdeb5b99c47658305be90db",
+            "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/services/dns/tank_policy_test.go": "a39db84415c0e2dfe830503f057ec8fbb097a995479726b32cc9a37762bc6d18"
+          },
+          "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "sdk_abi_changed": false,
+          "native_qualification": "NOT_RUN"
+        },
+        "build": {
+          "image_sha256": "a9cf14be68be815f5cacb03054e2dae2aacbd62b29d606775a56199e9e278b8a",
+          "source_overlay": "deploy/boxlite/v0.10.6/replay-dns",
+          "link_flags": "same upstream static relocation flags; -crt-static",
+          "sdk_abi_changed": false
+        },
+        "build_evidence_sha256": {
+          "SHA256SUMS": "6bbd1f6024fd6573d587d36e78aee6513b2ae96c194ee0f7a925d5fcfba1caae",
+          "boxlite-shim": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+          "bridge-tests.log": "fe216788a3c1c6743798bb652574899dfa412dc226f003cb872e010c5b8c46a9",
+          "build-packages.txt": "e69299bbeae5f0f6a588b85547b30493ea04fce22e33c185c027a0c8234fcb7e",
+          "dns-tests.log": "4adf6e922c27843fc3d2f0572f95fed4aa34d230795ebdebd6f3419e54600ee4",
+          "dynamic.txt": "9d7bb6b42b4fdb96bdcdaadaaab3a6ba19fcab857463899c41375ccc8de093ec",
+          "file.txt": "ca4c497918bc2fc898511739ee5ac8cd8b5df8df8a2f888e5c0e8a2d1eacf4c3",
+          "glibc-version.txt": "d413ead7ce9065771e2e436981fabd86519efcf109a71c81ffa37dd397fa825b",
+          "go-version.txt": "72fbd1d67ca459621672bbf30387af1e39868899b7092da85d764dc5708a3702",
+          "ldd.txt": "f40dea762341b7dd7cfe57d9ebdd1796637cd3be87156b6eb0f1a4fe513546e9",
+          "module-download.json": "f0beb2abf6beaa7970794c360481af311e6a4926485dcad1f7a1a33906933750",
+          "patch-receipt.json": "5bb1ca1b571ca209b6205bcc50d02f56a5f2e5bfa411f903b5326cc33cafe5ba",
+          "program-headers.txt": "3fd7492b7c5f695e4643acd3f2e36054411fd42af69ba2acd94c9bd11c92a1d5",
+          "rustc-version.txt": "938db28b83089ab88301ca425f99fa1d8b61ee66e0371babe1db6373ae9810a3",
+          "source-diff-stat.txt": "7fe2dc72ac51b9d4ce4bd5d39c57b807a856f9a52ceb16a457762a46110443a5",
+          "source.patch": "8b06e3d9597070d5f1d0fa6bb7f44af3a15fcd5913b03d0b7637b46a6e72532f",
+          "submodules.txt": "f4e7bfd246c0e0a01f629d52104737b986c541307ab65089d7fae6d337cefa26",
+          "versions.txt": "d00a0292068f98fbf0af7811f9875c7e3607938b7bb334ad801519c992cc0629"
+        },
+        "build_phase_receipts_sha256": {
+          "build-2-receipt.json": "5e1b31ef7f72e08971d0bd2225bdc955a57d71abc4c494f7ff7431d3bf14cb9d",
+          "build-receipt.json": "de6bcd31682283160055aeb771f7f63945418c8895e277ab4472e3ffc6687bd3",
+          "prepare-receipt.json": "07a623087df59505c526801d7c4866afd2937b95aee7096c1b6625306dc67699",
+          "test-2-receipt.json": "ef243528737f09699e31c7a34da8cb6c1effc2f70ef6ba6aa22a3df7d0cb22db",
+          "test-receipt.json": "02ed34cd3698f79b0360a33235d20fe3519b077591026445d297316f51524c88"
+        },
+        "qualification": {
+          "required_for_this_artifact": true,
+          "native": "NOT_RUN",
+          "production_adoption": false,
+          "inherited_hardware_results": false
+        },
+        "build_contract": {
+          "schema": "tank.boxlite-local-build.v1",
+          "evidence_sha256": {
+            "build-receipt.json": "5e1b31ef7f72e08971d0bd2225bdc955a57d71abc4c494f7ff7431d3bf14cb9d",
+            "test-receipt.json": "ef243528737f09699e31c7a34da8cb6c1effc2f70ef6ba6aa22a3df7d0cb22db",
+            "source.patch": "8b06e3d9597070d5f1d0fa6bb7f44af3a15fcd5913b03d0b7637b46a6e72532f",
+            "patch-receipt.json": "5bb1ca1b571ca209b6205bcc50d02f56a5f2e5bfa411f903b5326cc33cafe5ba",
+            "go-version.txt": "72fbd1d67ca459621672bbf30387af1e39868899b7092da85d764dc5708a3702",
+            "rustc-version.txt": "938db28b83089ab88301ca425f99fa1d8b61ee66e0371babe1db6373ae9810a3",
+            "glibc-version.txt": "d413ead7ce9065771e2e436981fabd86519efcf109a71c81ffa37dd397fa825b",
+            "submodules.txt": "f4e7bfd246c0e0a01f629d52104737b986c541307ab65089d7fae6d337cefa26"
+          },
+          "trust": "Locally built operator artifact; evidence hashes are not third-party signed attestation"
+        }
+      },
+      "sandbox_browser": {
+        "engine": "pinned Playwright default Chromium headless shell; no fallback",
+        "worker_sha256": "8e3881b1e4de68a0f53c88321adc48691bd2d8f44f6e915b8843062c3c49a988",
+        "cache_preparer_sha256": "3bacdfb0a29d0679bf18a3b224646c066221dcf5aaf8252c030136fc471c8d2f",
+        "image_manifest": "/opt/tank/browser-font-cache.json",
+        "rpc_budget_s": 75,
+        "rpc_response_receipt_budget_s": 80,
+        "sandbox_exec_budget_s": 90
+      },
+      "entrypoint_sha256": "48e5bf5eb78706c3a939b954fcdcbedd6ecde0fef1f2b7f022a2abddb8ec2898",
+      "dockerfile_sha256": "39ff26b148b1d22b0ed47e1dedafbd12256b12666fc41974bb8881a0c57e8a91",
+      "source_hashes": {
+        "packages/sandbox-adapter-litebox/src/litebox.ts": "6becdfdbeb66b94903677a81963d30e1acf6b2a0711be414a982dd8ed064b51c",
+        "packages/control-plane-node/src/modules/node-foundation.ts": "670d021bbecdf97018931511ad9134b80d96078f498c8af14034c9a4a09313ca",
+        "packages/control-plane-node/src/modules/node-managed.ts": "61dee1b2fb58ae245c1032003f003f513ecfbfbdb03025dc16d334beb5c6929b",
+        "packages/control-plane-node/src/registry.ts": "a409f0ca7b158f2ad2585cf025d838d1535adb361ba4f9d3c0067e859223ad70",
+        "packages/session-runtime-sql/src/coordination.ts": "a30aec208005cd0514458bf11a79ab0c6a1eea53fcbe65a2d486e02ec6e25a68",
+        "packages/session-event-store-sql/src/index.ts": "b6c3f1c54fd037147c391d4597b91fbd53e71eed134cfe4ffb8287f33ec3bf38",
+        "packages/control-plane-node/src/lib/node-managed-workspace-checkpoints.ts": "3b96f352b16d1578e1d3f5f2d30082b40200f9b52ba633a6edc116cf91d9bf42",
+        "packages/agents-store/src/adapters/sql-agent-repo.ts": "b3d1190a5eed96c8f3271571fe7b683cdc87062d057ff706788564f0c0e80368",
+        "packages/environments-store/src/adapters/sql-environment-repo.ts": "5a1cfa89a86ec2b8e30668be154ee97815d1127269bf1c01cce583225b8912eb",
+        "packages/sessions-store/src/adapters/sql-session-repo.ts": "622290725c218fb54ada8dbb2be32be0bb00c91bd6bf1e8185ddcd36a12c07c2",
+        "packages/credentials-store/src/adapters/sql-credential-repo.ts": "dfcceff73f74150f7b2d615be0fca638440290118dc667bdbf6a0bd813a9d1d6",
+        "packages/dreams-store/src/adapters/sql-dream-repo.ts": "7ad4842c37deec4a3db7606ba57202821c585e8fbbd1e49404884ac3b1951d4a",
+        "packages/evals-store/src/adapters/sql-eval-run-repo.ts": "3c1953c0e4c5b4888704cb97e6fe31fd04fdbf0495ee4a8d7a3e6a9bcc44bef4",
+        "packages/files-store/src/adapters/sql-file-repo.ts": "d356d9273bc8d79f9c8f650a082d2c84acfb7c04966ab2985d6eb9ced967d017",
+        "packages/memory-store/src/adapters/sql-memory-repo.ts": "10fddc992f41b30fb557327caba7b368066d9f66564f98c56a183a39ea52e244",
+        "packages/memory-store/src/adapters/sql-store-repo.ts": "e312914049a23b1ee7120e266d881a3855f3b80360180478c40d43f148c5e122",
+        "packages/memory-store/src/adapters/sql-version-repo.ts": "21c05b88c4e81ac1f0a35417b679fb46c842e5fac8ab938cc1bcdd3596161634",
+        "packages/vaults-store/src/adapters/sql-vault-repo.ts": "840d4d2e9ccef8289068a27cfe7643021d13151831907a5b12713914e04cb921",
+        "packages/control-plane-node/src/modules/node-runtime.ts": "53ffcdf4d9ed514c7130e23d025d6fe2290becb6c6bd2bc349f5a88f59bd28dc",
+        "packages/managed-agents-api/src/contracts/agent-input-components.ts": "fd0e517cdbfc6e1f054af6a5ab99b248a4d14df07ec84e3ac1e1c13976d48b8f",
+        "packages/managed-agents-api/src/contracts/agent-response-components.ts": "ae31b0aaa81f325f6d0443b85f84c539ca42622b1345f431b1f43b197c5c4388",
+        "packages/managed-agents-domain/src/agents/definition.ts": "005d3866b816197efe251ef8b41f5d0ab3c7c51081dd47675a868d96d0f18726",
+        "packages/managed-agents-application/src/agents/definition-resolution.ts": "3d74b9bbd25502ea7998f59d4375bc533527dcce37fde6cc10e6b8bcb891ec64",
+        "packages/managed-agents-api/src/mappers/agent-definition.ts": "2dbcd6f11e016d1d17ca40c43949bda9bda63369d8feaf2b7c4197cb7867123b",
+        "packages/managed-agents-api/src/contracts/agents.ts": "7725cfd0b0a12ae04e7518a90dd86422d26004ac003e9d8437b1526992086a7a",
+        "apps/agent/src/harness/tools.ts": "313c95b191a36d19d39d226667f13be5a36ae78824066d393efa312b0c04d579",
+        "packages/browser-harness/src/index.ts": "a6b8f640744563b61563b63b0fcf4a6fa1e4ccb4345ddf382382d4ab465b9213",
+        "packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts": "6110e8c3ebec6d9beb9690910a19d55d4e81bbd70b6e695f76d444d093f037ac",
+        "packages/managed-agents-adapters-runtime/src/index.ts": "e2e01a8205d137a286c67e2d02f6440b0a3b8e7da7250354f92baea869e9adca",
+        "pnpm-lock.yaml": "6d5b4aee16af9210f0e5d7f5071e8e1ec916d77ee81f9d6c1e4e8768e00fb822",
+        "pnpm-workspace.yaml": "2316fdc7c95fad20758ef6aea06c194a508b98c49ccb597977188afd536b7461",
+        "packages/sandbox-adapter-litebox/src/index.ts": "9d7fd5012c120eae398a57773c9ac4092719b729f3388a769d9cccaaa9d68a8d",
+        "packages/sandbox-adapter-litebox/test/litebox.test.ts": "7cac970a5049c5a4fca588eba6552bd9ec8ee48c67a58b907ccac1cf6a29bfa4",
+        "packages/control-plane-node/src/lib/node-managed-session-inputs.ts": "93bb57eb4deb6681a81e00dc887f5ca4efdeb8214fd8a8a678f313c03939127b"
+      },
+      "patched_file_hashes": {
+        "packages/sandbox-adapter-litebox/src/litebox.ts": "2029ccc872960bc2ca3d77e0e4e59d63501b7f4b3bc7208cfd26a12db7117455",
+        "packages/control-plane-node/src/modules/node-foundation.ts": "2946e3d1b449efdf8d0e4f859dda71a0fa3cea1e3cb1ec6045474e6864d4118b",
+        "packages/control-plane-node/src/modules/node-managed.ts": "5ceb2f13d75bd74d40ed60c4e2e75106a6690e4c2d90851cdbea6f9cb866cb02",
+        "packages/control-plane-node/src/registry.ts": "c2537b5d10c884ae64011ddc5d2e1a951dc5d1d90385b325e787213131598294",
+        "packages/session-runtime-sql/src/coordination.ts": "8e2f096c44f8a3bd40120a0ab6806b76d4c55cbcd74cdbc19bd228bdd36febe7",
+        "packages/session-event-store-sql/src/index.ts": "8d19e9f4725ae0a07965a049ddb783fedc22a1f4a7729692c77837cad502dd6b",
+        "packages/control-plane-node/src/lib/node-managed-workspace-checkpoints.ts": "b3062e65c14ae99bd137c1ef690cee516c390cf9744d8133d7435c7d5b9938cb",
+        "packages/agents-store/src/adapters/sql-agent-repo.ts": "d011b9e5c6d5f20aaf80c4a6f90f37a868f0bbc7fc095e8190fc476fd5760a35",
+        "packages/environments-store/src/adapters/sql-environment-repo.ts": "0c99dc14d30695202b884e3494c51c51388f817f0ba9e0aee054324a3c23e7be",
+        "packages/sessions-store/src/adapters/sql-session-repo.ts": "436742a248e1cc8f40aef0ce2c8a9b3b3cb40cf325d7d5cb4c64e0b88760c077",
+        "packages/credentials-store/src/adapters/sql-credential-repo.ts": "ed2a04d334643e450fbf94f96865394404e327c28369aae6ecbb61879a1b2232",
+        "packages/dreams-store/src/adapters/sql-dream-repo.ts": "65b35c1d0d62300e66ea88f13ea7595d2b3f517c1a46c7d8f4a5dcb711646cad",
+        "packages/evals-store/src/adapters/sql-eval-run-repo.ts": "060c1b053fa9102bd7cf998108cbea91651a592eb876133bc60289f94724130b",
+        "packages/files-store/src/adapters/sql-file-repo.ts": "c31384edc3719503b7b5f29541667ff3bff83e6d545a43690dba3ff6f09cc8f3",
+        "packages/memory-store/src/adapters/sql-memory-repo.ts": "966d8022ff77756ee694c033387a67ce1bfce02ff7db7fa4a978d9868273cdab",
+        "packages/memory-store/src/adapters/sql-store-repo.ts": "378356c44b85991bc9a0d5b761366c3acd861b474f69dfe2de9e94d501180dd3",
+        "packages/memory-store/src/adapters/sql-version-repo.ts": "fdaa836161480555bcc761ef405606f4afc5fcd865e3a16d52b197f9b6763502",
+        "packages/vaults-store/src/adapters/sql-vault-repo.ts": "1a5092e9a9efab726bba6f078d6e101944230f492f4473b54f3eb9efc1259974",
+        "packages/control-plane-node/src/modules/node-runtime.ts": "6687223a03befba12e4e1f225174763cd287f442c36ca2480afd0dd93008cfa6",
+        "packages/managed-agents-api/src/contracts/agent-input-components.ts": "b127ddfd8ffa9310c5e7e002fa754cf4d0cb36d8382b531b89966029510845b6",
+        "packages/managed-agents-api/src/contracts/agent-response-components.ts": "b7c5baf65f725fe18be44a4547a81c36f0cb919342f12f156a8f757e27dcb0a9",
+        "packages/managed-agents-domain/src/agents/definition.ts": "7059d6eecd693de2624e05c268406401bd65069d686f1d22981cde7b81cb894d",
+        "packages/managed-agents-application/src/agents/definition-resolution.ts": "161f473dd8b6b2b991b8eecc40e2019451a735ae6473f018b9257f46ee4189b5",
+        "packages/managed-agents-api/src/mappers/agent-definition.ts": "04cd1cb308a18c909f1cd3b014b2fdb125434ff8cc5b134041161f05579416d0",
+        "packages/managed-agents-api/src/contracts/agents.ts": "b092b5cf08587d88708f42cf350050c8431379820e8921ede3b713b32ad536b2",
+        "apps/agent/src/harness/tools.ts": "b2403a85ede9154fe27d26c1995e319ba59df0e9708bc91748525df8e906fbbe",
+        "packages/browser-harness/src/index.ts": "1f3e1c6f75f1b620abdeeb2876cd5ae946f658de0824f0fb2ef8b51fbe37c6e4",
+        "packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts": "d044bf3cc62f8a8fadb659acba4661daaf79b1485961b2b5b1d42d9cb273a7b9",
+        "packages/managed-agents-adapters-runtime/src/index.ts": "4f7431d8f036f27108437bbbbcb34953293a2139940726c0f354e1423357fb7f",
+        "pnpm-lock.yaml": "8db697971714ee04b538d90653a370f1ce25cc792f7304da1c57ebff276aa128",
+        "pnpm-workspace.yaml": "280eeb1cf424dec6b8a03173813f83db2350b9f8aabd3f1e315804e6087ca711",
+        "packages/sandbox-adapter-litebox/src/index.ts": "d6098f2f309f75ebfcf65d88eee6f6f9c708c2af9a2dc6c1e7fe42e93b4ea8dd",
+        "packages/sandbox-adapter-litebox/test/litebox.test.ts": "a43d226f3f7feb00e14f19fba46e41202757ae9c22ee7ab13ade85a5d1173f7e",
+        "packages/control-plane-node/src/lib/node-managed-session-inputs.ts": "265f4c3ba423a31b5286f5a5035c09efd8520aff8b6429f2c539e53fe87b5156"
+      },
+      "added_file_hashes": {
+        "apps/agent/src/harness/sandbox-browser.ts": "d5395c7bf669a0fe626c0d27fbf4f0e2060892879df803fdf98ed342747a69eb",
+        "packages/browser-harness/test/tank-sandbox.test.ts": "4e94532ed1a52bd8e8c70137c339ce8a0b9a5254a582b170e0622003756e5ae3",
+        "packages/control-plane-node/src/lib/node-managed-skill-manifest.ts": "2ff175a9e795ea381ce6625c679c2045ba42aee1f8a905b5bfeba5ab38c9859c",
+        "apps/main-node/test/tank-skill-archive.test.ts": "56deb46c54ac36a1a89640e235981ee5f47b7b946fa8157acef9714d1b6ab363",
+        "apps/main-node/test/fixtures/tank-registered-skill.zip": "c6d0d6c0eb69b355069ca6c954ff5f477e1003cf47fa73257fb5cfc7765cbe20",
+        "packages/sandbox-adapter-litebox/src/tank-replay-evidence.ts": "4850cafe8c8d209d1f8d7b6e7db4cceb08e437d13a109153a786feb9d0444601",
+        "packages/sandbox-adapter-litebox/test/tank-network.test.ts": "b15274be21b6e609b9004df40f25f7a5fbeab35dec3fcc71d18796b9a777a82b"
+      },
+      "changes": [
+        "PostgreSQL typed nullable guards and bigint epoch boundaries",
+        "opaque tool/application JSON preserved across runtime protocol envelope case mapping",
+        "canonical tool schemas/domain/mappers preserve browser and scheduling controls",
+        "browser tools execute through per-session SandboxPort and VM-local Unix-socket Playwright worker",
+        "network policy passed from selected environment to BoxLite",
+        "native skill descriptors resolve the validated unique manifest directory from compiled ZIPs in every exposure mode",
+        "sandbox Python3.12 image supplied with SANDBOX_IMAGE",
+        "curated read-only DB/API credentials only; replay excludes API keys",
+        "Node24 required by pinned pnpm11, upstream Dockerfile used Node22"
+      ]
+    }
+  },
+  "retained_lifecycle": {
+    "runtime_identity": "c4afefbdddba3e6f05634a3bb5a46db20d5636413f4f24909b2abcdfa8fa8654",
+    "native_vm_proof": "NOT_RUN",
+    "production_adoption": false
+  },
+  "pre_execution_stage_provenance": {
+    "manifest_sha256": "34d9351145bc3a1b5c8d71219e7e13ff339cd61aaf27199b8688eebdfd7b80cf",
+    "manifest": {
+      "upstream_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+      "overlay": "tank8-replay-sealed",
+      "boxlite_sdk_version": "0.10.6",
+      "boxlite_sdk_patch": {
+        "sdk_version": "0.10.6",
+        "pnpm_version": "11.0.8",
+        "upstream_openma_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+        "source_sha256": {
+          "pnpm-lock.yaml": "6d5b4aee16af9210f0e5d7f5071e8e1ec916d77ee81f9d6c1e4e8768e00fb822",
+          "pnpm-workspace.yaml": "2316fdc7c95fad20758ef6aea06c194a508b98c49ccb597977188afd536b7461"
+        },
+        "workspace_append": "\n# Tank observed-runtime compatibility pin; upstream OpenMA source commit is unchanged.\noverrides:\n  '@boxlite-ai/boxlite': '0.10.6'\n",
+        "lockfile_asset": "openma-pnpm-lock.yaml",
+        "lockfile_sha256": "8db697971714ee04b538d90653a370f1ce25cc792f7304da1c57ebff276aa128",
+        "policy": "Candidate runtime compatibility repair for reproduced mounted-boot and static-loader failures; no production adoption implied",
+        "native_host_security": {
+          "jailerEnabled": false,
+          "seccompEnabled": false
+        },
+        "security_basis": "Explicitly retain measured BoxLite0.9 Linux native defaults; outer Docker default seccomp/AppArmor remain enabled"
+      },
+      "boxlite_runtime": {
+        "status": "UNQUALIFIED_REPLAY_DNS_CANDIDATE",
+        "architecture": "amd64",
+        "source": {
+          "repository": "https://github.com/boxlite-ai/boxlite.git",
+          "version": "0.10.6",
+          "commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+          "libkrun_commit": "e12b9b3780ffa8df9f3e1797b217d13453479167",
+          "Cargo.lock": "720f5f70fdd48ca15d170d8ba8bf61832378e8615dadfb12a84b55761b571149",
+          "libkrun_Cargo.lock": "353fe6bb081d1cd4b4e24aa4ef323319709543c65b7304e015320a563688d3c2",
+          "gvproxy_go.sum": "84dddcab5d612e04cac72c140477a7eeeb8ec01088f237f1dd0de157d9217c47",
+          "source_tracked_diff": "clean pinned baseline; exact reviewed replay DNS overlay retained unchanged through compilation"
+        },
+        "official_runtime": {
+          "url": "https://github.com/boxlite-ai/boxlite/releases/download/v0.10.6/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz",
+          "archive_sha256": "241171320f008c86d2f4af95ed6690edf93417ade956a196b2c3e366e4857e1b",
+          "size": 28133546
+        },
+        "original_files": {
+          "guest-resize2fs": "0a2c15cb20fa3e369a02e9712c611037a89236bc52ad109daf02c3d33a19ee97",
+          "boxlite-shim": "fb836e52ea6f29c4c66c78cffa476e010a1e88404971dfc45cc27bd0302ba9b5",
+          "libkrunfw.so.5": "953201c0c367070946a2f99695cb50dbb8980d97e416964bfa3fb1e9d1f15f69",
+          "boxlite-guest": "5e7d1415307e46dfb2dd690c118e63ebd7d62189777ded62b710929d01fb059e",
+          "mke2fs": "6898e063cdda9c004b7180b8ab6b06d14f06828ecf1708a5d8c12020f543add4",
+          "bwrap": "3ca262bcd5a1640d43adcd207a03e1834dd91e1bd6a2bb47b3d0aa47a2dc9c72",
+          "guest-mke2fs": "3a8cda1b1e6ba7c1e740f3d49e58155485c37f344b33851d95e68e1980f3922c",
+          "debugfs": "578ec8385c4e92cad16629a7ef2d25ade4bbdb2ef5c5a4e80e3124b0736e6712"
+        },
+        "files": {
+          "boxlite-guest": "5e7d1415307e46dfb2dd690c118e63ebd7d62189777ded62b710929d01fb059e",
+          "boxlite-shim": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+          "bwrap": "3ca262bcd5a1640d43adcd207a03e1834dd91e1bd6a2bb47b3d0aa47a2dc9c72",
+          "debugfs": "578ec8385c4e92cad16629a7ef2d25ade4bbdb2ef5c5a4e80e3124b0736e6712",
+          "guest-mke2fs": "3a8cda1b1e6ba7c1e740f3d49e58155485c37f344b33851d95e68e1980f3922c",
+          "guest-resize2fs": "0a2c15cb20fa3e369a02e9712c611037a89236bc52ad109daf02c3d33a19ee97",
+          "libkrunfw.so.5": "953201c0c367070946a2f99695cb50dbb8980d97e416964bfa3fb1e9d1f15f69",
+          "mke2fs": "6898e063cdda9c004b7180b8ab6b06d14f06828ecf1708a5d8c12020f543add4"
+        },
+        "shim_sha256": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+        "elf": {
+          "architecture": "x86_64",
+          "interpreter": "/lib64/ld-linux-x86-64.so.2",
+          "needed": [
+            "libgcc_s.so.1",
+            "libm.so.6",
+            "libc.so.6",
+            "ld-linux-x86-64.so.2"
+          ],
+          "RUNPATH": "$ORIGIN",
+          "highest_required_glibc": "2.34",
+          "build_system_glibc": "2.36",
+          "shipped_libc_or_loader": false
+        },
+        "previous_runtime": {
+          "shim_sha256": "fb836e52ea6f29c4c66c78cffa476e010a1e88404971dfc45cc27bd0302ba9b5",
+          "provenance_sha256": null,
+          "official_archive_sha256": "241171320f008c86d2f4af95ed6690edf93417ade956a196b2c3e366e4857e1b"
+        },
+        "native_dns_patch": {
+          "upstream_boxlite_commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+          "dependency": "github.com/containers/gvisor-tap-vsock@v0.8.7",
+          "dependency_sum": "h1:mFMMU5CIXO9sbtsgECc90loUHx15km3AN6Zuhg3X4qM=",
+          "original_bridge_sha256": {
+            "main.go": "14b73c01d2ed7d8ee8d9bd610ffcb8b3f9e6d330c17e3c649cb00e81ab6308c7",
+            "go.mod": "a5d0a73c4da38777c8bc84222933ebe50636758b9996504611b96ff70eecda0e",
+            "go.sum": "84dddcab5d612e04cac72c140477a7eeeb8ec01088f237f1dd0de157d9217c47"
+          },
+          "original_dependency_sha256": {
+            "pkg/types/configuration.go": "24257bff47a0dd21e248869336dd1b55ed1fda77c78f95d5f49634bf950ea2ce",
+            "pkg/virtualnetwork/services.go": "1c6970a236d9ddbe1d341a1ca8eebeef9647d5980e42ef7d9771a5b58c259410",
+            "pkg/services/dns/dns.go": "6b89d79e05aacceecd3e7fcd87270e505ecf1226ad8a6c4885e6afd5632a4e5c",
+            "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          "patched_sha256": {
+            "src/deps/libgvproxy-sys/gvproxy-bridge/main.go": "cf63ea0c3404a7a95bc3386e40a2f90005ef316a3a2286114e4c302b202e1514",
+            "src/deps/libgvproxy-sys/gvproxy-bridge/go.mod": "76b83a7d13d485a5dbba8b87e080723d2804f433c726e49dafbabc149cb58747",
+            "src/deps/libgvproxy-sys/gvproxy-bridge/tank_dns_policy.go": "fff7de075555223525b503dfabd6c3cd7244ef0d8a295043adc81d3cf6029268",
+            "src/deps/libgvproxy-sys/gvproxy-bridge/tank_dns_policy_test.go": "f0e6afe1982a21322db5e753870ce7320479e8c5833314d01af306bf5d8bb418",
+            "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/types/configuration.go": "b65257e1a91e98e95bae8838494170ab7dbd8597a30083eea0ce20724795896d",
+            "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/virtualnetwork/services.go": "f86e1240e30f6534f7aa3436e02a20f986d38c058b52999de4041b9d3cfa6ce5",
+            "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/services/dns/dns.go": "f02cb1778c9fd26c14ba2b6b89c171c83a72dfe0afdeb5b99c47658305be90db",
+            "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/services/dns/tank_policy_test.go": "a39db84415c0e2dfe830503f057ec8fbb097a995479726b32cc9a37762bc6d18"
+          },
+          "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "sdk_abi_changed": false,
+          "native_qualification": "NOT_RUN"
+        },
+        "build": {
+          "image_sha256": "a9cf14be68be815f5cacb03054e2dae2aacbd62b29d606775a56199e9e278b8a",
+          "source_overlay": "deploy/boxlite/v0.10.6/replay-dns",
+          "link_flags": "same upstream static relocation flags; -crt-static",
+          "sdk_abi_changed": false
+        },
+        "build_evidence_sha256": {
+          "SHA256SUMS": "6bbd1f6024fd6573d587d36e78aee6513b2ae96c194ee0f7a925d5fcfba1caae",
+          "boxlite-shim": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+          "bridge-tests.log": "fe216788a3c1c6743798bb652574899dfa412dc226f003cb872e010c5b8c46a9",
+          "build-packages.txt": "e69299bbeae5f0f6a588b85547b30493ea04fce22e33c185c027a0c8234fcb7e",
+          "dns-tests.log": "4adf6e922c27843fc3d2f0572f95fed4aa34d230795ebdebd6f3419e54600ee4",
+          "dynamic.txt": "9d7bb6b42b4fdb96bdcdaadaaab3a6ba19fcab857463899c41375ccc8de093ec",
+          "file.txt": "ca4c497918bc2fc898511739ee5ac8cd8b5df8df8a2f888e5c0e8a2d1eacf4c3",
+          "glibc-version.txt": "d413ead7ce9065771e2e436981fabd86519efcf109a71c81ffa37dd397fa825b",
+          "go-version.txt": "72fbd1d67ca459621672bbf30387af1e39868899b7092da85d764dc5708a3702",
+          "ldd.txt": "f40dea762341b7dd7cfe57d9ebdd1796637cd3be87156b6eb0f1a4fe513546e9",
+          "module-download.json": "f0beb2abf6beaa7970794c360481af311e6a4926485dcad1f7a1a33906933750",
+          "patch-receipt.json": "5bb1ca1b571ca209b6205bcc50d02f56a5f2e5bfa411f903b5326cc33cafe5ba",
+          "program-headers.txt": "3fd7492b7c5f695e4643acd3f2e36054411fd42af69ba2acd94c9bd11c92a1d5",
+          "rustc-version.txt": "938db28b83089ab88301ca425f99fa1d8b61ee66e0371babe1db6373ae9810a3",
+          "source-diff-stat.txt": "7fe2dc72ac51b9d4ce4bd5d39c57b807a856f9a52ceb16a457762a46110443a5",
+          "source.patch": "8b06e3d9597070d5f1d0fa6bb7f44af3a15fcd5913b03d0b7637b46a6e72532f",
+          "submodules.txt": "f4e7bfd246c0e0a01f629d52104737b986c541307ab65089d7fae6d337cefa26",
+          "versions.txt": "d00a0292068f98fbf0af7811f9875c7e3607938b7bb334ad801519c992cc0629"
+        },
+        "build_phase_receipts_sha256": {
+          "build-2-receipt.json": "5e1b31ef7f72e08971d0bd2225bdc955a57d71abc4c494f7ff7431d3bf14cb9d",
+          "build-receipt.json": "de6bcd31682283160055aeb771f7f63945418c8895e277ab4472e3ffc6687bd3",
+          "prepare-receipt.json": "07a623087df59505c526801d7c4866afd2937b95aee7096c1b6625306dc67699",
+          "test-2-receipt.json": "ef243528737f09699e31c7a34da8cb6c1effc2f70ef6ba6aa22a3df7d0cb22db",
+          "test-receipt.json": "02ed34cd3698f79b0360a33235d20fe3519b077591026445d297316f51524c88"
+        },
+        "qualification": {
+          "required_for_this_artifact": true,
+          "native": "NOT_RUN",
+          "production_adoption": false,
+          "inherited_hardware_results": false
+        },
+        "build_contract": {
+          "schema": "tank.boxlite-local-build.v1",
+          "evidence_sha256": {
+            "build-receipt.json": "5e1b31ef7f72e08971d0bd2225bdc955a57d71abc4c494f7ff7431d3bf14cb9d",
+            "test-receipt.json": "ef243528737f09699e31c7a34da8cb6c1effc2f70ef6ba6aa22a3df7d0cb22db",
+            "source.patch": "8b06e3d9597070d5f1d0fa6bb7f44af3a15fcd5913b03d0b7637b46a6e72532f",
+            "patch-receipt.json": "5bb1ca1b571ca209b6205bcc50d02f56a5f2e5bfa411f903b5326cc33cafe5ba",
+            "go-version.txt": "72fbd1d67ca459621672bbf30387af1e39868899b7092da85d764dc5708a3702",
+            "rustc-version.txt": "938db28b83089ab88301ca425f99fa1d8b61ee66e0371babe1db6373ae9810a3",
+            "glibc-version.txt": "d413ead7ce9065771e2e436981fabd86519efcf109a71c81ffa37dd397fa825b",
+            "submodules.txt": "f4e7bfd246c0e0a01f629d52104737b986c541307ab65089d7fae6d337cefa26"
+          },
+          "trust": "Locally built operator artifact; evidence hashes are not third-party signed attestation"
+        }
+      },
+      "sandbox_browser": {
+        "engine": "pinned Playwright default Chromium headless shell; no fallback",
+        "worker_sha256": "8e3881b1e4de68a0f53c88321adc48691bd2d8f44f6e915b8843062c3c49a988",
+        "cache_preparer_sha256": "3bacdfb0a29d0679bf18a3b224646c066221dcf5aaf8252c030136fc471c8d2f",
+        "image_manifest": "/opt/tank/browser-font-cache.json",
+        "rpc_budget_s": 75,
+        "rpc_response_receipt_budget_s": 80,
+        "sandbox_exec_budget_s": 90
+      },
+      "entrypoint_sha256": "48e5bf5eb78706c3a939b954fcdcbedd6ecde0fef1f2b7f022a2abddb8ec2898",
+      "dockerfile_sha256": "39ff26b148b1d22b0ed47e1dedafbd12256b12666fc41974bb8881a0c57e8a91",
+      "source_hashes": {
+        "packages/sandbox-adapter-litebox/src/litebox.ts": "6becdfdbeb66b94903677a81963d30e1acf6b2a0711be414a982dd8ed064b51c",
+        "packages/control-plane-node/src/modules/node-foundation.ts": "670d021bbecdf97018931511ad9134b80d96078f498c8af14034c9a4a09313ca",
+        "packages/control-plane-node/src/modules/node-managed.ts": "61dee1b2fb58ae245c1032003f003f513ecfbfbdb03025dc16d334beb5c6929b",
+        "packages/control-plane-node/src/registry.ts": "a409f0ca7b158f2ad2585cf025d838d1535adb361ba4f9d3c0067e859223ad70",
+        "packages/session-runtime-sql/src/coordination.ts": "a30aec208005cd0514458bf11a79ab0c6a1eea53fcbe65a2d486e02ec6e25a68",
+        "packages/session-event-store-sql/src/index.ts": "b6c3f1c54fd037147c391d4597b91fbd53e71eed134cfe4ffb8287f33ec3bf38",
+        "packages/control-plane-node/src/lib/node-managed-workspace-checkpoints.ts": "3b96f352b16d1578e1d3f5f2d30082b40200f9b52ba633a6edc116cf91d9bf42",
+        "packages/agents-store/src/adapters/sql-agent-repo.ts": "b3d1190a5eed96c8f3271571fe7b683cdc87062d057ff706788564f0c0e80368",
+        "packages/environments-store/src/adapters/sql-environment-repo.ts": "5a1cfa89a86ec2b8e30668be154ee97815d1127269bf1c01cce583225b8912eb",
+        "packages/sessions-store/src/adapters/sql-session-repo.ts": "622290725c218fb54ada8dbb2be32be0bb00c91bd6bf1e8185ddcd36a12c07c2",
+        "packages/credentials-store/src/adapters/sql-credential-repo.ts": "dfcceff73f74150f7b2d615be0fca638440290118dc667bdbf6a0bd813a9d1d6",
+        "packages/dreams-store/src/adapters/sql-dream-repo.ts": "7ad4842c37deec4a3db7606ba57202821c585e8fbbd1e49404884ac3b1951d4a",
+        "packages/evals-store/src/adapters/sql-eval-run-repo.ts": "3c1953c0e4c5b4888704cb97e6fe31fd04fdbf0495ee4a8d7a3e6a9bcc44bef4",
+        "packages/files-store/src/adapters/sql-file-repo.ts": "d356d9273bc8d79f9c8f650a082d2c84acfb7c04966ab2985d6eb9ced967d017",
+        "packages/memory-store/src/adapters/sql-memory-repo.ts": "10fddc992f41b30fb557327caba7b368066d9f66564f98c56a183a39ea52e244",
+        "packages/memory-store/src/adapters/sql-store-repo.ts": "e312914049a23b1ee7120e266d881a3855f3b80360180478c40d43f148c5e122",
+        "packages/memory-store/src/adapters/sql-version-repo.ts": "21c05b88c4e81ac1f0a35417b679fb46c842e5fac8ab938cc1bcdd3596161634",
+        "packages/vaults-store/src/adapters/sql-vault-repo.ts": "840d4d2e9ccef8289068a27cfe7643021d13151831907a5b12713914e04cb921",
+        "packages/control-plane-node/src/modules/node-runtime.ts": "53ffcdf4d9ed514c7130e23d025d6fe2290becb6c6bd2bc349f5a88f59bd28dc",
+        "packages/managed-agents-api/src/contracts/agent-input-components.ts": "fd0e517cdbfc6e1f054af6a5ab99b248a4d14df07ec84e3ac1e1c13976d48b8f",
+        "packages/managed-agents-api/src/contracts/agent-response-components.ts": "ae31b0aaa81f325f6d0443b85f84c539ca42622b1345f431b1f43b197c5c4388",
+        "packages/managed-agents-domain/src/agents/definition.ts": "005d3866b816197efe251ef8b41f5d0ab3c7c51081dd47675a868d96d0f18726",
+        "packages/managed-agents-application/src/agents/definition-resolution.ts": "3d74b9bbd25502ea7998f59d4375bc533527dcce37fde6cc10e6b8bcb891ec64",
+        "packages/managed-agents-api/src/mappers/agent-definition.ts": "2dbcd6f11e016d1d17ca40c43949bda9bda63369d8feaf2b7c4197cb7867123b",
+        "packages/managed-agents-api/src/contracts/agents.ts": "7725cfd0b0a12ae04e7518a90dd86422d26004ac003e9d8437b1526992086a7a",
+        "apps/agent/src/harness/tools.ts": "313c95b191a36d19d39d226667f13be5a36ae78824066d393efa312b0c04d579",
+        "packages/browser-harness/src/index.ts": "a6b8f640744563b61563b63b0fcf4a6fa1e4ccb4345ddf382382d4ab465b9213",
+        "packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts": "6110e8c3ebec6d9beb9690910a19d55d4e81bbd70b6e695f76d444d093f037ac",
+        "packages/managed-agents-adapters-runtime/src/index.ts": "e2e01a8205d137a286c67e2d02f6440b0a3b8e7da7250354f92baea869e9adca",
+        "pnpm-lock.yaml": "6d5b4aee16af9210f0e5d7f5071e8e1ec916d77ee81f9d6c1e4e8768e00fb822",
+        "pnpm-workspace.yaml": "2316fdc7c95fad20758ef6aea06c194a508b98c49ccb597977188afd536b7461",
+        "packages/sandbox-adapter-litebox/src/index.ts": "9d7fd5012c120eae398a57773c9ac4092719b729f3388a769d9cccaaa9d68a8d",
+        "packages/sandbox-adapter-litebox/test/litebox.test.ts": "7cac970a5049c5a4fca588eba6552bd9ec8ee48c67a58b907ccac1cf6a29bfa4",
+        "packages/control-plane-node/src/lib/node-managed-session-inputs.ts": "93bb57eb4deb6681a81e00dc887f5ca4efdeb8214fd8a8a678f313c03939127b"
+      },
+      "patched_file_hashes": {
+        "apps/agent/src/harness/tools.ts": "b2403a85ede9154fe27d26c1995e319ba59df0e9708bc91748525df8e906fbbe",
+        "packages/agents-store/src/adapters/sql-agent-repo.ts": "d011b9e5c6d5f20aaf80c4a6f90f37a868f0bbc7fc095e8190fc476fd5760a35",
+        "packages/browser-harness/src/index.ts": "1f3e1c6f75f1b620abdeeb2876cd5ae946f658de0824f0fb2ef8b51fbe37c6e4",
+        "packages/control-plane-node/package.json": "0da7af39f3da70db4206b12cae6d171da69d97cbb18616a7c47d8b78fde4d809",
+        "packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts": "d044bf3cc62f8a8fadb659acba4661daaf79b1485961b2b5b1d42d9cb273a7b9",
+        "packages/control-plane-node/src/lib/node-managed-session-inputs.ts": "265f4c3ba423a31b5286f5a5035c09efd8520aff8b6429f2c539e53fe87b5156",
+        "packages/control-plane-node/src/lib/node-managed-session-runner.ts": "fe95e727a15a2c764b72db7ad1f28c1ed8d6a2c15a1761cc4555160751f59d57",
+        "packages/control-plane-node/src/lib/node-managed-workspace-checkpoints.ts": "b3062e65c14ae99bd137c1ef690cee516c390cf9744d8133d7435c7d5b9938cb",
+        "packages/control-plane-node/src/modules/node-foundation.ts": "2946e3d1b449efdf8d0e4f859dda71a0fa3cea1e3cb1ec6045474e6864d4118b",
+        "packages/control-plane-node/src/modules/node-managed.ts": "dd9de6621b8118c02a79738e5434b9a7fe4c97ad3c55838a7383a7031eeeb72c",
+        "packages/control-plane-node/src/modules/node-runtime.ts": "6687223a03befba12e4e1f225174763cd287f442c36ca2480afd0dd93008cfa6",
+        "packages/control-plane-node/src/registry.ts": "c2537b5d10c884ae64011ddc5d2e1a951dc5d1d90385b325e787213131598294",
+        "packages/credentials-store/src/adapters/sql-credential-repo.ts": "ed2a04d334643e450fbf94f96865394404e327c28369aae6ecbb61879a1b2232",
+        "packages/dreams-store/src/adapters/sql-dream-repo.ts": "65b35c1d0d62300e66ea88f13ea7595d2b3f517c1a46c7d8f4a5dcb711646cad",
+        "packages/environments-store/src/adapters/sql-environment-repo.ts": "0c99dc14d30695202b884e3494c51c51388f817f0ba9e0aee054324a3c23e7be",
+        "packages/evals-store/src/adapters/sql-eval-run-repo.ts": "060c1b053fa9102bd7cf998108cbea91651a592eb876133bc60289f94724130b",
+        "packages/files-store/src/adapters/sql-file-repo.ts": "c31384edc3719503b7b5f29541667ff3bff83e6d545a43690dba3ff6f09cc8f3",
+        "packages/managed-agents-adapters-runtime/src/index.ts": "4f7431d8f036f27108437bbbbcb34953293a2139940726c0f354e1423357fb7f",
+        "packages/managed-agents-api/src/contracts/agent-input-components.ts": "b127ddfd8ffa9310c5e7e002fa754cf4d0cb36d8382b531b89966029510845b6",
+        "packages/managed-agents-api/src/contracts/agent-response-components.ts": "b7c5baf65f725fe18be44a4547a81c36f0cb919342f12f156a8f757e27dcb0a9",
+        "packages/managed-agents-api/src/contracts/agents.ts": "b092b5cf08587d88708f42cf350050c8431379820e8921ede3b713b32ad536b2",
+        "packages/managed-agents-api/src/mappers/agent-definition.ts": "04cd1cb308a18c909f1cd3b014b2fdb125434ff8cc5b134041161f05579416d0",
+        "packages/managed-agents-application/src/agents/definition-resolution.ts": "161f473dd8b6b2b991b8eecc40e2019451a735ae6473f018b9257f46ee4189b5",
+        "packages/managed-agents-domain/src/agents/definition.ts": "7059d6eecd693de2624e05c268406401bd65069d686f1d22981cde7b81cb894d",
+        "packages/memory-store/src/adapters/sql-memory-repo.ts": "966d8022ff77756ee694c033387a67ce1bfce02ff7db7fa4a978d9868273cdab",
+        "packages/memory-store/src/adapters/sql-store-repo.ts": "378356c44b85991bc9a0d5b761366c3acd861b474f69dfe2de9e94d501180dd3",
+        "packages/memory-store/src/adapters/sql-version-repo.ts": "fdaa836161480555bcc761ef405606f4afc5fcd865e3a16d52b197f9b6763502",
+        "packages/sandbox-adapter-litebox/src/index.ts": "d6098f2f309f75ebfcf65d88eee6f6f9c708c2af9a2dc6c1e7fe42e93b4ea8dd",
+        "packages/sandbox-adapter-litebox/src/litebox.ts": "4b304db1665f1f4151a25802ef0cfbe10d237d45b90f82a942abc452069b680c",
+        "packages/sandbox-adapter-litebox/test/litebox.test.ts": "a43d226f3f7feb00e14f19fba46e41202757ae9c22ee7ab13ade85a5d1173f7e",
+        "packages/session-event-store-sql/src/index.ts": "8d19e9f4725ae0a07965a049ddb783fedc22a1f4a7729692c77837cad502dd6b",
+        "packages/session-runtime-sql/src/coordination.ts": "8e2f096c44f8a3bd40120a0ab6806b76d4c55cbcd74cdbc19bd228bdd36febe7",
+        "packages/sessions-store/src/adapters/sql-session-repo.ts": "436742a248e1cc8f40aef0ce2c8a9b3b3cb40cf325d7d5cb4c64e0b88760c077",
+        "packages/vaults-store/src/adapters/sql-vault-repo.ts": "1a5092e9a9efab726bba6f078d6e101944230f492f4473b54f3eb9efc1259974",
+        "pnpm-lock.yaml": "85fff8559737ce2e7313cd18b21f9770a24591d211c84a23c1f97dbd8581fecc",
+        "pnpm-workspace.yaml": "280eeb1cf424dec6b8a03173813f83db2350b9f8aabd3f1e315804e6087ca711"
+      },
+      "added_file_hashes": {
+        "apps/agent/src/harness/sandbox-browser.ts": "d5395c7bf669a0fe626c0d27fbf4f0e2060892879df803fdf98ed342747a69eb",
+        "apps/main-node/test/fixtures/tank-registered-skill.zip": "c6d0d6c0eb69b355069ca6c954ff5f477e1003cf47fa73257fb5cfc7765cbe20",
+        "apps/main-node/test/tank-skill-archive.test.ts": "56deb46c54ac36a1a89640e235981ee5f47b7b946fa8157acef9714d1b6ab363",
+        "packages/browser-harness/test/tank-sandbox.test.ts": "4e94532ed1a52bd8e8c70137c339ce8a0b9a5254a582b170e0622003756e5ae3",
+        "packages/control-plane-node/src/lib/node-managed-skill-manifest.ts": "2ff175a9e795ea381ce6625c679c2045ba42aee1f8a905b5bfeba5ab38c9859c",
+        "packages/control-plane-node/src/lib/tank-retained/boxlite-provider.ts": "ecbbe30d29a7e2c48ff918681d4816a0af57ecda2ece093bcf023f101763fca9",
+        "packages/control-plane-node/src/lib/tank-retained/node-lifecycle.ts": "5c272de72bc4289db4c138d7e114cbfad84163d1df19a8d5978a210e8c25ff52",
+        "packages/control-plane-node/src/lib/tank-retained/replay-attachment.ts": "18847f3ef29f34259d8fd504acf5f8cfcc16636b609a5b3bc7be8cd23487ea46",
+        "packages/control-plane-node/src/lib/tank-retained/retained-session.ts": "57553be1a6716aa0395b851c71d0ec8aac06c16236c2c54d968e3699d4fd832d",
+        "packages/sandbox-adapter-litebox/src/tank-replay-evidence.ts": "4850cafe8c8d209d1f8d7b6e7db4cceb08e437d13a109153a786feb9d0444601",
+        "packages/sandbox-adapter-litebox/test/tank-network.test.ts": "b15274be21b6e609b9004df40f25f7a5fbeab35dec3fcc71d18796b9a777a82b"
+      },
+      "changes": [
+        "PostgreSQL typed nullable guards and bigint epoch boundaries",
+        "opaque tool/application JSON preserved across runtime protocol envelope case mapping",
+        "canonical tool schemas/domain/mappers preserve browser and scheduling controls",
+        "browser tools execute through per-session SandboxPort and VM-local Unix-socket Playwright worker",
+        "network policy passed from selected environment to BoxLite",
+        "native skill descriptors resolve the validated unique manifest directory from compiled ZIPs in every exposure mode",
+        "sandbox Python3.12 image supplied with SANDBOX_IMAGE",
+        "curated read-only DB/API credentials only; replay excludes API keys",
+        "Node24 required by pinned pnpm11, upstream Dockerfile used Node22"
+      ],
+      "manifest_stage": "retained-lifecycle-composite",
+      "base_stage_provenance": {
+        "manifest_sha256": "6ddaf2106c24c2b52c8ef79ff68c633b009873f15ae997a97e16057aab0eb751",
+        "manifest": {
+          "upstream_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+          "overlay": "tank8-replay-sealed",
+          "boxlite_sdk_version": "0.10.6",
+          "boxlite_sdk_patch": {
+            "sdk_version": "0.10.6",
+            "pnpm_version": "11.0.8",
+            "upstream_openma_commit": "85d5361f535c7221de975838dc48444e468cc02e",
+            "source_sha256": {
+              "pnpm-lock.yaml": "6d5b4aee16af9210f0e5d7f5071e8e1ec916d77ee81f9d6c1e4e8768e00fb822",
+              "pnpm-workspace.yaml": "2316fdc7c95fad20758ef6aea06c194a508b98c49ccb597977188afd536b7461"
+            },
+            "workspace_append": "\n# Tank observed-runtime compatibility pin; upstream OpenMA source commit is unchanged.\noverrides:\n  '@boxlite-ai/boxlite': '0.10.6'\n",
+            "lockfile_asset": "openma-pnpm-lock.yaml",
+            "lockfile_sha256": "8db697971714ee04b538d90653a370f1ce25cc792f7304da1c57ebff276aa128",
+            "policy": "Candidate runtime compatibility repair for reproduced mounted-boot and static-loader failures; no production adoption implied",
+            "native_host_security": {
+              "jailerEnabled": false,
+              "seccompEnabled": false
+            },
+            "security_basis": "Explicitly retain measured BoxLite0.9 Linux native defaults; outer Docker default seccomp/AppArmor remain enabled"
+          },
+          "boxlite_runtime": {
+            "status": "UNQUALIFIED_REPLAY_DNS_CANDIDATE",
+            "architecture": "amd64",
+            "source": {
+              "repository": "https://github.com/boxlite-ai/boxlite.git",
+              "version": "0.10.6",
+              "commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+              "libkrun_commit": "e12b9b3780ffa8df9f3e1797b217d13453479167",
+              "Cargo.lock": "720f5f70fdd48ca15d170d8ba8bf61832378e8615dadfb12a84b55761b571149",
+              "libkrun_Cargo.lock": "353fe6bb081d1cd4b4e24aa4ef323319709543c65b7304e015320a563688d3c2",
+              "gvproxy_go.sum": "84dddcab5d612e04cac72c140477a7eeeb8ec01088f237f1dd0de157d9217c47",
+              "source_tracked_diff": "clean pinned baseline; exact reviewed replay DNS overlay retained unchanged through compilation"
+            },
+            "official_runtime": {
+              "url": "https://github.com/boxlite-ai/boxlite/releases/download/v0.10.6/boxlite-runtime-v0.10.6-linux-x64-gnu.tar.gz",
+              "archive_sha256": "241171320f008c86d2f4af95ed6690edf93417ade956a196b2c3e366e4857e1b",
+              "size": 28133546
+            },
+            "original_files": {
+              "guest-resize2fs": "0a2c15cb20fa3e369a02e9712c611037a89236bc52ad109daf02c3d33a19ee97",
+              "boxlite-shim": "fb836e52ea6f29c4c66c78cffa476e010a1e88404971dfc45cc27bd0302ba9b5",
+              "libkrunfw.so.5": "953201c0c367070946a2f99695cb50dbb8980d97e416964bfa3fb1e9d1f15f69",
+              "boxlite-guest": "5e7d1415307e46dfb2dd690c118e63ebd7d62189777ded62b710929d01fb059e",
+              "mke2fs": "6898e063cdda9c004b7180b8ab6b06d14f06828ecf1708a5d8c12020f543add4",
+              "bwrap": "3ca262bcd5a1640d43adcd207a03e1834dd91e1bd6a2bb47b3d0aa47a2dc9c72",
+              "guest-mke2fs": "3a8cda1b1e6ba7c1e740f3d49e58155485c37f344b33851d95e68e1980f3922c",
+              "debugfs": "578ec8385c4e92cad16629a7ef2d25ade4bbdb2ef5c5a4e80e3124b0736e6712"
+            },
+            "files": {
+              "boxlite-guest": "5e7d1415307e46dfb2dd690c118e63ebd7d62189777ded62b710929d01fb059e",
+              "boxlite-shim": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+              "bwrap": "3ca262bcd5a1640d43adcd207a03e1834dd91e1bd6a2bb47b3d0aa47a2dc9c72",
+              "debugfs": "578ec8385c4e92cad16629a7ef2d25ade4bbdb2ef5c5a4e80e3124b0736e6712",
+              "guest-mke2fs": "3a8cda1b1e6ba7c1e740f3d49e58155485c37f344b33851d95e68e1980f3922c",
+              "guest-resize2fs": "0a2c15cb20fa3e369a02e9712c611037a89236bc52ad109daf02c3d33a19ee97",
+              "libkrunfw.so.5": "953201c0c367070946a2f99695cb50dbb8980d97e416964bfa3fb1e9d1f15f69",
+              "mke2fs": "6898e063cdda9c004b7180b8ab6b06d14f06828ecf1708a5d8c12020f543add4"
+            },
+            "shim_sha256": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+            "elf": {
+              "architecture": "x86_64",
+              "interpreter": "/lib64/ld-linux-x86-64.so.2",
+              "needed": [
+                "libgcc_s.so.1",
+                "libm.so.6",
+                "libc.so.6",
+                "ld-linux-x86-64.so.2"
+              ],
+              "RUNPATH": "$ORIGIN",
+              "highest_required_glibc": "2.34",
+              "build_system_glibc": "2.36",
+              "shipped_libc_or_loader": false
+            },
+            "previous_runtime": {
+              "shim_sha256": "fb836e52ea6f29c4c66c78cffa476e010a1e88404971dfc45cc27bd0302ba9b5",
+              "provenance_sha256": null,
+              "official_archive_sha256": "241171320f008c86d2f4af95ed6690edf93417ade956a196b2c3e366e4857e1b"
+            },
+            "native_dns_patch": {
+              "upstream_boxlite_commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+              "dependency": "github.com/containers/gvisor-tap-vsock@v0.8.7",
+              "dependency_sum": "h1:mFMMU5CIXO9sbtsgECc90loUHx15km3AN6Zuhg3X4qM=",
+              "original_bridge_sha256": {
+                "main.go": "14b73c01d2ed7d8ee8d9bd610ffcb8b3f9e6d330c17e3c649cb00e81ab6308c7",
+                "go.mod": "a5d0a73c4da38777c8bc84222933ebe50636758b9996504611b96ff70eecda0e",
+                "go.sum": "84dddcab5d612e04cac72c140477a7eeeb8ec01088f237f1dd0de157d9217c47"
+              },
+              "original_dependency_sha256": {
+                "pkg/types/configuration.go": "24257bff47a0dd21e248869336dd1b55ed1fda77c78f95d5f49634bf950ea2ce",
+                "pkg/virtualnetwork/services.go": "1c6970a236d9ddbe1d341a1ca8eebeef9647d5980e42ef7d9771a5b58c259410",
+                "pkg/services/dns/dns.go": "6b89d79e05aacceecd3e7fcd87270e505ecf1226ad8a6c4885e6afd5632a4e5c",
+                "LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+              },
+              "patched_sha256": {
+                "src/deps/libgvproxy-sys/gvproxy-bridge/main.go": "cf63ea0c3404a7a95bc3386e40a2f90005ef316a3a2286114e4c302b202e1514",
+                "src/deps/libgvproxy-sys/gvproxy-bridge/go.mod": "76b83a7d13d485a5dbba8b87e080723d2804f433c726e49dafbabc149cb58747",
+                "src/deps/libgvproxy-sys/gvproxy-bridge/tank_dns_policy.go": "fff7de075555223525b503dfabd6c3cd7244ef0d8a295043adc81d3cf6029268",
+                "src/deps/libgvproxy-sys/gvproxy-bridge/tank_dns_policy_test.go": "f0e6afe1982a21322db5e753870ce7320479e8c5833314d01af306bf5d8bb418",
+                "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/types/configuration.go": "b65257e1a91e98e95bae8838494170ab7dbd8597a30083eea0ce20724795896d",
+                "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/virtualnetwork/services.go": "f86e1240e30f6534f7aa3436e02a20f986d38c058b52999de4041b9d3cfa6ce5",
+                "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/services/dns/dns.go": "f02cb1778c9fd26c14ba2b6b89c171c83a72dfe0afdeb5b99c47658305be90db",
+                "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/pkg/services/dns/tank_policy_test.go": "a39db84415c0e2dfe830503f057ec8fbb097a995479726b32cc9a37762bc6d18"
+              },
+              "license_sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+              "sdk_abi_changed": false,
+              "native_qualification": "NOT_RUN"
+            },
+            "build": {
+              "image_sha256": "a9cf14be68be815f5cacb03054e2dae2aacbd62b29d606775a56199e9e278b8a",
+              "source_overlay": "deploy/boxlite/v0.10.6/replay-dns",
+              "link_flags": "same upstream static relocation flags; -crt-static",
+              "sdk_abi_changed": false
+            },
+            "build_evidence_sha256": {
+              "SHA256SUMS": "6bbd1f6024fd6573d587d36e78aee6513b2ae96c194ee0f7a925d5fcfba1caae",
+              "boxlite-shim": "353a506b165ccb9cbe963cee39dd53f74609e24233f796c54b93f0a08379f60d",
+              "bridge-tests.log": "fe216788a3c1c6743798bb652574899dfa412dc226f003cb872e010c5b8c46a9",
+              "build-packages.txt": "e69299bbeae5f0f6a588b85547b30493ea04fce22e33c185c027a0c8234fcb7e",
+              "dns-tests.log": "4adf6e922c27843fc3d2f0572f95fed4aa34d230795ebdebd6f3419e54600ee4",
+              "dynamic.txt": "9d7bb6b42b4fdb96bdcdaadaaab3a6ba19fcab857463899c41375ccc8de093ec",
+              "file.txt": "ca4c497918bc2fc898511739ee5ac8cd8b5df8df8a2f888e5c0e8a2d1eacf4c3",
+              "glibc-version.txt": "d413ead7ce9065771e2e436981fabd86519efcf109a71c81ffa37dd397fa825b",
+              "go-version.txt": "72fbd1d67ca459621672bbf30387af1e39868899b7092da85d764dc5708a3702",
+              "ldd.txt": "f40dea762341b7dd7cfe57d9ebdd1796637cd3be87156b6eb0f1a4fe513546e9",
+              "module-download.json": "f0beb2abf6beaa7970794c360481af311e6a4926485dcad1f7a1a33906933750",
+              "patch-receipt.json": "5bb1ca1b571ca209b6205bcc50d02f56a5f2e5bfa411f903b5326cc33cafe5ba",
+              "program-headers.txt": "3fd7492b7c5f695e4643acd3f2e36054411fd42af69ba2acd94c9bd11c92a1d5",
+              "rustc-version.txt": "938db28b83089ab88301ca425f99fa1d8b61ee66e0371babe1db6373ae9810a3",
+              "source-diff-stat.txt": "7fe2dc72ac51b9d4ce4bd5d39c57b807a856f9a52ceb16a457762a46110443a5",
+              "source.patch": "8b06e3d9597070d5f1d0fa6bb7f44af3a15fcd5913b03d0b7637b46a6e72532f",
+              "submodules.txt": "f4e7bfd246c0e0a01f629d52104737b986c541307ab65089d7fae6d337cefa26",
+              "versions.txt": "d00a0292068f98fbf0af7811f9875c7e3607938b7bb334ad801519c992cc0629"
+            },
+            "build_phase_receipts_sha256": {
+              "build-2-receipt.json": "5e1b31ef7f72e08971d0bd2225bdc955a57d71abc4c494f7ff7431d3bf14cb9d",
+              "build-receipt.json": "de6bcd31682283160055aeb771f7f63945418c8895e277ab4472e3ffc6687bd3",
+              "prepare-receipt.json": "07a623087df59505c526801d7c4866afd2937b95aee7096c1b6625306dc67699",
+              "test-2-receipt.json": "ef243528737f09699e31c7a34da8cb6c1effc2f70ef6ba6aa22a3df7d0cb22db",
+              "test-receipt.json": "02ed34cd3698f79b0360a33235d20fe3519b077591026445d297316f51524c88"
+            },
+            "qualification": {
+              "required_for_this_artifact": true,
+              "native": "NOT_RUN",
+              "production_adoption": false,
+              "inherited_hardware_results": false
+            },
+            "build_contract": {
+              "schema": "tank.boxlite-local-build.v1",
+              "evidence_sha256": {
+                "build-receipt.json": "5e1b31ef7f72e08971d0bd2225bdc955a57d71abc4c494f7ff7431d3bf14cb9d",
+                "test-receipt.json": "ef243528737f09699e31c7a34da8cb6c1effc2f70ef6ba6aa22a3df7d0cb22db",
+                "source.patch": "8b06e3d9597070d5f1d0fa6bb7f44af3a15fcd5913b03d0b7637b46a6e72532f",
+                "patch-receipt.json": "5bb1ca1b571ca209b6205bcc50d02f56a5f2e5bfa411f903b5326cc33cafe5ba",
+                "go-version.txt": "72fbd1d67ca459621672bbf30387af1e39868899b7092da85d764dc5708a3702",
+                "rustc-version.txt": "938db28b83089ab88301ca425f99fa1d8b61ee66e0371babe1db6373ae9810a3",
+                "glibc-version.txt": "d413ead7ce9065771e2e436981fabd86519efcf109a71c81ffa37dd397fa825b",
+                "submodules.txt": "f4e7bfd246c0e0a01f629d52104737b986c541307ab65089d7fae6d337cefa26"
+              },
+              "trust": "Locally built operator artifact; evidence hashes are not third-party signed attestation"
+            }
+          },
+          "sandbox_browser": {
+            "engine": "pinned Playwright default Chromium headless shell; no fallback",
+            "worker_sha256": "8e3881b1e4de68a0f53c88321adc48691bd2d8f44f6e915b8843062c3c49a988",
+            "cache_preparer_sha256": "3bacdfb0a29d0679bf18a3b224646c066221dcf5aaf8252c030136fc471c8d2f",
+            "image_manifest": "/opt/tank/browser-font-cache.json",
+            "rpc_budget_s": 75,
+            "rpc_response_receipt_budget_s": 80,
+            "sandbox_exec_budget_s": 90
+          },
+          "entrypoint_sha256": "48e5bf5eb78706c3a939b954fcdcbedd6ecde0fef1f2b7f022a2abddb8ec2898",
+          "dockerfile_sha256": "39ff26b148b1d22b0ed47e1dedafbd12256b12666fc41974bb8881a0c57e8a91",
+          "source_hashes": {
+            "packages/sandbox-adapter-litebox/src/litebox.ts": "6becdfdbeb66b94903677a81963d30e1acf6b2a0711be414a982dd8ed064b51c",
+            "packages/control-plane-node/src/modules/node-foundation.ts": "670d021bbecdf97018931511ad9134b80d96078f498c8af14034c9a4a09313ca",
+            "packages/control-plane-node/src/modules/node-managed.ts": "61dee1b2fb58ae245c1032003f003f513ecfbfbdb03025dc16d334beb5c6929b",
+            "packages/control-plane-node/src/registry.ts": "a409f0ca7b158f2ad2585cf025d838d1535adb361ba4f9d3c0067e859223ad70",
+            "packages/session-runtime-sql/src/coordination.ts": "a30aec208005cd0514458bf11a79ab0c6a1eea53fcbe65a2d486e02ec6e25a68",
+            "packages/session-event-store-sql/src/index.ts": "b6c3f1c54fd037147c391d4597b91fbd53e71eed134cfe4ffb8287f33ec3bf38",
+            "packages/control-plane-node/src/lib/node-managed-workspace-checkpoints.ts": "3b96f352b16d1578e1d3f5f2d30082b40200f9b52ba633a6edc116cf91d9bf42",
+            "packages/agents-store/src/adapters/sql-agent-repo.ts": "b3d1190a5eed96c8f3271571fe7b683cdc87062d057ff706788564f0c0e80368",
+            "packages/environments-store/src/adapters/sql-environment-repo.ts": "5a1cfa89a86ec2b8e30668be154ee97815d1127269bf1c01cce583225b8912eb",
+            "packages/sessions-store/src/adapters/sql-session-repo.ts": "622290725c218fb54ada8dbb2be32be0bb00c91bd6bf1e8185ddcd36a12c07c2",
+            "packages/credentials-store/src/adapters/sql-credential-repo.ts": "dfcceff73f74150f7b2d615be0fca638440290118dc667bdbf6a0bd813a9d1d6",
+            "packages/dreams-store/src/adapters/sql-dream-repo.ts": "7ad4842c37deec4a3db7606ba57202821c585e8fbbd1e49404884ac3b1951d4a",
+            "packages/evals-store/src/adapters/sql-eval-run-repo.ts": "3c1953c0e4c5b4888704cb97e6fe31fd04fdbf0495ee4a8d7a3e6a9bcc44bef4",
+            "packages/files-store/src/adapters/sql-file-repo.ts": "d356d9273bc8d79f9c8f650a082d2c84acfb7c04966ab2985d6eb9ced967d017",
+            "packages/memory-store/src/adapters/sql-memory-repo.ts": "10fddc992f41b30fb557327caba7b368066d9f66564f98c56a183a39ea52e244",
+            "packages/memory-store/src/adapters/sql-store-repo.ts": "e312914049a23b1ee7120e266d881a3855f3b80360180478c40d43f148c5e122",
+            "packages/memory-store/src/adapters/sql-version-repo.ts": "21c05b88c4e81ac1f0a35417b679fb46c842e5fac8ab938cc1bcdd3596161634",
+            "packages/vaults-store/src/adapters/sql-vault-repo.ts": "840d4d2e9ccef8289068a27cfe7643021d13151831907a5b12713914e04cb921",
+            "packages/control-plane-node/src/modules/node-runtime.ts": "53ffcdf4d9ed514c7130e23d025d6fe2290becb6c6bd2bc349f5a88f59bd28dc",
+            "packages/managed-agents-api/src/contracts/agent-input-components.ts": "fd0e517cdbfc6e1f054af6a5ab99b248a4d14df07ec84e3ac1e1c13976d48b8f",
+            "packages/managed-agents-api/src/contracts/agent-response-components.ts": "ae31b0aaa81f325f6d0443b85f84c539ca42622b1345f431b1f43b197c5c4388",
+            "packages/managed-agents-domain/src/agents/definition.ts": "005d3866b816197efe251ef8b41f5d0ab3c7c51081dd47675a868d96d0f18726",
+            "packages/managed-agents-application/src/agents/definition-resolution.ts": "3d74b9bbd25502ea7998f59d4375bc533527dcce37fde6cc10e6b8bcb891ec64",
+            "packages/managed-agents-api/src/mappers/agent-definition.ts": "2dbcd6f11e016d1d17ca40c43949bda9bda63369d8feaf2b7c4197cb7867123b",
+            "packages/managed-agents-api/src/contracts/agents.ts": "7725cfd0b0a12ae04e7518a90dd86422d26004ac003e9d8437b1526992086a7a",
+            "apps/agent/src/harness/tools.ts": "313c95b191a36d19d39d226667f13be5a36ae78824066d393efa312b0c04d579",
+            "packages/browser-harness/src/index.ts": "a6b8f640744563b61563b63b0fcf4a6fa1e4ccb4345ddf382382d4ab465b9213",
+            "packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts": "6110e8c3ebec6d9beb9690910a19d55d4e81bbd70b6e695f76d444d093f037ac",
+            "packages/managed-agents-adapters-runtime/src/index.ts": "e2e01a8205d137a286c67e2d02f6440b0a3b8e7da7250354f92baea869e9adca",
+            "pnpm-lock.yaml": "6d5b4aee16af9210f0e5d7f5071e8e1ec916d77ee81f9d6c1e4e8768e00fb822",
+            "pnpm-workspace.yaml": "2316fdc7c95fad20758ef6aea06c194a508b98c49ccb597977188afd536b7461",
+            "packages/sandbox-adapter-litebox/src/index.ts": "9d7fd5012c120eae398a57773c9ac4092719b729f3388a769d9cccaaa9d68a8d",
+            "packages/sandbox-adapter-litebox/test/litebox.test.ts": "7cac970a5049c5a4fca588eba6552bd9ec8ee48c67a58b907ccac1cf6a29bfa4",
+            "packages/control-plane-node/src/lib/node-managed-session-inputs.ts": "93bb57eb4deb6681a81e00dc887f5ca4efdeb8214fd8a8a678f313c03939127b"
+          },
+          "patched_file_hashes": {
+            "packages/sandbox-adapter-litebox/src/litebox.ts": "2029ccc872960bc2ca3d77e0e4e59d63501b7f4b3bc7208cfd26a12db7117455",
+            "packages/control-plane-node/src/modules/node-foundation.ts": "2946e3d1b449efdf8d0e4f859dda71a0fa3cea1e3cb1ec6045474e6864d4118b",
+            "packages/control-plane-node/src/modules/node-managed.ts": "5ceb2f13d75bd74d40ed60c4e2e75106a6690e4c2d90851cdbea6f9cb866cb02",
+            "packages/control-plane-node/src/registry.ts": "c2537b5d10c884ae64011ddc5d2e1a951dc5d1d90385b325e787213131598294",
+            "packages/session-runtime-sql/src/coordination.ts": "8e2f096c44f8a3bd40120a0ab6806b76d4c55cbcd74cdbc19bd228bdd36febe7",
+            "packages/session-event-store-sql/src/index.ts": "8d19e9f4725ae0a07965a049ddb783fedc22a1f4a7729692c77837cad502dd6b",
+            "packages/control-plane-node/src/lib/node-managed-workspace-checkpoints.ts": "b3062e65c14ae99bd137c1ef690cee516c390cf9744d8133d7435c7d5b9938cb",
+            "packages/agents-store/src/adapters/sql-agent-repo.ts": "d011b9e5c6d5f20aaf80c4a6f90f37a868f0bbc7fc095e8190fc476fd5760a35",
+            "packages/environments-store/src/adapters/sql-environment-repo.ts": "0c99dc14d30695202b884e3494c51c51388f817f0ba9e0aee054324a3c23e7be",
+            "packages/sessions-store/src/adapters/sql-session-repo.ts": "436742a248e1cc8f40aef0ce2c8a9b3b3cb40cf325d7d5cb4c64e0b88760c077",
+            "packages/credentials-store/src/adapters/sql-credential-repo.ts": "ed2a04d334643e450fbf94f96865394404e327c28369aae6ecbb61879a1b2232",
+            "packages/dreams-store/src/adapters/sql-dream-repo.ts": "65b35c1d0d62300e66ea88f13ea7595d2b3f517c1a46c7d8f4a5dcb711646cad",
+            "packages/evals-store/src/adapters/sql-eval-run-repo.ts": "060c1b053fa9102bd7cf998108cbea91651a592eb876133bc60289f94724130b",
+            "packages/files-store/src/adapters/sql-file-repo.ts": "c31384edc3719503b7b5f29541667ff3bff83e6d545a43690dba3ff6f09cc8f3",
+            "packages/memory-store/src/adapters/sql-memory-repo.ts": "966d8022ff77756ee694c033387a67ce1bfce02ff7db7fa4a978d9868273cdab",
+            "packages/memory-store/src/adapters/sql-store-repo.ts": "378356c44b85991bc9a0d5b761366c3acd861b474f69dfe2de9e94d501180dd3",
+            "packages/memory-store/src/adapters/sql-version-repo.ts": "fdaa836161480555bcc761ef405606f4afc5fcd865e3a16d52b197f9b6763502",
+            "packages/vaults-store/src/adapters/sql-vault-repo.ts": "1a5092e9a9efab726bba6f078d6e101944230f492f4473b54f3eb9efc1259974",
+            "packages/control-plane-node/src/modules/node-runtime.ts": "6687223a03befba12e4e1f225174763cd287f442c36ca2480afd0dd93008cfa6",
+            "packages/managed-agents-api/src/contracts/agent-input-components.ts": "b127ddfd8ffa9310c5e7e002fa754cf4d0cb36d8382b531b89966029510845b6",
+            "packages/managed-agents-api/src/contracts/agent-response-components.ts": "b7c5baf65f725fe18be44a4547a81c36f0cb919342f12f156a8f757e27dcb0a9",
+            "packages/managed-agents-domain/src/agents/definition.ts": "7059d6eecd693de2624e05c268406401bd65069d686f1d22981cde7b81cb894d",
+            "packages/managed-agents-application/src/agents/definition-resolution.ts": "161f473dd8b6b2b991b8eecc40e2019451a735ae6473f018b9257f46ee4189b5",
+            "packages/managed-agents-api/src/mappers/agent-definition.ts": "04cd1cb308a18c909f1cd3b014b2fdb125434ff8cc5b134041161f05579416d0",
+            "packages/managed-agents-api/src/contracts/agents.ts": "b092b5cf08587d88708f42cf350050c8431379820e8921ede3b713b32ad536b2",
+            "apps/agent/src/harness/tools.ts": "b2403a85ede9154fe27d26c1995e319ba59df0e9708bc91748525df8e906fbbe",
+            "packages/browser-harness/src/index.ts": "1f3e1c6f75f1b620abdeeb2876cd5ae946f658de0824f0fb2ef8b51fbe37c6e4",
+            "packages/control-plane-node/src/lib/node-managed-confirmed-tool-executor.ts": "d044bf3cc62f8a8fadb659acba4661daaf79b1485961b2b5b1d42d9cb273a7b9",
+            "packages/managed-agents-adapters-runtime/src/index.ts": "4f7431d8f036f27108437bbbbcb34953293a2139940726c0f354e1423357fb7f",
+            "pnpm-lock.yaml": "8db697971714ee04b538d90653a370f1ce25cc792f7304da1c57ebff276aa128",
+            "pnpm-workspace.yaml": "280eeb1cf424dec6b8a03173813f83db2350b9f8aabd3f1e315804e6087ca711",
+            "packages/sandbox-adapter-litebox/src/index.ts": "d6098f2f309f75ebfcf65d88eee6f6f9c708c2af9a2dc6c1e7fe42e93b4ea8dd",
+            "packages/sandbox-adapter-litebox/test/litebox.test.ts": "a43d226f3f7feb00e14f19fba46e41202757ae9c22ee7ab13ade85a5d1173f7e",
+            "packages/control-plane-node/src/lib/node-managed-session-inputs.ts": "265f4c3ba423a31b5286f5a5035c09efd8520aff8b6429f2c539e53fe87b5156"
+          },
+          "added_file_hashes": {
+            "apps/agent/src/harness/sandbox-browser.ts": "d5395c7bf669a0fe626c0d27fbf4f0e2060892879df803fdf98ed342747a69eb",
+            "packages/browser-harness/test/tank-sandbox.test.ts": "4e94532ed1a52bd8e8c70137c339ce8a0b9a5254a582b170e0622003756e5ae3",
+            "packages/control-plane-node/src/lib/node-managed-skill-manifest.ts": "2ff175a9e795ea381ce6625c679c2045ba42aee1f8a905b5bfeba5ab38c9859c",
+            "apps/main-node/test/tank-skill-archive.test.ts": "56deb46c54ac36a1a89640e235981ee5f47b7b946fa8157acef9714d1b6ab363",
+            "apps/main-node/test/fixtures/tank-registered-skill.zip": "c6d0d6c0eb69b355069ca6c954ff5f477e1003cf47fa73257fb5cfc7765cbe20",
+            "packages/sandbox-adapter-litebox/src/tank-replay-evidence.ts": "4850cafe8c8d209d1f8d7b6e7db4cceb08e437d13a109153a786feb9d0444601",
+            "packages/sandbox-adapter-litebox/test/tank-network.test.ts": "b15274be21b6e609b9004df40f25f7a5fbeab35dec3fcc71d18796b9a777a82b"
+          },
+          "changes": [
+            "PostgreSQL typed nullable guards and bigint epoch boundaries",
+            "opaque tool/application JSON preserved across runtime protocol envelope case mapping",
+            "canonical tool schemas/domain/mappers preserve browser and scheduling controls",
+            "browser tools execute through per-session SandboxPort and VM-local Unix-socket Playwright worker",
+            "network policy passed from selected environment to BoxLite",
+            "native skill descriptors resolve the validated unique manifest directory from compiled ZIPs in every exposure mode",
+            "sandbox Python3.12 image supplied with SANDBOX_IMAGE",
+            "curated read-only DB/API credentials only; replay excludes API keys",
+            "Node24 required by pinned pnpm11, upstream Dockerfile used Node22"
+          ]
+        }
+      },
+      "retained_lifecycle": {
+        "runtime_identity": "9ee8634a1e54a2ec4b9efd657cc67d8e2a698a2f9d19a6af649f1832d7fce23e",
+        "native_vm_proof": "NOT_RUN",
+        "production_adoption": false
+      }
+    }
+  },
+  "deployment_composition": {
+    "receipt": "tank-deployment-composition.json",
+    "runtime_identity": "c4afefbdddba3e6f05634a3bb5a46db20d5636413f4f24909b2abcdfa8fa8654"
+  },
+  "execution_protocol": {
+    "overlay_sha256": "5924431e37c3e0f91e2e98b45d736af278398fe705e8a191945d93736ccc8d9d",
+    "assets_sha256": "54f22c9700583a119867d4f9edf40a51531f9cfe9d943f297c5a8332e18140c8",
+    "native_identity_rebase_sha256": "6b0caf566fc3c4437956bc3f1e9ee43b27550394d09a733761cfbf0271e2b923",
+    "runtime_identity": "c4afefbdddba3e6f05634a3bb5a46db20d5636413f4f24909b2abcdfa8fa8654"
+  }
+}

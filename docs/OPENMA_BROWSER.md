@@ -6,13 +6,11 @@ session sandbox. The upstream canonical configuration accepted browser opt-in,
 but Node's two `buildTools` call sites supplied no `env.browser`. Its existing
 Node browser adapter would launch Chromium in the OpenMA container.
 
-`deploy/openma_browser/overlay.json` supplies count-checked source edits;
-`source-hashes.json` supplies the original upstream SHA-256 guards consumed by
-`deploy/prepare_openma_source.py`. The new adapter is copied into the agent
-harness package, whose existing dependencies already provide BrowserHarness
-and SandboxPort. No additional JavaScript dependency or lockfile change is
-required. Both the normal and confirmed-tool execution paths bind the exact
-session's SandboxPort to `createSandboxBrowserHarness`.
+The adapter is checked in directly at
+`vendor/openma/apps/agent/src/harness/sandbox-browser.ts`. Its existing workspace
+dependencies provide BrowserHarness and SandboxPort. Both normal and
+confirmed-tool execution paths bind the exact session's SandboxPort to
+`createSandboxBrowserHarness`; no source patch or preparation command is used.
 
 ## Execution and state
 

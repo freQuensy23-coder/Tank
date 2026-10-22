@@ -1,0 +1,180 @@
+{
+  "schema": "tank.vendored-native-runtime.v1",
+  "boxlite_version": "0.10.6",
+  "platform": "linux/arm64",
+  "archive": {
+    "path": "boxlite-runtime-v0.10.6-tank-replay-dns-arm64.tar.gz",
+    "bytes": 31171523,
+    "sha256": "2372c189fc7e6b90aa26fa56941b5c4d38439ae31ad0664ecd473d0dc6c3bcbe",
+    "extraction": "Archive entries are relative to /opt/tank-boxlite-runtime, with no wrapper directory.",
+    "normalization": "uid/gid root, mtime zero; original file bytes and executable modes preserved."
+  },
+  "origin": {
+    "repository": "https://github.com/boxlite-ai/boxlite.git",
+    "commit": "7873ae4995e171237a3342adbb84000c8ab9965b",
+    "official_runtime": {
+      "url": "https://github.com/boxlite-ai/boxlite/releases/download/v0.10.6/boxlite-runtime-v0.10.6-linux-arm64-gnu.tar.gz",
+      "archive_sha256": "fdf36eec030a6291d0cf321aed02506ea6d339b1b8abfc385b404569b7164f3a",
+      "size": 31760491
+    },
+    "custom_source": "../../../deploy/boxlite/v0.10.6/replay-dns",
+    "build_verifier": "../../../deploy/prepare_boxlite_runtime.py",
+    "unchanged_sdk_abi": true,
+    "submodules": [
+      " 9ca3b05ec787acfb4b17bed37db5719fa777834f src/deps/bubblewrap-sys/vendor/bubblewrap (v0.11.0)",
+      " da631e117dcf8797bfda0f48bdaa05ac0fbcf7af src/deps/e2fsprogs-sys/vendor/e2fsprogs (v1.47.3)",
+      " e12b9b3780ffa8df9f3e1797b217d13453479167 src/deps/libkrun-sys/vendor/libkrun (v0.2.0-1051-ge12b9b3)",
+      " e0647fa7a3932c4570fb2c0fd483b9f7a382ebdd src/deps/libkrun-sys/vendor/libkrunfw (v2.0.0-197-ge0647fa)"
+    ],
+    "submodule_repositories": [
+      {
+        "path": "src/deps/libkrun-sys/vendor/libkrun",
+        "repository": "https://github.com/boxlite-ai/libkrun.git",
+        "commit": "e12b9b3780ffa8df9f3e1797b217d13453479167"
+      },
+      {
+        "path": "src/deps/libkrun-sys/vendor/libkrunfw",
+        "repository": "https://github.com/boxlite-ai/libkrunfw.git",
+        "commit": "e0647fa7a3932c4570fb2c0fd483b9f7a382ebdd"
+      },
+      {
+        "path": "src/deps/e2fsprogs-sys/vendor/e2fsprogs",
+        "repository": "https://github.com/tytso/e2fsprogs.git",
+        "commit": "da631e117dcf8797bfda0f48bdaa05ac0fbcf7af"
+      },
+      {
+        "path": "src/deps/bubblewrap-sys/vendor/bubblewrap",
+        "repository": "https://github.com/containers/bubblewrap.git",
+        "commit": "9ca3b05ec787acfb4b17bed37db5719fa777834f"
+      }
+    ],
+    "recovered_export": "data/qa/openma-browser-tool-r50/source/tank-deploy/boxlite-runtime",
+    "registered_runtime": "../../../deploy/boxlite/v0.10.6/replay-dns-qualified-artifact.json"
+  },
+  "runtime_files": [
+    {
+      "path": "SHA256SUMS",
+      "bytes": 620,
+      "mode": "0o644",
+      "sha256": "20ec701ab156a4aa9b5d9efda37af0b6bf9cc98843156918ea1968a0bba46c2f"
+    },
+    {
+      "path": "boxlite-guest",
+      "bytes": 21128720,
+      "mode": "0o755",
+      "sha256": "90c4fb9b8525aedfd167d715a019a271100b055df4e715288fb1da726e276621"
+    },
+    {
+      "path": "boxlite-shim",
+      "bytes": 24157808,
+      "mode": "0o755",
+      "sha256": "b645c32295a3450c58536a7da9238ee44560a21800e16859ea906aa3801382fa"
+    },
+    {
+      "path": "bwrap",
+      "bytes": 286472,
+      "mode": "0o755",
+      "sha256": "ff5634c3b9eb92135adacf974569ad9160f09898fefebe60cc687a4892ceb2d2"
+    },
+    {
+      "path": "debugfs",
+      "bytes": 3581760,
+      "mode": "0o755",
+      "sha256": "017e6bccb4c0ae757f961ab4241c8b0796613fef77d6410bf49590616d61cbca"
+    },
+    {
+      "path": "guest-mke2fs",
+      "bytes": 645720,
+      "mode": "0o755",
+      "sha256": "e4685269fad901ae2408cd9b01653099d8220e2a6f52015677b44c5d4a15e963"
+    },
+    {
+      "path": "guest-resize2fs",
+      "bytes": 472048,
+      "mode": "0o755",
+      "sha256": "47e2659d5577bedc109de8f3427d42a26af1234669c563e50cc099961a9d0aca"
+    },
+    {
+      "path": "libkrunfw.so.5",
+      "bytes": 23791889,
+      "mode": "0o755",
+      "sha256": "a47fad6c557420899b7e079c63227b4660c365bbb1c7def0428bf6352786a321"
+    },
+    {
+      "path": "mke2fs",
+      "bytes": 3041216,
+      "mode": "0o755",
+      "sha256": "2ffb7f930adaa5781aa124766d2686ab68b7a2108e50e9f0f2963b075e58088a"
+    },
+    {
+      "path": "provenance.json",
+      "bytes": 8455,
+      "mode": "0o644",
+      "sha256": "ed4d17b305f0695e7bcd1e82c8def8b541af07f7c069aa44c910389ebfbf3245"
+    }
+  ],
+  "licenses": [
+    {
+      "path": "licenses/boxlite/LICENSE",
+      "upstream_path": "LICENSE",
+      "sha256": "249fe9de0b426a5befc326677834c10a82ea22e1b806b9ac3162cfdd1080f511"
+    },
+    {
+      "path": "licenses/boxlite/NOTICE",
+      "upstream_path": "NOTICE",
+      "sha256": "6b738602c43b32c2145fd18450bba0d8c7b71eab10e2d186236996b1ccb0659d"
+    },
+    {
+      "path": "licenses/bubblewrap/COPYING",
+      "upstream_path": "src/deps/bubblewrap-sys/vendor/bubblewrap/COPYING",
+      "sha256": "b7993225104d90ddd8024fd838faf300bea5e83d91203eab98e29512acebd69c"
+    },
+    {
+      "path": "licenses/e2fsprogs/NOTICE",
+      "upstream_path": "src/deps/e2fsprogs-sys/vendor/e2fsprogs/NOTICE",
+      "sha256": "5da5ef153e559c1d990d4c3eedbedd4442db892d37eae1f35fff069de8ec9020"
+    },
+    {
+      "path": "licenses/e2fsprogs/uuid-COPYING",
+      "upstream_path": "src/deps/e2fsprogs-sys/vendor/e2fsprogs/lib/uuid/COPYING",
+      "sha256": "9b718a9460fed5952466421235bc79eb49d4e9eacc920d7a9dd6285ab8fd6c6d"
+    },
+    {
+      "path": "licenses/libkrun/LICENSE",
+      "upstream_path": "src/deps/libkrun-sys/vendor/libkrun/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "licenses/libkrunfw/LICENSE-GPL-2.0-only",
+      "upstream_path": "src/deps/libkrun-sys/vendor/libkrunfw/LICENSE-GPL-2.0-only",
+      "sha256": "f6b78c087c3ebdf0f3c13415070dd480a3f35d8fc76f3d02180a407c1c812f79"
+    },
+    {
+      "path": "licenses/libkrunfw/LICENSE-LGPL-2.1-only",
+      "upstream_path": "src/deps/libkrun-sys/vendor/libkrunfw/LICENSE-LGPL-2.1-only",
+      "sha256": "dc626520dcd53a22f727af3ee42c770e56c97a64fe3adb063799d8ab032fe551"
+    },
+    {
+      "path": "licenses/gvisor-tap-vsock/LICENSE",
+      "upstream_path": "src/deps/libgvproxy-sys/gvproxy-bridge/tank-vendor/gvisor-tap-vsock/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    }
+  ],
+  "qualification": {
+    "required_for_this_artifact": true,
+    "native": "NOT_RUN",
+    "production_adoption": false,
+    "inherited_hardware_results": false
+  },
+  "original_status": "UNQUALIFIED_REPLAY_DNS_CANDIDATE",
+  "historical_component_qualification": {
+    "status": "QUALIFIED_NATIVE_REPLAY_NETWORK",
+    "scope": "native factory replay network and read-only database component",
+    "registry": "../../../deploy/boxlite/v0.10.6/replay-dns-qualified-artifact.json",
+    "shim_sha256": "b645c32295a3450c58536a7da9238ee44560a21800e16859ea906aa3801382fa",
+    "provenance_sha256": "ed4d17b305f0695e7bcd1e82c8def8b541af07f7c069aa44c910389ebfbf3245",
+    "registered_receipts_verified": 23,
+    "managed_session_or_full_E2E_acceptance": false,
+    "raw_candidate_provenance_relabelled": false
+  }
+}

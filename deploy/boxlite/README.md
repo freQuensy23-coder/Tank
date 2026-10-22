@@ -60,11 +60,13 @@ The proven delivery directory is `runtime-bundle`; its SHA256SUMS and
 provenance.json bind the boot-tested shim to the source/build inputs.
 
 The exported `/runtime` directory must be finalized with
-`deploy/prepare_boxlite_runtime.py` inside the Tank Python image before passing
-`--boxlite-runtime` to `prepare_openma_source.py`. That helper verifies unchanged
-original firmware/guest/helpers and the ARM64 system-loader ELF contract, writes
-artifact hashes, and marks hardware verification as required for the newly built
-artifact. It does not inherit a previous binary's KVM acceptance result.
+`deploy/prepare_boxlite_runtime.py` inside the Tank Python image before updating
+the versioned native archive and checksums in `vendor/openma/tank-native`.
+That verifier checks the unchanged original firmware/guest/helpers and the
+platform ELF contract. The static `vendor/openma/Dockerfile` extracts the committed
+archive during the ordinary root Compose build. A replacement artifact and its
+Dockerfile platform contract must match; new bytes require their own recorded
+hardware qualification and do not inherit a previous binary's KVM result.
 
 No credentials, BoxLite per-box configuration, generated certificates, browser
 profiles or model auth files belong in this directory. The verifier rejects

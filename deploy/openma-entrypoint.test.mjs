@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { after, test } from "node:test";
 
@@ -56,6 +57,28 @@ async function entrypointFixture(t, options = {}) {
     18,
   );
 
+  const provenance = JSON.stringify({ architecture, boxlite_version: "0.10.6" });
+  const sha256 = (value) => createHash("sha256").update(value).digest("hex");
+  const hashes = { shim_sha256: sha256(shim), provenance_sha256: sha256(provenance) };
+  const qualification = {
+    amd64: {
+      schema: "tank.boxlite-native-qualification.v1",
+      status: "PASS",
+      architecture: "amd64",
+      checks: { kvm: "PASS", state_persistence: "PASS", dns: "PASS", replay_isolation: "PASS" },
+      ...hashes,
+    },
+    arm64: {
+      schema: "tank.boxlite-qualified-replay-dns-artifact.v1",
+      status: "QUALIFIED_NATIVE_REPLAY_NETWORK",
+      qualification: { status: "PASS" },
+      source: { version: "0.10.6" },
+      files: { "boxlite-shim": hashes.shim_sha256 },
+      ...hashes,
+    },
+  };
+  if (options.unqualified) qualification[architecture].status = "FAIL";
+
   const secrets = {
     oma_db_password: "synthetic oma password",
     oma_api_key: "synthetic-service-key",
@@ -78,11 +101,13 @@ async function entrypointFixture(t, options = {}) {
   t.mock.module("node:fs", {
     exports: {
       readFileSync(path, encoding) {
+        if (path instanceof URL) {
+          assert.ok(path.pathname.endsWith("/tank-native-qualification.json"));
+          return JSON.stringify(qualification);
+        }
         reads.push(path);
         if (path === "/synthetic-native/boxlite-shim") return shim;
-        if (path === "/synthetic-native/provenance.json") {
-          return JSON.stringify({ architecture });
-        }
+        if (path === "/synthetic-native/provenance.json") return provenance;
         assert.equal(encoding, "utf8");
         const name = path.replace("/run/secrets/", "");
         assert.ok(Object.hasOwn(secrets, name), "Unexpected secret read");
@@ -113,7 +138,7 @@ async function entrypointFixture(t, options = {}) {
   });
   t.mock.method(process, "exit", (code) => exits.push(code));
 
-  const moduleUrl = new URL("./openma_entrypoint.mjs", import.meta.url);
+  const moduleUrl = new URL("../vendor/openma/tank-deploy/openma_entrypoint.mjs", import.meta.url);
   moduleUrl.searchParams.set("fixture", String(++fixtureNumber));
   const { main } = await import(moduleUrl.href);
   return { main, reads, resolutions, spawns, kills, exits, child, secrets };
@@ -196,6 +221,18 @@ test("main refuses an incompatible native binary before reading secrets or spawn
     "/synthetic-native/provenance.json",
   ]);
   assert.deepEqual(f.resolutions, []);
+  assert.deepEqual(f.spawns, []);
+});
+
+test("main refuses an unqualified native component before reading secrets or spawning", async (t) => {
+  const f = await entrypointFixture(t, { unqualified: true });
+
+  await assert.rejects(f.main(), /qualification missing or invalid/);
+
+  assert.deepEqual(f.reads, [
+    "/synthetic-native/boxlite-shim",
+    "/synthetic-native/provenance.json",
+  ]);
   assert.deepEqual(f.spawns, []);
 });
 

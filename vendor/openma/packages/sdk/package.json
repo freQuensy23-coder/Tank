@@ -1,0 +1,59 @@
+{
+  "name": "@openma/sdk",
+  "version": "1.0.2",
+  "description": "OpenMA composition SDK: the official Anthropic Managed Agents client plus typed OpenMA extensions.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "pnpm run clean && tsc",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "ai",
+    "agents",
+    "managed-agents",
+    "openma",
+    "sdk",
+    "llm",
+    "streaming",
+    "sse"
+  ],
+  "license": "Apache-2.0",
+  "homepage": "https://openma.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openma-ai/open-managed-agents",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "url": "https://github.com/openma-ai/open-managed-agents/issues"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.1.0",
+    "@anthropic-ai/sdk": "0.120.0"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.3"
+  }
+}

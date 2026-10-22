@@ -1,0 +1,467 @@
+// Memory store routes — REST CRUD on memory_stores + memories + versions.
+// Wraps services.memory directly; identical behaviour on CF (R2 + D1) and
+// Node (LocalFs/S3 + SqlClient).
+//
+// Keep in sync with apps/main/src/routes/memory.ts — the CF worker still
+// mounts its own copy for historical reasons; behaviour must match.
+// Missing routes here used to fall through main-node's SPA `index.html`
+// catch-all and surface as `Unexpected token '<' ... is not valid JSON`
+// in the console (Version history tab).
+
+import { Hono } from "hono";
+import {
+  MemoryBlobStoreError,
+  MemoryContentTooLargeError,
+  MemoryNotFoundError,
+  MemoryPreconditionFailedError,
+  MemoryStoreNotFoundError,
+  type Actor,
+  type MemoryRow,
+  type MemoryStoreRow,
+  type MemoryVersionRow,
+  type WritePrecondition,
+} from "@open-managed-agents/memory-store";
+import type { RouteServices, RouteServicesArg } from "../types";
+import { resolveServices } from "../types";
+
+interface Vars {
+  Variables: { tenant_id: string; user_id?: string };
+}
+
+export interface MemoryRoutesDeps {
+  services: RouteServicesArg;
+}
+
+function actorFor(c: { var: { user_id?: string; tenant_id: string } }): Actor {
+  return c.var.user_id
+    ? { type: "user", id: c.var.user_id }
+    : { type: "api_key", id: "api" };
+}
+
+async function rejectActiveDreamOutputStore(
+  services: RouteServices,
+  tenantId: string,
+  storeId: string,
+): Promise<{ error: { type: "invalid_request_error"; message: string } } | null> {
+  if (!services.dreams) return null;
+  const blocking = await services.dreams.findActiveDreamsByOutputStore({
+    tenantId,
+    storeId,
+  });
+  if (blocking.length === 0) return null;
+  return {
+    error: {
+      type: "invalid_request_error",
+      message: `memory store is the output of an active dream (${blocking[0].id}); cancel the dream first`,
+    },
+  };
+}
+
+/** Map service errors → HTTP status. */
+function handle(err: unknown): Response {
+  if (err instanceof MemoryStoreNotFoundError) {
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  if (err instanceof MemoryNotFoundError) {
+    return new Response(JSON.stringify({ error: err.message }), {
+      status: 404,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  if (err instanceof MemoryPreconditionFailedError) {
+    return new Response(JSON.stringify({ error: err.code, detail: err.message }), {
+      status: 409,
+      headers: { "content-type": "application/json" },
+    });
+  }
+  if (err instanceof MemoryContentTooLargeError) {
+    return new Response(
+      JSON.stringify({ error: `content exceeds 100KB limit (${err.limitBytes} bytes)` }),
+      { status: 400, headers: { "content-type": "application/json" } },
+    );
+  }
+  if (err instanceof MemoryBlobStoreError) {
+    console.error("memory_blob_store_error:", err.message, err.cause);
+    return new Response(
+      JSON.stringify({ error: err.code, detail: "blob store unavailable; try again" }),
+      { status: 503, headers: { "content-type": "application/json" } },
+    );
+  }
+  throw err;
+}
+
+function toApiStore(s: MemoryStoreRow) {
+  return {
+    type: "memory_store" as const,
+    id: s.id,
+    name: s.name,
+    description: s.description ?? undefined,
+    created_at: s.created_at,
+    updated_at: s.updated_at ?? undefined,
+    archived_at: s.archived_at ?? undefined,
+  };
+}
+
+function toApiMemory(m: MemoryRow) {
+  return {
+    id: m.id,
+    store_id: m.store_id,
+    path: m.path,
+    content: m.content,
+    content_sha256: m.content_sha256,
+    etag: m.etag,
+    size_bytes: m.size_bytes,
+    created_at: m.created_at,
+    updated_at: m.updated_at,
+  };
+}
+
+/** Re-nest actor_type/actor_id back into Anthropic's `actor: {type, id}` shape. */
+function toApiVersion(v: MemoryVersionRow) {
+  return {
+    id: v.id,
+    memory_id: v.memory_id,
+    store_id: v.store_id,
+    operation: v.operation,
+    path: v.path ?? undefined,
+    content: v.content ?? undefined,
+    content_sha256: v.content_sha256 ?? undefined,
+    size_bytes: v.size_bytes ?? undefined,
+    actor: { type: v.actor_type, id: v.actor_id },
+    created_at: v.created_at,
+    redacted: v.redacted || undefined,
+  };
+}
+
+export function buildMemoryRoutes(deps: MemoryRoutesDeps) {
+  const app = new Hono<Vars>();
+
+  // ── Stores ────────────────────────────────────────────────────────
+
+  app.post("/", async (c) => {
+    const services = resolveServices(deps.services, c);
+    const body = await c.req.json<{ name: string; description?: string }>();
+    if (!body.name) return c.json({ error: "name is required" }, 400);
+    try {
+      const row = await services.memory.createStore({
+        tenantId: c.var.tenant_id,
+        name: body.name,
+        description: body.description,
+      });
+      return c.json(toApiStore(row), 201);
+    } catch (err) {
+      return handle(err);
+    }
+  });
+
+  app.get("/", async (c) => {
+    const services = resolveServices(deps.services, c);
+
+    // status: enum filter on archive state. Whitelist strictly — any
+    // unknown value is a 400, NOT a silent fallback to "any". Allowing
+    // arbitrary strings here would mask client bugs (typo'd "active "
+    // returning every row looks like a feature).
+    const statusRaw = c.req.query("status");
+    let status: "active" | "archived" | "any" | undefined;
+    if (statusRaw !== undefined) {
+      if (statusRaw === "active" || statusRaw === "archived" || statusRaw === "any") {
+        status = statusRaw;
+      } else {
+        return c.json(
+          {
+            error: {
+              type: "invalid_request_error",
+              code: "invalid_status",
+              message: `Invalid status '${statusRaw}'; expected one of active|archived|any.`,
+            },
+          },
+          400,
+        );
+      }
+    }
+
+    // created_after / created_before: ISO timestamps → epoch ms. Reject
+    // unparseable values explicitly so the client knows it's a malformed
+    // request, not just "no results".
+    const parseMs = (
+      raw: string | undefined,
+      field: string,
+    ): { value: number | undefined; err?: Response } => {
+      if (raw === undefined) return { value: undefined };
+      const ms = Date.parse(raw);
+      if (Number.isNaN(ms)) {
+        return {
+          value: undefined,
+          err: c.json(
+            {
+              error: {
+                type: "invalid_request_error",
+                code: "invalid_timestamp",
+                message: `Invalid ${field} '${raw}'; expected ISO-8601 timestamp.`,
+              },
+            },
+            400,
+          ),
+        };
+      }
+      return { value: ms };
+    };
+    const createdAfterRes = parseMs(c.req.query("created_after"), "created_after");
+    if (createdAfterRes.err) return createdAfterRes.err;
+    const createdBeforeRes = parseMs(c.req.query("created_before"), "created_before");
+    if (createdBeforeRes.err) return createdBeforeRes.err;
+
+    // include_archived: legacy back-compat — older console builds sent
+    // this checkbox boolean before the 3-way status chip existed.
+    // Maps to status=any when the new `status` param isn't set. The
+    // service layer keeps both for the same reason.
+    const includeArchivedRaw = c.req.query("include_archived");
+    const includeArchived = includeArchivedRaw === "true";
+
+    const rows = await services.memory.listStores({
+      tenantId: c.var.tenant_id,
+      ...(status !== undefined ? { status } : {}),
+      ...(includeArchivedRaw !== undefined ? { includeArchived } : {}),
+      ...(createdAfterRes.value !== undefined
+        ? { createdAfter: createdAfterRes.value }
+        : {}),
+      ...(createdBeforeRes.value !== undefined
+        ? { createdBefore: createdBeforeRes.value }
+        : {}),
+    });
+    return c.json({ data: rows.map(toApiStore) });
+  });
+
+  app.get("/:id", async (c) => {
+    const services = resolveServices(deps.services, c);
+    const row = await services.memory.getStore({
+      tenantId: c.var.tenant_id,
+      storeId: c.req.param("id"),
+    });
+    if (!row) return c.json({ error: "Memory store not found" }, 404);
+    return c.json(toApiStore(row));
+  });
+
+  // POST/PUT /v1/memory_stores/:id — update memory store. Anthropic uses
+  // POST per their REST conventions; PUT accepted as a body-replace alias
+  // (matches our agents / sessions update routes).
+  app.on(["PUT", "POST"], "/:id", async (c) => {
+    const services = resolveServices(deps.services, c);
+    const body = await c.req.json<{ name?: string; description?: string | null }>();
+    try {
+      const store = await services.memory.updateStore({
+        tenantId: c.var.tenant_id,
+        storeId: c.req.param("id"),
+        name: body.name,
+        description: body.description,
+      });
+      return c.json(toApiStore(store));
+    } catch (err) {
+      return handle(err);
+    }
+  });
+
+  app.post("/:id/archive", async (c) => {
+    const services = resolveServices(deps.services, c);
+    const storeId = c.req.param("id");
+    const blocked = await rejectActiveDreamOutputStore(services, c.var.tenant_id, storeId);
+    if (blocked) return c.json(blocked, 400);
+    try {
+      const store = await services.memory.archiveStore({
+        tenantId: c.var.tenant_id,
+        storeId,
+      });
+      return c.json(toApiStore(store));
+    } catch (err) {
+      return handle(err);
+    }
+  });
+
+  app.delete("/:id", async (c) => {
+    const services = resolveServices(deps.services, c);
+    const storeId = c.req.param("id");
+    const blocked = await rejectActiveDreamOutputStore(services, c.var.tenant_id, storeId);
+    if (blocked) return c.json(blocked, 400);
+    try {
+      await services.memory.deleteStore({ tenantId: c.var.tenant_id, storeId });
+      return c.json({ type: "memory_store_deleted", id: storeId });
+    } catch (err) {
+      return handle(err);
+    }
+  });
+
+  // ── Memories ──────────────────────────────────────────────────────
+
+  app.post("/:id/memories", async (c) => {
+    const services = resolveServices(deps.services, c);
+    const body = await c.req.json<{
+      path: string;
+      content: string;
+      precondition?: WritePrecondition;
+    }>();
+    if (!body.path || body.content === undefined) {
+      return c.json({ error: "path and content are required" }, 400);
+    }
+    try {
+      const row = await services.memory.writeByPath({
+        tenantId: c.var.tenant_id,
+        storeId: c.req.param("id"),
+        path: body.path,
+        content: body.content,
+        precondition: body.precondition,
+        actor: actorFor(c),
+      });
+      return c.json(toApiMemory(row), 201);
+    } catch (err) {
+      return handle(err);
+    }
+  });
+
+  app.get("/:id/memories", async (c) => {
+    const services = resolveServices(deps.services, c);
+    const pathPrefix = c.req.query("path_prefix") ?? c.req.query("prefix") ?? undefined;
+    // `depth` is Anthropic-aligned: `depth=N` shows entries at most N path
+    // segments below the prefix. Implemented client-side over the service's
+    // flat list (cheap given typical store size). depth=undefined → return all.
+    const depthRaw = c.req.query("depth");
+    const depth = depthRaw ? Math.max(0, parseInt(depthRaw, 10)) : undefined;
+    try {
+      let memories = await services.memory.listMemories({
+        tenantId: c.var.tenant_id,
+        storeId: c.req.param("id"),
+        pathPrefix,
+      });
+      if (depth !== undefined && pathPrefix) {
+        memories = memories.filter((m) => {
+          if (!m.path.startsWith(pathPrefix)) return false;
+          const remainder = m.path.slice(pathPrefix.length);
+          const segments = remainder.split("/").filter(Boolean).length;
+          return segments <= depth;
+        });
+      }
+      // List does not include content (mirrors Anthropic semantics).
+      return c.json({
+        data: memories.map((m) => {
+          const { content: _content, ...meta } = toApiMemory(m);
+          return meta;
+        }),
+      });
+    } catch (err) {
+      return handle(err);
+    }
+  });
+
+  app.get("/:id/memories/:mid", async (c) => {
+    const services = resolveServices(deps.services, c);
+    try {
+      const row = await services.memory.readById({
+        tenantId: c.var.tenant_id,
+        storeId: c.req.param("id"),
+        memoryId: c.req.param("mid"),
+      });
+      if (!row) return c.json({ error: "Memory not found" }, 404);
+      return c.json(toApiMemory(row));
+    } catch (err) {
+      return handle(err);
+    }
+  });
+
+  const updateMemory = async (c: any) => {
+    const services = resolveServices(deps.services, c);
+    const body = (await c.req.json()) as {
+      path?: string;
+      content?: string;
+      precondition?: WritePrecondition;
+    };
+    try {
+      const mem = await services.memory.updateById({
+        tenantId: c.var.tenant_id,
+        storeId: c.req.param("id"),
+        memoryId: c.req.param("mid"),
+        path: body.path,
+        content: body.content,
+        precondition: body.precondition,
+        actor: actorFor(c),
+      });
+      return c.json(toApiMemory(mem));
+    } catch (err) {
+      return handle(err);
+    }
+  };
+  app.patch("/:id/memories/:mid", updateMemory);
+  app.post("/:id/memories/:mid", updateMemory);
+
+  app.delete("/:id/memories/:mid", async (c) => {
+    const services = resolveServices(deps.services, c);
+    const expectedSha = c.req.query("expected_content_sha256") ?? undefined;
+    try {
+      await services.memory.deleteById({
+        tenantId: c.var.tenant_id,
+        storeId: c.req.param("id"),
+        memoryId: c.req.param("mid"),
+        expectedSha,
+        actor: actorFor(c),
+      });
+      return c.json({ type: "memory_deleted", id: c.req.param("mid") });
+    } catch (err) {
+      return handle(err);
+    }
+  });
+
+  // ── Versions ──────────────────────────────────────────────────────
+
+  app.get("/:id/memory_versions", async (c) => {
+    const services = resolveServices(deps.services, c);
+    const memoryId = c.req.query("memory_id") ?? undefined;
+    try {
+      const versions = await services.memory.listVersions({
+        tenantId: c.var.tenant_id,
+        storeId: c.req.param("id"),
+        memoryId,
+      });
+      // List omits content body to match prior behavior.
+      return c.json({
+        data: versions.map((v) => {
+          const { content: _content, ...rest } = toApiVersion(v);
+          return rest;
+        }),
+      });
+    } catch (err) {
+      return handle(err);
+    }
+  });
+
+  app.get("/:id/memory_versions/:ver_id", async (c) => {
+    const services = resolveServices(deps.services, c);
+    try {
+      const v = await services.memory.getVersion({
+        tenantId: c.var.tenant_id,
+        storeId: c.req.param("id"),
+        versionId: c.req.param("ver_id"),
+      });
+      if (!v) return c.json({ error: "Memory version not found" }, 404);
+      return c.json(toApiVersion(v));
+    } catch (err) {
+      return handle(err);
+    }
+  });
+
+  app.post("/:id/memory_versions/:ver_id/redact", async (c) => {
+    const services = resolveServices(deps.services, c);
+    try {
+      const v = await services.memory.redactVersion({
+        tenantId: c.var.tenant_id,
+        storeId: c.req.param("id"),
+        versionId: c.req.param("ver_id"),
+      });
+      return c.json(toApiVersion(v));
+    } catch (err) {
+      return handle(err);
+    }
+  });
+
+  return app;
+}
