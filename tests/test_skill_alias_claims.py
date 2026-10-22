@@ -7,7 +7,8 @@ import pytest
 
 ROOT = Path(__file__).parents[1]
 SPEC = importlib.util.spec_from_file_location(
-    "skill_alias_claims", ROOT / "vendor/openma/packages/control-plane-node/src/lib/node-managed-skill-aliases.py"
+    "skill_alias_claims",
+    ROOT / "vendor/openma/packages/control-plane-node/src/lib/node-managed-skill-aliases.py",
 )
 claims = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(claims)
@@ -114,5 +115,3 @@ def test_failed_atomic_publication_leaves_no_partial_receipt_and_retries(tmp_pat
     monkeypatch.setattr(claims.os, "link", original)
     claims.apply([binding()], "claim", tmp_path)
     assert json.loads((receipts / "tank-data.json").read_text()) == binding()
-
-
