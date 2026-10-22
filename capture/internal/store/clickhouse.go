@@ -66,6 +66,7 @@ func (c *ClickHouse) post(ctx context.Context, query string, params map[string]s
 	q.Set("output_format_json_quote_decimals", "0")
 	q.Set("max_partitions_per_insert_block", "1000")
 	q.Set("do_not_merge_across_partitions_select_final", "1")
+	q.Set("max_query_size", "268435456")
 	for k, v := range params {
 		q.Set("param_"+k, v)
 	}
@@ -277,14 +278,50 @@ func (s *Store) series(collection string) error {
 	return nil
 }
 
+var chDay = map[string]string{
+	"mkt.klines_1m": "open_time", "mkt.flow_bars_1m": "minute_start", "mkt.book_summaries": "exchange_ts",
+	"mkt.oi_obs": "ts", "mkt.funding_obs": "as_of", "mkt.liq_obs": "ts", "mkt.tickers_24h": "ts",
+}
+
 func (s *Store) chSelect(ctx context.Context, collection, where string, params map[string]string, tail string) ([]map[string]any, []string, error) {
-	rows, err := s.CH.rows(ctx, "SELECT * FROM "+collection+" FINAL WHERE "+where+" "+tail, params)
+	day := chColumn(chDay[collection])
+	picked, err := s.CH.rows(ctx, "SELECT storage_key, toString("+day+") AS _day FROM "+collection+" FINAL WHERE "+where+" "+tail, params)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: %w", collection, err)
 	}
-	out := make([]map[string]any, 0, len(rows))
-	keys := make([]string, 0, len(rows))
+	if len(picked) == 0 {
+		return []map[string]any{}, []string{}, nil
+	}
+	order := make([]string, len(picked))
+	low, high := "", ""
+	for i, r := range picked {
+		order[i], _ = r["storage_key"].(string)
+		d, _ := r["_day"].(string)
+		if low == "" || d < low {
+			low = d
+		}
+		if d > high {
+			high = d
+		}
+	}
+	quoted := chArray(order)
+	rows, err := s.CH.rows(ctx, "SELECT * FROM "+collection+" FINAL WHERE "+day+" >= toDateTime64('"+low+"', 6, 'UTC') AND "+
+		day+" <= toDateTime64('"+high+"', 6, 'UTC') AND storage_key IN ("+quoted[1:len(quoted)-1]+")", nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s: %w", collection, err)
+	}
+	byKey := make(map[string]map[string]any, len(rows))
 	for _, r := range rows {
+		k, _ := r["storage_key"].(string)
+		byKey[k] = r
+	}
+	out := make([]map[string]any, 0, len(order))
+	keys := make([]string, 0, len(order))
+	for _, k := range order {
+		r, ok := byKey[k]
+		if !ok {
+			continue
+		}
 		rec, key, err := chDecode(collection, r)
 		if err != nil {
 			return nil, nil, err
