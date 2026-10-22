@@ -1912,3 +1912,41 @@ async def test_expired_file_payloads_are_deleted_with_their_metadata():
     assert not await repo.get("ops.telegram_file_payloads", "f") and not await repo.get(
         "ops.telegram_files", "f"
     )
+
+
+@pytest.mark.asyncio
+async def test_paired_size_notice_settles_both_rows_in_one_transaction():
+    repo = MemoryRepository()
+    await seed(repo)
+    comment = message(
+        120, date=1_800_019_000, caption="Файл", document={"file_id": "huge", "file_name": "b.bin"}
+    )
+    forward = message(
+        121,
+        date=1_800_019_000,
+        text="AAVE exploit card",
+        forward_origin={"type": "user", "sender_user": {"id": BOT}, "date": 1_800_000_000},
+    )
+    telegram = FakeTelegram([{"update_id": 1, "message": comment}, {"update_id": 2, "message": forward}])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        await inbox.poll(timeout=0)
+        original = inbox.mark
+        calls = []
+
+        async def failing_second(row, status, **extra):
+            calls.append(row["message_id"])
+            if len(calls) == 2:
+                raise RuntimeError("write lost")
+            await original(row, status, **extra)
+
+        inbox.mark = failing_second
+        await inbox.sweep(now=1_800_019_100)
+        inbox.mark = original
+        first = {n: (await repo.get("ops.telegram_messages", f"{USER}:{n}"))["status"] for n in (120, 121)}
+        for step in range(1, 4):
+            await inbox.sweep(now=1_800_019_100 + step * 400)
+    assert first == {120: "RECEIVED", 121: "RECEIVED"}
+    assert (await repo.get("ops.telegram_messages", f"{USER}:120"))["status"] == "IGNORED"
+    assert (await repo.get("ops.telegram_messages", f"{USER}:121"))["status"] == "IGNORED"
+    assert [body["text"] for body in telegram.sent].count(PROMPT_TEXT) == 0

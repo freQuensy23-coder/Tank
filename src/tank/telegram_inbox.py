@@ -452,8 +452,13 @@ class TelegramInbox:
             try:
                 await self.question(companion, target, forwarded=row)
             except FileTooLarge:
-                await self.notice(companion, TOO_LARGE_TEXT, "IGNORED", reason="FILE_TOO_LARGE")
-                await self.mark(row, "IGNORED", reason="FILE_TOO_LARGE", paired_with=companion["message_id"])
+                await self.notice(
+                    companion,
+                    TOO_LARGE_TEXT,
+                    "IGNORED",
+                    reason="FILE_TOO_LARGE",
+                    also=[(row, {"reason": "FILE_TOO_LARGE", "paired_with": companion["message_id"]})],
+                )
                 return
             await self.mark(
                 row,
@@ -776,8 +781,11 @@ class TelegramInbox:
             "bytes": len(content),
         }
 
-    async def notice(self, row, text, status, **extra):
-        """Reply with a notice at most once, then settle the input; a rejected send stays retryable."""
+    async def notice(self, row, text, status, *, also=(), **extra):
+        """Reply with a notice at most once, then settle the input (and any paired rows) together.
+
+        A rejected send leaves every row retryable.
+        """
         key = question_id_for(row["chat_id"], row["message_id"])
         ledger = [
             delivery
@@ -825,7 +833,10 @@ class TelegramInbox:
                 },
                 immutable=True,
             )
-        await self.mark(row, status, **extra)
+        async with self.repo.transaction():
+            await self.mark(row, status, **extra)
+            for other, other_extra in also:
+                await self.mark(other, status, **other_extra)
 
     async def prompt(self, row, target):
         """Ask for the question; a reply to this prompt continues the referenced session."""
