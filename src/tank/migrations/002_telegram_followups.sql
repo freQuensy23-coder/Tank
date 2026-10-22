@@ -40,3 +40,8 @@ immutable boolean NOT NULL DEFAULT false,
 "filename" text,
 "size" bigint);
 CREATE INDEX IF NOT EXISTS ops_telegram_files_question_id_idx ON ops.telegram_files ("question_id");
+-- File bytes live apart from their metadata, so expiry scans never read payloads.
+CREATE TABLE IF NOT EXISTS ops.telegram_file_payloads (storage_key text PRIMARY KEY,
+document jsonb NOT NULL,
+immutable boolean NOT NULL DEFAULT false,
+"file_key" text);

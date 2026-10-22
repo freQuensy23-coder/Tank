@@ -887,8 +887,9 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
     await run_inbox(repo, telegram, now=1_800_004_001)
     question = await repo.get("out.user_questions", question_id_for(ALERTS, 40))
     item = question["attachments"][0]
-    stored = await repo.get("ops.telegram_files", item["file_key"])
+    stored = await repo.get("ops.telegram_file_payloads", item["file_key"])
     assert base64.b64decode(stored["content_base64"]) == b"col\n1\n" and item["filename"] == "my_data.csv"
+    assert "content_base64" not in await repo.get("ops.telegram_files", item["file_key"])
     text = question_message(question)
     assert (
         "Посчитай по этому файлу" in text
@@ -1880,3 +1881,34 @@ async def test_paired_size_notice_failure_keeps_both_messages_retryable():
     assert [body["text"] for body in telegram.sent] == [TOO_LARGE_TEXT]
     assert (await repo.get("ops.telegram_messages", f"{USER}:110"))["status"] == "IGNORED"
     assert (await repo.get("ops.telegram_messages", f"{USER}:111"))["status"] == "IGNORED"
+
+
+@pytest.mark.asyncio
+async def test_question_to_a_session_missing_in_openma_answers_no_session():
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(404, json={}))
+    ) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
+        assert await service.send_message(payload) is None
+    assert (await repo.get("out.user_questions", question_id))["answer_status"] == "NO_SESSION"
+
+
+@pytest.mark.asyncio
+async def test_expired_file_payloads_are_deleted_with_their_metadata():
+    from datetime import timedelta
+
+    from tank.util import iso, utcnow
+
+    repo = MemoryRepository()
+    await repo.put(
+        "ops.telegram_files", "f", {"file_key": "f", "stored_at": iso(utcnow() - timedelta(days=31))}
+    )
+    await repo.put("ops.telegram_file_payloads", "f", {"file_key": "f", "content_base64": "eA=="})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(FakeTelegram())) as http:
+        await TelegramInbox(repo, inbox_settings(), http=http).prune_files()
+    assert not await repo.get("ops.telegram_file_payloads", "f") and not await repo.get(
+        "ops.telegram_files", "f"
+    )

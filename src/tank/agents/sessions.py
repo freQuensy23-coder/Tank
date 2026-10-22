@@ -366,7 +366,12 @@ class SessionService:
         if session.get("status") == "ENDED":
             await record_answer(self.repo, question_id, None, status="ARCHIVED")
             return False
-        remote = await self.request("GET", f"sessions/{session['session_id']}")
+        try:
+            remote = await self.request("GET", f"sessions/{session['session_id']}")
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 404:
+                raise
+            remote = {"status": "terminated", "missing": True}
         remote = remote.get("data", remote)
         if remote.get("status") == "terminated" or remote.get("archived_at"):
             async with self.repo.lock("session:" + session["session_id"]):

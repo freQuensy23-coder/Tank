@@ -749,6 +749,7 @@ TABLE_COLUMNS["ops.telegram_files"] = {
     "filename": "text",
     "size": "bigint",
 }
+TABLE_COLUMNS["ops.telegram_file_payloads"] = {"file_key": "text"}
 TABLE_COLUMNS["out.user_questions"] = {
     "question_id": "text",
     "session_id": "text",

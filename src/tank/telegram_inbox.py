@@ -104,7 +104,7 @@ def question_message(question):
         lines.append(
             f"Пользователь приложил файл {item['filename']} ({item['size']} байт). Положить его в /workspace: "
             f'mkdir -p /workspace/uploads && psql "$TANK_DB_URL" -Atc '
-            f"\"select document->>'content_base64' from ops.telegram_files where storage_key='{item['file_key']}'\" "
+            f"\"select document->>'content_base64' from ops.telegram_file_payloads where storage_key='{item['file_key']}'\" "
             f"| base64 -d > '/workspace/uploads/{item['file_key'][-8:]}-{item['filename']}'"
         )
     lines.append(
@@ -260,6 +260,7 @@ class TelegramInbox:
             if row.get("stored_at") and parse_time(row["stored_at"]) < cutoff
         ]
         for key in expired:
+            await self.repo.delete("ops.telegram_file_payloads", key)
             await self.repo.delete("ops.telegram_files", key)
         old = [
             f"{row['chat_id']}:{row['message_id']}"
@@ -902,7 +903,7 @@ class TelegramInbox:
         )
 
     async def attachments(self, row, question_id, session_id, *messages):
-        """Download each attached file (at most 20 MB) into ops.telegram_files for the session."""
+        """Download each attached file (at most 20 MB): metadata in ops.telegram_files, bytes in ops.telegram_file_payloads."""
         stored = []
         for message in messages:
             item = media(message) if message else None
@@ -911,6 +912,11 @@ class TelegramInbox:
             key = "tgf_" + sha256({"question_id": question_id, "file": item["file_unique_id"]})[:32]
             if not await self.repo.get("ops.telegram_files", key):
                 content = await self.download(item["file_id"])
+                await self.repo.put(
+                    "ops.telegram_file_payloads",
+                    key,
+                    {"file_key": key, "content_base64": base64.b64encode(content).decode()},
+                )
                 await self.repo.put(
                     "ops.telegram_files",
                     key,
@@ -922,7 +928,6 @@ class TelegramInbox:
                         "mime": item["mime"],
                         "size": len(content),
                         "sha256": hashlib.sha256(content).hexdigest(),
-                        "content_base64": base64.b64encode(content).decode(),
                         **collection_clock(utcnow()).fields("stored_at"),
                     },
                 )
