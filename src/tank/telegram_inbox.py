@@ -91,6 +91,10 @@ def question_message(question):
     return "\n\n".join(lines)
 
 
+class FileTooLarge(ValueError):
+    """Telegram refuses bot downloads above 20 MB; the message is answered and set aside."""
+
+
 def media(message):
     """The single file a Telegram message carries, if any: the largest photo size or the document."""
     for kind in MEDIA_KINDS:
@@ -175,15 +179,20 @@ class TelegramInbox:
         return data["result"]
 
     async def download(self, file_id):
-        info = await self.call("getFile", {"file_id": file_id})
+        try:
+            info = await self.call("getFile", {"file_id": file_id})
+        except RuntimeError as error:
+            if getattr(error, "status", None) == 400:
+                raise FileTooLarge("Telegram refused the file download") from error
+            raise
         if int(info.get("file_size") or 0) > UPLOAD_LIMIT:
-            raise ValueError("Telegram file exceeds 20 MB")
+            raise FileTooLarge("Telegram file exceeds 20 MB")
         response = await self.http.get(
             f"https://api.telegram.org/file/bot{self.settings.telegram_token}/{info['file_path']}"
         )
         response.raise_for_status()
         if len(response.content) > UPLOAD_LIMIT:
-            raise ValueError("Telegram file exceeds 20 MB")
+            raise FileTooLarge("Telegram file exceeds 20 MB")
         return response.content
 
     async def run(self, stop):
@@ -272,7 +281,11 @@ class TelegramInbox:
         for row in rows:
             current = await self.repo.get("ops.telegram_messages", f"{row['chat_id']}:{row['message_id']}")
             if current and current["status"] == "RECEIVED":
-                await self.handle(current, now)
+                try:
+                    await self.handle(current, now)
+                except FileTooLarge:
+                    await self.notice(current, TOO_LARGE_TEXT)
+                    await self.mark(current, "IGNORED", reason="FILE_TOO_LARGE")
 
     async def authorized(self, message):
         chat = message["chat"]
@@ -476,8 +489,11 @@ class TelegramInbox:
         start = datetime.fromtimestamp(date - FORWARD_MATCH_S, UTC)
         end = datetime.fromtimestamp(date + FORWARD_MATCH_S, UTC)
         candidates = []
+        chats = {str(message["chat"]["id"]), str(self.settings.telegram_alerts_chat)}
         for channel in (CARD_CHANNEL, ANSWER_CHANNEL):
             for delivery in await self.sent_between(channel, start, end):
+                if channel == ANSWER_CHANNEL and str(delivery.get("chat_id")) not in chats:
+                    continue
                 stamp = delivery.get("telegram_date")
                 if stamp is not None and int(stamp) != int(date):
                     continue

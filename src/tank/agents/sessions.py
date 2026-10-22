@@ -11,6 +11,7 @@ import time
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass
 from datetime import timedelta
+from urllib.parse import quote
 
 import httpx
 from httpx_sse import aconnect_sse
@@ -463,7 +464,8 @@ class SessionService:
         content = None
         for _ in range(10):
             response = await self.http.get(
-                self.url(f"sessions/{session['session_id']}/outputs/{filename}"), headers=self.headers()
+                self.url(f"sessions/{session['session_id']}/outputs/{quote(filename, safe='')}"),
+                headers=self.headers(),
             )
             if response.status_code == 200:
                 content = response.content

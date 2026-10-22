@@ -2445,6 +2445,10 @@ class EventToolService:
         for leaf in a.get("conditions") or []:
             if not re.fullmatch(r"[a-z_][a-z0-9_]*(\.[a-z0-9_]+)+", leaf["metric"]):
                 raise ValueError("metric must be a dotted lowercase metric name")
+            if leaf["metric"].startswith(("event.", "milestone.")) and leaf.get("persist_count", 1) > 1:
+                raise ValueError(
+                    "event.* and milestone.* conditions fire on the first match; omit persist_count"
+                )
             if leaf["op"] == "in" and not isinstance(leaf["value"], list):
                 raise ValueError("op in requires a list value")
             if leaf["op"] in (">", ">=", "<", "<="):

@@ -759,6 +759,11 @@ class Scheduler:
                             cond["cond_id"],
                             condition=updated,
                             token_id=cond["token_id"],
+                            **(
+                                {"session_id": cond["session_id"]}
+                                if cond.get("agent_defined") and cond.get("session_id")
+                                else {}
+                            ),
                         )
                 else:
                     await self.repo.put("ana.watch_conditions", cond["cond_id"], updated)

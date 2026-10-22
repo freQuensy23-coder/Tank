@@ -53,6 +53,8 @@ class FakeTelegram:
         method = request.url.path.rsplit("/", 1)[-1]
         body = json.loads(request.content or b"{}")
         if method == "getFile":
+            if body["file_id"] not in self.files:
+                return httpx.Response(400, json={"ok": False, "description": "Bad Request: file is too big"})
             return httpx.Response(
                 200,
                 json={
@@ -965,3 +967,118 @@ def test_reopening_fails_queued_follow_ups_of_the_failed_session():
     assert session["message_log"][0]["turn_status"] == "FAILED"
     assert session["message_log"][1]["turn_status"] == "ACCEPTING"
     assert session["retired_message_ids"] == ["old_q"] and session["status"] == "OPEN"
+
+
+@pytest.mark.asyncio
+async def test_unsized_file_that_telegram_refuses_is_set_aside_without_blocking_the_inbox():
+    from tank.telegram_inbox import TOO_LARGE_TEXT
+
+    repo = MemoryRepository()
+    await seed(repo)
+    unsized = message(
+        50,
+        date=1_800_007_000,
+        chat=int(ALERTS),
+        chat_type="supergroup",
+        caption="?",
+        document={"file_id": "huge", "file_name": "big.bin"},
+        reply_to_message={"message_id": 55, "from": {"id": BOT}},
+    )
+    after = message(
+        51,
+        date=1_800_007_001,
+        text="А так?",
+        chat=int(ALERTS),
+        chat_type="supergroup",
+        reply_to_message={"message_id": 55, "from": {"id": BOT}},
+    )
+    telegram = FakeTelegram([{"update_id": 1, "message": unsized}, {"update_id": 2, "message": after}])
+    await run_inbox(repo, telegram, now=1_800_007_002)
+    assert (await repo.get("ops.telegram_messages", f"{ALERTS}:50"))["reason"] == "FILE_TOO_LARGE"
+    assert telegram.sent[0]["text"] == TOO_LARGE_TEXT
+    assert (await repo.get("out.user_questions", question_id_for(ALERTS, 51)))["session_id"] == "ses_1"
+
+
+@pytest.mark.asyncio
+async def test_output_filename_is_one_encoded_path_segment():
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
+    session["message_log"].append({"message_id": "mq", "payload": payload, "turn_status": "RUNNING"})
+    session["active_message_id"] = "mq"
+    paths = []
+
+    def handler(request):
+        if request.url.host == "oma":
+            paths.append(request.url.raw_path)
+            return httpx.Response(200, content=b"x")
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 3002, "date": 1}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        service.telegram = TelegramInbox(repo, inbox_settings(), http=http)
+        await service.invoke_tool(session, "send_telegram_file", {"filename": "q?a#b.txt"}, "call_9")
+    assert paths == [b"/v1/sessions/ses_1/outputs/q%3Fa%23b.txt"]
+
+
+@pytest.mark.asyncio
+async def test_fired_agent_watch_wakes_the_session_that_armed_it():
+    from datetime import timedelta
+    from unittest.mock import AsyncMock
+
+    from tank.scheduler import Scheduler
+    from tank.util import iso, utcnow
+
+    repo = MemoryRepository()
+    now = utcnow()
+    await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
+    await repo.put(
+        "ana.contradictions",
+        "fatal",
+        {"contradiction_id": "fatal", "event_id": "evt_1", "type": "FATAL", "detected_at": iso(now)},
+    )
+    await repo.put(
+        "ana.watch_conditions",
+        "c1",
+        {
+            "cond_id": "c1",
+            "event_id": "evt_1",
+            "token_id": "bitcoin:BTC",
+            "role": "AGENT",
+            "agent_defined": True,
+            "session_id": "ses_followup",
+            "status": "ARMED",
+            "expires_at": iso(now + timedelta(days=1)),
+            "expr": {"metric": "event.contradiction_fatal", "window": "W1H", "op": "==", "value": True},
+        },
+    )
+    scheduler = Scheduler(repo, SimpleNamespace(), None, SimpleNamespace(assess=AsyncMock(return_value={})))
+    await scheduler.eval_conditions({"cutoff": iso(now)})
+    jobs = await repo.list("ops.jobs", filters={"type": "AGENT_MESSAGE"})
+    assert (
+        jobs[0]["payload"]["kind"] == "CONDITION_FIRED" and jobs[0]["payload"]["session_id"] == "ses_followup"
+    )
+
+
+@pytest.mark.asyncio
+async def test_event_scoped_watches_refuse_persistence():
+    from tank.event_tools import EventToolService
+
+    repo = MemoryRepository()
+    await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
+    tools = object.__new__(EventToolService)
+    tools.repo = repo
+    tools.settings = SimpleNamespace(config_version="c", code_version="v")
+    with pytest.raises(ValueError, match="first match"):
+        await tools.set_watch_condition(
+            {
+                "event_id": "evt_1",
+                "action": "ARM",
+                "token": "bitcoin:BTC",
+                "conditions": [
+                    {"metric": "milestone.outcome", "op": "==", "value": "VERIFIED", "persist_count": 2}
+                ],
+            },
+            {},
+        )
