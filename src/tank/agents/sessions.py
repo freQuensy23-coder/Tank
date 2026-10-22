@@ -20,6 +20,7 @@ from tank.agents import workflow
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
+from tank.delivery import DeliveryDeferred
 from tank.telegram_inbox import DOCUMENT_LIMIT, question_message, record_answer
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, iso, sha256
@@ -414,16 +415,13 @@ class SessionService:
         if getattr(self.settings, "replay", False):
             return
         session = await self.repo.get("ops.agent_sessions", sid)
-        if (
-            session is None
-            or session.get("proposal_id")
-            or session.get("active_message_id")
-            or session.get("runtime_status") in BUSY_RUNTIME_STATES
-        ):
-            return
+        if session is None or session.get("proposal_id"):
+            return None
         tools = self.analyst_tools()
         if not tools or session.get("tools_sha256") == sha256(tools):
-            return
+            return None
+        if session.get("active_message_id") or session.get("runtime_status") in BUSY_RUNTIME_STATES:
+            return "BUSY"
         try:
             await self.request("POST", f"sessions/{sid}", json={"agent": {"tools": tools}})
             remote = await self.request("GET", f"sessions/{sid}")
@@ -498,8 +496,8 @@ class SessionService:
         async with self.repo.lock("session-mapping:" + str(mapping_identity)):
             session = await self.resolve(payload)
         sid, key = session["session_id"], sha256(payload)
-        if payload.get("kind") == "USER_QUESTION":
-            await self.sync_tools(sid)
+        if payload.get("kind") == "USER_QUESTION" and await self.sync_tools(sid) == "BUSY":
+            raise DeliveryDeferred(offset_schedule(collection_clock(), timedelta(seconds=30)))
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             async with self.repo.lock("session:" + sid):
                 session = await self.repo.get("ops.agent_sessions", sid)
@@ -804,36 +802,42 @@ class SessionService:
             await self.deliver_answers(sid)
         return result
 
-    async def turn_answers(self, session):
+    async def turn_answers(self, session, inputs=None):
         """Per accepted message: the last agent text of its executions and whether its turn ended.
 
-        A turn ends when the newest execution owned by the message went idle with end_turn.
+        A turn ends when the newest execution owned by the message went idle with end_turn. History
+        is read newest first and only back to the oldest wanted input, never the whole session.
         """
-        texts, ends, order, current, page = {}, {}, [], None, None
+        wanted = set(inputs or ())
+        recent, page = [], None
         while True:
-            params = {"limit": 100, "order": "asc"}
+            params = {"limit": 100, "order": "desc"}
             if page:
                 params["page"] = page
             data = await self.request("GET", f"sessions/{session['session_id']}/events", params=params)
             for event in data.get("data", []):
-                kind = event.get("type")
-                if kind == "session.status_running":
-                    current = event.get("execution_id")
-                    if current and current not in order:
-                        order.append(current)
-                elif kind == "agent.message" and current:
-                    text = "".join(
-                        block.get("text", "")
-                        for block in event.get("content", [])
-                        if isinstance(block, dict) and block.get("type") == "text"
-                    ).strip()
-                    if text:
-                        texts[current] = text
-                elif kind == "session.status_idle" and event.get("execution_id"):
-                    ends[event["execution_id"]] = (event.get("stop_reason") or {}).get("type") == "end_turn"
+                recent.append(event)
+                wanted.discard(event.get("id"))
             page = data.get("next_page")
-            if not page:
+            if not page or (inputs and not wanted):
                 break
+        texts, ends, order, current = {}, {}, [], None
+        for event in reversed(recent):
+            kind = event.get("type")
+            if kind == "session.status_running":
+                current = event.get("execution_id")
+                if current and current not in order:
+                    order.append(current)
+            elif kind == "agent.message" and current:
+                text = "".join(
+                    block.get("text", "")
+                    for block in event.get("content", [])
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ).strip()
+                if text:
+                    texts[current] = text
+            elif kind == "session.status_idle" and event.get("execution_id"):
+                ends[event["execution_id"]] = (event.get("stop_reason") or {}).get("type") == "end_turn"
         answers = {}
         for execution_id in order:
             owner = await self.native_input_owner(session, execution_id)
@@ -862,7 +866,13 @@ class SessionService:
         if not pending:
             return
         live = any(row.get("remote_event_id") and row.get("turn_status") != "FAILED" for row in pending)
-        answers = await self.turn_answers(session) if live else {}
+        answers = (
+            await self.turn_answers(
+                session, [row["remote_event_id"] for row in pending if row.get("remote_event_id")]
+            )
+            if live
+            else {}
+        )
         recorded = set()
         for row in pending:
             question_id = row["payload"]["question_id"]
@@ -882,6 +892,34 @@ class SessionService:
                 if row["message_id"] in recorded:
                     row["answer_recorded"] = True
             await self.repo.put("ops.agent_sessions", sid, current)
+
+    async def abandon_question(self, session_id, question_id):
+        """A question job gave up: retire its unsent intent so recovery never posts it later.
+
+        Returns False when the question already reached OpenMA; its answer will still arrive.
+        """
+        async with self.repo.lock("session:" + str(session_id)):
+            session = await self.repo.get("ops.agent_sessions", str(session_id))
+            if session is None:
+                return True
+            rows = [
+                row
+                for row in session.get("message_log", [])
+                if (row.get("payload") or {}).get("question_id") == question_id
+            ]
+            if any(row.get("remote_event_id") for row in rows):
+                return False
+            for row in rows:
+                row["turn_status"] = "FAILED"
+                row["answer_recorded"] = True
+            if rows:
+                retired = set(session.get("retired_message_ids", []))
+                retired.update(row["message_id"] for row in rows)
+                session["retired_message_ids"] = sorted(retired)
+                if session.get("active_message_id") in retired:
+                    session["active_message_id"] = None
+                await self.repo.put("ops.agent_sessions", session["session_id"], session)
+            return True
 
     async def reconcile_answers(self):
         """Questions still waiting after a restart or a lost terminal hand-off get their answer."""

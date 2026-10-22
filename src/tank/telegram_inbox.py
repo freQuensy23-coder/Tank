@@ -227,11 +227,22 @@ class TelegramInbox:
         cutoff = (now or utcnow()) - FILE_RETENTION
         expired = [
             row["file_key"]
-            async for row in self.repo.iter_all("ops.telegram_files")
-            if parse_time(row["stored_at"]) < cutoff
+            async for row in self.repo.iter_metadata("ops.telegram_files", ("file_key", "stored_at"))
+            if row.get("stored_at") and parse_time(row["stored_at"]) < cutoff
         ]
         for key in expired:
             await self.repo.delete("ops.telegram_files", key)
+        old = [
+            f"{row['chat_id']}:{row['message_id']}"
+            async for row in self.repo.iter_metadata(
+                "ops.telegram_messages", ("chat_id", "message_id", "status", "received_at")
+            )
+            if row.get("status") != "RECEIVED"
+            and row.get("received_at")
+            and parse_time(row["received_at"]) < cutoff
+        ]
+        for key in old:
+            await self.repo.delete("ops.telegram_messages", key)
         return len(expired)
 
     async def close(self):
@@ -278,6 +289,8 @@ class TelegramInbox:
                 "message_id": int(message["message_id"]),
                 "user_id": str((message.get("from") or {}).get("id", "")),
                 "update_id": int(update_id),
+                "date": int(message.get("date") or 0),
+                "pair_bucket": int(message.get("date") or 0) // PAIR_WINDOW_S,
                 "status": "RECEIVED",
                 "message": message,
                 **collection_clock(utcnow()).fields("received_at"),
@@ -346,6 +359,18 @@ class TelegramInbox:
         reply = message.get("reply_to_message") or {}
         age = now - message.get("date", now)
         if message.get("forward_origin"):
+            async for linked in self.repo.iter_all(
+                "out.user_questions",
+                filters={"chat_id": row["chat_id"], "forwarded_message_id": row["message_id"]},
+            ):
+                await self.mark(
+                    row,
+                    "PAIRED",
+                    paired_with=linked["reply_to_message_id"],
+                    session_id=linked["session_id"],
+                    event_id=linked.get("event_id"),
+                )
+                return
             companion = await self.pair(row)
             if companion is None and age < PAIR_WINDOW_S:
                 return
@@ -391,9 +416,17 @@ class TelegramInbox:
         """The comment sent with a forward (or the forward sent with a comment) by the same user."""
         date = row["message"].get("date", 0)
         candidates = []
-        async for other in self.repo.iter_all(
-            "ops.telegram_messages", filters={"chat_id": row["chat_id"], "user_id": row["user_id"]}
-        ):
+        bucket = date // PAIR_WINDOW_S
+        nearby = []
+        for near in (bucket - 1, bucket, bucket + 1):
+            nearby += [
+                other
+                async for other in self.repo.iter_all(
+                    "ops.telegram_messages",
+                    filters={"chat_id": row["chat_id"], "user_id": row["user_id"], "pair_bucket": near},
+                )
+            ]
+        for other in nearby:
             body = other["message"]
             if other["message_id"] == row["message_id"] or other["status"] != "RECEIVED":
                 continue
@@ -470,6 +503,8 @@ class TelegramInbox:
         ref = str(reply["message_id"])
         if str(chat_id) == str(self.settings.telegram_alerts_chat):
             for delivery in await self.sent(CARD_CHANNEL, message_ref=ref):
+                if delivery.get("chat_id") not in (None, str(chat_id)):
+                    continue
                 return await self.card_target(delivery)
         for delivery in await self.sent(ANSWER_CHANNEL, message_ref=ref, chat_id=str(chat_id)):
             return await self.answer_target(delivery)
@@ -507,7 +542,9 @@ class TelegramInbox:
             text = plain(message.get("text") or message.get("caption") or "")
             matches = [
                 row
-                async for row in self.repo.iter_all("ops.telegram_messages", filters={"user_id": str(sender)})
+                async for row in self.repo.iter_all(
+                    "ops.telegram_messages", filters={"user_id": str(sender), "date": int(date)}
+                )
                 if row["message"].get("date") == date
                 and row.get("session_id")
                 and row["message_id"] != message["message_id"]
@@ -838,35 +875,57 @@ class TelegramInbox:
         ledger = [
             row
             async for row in self.repo.iter_all(
-                "out.deliveries",
-                filters={"question_id": question["question_id"], "channel": ANSWER_CHANNEL, "status": "SENT"},
+                "out.deliveries", filters={"question_id": question["question_id"], "channel": ANSWER_CHANNEL}
             )
-            if row.get("purpose") == "ANSWER"
+            if row.get("purpose") == "ANSWER" and row.get("chunk") is not None
         ]
-        done = {row["chunk"]: row for row in ledger}
         previous = question.get("reply_to_message_id")
         for index, part in enumerate(parts):
-            if index in done:
-                previous = done[index]["message_ref"]
+            rows = [row for row in ledger if row["chunk"] == index]
+            sent = next((row for row in rows if row["status"] == "SENT"), None)
+            if sent:
+                previous = sent["message_ref"]
                 continue
-            result = await self.send(question["chat_id"], part, previous)
+            if sum(row["status"] == "GENERATED" for row in rows) > sum(
+                row["status"] == "FAILED" for row in rows
+            ):
+                continue
+            base = {
+                "channel": ANSWER_CHANNEL,
+                "question_id": question["question_id"],
+                "session_id": question["session_id"],
+                "purpose": "ANSWER",
+                "chat_id": question["chat_id"],
+                "chunk": index,
+                "chunks": len(parts),
+                "attempt": 1,
+                "text": part,
+            }
+            await self.repo.put(
+                "out.deliveries",
+                new_id("delivery"),
+                {**base, "status": "GENERATED", **collection_clock(utcnow()).fields("at")},
+                immutable=True,
+            )
+            try:
+                result = await self.send(question["chat_id"], part, previous)
+            except RuntimeError:
+                await self.repo.put(
+                    "out.deliveries",
+                    new_id("delivery"),
+                    {**base, "status": "FAILED", **collection_clock(utcnow()).fields("at")},
+                    immutable=True,
+                )
+                raise
             previous = str(result["message_id"])
             await self.repo.put(
                 "out.deliveries",
                 new_id("delivery"),
                 {
-                    "channel": ANSWER_CHANNEL,
-                    "question_id": question["question_id"],
-                    "session_id": question["session_id"],
-                    "purpose": "ANSWER",
-                    "chat_id": question["chat_id"],
-                    "chunk": index,
-                    "chunks": len(parts),
+                    **base,
                     "status": "SENT",
-                    "attempt": 1,
                     "message_ref": previous,
                     "telegram_date": result.get("date"),
-                    "text": part,
                     **collection_clock(utcnow()).fields("at"),
                 },
                 immutable=True,

@@ -279,7 +279,8 @@ def openma(posts, history):
             posts.append((request.url.path, body))
             return httpx.Response(200, json={"data": [{"id": "in_q"}]})
         if request.url.path.endswith("/events"):
-            return httpx.Response(200, json={"data": history, "next_page": None})
+            ordered = history[::-1] if request.url.params.get("order") == "desc" else history
+            return httpx.Response(200, json={"data": ordered, "next_page": None})
         raise AssertionError(request.url.path)
 
     return handler
@@ -537,7 +538,8 @@ async def test_first_question_is_answered_while_a_second_is_still_running():
         if request.method == "POST":
             posts.append(json.loads(request.content))
             return httpx.Response(200, json={"data": [{"id": next(ids)}]})
-        return httpx.Response(200, json={"data": history, "next_page": None})
+        ordered = history[::-1] if request.url.params.get("order") == "desc" else history
+        return httpx.Response(200, json={"data": ordered, "next_page": None})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, session_settings(), None, http=http)
@@ -1355,3 +1357,167 @@ async def test_watch_rules_refuse_mixed_windows_and_unevaluated_metrics():
             await tools.set_watch_condition(
                 {**base, "conditions": [{"metric": metric, "op": "==", "value": 1}]}, {}
             )
+
+
+@pytest.mark.asyncio
+async def test_answer_chunks_resend_only_after_definite_rejection():
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    question = await repo.get("out.user_questions", question_id)
+    question.update(answer_status="ANSWERED", answer_text="a" * 3000 + "\n" + "b" * 3000)
+    await repo.put("out.user_questions", question_id, question)
+    base = {"channel": "telegram:answer", "question_id": question_id, "purpose": "ANSWER", "attempt": 1}
+    await repo.put(
+        "out.deliveries", "c0", {**base, "chunk": 0, "status": "GENERATED", "at": "2027-01-15T08:00:00Z"}
+    )
+    await repo.put(
+        "out.deliveries", "c1g", {**base, "chunk": 1, "status": "GENERATED", "at": "2027-01-15T08:00:00Z"}
+    )
+    await repo.put(
+        "out.deliveries", "c1f", {**base, "chunk": 1, "status": "FAILED", "at": "2027-01-15T08:00:01Z"}
+    )
+    telegram = FakeTelegram()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+        await TelegramInbox(repo, inbox_settings(), http=http).answer({"question_id": question_id})
+    assert [body["text"][0] for body in telegram.sent] == ["b"]
+
+
+@pytest.mark.asyncio
+async def test_card_reply_ignores_deliveries_recorded_for_another_chat():
+    repo = MemoryRepository()
+    await seed(repo)
+    await repo.put(
+        "out.deliveries",
+        "other-chat",
+        {
+            "alert_id": "a",
+            "version": 1,
+            "channel": CARD_CHANNEL,
+            "status": "SENT",
+            "attempt": 1,
+            "message_ref": "77",
+            "chat_id": "-100999",
+            "at": "2027-01-15T08:00:00Z",
+        },
+        immutable=True,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(FakeTelegram())) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        assert await inbox.reply_target(ALERTS, {"message_id": 77}) is None
+        assert (await inbox.reply_target(ALERTS, {"message_id": 55}))["session_id"] == "ses_1"
+
+
+@pytest.mark.asyncio
+async def test_forward_already_linked_to_a_question_is_marked_paired_without_prompt():
+    repo = MemoryRepository()
+    await seed(repo)
+    await repo.put(
+        "out.user_questions",
+        "q_linked",
+        {
+            "question_id": "q_linked",
+            "session_id": "ses_1",
+            "status": "QUEUED",
+            "chat_id": str(USER),
+            "forwarded_message_id": 91,
+            "reply_to_message_id": 90,
+        },
+    )
+    forward = message(
+        91,
+        date=1_800_013_000,
+        text="AAVE exploit card",
+        forward_origin={"type": "user", "sender_user": {"id": BOT}, "date": 1_800_000_000},
+    )
+    telegram = FakeTelegram([{"update_id": 1, "message": forward}])
+    await run_inbox(repo, telegram, now=1_800_013_100)
+    assert (await repo.get("ops.telegram_messages", f"{USER}:91"))["status"] == "PAIRED"
+    assert telegram.sent == []
+
+
+@pytest.mark.asyncio
+async def test_abandoned_question_retires_its_unsent_intent_but_keeps_accepted_ones():
+    repo = MemoryRepository()
+    await seed(repo)
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    session["message_log"] += [
+        {
+            "message_id": "m_unsent",
+            "payload": {"kind": "USER_QUESTION", "question_id": "q_a"},
+            "turn_status": "ACCEPTING",
+        },
+        {
+            "message_id": "m_sent",
+            "payload": {"kind": "USER_QUESTION", "question_id": "q_b"},
+            "turn_status": "PENDING",
+            "remote_event_id": "in_b",
+        },
+    ]
+    await repo.put("ops.agent_sessions", "ses_1", session)
+    service = SessionService(repo, session_settings(), None, http=httpx.AsyncClient())
+    assert await service.abandon_question("ses_1", "q_a") is True
+    assert await service.abandon_question("ses_1", "q_b") is False
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    unsent = next(row for row in session["message_log"] if row["message_id"] == "m_unsent")
+    assert unsent["turn_status"] == "FAILED" and "m_unsent" in session["retired_message_ids"]
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_follow_up_to_a_busy_session_with_stale_tools_is_deferred():
+    from tank.delivery import DeliveryDeferred
+
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    session.update(runtime_status="RUNNING", active_message_id="m0")
+    await repo.put("ops.agent_sessions", "ses_1", session)
+    settings = session_settings()
+    settings.read_config_json = lambda relative: [
+        {"name": "x", "description": "d", "input_schema": {"type": "object"}}
+    ]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(openma([], []))) as http:
+        service = SessionService(repo, settings, None, http=http)
+        with pytest.raises(DeliveryDeferred):
+            await service.send_message(
+                {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
+            )
+
+
+@pytest.mark.asyncio
+async def test_answer_lookup_reads_history_only_back_to_the_question():
+    repo = MemoryRepository()
+    await seed(repo)
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    session["message_log"].append(
+        {
+            "message_id": "mq",
+            "payload": {"kind": "USER_QUESTION", "question_id": "q"},
+            "remote_event_id": "in_q",
+        }
+    )
+    history = [{"id": f"old{n}", "type": "agent.message", "content": []} for n in range(250)] + [
+        {"id": "in_q", "type": "user.message"},
+        {"id": "r", "type": "session.status_running", "execution_id": "in_q"},
+        {"id": "x", "type": "agent.message", "content": [{"type": "text", "text": "Ответ"}]},
+        {
+            "id": "i",
+            "type": "session.status_idle",
+            "execution_id": "in_q",
+            "stop_reason": {"type": "end_turn"},
+        },
+    ]
+    pages = []
+
+    def handler(request):
+        page = int(request.url.params.get("page") or 0)
+        pages.append(page)
+        newest = history[::-1]
+        chunk = newest[page * 100 : (page + 1) * 100]
+        following = str(page + 1) if (page + 1) * 100 < len(newest) else None
+        return httpx.Response(200, json={"data": chunk, "next_page": following})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        answers = await service.turn_answers(session, ["in_q"])
+    assert answers["mq"] == {"text": "Ответ", "ended": True} and pages == [0]

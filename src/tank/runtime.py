@@ -309,7 +309,11 @@ class Runtime:
         if job["type"] == "AGENT_MESSAGE" and job["payload"].get("kind") == "USER_QUESTION":
             from tank.telegram_inbox import record_answer
 
-            await record_answer(self.repo, job["payload"]["question_id"], None, status="FAILED")
+            abandon = getattr(getattr(self, "sessions", None), "abandon_question", None)
+            if abandon is None or await abandon(
+                job["payload"].get("session_id"), job["payload"]["question_id"]
+            ):
+                await record_answer(self.repo, job["payload"]["question_id"], None, status="FAILED")
         if job["type"] == "TELEGRAM_ANSWER" and getattr(self, "inbox", None):
             await self.inbox.answer_failed(job["payload"], reason)
 

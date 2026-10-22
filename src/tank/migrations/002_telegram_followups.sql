@@ -5,8 +5,11 @@ immutable boolean NOT NULL DEFAULT false,
 "chat_id" text,
 "message_id" bigint,
 "user_id" text,
-"status" text);
-CREATE INDEX IF NOT EXISTS ops_telegram_messages_chat_user_idx ON ops.telegram_messages ("chat_id", "user_id");
+"status" text,
+"date" bigint,
+"pair_bucket" bigint);
+CREATE INDEX IF NOT EXISTS ops_telegram_messages_chat_user_idx ON ops.telegram_messages ("chat_id", "user_id", "pair_bucket");
+CREATE INDEX IF NOT EXISTS ops_telegram_messages_user_date_idx ON ops.telegram_messages ("user_id", "date");
 CREATE INDEX IF NOT EXISTS ops_telegram_messages_status_idx ON ops.telegram_messages ("status");
 CREATE INDEX IF NOT EXISTS ops_telegram_messages_doc_idx ON ops.telegram_messages USING gin(document);
 CREATE TABLE IF NOT EXISTS out.user_questions (storage_key text PRIMARY KEY,

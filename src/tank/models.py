@@ -740,6 +740,8 @@ TABLE_COLUMNS["ops.telegram_messages"] = {
     "message_id": "bigint",
     "user_id": "text",
     "status": "text",
+    "date": "bigint",
+    "pair_bucket": "bigint",
 }
 TABLE_COLUMNS["ops.telegram_files"] = {
     "question_id": "text",

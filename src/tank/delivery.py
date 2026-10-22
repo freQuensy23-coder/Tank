@@ -290,6 +290,7 @@ class DeliveryService:
                         **sent_at.fields("sent_at"),
                         "status": "SENT",
                         "message_ref": message_ref,
+                        "chat_id": str(chat),
                         "telegram_date": telegram_date,
                         "response_reply_to_message_ref": response_reply_to_message_ref,
                     },
