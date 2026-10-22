@@ -51,13 +51,25 @@ def plain(text):
     return " ".join(html.unescape(re.sub(r"<[^>]+>", "", text or "")).split())
 
 
+def utf16_length(text):
+    """Telegram measures message length in UTF-16 code units, not Python code points."""
+    return len(text.encode("utf-16-le")) // 2
+
+
 def chunks(text, limit=MESSAGE_LIMIT):
     parts = []
     rest = text.strip()
-    while len(rest) > limit:
-        cut = rest.rfind("\n", 0, limit)
-        if cut < limit // 2:
-            cut = limit
+    while utf16_length(rest) > limit:
+        low, high = 1, len(rest)
+        while low < high:
+            middle = (low + high + 1) // 2
+            if utf16_length(rest[:middle]) <= limit:
+                low = middle
+            else:
+                high = middle - 1
+        cut = rest.rfind("\n", 0, low)
+        if cut < low // 2:
+            cut = low
         parts.append(rest[:cut].rstrip())
         rest = rest[cut:].lstrip()
     if rest:
@@ -496,7 +508,8 @@ class TelegramInbox:
             "session_id": question["session_id"],
             "event_id": question.get("event_id"),
             "question_id": question["question_id"],
-            "text": delivery.get("text"),
+            "text": delivery.get("reference_text") or delivery.get("text"),
+            "sent_text": delivery.get("text"),
         }
 
     async def reply_target(self, chat_id, reply):
@@ -579,7 +592,8 @@ class TelegramInbox:
                     else await self.answer_target(delivery)
                 )
                 if target:
-                    score = SequenceMatcher(None, text[:600], plain(target.get("text") or "")[:600]).ratio()
+                    sent = target.get("sent_text") or target.get("text") or ""
+                    score = SequenceMatcher(None, text[:600], plain(sent)[:600]).ratio()
                     candidates.append((score, -abs(stamp - date), target))
         if not candidates:
             return None
@@ -746,7 +760,8 @@ class TelegramInbox:
                 "purpose": "PROMPT",
                 "chat_id": row["chat_id"],
                 "attempt": 1,
-                "text": target.get("text"),
+                "text": PROMPT_TEXT,
+                "reference_text": target.get("text"),
             }
             await self.repo.put(
                 "out.deliveries",

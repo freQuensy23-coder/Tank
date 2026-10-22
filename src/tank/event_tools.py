@@ -2478,6 +2478,9 @@ class EventToolService:
         token = a.get("token")
         if not isinstance(token, str) or ":" not in token:
             raise ValueError("ARM requires token as a registry token_id or ticker")
+        registry = self.settings.load_config("registry") if hasattr(self.settings, "load_config") else None
+        if registry is not None and token not in {row["token_id"] for row in registry.get("tokens", [])}:
+            raise ValueError(f"{token} is not a registry token; use a token_id from get_registry")
         leaves = []
         for leaf in a.get("conditions") or []:
             if leaf["metric"] not in AGENT_WATCH_METRICS:

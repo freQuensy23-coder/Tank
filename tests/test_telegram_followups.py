@@ -1,4 +1,5 @@
 import json
+import time
 from types import SimpleNamespace
 
 import httpx
@@ -83,7 +84,7 @@ class FakeTelegram:
             self.sent.append(body)
             self.next_id += 1
             return httpx.Response(
-                200, json={"ok": True, "result": {"message_id": self.next_id, "date": 1_800_000_100}}
+                200, json={"ok": True, "result": {"message_id": self.next_id, "date": int(time.time())}}
             )
         raise AssertionError(method)
 
@@ -1521,3 +1522,93 @@ async def test_answer_lookup_reads_history_only_back_to_the_question():
         service = SessionService(repo, session_settings(), None, http=http)
         answers = await service.turn_answers(session, ["in_q"])
     assert answers["mq"] == {"text": "Ответ", "ended": True} and pages == [0]
+
+
+def test_chunks_respect_telegram_utf16_length():
+    from tank.telegram_inbox import utf16_length
+
+    parts = chunks("😀" * 5000)
+    assert len(parts) == 3 and all(utf16_length(part) <= 4000 for part in parts)
+    assert "".join(parts) == "😀" * 5000
+
+
+@pytest.mark.asyncio
+async def test_oversized_session_output_is_refused_while_streaming(monkeypatch):
+    import tank.agents.sessions as module
+
+    monkeypatch.setattr(module, "DOCUMENT_LIMIT", 10)
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
+    session["message_log"].append({"message_id": "mq", "payload": payload, "turn_status": "RUNNING"})
+    session["active_message_id"] = "mq"
+    sent = []
+
+    def handler(request):
+        if request.url.host == "oma":
+            return httpx.Response(200, content=b"x" * 100)
+        sent.append(request)
+        return httpx.Response(200, json={"ok": True, "result": {"message_id": 1}})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        service.telegram = TelegramInbox(repo, inbox_settings(), http=http)
+        with pytest.raises(ValueError, match="45 MB"):
+            await service.send_file(session, {"filename": "big.bin"}, "call_big")
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_forwarded_prompt_matches_by_the_text_actually_sent():
+    repo = MemoryRepository()
+    await seed(repo)
+    forward = message(
+        95,
+        date=1_800_014_000,
+        text="AAVE exploit card",
+        forward_origin={"type": "user", "sender_user": {"id": BOT}, "date": 1_800_000_000},
+    )
+    telegram = FakeTelegram([{"update_id": 1, "message": forward}])
+    await run_inbox(repo, telegram, now=1_800_014_100)
+    prompt = next(
+        row
+        for row in await repo.list("out.deliveries")
+        if row.get("purpose") == "PROMPT" and row["status"] == "SENT"
+    )
+    assert prompt["text"] == PROMPT_TEXT and "exploit card" in prompt["reference_text"]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        target = await inbox.forwarded_target(
+            message(
+                96,
+                date=1_800_014_200,
+                text=PROMPT_TEXT,
+                forward_origin={"type": "user", "sender_user": {"id": BOT}, "date": prompt["telegram_date"]},
+            ),
+            BOT,
+        )
+    assert target["kind"] == "PROMPT" and target["session_id"] == "ses_1" and "exploit card" in target["text"]
+
+
+@pytest.mark.asyncio
+async def test_watch_token_must_exist_in_the_registry():
+    from tank.event_tools import EventToolService
+
+    repo = MemoryRepository()
+    await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
+    tools = object.__new__(EventToolService)
+    tools.repo = repo
+    tools.settings = SimpleNamespace(
+        config_version="c",
+        code_version="v",
+        load_config=lambda name: {"tokens": [{"token_id": "bitcoin:BTC"}]},
+    )
+    arm = {
+        "event_id": "evt_1",
+        "action": "ARM",
+        "conditions": [{"metric": "deriv.native_oi_chg_pct", "op": ">", "value": 3}],
+    }
+    with pytest.raises(ValueError, match="not a registry token"):
+        await tools.set_watch_condition({**arm, "token": "bitcoin:BTX"}, {})
+    assert (await tools.set_watch_condition({**arm, "token": "bitcoin:BTC"}, {}))["accepted"]

@@ -462,16 +462,19 @@ class SessionService:
         if not isinstance(filename, str) or not filename or "/" in filename or "\\" in filename:
             raise ValueError("filename must be a plain name inside /mnt/session/outputs")
         content = None
+        url = self.url(f"sessions/{session['session_id']}/outputs/{quote(filename, safe='')}")
         for _ in range(10):
-            response = await self.http.get(
-                self.url(f"sessions/{session['session_id']}/outputs/{quote(filename, safe='')}"),
-                headers=self.headers(),
-            )
-            if response.status_code == 200:
-                content = response.content
-                break
-            if response.status_code != 404:
-                response.raise_for_status()
+            async with self.http.stream("GET", url, headers=self.headers()) as response:
+                if response.status_code == 200:
+                    received = bytearray()
+                    async for block in response.aiter_bytes():
+                        received.extend(block)
+                        if len(received) > DOCUMENT_LIMIT:
+                            raise ValueError("File exceeds the 45 MB Telegram bot limit")
+                    content = bytes(received)
+                    break
+                if response.status_code != 404:
+                    response.raise_for_status()
             await asyncio.sleep(1)
         if content is None:
             raise ValueError(f"/mnt/session/outputs/{filename} was not found in this session")
