@@ -1,6 +1,6 @@
 """Market capture, strict semantics and auditable public exchange history."""
 
-from .normalize import SemanticError
-from .service import MarketService
+from tank.market.normalize import SemanticError
+from tank.market.service import MarketService
 
 __all__ = ["MarketService", "SemanticError"]

@@ -1,7 +1,5 @@
 """Public renderer with an isolated context in the service Chromium process."""
 
-from __future__ import annotations
-
 import asyncio
 
 
@@ -18,8 +16,6 @@ class BrowserReader:
         if self.context is not None:
             return
         if self.shared_sensor is not None:
-            # The authenticated persistent context owns the one browser process;
-            # public issuer pages get a separate cookie/local-storage boundary.
             authenticated = await self.shared_sensor.browser_context()
             self.browser = authenticated.browser
         else:

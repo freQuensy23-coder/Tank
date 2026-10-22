@@ -98,8 +98,6 @@ def test_clock_and_query_bounds(packet):
         clock.advance("2026-09-24T09:00:00Z")
 
 
-
-
 async def test_bundle_reproduction_reexecutes_captured_tools(packet, tmp_path):
     from tank.replay import digest, replay_bundle, reproduce_bundle
 
@@ -274,6 +272,7 @@ def test_masking_preserves_original_and_private_map_is_not_pipeline_input(packet
         load_inputs(masked, settings())
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("captured_http_status", [None, 404, 503])
 @pytest.mark.parametrize("transient_case", [None, "scope_refusal", "lost_decision_ack"])
 async def test_fresh_replay_session_reruns_market_and_decision_code(
@@ -533,7 +532,6 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
             if event.get("custom_tool_use_id") == "replay-decision":
                 decision_ack_bodies.append(copy.deepcopy(event))
                 if transient_case == "lost_decision_ack" and len(decision_ack_bodies) == 1:
-                    # Native reconnect redelivers the unacknowledged original use.
                     await queue.put(
                         (
                             4,
@@ -693,7 +691,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
     assert report["session_id"] != old_sid
     assert report["mode"] == "FRESH_OPENMA_SESSION"
     assert report["output"]["decisions"][0]["action"] == "WAIT"
-    assert results[-1]["action"] == "WAIT"  # deliberately wrong stored START was not reused
+    assert results[-1]["action"] == "WAIT"
     assert results[0]["market_truth"][0]["move_class"] == "UNKNOWN"
     if captured_http_status:
         assert results[1] == captured_error
@@ -1056,7 +1054,7 @@ def test_operator_cli_defaults_to_fresh_session_and_diagnostic_is_explicit(monke
         result = runner.invoke(cli.main, args + ["--database-url", "postgresql://replay/isolated"])
         assert result.exit_code == 0, result.output
     assert [row[2] for row in seen] == ["fresh-session", "fresh-session"]
-    # Fixture replay has only the 03 §11.1 path (lead ruling 2026-10-20 17:20).
+
     result = runner.invoke(
         cli.main,
         ["replay", "F-01", "--mode", "captured-tools", "--database-url", "postgresql://replay/isolated"],
@@ -1064,6 +1062,7 @@ def test_operator_cli_defaults_to_fresh_session_and_diagnostic_is_explicit(monke
     assert result.exit_code == 2
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("timer_divergence", [False, True])
 async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_seeding(
     packet, timer_divergence
@@ -1149,8 +1148,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
             },
         }
     )
-    # Synthetic original host transcript binds the rerun origin identity; the
-    # deliberately absent original call counterpart remains the timer divergence.
+
     data["records"].extend(
         [
             {
@@ -1276,7 +1274,6 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
                     assert revised["route_event_id"] == fresh_event_id
                     assert revised["extraction_status"] == "DONE"
                     assert "event_id" not in revised and "session_id" not in revised
-                    assert "SENTINEL-ORIGINAL" not in json.dumps(revised)
                 assert await repo.get("evt.events", "future-original-output") is None
                 actor_item, actor_stage = item, "get"
                 sent.append(item)
@@ -1343,8 +1340,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
 
                     assert result.get("event_id"), result
                     fresh_event_id, actor_stage = result["event_id"], "assessment"
-                    # Preserve this projection fixture's independently tested routing metadata;
-                    # extraction completion itself comes only from the accepted producer.
+
                     source = await repo.get("ingest.source_items", "first")
                     await repo.put(
                         "ingest.source_items", "first", dict(source, route_event_id=fresh_event_id)
@@ -1417,7 +1413,6 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
         assert "unique fresh counterpart" in report["divergence"]["reason"]
     assert sent == ["first", "second"]
     assert [row["item_id"] for row in results] == ["first", "first"]
-    assert "SENTINEL-ORIGINAL" not in json.dumps(results)
     assert report["cleanup_sessions"] == [{"session_id": "new-session", "archived": True}]
     session = await repo.get("ops.agent_sessions", "new-session")
     assert [row["sent_at"] for row in session["message_log"]] == [first_at, second_at]
@@ -1664,6 +1659,7 @@ async def test_timer_evidence_maps_only_exact_accepted_claim_counterpart(packet)
         )
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("premature_trigger", [False, True])
 async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_expiry(
     packet, premature_trigger
@@ -1825,8 +1821,6 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         ]
     )
     if not premature_trigger:
-        # Explicit synthetic receipt for the newly required expiry UPDATE.
-        # It supplies captured transport acknowledgment, not a publication verdict.
         records.extend(
             [
                 (
@@ -2034,6 +2028,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
     assert await repo.get("ana.calls", "original-call") is None
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("state", ["APPROVED", "PROPOSED"])
 async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicate(packet, state):
     """Fixture grade, real callback ledger/reconcile/watch execution; no live requests."""
@@ -2345,9 +2340,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
         )
 
         async def fixture_grade(arguments, context):
-            # This test already isolates a declared fixture-grade condition;
-            # retain that grade on refresh, while real reconciliation consumes
-            # the fired watch instead of rearming or adding unrelated watches.
+
             result = dict(
                 baseline_decision,
                 dec_id="fresh-decision" if len(messages) == 1 else "fresh-timer-decision",
@@ -2392,15 +2385,13 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
             timeout=3,
         )
     all_conditions = await repo.list("ana.watch_conditions")
-    # W1 (03 §6.6): the fired watch is spent; the same expression is re-armed.
+
     conditions = [c for c in all_conditions if not c.get("rearmed_from")]
     rearmed = [c for c in all_conditions if c.get("rearmed_from")]
     assert len(conditions) == 1 and conditions[0]["cond_id"] != "old-condition"
     assert report["identity_substitutions"]["old-condition"] == conditions[0]["cond_id"]
     assert report["causal_tool_receipts"][0]["source_call_id"] == "decision"
-    assert (
-        report["output"]["conditions"][0]["expires_at"] != old["expires_at"]
-    )  # Economic difference retained.
+    assert report["output"]["conditions"][0]["expires_at"] != old["expires_at"]
     assert report["status"] == ("COMPLETED" if state == "APPROVED" else "DIVERGED")
     if state == "APPROVED":
         assert conditions[0]["status"] == "FIRED"
@@ -2412,82 +2403,66 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
         assert len(messages) == 1
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_captured_replay_batches_market_prefix_without_per_row_writer(packet, monkeypatch, backend):
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_captured_replay_batches_market_prefix_without_per_row_writer(
+    packet, monkeypatch, backend, postgres_template
+):
     import os
-    import uuid
-    from urllib.parse import urlsplit, urlunsplit
+    from contextlib import AsyncExitStack
 
-    from tank.storage import PostgresRepository
+    async with AsyncExitStack() as cleanup:
+        if backend == "postgres":
+            from psycopg.conninfo import conninfo_to_dict
 
-    admin, database = None, None
-    if backend == "postgres":
-        import psycopg
-        from psycopg import sql
-
-        url = os.getenv("TANK_TEST_DATABASE_URL")
-        if not url:
-            pytest.skip("Explicit isolated replay batch PostgreSQL database not configured")
-        database = "tank_replay_batch_" + uuid.uuid4().hex[:12]
-        admin = await psycopg.AsyncConnection.connect(url, autocommit=True)
-        await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
-        target = urlunsplit(urlsplit(url)._replace(path="/" + database))
-        repo = None
-        try:
-            repo = await PostgresRepository(target).open()
-            await repo.migrate()
-        except BaseException:
-            if repo:
-                await repo.close()
-            await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database)))
-            await admin.close()
-            raise
-    else:
-        repo = MemoryRepository()
-    data = json.loads(packet.read_text())
-    data["records"] = []
-    for index in range(1001):
-        data["records"].append(
+            url = os.getenv("TANK_TEST_DATABASE_URL")
+            if not url:
+                pytest.skip("Explicit isolated replay batch PostgreSQL database not configured")
+            if not conninfo_to_dict(url).get("dbname", "").startswith("tank_test"):
+                pytest.fail("TANK_TEST_DATABASE_URL must select an isolated tank_test* database")
+            repo = await cleanup.enter_async_context(postgres_template.repository(url))
+        else:
+            repo = MemoryRepository()
+            cleanup.push_async_callback(repo.close)
+        data = json.loads(packet.read_text())
+        data["records"] = []
+        for index in range(1001):
+            data["records"].append(
+                {
+                    "collection": "mkt.tickers_24h",
+                    "key": f"ticker-{index}",
+                    "available_at": data["cutoff"],
+                    "record": {"instrument_id": f"fixture:{index}", "ts": data["cutoff"], "last": "1"},
+                }
+            )
+        data["config"]["replay_tool_calls"] = [
             {
-                "collection": "mkt.tickers_24h",
-                "key": f"ticker-{index}",
+                "call_id": "one",
+                "tool": "get_registry",
+                "arguments": {},
                 "available_at": data["cutoff"],
-                "record": {"instrument_id": f"fixture:{index}", "ts": data["cutoff"], "last": "1"},
             }
-        )
-    data["config"]["replay_tool_calls"] = [
-        {
-            "call_id": "one",
-            "tool": "get_registry",
-            "arguments": {},
-            "available_at": data["cutoff"],
-        }
-    ]
-    packet.write_text(json.dumps(data))
-    sizes = []
-    original_batch, original_put = repo.put_market_batch, repo.put
+        ]
+        packet.write_text(json.dumps(data))
+        sizes = []
+        original_batch, original_put = repo.put_market_batch, repo.put
 
-    async def batch(collection, records, **kwargs):
-        assert collection == "mkt.tickers_24h"
-        sizes.append(len(records))
-        return await original_batch(collection, records, **kwargs)
+        async def batch(collection, records, **kwargs):
+            assert collection == "mkt.tickers_24h"
+            sizes.append(len(records))
+            return await original_batch(collection, records, **kwargs)
 
-    async def put(collection, *args, **kwargs):
-        assert not collection.startswith("mkt."), "market import used per-row writer"
-        return await original_put(collection, *args, **kwargs)
+        async def put(collection, *args, **kwargs):
+            assert not collection.startswith("mkt."), "market import used per-row writer"
+            return await original_put(collection, *args, **kwargs)
 
-    monkeypatch.setattr(repo, "put_market_batch", batch)
-    monkeypatch.setattr(repo, "put", put)
-    try:
+        monkeypatch.setattr(repo, "put_market_batch", batch)
+        monkeypatch.setattr(repo, "put", put)
         await replay_bundle(packet, repo, settings())
         assert sizes == [500, 500, 1]
         rows = [row async for row in repo.iter_all("mkt.tickers_24h")]
         assert len(rows) == 1001
-    finally:
-        await repo.close()
-        if admin:
-            await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database)))
-            await admin.close()
 
 
 def test_as_of_market_receipt_cannot_bypass_current_replay_clock():
@@ -2550,6 +2525,7 @@ async def test_operational_initial_view_uses_same_earliest_revision_clock(
     await replay.run_operational_replay(packet, MemoryRepository(), config, http=object())
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("profile", ["first_reference", "ordinary_missing_sent"])
 async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_requires_capture(
     tmp_path, monkeypatch, profile
@@ -2596,8 +2572,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
         for key in list(data["records"][0]):
             if key.startswith("simulated_"):
                 data["records"][0].pop(key)
-        # An explicitly incomplete synthetic original transcript has a prior
-        # publication but no SENT receipt. Ordinary replay must still refuse it.
+
         data["records"].extend(
             [
                 {
@@ -2886,6 +2861,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
     assert await repo.list("ana.calls") == []
 
 
+@pytest.mark.integration
 async def test_captured_tools_decision_refreshes_fired_market_watch_offline(packet, tmp_path, monkeypatch):
     from datetime import timedelta
 

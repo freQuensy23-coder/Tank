@@ -172,7 +172,7 @@ try {
   const publishPrefix=async(run,cutoff)=>{
     const selected=join(evidenceRoot,run);await mkdir(selected,{recursive:true});
     const manifest={schema:'tank.replay-evidence.v1',run_id:run,input_sha256:'d'.repeat(64),cutoff,cutoff_prec:'EXACT',cutoff_prec_reason:null,
-      guest_root:'/replay/evidence',files:[],identity_key:['instrument_id','trade_id'],writer:{library:'pyarrow',version:'boundary-fixture-only',compression:'zstd'},
+      guest_root:'/replay/evidence',files:[],identity_key:['instrument_id','trade_id'],format:'jsonl',
       sealed_at:'2026-10-18T00:00:00+00:00',sealed_at_prec:'COLLECTION_ONLY',sealed_at_prec_reason:null};
     const bytes=JSON.stringify(manifest)+'\n';await writeFile(join(selected,'manifest.staging'),bytes);await rename(join(selected,'manifest.staging'),join(selected,'manifest.json'));
     return {tank_replay_run_id:run,tank_replay_evidence_sha256:createHash('sha256').update(bytes).digest('hex'),tank_replay_cutoff:cutoff};

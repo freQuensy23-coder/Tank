@@ -7,8 +7,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/testutil"
 )
 
-// Vectors from json.dumps(sort_keys=True, separators=(",", ":")) in CPython
-// (scripts/capture/gen_pyvectors.py).
 func TestDumpsMatchesPython(t *testing.T) {
 	var v struct {
 		Values []struct {

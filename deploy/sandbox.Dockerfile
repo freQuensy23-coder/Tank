@@ -8,7 +8,7 @@ RUN --mount=type=cache,id=tank-sandbox-pip,target=/root/.cache/pip,sharing=locke
     && python -m playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 RUN --mount=type=cache,id=tank-sandbox-pip,target=/root/.cache/pip,sharing=locked \
-    python -m pip install pandas numpy scipy statsmodels pyarrow duckdb 'psycopg[binary]' httpx websockets
+    python -m pip install pandas numpy scipy statsmodels duckdb 'psycopg[binary]' httpx websockets
 
 RUN mkdir -p /workspace /home/user/.skills
 WORKDIR /workspace

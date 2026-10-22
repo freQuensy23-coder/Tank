@@ -4,14 +4,16 @@ Tank collects public information and market data, maintains one OpenMA analysis 
 
 The implementation follows the three specifications in this directory and recorded operator changes. On 18 October 2026 the operator selected OpenRouter for Jev, using the existing OpenRouter key and plain HTTP with the documented System One endpoint and namespaced `typesafe/jev-1.13` model. Analysis remains on the Codex subscription gateway. Current acceptance evidence and unresolved specification conflicts are tracked in [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md). Operational installation is described in [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
-## Local development
+## Development and tests
 
 ```sh
 uv sync --python 3.12 --frozen --extra dev
 uv run tank --help
 uv run tank doctor
-uv run pytest -q
+uv run pytest -q -n auto --dist loadfile
 ```
+
+Run development commands in an isolated checkout on the server. The pytest command runs the offline unit selection across available CPUs with a 10-second per-case timeout. Normal test runs use no artificial CPU or memory quotas. [Testing conventions and separate integration commands](docs/TESTING.md) include the p90 <1s check, resource prerequisites, and Node lanes.
 
 `doctor` reports missing deployment configuration without printing credentials. Credentials remain outside the repository. The local configuration records deployed OpenMA resource IDs and the operator-approved Jev baseline: filter 0.23, routing 0.67. Its measured precision/recall and outstanding acceptance gates are recorded in the implementation ledger.
 
@@ -21,9 +23,11 @@ For database tests, use isolated PostgreSQL 16 databases. Test databases must ne
 
 ```sh
 TANK_TEST_DATABASE_URL=postgresql:///tank_test \
-TANK_E2E_DATABASE_URL=postgresql:///tank_e2e \
-uv run pytest -q
+TANK_E2E_DATABASE_URL=postgresql:///tank_test_e2e \
+uv run pytest -q -m 'integration and postgres' --timeout=300
 ```
+
+For parallel integration, precreate separate worker databases and use the opt-in portable plugin recipe in [Testing](docs/TESTING.md). Do not share the serial DSNs across xdist workers.
 
 The end-to-end tests use the real repository, job workers, source parser, session/tool bridge, market calculations, agent-authored event persistence, card composition, and delivery ledger. External source, model and Telegram responses are explicitly mocked. Public adapter smoke checks, live source latency, model quality, and unattended acceptance are recorded separately.
 
@@ -39,7 +43,7 @@ Pytest disables operator dotenv files, credential paths and external Python netw
 | `event_tools` | Persistence of agent claims and judgments, registry identity resolution, beneficiary records and publication gate |
 | `market` | Venue discovery, REST/WS capture, normalization, archives and fundamentals |
 | `analysis` | Market Truth, confidence, outlook, grades, actions, card composition |
-| `storage` | PostgreSQL migrations, immutable records, partitioned market tables and durable jobs |
+| `storage` | PostgreSQL migrations, immutable records and durable jobs; market series and prints routed to ClickHouse (`clickhouse_market`) |
 | `runtime`, `scheduler`, `delivery` | Eight job workers, conditions, milestones, reactions, operations and Telegram delivery |
 | `replay`, `calibration` | Isolated replay and reviewed threshold calibration |
 | `review` | Frozen evidence, horizon outcomes, versioned labels and S1–S9 with explicit coverage |

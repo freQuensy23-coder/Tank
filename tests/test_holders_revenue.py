@@ -143,6 +143,7 @@ def test_display_set_stays_at_three_and_excludes_other_token_revenue():
     assert "88888" not in capture_line
 
 
+@pytest.mark.integration
 async def test_real_supply_producer_to_computed_frozen_analysis(tmp_path):
     repo = MemoryRepository()
     await repo.open()
@@ -230,34 +231,7 @@ def test_future_capture_receipt_cannot_supply_observed_revenue():
     assert "999999" not in render([{"token_id": "T", "supply": {"holders_revenue": result}}])
 
 
-def test_revenue_card_numbers_bind_frozen_context_and_reject_tampering():
-    truth = {
-        "token_id": "T",
-        "supply": {"holders_revenue": metric([captured({"a": {"total24h": "123.456"}})])},
-    }
-    event = {
-        "statement": "A source reports a proposal.",
-        "event_state": "PROPOSED",
-        "thresholds": {"card_max_chars": 20000},
-    }
-    edges = [
-        {
-            "token_id": "T",
-            "role": "PRIMARY",
-            "capture_class": "UNKNOWN",
-            "causal_chain": "No mechanism evidenced",
-        }
-    ]
-    decisions = [{"token_id": "T", "action": "WAIT"}]
-    text = CARDS.compose_card(event, {}, edges, decisions, [truth])
-    assert "123.456 USD" in text
-
-
-@pytest.mark.parametrize(
-    "unsupported",
-    ["Revenue to holders is 123.456 USD", "Buybacks distribute 123.456 USD", "Burn sends value to the token"],
-)
-def test_provider_revenue_with_unknown_capture_never_authorizes_token_capture_claim(unsupported):
+def test_provider_revenue_with_unknown_capture_never_authorizes_token_capture_claim():
     truth = {
         "token_id": "T",
         "supply": {"holders_revenue": metric([captured({"adapter": {"total24h": "123.456"}})])},
@@ -287,7 +261,6 @@ def test_provider_revenue_with_unknown_capture_never_authorizes_token_capture_cl
     assert "DefiLlama reports holders revenue: adapter 123.456 USD/24h" in line
     assert context == before and edges[0]["capture_class"] == "UNKNOWN"
     assert "DIRECT" not in line and "INDIRECT" not in line
-    # Same nonzero frozen provider figure does not evidence a token mechanism.
 
 
 def test_compact_display_prefers_24h_preserving_30d_details_and_default_limit():

@@ -8,8 +8,6 @@ start of the window with --save, and at the end with --baseline to get the windo
     python -m tank.sources.read_report --baseline start.json --save end.json
 """
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import json
@@ -70,6 +68,9 @@ async def main(argv=None):
     sources = settings.load_config("sources")["sources"]
     source_ids = [s["source_id"] for s in sources]
     repo = PostgresRepository(settings.database_url)
+    from tank import clickhouse_market
+
+    clickhouse_market.install(repo, settings)
     await repo.open()
     try:
         end = await snapshot(repo, sources)

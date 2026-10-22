@@ -42,7 +42,7 @@ func loadVectors(t *testing.T) vectors {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Payload numbers stay JSON numbers, as in a decoded request body.
+
 	raw, err := pyval.Decode(data)
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +161,6 @@ func TestBucketNameIsPythonRepr(t *testing.T) {
 	}
 }
 
-// clock is a manual clock; sleeping advances it.
 type clock struct {
 	mu sync.Mutex
 	t  time.Time
@@ -189,14 +188,14 @@ func TestMemoryLedgerRollingWindow(t *testing.T) {
 		}
 		c.advance(100 * time.Millisecond)
 	}
-	// Full: the oldest spend (t0) leaves the window at t0 + 1 s; now is t0 + 300 ms.
+
 	if wait, _ := l.Acquire(ctx, "b", 3, 1, 1, "test", ""); wait != 700*time.Millisecond {
 		t.Fatalf("wait %v, want 700ms", wait)
 	}
 	if wait, _ := l.Acquire(ctx, "b", 3, 1, 2, "test", ""); wait != 700*time.Millisecond {
 		t.Fatalf("weighted wait %v", wait)
 	}
-	c.advance(700 * time.Millisecond) // a spend exactly window_s old is gone (now - at >= window_s)
+	c.advance(700 * time.Millisecond)
 	if wait, _ := l.Acquire(ctx, "b", 3, 1, 1, "test", ""); wait != 0 {
 		t.Fatalf("after the window: wait %v", wait)
 	}
@@ -216,7 +215,7 @@ func TestMemoryLedgerHostBlocks(t *testing.T) {
 	l := NewMemoryLedger(c.now)
 	ctx := context.Background()
 	_ = l.Block(ctx, "api.binance.com", c.now().Add(30*time.Second), "HTTP 429", "core")
-	_ = l.Block(ctx, "api.binance.com", c.now().Add(10*time.Second), "HTTP 429", "capture") // an earlier block never shortens
+	_ = l.Block(ctx, "api.binance.com", c.now().Add(10*time.Second), "HTTP 429", "capture")
 	if wait, _ := l.Acquire(ctx, "b", 10, 60, 1, "test", "api.binance.com"); wait != 30*time.Second {
 		t.Fatalf("blocked wait %v", wait)
 	}
@@ -252,7 +251,7 @@ func TestGateAdmitWaitsForTheLedger(t *testing.T) {
 	l := NewMemoryLedger(c.now)
 	g, slept := testGate(l, c)
 	ctx := context.Background()
-	// Kraken: one request per second in total.
+
 	for i := 0; i < 3; i++ {
 		if err := g.Admit(ctx, "api.kraken.com", "/0/public/Trades", nil, nil, 0); err != nil {
 			t.Fatal(err)
@@ -283,7 +282,7 @@ func TestGateUrgentYielding(t *testing.T) {
 	l := NewMemoryLedger(c.now)
 	g, slept := testGate(l, c)
 	b := Bucket{"kraken", 1, 1, 1}
-	g.urgent[b.Name()] = 1 // an urgent request of this process waits for the bucket
+	g.urgent[b.Name()] = 1
 	ctx, cancel := context.WithCancel(context.Background())
 	sleeps := 0
 	g.sleep = func(ctx context.Context, d time.Duration) error {
@@ -304,7 +303,7 @@ func TestGateUrgentYielding(t *testing.T) {
 			t.Fatalf("yield delay %v, want min(0.05, window)", d)
 		}
 	}
-	// The urgent request itself never yields.
+
 	if err := g.acquire(context.Background(), "api.kraken.com", b, -1); err != nil {
 		t.Fatal(err)
 	}
@@ -322,7 +321,7 @@ func TestGatePriorityOrder(t *testing.T) {
 	g := NewGate(NewMemoryLedger(nil), "test")
 	g.Interval = func(string) time.Duration { return 0 }
 	ctx := context.Background()
-	hold, err := g.Enter(ctx, "api.kraken.com", 0) // capacity 1
+	hold, err := g.Enter(ctx, "api.kraken.com", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +343,7 @@ func TestGatePriorityOrder(t *testing.T) {
 			mu.Unlock()
 			release()
 		}(i, priority)
-		// Queue them in this order.
+
 		for {
 			h.slots.mu.Lock()
 			n := h.slots.waiters.Len()
@@ -357,7 +356,7 @@ func TestGatePriorityOrder(t *testing.T) {
 	}
 	hold()
 	wg.Wait()
-	want := []int{4, 1, 3, 2, 0} // -1, then the two 0s in arrival order, then 1, then 2
+	want := []int{4, 1, 3, 2, 0}
 	for i := range want {
 		if order[i] != want[i] {
 			t.Fatalf("admission order %v, want %v", order, want)
@@ -380,7 +379,7 @@ func TestGateEnterCancelledFreesTheSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	release()
-	release() // idempotent
+	release()
 	if h := g.host("api.kraken.com"); h.slots.active != 0 {
 		t.Fatalf("active %d after release", h.slots.active)
 	}
@@ -390,7 +389,7 @@ func TestGateStartSpacing(t *testing.T) {
 	c := &clock{t: time.Date(2026, 10, 21, 12, 0, 0, 0, time.UTC)}
 	g, slept := testGate(NewMemoryLedger(c.now), c)
 	ctx := context.Background()
-	// Two holders at once on Coinbase: the second start is reserved 210 ms later.
+
 	first, _ := g.Enter(ctx, "api.exchange.coinbase.com", 0)
 	second, _ := g.Enter(ctx, "api.exchange.coinbase.com", 0)
 	if len(*slept) != 1 || (*slept)[0] != 210*time.Millisecond {
@@ -404,7 +403,7 @@ func TestGateStartSpacing(t *testing.T) {
 	if len(*slept) != 1 {
 		t.Fatalf("a start after the spacing slept: %v", *slept)
 	}
-	// Kraken: one second between starts.
+
 	k1, _ := g.Enter(ctx, "api.kraken.com", 0)
 	k1()
 	k2, _ := g.Enter(ctx, "api.kraken.com", 0)
@@ -431,11 +430,10 @@ func TestObserve429RetriesAfterRetryAfter(t *testing.T) {
 			t.Fatalf("429: retry %v err %v", retry, err)
 		}
 		until, ok := l.Blocked("api.bybit.com")
-		if !ok || until.Sub(time.Now()) > tc.want || until.Sub(time.Now()) < tc.want-time.Second {
+		if !ok || time.Until(until) > tc.want || time.Until(until) < tc.want-time.Second {
 			t.Fatalf("Retry-After %q: ledger block until %v", tc.header, until)
 		}
-		// The next start of this process waits for the block too (and its spacing, as
-		// _last_request[host] = now + delay does in Python).
+
 		release, _ := g.Enter(context.Background(), "api.bybit.com", 0)
 		release()
 		if len(*slept) != 1 || (*slept)[0] != tc.want+Interval("api.bybit.com") {
@@ -464,8 +462,7 @@ func TestObserve418IsNeverRetried(t *testing.T) {
 		if left := time.Until(until); !ok || left > tc.want || left < tc.want-time.Second {
 			t.Fatalf("Retry-After %q: blocked %v", tc.header, left)
 		}
-		// This process fails at once during its ban; another process sharing the ledger
-		// waits for it.
+
 		err = g.Admit(context.Background(), "api.binance.com", "/api/v3/klines", map[string]string{"limit": "3"}, nil, 0)
 		if !errors.As(err, &banned) {
 			t.Fatalf("admitted during a ban: %v", err)

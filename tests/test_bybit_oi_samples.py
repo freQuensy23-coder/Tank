@@ -17,7 +17,7 @@ from tank.util import iso, parse_time
 @pytest.mark.parametrize("period", [300, 900, 3600])
 def test_sample_time_is_exact_without_rounding_or_request_bucket_invention(period):
     inst = instrument("bybit", "PERP_LINEAR")
-    timestamp = TS + 1234  # Deliberately not a cadence boundary.
+    timestamp = TS + 1234
     raw = {"singleOpenInterest": "123.456789", "openInterest": "246.913578", "timestamp": str(timestamp)}
     original = deepcopy(raw)
     row = oi(inst, raw, bucket_size_s=period, received_ts=timestamp + 4000)
@@ -90,7 +90,7 @@ def test_actual_retained_f11_endpoint_values_reach_production_oi_math_without_re
             token_id="world:WLD",
             venue_symbol="WLDUSDT",
         )
-        # Configured single-sided native units are immediately usable; no probe status.
+
         rows = [oi(inst, r, bucket_size_s=300) for r in raw if parse_time(r["timestamp"]) <= end]
         groups.append((inst, rows, "BASE_QTY_SINGLE_SIDED"))
     result = synchronized_oi(groups, start, end)
@@ -99,5 +99,5 @@ def test_actual_retained_f11_endpoint_values_reach_production_oi_math_without_re
     assert Decimal(".0768") <= native <= Decimal(".0868")
     assert result["oi_native_start"] == Decimal("183464692") + Decimal("83937472.5")
     assert result["oi_native_end"] == Decimal("202487919") + Decimal("86777506")
-    # USD/normal history is absent here, so this endpoint test does not certify REAL_NATIVE.
+
     assert result["oi_class"] is None

@@ -11,6 +11,7 @@ from tank.storage import MemoryRepository
 from tank.util import iso, parse_time
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("open_call,expected", [(True, "ARMED"), (False, "FIRED")])
 async def test_concentrated_sell_only_fires_weaker_watch_downgrade(open_call, expected):
@@ -67,8 +68,7 @@ async def test_concentrated_sell_only_fires_weaker_watch_downgrade(open_call, ex
     if open_call:
 
         async def broad(event_id, token_id, cutoff):
-            # Historical endpoints keep their actual facts when rechecked for
-            # late data; broad selling begins only with the 13:00 closed hour.
+
             classification = "BROAD" if parse_time(cutoff.value).hour >= 13 else "CONCENTRATED"
             return {
                 "spot": {
@@ -138,6 +138,7 @@ async def fire_generated(condition, event, truth_rows):
     return await repo.get("ana.watch_conditions", condition["cond_id"])
 
 
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_watch_anchor_fired_by_actual_evaluator_prevents_new_start():
     from test_decisions import inputs
@@ -156,7 +157,7 @@ async def test_watch_anchor_fired_by_actual_evaluator_prevents_new_start():
     m["data_confidence"]["class"] = "HIGH"
     result = engine.evaluate(e, a, b, m, conditions=[fired])
     assert result["action"] == "WAIT" and result["action_rule"] == "WATCH_ANCHOR_LOST"
-    # A milestone re-score condition is not itself an anchor breach.
+
     assert (
         engine.evaluate(
             e,

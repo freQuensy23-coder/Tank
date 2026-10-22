@@ -201,6 +201,8 @@ async def test_x_list_comes_only_from_source_config(tmp_path, monkeypatch):
         await service.close()
 
 
+@pytest.mark.browser
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_s19_and_x_share_chromium_with_isolated_storage_and_unchanged_input(tmp_path):
     if os.getenv("TANK_BROWSER_TESTS") != "1":
@@ -230,7 +232,7 @@ async def test_s19_and_x_share_chromium_with_isolated_storage_and_unchanged_inpu
     renderer = BrowserReader(SimpleNamespace(), shared_sensor=sensor)
     try:
         await renderer.open()
-        # Public rendering can start without reading the session export.
+
         assert not (profile / ".tank-x-session-seeded.json").exists()
         await sensor.open()
         assert renderer.browser is sensor.context.browser
@@ -257,6 +259,8 @@ async def test_s19_and_x_share_chromium_with_isolated_storage_and_unchanged_inpu
         await sensor.close()
 
 
+@pytest.mark.browser
+@pytest.mark.integration
 @pytest.mark.asyncio
 async def test_invalid_x_input_keeps_shared_public_browser_available(tmp_path):
     if os.getenv("TANK_BROWSER_TESTS") != "1":

@@ -5,8 +5,6 @@ import (
 	"testing"
 )
 
-// Configuration floats (yaml.safe_load) behave as Python's str(x), Decimal(str(x)) and
-// int(x); the expected values are CPython's.
 func TestFloatsLikePython(t *testing.T) {
 	cases := []struct {
 		x            float64

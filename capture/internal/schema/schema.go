@@ -1,6 +1,3 @@
-// Package schema is tank.market_schema plus tank.market_storage.encode and
-// semantic_fingerprint: the typed market columns, aliases and identities, and the exact
-// encoding and fingerprint the Python writer applies before PostgreSQL.
 package schema
 
 import (
@@ -17,25 +14,21 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 )
 
-// Column is one typed market column.
 type Column struct {
 	Name string
-	Kind string // text, numeric, bigint, boolean, timestamptz, jsonb, text[]
+	Kind string
 }
 
 //go:embed market_schema.json
 var exported []byte
 
 var (
-	// Columns is MARKET_COLUMNS in declaration order.
 	Columns map[string][]Column
-	// Aliases is MARKET_ALIASES (producer field -> column).
+
 	Aliases map[string]map[string]string
-	// Identities is MARKET_IDENTITIES.
+
 	Identities map[string][]string
-	// Partitions is MARKET_PARTITIONS.
-	Partitions map[string]string
-	// Required is MARKET_REQUIRED.
+
 	Required map[string][]string
 	kinds    map[string]map[string]string
 )
@@ -45,7 +38,6 @@ func init() {
 		Columns    map[string][][2]string       `json:"columns"`
 		Aliases    map[string]map[string]string `json:"aliases"`
 		Identities map[string][]string          `json:"identities"`
-		Partitions map[string]string            `json:"partitions"`
 		Required   map[string][]string          `json:"required"`
 	}
 	if err := json.Unmarshal(exported, &raw); err != nil {
@@ -59,18 +51,13 @@ func init() {
 			kinds[collection][c[0]] = c[1]
 		}
 	}
-	Aliases, Identities, Partitions, Required = raw.Aliases, raw.Identities, raw.Partitions, raw.Required
+	Aliases, Identities, Required = raw.Aliases, raw.Identities, raw.Required
 }
 
-// Kind is the column type of collection.name, "" when unknown.
 func Kind(collection, name string) string { return kinds[collection][name] }
 
-// Known reports whether collection is a typed market collection.
 func Known(collection string) bool { _, ok := kinds[collection]; return ok }
 
-// Encode is tank.market_storage.encode: aliases folded into columns, timestamp
-// precision propagated through the shared contract, numerics as decimals, timestamps
-// as times. Unknown fields and conflicting aliases are errors, as in Python.
 func Encode(collection string, record map[string]any) (map[string]any, error) {
 	columns, ok := kinds[collection]
 	if !ok {
@@ -239,18 +226,16 @@ func toInt(value any) (int64, error) {
 	case json.Number:
 		return v.Int64()
 	case bool:
-		// Python bool is an int subclass; Tank never stores one in a bigint column.
+
 		return 0, fmt.Errorf("boolean in bigint column")
 	}
 	return 0, fmt.Errorf("not an integer: %T", value)
 }
 
-// fingerprintExcluded is FINGERPRINT_EXCLUDED.
 var fingerprintExcluded = map[string]map[string]bool{"mkt.book_summaries": {"bids": true, "asks": true}}
 
 var strippedPrefixes = []string{"received_ts", "recorded_at", "updated_at", "observed_at"}
 
-// isNone is Python None for a record value: nil, or a nil map or slice.
 func isNone(v any) bool {
 	switch x := v.(type) {
 	case nil:
@@ -293,7 +278,6 @@ func strip(value any) any {
 	return value
 }
 
-// Fingerprint is semantic_fingerprint(record, collection) of an encoded record.
 func Fingerprint(record map[string]any, collection string) string {
 	if excluded := fingerprintExcluded[collection]; excluded != nil {
 		kept := make(map[string]any, len(record))
@@ -308,7 +292,6 @@ func Fingerprint(record map[string]any, collection string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// Identity is the identity tuple values of an encoded record (storage_key uses key).
 func Identity(collection string, record map[string]any, key string) ([]any, error) {
 	var values []any
 	for _, name := range Identities[collection] {

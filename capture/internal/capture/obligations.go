@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -15,8 +14,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// obligations runs the pre-event capture obligations core wrote (mkt.backfill_runs):
-// the PENDING ones, and RUNNING ones a stopped writer left.
 func (s *Service) obligations(ctx context.Context) {
 	rows, err := s.store.BackfillRuns(ctx, []string{"PENDING", "RUNNING"})
 	if err != nil {
@@ -39,7 +36,6 @@ func (s *Service) obligations(ctx context.Context) {
 	}
 }
 
-// putRun writes a backfill run with MarketService._put's run clocks.
 func (s *Service) putRun(ctx context.Context, row map[string]any) {
 	row = copyRow(row)
 	for _, field := range []string{"started_at", "finished_at"} {
@@ -70,7 +66,6 @@ func copyRow(row map[string]any) map[string]any {
 	return out
 }
 
-// runObligation is the capture task of _schedule_event_backfill.
 func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 	row = copyRow(row)
 	for _, k := range []string{"semantic_fingerprint", "config_version", "code_version"} {
@@ -108,7 +103,7 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 		}
 		s.registerBoundaries(ids, cutoff, &begin)
 	}
-	// Benchmark closes first: two cheap kline reads that market context needs.
+
 	benchmarks := s.backfillBenchmarkKlines(ctx, anchor)
 	var wg sync.WaitGroup
 	for _, inst := range instruments {
@@ -127,7 +122,7 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 	}
 	wg.Wait()
 	if ctx.Err() != nil {
-		return // a RUNNING obligation is resumed by the next writer
+		return
 	}
 	end := minTime(s.clock.Now(), anchor.Add(WindowAfter))
 	s.repairWindows(ctx, token, anchor.Add(-WindowBefore), end, 0)
@@ -158,7 +153,6 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 	s.putRun(ctx, row)
 }
 
-// tokenInstruments are a token's active instruments in registry order.
 func (s *Service) tokenInstruments(token string) []*venue.Instrument {
 	var out []*venue.Instrument
 	for _, iid := range s.opt.Order {
@@ -169,7 +163,6 @@ func (s *Service) tokenInstruments(token string) []*venue.Instrument {
 	return out
 }
 
-// requests runs what core asks for (mkt.capture_requests): REPAIR_WINDOWS and HTTP_FETCH.
 func (s *Service) requests(ctx context.Context) {
 	for ctx.Err() == nil {
 		row, err := s.store.ClaimRequest(ctx, s.opt.Writer, s.clock.Now())
@@ -209,7 +202,8 @@ func (s *Service) runRequest(ctx context.Context, row map[string]any) {
 			budget = limit
 		}
 	}
-	if text(row["kind"]) == "HTTP_FETCH" {
+	switch text(row["kind"]) {
+	case "HTTP_FETCH":
 		s.runFetch(ctx, row, budget, finish)
 		return
 	}
@@ -227,9 +221,6 @@ func (s *Service) runRequest(ctx context.Context, row map[string]any) {
 	finish("COMPLETE", nil, map[string]any{"instruments": out})
 }
 
-// repairWindows is repair_windows: every incomplete or missing persisted minute of
-// [start, end) for a token's instruments is repaired over REST from the last proven print
-// (03 §5.1 fill order, §5.2 step 2) within budget (0 = none).
 func (s *Service) repairWindows(ctx context.Context, token string, start, end time.Time, budget time.Duration) map[string]map[string]any {
 	if budget > 0 {
 		var cancel context.CancelFunc
@@ -300,10 +291,8 @@ func (s *Service) repairWindows(ctx context.Context, token string, start, end ti
 	return results
 }
 
-// incompleteRuns is _incomplete_runs: contiguous [start, end) runs of minutes without a
-// complete persisted bar, and the bars of [lo - 1 min, hi) by minute.
 func (s *Service) incompleteRuns(ctx context.Context, iid string, lo, hi time.Time) ([]span, map[int64]map[string]any, error) {
-	rows, err := s.store.Range(ctx, "mkt.flow_bars_1m", "minute_start", lo.Add(-time.Minute), hi, map[string]any{"instrument_id": iid})
+	rows, err := s.store.Projection(ctx, "mkt.flow_bars_1m", []string{"minute_start", "complete", "last_trade", "gap_reason"}, "minute_start", lo.Add(-time.Minute), hi, []string{iid})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -334,8 +323,6 @@ func minutesIn(runs []span) int64 {
 	return n
 }
 
-// repairInstrument is _repair_instrument: newest first, at most an hour per backfill, so
-// the event windows come before older history and every finished hour is persisted.
 func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, lo, hi time.Time, reserved bool) (int64, int64) {
 	if !hi.After(lo) {
 		return 0, 0
@@ -372,8 +359,7 @@ func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, 
 				cp.lastTradeID, cp.lastTrade = text(p["last_trade_id"]), pyval.Map(p["last_trade"])
 			}
 		}
-		// Paging venues continue below the first print of the newer minute (just repaired)
-		// instead of walking back from now for every chunk.
+
 		if inst.Venue == "coinbase" || inst.Venue == "okx" {
 			if following, err := s.store.Get(ctx, "mkt.flow_bars_1m", iid+":"+pytime.ISO(ch.end)); err == nil && following != nil {
 				if ft := pyval.Map(following["first_trade"]); text(ft["trade_id"]) != "" {
@@ -416,7 +402,11 @@ func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, 
 	for _, r := range runs {
 		for m := r.start; m.Before(r.end); m = m.Add(time.Minute) {
 			if bar := bars[m.Unix()]; bar != nil && bar["gap_reason"] == nil {
-				// An unproven minute always says why (never a null reason).
+
+				bar, err := s.store.Get(context.WithoutCancel(ctx), "mkt.flow_bars_1m", iid+":"+pytime.ISO(m))
+				if err != nil || bar == nil {
+					continue
+				}
 				row := copyRow(bar)
 				row["gap_reason"] = reason
 				s.writeStored(inst, flow.Key{IID: iid, Minute: m.Unix()}, row, bar, "REASON_RECORDED", now)
@@ -427,8 +417,6 @@ func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, 
 	return before, minutesIn(runs)
 }
 
-// backfillKlines is _backfill_klines: actual closed candles, including the close at or
-// before a return anchor.
 func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, start, end time.Time, includeReference bool, kind string) (map[string]any, error) {
 	first, last := start, pytime.MinuteFloor(end)
 	if includeReference {
@@ -511,8 +499,6 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 	}, nil
 }
 
-// backfillBenchmarkKlines is _backfill_benchmark_klines: the BTC and ETH closes of the
-// day before an anchor.
 func (s *Service) backfillBenchmarkKlines(ctx context.Context, anchor time.Time) []map[string]any {
 	var result []map[string]any
 	for _, symbol := range []string{"BTC", "ETH"} {
@@ -554,8 +540,6 @@ func benchmarkLess(a, b *venue.Instrument) bool {
 	return a.ID < b.ID
 }
 
-// captureWindowCoverage is _capture_window_coverage: the 1, 4 and 24 h windows before an
-// anchor, from the stored bars and klines, and the PRE24 reference print.
 func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrument, anchor time.Time) map[string]any {
 	end := anchor
 	windows := map[string]any{}
@@ -632,8 +616,6 @@ func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrum
 	return result
 }
 
-// startupRepairs is _repair_on_start: a restart is a reconnect (03 §5.2 step 2); each hot
-// token's windows are repaired from the bars stored up to this start.
 func (s *Service) startupRepairs(ctx context.Context, hot []map[string]any, started time.Time) {
 	anchors := s.hotAnchors(ctx, hot)
 	type window struct{ start, end time.Time }
@@ -660,12 +642,101 @@ func (s *Service) startupRepairs(ctx context.Context, hot []map[string]any, star
 			return
 		}
 		s.log.Info("startup repair", "token", token, "start", pytime.ISO(w.start), "end", pytime.ISO(minTime(started, w.end)))
-		s.repairWindows(ctx, token, w.start, minTime(started, w.end), 0)
+		s.repairUnrepaired(ctx, token, w.start, pytime.MinuteFloor(minTime(started, w.end)), false)
 	}
 }
 
-// hotAnchors is the anchor of every hot (token, event): the newest obligation's anchor,
-// else the hot row's since.
+func (s *Service) unrepaired(ctx context.Context, iid string, lo, hi time.Time) []span {
+	if !hi.After(lo) {
+		return nil
+	}
+	runs, bars, err := s.incompleteRuns(ctx, iid, lo, hi)
+	if err != nil {
+		s.log.Warn("repair read failed", "instrument", iid, "error", err)
+		return nil
+	}
+	var out []span
+	for _, r := range runs {
+		for m := r.start; m.Before(r.end); m = m.Add(time.Minute) {
+			if b := bars[m.Unix()]; b != nil && sourceLimit(text(b["gap_reason"])) {
+				continue
+			}
+			if n := len(out); n > 0 && out[n-1].end.Equal(m) {
+				out[n-1].end = m.Add(time.Minute)
+			} else {
+				out = append(out, span{m, m.Add(time.Minute)})
+			}
+		}
+	}
+	return out
+}
+
+func sourceLimit(reason string) bool {
+	if reason == BybitLimit {
+		return true
+	}
+	for _, r := range NoTradeHistory {
+		if reason == r {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) repairUnrepaired(ctx context.Context, token string, lo, hi time.Time, reserved bool) {
+	s.repairGateOnce.Do(func() { s.repairGate = make(chan struct{}, repairParallel) })
+	sem := s.repairGate
+	var wg sync.WaitGroup
+	for _, inst := range s.tokenInstruments(token) {
+		gaps := s.unrepaired(ctx, inst.ID, lo, hi)
+		if len(gaps) == 0 {
+			continue
+		}
+		wg.Add(1)
+		go func(inst *venue.Instrument, gaps []span) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			defer func() { <-sem }()
+			for i := len(gaps) - 1; i >= 0 && ctx.Err() == nil; i-- {
+				s.log.Info("gap repair", "instrument", inst.ID, "start", pytime.ISO(gaps[i].start), "end", pytime.ISO(gaps[i].end))
+				s.repairInstrument(ctx, inst, gaps[i].start, gaps[i].end, reserved)
+			}
+		}(inst, gaps)
+	}
+	wg.Wait()
+}
+
+const repairParallel = 8
+
+const sweepEvery, sweepSpan, sweepLag = 2 * time.Minute, time.Hour, 2 * time.Minute
+
+func (s *Service) sweep(ctx context.Context) {
+	if !s.leading() {
+		return
+	}
+	s.mu.Lock()
+	tokens := make([]string, 0, len(s.hotSince))
+	for t := range s.hotSince {
+		tokens = append(tokens, t)
+	}
+	s.mu.Unlock()
+	sort.Strings(tokens)
+	hi := pytime.MinuteFloor(s.clock.Now().Add(-sweepLag))
+	var wg sync.WaitGroup
+	for _, token := range tokens {
+		wg.Add(1)
+		go func(token string) {
+			defer wg.Done()
+			s.repairUnrepaired(ctx, token, hi.Add(-sweepSpan), hi, true)
+		}(token)
+	}
+	wg.Wait()
+}
+
 func (s *Service) hotAnchors(ctx context.Context, hot []map[string]any) map[string]time.Time {
 	out := map[string]time.Time{}
 	runs, err := s.store.BackfillRuns(ctx, []string{"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"})
@@ -692,13 +763,4 @@ func (s *Service) hotAnchors(ctx context.Context, hot []map[string]any) map[stri
 		}
 	}
 	return out
-}
-
-func hasPrefix(s string, prefixes ...string) bool {
-	for _, p := range prefixes {
-		if strings.HasPrefix(s, p) {
-			return true
-		}
-	}
-	return false
 }

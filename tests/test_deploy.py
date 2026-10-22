@@ -78,11 +78,13 @@ def test_registration_real_api_shapes_with_synthetic_credentials(tmp_path, monke
     )
 
 
+@pytest.mark.integration
+@pytest.mark.process
 def test_config_identity_manifest_matches_runtime_algorithm(tmp_path):
     config = tmp_path / "config"
     config.mkdir()
     (config / "registry.yaml").write_text("tokens: []\n")
-    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True, timeout=3)
     subprocess.run(
         [
             "git",
@@ -96,6 +98,7 @@ def test_config_identity_manifest_matches_runtime_algorithm(tmp_path):
             ".",
         ],
         check=True,
+        timeout=3,
     )
     subprocess.run(
         [
@@ -111,6 +114,7 @@ def test_config_identity_manifest_matches_runtime_algorithm(tmp_path):
             "fixture",
         ],
         check=True,
+        timeout=3,
     )
     manifest = module("prepare_config").prepare_config(config)
     from tank.settings import _capture_tree, _digest
@@ -153,6 +157,9 @@ def test_bootstrap_hba_denies_all_sandbox_roles_until_actual_source_is_observed(
         helper.prepare("172.30.42.0/24", "172.30.42.3/32", tmp_path / "bad", bootstrap_only=True)
 
 
+@pytest.mark.integration
+@pytest.mark.node
+@pytest.mark.process
 def test_sandbox_route_defaults_and_validated_isolated_override():
     import shutil
 
@@ -169,7 +176,12 @@ for(const value of ['', 'tank;DROP', '../tank', 'A', 'x'.repeat(64)])for(const k
 console.log(JSON.stringify({defaults,isolated,rejected}));
 """
     result = subprocess.run(
-        [node, "--input-type=module", "-e", script], cwd=ROOT, check=True, capture_output=True, text=True
+        [node, "--input-type=module", "-e", script],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=3,
     )
     data = json.loads(result.stdout)
     assert data["defaults"] == "postgresql://tank_agent:synthetic%3Ap%40ss@postgres:5432/tank"
@@ -177,6 +189,9 @@ console.log(JSON.stringify({defaults,isolated,rejected}));
     assert data["rejected"] == 10
 
 
+@pytest.mark.integration
+@pytest.mark.node
+@pytest.mark.process
 def test_replay_route_resolves_only_declared_private_service_for_l4_acl():
     import shutil
 
@@ -189,7 +204,12 @@ const resolved=await replayDatabaseRoute(()=> 'synthetic',async(host,opts)=>{if(
 let denied=0;for(const address of ['8.8.8.8','0.0.0.0','127.0.0.1','::1'])try{await replayDatabaseRoute(()=> 'synthetic',async()=>({address}));}catch{denied++;}
 console.log(JSON.stringify({called,resolved,denied}));"""
     result = subprocess.run(
-        [node, "--input-type=module", "-e", script], cwd=ROOT, check=True, capture_output=True, text=True
+        [node, "--input-type=module", "-e", script],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=3,
     )
     data = json.loads(result.stdout)
     assert data["called"] and data["denied"] == 4

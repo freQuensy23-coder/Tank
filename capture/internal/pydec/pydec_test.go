@@ -31,7 +31,6 @@ func loadVectors(t *testing.T) vectors {
 	return v
 }
 
-// The vectors come from CPython's decimal (scripts/capture/gen_pyvectors.py).
 func TestLiteralsRenderLikeCPython(t *testing.T) {
 	v := loadVectors(t)
 	if len(v.Literals) < 500 {

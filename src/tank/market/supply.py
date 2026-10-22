@@ -1,15 +1,12 @@
 """Supply observations retain partial coverage and avoid interpreting transfers as sales."""
 
-from __future__ import annotations
-
 import time
 from datetime import timedelta
 from decimal import Decimal as D
 
+from tank.market.normalize import SemanticError, precise
 from tank.time_precision import collection_clock, propagate_timestamp
 from tank.util import iso, parse_time, sha256, utcnow
-
-from .normalize import SemanticError, precise
 
 CHAIN_IDS = {
     "Ethereum": 1,
@@ -20,11 +17,10 @@ CHAIN_IDS = {
     "Polygon": 137,
     "Avalanche": 43114,
 }
-# Registry chain name -> DefiLlama stablecoincharts chain name, where they differ.
+
 DEFILLAMA_CHAINS = {"BNB Chain": "BSC"}
 
 
-# Poll step -> the observation kind whose time marks that step's last refresh.
 REFRESH_KINDS = {
     "unlocks": "UNLOCKS",
     "inventory": "EXCHANGE_INVENTORY",
@@ -34,7 +30,6 @@ REFRESH_KINDS = {
 }
 
 
-# The supply loop sleeps this long between poll passes (MarketService._supply_loop).
 SUPPLY_LOOP_SLEEP_S = 60
 
 
@@ -90,15 +85,10 @@ class SupplyCapture:
         self.market = market
         self.repo = market.repo
         self.settings = market.settings
-        # /lendBorrow exposes stable UUIDs and measurements, but no project or
-        # chain. Resolve those identities from the versioned registry, never a
-        # second runtime feed whose availability could erase lending coverage.
+
         catalog = self.settings.load_config("registry").get("lending_pool_catalog", {})
         self.lending_pool_catalog = catalog
         self.lending_pool_identities = {row["pool_id"]: row for row in catalog.get("pools", [])}
-
-    def instrument(self, token):
-        return {"instrument_id": "supply:" + token["token_id"], "token_id": token["token_id"]}
 
     async def record(self, token, kind, **fields):
         if self.settings.etherscan_api_key:
@@ -118,9 +108,7 @@ class SupplyCapture:
         return row
 
     async def request(self, token, kind, url, **kwargs):
-        raw = await self.market._request("GET", url, **kwargs)
-        await self.market._raw(self.instrument(token), kind, raw)
-        return raw
+        return await self.market._request("GET", url, **kwargs)
 
     async def resume_refresh_state(self, state, now):
         """Restore the last refresh of each step from stored observations, so a restart
@@ -162,7 +150,7 @@ class SupplyCapture:
                     continue
                 try:
                     await call(token)
-                except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
+                except Exception as exc:
                     await self.record(token, kind.upper(), available=False, reason=str(exc))
                 state[token_id, kind] = now
         self.market._supply_longest_pass_s = max(
@@ -196,8 +184,6 @@ class SupplyCapture:
             "https://api.etherscan.io/v2/api",
             params={"chainid": chainid, "apikey": self.settings.etherscan_api_key, **params},
         )
-        # Archive payload contains no API credentials (response only).
-        await self.market._raw(self.instrument(token), "etherscan_" + params.get("action", ""), raw)
         if raw.get("status") == "0" and raw.get("message") != "No transactions found":
             raise SemanticError("Etherscan request failed: " + str(raw.get("result")))
         if "error" in raw:
@@ -223,7 +209,6 @@ class SupplyCapture:
                 continue
             decimals = contract.get("decimals")
             if decimals is None:
-                # ERC-20 decimals() selector. No inference from symbol or popular defaults.
                 try:
                     value = await self.etherscan(
                         token,
@@ -239,7 +224,7 @@ class SupplyCapture:
                     decimals = int(value, 16)
                     if not 0 <= decimals <= 255:
                         raise SemanticError("invalid ERC20 decimals")
-                except Exception as exc:  # noqa: BLE001 - one unavailable chain must not discard other contracts
+                except Exception as exc:
                     errors.append(
                         {
                             "chain": contract["chain"],
@@ -268,7 +253,7 @@ class SupplyCapture:
                         )
                         total += D(raw) / (D(10) ** decimals)
                         observed += 1
-                        # Hash/tx index dedup; pages sorted descending, stop after 24h.
+
                         for page in range(1, 101):
                             rows = await self.etherscan(
                                 token,
@@ -291,7 +276,7 @@ class SupplyCapture:
                                     row["from"].lower() in all_addresses
                                     and row["to"].lower() in all_addresses
                                 )
-                                # Unlabeled origin is ambiguous. Never force accumulation or sale.
+
                                 transfers.append(
                                     {
                                         "chainid": chainid,
@@ -316,7 +301,7 @@ class SupplyCapture:
                                 parse_time(r["timeStamp"]) < utcnow() - timedelta(days=1) for r in rows
                             ):
                                 break
-                    except Exception as exc:  # noqa: BLE001 - isolate venue failures; persist explicit capture gaps
+                    except Exception as exc:
                         errors.append({"wallet": wallet, "chainid": chainid, "reason": str(exc)})
                 balances.append(
                     {
@@ -447,7 +432,7 @@ class SupplyCapture:
                 )
                 if not isinstance(data, list):
                     raise SemanticError("stablecoin chart schema mismatch")
-            except Exception as exc:  # noqa: BLE001 - one chain's gap must not erase the other chains
+            except Exception as exc:
                 await self.record(token, "CHAIN_LIQUIDITY", available=False, chain=chain, reason=str(exc))
                 continue
             values = []
@@ -474,7 +459,7 @@ class SupplyCapture:
                 identity_evidence=token.get("fundamentals_evidence"),
                 inference_limits=["UNSUPPORTED_IS_NOT_ZERO_FEES"],
             )
-        # Slugs come only from the versioned registry; HLD §4.8 lists no catalog endpoint.
+
         slugs = token.get("defillama_protocol_slugs") or (
             [token["defillama_protocol_slug"]] if token.get("defillama_protocol_slug") else None
         )
@@ -513,7 +498,7 @@ class SupplyCapture:
                         or bool(raw.get("totalDataChart")),
                         source_url="https://api.llama.fi/summary/fees/" + slug + "?dataType=" + kind,
                     )
-                except Exception as exc:  # noqa: BLE001 - preserve available fundamentals when one metric is unsupported
+                except Exception as exc:
                     metrics[kind] = {"available": False, "reason": str(exc)}
                     errors.append({"slug": slug, "metric": kind, "reason": str(exc)})
             protocols[slug] = metrics

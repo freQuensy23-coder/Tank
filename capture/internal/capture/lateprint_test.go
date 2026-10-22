@@ -12,8 +12,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
 )
 
-// A late Hyperliquid print for a complete bar the sealer released revises the bar; it
-// never turns it incomplete, and a replayed print the bar already holds changes nothing.
 func TestHyperliquidLatePrintRevisesWithoutDowngrade(t *testing.T) {
 	r := newRESTRig(t, "hyperliquid")
 	minute := r.base.Add(5 * time.Minute)
@@ -33,16 +31,18 @@ func TestHyperliquidLatePrintRevisesWithoutDowngrade(t *testing.T) {
 		}
 	}
 
-	// A reconnect replays prints the bar already counted: nothing is written.
 	r.s.latePrintRevision(key, stored, print(20*time.Second, "905"), r.clock.Now())
-	r.mem.Flush(context.Background())
+	if err := r.mem.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	if r.mem.writes["mkt.flow_bars_1m"] != 0 {
 		t.Fatalf("a replayed print rewrote the bar: %v", r.mem.rows["mkt.flow_bars_1m"][storageKey])
 	}
 
-	// A print after the bar's last counted one is a revision, still complete.
 	r.s.latePrintRevision(key, stored, print(45*time.Second, "911"), r.clock.Now())
-	r.mem.Flush(context.Background())
+	if err := r.mem.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	row := r.mem.rows["mkt.flow_bars_1m"][storageKey]
 	if row["complete"] != true || row["gap_reason"] != nil {
 		t.Fatalf("a late print downgraded a complete bar: %v", row)
@@ -61,7 +61,6 @@ func TestHyperliquidLatePrintRevisesWithoutDowngrade(t *testing.T) {
 	}
 }
 
-// While the writer lock is being re-acquired a flush writes nothing and drops nothing.
 func TestFlushWaitsForTheWriterLock(t *testing.T) {
 	r := newRESTRig(t, "coinbase")
 	held := false

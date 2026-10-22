@@ -1,0 +1,194 @@
+name: Test suite
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  python-unit:
+    name: Python unit
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13.13"
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          version: "0.11.7"
+          enable-cache: true
+      - run: uv sync --python 3.13.13 --frozen --extra dev
+      - name: Stage exact retained capture inputs
+        run: uv run --frozen --extra dev python scripts/ci/stage_retained_fixtures.py
+      - name: Check CI helper style
+        run: uv run --frozen --extra dev ruff check scripts/ci
+      - name: Run all offline units
+        run: uv run --frozen --extra dev pytest -q -n auto --dist loadfile --junitxml=.test-results/unit.xml
+      - name: Enforce unit duration and zero skips
+        run: uv run --frozen --extra dev python scripts/check-unit-timings.py .test-results/unit.xml
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: python-unit-results
+          path: .test-results/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  python-integration:
+    name: Python integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      CLICKHOUSE_TEST_URL: http://tank_ci:tank-ci-disposable@127.0.0.1:8123
+    services:
+      clickhouse:
+        image: clickhouse/clickhouse-server:25.8
+        env:
+          CLICKHOUSE_USER: tank_ci
+          CLICKHOUSE_PASSWORD: tank-ci-disposable
+          CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+        ports:
+          - 8123:8123
+        options: >-
+          --health-cmd "clickhouse-client --user=tank_ci --password=tank-ci-disposable --query='SELECT 1'"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.13.13"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24.22.0"
+          package-manager-cache: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          version: "0.11.7"
+          enable-cache: true
+      - run: uv sync --python 3.13.13 --frozen --extra dev
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version: "1.25.14"
+          cache-dependency-path: capture/go.sum
+      - name: Prepare the isolated ClickHouse schema
+        run: uv run --frozen --extra dev python scripts/ci/prepare_clickhouse.py
+      - name: Prepare the pinned Go modules and offline build cache
+        working-directory: capture
+        run: |
+          export GOENV=off GOTOOLCHAIN=local
+          for variable in GOMODCACHE GOCACHE GOPATH; do
+            value="$(go env "$variable")"
+            export "$variable=$value"
+            echo "$variable=$value" >> "$GITHUB_ENV"
+          done
+          printf '%s\n' GOENV=off GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off GOFLAGS=-mod=readonly >> "$GITHUB_ENV"
+          GOPROXY=https://proxy.golang.org GOSUMDB=sum.golang.org go mod download
+          git diff --exit-code -- go.mod go.sum
+          CGO_ENABLED=0 GOPROXY=off GOSUMDB=off go build -mod=readonly -o "$RUNNER_TEMP/capture-parity-prime" ./cmd/capture-parity
+      - name: Install the locked actual pi-ai gateway test dependency
+        run: npm ci --prefix tests/node-gateway --ignore-scripts --no-audit --no-fund
+      - run: uv run --frozen --extra dev python -m playwright install --with-deps chromium
+      - name: Stage exact retained capture inputs
+        run: uv run --frozen --extra dev python scripts/ci/stage_retained_fixtures.py
+      - name: Stage exact supplementary source captures
+        run: uv run --frozen --extra dev python tests/fixtures/supplementary-sources/stage.py
+      - name: Start owned PostgreSQL 16 with verified integration settings
+        run: |
+          mkdir -p .test-results
+          container_id="$(docker run --detach --name tank-test-ci \
+            --label "tank.ci-owner=$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --publish 127.0.0.1:5432:5432 \
+            --tmpfs /var/lib/postgresql/data:rw --shm-size 1g \
+            --env POSTGRES_DB=tank_test_ci_admin --env POSTGRES_USER=postgres \
+            --env POSTGRES_PASSWORD=tank-ci-disposable \
+            postgres:16-bookworm \
+            -c max_locks_per_transaction=1024 -c max_connections=300 \
+            -c fsync=on -c synchronous_commit=on)"
+          echo "$container_id" > .test-results/postgres-container-id
+          deadline=$((SECONDS + 60))
+          until docker exec "$container_id" pg_isready -h 127.0.0.1 -U postgres -d tank_test_ci_admin >/dev/null 2>&1; do
+            if (( SECONDS >= deadline )); then
+              docker logs "$container_id"
+              exit 1
+            fi
+            sleep 1
+          done
+          docker exec "$container_id" psql -U postgres -d tank_test_ci_admin -At \
+            -c "SELECT json_build_object('version', version(), 'max_locks_per_transaction', current_setting('max_locks_per_transaction'), 'max_connections', current_setting('max_connections'), 'fsync', current_setting('fsync'), 'synchronous_commit', current_setting('synchronous_commit'))" \
+            > .test-results/postgres-settings.json
+      - name: Provision disposable worker databases and read-only role
+        run: uv run --frozen --extra dev python scripts/ci/prepare_postgres.py
+        env:
+          CI_POSTGRES_DSN: postgresql://postgres:tank-ci-disposable@127.0.0.1:5432/tank_test_ci_admin
+          PYTHONPATH: tests
+      - name: Record the complete integration collection
+        run: uv run --frozen --extra dev pytest -p collect_integration -q --collect-only -m integration --postgres-schema-template "$TANK_CI_SCHEMA_TEMPLATE"
+        env:
+          PYTHONPATH: scripts/ci:tests
+          TANK_BROWSER_TESTS: "1"
+      - name: Run all integration cases
+        run: uv run --frozen --extra dev pytest -p parallel_postgres -q -n auto --dist loadfile -m integration --postgres-schema-template "$TANK_CI_SCHEMA_TEMPLATE" --timeout=300 --junitxml=.test-results/integration.xml
+        env:
+          PYTHONPATH: tests
+          TANK_BROWSER_TESTS: "1"
+      - name: Require the complete integration collection with zero skips
+        run: uv run --frozen --extra dev python scripts/ci/check_integration_results.py .test-results/integration.xml --collection .test-results/integration-collection.json
+      - name: Collect the owned ClickHouse logs
+        if: always()
+        env:
+          CLICKHOUSE_CONTAINER_ID: ${{ job.services.clickhouse.id }}
+        run: |
+          mkdir -p .test-results
+          docker logs "$CLICKHOUSE_CONTAINER_ID" > .test-results/clickhouse.log 2>&1
+      - name: Collect logs and remove only the owned PostgreSQL container
+        if: always()
+        run: |
+          if [[ -f .test-results/postgres-container-id ]]; then
+            container_id="$(cat .test-results/postgres-container-id)"
+            owner="$(docker inspect --format '{{index .Config.Labels "tank.ci-owner"}}' "$container_id")"
+            if [[ "$owner" != "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" ]]; then
+              echo "::error::Refusing to remove an unowned PostgreSQL container"
+              exit 1
+            fi
+            log_status=0
+            docker logs "$container_id" > .test-results/postgres.log 2>&1 || log_status=$?
+            docker rm --force "$container_id"
+            exit "$log_status"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: python-integration-results
+          path: .test-results/
+          include-hidden-files: true
+          if-no-files-found: error
+
+  node-local:
+    name: Node local units and contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24.22.0"
+          package-manager-cache: false
+      - name: Local JavaScript units
+        run: node scripts/test-node.mjs local-unit
+      - name: Local JavaScript contracts
+        run: node scripts/test-node.mjs local-contract

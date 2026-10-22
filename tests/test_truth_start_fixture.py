@@ -1,7 +1,11 @@
 """Synthetic deterministic evidence generator for the positive START integration path."""
 
+from copy import deepcopy
 from datetime import timedelta
+from functools import lru_cache
 from math import sin
+
+import pytest
 
 from tank.analysis.truth import compute_market_truth
 from tank.util import iso, parse_time
@@ -224,8 +228,31 @@ def synthetic_start_snapshot():
     return snap
 
 
+@lru_cache(maxsize=1)
+def _compact_start_seed():
+    snapshot = synthetic_start_snapshot()
+
+    funding = snapshot["funding"]
+    end = parse_time(snapshot["cutoff"])
+    boundaries = {end - timedelta(seconds=seconds) for seconds in (0, 900, 3600, 14400, 86400)}
+    boundaries.add(parse_time(snapshot["anchor"]["ts"]))
+    snapshot["funding"] = [
+        row
+        for index, row in enumerate(funding)
+        if index % 96 == 0 or parse_time(row["settlement_time"]) in boundaries
+    ]
+
+    snapshot["oi"] = snapshot["oi"][::3]
+    return snapshot
+
+
+def compact_start_snapshot():
+
+    return deepcopy(_compact_start_seed())
+
+
 def test_synthetic_start_truth_positive_path():
-    result = compute_market_truth(synthetic_start_snapshot())
+    result = compute_market_truth(compact_start_snapshot())
     assert result["data_confidence"]["class"] == "HIGH", result["data_confidence"]
     assert result["move_class"] == "SPOT_LED_ACCUMULATION", result
     assert result["relative"]["repricing_band"] == "EARLY", result["relative"]
@@ -233,9 +260,9 @@ def test_synthetic_start_truth_positive_path():
 
 
 def test_confidence_diagnostics_do_not_add_unlisted_grade_conditions():
-    snapshot = synthetic_start_snapshot()
+    snapshot = compact_start_snapshot()
     snapshot["capture_status"] = {"status": "RUNNING", "reason": "BACKFILL_PENDING"}
-    # Native coverage and semantics remain valid when USD decomposition is unavailable.
+
     for row in snapshot["oi"]:
         row["oi_usd"] = None
     result = compute_market_truth(snapshot)
@@ -245,7 +272,30 @@ def test_confidence_diagnostics_do_not_add_unlisted_grade_conditions():
 
 
 def test_threshold_configuration_is_consumed_and_isolated_between_calls():
-    snapshot = synthetic_start_snapshot()
+    snapshot = compact_start_snapshot()
+
+    end = parse_time(snapshot["cutoff"])
+    start = end - timedelta(minutes=15)
+    snapshot["anchor"] = {"type": "T0", "ts": iso(start)}
+    snapshot["instruments"] = [row for row in snapshot["instruments"] if row["market_type"] == "SPOT"]
+    spot_ids = {row["instrument_id"] for row in snapshot["instruments"]}
+    snapshot["flow_bars"] = [
+        row
+        for row in snapshot["flow_bars"]
+        if row["instrument_id"] in spot_ids and start <= parse_time(row["minute_start"]) < end
+    ]
+    snapshot["klines"] = [
+        row
+        for row in snapshot["klines"]
+        if row["instrument_id"] in spot_ids and parse_time(row["open_time"]) == end - timedelta(minutes=1)
+    ]
+    snapshot["books"] = [
+        row
+        for row in snapshot["books"]
+        if row["instrument_id"] in spot_ids and parse_time(row["exchange_ts"]) == end
+    ]
+    snapshot["semantics"] = [row for row in snapshot["semantics"] if row["market_type"] == "SPOT"]
+    snapshot["oi"], snapshot["funding"] = [], []
     strict = compute_market_truth(snapshot, config={"min_spot_venues": 3})
     assert strict["data_confidence"]["class"] == "LOW"
     assert strict["data_confidence"]["limiting"]["condition"] == "spot_coverage"
@@ -256,32 +306,44 @@ def test_threshold_configuration_is_consumed_and_isolated_between_calls():
     assert baseline["spot"][baseline["primary_window"]]["direction"] == "BUY"
 
 
-def test_legacy_semantic_status_cannot_reduce_confidence_or_mask_real_freshness():
-    snapshot = synthetic_start_snapshot()
+@pytest.fixture(scope="module")
+def legacy_semantic_baseline():
+    snapshot = compact_start_snapshot()
     for row in snapshot["semantics"]:
         row.pop("semantic_confidence", None)
     baseline = compute_market_truth(snapshot)
     assert baseline["data_confidence"]["class"] == "HIGH"
-    for status in ("DOCUMENTED_UNTESTED", "UNKNOWN", "INFERRED"):
-        for row in snapshot["semantics"]:
-            row["semantic_confidence"] = status
-        actual = compute_market_truth(snapshot)
-        assert actual["data_confidence"] == baseline["data_confidence"]
-        assert actual["derivatives"]["synchronized"] == baseline["derivatives"]["synchronized"]
-    snapshot["books"] = []
-    missing = compute_market_truth(snapshot)
-    assert missing["data_confidence"]["class"] == "MEDIUM"
-    assert missing["data_confidence"]["limiting"]["condition"] == "freshness"
+
+    def fresh():
+
+        return deepcopy((snapshot, baseline))
+
+    return fresh
+
+
+@pytest.mark.parametrize("status", ["DOCUMENTED_UNTESTED", "UNKNOWN", "INFERRED"])
+def test_legacy_semantic_status_cannot_reduce_confidence_or_mask_real_freshness(
+    legacy_semantic_baseline, status
+):
+    snapshot, baseline = legacy_semantic_baseline()
+    for row in snapshot["semantics"]:
+        row["semantic_confidence"] = status
+    actual = compute_market_truth(snapshot)
+    assert actual["data_confidence"] == baseline["data_confidence"]
+    assert actual["derivatives"]["synchronized"] == baseline["derivatives"]["synchronized"]
+    if status == "INFERRED":
+        snapshot["books"] = []
+        missing = compute_market_truth(snapshot)
+        assert missing["data_confidence"]["class"] == "MEDIUM"
+        assert missing["data_confidence"]["limiting"]["condition"] == "freshness"
 
 
 def test_missing_instrument_registry_and_selftest_records_do_not_cap_observed_confidence():
-    snapshot = synthetic_start_snapshot()
+    snapshot = compact_start_snapshot()
     end = parse_time(snapshot["cutoff"])
     baseline = compute_market_truth(snapshot)
     assert baseline["data_confidence"]["class"] == "HIGH"
 
-    # Actual typed observations carry identities even if discovery/self-test
-    # metadata has not arrived. Those metadata records are not a fourth gate.
     snapshot["instruments"] = []
     for row in snapshot["semantics"]:
         row["semantic_confidence"] = "DOCUMENTED_UNTESTED"
@@ -290,7 +352,6 @@ def test_missing_instrument_registry_and_selftest_records_do_not_cap_observed_co
     assert observed["spot"] == baseline["spot"]
     assert observed["derivatives"] == baseline["derivatives"]
 
-    # Removing metadata must not hide a genuinely stale observed field.
     snapshot["books"] = [
         row for row in snapshot["books"] if parse_time(row["exchange_ts"]) < end - timedelta(seconds=10)
     ]
@@ -320,7 +381,7 @@ async def _assess_loser_snapshot():
 
     class Market:
         async def snapshot(self, token_id, cutoff, anchor=None):
-            return synthetic_start_snapshot()
+            return compact_start_snapshot()
 
     return await MarketTruthService(
         Repo(), SimpleNamespace(config_version="test", code_version="test"), Market()
@@ -334,4 +395,4 @@ def test_latest_durable_beneficiary_role_sets_loser_repricing_direction():
     assert result["relative"]["expected_direction"] == "LOSER"
     assert result["relative"]["repricing_sign"] == -1
     assert result["relative"]["repricing_band"] == "UNPRICED"
-    assert compute_market_truth(synthetic_start_snapshot())["relative"]["repricing_band"] == "EARLY"
+    assert compute_market_truth(compact_start_snapshot())["relative"]["repricing_band"] == "EARLY"

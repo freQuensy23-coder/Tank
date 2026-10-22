@@ -13,8 +13,7 @@ def tool_wire_result(tool, result, *, session_id, call_id):
     record_ids = set()
     if not isinstance(result, dict) or not isinstance(result.get("market_truth"), list):
         return result
-    # Only the explicit producer shape contains the redundant companion. A
-    # similarly named evidence/raw field is canonical data and stays untouched.
+
     projected = dict(result)
     truths = []
     for index, truth in enumerate(result["market_truth"]):
@@ -51,8 +50,7 @@ def tool_wire_result(tool, result, *, session_id, call_id):
             "parameters": [session_id, call_id],
         },
     }
-    # All Tank tools return objects; refuse an unexpected shape rather than
-    # silently wrapping/replacing any canonical result fields.
+
     if not isinstance(projected, dict) or "measurement_metadata_access" in projected:
         raise ValueError("Unexpected get_market_truth wire projection shape")
     projected["measurement_metadata_access"] = access

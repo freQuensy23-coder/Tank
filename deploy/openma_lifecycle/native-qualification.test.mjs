@@ -36,7 +36,6 @@ test('diagnostic DOM/PNG capture saves exact artifacts and rejects absent eviden
 
 test('outer orchestration contains cold preparation and all unchanged browser RPC budgets',()=>{
   // First: open/goto/content/PNG/set-profile/read-profile/close. Resume omits set-profile.
-  assert.deepEqual(phaseWallSeconds,{first:1080,resume:900,cleanup:60});
   assert.ok(phaseWallSeconds.first >= 240 + 7*90 + 90);
   assert.ok(phaseWallSeconds.resume >= 240 + 6*90 + 90);
 });

@@ -1,6 +1,3 @@
-// Command tank-capture is Tank's exchange capture service: the only process that talks
-// to the exchanges for market data. It writes the typed market tables Tank core reads
-// (capture/README.md).
 package main
 
 import (
@@ -11,11 +8,14 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/pprof"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -24,20 +24,22 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/budget"
 	"github.com/freQuensy23-coder/Tank/capture/internal/capture"
 	"github.com/freQuensy23-coder/Tank/capture/internal/config"
+	"github.com/freQuensy23-coder/Tank/capture/internal/rawstore"
 	"github.com/freQuensy23-coder/Tank/capture/internal/rest"
 	"github.com/freQuensy23-coder/Tank/capture/internal/store"
 )
 
-// healthStale is how old the last successful flush may be for the service to be healthy.
 const healthStale = 30 * time.Second
 
-// shutdownLimit bounds a stop: the final flush has 20 s of it.
 const shutdownLimit = 45 * time.Second
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
-		os.Exit(healthcheck())
+		os.Exit(healthcheck("/healthz"))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "readycheck" {
+		os.Exit(healthcheck("/readyz"))
 	}
 	if err := run(log); err != nil {
 		log.Error("tank-capture stopped", "error", err)
@@ -45,8 +47,7 @@ func main() {
 	}
 }
 
-// healthcheck is the container healthcheck: GET /healthz on the local health address.
-func healthcheck() int {
+func healthcheck(path string) int {
 	addr := os.Getenv("TANK_CAPTURE_HEALTH_ADDR")
 	if addr == "" {
 		addr = ":8791"
@@ -56,11 +57,13 @@ func healthcheck() int {
 		return 1
 	}
 	client := http.Client{Timeout: 4 * time.Second}
-	resp, err := client.Get("http://127.0.0.1:" + port + "/healthz")
+	resp, err := client.Get("http://127.0.0.1:" + port + path)
 	if err != nil {
 		return 1
 	}
-	defer resp.Body.Close()
+	defer func() {
+		_ = resp.Body.Close()
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return 1
 	}
@@ -78,37 +81,50 @@ func run(log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log.Info("starting", "schema", cfg.Schema(), "config_version", cfg.ConfigVersion,
+	log.Info("starting", "config_version", cfg.ConfigVersion,
 		"code_version", cfg.CodeVersion, "instruments", len(cfg.Instruments))
-	st, err := store.Open(ctx, cfg.DatabaseURL, cfg.Schema())
+	st, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	health := &healthState{}
-	server := serveHealth(cfg.HealthAddr, health, log)
-	defer server.Close()
-	log.Info("waiting for the writer lock", "key", cfg.LockKey())
-	lock, err := st.Lock(ctx, cfg.LockKey())
+
+	chURL := os.Getenv("TANK_CLICKHOUSE_URL")
+	if chURL == "" {
+		return errors.New("TANK_CLICKHOUSE_URL is not set")
+	}
+	dbURL, err := url.Parse(cfg.DatabaseURL)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil
-		}
 		return err
 	}
-	defer lock.Release()
-	log.Info("writer lock held", "key", cfg.LockKey())
+	password, _ := dbURL.User.Password()
+	ch, err := store.NewClickHouse(chURL, password)
+	if err != nil {
+		return err
+	}
+	st.CH = ch
+	health := &healthState{}
+	server := serveHealth(cfg.HealthAddr, health, log)
+	defer func() {
+		_ = server.Close()
+	}()
+
 	owner := config.Writer
 	clock := capture.NewSystemClock()
 	gate := budget.NewGate(st.Ledger(), owner)
 	client := rest.NewClient(cfg.UserAgent, gate, clock.Now)
 	writer := store.NewWriter(st)
+	var held atomic.Pointer[store.Lock]
+	leading := make(chan struct{})
 	svc := capture.New(capture.Options{
 		Instruments: cfg.Instruments, Order: cfg.Order, Tokens: cfg.Tokens, Thresholds: cfg.Thresholds,
 		ConfigVersion: cfg.ConfigVersion, CodeVersion: cfg.CodeVersion, Writer: config.Writer,
-		CanWrite: lock.Held, Fetcher: client, Log: log,
+		CanWrite: func() bool { l := held.Load(); return l != nil && l.Held() },
+		Leading:  leading,
+		Fetcher:  client, Log: log,
+		Raw: rawstore.New(ch, cfg.CodeVersion, cfg.ConfigVersion, log),
 	}, st, writer, capture.RESTVenues(client), dial(cfg.UserAgent), clock)
-	health.set(svc, lock)
+	health.set(svc, nil)
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	notifications, err := st.Listen(runCtx, "tank_capture")
@@ -120,7 +136,29 @@ func run(log *slog.Logger) error {
 			svc.Wake()
 		}
 	}()
+	go logReads(runCtx, client, log)
 	go func() {
+
+		<-runCtx.Done()
+		time.Sleep(shutdownLimit)
+		buf := make([]byte, 1<<20)
+		log.Error("shutdown exceeded its limit", "limit", shutdownLimit.String(), "stacks", string(buf[:runtime.Stack(buf, true)]))
+		os.Exit(1)
+	}()
+	go func() {
+		log.Info("standby: capturing, waiting for the writer lock", "key", cfg.LockKey())
+		lock, err := st.Lock(runCtx, cfg.LockKey())
+		if err != nil {
+			if runCtx.Err() == nil {
+				log.Error("writer lock failed", "error", err)
+				cancel()
+			}
+			return
+		}
+		held.Store(lock)
+		health.set(svc, lock)
+		log.Info("writer lock held", "key", cfg.LockKey())
+		close(leading)
 		select {
 		case <-lock.Lost():
 			log.Error("another writer holds the writer lock: stopping")
@@ -128,25 +166,22 @@ func run(log *slog.Logger) error {
 		case <-runCtx.Done():
 		}
 	}()
-	go logReads(runCtx, client, log)
-	go func() {
-		// A stop that does not finish must not hold the writer lock: exit with the stacks.
-		<-runCtx.Done()
-		time.Sleep(shutdownLimit)
-		buf := make([]byte, 1<<20)
-		log.Error("shutdown exceeded its limit", "limit", shutdownLimit.String(), "stacks", string(buf[:runtime.Stack(buf, true)]))
-		os.Exit(1)
+	defer func() {
+		if l := held.Load(); l != nil {
+			l.Release()
+		}
 	}()
 	err = svc.Run(runCtx)
-	select {
-	case <-lock.Lost():
-		return errors.New("another writer holds the writer lock")
-	default:
+	if l := held.Load(); l != nil {
+		select {
+		case <-l.Lost():
+			return errors.New("another writer holds the writer lock")
+		default:
+		}
 	}
 	return err
 }
 
-// dial opens public WebSocket connections (websockets.connect: 32 MiB frames).
 func dial(userAgent string) capture.Dialer {
 	dialer := websocket.Dialer{
 		Proxy: http.ProxyFromEnvironment, HandshakeTimeout: 30 * time.Second,
@@ -156,7 +191,7 @@ func dial(userAgent string) capture.Dialer {
 		header := http.Header{"User-Agent": []string{userAgent}}
 		conn, resp, err := dialer.DialContext(ctx, url, header)
 		if resp != nil && resp.Body != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		if err != nil {
 			if resp != nil {
@@ -169,7 +204,6 @@ func dial(userAgent string) capture.Dialer {
 	}
 }
 
-// logReads logs the REST reads per host once a minute (MarketService's minute log).
 func logReads(ctx context.Context, client *rest.Client, log *slog.Logger) {
 	t := time.NewTicker(time.Minute)
 	defer t.Stop()
@@ -208,11 +242,10 @@ func (h *healthState) get() (*capture.Service, *store.Lock) {
 	return h.svc, h.lock
 }
 
-// healthy: the writer lock is held and typed rows were written recently.
 func (h *healthState) healthy() (bool, string) {
 	svc, lock := h.get()
 	if svc == nil || lock == nil {
-		return false, "waiting for the writer lock"
+		return false, "standby: waiting for the writer lock"
 	}
 	select {
 	case <-lock.Lost():
@@ -237,7 +270,15 @@ func serveHealth(addr string, h *healthState, log *slog.Logger) *http.Server {
 			http.Error(w, reason, http.StatusServiceUnavailable)
 			return
 		}
-		fmt.Fprintln(w, reason)
+		_, _ = fmt.Fprintln(w, reason)
+	})
+
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		if svc, _ := h.get(); svc != nil && svc.Ready() {
+			_, _ = fmt.Fprintln(w, "ready")
+			return
+		}
+		http.Error(w, "streams connecting", http.StatusServiceUnavailable)
 	})
 	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
 		ok, reason := h.healthy()
@@ -248,6 +289,9 @@ func serveHealth(addr string, h *healthState, log *slog.Logger) *http.Server {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(status)
 	})
+
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

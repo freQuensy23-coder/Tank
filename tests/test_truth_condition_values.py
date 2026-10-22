@@ -2,20 +2,28 @@
 
 from copy import deepcopy
 from decimal import Decimal
-from pathlib import Path
-from runpy import run_path
 from types import SimpleNamespace
 
 import pytest
+from test_truth_start_fixture import compact_start_snapshot
 
 import tank.analysis.truth as module
 from tank.scheduler import metric_value
 
 
 def snapshot():
-    return run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
-        "synthetic_start_snapshot"
-    ]()
+    return compact_start_snapshot()
+
+
+@pytest.fixture(scope="module")
+def baseline_truth():
+
+    result = module.compute_market_truth(snapshot())
+
+    def fresh():
+        return deepcopy(result)
+
+    return fresh
 
 
 REQUIREMENTS = [
@@ -30,9 +38,9 @@ REQUIREMENTS = [
 ]
 
 
-def test_selective_same_input_parity_and_no_unrequested_domains(monkeypatch):
+def test_selective_same_input_parity_and_no_unrequested_domains(monkeypatch, baseline_truth):
     packet = snapshot()
-    full = module.compute_market_truth(packet)
+    full = baseline_truth()
 
     def forbidden(*args, **kwargs):
         raise AssertionError("Unrequested full/cross-domain assessment")
@@ -289,7 +297,7 @@ async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_wr
     async with httpx.AsyncClient() as http:
         market = MarketService(repo, settings, http=http)
         monkeypatch.setattr(market, "snapshot", forbidden)
-        monkeypatch.setattr(market, "_flush_flow", forbidden)
+        monkeypatch.setattr(market, "_put", forbidden)
         monkeypatch.setattr(market, "flush_market", forbidden)
         truth = module.MarketTruthService(repo, settings, market)
         req = [
@@ -306,7 +314,9 @@ async def test_actual_market_loader_selective_sql_footprint_and_no_assessment_wr
 @pytest.mark.parametrize(
     "case", ["HIGH", "UNVERIFIED", "UNKNOWN", "STALE_BOOK", "MISSING_USD", "STALE_SUPPLY"]
 )
-def test_selective_confidence_matches_full_rules_without_relative_liquidity_or_support(case, monkeypatch):
+def test_selective_confidence_matches_full_rules_without_relative_liquidity_or_support(
+    case, monkeypatch, baseline_truth
+):
     from datetime import timedelta
 
     from tank.util import iso, parse_time
@@ -329,7 +339,7 @@ def test_selective_confidence_matches_full_rules_without_relative_liquidity_or_s
                 kind="FUNDAMENTALS", ts=iso(parse_time(packet["cutoff"]) - timedelta(days=1)), available=True
             )
         ]
-    full = module.compute_market_truth(packet)
+    full = baseline_truth() if case == "HIGH" else module.compute_market_truth(packet)
 
     def forbidden(*args, **kwargs):
         raise AssertionError("DC must not compute statistical repricing/liquidity/support/class")
@@ -350,9 +360,9 @@ def test_selective_confidence_matches_full_rules_without_relative_liquidity_or_s
     assert not selected["_condition_evaluation"]["requires_market_truth"]
 
 
-def test_depth_ratio_uses_only_actual_books_and_reuses_pre_event_baseline(monkeypatch):
+def test_depth_ratio_uses_only_actual_books_and_reuses_pre_event_baseline(monkeypatch, baseline_truth):
     packet = snapshot()
-    full = module.compute_market_truth(packet)
+    full = baseline_truth()
     monkeypatch.setattr(
         module,
         "liquidity_truth",
@@ -420,7 +430,7 @@ def test_compact_statistical_projections_preserve_full_catalog_and_exact_prices(
                 ),
                 "values": array("d", [float(r.get("c", r.get("close"))) for r in rows]),
             }
-    # The separate exact current monetary rows remain available; history is compact.
+
     end = module.parse_time(raw["cutoff"])
     compact["klines"] = [r for r in raw["klines"] if module._time(r) >= end - module.timedelta(hours=1)]
     actual = module.compute_condition_values(
@@ -484,9 +494,9 @@ def test_compact_native_volume_keeps_exact_sums_and_continuity():
     assert missing["spot_volume_up_beyond_normal"] is None
 
 
-def test_composite_primary_graph_reused_across_requested_windows(monkeypatch):
+def test_composite_primary_graph_reused_across_requested_windows(monkeypatch, baseline_truth):
     packet = snapshot()
-    full = module.compute_market_truth(packet)
+    full = baseline_truth()
     calls = []
     original = module.derivatives_truth
 
@@ -579,7 +589,7 @@ def test_beneficiary_direction_invalidates_market_head_cache():
     assert second["_condition_evaluation"]["proofs"][0]["reused"] is False
 
 
-def test_complete_market_condition_catalog_matches_same_input_full_truth():
+def test_complete_market_condition_catalog_matches_same_input_full_truth(baseline_truth):
     packet = snapshot()
     catalog = sorted(
         module.SPOT_CONDITION_METRICS
@@ -589,7 +599,7 @@ def test_complete_market_condition_catalog_matches_same_input_full_truth():
         | {"dc.class", "price.close_vs_level", "liq.depth_p1_vs_pre", "liq.spread_ratio"}
     )
     requirements = [dict(metric=metric, window="W1H") for metric in catalog]
-    full = module.compute_market_truth(packet)
+    full = baseline_truth()
     result = module.compute_condition_values(packet, requirements)
     for metric in catalog:
         assert metric_value(result, {}, metric, "W1H") == metric_value(full, {}, metric, "W1H"), metric

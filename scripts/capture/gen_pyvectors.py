@@ -86,7 +86,7 @@ def decimals(rng):
         op = rng.choice(["add", "sub", "mul", "div"])
         for prec in (28, 100):
             ops.append({"op": op, "a": str(a), "b": str(b), "prec": prec, "result": run(op, a, b, prec)})
-    # Tank's own shapes: sums of trade sizes, squares, VWAPs, mid and spread arithmetic.
+
     for _ in range(400):
         q = Decimal(rng.choice(["0.0001", "0.00012", "1.5", "3", "0.123456789", "25000", "0.00000300"]))
         p = Decimal(rng.choice(["83520.4", "0.000007", "1.0002", "2.5", "0.0000001", "64000"]))

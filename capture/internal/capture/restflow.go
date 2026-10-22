@@ -14,7 +14,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// checkpoint is a reconnect or repair checkpoint: REST pages from the last proven print.
 type checkpoint struct {
 	lastTS       time.Time
 	lastTradeID  string
@@ -23,31 +22,27 @@ type checkpoint struct {
 	handoffRetry int
 }
 
-// gapPair is a trade-ID hole a REST rebuild found: the prints before and after it.
 type gapPair struct{ before, after *normalize.Trade }
 
-// minuteBuild is one minute rebuilt from REST prints (and the prints the sealer holds).
 type minuteBuild struct {
 	key    flow.Key
 	bar    *flow.Bar
-	first  *normalize.Trade // lowest print in continuity order
+	first  *normalize.Trade
 	last   *normalize.Trade
 	gaps   []gapPair
 	held   bool
 	sealed bool
 }
 
-// restFlow pages one backfill's prints and rebuilds the minutes of [lo, end) as the
-// paging leaves them behind, so a day of prints is never held at once.
 type restFlow struct {
 	s        *Service
 	inst     *venue.Instrument
 	lo, end  time.Time
 	ids      bool
-	pending  map[int64][]*normalize.Trade // minute -> prints of a minute not yet built
+	pending  map[int64][]*normalize.Trade
 	seen     map[string]bool
 	built    map[int64]*minuteBuild
-	previous *normalize.Trade // newest print before the earliest pending minute (forward paging)
+	previous *normalize.Trade
 	err      error
 }
 
@@ -58,7 +53,6 @@ func newRESTFlow(s *Service, inst *venue.Instrument, lo, end time.Time) *restFlo
 	}
 }
 
-// add collects a print for the rebuild range (ingest_trade(backfill=True)).
 func (r *restFlow) add(t *normalize.Trade) {
 	if t.TS.Before(r.lo) || !t.TS.Before(r.end) {
 		if t.TS.Before(r.lo) && (r.previous == nil || lessPrint(r.previous, t, r.ids)) {
@@ -70,7 +64,8 @@ func (r *restFlow) add(t *normalize.Trade) {
 		return
 	}
 	r.seen[t.TradeID] = true
-	t.SourcePayload = nil // a rebuilt bar needs the print, not its frame
+	r.s.raw(t)
+	t.SourcePayload = nil
 	m := pytime.MinuteFloor(t.TS).Unix()
 	if r.built[m] != nil {
 		r.err = fmt.Errorf("print %s after its minute was built", t.TradeID)
@@ -79,7 +74,6 @@ func (r *restFlow) add(t *normalize.Trade) {
 	r.pending[m] = append(r.pending[m], t)
 }
 
-// closeBefore builds every pending minute before `before` (forward paging passed them).
 func (r *restFlow) closeBefore(before time.Time) {
 	var minutes []int64
 	for m := range r.pending {
@@ -93,8 +87,6 @@ func (r *restFlow) closeBefore(before time.Time) {
 	}
 }
 
-// closeAfter builds every pending minute that starts after `after` (backward paging
-// reached a print older than them).
 func (r *restFlow) closeAfter(after time.Time) {
 	for m := range r.pending {
 		if time.Unix(m, 0).UTC().After(after) {
@@ -143,12 +135,11 @@ func (r *restFlow) build(m int64) {
 	b.bar = acc.Bars[key]
 	b.bar.Coverage = nil
 	if _, boundary := r.s.boundaryMinute(key); !boundary && !b.held {
-		b.bar.Trades = nil // Record walks prints only at window boundaries
+		b.bar.Trades = nil
 	}
 	r.built[m] = b
 }
 
-// previousOf is the newest collected print before minute (for the bar's prior trade).
 func (r *restFlow) previousOf(minute time.Time) []*normalize.Trade {
 	var best *normalize.Trade
 	consider := func(t *normalize.Trade) {
@@ -177,7 +168,6 @@ func (r *restFlow) previousOf(minute time.Time) []*normalize.Trade {
 	return []*normalize.Trade{best}
 }
 
-// finish builds what is left and every empty minute of the range.
 func (r *restFlow) finish() {
 	r.closeBefore(r.end.Add(time.Minute))
 	for m := r.lo; m.Before(r.end); m = m.Add(time.Minute) {
@@ -188,12 +178,11 @@ func (r *restFlow) finish() {
 	}
 }
 
-// pagingInfo is what _backfill learns while paging.
 type pagingInfo struct {
 	proven      []span
-	firstWindow *normalize.Trade // lowest-ID print of [start, end) (Binance, Kraken)
-	firstAfter  *normalize.Trade // lowest-ID print at or after start (Kraken)
-	reference   *normalize.Trade // newest print before start
+	firstWindow *normalize.Trade
+	firstAfter  *normalize.Trade
+	reference   *normalize.Trade
 	restLast    int64
 	restLastSet bool
 	minTime     time.Time
@@ -215,7 +204,6 @@ func (s *Service) normalizeREST(inst *venue.Instrument, rows []any) ([]*normaliz
 	return out, nil
 }
 
-// page is the paging loop of _backfill over its slices.
 func (s *Service) page(ctx context.Context, inst *venue.Instrument, v Venue, rf *restFlow, start, end, captureStart time.Time, cp *checkpoint) pagingInfo {
 	key := inst.Key()
 	binance := strings.HasPrefix(key, "binance")
@@ -294,7 +282,7 @@ func (s *Service) page(ctx context.Context, inst *venue.Instrument, v Venue, rf 
 					}
 					rf.add(t)
 				} else if ts.Before(start) {
-					rf.add(t) // a reference candidate belongs to its minute's bar too
+					rf.add(t)
 				}
 			}
 			newest, oldest := normalized[len(normalized)-1], normalized[0]
@@ -344,7 +332,6 @@ func idLess(a, b string) bool {
 	return a < b
 }
 
-// rangesCover is _ranges_cover.
 func rangesCover(ranges []span, start, end time.Time) bool {
 	sorted := append([]span(nil), ranges...)
 	sort.Slice(sorted, func(i, j int) bool {
@@ -366,10 +353,6 @@ func rangesCover(ranges []span, start, end time.Time) bool {
 	return !cursor.Before(end)
 }
 
-// backfill is MarketService.backfill/_backfill: page immutable prints over REST and
-// rebuild the minutes they prove. With a checkpoint it repairs [checkpoint, anchor); without
-// one it captures the 24 h before anchor and the reference print before them. Unproven
-// endpoints and retention stay explicit gaps.
 func (s *Service) backfill(ctx context.Context, inst *venue.Instrument, anchor time.Time, cp *checkpoint) error {
 	unlock := s.flowLock(inst.ID)
 	defer unlock()
@@ -388,7 +371,7 @@ func (s *Service) backfill(ctx context.Context, inst *venue.Instrument, anchor t
 	s.registerBoundaries([]string{inst.ID}, end, &start)
 	priority := 1
 	if cp != nil {
-		priority = 0 // a reconnect repair completes live minutes
+		priority = 0
 	}
 	v := s.venues.Venue(inst, priority)
 	rf := newRESTFlow(s, inst, start, end)
@@ -419,8 +402,7 @@ func (s *Service) backfill(ctx context.Context, inst *venue.Instrument, anchor t
 		} else if ref := s.seal.ReferenceAt(inst.ID, start); ref != nil {
 			previousID = text(pyval.Map(ref["last_trade"])["trade_id"])
 		}
-		// Consecutive per-pair IDs: the first print of the window (or, in a window without
-		// prints, the first one after it) following the print before it proves the window.
+
 		next := info.firstWindow
 		if next == nil {
 			next = info.firstAfter
@@ -465,7 +447,7 @@ func (s *Service) backfill(ctx context.Context, inst *venue.Instrument, anchor t
 		retries = cp.handoffRetry
 	}
 	if cp != nil && len(handoff) > 0 && retries < HandoffRetries {
-		// REST trails the stream: ask again from the last print it had.
+
 		before := handoff[0].before
 		for _, g := range handoff[1:] {
 			if idLess(g.before.TradeID, before.TradeID) {
@@ -483,12 +465,9 @@ func (s *Service) backfill(ctx context.Context, inst *venue.Instrument, anchor t
 	return err
 }
 
-// persistRESTFlow is _persist_rest_flow_ranges: every minute of [floor(start), end) is
-// written from its prints and proofs, a complete stored bar the rebuild reproduces stands
-// as written, and the trade-ID gaps found are recorded and returned.
 func (s *Service) persistRESTFlow(ctx context.Context, inst *venue.Instrument, rf *restFlow, start, end time.Time, proven []span, cp *checkpoint) []gapPair {
 	if len(proven) == 0 {
-		return nil // nothing proven: the stream's bars and the stored ones stand
+		return nil
 	}
 	now := s.clock.Now()
 	minutes := make([]int64, 0, len(rf.built))
@@ -501,7 +480,7 @@ func (s *Service) persistRESTFlow(ctx context.Context, inst *venue.Instrument, r
 		rows, err := s.store.Range(ctx, "mkt.flow_bars_1m", "minute_start", rf.lo, end, map[string]any{"instrument_id": inst.ID})
 		if err != nil {
 			s.gap(inst, "PRE_EVENT_FLOW", "stored bars unreadable: "+err.Error(), &start, &end)
-			return nil // never write over bars this rebuild could not compare
+			return nil
 		}
 		for _, row := range rows {
 			stored[text(row["minute_start"])] = row
@@ -511,8 +490,7 @@ func (s *Service) persistRESTFlow(ctx context.Context, inst *venue.Instrument, r
 	for _, p := range proven {
 		proofs = append(proofs, flow.Proof{Start: p.start, End: p.end, Complete: true, Source: sourceREST, Observed: now})
 	}
-	// The print before the range: an explicit reference, else none (a checkpoint repair
-	// starts at a proven print or a minute start).
+
 	var previous *normalize.Trade
 	if ref := s.seal.ReferenceAt(inst.ID, start); ref != nil && rf.ids {
 		if lt := pyval.Map(ref["last_trade"]); lt != nil {
@@ -577,7 +555,6 @@ func (s *Service) persistRESTFlow(ctx context.Context, inst *venue.Instrument, r
 	return found
 }
 
-// recordBuilt is the typed row of a rebuilt minute the sealer does not hold.
 func (s *Service) recordBuilt(b *minuteBuild, complete bool, now time.Time) map[string]any {
 	acc := flow.New()
 	acc.Bars[b.key] = b.bar
@@ -593,22 +570,17 @@ func (s *Service) recordBuilt(b *minuteBuild, complete bool, now time.Time) map[
 	return row
 }
 
-// writeStored writes a minute the sealer does not hold against its stored row: a missing
-// or provisional row is sealed, a complete row is never replaced by an incomplete one nor
-// rewritten when the rebuild reproduces it, any other change is a revision.
 func (s *Service) writeStored(inst *venue.Instrument, key flow.Key, row, stored map[string]any, reason string, now time.Time) {
 	s.writeRevised(inst, key, row, stored, reason, now, false)
 }
 
-// writeRevised is writeStored; with invalidate a complete stored bar may be revised to
-// incomplete (a print it lacks is known but cannot be rebuilt).
 func (s *Service) writeRevised(inst *venue.Instrument, key flow.Key, row, stored map[string]any, reason string, now time.Time, invalidate bool) {
 	version := int64(0)
 	if stored != nil {
 		if v, err := pyval.Int(stored["bar_version"]); err == nil {
 			version = v
 		} else {
-			version = 1 // written by the in-process capture: final as written
+			version = 1
 		}
 	}
 	if known, ok := s.seal.Version(key); ok && known > version {
@@ -639,7 +611,6 @@ func (s *Service) writeRevised(inst *venue.Instrument, key flow.Key, row, stored
 	s.points.Put("mkt.flow_bars_1m", key.IID+":"+key.MinuteISO(), row)
 }
 
-// recordReference is _record_reference: an explicit print strictly before a boundary.
 func (s *Service) recordReference(inst *venue.Instrument, boundary time.Time, t *normalize.Trade, source string) {
 	if !t.TS.Before(boundary) {
 		return
@@ -654,8 +625,6 @@ func (s *Service) recordReference(inst *venue.Instrument, boundary time.Time, t 
 	s.seal.Reference(inst.ID, boundary, point)
 }
 
-// binanceEndBound is the binance.spot PRE24 reference of a wholly quiet window: endTime
-// alone returns the newest records up to that bound.
 func (s *Service) binanceEndBound(ctx context.Context, inst *venue.Instrument, v Venue, rf *restFlow, start time.Time) {
 	bound := start.Add(-time.Millisecond)
 	rows, _, err := v.Trades(ctx, nil, &bound, nil)
@@ -680,7 +649,6 @@ func (s *Service) binanceEndBound(ctx context.Context, inst *venue.Instrument, v
 	}
 }
 
-// binancePredecessor walks back by aggregate ID to the actual print before the window.
 func (s *Service) binancePredecessor(ctx context.Context, inst *venue.Instrument, v Venue, rf *restFlow, start time.Time, first *normalize.Trade) {
 	before, _ := intID(first.TradeID)
 	for i := 0; i < 10; i++ {
@@ -714,8 +682,6 @@ func (s *Service) binancePredecessor(ctx context.Context, inst *venue.Instrument
 	}
 }
 
-// krakenReference follows Kraken's forward `since` cursor, widening the search only when
-// a quiet interval has no print, until a page crosses the boundary.
 func (s *Service) krakenReference(ctx context.Context, inst *venue.Instrument, v Venue, rf *restFlow, start time.Time) {
 	span := time.Minute
 	var cursor any
@@ -765,8 +731,6 @@ func minDuration(a, b time.Duration) time.Duration {
 	return b
 }
 
-// krakenPredecessor is _kraken_predecessor: the last Kraken print before start, found by
-// a `since` page that crosses start.
 func (s *Service) krakenPredecessor(ctx context.Context, inst *venue.Instrument, start time.Time) map[string]any {
 	v := s.venues.Venue(inst, 0)
 	for _, minutes := range []int{2, 10, 60, 240} {
@@ -796,7 +760,6 @@ func (s *Service) krakenPredecessor(ctx context.Context, inst *venue.Instrument,
 	return nil
 }
 
-// registerBoundaries is _register_capture_boundaries.
 func (s *Service) registerBoundaries(ids []string, cutoff time.Time, anchor *time.Time) {
 	points := []time.Time{cutoff}
 	for _, minutes := range []int{15, 60, 240, 1440} {
@@ -811,7 +774,6 @@ func (s *Service) registerBoundaries(ids []string, cutoff time.Time, anchor *tim
 	}
 }
 
-// boundaryMinute reports whether a minute has registered window boundaries.
 func (s *Service) boundaryMinute(key flow.Key) (map[int64]time.Time, bool) {
 	_, points := s.seal.References(key)
 	return points, len(points) > 0

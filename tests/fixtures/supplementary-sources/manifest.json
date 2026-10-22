@@ -1,0 +1,2278 @@
+{
+  "schema": 1,
+  "capture": "supplementary-sweep-20261019-run1",
+  "raw_index_sha256": "9ca7e6b7a606b587eada5b2ad8faa9c861a114afa78ee0e4671d912bb59cffca",
+  "archive_sha256": "75d0413a58e30f5e2ac13d73f638718852ed61dc0f9f481a9778c2dc03b08a65",
+  "archive_bytes": 7184680,
+  "total_files": 173,
+  "source_counts": {
+    "S08": 142,
+    "S15": 18,
+    "S28": 12
+  },
+  "index_records": 1085,
+  "selection": "Every S08 and S15 record; S28 zero-based indices 181..192, exactly as the existing 18 historical regressions require.",
+  "provenance": "Exact existing 2026-10-19 public captures read from /srv/tank/data/calibration/supplementary-sweep-20261019-run1. Index and compressed files preserved byte-for-byte. No network capture, metadata rewrite, gold/expected-output change or source reclassification.",
+  "archive_format": "USTAR regular files only; sorted paths; mode0644; uid/gid/mtime0; empty user/group; gzip filename empty and mtime0. Two independent builds byte-identical.",
+  "secret_shape_scan": {
+    "scope": "Full unchanged raw index plus all 172 decompressed page captures; values not printed.",
+    "rules": [
+      "authorization_credential",
+      "aws_access_key",
+      "github_token",
+      "openai_openrouter_key",
+      "private_key_pem",
+      "slack_token",
+      "telegram_bot_token"
+    ],
+    "documents": 173,
+    "bytes": 55178290,
+    "matches": 0,
+    "limitation": "Credential-shape scan, not a proof against every possible secret format. Captures are public source bodies and no authorization/header/session files are included."
+  },
+  "files": [
+    {
+      "path": "raw-items.new.jsonl",
+      "bytes": 5890994,
+      "sha256": "9ca7e6b7a606b587eada5b2ad8faa9c861a114afa78ee0e4671d912bb59cffca"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV2J4S23SPWXHTGRGQWP1.json.zst",
+      "bytes": 33076,
+      "sha256": "d24eaafe8df744be7511d1f233e935ffc6e7bab676b0c761921d90ea69234d31"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV44MGGMZWQ3P3D7X761K.json.zst",
+      "bytes": 35867,
+      "sha256": "39a3068464fddbf58b5473ac5396baa11f602481ec4e8d857b3ec97deb130980"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV483GXXDKYFWE48DM0A2.json.zst",
+      "bytes": 33562,
+      "sha256": "2168965fe2e3fbdc50a8be239dc33f4b6dac4f052aca78c950ec63a0c64c4227"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV5Z56K1WTJPQDD4F0FX8.json.zst",
+      "bytes": 36859,
+      "sha256": "74feca37995f419af89115a0ce98d8728615ff4fa0058b0a5643725360deadb9"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV64KD8CACR1PFDWNSSQ5.json.zst",
+      "bytes": 35466,
+      "sha256": "5d36022c01d32b349168a2adaee383ffbdab3f2324dc968a7ff325e02cc2a543"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV7M9JFJEK8DR5WXVYCX2.json.zst",
+      "bytes": 34765,
+      "sha256": "c4f5b5deac2730babf572211e7e3e9d789789e6dc99e5a9c90d7f3c0615e6bee"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV7XM6FXBKK4GW20FYXCR.json.zst",
+      "bytes": 34832,
+      "sha256": "8b8d2437811f68b028627d3c1b3e35cb67cc30a71156184c3f8c8d583fbff07b"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV96FEQV6J3NP0SEDAHZH.json.zst",
+      "bytes": 35760,
+      "sha256": "384b8f9b5ecf15bfa60070d973a7c8315daba25d21352f2a4fd34750415c73c7"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV9K670K5PN3CBXFRT24J.json.zst",
+      "bytes": 31544,
+      "sha256": "f0fecf390d17885a3814df5892fb4daa16bcd0461005253241ebbda998f16458"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVA4TAH9AF6BM7YNWBZW6.json.zst",
+      "bytes": 33770,
+      "sha256": "abcdfa1e24d6d88d3bd4beccea2df3233114922e96c543ee52aeff1c71a28ba3"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVB5QABH9V82J7W4YQ501.json.zst",
+      "bytes": 33596,
+      "sha256": "1084d4495ab59c7a23fb4f8453ae191a2fa1b2fa07551f89cbfddd14d7c13ab8"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVB6Z72MXYEDSWBF7QFB1.json.zst",
+      "bytes": 34410,
+      "sha256": "733b175b0bff95f610bdbf1ea98e39575065fc8a2639b99380b57cde20165305"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVBQ96BGF75NA91HER82Y.json.zst",
+      "bytes": 34502,
+      "sha256": "f98833c6f43a60afff20fb7807cfa526de6132b1b619a52adab4eddd9f005380"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVBRW3Z84R152XC0YVZQG.json.zst",
+      "bytes": 31837,
+      "sha256": "7727761334837d7971262f6ee1120d4d1005540a6d49eb8c6edf0c7d8c88bce5"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVCT6QQFHK4Q7SQMVXCTP.json.zst",
+      "bytes": 32356,
+      "sha256": "907f0e730842d2645a370a206b6969a6e8deb9ec6b5130106989ca0a4c761d9a"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVCVC55NHNK6PNFJQFZJR.json.zst",
+      "bytes": 33767,
+      "sha256": "fe0221ab09d42eaa624a49c283f67bc81261e3b5a56af8a699a951646656b93a"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVDE62NZYRPY3WE4KBSD7.json.zst",
+      "bytes": 33622,
+      "sha256": "de6d16bf8c4c9e79e0fc28b0626fc38f8fa99af9ecb2e2a733a04ed9da77e416"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVDVJB3XBZAT61YCBVW5Q.json.zst",
+      "bytes": 32696,
+      "sha256": "2745333d288c64fa906d464af3c1b77eb7c4983de579679ec9d426e408340f49"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVEJJCT5FANMCRQD27JW8.json.zst",
+      "bytes": 33804,
+      "sha256": "cec8f4b0b0e8a47f817ac83a3a0d702ab92491acca6747a71832508cedc00c41"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVER2VG1BX8CEVEEQF4GG.json.zst",
+      "bytes": 35520,
+      "sha256": "026bab389591ebeb0dc4f0c34996cb00f15c3698ceb59d35c0b3979a421136e8"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVGEX7WX8HQGNGJYGGMAJ.json.zst",
+      "bytes": 34315,
+      "sha256": "7313015d475e8d3b0d09806b4e9f0dc51b30af0fa849604f366765148e140d43"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVGF8YYCDFT85NQF99M9Z.json.zst",
+      "bytes": 33493,
+      "sha256": "9edac5b9b88604783f45b230a1d05c1a471baa3968d53214aebd090147717962"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW2R7N0V2QMG61N67F4H0.json.zst",
+      "bytes": 34392,
+      "sha256": "ea96eef4759f0709c1ccb0c930fd9fbd8d9707c840537ff4385cfa0a7d7702e7"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW4K5TFRW8WEBX85RJDCV.json.zst",
+      "bytes": 34994,
+      "sha256": "e5762cc5ad9af27d0cac23a24608bf558899071531ca4755afe087e98f549eb4"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW5AFP585KXEXJ85R5B0V.json.zst",
+      "bytes": 35929,
+      "sha256": "0ff162c3c12dcee9ca71ed5c4b93a79627cfbe93a7d29ccc538390958a15774c"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW68V0CTXEDQ0KJFCT6X5.json.zst",
+      "bytes": 33961,
+      "sha256": "68926e3e244949ea61be63d3755b567bf01049818a241db2d01bcd77e8c5e7ff"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW70JDHPPQPP23HRHMWHJ.json.zst",
+      "bytes": 34541,
+      "sha256": "eb80bd61c1babb679d727740c18681116ae896db0be9574908ad21446ea76556"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW799KJJR19R9346FEWFT.json.zst",
+      "bytes": 34830,
+      "sha256": "b3e04295679f8b2f9cc90da5bddf42b4d6f9be63414ce7777df790c152878121"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW7A368DQ16GMWS4PFCB0.json.zst",
+      "bytes": 33874,
+      "sha256": "0b59081eaa6793823fca55dc49bdd8993d1e7d2a015a8982e12a30b7dc276a13"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW82HPS1KWDZZFGKZFS03.json.zst",
+      "bytes": 33053,
+      "sha256": "92996ba02eac2e6fc33b1c3ad80987da6a7ce36f33307de524b7536a426f1eac"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW97WE2RGVY3N1AG6SSTW.json.zst",
+      "bytes": 35100,
+      "sha256": "9d2bfb7a96f57153e0dfc021c4743e017331e1b906fa1c638b568e5daf2ed33f"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW9ACH0W4S6F39SDF7289.json.zst",
+      "bytes": 33499,
+      "sha256": "4c9306a71fe595eed920df648ff7b69b084776ebb95031dd5952879d07d9490f"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWAMGEES1CZXM58B17Q7C.json.zst",
+      "bytes": 37924,
+      "sha256": "81be04d96e37dc7331b006a3abe6c9ccfa1f8b2c55334d82e42ecb0202a5e28b"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWB30EYT2BHCXSZF3VAFP.json.zst",
+      "bytes": 34177,
+      "sha256": "54dba2f302780261e5984fbf74992e22f4721f149fb6881d498dce11923dcbb2"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWB8EYDY3PZFT5MZF6FP4.json.zst",
+      "bytes": 34955,
+      "sha256": "c38dec1d94001a22305a83a420244dcd7b6c80c3df6cc3cce5d995bdaaa4e230"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWCFPHC2Q8QBD7JZJCW6G.json.zst",
+      "bytes": 33164,
+      "sha256": "e963bd493a66e17fceab0f1f85a6c98ba453002b1847c877601cf0448040aab2"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWCXR4WZKMVX8J8KNAJPF.json.zst",
+      "bytes": 33244,
+      "sha256": "0fdb8e80be0226c79329469b0dffef5a05b74d02bbe69d465dc6d20e831d8aa1"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWD1V1TN18HKB9Q6ZNAAB.json.zst",
+      "bytes": 33555,
+      "sha256": "96b507374883f7452b86c1e00964011c70edd1129ff5577e31c26641c891dd72"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWD267WRS8PRN1M9J7CCN.json.zst",
+      "bytes": 34382,
+      "sha256": "7e59ac7b2a0694934f252e0149df1f51bbd31fcf2d0749c95d1e918909f1a639"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWEATJ65Y9F33THWT3M64.json.zst",
+      "bytes": 33554,
+      "sha256": "7a7e72fa60d90fae02d47e1bbeacc76e26ed978f94be0d0a8c6679de6361ff1c"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWG6PMVSBZDBD30RZSX45.json.zst",
+      "bytes": 34299,
+      "sha256": "1e783483585cf83aeec85b1dd946fa7e951579d3f24f9d407149012ca55a0822"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWG709MHH3DMSXSXMTFCX.json.zst",
+      "bytes": 33612,
+      "sha256": "803571fc1b1413a5dc012a4091920a91e4cdec51a658995cc3ba910e8df0b5fe"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWGHF2XCHVF8KRWAN25Z5.json.zst",
+      "bytes": 35186,
+      "sha256": "6add1952ae84e051febe562d1f8fa419e1cbc45f432bbf39768554559d75598e"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWJ1HJNMZEETP5JWDPTRD.json.zst",
+      "bytes": 34308,
+      "sha256": "e5df47307502c27bf65be702c7d9854e80bb0f5539a5acfc5c17c77f065b5cd6"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWJDJ7YV8MD0M3Y7WAR80.json.zst",
+      "bytes": 35430,
+      "sha256": "90521785045f9f66738f71d825f0c50f4bcd5a032964b2230443ecb24d73451b"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWJQ74PWC0HZXG91SKGGJ.json.zst",
+      "bytes": 33809,
+      "sha256": "aeb83c4c0d72be7e6ea6ad8e4e3a5d108bc458e4e5e1cd33603a318fc3d65e07"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWK4DSFGTDJ3S1HFNETS8.json.zst",
+      "bytes": 33047,
+      "sha256": "86108d5457ccbdfff7f764a5879f657227f3ab023c3557a838a5c51792149a31"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWKYFTX2EC27SDZSZSA11.json.zst",
+      "bytes": 34969,
+      "sha256": "45f2232b5135d923b72fdaa48963e8834ace09677994b2ede59b67389eff58c8"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWM9X9CCEBWVMV2QG7GAS.json.zst",
+      "bytes": 33801,
+      "sha256": "07fe6008101d04d66d51cb4b4d776f01b25b21fa5e3f64e0393241c5c3323989"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWMF1QZWCW168PFEEDSNQ.json.zst",
+      "bytes": 34394,
+      "sha256": "ad75129ddc45987b425293940dbafb6063d3abb600724a78cdfb562e8177531f"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWMZTR9JAMTA4BBMAVD2R.json.zst",
+      "bytes": 33959,
+      "sha256": "2e6b5fe046018ee4d406839632f63d0aaeb64c82a73acdc9f3f4d3328e1b1590"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWNKT04MFKH76H462FSW9.json.zst",
+      "bytes": 32239,
+      "sha256": "86077322a9f268d3b107c0dcc9b29ade3310c30f362b9221d04dc5e4cc65f932"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWNSVMS47QHHV8MR361PW.json.zst",
+      "bytes": 33470,
+      "sha256": "36b451a4ba3d00b6ab41d818236d5aef576a0b2f04b70d556d89dd0f550c11e4"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWP0RSDVTRC71RGVY9QJ7.json.zst",
+      "bytes": 33587,
+      "sha256": "e8ebc01ee49144b3b431a4f8a3f0c3ade6c303726f9b2112996f80c9d56daa5e"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWPVKJMR7VRR47CYTVB13.json.zst",
+      "bytes": 34353,
+      "sha256": "847833f2d3f10dcd8df1ff262f5364d9d570214e9ed122a77558c7e3c28c9c1c"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWQ9FV6V3FTW821C1FZPA.json.zst",
+      "bytes": 33530,
+      "sha256": "0baec13bfbac1ceda1a46b7e425751baead6ad7c0f2686932e6119a16f8a170d"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWQJC1NMDWCJ4PJAF87B9.json.zst",
+      "bytes": 32568,
+      "sha256": "796b962f7cf04875ff3b1fd2ce9483782142fc6cfc04b1d4435a762e5bc18936"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWQR9A45RKWPDP1EJ5BJE.json.zst",
+      "bytes": 33783,
+      "sha256": "c0626c105b7d353075a729210dbff29f70db9371742b9011864ea64c5ee662f8"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWRJ85S257BQFWAWPNRDF.json.zst",
+      "bytes": 33545,
+      "sha256": "472cf458bec3abe9559e4fe2f271cc0e79787e555ee3ddd1433e7da9af1bb0aa"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWS3Q6JS6SYFANFFSHDHQ.json.zst",
+      "bytes": 33599,
+      "sha256": "1e47e74b69e387873332e9b88cd8e9c0234d21c2d4768aea5b9d4832f4eb9f0f"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWTV29D27ZBSSZTT32G6H.json.zst",
+      "bytes": 33562,
+      "sha256": "3f3ed8458aaa4b9fd4c6f2f291d1a7134e783ceaf585151a55df2a3e8e00db3a"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWTY5M591A2JV78TK8KB8.json.zst",
+      "bytes": 33624,
+      "sha256": "d69799e8df80f2591f8ff7213e29144f1e9d1904a1a82ed2edc6e3fa2614d715"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWV444RS28FJ0RJXBBS0Z.json.zst",
+      "bytes": 33800,
+      "sha256": "b592e011e2b80538ca2f7dbc18671126eb3405c0674fcd58e161ccd9f376e4a4"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWWEKPW52YM5Y6E7EAP4M.json.zst",
+      "bytes": 34613,
+      "sha256": "386a4d3c2707a90227745dee6babe59c678d4f524d5a3652429c98917152fb51"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWWN9DNW9CZ36KY3N3NE9.json.zst",
+      "bytes": 33202,
+      "sha256": "23eddf77795202715ab4d79d4ce172b1b647caaa236c4bc7ac1f85c177ae90ab"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWWV62Z1TS5SZGAHSH8M7.json.zst",
+      "bytes": 34926,
+      "sha256": "d22ec2b418f311a3a738bc9e73ca76a88ff5987924943de2dc126ec968d68b72"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWY7ADF25NBQB19FJZRP1.json.zst",
+      "bytes": 33720,
+      "sha256": "a16ebd6d84a3afe73568323481031e4c9efc2d878a6e1ab45837dbc60d1843c7"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWYHE12HNRBZS21TB2DQ0.json.zst",
+      "bytes": 33806,
+      "sha256": "1c63f18b0cd86feda05f2715372ab0906fe1754a26429c068ed8ec3bc18fefc4"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWYPRFTDW74NB7AAJMEJ2.json.zst",
+      "bytes": 34194,
+      "sha256": "c164316a314d7094900eacdb3c8d714505b590f04c6d9c84d6ba0470033be847"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWZJ0ZGA907SQ8485641M.json.zst",
+      "bytes": 33524,
+      "sha256": "09e0b96f114566acc5cd44c1bb8e28d4271a7085e11b0a03faec01beb034b93f"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX01B07MZJFS0TCJNJY9Z.json.zst",
+      "bytes": 33407,
+      "sha256": "fe88b7c3a663fa6e5b81db7c68a0434bc4f9e0424ce78ae3564797930f9dd23a"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX049BFVMZ628A0ET4W3Q.json.zst",
+      "bytes": 33848,
+      "sha256": "81516005619d9ce05b8685f21c6e6eb7e1a1dac7f60ab854d176539c92d7bff0"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX0K5N71DDW39K9H2Z9GK.json.zst",
+      "bytes": 33738,
+      "sha256": "85884fe8a5a83df1bd0e1b6833ad5d0db099b6d45ac3b2016fa5f3be3068b6d7"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX18RYJA85T8H9PB5R6KZ.json.zst",
+      "bytes": 33858,
+      "sha256": "3719c2b7a9f1cbd4c85e8c9622450e4d6534d809f6e64526eec93c5c5f210a00"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX1EXQX5ZB4SM5EGSVHSM.json.zst",
+      "bytes": 33778,
+      "sha256": "c81ec979a49bddc993bb4fca7750533bdb0a2c77e056cd4ef4f8fa89eeb22ecc"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX1S5S6YRS6PQQ5HJH3DC.json.zst",
+      "bytes": 34090,
+      "sha256": "37d60da04ee0520e0a83ea52d7028435e795311e51748dbfc1e4a74056cd7eba"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX2D2J5N8T9JSYSMH1N6D.json.zst",
+      "bytes": 33796,
+      "sha256": "a52d9f130ac27c2e17a50b4c6323fffc376f379a356212a1db9740805997f371"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX3A5GFS4WQWBME2EDPH7.json.zst",
+      "bytes": 35649,
+      "sha256": "9efd4fdbe4bf48b78e49b9fbce51d1e9ec2f4ca995dff238f6145006730b079d"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX3FZZXR2ZEQ73D4YY9RG.json.zst",
+      "bytes": 34018,
+      "sha256": "6fa1bec94009e019d92b257b43ff0f574ddf92657f78830ec203b831ca3c1e81"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX46W21GQK3VKDJ2TK64A.json.zst",
+      "bytes": 33420,
+      "sha256": "9a5f9962da71e27ae580fb3535456762b43bd0e1a563e11ce3a6ac6c9001b395"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX5W8SAMSFY1EYJ40RD12.json.zst",
+      "bytes": 33831,
+      "sha256": "0412ec5fed982a29a10443c4817ca796bb8f72748b3761f83dbec48c1641ebc2"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX5XT990MHFT9XXKM0CQ2.json.zst",
+      "bytes": 33732,
+      "sha256": "775597260c88b60b01ae1bc878074dadc3d9bf0481b254fbbb4f18c79171da91"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX5YDG5ZGEQ3RYYFX32JA.json.zst",
+      "bytes": 34219,
+      "sha256": "6a345ae1502177e42567923e9b215beec6731bd9c24f51994374b76df6b6d9c9"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX65NHK8BW697JMBPEEYN.json.zst",
+      "bytes": 34029,
+      "sha256": "f7d604f420ad48589a6363f65a2542d459752b435143a7df400d8a06973cec6a"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX7HRNEWAB2TFHYQ8H3J5.json.zst",
+      "bytes": 34229,
+      "sha256": "8ed351c56488ab40db86a44015b3c2098847f3900137718abadaa065b64e635b"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX7PBCECXXZMEYXQ27EN4.json.zst",
+      "bytes": 33889,
+      "sha256": "1c92ebf6ce8bdf2bb8a2ec3ba44b3e419208f6b226b185d851da32e0ac38dcf2"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX7QST15R8MNERR05164M.json.zst",
+      "bytes": 33557,
+      "sha256": "22b0af964e52eb6f9043bf5b0b94dc1022e6724d968619a48774a6c80b39689d"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX8GR7ZSG14R8D0YZH7HT.json.zst",
+      "bytes": 33127,
+      "sha256": "09775e9c9fc762d0ac9f327275928d76b8c96781ea8a21c0bbb747f7e286c494"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX9661B2MYS3M5VC8SF65.json.zst",
+      "bytes": 33959,
+      "sha256": "d50e84435b9db6a5d73b1e5792767f0985f4c12cbf90b76fc42242491f5480af"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX9ERF12QAVBDFB1YBRZ5.json.zst",
+      "bytes": 33918,
+      "sha256": "f3ec31ce394e09ef369ec7ae297641e85750f28c0ee4ea2d343be28fddb88eed"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX9JS450XYSMCH7J8MZ8P.json.zst",
+      "bytes": 34880,
+      "sha256": "1ad2dd0921fa2a90f48d7359b508650528d6056f662e210bcf0e98803f13cdc2"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXA9W9BC7GRY9FWQN9RGA.json.zst",
+      "bytes": 32439,
+      "sha256": "056ccff243bd6a079e649977d52a20e3f8d6e7dabeaa3a96ce0c8cce11c29672"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXB2S9ATTY8AH26H3XBXQ.json.zst",
+      "bytes": 32591,
+      "sha256": "9a438b2efabf74843ff95e10d1a6633e7ff4c1d899a89536af0df58acb5bc15b"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXBG765K9BFWGGZS47E03.json.zst",
+      "bytes": 33835,
+      "sha256": "cdbbbc705e07c8001c5da80a46bdb4af84e239b1e6491be1fb653d36eb3c2d5f"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXC7A068YBTXN7NHSK2C7.json.zst",
+      "bytes": 33318,
+      "sha256": "8cc824286d6beb960bc792ffbe0f47b7b5f7701eea1852b984a523e1525e7dba"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXD1EYRRK8157GV0EZRJ3.json.zst",
+      "bytes": 33684,
+      "sha256": "2d888a5ff100e6ce027b0a79fe22a809ea2059edc25e4fe7c7dea8d2660aa2e9"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXD71MS6TACJ35YNWNDQB.json.zst",
+      "bytes": 33527,
+      "sha256": "7ef0a18ede86f56e662bb9912ca5eae667d3987e796e3bb9eaa2ffed85be272f"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXDXWK0XB59RZBENYMDGM.json.zst",
+      "bytes": 33743,
+      "sha256": "985c34ed41d6afdb94279992a0eb51c5cb29a1cea139cfe2192616063450c821"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXE82CBF3QDVAHQBVK4F2.json.zst",
+      "bytes": 33134,
+      "sha256": "4d9600553d772d2699e1e532ea07dd95198cdc76870d0a67523ee621eb6f37f6"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXER0G6YZDYCSZKVVY92Y.json.zst",
+      "bytes": 35005,
+      "sha256": "c6e98ed78582104da7f4877a73a0ce79eb46b605edf4cdea505f65afbff66a2a"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXGA4P7C28XTA1WQY3BXZ.json.zst",
+      "bytes": 34532,
+      "sha256": "600ff155ce98647c3a2c7d5690604d58538fa57bfe4803a4bd29864a8ce06d19"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXGF4CYXN5YVKPZ7MTRSX.json.zst",
+      "bytes": 33949,
+      "sha256": "133d9d3f184f4ddb0004d7d540bc22319a4de6028585b1c74732b2866f4ec7c9"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXGG2J2DPZZ86T1Z51X3Q.json.zst",
+      "bytes": 33506,
+      "sha256": "c865658d43086457833432f3144ba46951d1107c437f8f0fb403ef91811ea282"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXGMG05FYA4BJF83ASBFF.json.zst",
+      "bytes": 34201,
+      "sha256": "4a51106c37ce7750853afed06ea6812ae6df6aaf7a79cd6586aa76d3808bfa2e"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXJ1XF3PBBC9R7W3YTQ9T.json.zst",
+      "bytes": 34415,
+      "sha256": "28cc82145713d4e758da99ec4e3276c255391af55e678e641cf04cf616e44de6"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXJ6Y5A8F9TCC63PZHZMM.json.zst",
+      "bytes": 34535,
+      "sha256": "4b0787b5087f1050182ec8becf99601d351d2ad9b569147e0b30ff4a7feaab71"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXJ8SJ52DGQYTN23W5J0Y.json.zst",
+      "bytes": 33327,
+      "sha256": "1cf74c4b59d30bed8d0341b316debc151382c52ef57ca814fdcd3a121bf2c820"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXJCDWSTK26C6KZ6Y9F2C.json.zst",
+      "bytes": 34280,
+      "sha256": "fff60cceacdfc32810addec5e328036720368e01639a83389c398f1bac6520e6"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXKPB3JPZ0Q5M2B5N252C.json.zst",
+      "bytes": 34632,
+      "sha256": "691ff5d19649c3693dd47a3a81d0d665c72f580136a6c7ae66a64416c1428246"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXKT51K2PDNR7TRTJTRXR.json.zst",
+      "bytes": 34031,
+      "sha256": "7982d07795b5677b1310789f890f5ab0f5def6556270d838c097862d0ee1ddbc"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXKZV1CGFQTJ0Z2NSWGFC.json.zst",
+      "bytes": 33272,
+      "sha256": "4cd614b2bb9d57d85eee90e436d9899b1db5c3de0aecb99534fbd2b824756c27"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXM1WJFF798QX6TCMFF0R.json.zst",
+      "bytes": 34226,
+      "sha256": "8fa117d2976d157fa83f6b0cc5e28ad1581a65e24ec8ceecf461dc9cc8397149"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXNA8KFD060G7TZP17R12.json.zst",
+      "bytes": 32491,
+      "sha256": "f67a8b7e8cdcf6896055900a91188008a30bd74591fabf11ca1b77f66e59c5d5"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXNCSYS6CXA398WZQQAH0.json.zst",
+      "bytes": 34075,
+      "sha256": "2c0a4c8625f5f2733619e20b11e3bf7953aa3e0a4a53355ee30d34b530f3f8ec"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXNQY664E3P4FWAAHJ1ZN.json.zst",
+      "bytes": 34325,
+      "sha256": "cf6e3949ee9a1865b7b20bfbdd181cdf0630e4ce639018d16b223fc360b3e2da"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXNYQ9V59DWN4A90Q0SQ4.json.zst",
+      "bytes": 33085,
+      "sha256": "03a850a34a9826b65172ccb4ade5ce16b059a944e2f99bd52ceb73c3cd47da94"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXQ1RPYTRXDMT76VWMPAQ.json.zst",
+      "bytes": 33524,
+      "sha256": "1f945eb369643654ceb4bb69cc0889833b6efa92e9b3d5d709137c84f7962e0c"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXQEW6T1Z859VT7JWZ78X.json.zst",
+      "bytes": 33692,
+      "sha256": "9ff762f0379f77354dd3d5761443ff132094d8ecc67cd8fb5bc76fced632d5f0"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXQKVZKBSTJ3SSG122A0F.json.zst",
+      "bytes": 34943,
+      "sha256": "2a4d131794c6fd21f72b40765a53007b85894946b0f24f9870167e9812185827"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXQSEKT00RNJD6GYBCAHM.json.zst",
+      "bytes": 33866,
+      "sha256": "66859dbe812b881811efa39c2fde40073b1cd6db01180e5e2a26bffa74793562"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXSE1373XQAKREFWM3S2E.json.zst",
+      "bytes": 33727,
+      "sha256": "004670727a19df1fcb60cc02edbd6a4399837ee1e04dcb4669f0655599707753"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXSEBF1AMHWP7QQNFP9NW.json.zst",
+      "bytes": 34206,
+      "sha256": "d357022ca7ca0ae149d8cd983fb2e887d6e206c0bec610fd6465f088fabf70f7"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXSF90KB4MTH97Z9B896S.json.zst",
+      "bytes": 33912,
+      "sha256": "ce826d6f0ea4f44191ec5a0bdd3e02395604cc306b36adf442a9dd0a4d2b1a74"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXSZYNC5RZXXWPG27796W.json.zst",
+      "bytes": 33816,
+      "sha256": "c4b47e3700a3691b6d50876472f623dba0205b5ec0e162d7e6f548624ef12e80"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXVC2BECZN51NQPQEAAQH.json.zst",
+      "bytes": 36124,
+      "sha256": "f7bea71ec6777cb9c1d6fe0b71f6c935d0a79b123b728c96dfbf1875f0aea91a"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXVCDYTQDEPJ2HF30NR8Z.json.zst",
+      "bytes": 33760,
+      "sha256": "464fad638c749565090e5474ecdf52175297ef299deb0cbc9b74a8db76a09593"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXVHYNEFNABNM53QP5EJ3.json.zst",
+      "bytes": 34150,
+      "sha256": "f3bec90981c74a1f79ec243e9faeb055ac0e9b49958ab831fbbe589acac4c0d1"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXVJ647KXCDHESJRTVHH2.json.zst",
+      "bytes": 34092,
+      "sha256": "d77c6e4e83ea81842a6ba7315a3eb9fe59c880293117cc0b02b8bc893d8154e6"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXX2YYNNBMD25NTC8QTK0.json.zst",
+      "bytes": 31605,
+      "sha256": "62a2a9f7339859d843714bf3a33c027ea95ecce27e9386019a2e3fdcd214c5d7"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXX37NPJZWAANTTHPJG84.json.zst",
+      "bytes": 34031,
+      "sha256": "b4e7068e34c3afb260fe16a9302b77acb0c3ad46df95f2a442c09d4e3e05c8c4"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXX8RA074A8JQMXBXRZ4D.json.zst",
+      "bytes": 31602,
+      "sha256": "4b19fa82427326409cc805e6978a4f65c7cb4d53f34bf98f9fb18696f0f4dd74"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXYNRJX0SB5Y6HFQ8JH9E.json.zst",
+      "bytes": 34101,
+      "sha256": "167408c2a066168bbbd9acb4e9433c4240f28d1421bba253af92b778fa59b621"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXYZ425YD0D1N0D6GW8KR.json.zst",
+      "bytes": 31829,
+      "sha256": "eb26987047d67582b1dcf9a3af1cd603af068ea9010cc1eb15760596ba3abb46"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXYZG05ZX634WZHPYVG2Z.json.zst",
+      "bytes": 34388,
+      "sha256": "084e665977a5ca5b4d1d36091866032e8c2786e6b6285994d0cdc7cd6f8e3f30"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXZMWD3980Z39H2X2Q065.json.zst",
+      "bytes": 33661,
+      "sha256": "f23fa30e1cf9fc33eed86a632761a0318228425c982a1a99384543dcea097075"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JY0G0T3REYWRSC3QB45H7.json.zst",
+      "bytes": 34064,
+      "sha256": "5c2865b3dc5a2cbba8a022abc28aa04463e629983c0ec9723ead259cdb9bf82a"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JY0SHPF66N6PZKYE13270.json.zst",
+      "bytes": 34811,
+      "sha256": "fa5bac567d6c4492c2a194f9cc2ae56a1d28ccf94c0520cc34903b05274cd5a9"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JY0XD19J8BM3JRDSADQ4N.json.zst",
+      "bytes": 34786,
+      "sha256": "8d8b0debe9ad9a2c0b36f69e1e9ef562b9fc7b25ca0bd0b24861666a4ac92f56"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JY17JP4SBQNCW2T44HHMV.json.zst",
+      "bytes": 30506,
+      "sha256": "6db7e61a4bd3067e515c9e96bb5bd21035b0519762ccc68f3090186f63bb6687"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JY21BJWBXY02KX93HBZ75.json.zst",
+      "bytes": 31669,
+      "sha256": "049b44ad62b7978003f942ffe8572389f1a43045e684cd47cf1c706ebf39ff80"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JY3JBJ5R0ZQPX9HTGB8XZ.json.zst",
+      "bytes": 33436,
+      "sha256": "65aa01a0617cbb27e060b6336deb39376a959a0bb391e6f24db5d70cf244582a"
+    },
+    {
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JY3P2XTDBKQ06YTP4EVMS.json.zst",
+      "bytes": 34561,
+      "sha256": "e14f8f97f7a4cc67cf270dbcb5da80a0dd91c3895662cc99aba92af9081dc4fb"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR2N3MNR6S1XPBQRJTWSJ.json.zst",
+      "bytes": 31549,
+      "sha256": "9321c400fcc027bf2a31cb43e9d6cff3660c828fc3b798a928860dccfea0d886"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR2XXV42NTK4E7CRNSRFE.json.zst",
+      "bytes": 31106,
+      "sha256": "7acd23d6c83b77d7efcac04425b700a778ec6d99325924c9201268b7e0589533"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR30SHPEVE5P8QW36KG9T.json.zst",
+      "bytes": 29512,
+      "sha256": "5cbe178d94d7a4648f82783098c9dd33550d15e1fe56908a9cdbaea799ff0235"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR344NW1M2000Z0TG7BRS.json.zst",
+      "bytes": 29928,
+      "sha256": "a260e56b7e72f8cd7a178e5c4b855117c488f7ae82f37878cee16f8119c8baf4"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR34D5P20R4F544AWGRJ3.json.zst",
+      "bytes": 31844,
+      "sha256": "9d53bd22dd4f449cc5bba1e1f691bf66b37853cb8625b490d45256de7ec80dc7"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR34TWE2KT6FPC4D5YBDE.json.zst",
+      "bytes": 34377,
+      "sha256": "390f4e8ec871fcea603a7978f8f8ba3470e3b545675be143cf23a1ab25751be6"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR37S2AQT24E0HNS8N7XZ.json.zst",
+      "bytes": 33690,
+      "sha256": "114ebcaaceaff2251210fcb7c8950354ee9b7d09101d25739dc3be337604bfbb"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3ATE77149NSEGTACK6N.json.zst",
+      "bytes": 31982,
+      "sha256": "1f42310ed38ebe5b68b91414b51db33e74a0e2bf64b879b7cbea7d7a57d242d8"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3B5Y763F9Y7G4JTWFSG.json.zst",
+      "bytes": 26324,
+      "sha256": "538ba721f4a1fbef16d94500473e3f47fa40244055ec5b2a611857743f56bc84"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3BHGYBD6AF0MHGW8P6D.json.zst",
+      "bytes": 32523,
+      "sha256": "d54b2bf9418a1ca318bc16fb6a4040215e32e663c955714acc38f9c282de3de4"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3BY87EW5JN64XYGJKJH.json.zst",
+      "bytes": 32178,
+      "sha256": "f02bc7ffeb0d92c44244a52d4d126200c90c463b7d3176a0feba29c24a6e382a"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3FC13TTEP56PES8F3RY.json.zst",
+      "bytes": 34766,
+      "sha256": "64d71de5de671f65904a1b52d92d67404816e17d4bf0dddc917c364c77e21df6"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3FTC5E7CRANFZE541EA.json.zst",
+      "bytes": 32945,
+      "sha256": "4f9c429922dc4a2a7046dd7e66fc8a02b3e36b7f228beb87012752a2300b342c"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3G57714ESMKK27YBS14.json.zst",
+      "bytes": 35255,
+      "sha256": "8f3fa4f4bc2445fc3e62ea7455fb7ad1ad520acd1e6aafbc35ae44e16fd4dffe"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3GNX5K1904HR6KWD4PT.json.zst",
+      "bytes": 40712,
+      "sha256": "066cdd3fd29945f4f9e62194b12c8bbd900f37b4a74b16c6033a0526f98ae685"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3M9G977WP3939AARZBS.json.zst",
+      "bytes": 35480,
+      "sha256": "41c63ba6a3cd558948f8e4037522ebef2ba5b6e6889f5315374a0cddf721505a"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3MPWFTY7EBXG41R5RF8.json.zst",
+      "bytes": 34025,
+      "sha256": "6ff59174b33eec0f865357446ba55646e4219eeb5e2cb04468d7380d62b06e8c"
+    },
+    {
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3N2SNZH5KM5E07SA40W.json.zst",
+      "bytes": 34539,
+      "sha256": "5d0139c950438736bed71b7fec31f7cb61540971741354ae5500705405b6e296"
+    },
+    {
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR0XC25WZ121WM8YAE7E5.json.zst",
+      "bytes": 36789,
+      "sha256": "0fa948ceb251cdcf24c1a7c21594985b1fb77d4c03b5ca9aa37a04f953900d18"
+    },
+    {
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR0XVVNKC3K84PAYPKWVD.json.zst",
+      "bytes": 35427,
+      "sha256": "719142fedc292983edcb1dabe340e1eb35749235fb4cdef9da470b53628061f0"
+    },
+    {
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR0Y9EW2RH00A0DPTTGSN.json.zst",
+      "bytes": 35675,
+      "sha256": "9b8542f68b1612aa63c0089169379f11fee915c2b293123d9f8ba893eb45ef0d"
+    },
+    {
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR17ZA9X48H2CPXA6C4P5.json.zst",
+      "bytes": 36445,
+      "sha256": "49bc4c7e18bdc8ef090075b4c3e38275bb4f280b3e3d28f7fb6d4a77547519dd"
+    },
+    {
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR18ASB142XCVQSF2RZF3.json.zst",
+      "bytes": 35130,
+      "sha256": "46e7b91da6623548abe6df60722233c39133d5447181cb24cf428e5cd7fc78a4"
+    },
+    {
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR18NKKQG9D9H5DKA5FMK.json.zst",
+      "bytes": 36969,
+      "sha256": "374f0ccb0bed8dccdb17a919ad020b9064560736833ea1ed13d0f21ba5818a7c"
+    },
+    {
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR197AGN2ZF5AAD9QR3B0.json.zst",
+      "bytes": 35863,
+      "sha256": "89cc54d62eac9bb3c90f7c1492fd6260f4b3390d97443c5d3ff2cd2aeb8243bc"
+    },
+    {
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR1F03Y9J4E2X1HMS824H.json.zst",
+      "bytes": 35360,
+      "sha256": "e5f07c8a7d5fe276816add5a28df19e73bca4ee6357df4c19023b2e357cb9eae"
+    },
+    {
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR1FGTM263457162QEN2P.json.zst",
+      "bytes": 36014,
+      "sha256": "b1e3e8c408ba3d451bc4482decd06ad26985572c5425f26bbd53cc61b276c011"
+    },
+    {
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR1FSY79PNN4CA46MNH9D.json.zst",
+      "bytes": 35874,
+      "sha256": "261476c088fa977699e943f56caf2b6ae3702068045eaf779418f6e0e5bd6db6"
+    },
+    {
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR1G4NR9AJMK96F1AQKB5.json.zst",
+      "bytes": 36503,
+      "sha256": "783a14a3182866e1c57f4db6faf6dbcb1fe354651955a2ab6e3aebecc654edf2"
+    },
+    {
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR1S1EXHYK16WWJYJM59W.json.zst",
+      "bytes": 35737,
+      "sha256": "417aaa3e7a15c1718901988cb87822e8a6e087711f4d9cccc28d620f7855372a"
+    }
+  ],
+  "captures": [
+    {
+      "index": 181,
+      "source_id": "S28",
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR1S1EXHYK16WWJYJM59W.json.zst",
+      "url": "https://www.anchorage.com/press-room/blockchain-governance-explained-for-crypto-investors",
+      "payload_sha256": "853d87fde21ddb3ae4d34bf6d0cdb1eef32196533735341856e47789e539b35e",
+      "payload_bytes": 177302
+    },
+    {
+      "index": 182,
+      "source_id": "S28",
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR1FGTM263457162QEN2P.json.zst",
+      "url": "https://www.anchorage.com/press-room/clearing-the-last-hurdles-to-institutional-adoption-of-crypto",
+      "payload_sha256": "5f60c83d583cbc34edd19c1b8c0e011607e9004b1c30728216ad01fe4dcd4d1e",
+      "payload_bytes": 177350
+    },
+    {
+      "index": 183,
+      "source_id": "S28",
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR1FSY79PNN4CA46MNH9D.json.zst",
+      "url": "https://www.anchorage.com/press-room/eth-staking-a-post-merge-analysis",
+      "payload_sha256": "6f78dec142a6fee70e29fc316a610acd88aed08e835a4c8729b508b832652415",
+      "payload_bytes": 177272
+    },
+    {
+      "index": 184,
+      "source_id": "S28",
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR0Y9EW2RH00A0DPTTGSN.json.zst",
+      "url": "https://www.anchorage.com/press-room/how-will-paywalled-content-get-paid-for",
+      "payload_sha256": "b282244697d0753dc6501bebee5adbdddec5bad605082a1cc60585e4f3e9456f",
+      "payload_bytes": 176153
+    },
+    {
+      "index": 185,
+      "source_id": "S28",
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR1G4NR9AJMK96F1AQKB5.json.zst",
+      "url": "https://www.anchorage.com/press-room/lessons-learned-using-graphql-for-ios",
+      "payload_sha256": "f5be31ec2d34ca521a6344dda02ba6f5dd0a18023501054d517ee72410b0b8b6",
+      "payload_bytes": 178791
+    },
+    {
+      "index": 186,
+      "source_id": "S28",
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR197AGN2ZF5AAD9QR3B0.json.zst",
+      "url": "https://www.anchorage.com/press-room/rias-top-considerations-selecting-qualified-digital-asset-custodian",
+      "payload_sha256": "0beb2140bcfe483b17311dd3b2786a0c5a6c5eb61cd36aa3fc41c03bc1fbbdae",
+      "payload_bytes": 177647
+    },
+    {
+      "index": 187,
+      "source_id": "S28",
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR1F03Y9J4E2X1HMS824H.json.zst",
+      "url": "https://www.anchorage.com/press-room/staking-and-inflation-explained-for-crypto-investors",
+      "payload_sha256": "8f47f33b8372e311de0d0a91714240da49fe2799ca6349e401aadb37e2ce189f",
+      "payload_bytes": 176195
+    },
+    {
+      "index": 188,
+      "source_id": "S28",
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR0XC25WZ121WM8YAE7E5.json.zst",
+      "url": "https://www.anchorage.com/press-room/the-cost-of-agentic-search",
+      "payload_sha256": "21a7a1de90a8938afb2a881a7e91f7b4e91c40bf0a15fb710ef0a4ef0e003642",
+      "payload_bytes": 179547
+    },
+    {
+      "index": 189,
+      "source_id": "S28",
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR0XVVNKC3K84PAYPKWVD.json.zst",
+      "url": "https://www.anchorage.com/press-room/the-dollars-next-battlefield-isnt-a-country-its-code",
+      "payload_sha256": "25e1c5c10c024a4ede2d5f25b630886edf0b1d05ba6206230d760ef18a8ad2bf",
+      "payload_bytes": 175473
+    },
+    {
+      "index": 190,
+      "source_id": "S28",
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR17ZA9X48H2CPXA6C4P5.json.zst",
+      "url": "https://www.anchorage.com/press-room/the-lifecycle-of-staked-eth",
+      "payload_sha256": "304b0038566d3d2b82a4f04823641a106d10d29503cf355de74d605c670628f9",
+      "payload_bytes": 179693
+    },
+    {
+      "index": 191,
+      "source_id": "S28",
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR18NKKQG9D9H5DKA5FMK.json.zst",
+      "url": "https://www.anchorage.com/press-room/the-need-for-speed",
+      "payload_sha256": "668897860c6149b302dfbfc85c8eea9990d78cadac32bcf10c304a9eeca130cb",
+      "payload_bytes": 178691
+    },
+    {
+      "index": 192,
+      "source_id": "S28",
+      "path": "runtime-data/raw/items/S28/2026/10/19/ITM-01M59JR18ASB142XCVQSF2RZF3.json.zst",
+      "url": "https://www.anchorage.com/press-room/what-to-ask-digital-asset-custodian",
+      "payload_sha256": "d15cae40709df01fb94210e4dcebb25b279fb5dce0ce2ce6303ff8b350916800",
+      "payload_bytes": 175640
+    },
+    {
+      "index": 204,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3G57714ESMKK27YBS14.json.zst",
+      "url": "https://blog.uniswap.org/correlated-pairs-how-amms-win-the-biggest-markets",
+      "payload_sha256": "fb034466d12e239c7e57991816c93843e0f7d7eeb698568e496030347e76644c",
+      "payload_bytes": 211498
+    },
+    {
+      "index": 205,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR37S2AQT24E0HNS8N7XZ.json.zst",
+      "url": "https://blog.uniswap.org/how-permissioned-pools-work-on-uniswap-v4",
+      "payload_sha256": "40b898eb093143649a02a3d86bd26d6a9b96431bd457f86e115f8541b7764654",
+      "payload_bytes": 197946
+    },
+    {
+      "index": 206,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR34TWE2KT6FPC4D5YBDE.json.zst",
+      "url": "https://blog.uniswap.org/keeping-value-in-the-pool-how-stablepair-hook-works",
+      "payload_sha256": "ff21511fe8d99c44e65cec5f89076a73aa322308593b49fbf54a5f06bb0ce429",
+      "payload_bytes": 200140
+    },
+    {
+      "index": 207,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3B5Y763F9Y7G4JTWFSG.json.zst",
+      "url": "https://blog.uniswap.org/latest-updates",
+      "payload_sha256": "77562b2f2d057dabaa403c3cd8ae9794912510595af08df6d25a1c4e505fae71",
+      "payload_bytes": 143023
+    },
+    {
+      "index": 208,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3BY87EW5JN64XYGJKJH.json.zst",
+      "url": "https://blog.uniswap.org/robinhood-chain-is-live",
+      "payload_sha256": "55651e51d23a0e357aaa0c7bda67a4f03d50cf997d8ac693b40a73cd30c6d890",
+      "payload_bytes": 187036
+    },
+    {
+      "index": 209,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR30SHPEVE5P8QW36KG9T.json.zst",
+      "url": "https://blog.uniswap.org/smbc-nikko-and-nethermind-are-building-a-defi-gateway-for-japan-on-uniswap-v4",
+      "payload_sha256": "33e75a224576414ab4346bcd56d13abdd7964b5a4437e1f5fd931022eedd7ff2",
+      "payload_bytes": 169300
+    },
+    {
+      "index": 210,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3ATE77149NSEGTACK6N.json.zst",
+      "url": "https://blog.uniswap.org/spark-moves-150m-of-liquidity-to-v4-with-new-hook-coming-soon",
+      "payload_sha256": "f52592f2a33006291e7505bb4765a9c134ae92724fb593851796c2e828379bb8",
+      "payload_bytes": 186900
+    },
+    {
+      "index": 211,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR34D5P20R4F544AWGRJ3.json.zst",
+      "url": "https://blog.uniswap.org/stablepair-hook-a-fee-that-moves-with-the-market",
+      "payload_sha256": "db15298e5b9b7675d7bf12b83e6e0bc740b9e6f65adcdd9b3e3c93f44d7f5bec",
+      "payload_bytes": 183774
+    },
+    {
+      "index": 212,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3GNX5K1904HR6KWD4PT.json.zst",
+      "url": "https://blog.uniswap.org/the-compact-v1",
+      "payload_sha256": "c335826853242ad5dbbc0052e257fe6e573d81015112992c7c005c6407ccd550",
+      "payload_bytes": 250158
+    },
+    {
+      "index": 213,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3BHGYBD6AF0MHGW8P6D.json.zst",
+      "url": "https://blog.uniswap.org/tokenized-securities-are-live",
+      "payload_sha256": "c3b0073958f95f57adb11640c1ea33aff6de4736554b5f3795bf06862aa1af1c",
+      "payload_bytes": 193079
+    },
+    {
+      "index": 214,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR344NW1M2000Z0TG7BRS.json.zst",
+      "url": "https://blog.uniswap.org/unichain-is-upgrading-to-op-enterprise",
+      "payload_sha256": "69b47f7a1c6503573a6d483af56c960c941412dadaacf345c09e02181668af5b",
+      "payload_bytes": 169919
+    },
+    {
+      "index": 215,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR2XXV42NTK4E7CRNSRFE.json.zst",
+      "url": "https://blog.uniswap.org/uniswap-is-live-on-arc",
+      "payload_sha256": "f40718411cfc8b9acd70404e6b101ba42ded1924eb9cc12d7541f8ab679462b6",
+      "payload_bytes": 179053
+    },
+    {
+      "index": 216,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3FTC5E7CRANFZE541EA.json.zst",
+      "url": "https://blog.uniswap.org/unlocking-defi-liquidity-for-buidl",
+      "payload_sha256": "1d33259996f50abb27664bf3662f74bf802eeaa4a715196594e50474a852d9af",
+      "payload_bytes": 191554
+    },
+    {
+      "index": 217,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR2N3MNR6S1XPBQRJTWSJ.json.zst",
+      "url": "https://blog.uniswap.org/volatilepair-hook-pricing-both-sides-of-the-trade",
+      "payload_sha256": "aaa407f158cdbe5706c2b9befccfa03017a172701d1d1effba5946eab7a26cea",
+      "payload_bytes": 183399
+    },
+    {
+      "index": 218,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3M9G977WP3939AARZBS.json.zst",
+      "url": "https://blog.uniswap.org/what-is-a-crypto-swap",
+      "payload_sha256": "83e7791e377d7ca6308da007d64f46297a2b8760115bf5b4bce3fe55b35cf0bb",
+      "payload_bytes": 219614
+    },
+    {
+      "index": 219,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3N2SNZH5KM5E07SA40W.json.zst",
+      "url": "https://blog.uniswap.org/what-is-a-decentralized-exchange",
+      "payload_sha256": "b93905723b0752bf5a6c1bc8c6ceefab9033385c32b4efaf6eb453e8ecf5dd2e",
+      "payload_bytes": 204840
+    },
+    {
+      "index": 220,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3FC13TTEP56PES8F3RY.json.zst",
+      "url": "https://blog.uniswap.org/what-is-an-automated-market-maker",
+      "payload_sha256": "0e8533bac75fcd5e3a2b964edcb43add1aceff34f7dcf2f20188508920715cf5",
+      "payload_bytes": 206630
+    },
+    {
+      "index": 221,
+      "source_id": "S15",
+      "path": "runtime-data/raw/items/S15/2026/10/19/ITM-01M59JR3MPWFTY7EBXG41R5RF8.json.zst",
+      "url": "https://blog.uniswap.org/what-is-defi",
+      "payload_sha256": "65ae7543c336ad36cc4c8f45c3db86c64470664c305a5c14e4d8e20b71347142",
+      "payload_bytes": 200222
+    },
+    {
+      "index": 932,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV64KD8CACR1PFDWNSSQ5.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/DTCC-FundSERV-Adds-Ondo-Finance-as-First-Tokenization-Member",
+      "payload_sha256": "db9b3849743c85c154fce5a302be9a3c6711a539d4c3f78ac9b15d01986a30e5",
+      "payload_bytes": 321889
+    },
+    {
+      "index": 933,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV5Z56K1WTJPQDD4F0FX8.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/US-Treasury-Central-Clearing-Survey-Industry-Ready-for-Cash-Clearing-Repo-Work-Remains",
+      "payload_sha256": "1b6b1a5940c4f12db2ffc8c3c9ba5209dd89798e64da45b7c1204d14197a72fb",
+      "payload_bytes": 329135
+    },
+    {
+      "index": 934,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVDVJB3XBZAT61YCBVW5Q.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/dtcc-advances-cloud-first-strategy-to-modernize-core-market-and-digital-market-infrastructures",
+      "payload_sha256": "fda992fd7dc912d52a82f2aff5a8e1cbde725b43112a547e6f2f8ce092aed9e3",
+      "payload_bytes": 292287
+    },
+    {
+      "index": 935,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVBRW3Z84R152XC0YVZQG.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/dtcc-advances-development-of-new-tokenization-service",
+      "payload_sha256": "5a7f48fd77a0ba85692982473e038d279ccaa18f3f19bb442af844467b00ce4d",
+      "payload_bytes": 281298
+    },
+    {
+      "index": 936,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVCT6QQFHK4Q7SQMVXCTP.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/dtcc-and-cme-group-receive-regulatory-approvals",
+      "payload_sha256": "1da079dc52a3dda118f40de169a6635bfa59ad3b27b0ae659842c1c77ac1a158",
+      "payload_bytes": 287579
+    },
+    {
+      "index": 937,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV44MGGMZWQ3P3D7X761K.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/dtcc-and-icapital-collaborate-to-advance-private-market-infrastructure",
+      "payload_sha256": "9936d75877b6a10a44f842e356302377a044ed2c9b3bd22989e6456eef2da942",
+      "payload_bytes": 324665
+    },
+    {
+      "index": 938,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVCVC55NHNK6PNFJQFZJR.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/dtcc-and-ssimple-collaborate-to-automate-standing-settlement-instructions",
+      "payload_sha256": "b0f87709db1dc209f9aa0e6388366769b9e0c3522c48f2fcdeb70138670d0c12",
+      "payload_bytes": 306570
+    },
+    {
+      "index": 939,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV2J4S23SPWXHTGRGQWP1.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/dtcc-appoints-industry-leader-samir-pandiri-as-chief-client-officer",
+      "payload_sha256": "7d87f9079171350abb408dad34417914d51cd0466e91de1a1bf7786886be6eef",
+      "payload_bytes": 301684
+    },
+    {
+      "index": 940,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVBQ96BGF75NA91HER82Y.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/dtcc-collaborates-with-chainlink-to-advance-24-7-collateral-management",
+      "payload_sha256": "b331e38d15e02fd27509a773cefa8cbebee991b31d163d7ed6324fe79cd9ee5b",
+      "payload_bytes": 312558
+    },
+    {
+      "index": 941,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVA4TAH9AF6BM7YNWBZW6.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/dtcc-expands-nsccs-central-clearing-capabilities-to-support-optionsbased-etfs",
+      "payload_sha256": "c52b3d7b5e3a7ae1cf9aad48fcbf4eeb86d068f24371d99966a285e05affa81d",
+      "payload_bytes": 306816
+    },
+    {
+      "index": 942,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVB5QABH9V82J7W4YQ501.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/dtcc-receives-regulatory-approval-to-launch-new-client-access-model-for-nsccs-sft-clearing-service",
+      "payload_sha256": "7233b5cf3a6c21d9f4738a77d692896953c85c3509fce3e278f505a924169879",
+      "payload_bytes": 306359
+    },
+    {
+      "index": 943,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV7XM6FXBKK4GW20FYXCR.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/dtcc-survey-firms-progress-toward-us-treasury-clearing-deadline",
+      "payload_sha256": "8f74660f45aa573f4ba0cb88237653d6e2529860746ec0aba78a7067ed3df0d5",
+      "payload_bytes": 316931
+    },
+    {
+      "index": 944,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV7M9JFJEK8DR5WXVYCX2.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/dtcc-turns-tokenization-into-reality",
+      "payload_sha256": "36153b2cb7478f1d1bdd7eefbd9483de8d3c72a039382062fc5730d58fc0525b",
+      "payload_bytes": 314694
+    },
+    {
+      "index": 945,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVEJJCT5FANMCRQD27JW8.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/four-distinguished-financial-services-industry-leaders-join-dtcc-board-of-directors",
+      "payload_sha256": "67a0c02c87683bb7ae013c432c3b0c4d5064e7516142bd3081e82a5cb582ee2c",
+      "payload_bytes": 306635
+    },
+    {
+      "index": 946,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV483GXXDKYFWE48DM0A2.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/jp-morgan-achieves-greater-efficiency-in-us-listed-options-space-by-leveraging-ctms-automated-matching-capabilities",
+      "payload_sha256": "f83bc8c36b4b0b5373e50e3754578f5788337f92f4b6060bb4d4fc8722fe5062",
+      "payload_bytes": 307459
+    },
+    {
+      "index": 947,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVER2VG1BX8CEVEEQF4GG.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/mapping-the-course-to-interoperability",
+      "payload_sha256": "8340284eed2788a3fd59a895a0d03d7c475a6b6ade67774919fc1f7b98d5b595",
+      "payload_bytes": 318708
+    },
+    {
+      "index": 948,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV96FEQV6J3NP0SEDAHZH.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/nscc-now-live-with-clearing-hours-extended",
+      "payload_sha256": "300360e5b7b47937b40ffce20e07b03f451a9fec99b1e3075e4984cca2f43162",
+      "payload_bytes": 322380
+    },
+    {
+      "index": 949,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVDE62NZYRPY3WE4KBSD7.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/rapid-issuance-for-faster-market-access-for-structured-note-securities-custodied-at-dtc",
+      "payload_sha256": "efd22e54a5bdd0fb226085d80486ff9b36d976dbc45abfd68d36791264fc74e6",
+      "payload_bytes": 306414
+    },
+    {
+      "index": 950,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JV9K670K5PN3CBXFRT24J.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/tokenization-service-to-connect-with-stellar-public-blockchain-as-dtc-advances-multi-chain-strategy",
+      "payload_sha256": "2fa0e99c78e2ac63f7e86add73e6276ba1eba282209a15772bb5763fcf926f7d",
+      "payload_bytes": 281564
+    },
+    {
+      "index": 951,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVB6Z72MXYEDSWBF7QFB1.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/tokenized-collateral-could-unlock-billions-in-capital-and-transform-liquidity-management",
+      "payload_sha256": "f43907976bd4571e63f01fcb5b0ff5e2b8327a355e0c602b81fe18770ca7fe24",
+      "payload_bytes": 312129
+    },
+    {
+      "index": 952,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW82HPS1KWDZZFGKZFS03.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/arianne-m.-collette-joins-dtcc-as-managing-director-and-head-of-u.s.-equities",
+      "payload_sha256": "422aae93454014c005fb81ade4eb8689cddd72a63bb745dcd495a22fd2bb8e5c",
+      "payload_bytes": 300567
+    },
+    {
+      "index": 953,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWB30EYT2BHCXSZF3VAFP.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/automated-tri-party-matching-workflow-for-prime-brokers",
+      "payload_sha256": "4957a10de59775b65eed4114c6d3a0cf22679893805a35cc1121ce77bf72cce6",
+      "payload_bytes": 310121
+    },
+    {
+      "index": 954,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW2R7N0V2QMG61N67F4H0.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtcc-and-digital-asset-partner-to-tokenize-dtc-custodied-us-treasury-securities",
+      "payload_sha256": "68f1724208e670586245d751639a6054afc459bd47097a70c68a52f54de55d53",
+      "payload_bytes": 311993
+    },
+    {
+      "index": 955,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW70JDHPPQPP23HRHMWHJ.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtcc-and-ey-share-insights-on-24x5-equity-trading",
+      "payload_sha256": "5d0052e2db2cd92e346aaf3eac2805af64b74d442b5b31664bf332e8284aa645",
+      "payload_bytes": 309775
+    },
+    {
+      "index": 956,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWCXR4WZKMVX8J8KNAJPF.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtcc-announces-the-appointment-of-laura-deaner-as-chief-information-security-officer",
+      "payload_sha256": "095a37d1b399c6a38ff94edfa06e7ae658d6d9b1e808f4255866788620b7327d",
+      "payload_bytes": 303738
+    },
+    {
+      "index": 957,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWEATJ65Y9F33THWT3M64.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtcc-appoints-talia-klein-as-head-of-wealth-management-services",
+      "payload_sha256": "7d3cfcf75a6f577e5ba3f04af1b80640182e37c98fdc0434d20b5b675c192e9b",
+      "payload_bytes": 305936
+    },
+    {
+      "index": 958,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWD267WRS8PRN1M9J7CCN.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtcc-central-securities-depository-subsidiary-surpasses-100-trillion-in-assets-under-custody",
+      "payload_sha256": "3d27738e38cbd756303885f330711d719374d6a8b0c65172995dda16e6aa770e",
+      "payload_bytes": 311644
+    },
+    {
+      "index": 959,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWD1V1TN18HKB9Q6ZNAAB.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtcc-comments-on-sifmas-accounting-committee-working-group-acs-model-review",
+      "payload_sha256": "e4646c2f85cbfa1a6de68c40c0b66bbe4c38e9f8820427a61e17958219443181",
+      "payload_bytes": 304143
+    },
+    {
+      "index": 960,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW5AFP585KXEXJ85R5B0V.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtcc-ficc-and-bny-launch-collateral-in-lieu-service",
+      "payload_sha256": "85c15662ab2a688d4c1968e676383cc7797cd954bf42454f47fabe7c58c0db4b",
+      "payload_bytes": 322975
+    },
+    {
+      "index": 961,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW799KJJR19R9346FEWFT.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtcc-files-to-expand-cme-group-cross-margining-arrangement",
+      "payload_sha256": "cf39cac224c3c8ee209412b0909726fd36b5a043dd935c1afa78d11270fed085",
+      "payload_bytes": 314391
+    },
+    {
+      "index": 962,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW97WE2RGVY3N1AG6SSTW.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/ficc-submits-proposed-rule-change-filing-to-the-sec-to-offer-new-agent-clearing-acs-triparty-service",
+      "payload_sha256": "cd2cc46412def6ad7f65d13f949a39665a1a0468d21605a97fb2996fb197a965",
+      "payload_bytes": 316499
+    },
+    {
+      "index": 963,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWB8EYDY3PZFT5MZF6FP4.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/ficc-submits-rule-filing-with-the-sec-for-approval-to-offer-new-collateral-in-lieu-service-b3p9i2aw",
+      "payload_sha256": "aa2dafd80022c4f0b06ae90b343b65cbb22f552d91d70b321869766a4c8514a6",
+      "payload_bytes": 314648
+    },
+    {
+      "index": 964,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWCFPHC2Q8QBD7JZJCW6G.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/ficc-successfully-processes",
+      "payload_sha256": "5e5e34dfb45b94d00077507fd6b8efbcbc3cf2f313c87fa89fb505cab7c70c11",
+      "payload_bytes": 300338
+    },
+    {
+      "index": 965,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW4K5TFRW8WEBX85RJDCV.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/paving-the-way-to-tokenized-dtc-custodied-assets",
+      "payload_sha256": "2fe354bc99c1779a7490e5f035f3cb5546ad9bafd6bbecab89d3377a0128837d",
+      "payload_bytes": 314849
+    },
+    {
+      "index": 966,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW9ACH0W4S6F39SDF7289.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/thomas-sullivan-appointed-as-managing-director-of-dtcc-digital-assets",
+      "payload_sha256": "de5fcf8a13d75c11a4b58d5034070faf7ad96cfe7ae104f99b02af4c90dc0f02",
+      "payload_bytes": 304678
+    },
+    {
+      "index": 967,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW68V0CTXEDQ0KJFCT6X5.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/top-risks-facing-global-finance",
+      "payload_sha256": "08da0c1bb5f8974d6433cf8f03733247969f3de21e278f88ed4c69fccbf4466c",
+      "payload_bytes": 306682
+    },
+    {
+      "index": 968,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWAMGEES1CZXM58B17Q7C.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/treasury-central-clearing-survey",
+      "payload_sha256": "6560a9b1076a9fb50d5389daea270937fd8e2418927ef4cc3a630378529343ee",
+      "payload_bytes": 338458
+    },
+    {
+      "index": 969,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVGF8YYCDFT85NQF99M9Z.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/adam-watson-joins-dtcc-as-managing-director-and-head-of-asset-services",
+      "payload_sha256": "a2f6b12cb034fad7c81d0993e50146c75ba94e9c599a826fe56e51cd7fe72da5",
+      "payload_bytes": 303352
+    },
+    {
+      "index": 970,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JW7A368DQ16GMWS4PFCB0.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/dtcc-launches-next-generation-equities-data-portals-advanced-analytics-and-operational-insights",
+      "payload_sha256": "e0fc4fb56449c23f5cea9dd0e6086b4509da0db0cbb4b0cd04d84d72468b5a2c",
+      "payload_bytes": 306705
+    },
+    {
+      "index": 971,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JVGEX7WX8HQGNGJYGGMAJ.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2026/dtcc-receives-sec-approval-to-launch-agent-clearing-triparty-service-on-bny-platform-b3p9i2aw",
+      "payload_sha256": "2ff26849159ed13acf3c1cce15b81c021cc49f722d97c209abe5a403b9945bd2",
+      "payload_bytes": 311427
+    },
+    {
+      "index": 972,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWQ9FV6V3FTW821C1FZPA.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-announces-the-appointment-of-michael-winnike-to-lead-clearing--securities-services-strategy-and-market-solutions",
+      "payload_sha256": "c5bff9aeca70f5ae3d620e2689557c3b295d17b57f379fbec341533ebec540a5",
+      "payload_bytes": 305831
+    },
+    {
+      "index": 973,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWNSVMS47QHHV8MR361PW.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-appoints-jason-angrisani-chief-marketing-officer",
+      "payload_sha256": "ed589c0e8bf73b66684cbc10fc4c5ed51b5fc349d24564884c846e762ae23567",
+      "payload_bytes": 303267
+    },
+    {
+      "index": 974,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWQJC1NMDWCJ4PJAF87B9.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-comments-on-sec-action-on-ficc-rule-filings",
+      "payload_sha256": "c72d977050f641365bcc9f588561ed1e7ae0e1469ffc61c846f3e41a7a6ff8cc",
+      "payload_bytes": 295527
+    },
+    {
+      "index": 975,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWNKT04MFKH76H462FSW9.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-comments-on-the-passing-of-president-carter",
+      "payload_sha256": "fef5f5786ea91bae67ff3f72a30c1595d0fcc48b1d77d5b1351291f7e389d0aa",
+      "payload_bytes": 293333
+    },
+    {
+      "index": 976,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWRJ85S257BQFWAWPNRDF.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtccs-ficc-enhances-var-calculator-capabilities",
+      "payload_sha256": "db3d3bb2f065bd02a78891fdaf304765b5c7778659adfd01e08fc707115b2bdf",
+      "payload_bytes": 305202
+    },
+    {
+      "index": 977,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWP0RSDVTRC71RGVY9QJ7.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtccs-insurance-and-retirement-services-launch-api-messaging-service",
+      "payload_sha256": "4d4d21bef3a4cc2cdeb215ded5acfb0d1a34fedf114cf79c1bd9ca816b44bbb1",
+      "payload_bytes": 306199
+    },
+    {
+      "index": 978,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWS3Q6JS6SYFANFFSHDHQ.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/fg-asset-management-adopts-dtcc-itp-services",
+      "payload_sha256": "79287c3d14d37e4deca76ef51a6f0fc3bc54d94f6665024267023942cec44644",
+      "payload_bytes": 306144
+    },
+    {
+      "index": 979,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWPVKJMR7VRR47CYTVB13.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/geopolitical-and-cyber-risks-remain-top-threats-to-the-financial-services-sector-in-2025",
+      "payload_sha256": "cc8df3be4ec4ddb910a4a02238f9dea4f91ab0bd4e92ae0edbbb0543ffeb92da",
+      "payload_bytes": 311614
+    },
+    {
+      "index": 980,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWQR9A45RKWPDP1EJ5BJE.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/higo-bank-selects-dtccs-itp-services-streamlining-and-accelerating-post-trade-processing",
+      "payload_sha256": "a82b97e403a439ae2b7e785bbd167bde0e0b54c5fa5f9abb3180d799d508e961",
+      "payload_bytes": 307656
+    },
+    {
+      "index": 981,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWKYFTX2EC27SDZSZSA11.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/cme-group-and-dtcc-to-enhance-existing-cross-margining-arrangement",
+      "payload_sha256": "80a9befadee8196191fcbc08f1fdd24392c25b38caace0736e0c28c6686669af",
+      "payload_bytes": 315569
+    },
+    {
+      "index": 982,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWMF1QZWCW168PFEEDSNQ.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtcc-announces-composerx",
+      "payload_sha256": "5430a1cfd7ce07fa0c6ad87a44b29f4e8b4cc48108269465c12b157ba60e2c49",
+      "payload_bytes": 310529
+    },
+    {
+      "index": 983,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWG6PMVSBZDBD30RZSX45.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtcc-announces-new-platform-for-tokenized-real-time-collateral-management",
+      "payload_sha256": "41fa954059f8b7aefd17589bb4fe01d021fc445bc1589319b20272e0ae94e86c",
+      "payload_bytes": 309193
+    },
+    {
+      "index": 984,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWM9X9CCEBWVMV2QG7GAS.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtcc-opens-second-india-office-location-in-hyderabad",
+      "payload_sha256": "3969067f052af0f59d393c8530d4c1b8fc150f7687c2a13e5d846e26dca68610",
+      "payload_bytes": 306816
+    },
+    {
+      "index": 985,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWGHF2XCHVF8KRWAN25Z5.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtcc-processes-record-volumes-across-services-amid-market-volatility",
+      "payload_sha256": "a7cd9c041b8617c2c638c89da6bfa4c03b0a9f36a3da9462d62ed2a2d2c4df1b",
+      "payload_bytes": 319308
+    },
+    {
+      "index": 986,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWG709MHH3DMSXSXMTFCX.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtcc-welcomes-two-senior-leaders-in-financial-services-to-its-board-of-directors",
+      "payload_sha256": "6958297e3f4d8a1d8404ea5e9a0eda7bbaf1ddb6d2176590b0f517ca72da36b8",
+      "payload_bytes": 305071
+    },
+    {
+      "index": 987,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWJ1HJNMZEETP5JWDPTRD.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtccs-ficc-now-live-with-new-treasury-clearing-capabilities",
+      "payload_sha256": "0fccc5e6f3ef8b713b8038770c08e86c2449f8ffa9217f669ee5a20a46fbf1d6",
+      "payload_bytes": 310641
+    },
+    {
+      "index": 988,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWJQ74PWC0HZXG91SKGGJ.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtccs-gtr-to-add-mifid-reporting-capabilities",
+      "payload_sha256": "6bb4088499f82ac29ab8000d119896f03719e6423da52286244aef2cc137ea86",
+      "payload_bytes": 308251
+    },
+    {
+      "index": 989,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWJDJ7YV8MD0M3Y7WAR80.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/dtccs-nscc-to-increase-clearing-hours-to-support-extended-trading",
+      "payload_sha256": "b39ecfa874ec51244c7578ce463f2a2a6914a7d94b0cfe510ee07673b27e6d86",
+      "payload_bytes": 320221
+    },
+    {
+      "index": 990,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWMZTR9JAMTA4BBMAVD2R.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/ficc-sponsored-service-volumes-exceeded-usd-2-trillion-at-the-end-of-2024",
+      "payload_sha256": "121739120090d5021455b74f933c9116639ab67a81f8303d0026c9c34d671660",
+      "payload_bytes": 308689
+    },
+    {
+      "index": 991,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWK4DSFGTDJ3S1HFNETS8.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2025/ficc-surpasses-usd11-trillion-in-daily-volume-amid-market-volatility",
+      "payload_sha256": "836e8066fbb4f95f7904a4c349e4f14834307e497517eed91e921804bd80f3ef",
+      "payload_bytes": 300560
+    },
+    {
+      "index": 1002,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX18RYJA85T8H9PB5R6KZ.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-and-cboe-clear-europe-to-introduce-new-clearing-workflow",
+      "payload_sha256": "2fb953e4e11b8408a69d1b076f5815f1fab50874f404c4af68655d263bede0be",
+      "payload_bytes": 308463
+    },
+    {
+      "index": 1003,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWWEKPW52YM5Y6E7EAP4M.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-announces-industry-sandbox-to-support-and-advance-the-digital-asset-ecosystem",
+      "payload_sha256": "c312781b7338a4836009ff125a7c99a7cfa4dc7ecd5d2665f05e0d0ccb8d6d78",
+      "payload_bytes": 313025
+    },
+    {
+      "index": 1004,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWV444RS28FJ0RJXBBS0Z.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-appoints-andrea-gibbons-as-managing-director-chief-human-resources-officer",
+      "payload_sha256": "f0857f6affee4d453f7d34df2b312b7540b90d35a04f421e64e64ba9af6229f4",
+      "payload_bytes": 306334
+    },
+    {
+      "index": 1005,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX049BFVMZ628A0ET4W3Q.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-appoints-four-financial-services-industry-leaders-to-its-board-of-directors",
+      "payload_sha256": "cdc58ce7d777ddf700fa1717698aac0d9656cb9f93bd5fae42f7e52324d0ad7e",
+      "payload_bytes": 306728
+    },
+    {
+      "index": 1006,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX3A5GFS4WQWBME2EDPH7.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-clearstream-and-euroclear-develop-framework-to-advance-adoption-of-digital-assets",
+      "payload_sha256": "168f6495d4794ddb84e3220bc51877d6e20ca96eb59e01eee44e14ec202396ea",
+      "payload_bytes": 321361
+    },
+    {
+      "index": 1007,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX3FZZXR2ZEQ73D4YY9RG.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-comments-on-industrys-affirmation-progress",
+      "payload_sha256": "7f9e8c2873098bb9bec6bf604a901ff6919694712d7b6dd0ba1e4217d83d265b",
+      "payload_bytes": 307299
+    },
+    {
+      "index": 1008,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX46W21GQK3VKDJ2TK64A.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-comments-on-industrys-t1-progress",
+      "payload_sha256": "3508c7396afd9b1ec64afcf65817d468ba095e980940012a49860d2009420995",
+      "payload_bytes": 302906
+    },
+    {
+      "index": 1009,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWTY5M591A2JV78TK8KB8.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-data-services-now-offers-corporate-fixed-income-premium-intraday-reference-data",
+      "payload_sha256": "6bfa5a50ebfa97b1d45905139d29f0054c0859196687a7fdc59ed0f480abe928",
+      "payload_bytes": 306628
+    },
+    {
+      "index": 1010,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX01B07MZJFS0TCJNJY9Z.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-ficc-unveils-public-facing-value-at-risk-var-calculator",
+      "payload_sha256": "5e45348eefb5b3e40c7709046dfc94da2e54a427d40fd7d2e401ea21dcf9463a",
+      "payload_bytes": 304412
+    },
+    {
+      "index": 1011,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWYPRFTDW74NB7AAJMEJ2.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-survey-significant-improvements-in-industry-preparedness-around-expanded-us-treasury-clearing",
+      "payload_sha256": "6500cbb61a3bddce0ad51ffe211483aeb318ccfe9c578a79d31537290a3ffc2a",
+      "payload_bytes": 309668
+    },
+    {
+      "index": 1012,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX1EXQX5ZB4SM5EGSVHSM.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-testifies-to-congress-advance-financial-markets-digital-securities-tokenization-services",
+      "payload_sha256": "3548002b55eca347ce2a223d9e9b60e6f1ab92ea64aa116352def3a8e9b04ce7",
+      "payload_bytes": 307534
+    },
+    {
+      "index": 1013,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWWN9DNW9CZ36KY3N3NE9.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtccs-alternative-investment-product-reaches-new-milestone-with-over-2500-unique-clients",
+      "payload_sha256": "75864c7895b01bc589ee8bcae7d5f88bceb0783f832033612eae8f220df80e23",
+      "payload_bytes": 303009
+    },
+    {
+      "index": 1014,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX0K5N71DDW39K9H2Z9GK.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtccs-ficc-launches-cclf-public-calculator-to-support-expansion-of-u.s.-treasury-clearing",
+      "payload_sha256": "c59095f30c50e0b6ea9b948750f21090c4e09090898e31c6c050e3dc659bf719",
+      "payload_bytes": 307216
+    },
+    {
+      "index": 1015,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWYHE12HNRBZS21TB2DQ0.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtccs-insurance--retirement-services-launch-standardized-can-sell-api-messaging-application",
+      "payload_sha256": "a72d8e300ee92f66914779f2a0e232065bab55bf4ad4eea100031fb60f7a65e9",
+      "payload_bytes": 306707
+    },
+    {
+      "index": 1016,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX1S5S6YRS6PQQ5HJH3DC.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/ficc-treasury-clearing-activity-expected-to-increase-by-over-us4-trillion-daily",
+      "payload_sha256": "7dc2dea6b87faa8e8c5b7714a831ca9c3eb458cdfa6955069b9ee27a89df9dc1",
+      "payload_bytes": 310076
+    },
+    {
+      "index": 1017,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWZJ0ZGA907SQ8485641M.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/ficcs-government-securities-division-clears-record-setting",
+      "payload_sha256": "f489444449beac123c60e5be736581ffd83a2f1622bd5f95d13da849152640b3",
+      "payload_bytes": 305354
+    },
+    {
+      "index": 1018,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWTV29D27ZBSSZTT32G6H.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/ficcs-government-securities-division-surpasses",
+      "payload_sha256": "d9d0864960ed32e3f011c7ba79649f0ce956b14308b484c1226bd6cfe73f1ace",
+      "payload_bytes": 305670
+    },
+    {
+      "index": 1019,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWY7ADF25NBQB19FJZRP1.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/government-securities-division-achieves-new-milestone-clearing-usd88-trillion-in-daily-activity",
+      "payload_sha256": "4280058599d85919750fbc790b97cf28d6fc733d2af437275314b03af126e758",
+      "payload_bytes": 306688
+    },
+    {
+      "index": 1020,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX2D2J5N8T9JSYSMH1N6D.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/ici-sifma-and-dtcc-comment-on-u.s.-move-to-t1",
+      "payload_sha256": "339f8bcabd31cb9d487123c6e7cb0aa7d9e55b29c3bf91e2847ed33d8d45ad10",
+      "payload_bytes": 306380
+    },
+    {
+      "index": 1021,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JWWV62Z1TS5SZGAHSH8M7.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/sifma-ici-and-dtcc-release-t1-after-action-report",
+      "payload_sha256": "d1b43c32f6e56a2300faea53a92fc8781b0244792febb7e524912728f540e1f5",
+      "payload_bytes": 315192
+    },
+    {
+      "index": 1022,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXBG765K9BFWGGZS47E03.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/2024-geopolitical-risk-and-inflation-dominate-as-top-risks-to-the-financial-services-industry",
+      "payload_sha256": "b69c3c31be01a472e69175b30c656d40bd7df12de048fd72b78711d182898689",
+      "payload_bytes": 307346
+    },
+    {
+      "index": 1023,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXE82CBF3QDVAHQBVK4F2.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-appoints-gloria-lio-head-of-enterprise-services",
+      "payload_sha256": "636f36b9c2e31e182d6c96e60c2c4c63c4a9ced38f097a4fd55d5629648ba6e3",
+      "payload_bytes": 300704
+    },
+    {
+      "index": 1024,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXB2S9ATTY8AH26H3XBXQ.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-comments-on-acquisition-of-securrency",
+      "payload_sha256": "2851c235c08cbe6ddae9e1aeb4e135634961aca3a0ac477e0f8dc06987522c98",
+      "payload_bytes": 296387
+    },
+    {
+      "index": 1025,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXA9W9BC7GRY9FWQN9RGA.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-comments-on-sec-ruling-around-expanded-us-treasury-clearing",
+      "payload_sha256": "c444b1225753a2151138c48ced1bc1982222983c1582649f7e11ad5d3e3c2c6b",
+      "payload_bytes": 295717
+    },
+    {
+      "index": 1026,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXD71MS6TACJ35YNWNDQB.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-launches-otc-direct-connect",
+      "payload_sha256": "0912ace924c87016c2da9a5d28925a37a5f78fe6535f5985d18ce03e76459545",
+      "payload_bytes": 304960
+    },
+    {
+      "index": 1027,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXDXWK0XB59RZBENYMDGM.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-report-hub-introduces-trade-reporting-analytics",
+      "payload_sha256": "6673874b2d4b30afeef5cdc0eb91dbf6df713cab4b6b516fa6cc935b81bb9213",
+      "payload_bytes": 307471
+    },
+    {
+      "index": 1028,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXER0G6YZDYCSZKVVY92Y.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-signs-definitive-agreement-to-acquire-securrency-inc",
+      "payload_sha256": "e439447a9ffa85da5cb7ad694173be8efe272897d08748a4cab9844553351a00",
+      "payload_bytes": 319648
+    },
+    {
+      "index": 1029,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXD1EYRRK8157GV0EZRJ3.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtccs-alert-surpasses-15-million-standing-settlement-instructions",
+      "payload_sha256": "c4d2629f31f3c493aa648841389c98f11c76722e80924467fd7e9879dc96ca09",
+      "payload_bytes": 306004
+    },
+    {
+      "index": 1030,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXC7A068YBTXN7NHSK2C7.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtccs-alternative-investment-product-services-surpasses-10000-unique-funds",
+      "payload_sha256": "c914d0e4a42e9142860c3f4cffa71efe66f44edbbef065d45737e61d0a6903b5",
+      "payload_bytes": 303282
+    },
+    {
+      "index": 1031,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX9JS450XYSMCH7J8MZ8P.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/cme-group-and-dtcc-launch-treasury-cross-margining-arrangement-for-clearing-members",
+      "payload_sha256": "fa18cc9eb84d3fe3842a8c58d2d291fc065eeff6994f18e48db94dfdf4e4cca3",
+      "payload_bytes": 316249
+    },
+    {
+      "index": 1032,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX7HRNEWAB2TFHYQ8H3J5.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-advances-pilot-to-further-automate-corporate-actions",
+      "payload_sha256": "5fda59990231bae61a305a947e3c54a10fcc5cbc38a8ba8f74710a8fdaf9d666",
+      "payload_bytes": 310534
+    },
+    {
+      "index": 1033,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX5YDG5ZGEQ3RYYFX32JA.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-collaborates-with-regnosys-to-support-isda-digital-regulatory-reporting",
+      "payload_sha256": "6b846f97ecda1a6a89cff820b38f6a06b9eec549cf12a3d5860814641a284dc0",
+      "payload_bytes": 309527
+    },
+    {
+      "index": 1034,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX8GR7ZSG14R8D0YZH7HT.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-comments-on-affirmation-progress-for-dtc-trade-submission-as-t1-draws-near",
+      "payload_sha256": "28c1989b56ddd980ea23b03f827f8a9633807a53a7ab821e1d3bcfbce7965d2f",
+      "payload_bytes": 300787
+    },
+    {
+      "index": 1035,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX5XT990MHFT9XXKM0CQ2.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-comments-on-industrys-affirmation-progress-with-t1-implementation-one-month-away",
+      "payload_sha256": "b6952268f605ba3384c9950dc9d17cc3a2c069dcf82dbf22224db41f85e85e27",
+      "payload_bytes": 305991
+    },
+    {
+      "index": 1036,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX7QST15R8MNERR05164M.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-comments-on-industrys-affirmation-progress-with-t1-implementation-two-months-away",
+      "payload_sha256": "93ace7b458862e706b30102b8cbd6d92d96885a6c812b073d2925b2e143a56a3",
+      "payload_bytes": 305209
+    },
+    {
+      "index": 1037,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX9ERF12QAVBDFB1YBRZ5.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtcc-issues-new-affirmation-progress-report-and-details-post-trade-best-practices-to-achieve-t1",
+      "payload_sha256": "7828d0378c71df08e49a74ed7f62024cf8c1b44be3f1cb0be28c7076611f51eb",
+      "payload_bytes": 308347
+    },
+    {
+      "index": 1038,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX9661B2MYS3M5VC8SF65.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtccs-ctm-match-to-instruct-workflow",
+      "payload_sha256": "0a428ba48485617de687deb395e41f5459d4eda2e76503d73561bf0c95360710",
+      "payload_bytes": 309017
+    },
+    {
+      "index": 1039,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX7PBCECXXZMEYXQ27EN4.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/dtccs-ficc-treasury-clearing-volumes-grow-31-percent",
+      "payload_sha256": "0c8a3cdca3b2fc3ee24599023faa993d0a71f2faba204ab34af16870d0394267",
+      "payload_bytes": 307645
+    },
+    {
+      "index": 1040,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX5W8SAMSFY1EYJ40RD12.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/new-ctm-tri-party-matching-workflow-for-prime-brokers-with-societe-generale-as-first-to-go-live",
+      "payload_sha256": "5f407a086954bbcf20241fc4928ad65e2ffb921b32ca42e269e3e8c6d4dc3845",
+      "payload_bytes": 308733
+    },
+    {
+      "index": 1041,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JX65NHK8BW697JMBPEEYN.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2024/sumitomo-mitsui-trust-asset-management-adopts-dtccs-itp-services",
+      "payload_sha256": "4414f990eafa00810b37a7df2d845f3ad857f07447844d236ac9b7815f6f1aa1",
+      "payload_bytes": 309304
+    },
+    {
+      "index": 1042,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXNYQ9V59DWN4A90Q0SQ4.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/alternative-investment-product-reaches-new-milestone",
+      "payload_sha256": "09c5f6ec7566e4b6c2682ace0621c95f1e6f86c8db40a68f125a23e9c2821a16",
+      "payload_bytes": 301433
+    },
+    {
+      "index": 1043,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXQEW6T1Z859VT7JWZ78X.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-report-hubs-assisted",
+      "payload_sha256": "29d02cb378a825c83783d7adde6239d26b4711e37b1d56aee86769386d777e19",
+      "payload_bytes": 306980
+    },
+    {
+      "index": 1044,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXQKVZKBSTJ3SSG122A0F.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-shares-findings-from-its-pilot-with-the-digital-dollar-project",
+      "payload_sha256": "7d0babac700f06987feccebba279f1d832d37cee76a8b425240694efbc3b4dfe",
+      "payload_bytes": 316376
+    },
+    {
+      "index": 1045,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXQSEKT00RNJD6GYBCAHM.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtccs-nscc-processes-first-trade-on-new-sft-clearing-service",
+      "payload_sha256": "dfa27ab55adaf638723d3b8f6e96a8b6116a7edd363b5639d0087df575b37a64",
+      "payload_bytes": 308694
+    },
+    {
+      "index": 1046,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXQ1RPYTRXDMT76VWMPAQ.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/geopolitical-risk-and-inflation",
+      "payload_sha256": "af8ef0cdbcd9e0c4e882c91c25e8a9a84bc51ce23e9b4c8361c650f9dc521978",
+      "payload_bytes": 303575
+    },
+    {
+      "index": 1047,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXGMG05FYA4BJF83ASBFF.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/350-investment-managers-now-leveraging-ctms-automated-affirmation-capabilities",
+      "payload_sha256": "35320ea624fd3cb074e001c335cbc908753582d192d39ef5e83ff104d25c8a88",
+      "payload_bytes": 310705
+    },
+    {
+      "index": 1048,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXJ6Y5A8F9TCC63PZHZMM.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/cme-group-and-dtcc-to-increase-cross-margining-opportunities-for-the-treasury-markets",
+      "payload_sha256": "ab69fcc4ec780d8a101923f1be15a8eeb3fd99826c9c74ea298445b769bb6c67",
+      "payload_bytes": 311839
+    },
+    {
+      "index": 1049,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXJCDWSTK26C6KZ6Y9F2C.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-and-nomura-research-institute-to-bring-greater-post-trade-automation-and-efficiency-to-japan",
+      "payload_sha256": "5d564e2f10c07b445429c70916002e71cf7c980421ebf30e197c18a7967a3150",
+      "payload_bytes": 311515
+    },
+    {
+      "index": 1050,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXGG2J2DPZZ86T1Z51X3Q.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-appoints-brian-steele-president-of-clearing--securities-services",
+      "payload_sha256": "2634c43b9b85eeb8094be44c1d4fa350b09f6d10d81cb58eb04cf6a0338e1465",
+      "payload_bytes": 305304
+    },
+    {
+      "index": 1051,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXKPB3JPZ0Q5M2B5N252C.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-appoints-kevin-kessinger-as-non-executive-chairman-of-board-of-directors",
+      "payload_sha256": "1999223a99718cb87bfc41679de6865c8d5cd89a216cb020e4ac0882f80662c6",
+      "payload_bytes": 313908
+    },
+    {
+      "index": 1052,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXKT51K2PDNR7TRTJTRXR.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-celebrates-50th-anniversary",
+      "payload_sha256": "0c370f93efe0607b089063e46ef67d1555050cec8543053b5226bbbfcfd0f760",
+      "payload_bytes": 307653
+    },
+    {
+      "index": 1053,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXGA4P7C28XTA1WQY3BXZ.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-clearstream-and-euroclear-call-for-more-industry-collaboration",
+      "payload_sha256": "ca2c0ee6666b22462e4dfa5563a1558d6970be18cae27f939f9db7475757e102",
+      "payload_bytes": 311588
+    },
+    {
+      "index": 1054,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXNA8KFD060G7TZP17R12.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-comments-on-sec-announcement-regarding-the-t1-implementation-date-of-may-28-2024",
+      "payload_sha256": "47b259a9fc728ac6d1141fb5da529e8857962ff2d8fc59877179e2a964073307",
+      "payload_bytes": 296040
+    },
+    {
+      "index": 1055,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXNQY664E3P4FWAAHJ1ZN.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-identifies-how-data-exchange",
+      "payload_sha256": "6867e51687dc8b284308701cbf5535406288a4373a7c68858ebc2ffb52b5709d",
+      "payload_bytes": 310467
+    },
+    {
+      "index": 1056,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXNCSYS6CXA398WZQQAH0.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-issues-first-ever-analysis",
+      "payload_sha256": "3bdae33eb6d6048b3d8a57fbe192f3a2496413dcb7a1c3dce502ca1499bcefb3",
+      "payload_bytes": 308177
+    },
+    {
+      "index": 1057,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXM1WJFF798QX6TCMFF0R.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtcc-launches-new-centralized-communication-solution",
+      "payload_sha256": "44a4b9a0119c45eccb588232580c9168367ba6bb0321c670b2c49cec0d2c10af",
+      "payload_bytes": 309892
+    },
+    {
+      "index": 1058,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXJ8SJ52DGQYTN23W5J0Y.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtccs-ficc-sponsored-service-reaches-new-milestone",
+      "payload_sha256": "623cfd25f38a8f30cfdfb5a3d9a813715291ff147125171c482ce1d799224e4c",
+      "payload_bytes": 302821
+    },
+    {
+      "index": 1059,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXKZV1CGFQTJ0Z2NSWGFC.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/dtccs-mf-info-xchange-service-builds-momentum",
+      "payload_sha256": "7ab92fe4d50f86849f541ad052ae5609e3340df70a04746a0050381e92da9de5",
+      "payload_bytes": 302500
+    },
+    {
+      "index": 1060,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXJ1XF3PBBC9R7W3YTQ9T.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/enhanced-treasury-cross-margining-arrangement-launching-january-2024",
+      "payload_sha256": "70ab173b9e7f3d5260e25e387f45c9c4e0e9569968aef7b1fc080793021b8c63",
+      "payload_bytes": 311243
+    },
+    {
+      "index": 1061,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXGF4CYXN5YVKPZ7MTRSX.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2023/treasury-clearing-activity-predicted-to-increase",
+      "payload_sha256": "bc2d89d90ea88a1b03b5fe7a39ed52ba53eff803c274494239005ebdd27e39f3",
+      "payload_bytes": 307427
+    },
+    {
+      "index": 1063,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXZMWD3980Z39H2X2Q065.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-achieves-automation-of-the-voluntary-corporate-actions-lifecycle",
+      "payload_sha256": "5320517c084d3f01127ac004cb406d3aed54eff1c1395d5d9fa72c2d0d4275d2",
+      "payload_bytes": 306516
+    },
+    {
+      "index": 1064,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JY17JP4SBQNCW2T44HHMV.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-appoints-two-leaders-in-financial-technology-innovation-to-its-board-of-directors",
+      "payload_sha256": "6719077874291804ebb3ecb924565873a44249281d937d83a3c5c1aaa5cff3f3",
+      "payload_bytes": 273136
+    },
+    {
+      "index": 1065,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JY0SHPF66N6PZKYE13270.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-board-of-directors-appoints-frank-la-salla-president-and-chief-executive-officer",
+      "payload_sha256": "c97f790aba13e19d7d0d752d1b28935a07688726820d8725b80871904a3baa82",
+      "payload_bytes": 312965
+    },
+    {
+      "index": 1066,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JY0XD19J8BM3JRDSADQ4N.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-building-industrys-first-prototype-to-supports-digital-us-currency",
+      "payload_sha256": "a9684e0fd7791d8571e24a100e67e95083c2c268af27ab13a80ccd5ce7f087cb",
+      "payload_bytes": 315310
+    },
+    {
+      "index": 1067,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXYZ425YD0D1N0D6GW8KR.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-comments-on-senate-confirmation-of-federal-reserve-appointments",
+      "payload_sha256": "d5235a890b8fedd2c10161a0b7815d4ac421007c59e7e14de134998f5888c391",
+      "payload_bytes": 292554
+    },
+    {
+      "index": 1068,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXX2YYNNBMD25NTC8QTK0.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-comments-on-senate-confirmation-of-michael-barr-at-the-federal-reserve",
+      "payload_sha256": "e968b7a31756761fc2ab227a903cf2fbb663c9a1e2be0d3462be3b2867d97a8c",
+      "payload_bytes": 290575
+    },
+    {
+      "index": 1069,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JY21BJWBXY02KX93HBZ75.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-comments-on-senate-confirmation-of-new-cftc-commissioners",
+      "payload_sha256": "ce593cbda097e3e145e95c7b8dcbea0f8d20379a5dcf62f13e08a88443b26535",
+      "payload_bytes": 290708
+    },
+    {
+      "index": 1070,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXX8RA074A8JQMXBXRZ4D.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-comments-on-senate-confirmation-of-sec-commissioners",
+      "payload_sha256": "1675554cf2812711a0cf7ac9e45a87a8170d1762389d9ff38f6555abc5739783",
+      "payload_bytes": 290351
+    },
+    {
+      "index": 1071,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JY0G0T3REYWRSC3QB45H7.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-identifies-key-systemic-threats",
+      "payload_sha256": "077d4aca8641f38c032c4923b4e39f24e31d9386836e58e2c5fc3163c237868c",
+      "payload_bytes": 307835
+    },
+    {
+      "index": 1072,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXVCDYTQDEPJ2HF30NR8Z.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-launches-1042-s-classification-announcement",
+      "payload_sha256": "9f39c1cb2199677187ea7d15779c700fe72e46456f837879648741a13da070c1",
+      "payload_bytes": 306902
+    },
+    {
+      "index": 1073,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXSF90KB4MTH97Z9B896S.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-outlines-post-quantum-security-risks-and-considerations",
+      "payload_sha256": "1b8e212087001b0e943ac31976d2bfa3eeec1e1ced15835ed1ae919377e85c50",
+      "payload_bytes": 307028
+    },
+    {
+      "index": 1074,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXVJ647KXCDHESJRTVHH2.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-partners-with-kingfield-to-transform-corporate-actions-claims-process",
+      "payload_sha256": "969fc5bc5a22392f36d8ccbaf06e12aca1da79deccf061a54fe6578979beebbc",
+      "payload_bytes": 309413
+    },
+    {
+      "index": 1075,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXSZYNC5RZXXWPG27796W.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-partners-with-snowflake-to-transform-financial-industry-data-ecosystem",
+      "payload_sha256": "6295bd0a5d11ac4e10bfc7c3262670b873575b88a26ecdde07717e6fa6d3652e",
+      "payload_bytes": 306868
+    },
+    {
+      "index": 1076,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXYZG05ZX634WZHPYVG2Z.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-unveils-technology-resilience-principles-in-white-paper",
+      "payload_sha256": "8d4eeee2a2a8d264941a91f412db0f2de8821a5cb810268919e49997eb6fe8f6",
+      "payload_bytes": 310820
+    },
+    {
+      "index": 1077,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXYNRJX0SB5Y6HFQ8JH9E.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtccs-nscc-receives-sec-approval-to-provide-central-clearing-of-securities-financing-transactions",
+      "payload_sha256": "77cc95b11b11a65f866616fa5a420994383030d7c3c1a6875f7c38cb6f490438",
+      "payload_bytes": 310448
+    },
+    {
+      "index": 1078,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXX37NPJZWAANTTHPJG84.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtccs-report-hub-community-grows-to-over-70-firms",
+      "payload_sha256": "e6062ef5e1b100d26a04ac42fdf66545ce8247cf10ba33f81df13a70c1aa46cc",
+      "payload_bytes": 309160
+    },
+    {
+      "index": 1079,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXVC2BECZN51NQPQEAAQH.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/implementation-playbook",
+      "payload_sha256": "20f856da7195149e3dc0545d15f5627b90f9dc3a109454eb7fcd1e1c4f549835",
+      "payload_bytes": 324986
+    },
+    {
+      "index": 1080,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXSEBF1AMHWP7QQNFP9NW.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/nyu-partners-with-dtcc-for-comprehensive-cybersecurity-program",
+      "payload_sha256": "50d6db5aff5cbe823b604d2c0c768329678e154b6c43e3210d8f805dc9fbc8a2",
+      "payload_bytes": 309376
+    },
+    {
+      "index": 1081,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXVHYNEFNABNM53QP5EJ3.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/project-ion",
+      "payload_sha256": "07c704d4c5bd6e44a0dfa13c7ee9d1630d55a26c8bcc20809ae4afe5c6905096",
+      "payload_bytes": 309524
+    },
+    {
+      "index": 1082,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JXSE1373XQAKREFWM3S2E.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/yo-bank-to-adopt-dtcc-itp-services",
+      "payload_sha256": "3935feecf906df7236badb55004fe574fafca1249213ae7c676cad92d5046860",
+      "payload_bytes": 305018
+    },
+    {
+      "index": 1083,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JY3P2XTDBKQ06YTP4EVMS.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-launches-enhanced-post-trade",
+      "payload_sha256": "0b3f222883a3a53fe12f6ff571063e12cf38bb03f06f3145598835965d7e944d",
+      "payload_bytes": 313591
+    },
+    {
+      "index": 1084,
+      "source_id": "S08",
+      "path": "runtime-data/raw/items/S08/2026/10/19/ITM-01M59JY3JBJ5R0ZQPX9HTGB8XZ.json.zst",
+      "url": "https://www.dtcc.com/press-releases/2022/dtcc-launches-treasury-kinetics-service",
+      "payload_sha256": "235efe1ddde318d7704c2debb7a69e37683d966074c8cebec11a3d78e9c2c28a",
+      "payload_bytes": 304430
+    }
+  ]
+}

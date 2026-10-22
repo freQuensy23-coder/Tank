@@ -1,4 +1,3 @@
-// Package testutil loads the committed reference vectors and fixtures.
 package testutil
 
 import (
@@ -12,18 +11,15 @@ import (
 	"testing"
 )
 
-// Root is the capture module directory.
 func Root() string {
 	_, file, _, _ := runtime.Caller(0)
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
 }
 
-// Path is a file under capture/testdata.
 func Path(parts ...string) string {
 	return filepath.Join(append([]string{Root(), "testdata"}, parts...)...)
 }
 
-// Open reads a testdata file, gunzipping .gz names.
 func Open(t testing.TB, parts ...string) []byte {
 	t.Helper()
 	path := Path(parts...)
@@ -31,7 +27,9 @@ func Open(t testing.TB, parts ...string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 	var r io.Reader = f
 	if strings.HasSuffix(path, ".gz") {
 		gz, err := gzip.NewReader(f)
@@ -47,7 +45,6 @@ func Open(t testing.TB, parts ...string) []byte {
 	return data
 }
 
-// Decode unmarshals a testdata JSON file with json.Number for numbers.
 func Decode(t testing.TB, target any, parts ...string) {
 	t.Helper()
 	dec := json.NewDecoder(strings.NewReader(string(Open(t, parts...))))

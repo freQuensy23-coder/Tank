@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = [pytest.mark.integration, pytest.mark.node, pytest.mark.process]
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -36,8 +38,6 @@ console.log(JSON.stringify({opaque,raw,decoded,encoded,resultHistory,resultDecod
         [node, "--experimental-strip-types", str(path)], check=True, text=True, capture_output=True
     )
     return json.loads(result.stdout)
-
-
 
 
 def test_guarded_codec_preserves_opaque_input_but_transforms_envelope(tmp_path):

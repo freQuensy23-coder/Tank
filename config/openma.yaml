@@ -1,8 +1,8 @@
 version: baseline-2.4
-agent_id: agent_8Cnovjjmh4iEz9j314WMr
-scout_agent_id: agent_lsENv31zsEFHPnsaQc2wf
-environment_id: env_cPiHq3GmnX3_SdZpnrlk2
-replay_environment_id: env_EPINWk88_-qU18AzIVpZ9
+agent_id: agent_qHm9ws8sr7gJd5P-wwXnn
+scout_agent_id: agent_sPzErC4f5HTDx9X4QtDFo
+environment_id: env_kU2VFGrZtxRStA_PToBNz
+replay_environment_id: env_NbIF2TQnM93xgoj1r0vw5
 release: 85d5361f535c7221de975838dc48444e468cc02e
 prompt_version: baseline-3.0-spec-playbook
 model_id: gpt-6.1-sol

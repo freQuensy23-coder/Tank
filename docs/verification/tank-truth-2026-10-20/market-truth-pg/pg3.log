@@ -1,4 +1,0 @@
-START 2026-10-20T17:03:44Z tests/test_event_tools.py::test_live_update_survives_restart_and_delivers_at_boundary_with_retry tests/test_runtime.py::test_delivery_order_wait_requeues_without_spending_network_attempts tests/test_runtime.py::test_contended_delivery_lock_is_scheduling_then_sends_once tests/test_replay_ingest_policy.py::test_fresh_import_rederives_policy_without_old_classifier_outputs -k postgres
-.....                                                                    [100%]
-5 passed, 5 deselected in 46.67s
-EXIT 0 2026-10-20T17:04:31Z

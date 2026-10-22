@@ -13,10 +13,8 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// Unproven is market_storage.UNPROVEN: a bar incomplete only for lack of a proof.
 const Unproven = "STREAM_COVERAGE_UNPROVEN"
 
-// Proof sources (capture proofs and capture_proof.sealed_by).
 const (
 	sourceStream    = "CONTINUOUS_STREAM"
 	sourceHead      = "REST_HEAD_CHECK"
@@ -25,18 +23,15 @@ const (
 	sealedFinal     = "UNPROVEN_FINAL"
 )
 
-// Seal timing.
 const (
-	headInterval  = 60 * time.Second // at most one head check per instrument per minute
-	provisionalS  = 5 * time.Second  // an open bar is rewritten at most this often
-	sealRetain    = 15 * time.Minute // a sealed bar stays in memory for late prints
-	holdUnsealed  = 30 * time.Minute // a minute that cannot be proven is written final after this
+	headInterval  = 60 * time.Second
+	provisionalS  = 5 * time.Second
+	sealRetain    = 15 * time.Minute
+	holdUnsealed  = 30 * time.Minute
 	headPrints    = 100
 	revisionsKeep = 200000
 )
 
-// ConsecutiveIDs reports the venues whose trade IDs are consecutive (FlowAccumulator.add):
-// there a chain is proven by its IDs, elsewhere by one uninterrupted connection.
 func ConsecutiveIDs(inst *venue.Instrument) bool {
 	switch inst.VenueName() {
 	case "binance", "coinbase", "kraken":
@@ -54,21 +49,19 @@ type span struct{ start, end time.Time }
 
 func (s span) overlaps(lo, hi time.Time) bool { return s.start.Before(hi) && s.end.After(lo) }
 
-// chain is one instrument's proven prints: the prints of its live connection, the proofs
-// issued from them and the REST repairs still pending.
 type chain struct {
 	inst      *venue.Instrument
 	ids       bool
-	conn      int64     // the live connection, 0 when none
-	first     time.Time // this process's first connection started here
-	start     time.Time // the connection's chain starts here
-	proved    time.Time // complete proofs issued up to here
-	frontier  time.Time // newest proven exchange time
+	conn      int64
+	first     time.Time
+	start     time.Time
+	proved    time.Time
+	frontier  time.Time
 	last      *normalize.Trade
 	lastConn  int64
-	anchor    *flow.TradePoint // where the next bridge starts: the stored cursor or the last print
-	resume    time.Time        // the first minute a disconnect left unproven
-	repairs   []span           // REST repairs queued or running; an open bridge ends far in the future
+	anchor    *flow.TradePoint
+	resume    time.Time
+	repairs   []span
 	headNext  time.Time
 	heading   bool
 	watermark time.Time
@@ -83,36 +76,30 @@ func (c *chain) pending(lo, hi time.Time) bool {
 	return false
 }
 
-// seal is a written final bar.
 type seal struct {
 	version int64
 	at      time.Time
 	record  map[string]any
 }
 
-// Sealer owns the live flow bars: the accumulator, each instrument's chain, the seals and
-// revisions and the provisional writes. A minute is sealed only when its prints form a
-// proven chain through a print at or after its end (or a head check proved it quiet).
 type Sealer struct {
 	mu        sync.Mutex
 	acc       *flow.Accumulator
 	chains    map[string]*chain
 	seals     map[flow.Key]*seal
-	versions  map[flow.Key]int64 // versions of sealed bars that left memory
+	versions  map[flow.Key]int64
 	ids       map[flow.Key]map[string]bool
 	wrote     map[flow.Key]time.Time
 	clock     Clock
 	put       func(collection, key string, row map[string]any) map[string]any
 	headDelay time.Duration
-	// Repair asks the service for a REST repair of [start, end); Gap records a capture gap.
+
 	Repair func(inst *venue.Instrument, start, end time.Time, reason string)
 	Gap    func(inst *venue.Instrument, kind, reason string, start, end time.Time)
-	// Late reports a print for a sealed minute that left memory: the service rebuilds the
-	// minute over REST (or, without REST history, marks the stored bar).
+
 	Late func(inst *venue.Instrument, t *normalize.Trade)
 }
 
-// NewSealer is a sealer writing through put (points.Put).
 func NewSealer(clock Clock, put func(collection, key string, row map[string]any) map[string]any, headDelay time.Duration) *Sealer {
 	if headDelay < 30*time.Second {
 		headDelay = 30 * time.Second
@@ -139,8 +126,6 @@ func (s *Sealer) chain(inst *venue.Instrument) *chain {
 	return c
 }
 
-// Anchor sets an instrument's stored cursor (latest_market_trades), where the first
-// connection's bridge starts after a restart.
 func (s *Sealer) Anchor(inst *venue.Instrument, point map[string]any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -155,14 +140,12 @@ func (s *Sealer) Anchor(inst *venue.Instrument, point map[string]any) {
 	}
 }
 
-// Boundaries registers exact window edges (register_capture_boundaries).
 func (s *Sealer) Boundaries(iid string, points []time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.acc.RegisterBoundaries(iid, points)
 }
 
-// Reference records an explicit reference print before a boundary (_record_reference).
 func (s *Sealer) Reference(iid string, boundary time.Time, point map[string]any) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -170,7 +153,6 @@ func (s *Sealer) Reference(iid string, boundary time.Time, point map[string]any)
 	s.acc.References[flow.RefKey(iid, boundary)] = point
 }
 
-// References is a copy of the explicit references and the boundaries of one minute.
 func (s *Sealer) References(key flow.Key) (map[string]map[string]any, map[int64]time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -188,17 +170,12 @@ func (s *Sealer) References(key flow.Key) (map[string]map[string]any, map[int64]
 	return refs, points
 }
 
-// Reference point of a key, if any.
 func (s *Sealer) ReferenceAt(iid string, boundary time.Time) map[string]any {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.acc.References[flow.RefKey(iid, boundary)]
 }
 
-// Connected starts the chain of a new connection at the local time `at` (the member's
-// _connected_since) and opens the bridge from the instrument's anchor: the REST repair
-// that proves the minutes between the previous chain and this one. It returns the
-// bridge, or nil when the instrument has no cursor and no hot window to cover.
 func (s *Sealer) Connected(inst *venue.Instrument, conn int64, at time.Time, hotSince *time.Time) *span {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -213,12 +190,11 @@ func (s *Sealer) Connected(inst *venue.Instrument, conn int64, at time.Time, hot
 	case c.anchor != nil:
 		lo = pytime.MinuteFloor(c.anchor.TS)
 		if c.resume.After(lo) {
-			lo = c.resume // minutes a head check proved after the last print stand
+			lo = c.resume
 		}
 		s.Gap(inst, "RECONNECT", "REST reconciliation pending", c.anchor.TS, at)
 	case hotSince != nil && hotSince.Before(at):
-		// First connection: the escalation backfills the pre-event windows up to the
-		// anchor (03 §5.1); this bridge covers the anchor up to the socket.
+
 		lo = *hotSince
 		if lo.Before(at.Add(-24 * time.Hour)) {
 			lo = at.Add(-24 * time.Hour)
@@ -234,7 +210,6 @@ func (s *Sealer) Connected(inst *venue.Instrument, conn int64, at time.Time, hot
 	return &bridge
 }
 
-// dropOpen removes the open-ended bridge a disconnect left (Connected closes it).
 func dropOpen(repairs []span) []span {
 	kept := repairs[:0]
 	for _, r := range repairs {
@@ -245,8 +220,6 @@ func dropOpen(repairs []span) []span {
 	return kept
 }
 
-// Disconnected ends the connection's chain: what follows the last proof is unproven until
-// the next connection's bridge repairs it (03 §5.2: a reconnect backfills over REST).
 func (s *Sealer) Disconnected(inst *venue.Instrument, conn int64, reason string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -273,7 +246,6 @@ func (s *Sealer) Disconnected(inst *venue.Instrument, conn int64, reason string)
 	c.repairs = append(dropOpen(c.repairs), span{pytime.MinuteFloor(c.proved), time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC)})
 }
 
-// RepairDone closes a REST repair of [start, end).
 func (s *Sealer) RepairDone(iid string, start, end time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -289,7 +261,6 @@ func (s *Sealer) RepairDone(iid string, start, end time.Time) {
 	}
 }
 
-// RepairQueued keeps minutes of [start, end) unsealed while a repair is queued.
 func (s *Sealer) RepairQueued(inst *venue.Instrument, start, end time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -322,7 +293,6 @@ func (s *Sealer) remember(key flow.Key, id string) {
 	set[id] = true
 }
 
-// Trade adds a streamed print of connection conn.
 func (s *Sealer) Trade(inst *venue.Instrument, t *normalize.Trade, conn int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -340,8 +310,7 @@ func (s *Sealer) Trade(inst *venue.Instrument, t *normalize.Trade, conn int64) {
 	}
 	c := s.chain(inst)
 	if !c.first.IsZero() && t.TS.Before(pytime.MinuteFloor(c.first)) {
-		// A minute before this process's first connection may be stored complete by an
-		// earlier writer: it changes only through the stored-bar path.
+
 		s.Late(inst, t)
 		return
 	}
@@ -367,8 +336,7 @@ func (s *Sealer) Trade(inst *venue.Instrument, t *normalize.Trade, conn int64) {
 		return
 	}
 	if hole {
-		// A trade-ID hole: everything between the two prints, both minutes included,
-		// stays unproven until REST fills it by ID.
+
 		s.proveTo(c, minTime(prior.TS, s.clock.Now()), sourceStream, s.clock.Now())
 		s.acc.ProveRange(inst.ID, prior.TS, t.TS, false, "STREAM", "TRADE_ID_GAP", s.clock.Now())
 		c.proved = maxTime(c.proved, t.TS)
@@ -376,7 +344,7 @@ func (s *Sealer) Trade(inst *venue.Instrument, t *normalize.Trade, conn int64) {
 		c.repairs = append(c.repairs, span{lo, hi})
 		s.Repair(inst, lo, hi, "TRADE_ID_GAP")
 	} else if b := s.acc.Bars[key]; b != nil && b.GapReason != "" && b.GapReason != before && !c.ids {
-		// OKX ID regression, Bybit sequence regression: the minute is rebuilt over REST.
+
 		lo, hi := pytime.MinuteFloor(t.TS), pytime.MinuteFloor(t.TS).Add(time.Minute)
 		c.repairs = append(c.repairs, span{lo, hi})
 		s.Repair(inst, lo, hi, b.GapReason)
@@ -389,8 +357,6 @@ func (s *Sealer) Trade(inst *venue.Instrument, t *normalize.Trade, conn int64) {
 	}
 }
 
-// lateHeld is a print for a sealed minute still in memory: the bar is rewritten as a
-// revision, never silently.
 func (s *Sealer) lateHeld(inst *venue.Instrument, key flow.Key, t *normalize.Trade) {
 	if s.acc.Bars[key] == nil {
 		s.Late(inst, t)
@@ -401,8 +367,6 @@ func (s *Sealer) lateHeld(inst *venue.Instrument, key flow.Key, t *normalize.Tra
 	s.revise(key, "LATE_PRINT", s.clock.Now())
 }
 
-// Watermark is the exchange time of a connection's newest frame. Hyperliquid lists no
-// REST trades: its quiet minutes are proven by the same connection's watermark.
 func (s *Sealer) Watermark(iid string, conn int64, ts time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -411,8 +375,6 @@ func (s *Sealer) Watermark(iid string, conn int64, ts time.Time) {
 	}
 }
 
-// proveTo issues complete proofs over [c.proved, until), one per minute, creating the
-// empty minutes inside the chain (never before its start).
 func (s *Sealer) proveTo(c *chain, until time.Time, source string, now time.Time) {
 	for lo := c.proved; lo.Before(until); {
 		minute := pytime.MinuteFloor(lo)
@@ -431,16 +393,12 @@ func (s *Sealer) proveTo(c *chain, until time.Time, source string, now time.Time
 	}
 }
 
-// HeadCheck is one head check to run: the newest REST prints of an instrument compared
-// with the last print of its chain.
 type HeadCheck struct {
 	Inst *venue.Instrument
 	Conn int64
 	Last *normalize.Trade
 }
 
-// Tick issues the proofs the chains hold, seals every minute it can, writes open bars
-// provisionally, lets old bars go and returns the head checks due.
 func (s *Sealer) Tick(now time.Time) []HeadCheck {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -456,8 +414,7 @@ func (s *Sealer) Tick(now time.Time) []HeadCheck {
 		if c.heading || now.Before(c.headNext) || c.inst.VenueName() == "hyperliquid" {
 			continue
 		}
-		// The minute holding the newest proof has ended a head delay ago without a later
-		// print: ask REST whether anything was printed after the chain's last print.
+
 		open := pytime.MinuteFloor(c.proved).Add(time.Minute)
 		if !open.Add(s.headDelay).After(now) && !c.pending(pytime.MinuteFloor(c.proved), open) {
 			c.heading = true
@@ -496,8 +453,7 @@ func (s *Sealer) Tick(now time.Time) []HeadCheck {
 		case c.pending(minute, end):
 			s.provisional(key, now)
 		case !c.proved.Before(end), !end.After(c.start), c.conn == 0, end.Add(holdUnsealed).Before(now):
-			// Proofs only extend forward from the chain's head: once it is past the minute
-			// and no repair is pending, nothing more can prove the minute.
+
 			s.seal(key, false, sealedFinal, now)
 		default:
 			s.provisional(key, now)
@@ -506,7 +462,6 @@ func (s *Sealer) Tick(now time.Time) []HeadCheck {
 	return checks
 }
 
-// proofSource is the source of the proof that covers a minute's end.
 func proofSource(proofs []flow.Proof, end time.Time) string {
 	source := sourceStream
 	for _, p := range proofs {
@@ -517,9 +472,6 @@ func proofSource(proofs []flow.Proof, end time.Time) string {
 	return source
 }
 
-// HeadResult applies a head check: prints REST has after the chain's last print either
-// continue the chain (consecutive IDs) or are a hole repaired over REST; no such print
-// proves the chain quiet up to the observation less the head delay.
 func (s *Sealer) HeadResult(check HeadCheck, prints []*normalize.Trade, observed time.Time, failed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -546,12 +498,12 @@ func (s *Sealer) HeadResult(check HeadCheck, prints []*normalize.Trade, observed
 				newer = append(newer, t)
 			}
 		} else if t.TS.After(c.last.TS) && !s.holds(flow.KeyOf(c.inst.ID, t.TS), t.TradeID) && !t.TS.After(limit) {
-			newer = append(newer, t) // a print newer than the head delay may still be in flight
+			newer = append(newer, t)
 		}
 	}
 	now := s.clock.Now()
 	if len(newer) == 0 {
-		// The page must reach back to the chain's last print, or it proves nothing.
+
 		if len(prints) > 0 && c.last != nil && prints[0].TS.After(c.last.TS) && len(prints) >= headPrints {
 			return
 		}
@@ -565,7 +517,7 @@ func (s *Sealer) HeadResult(check HeadCheck, prints []*normalize.Trade, observed
 		first, _ := intID(newer[0].TradeID)
 		prev, _ := intID(c.last.TradeID)
 		if first == prev+1 {
-			// The stream has not delivered them yet: they continue the chain as REST prints.
+
 			run := 0
 			for i, t := range newer {
 				id, _ := intID(t.TradeID)
@@ -587,7 +539,7 @@ func (s *Sealer) HeadResult(check HeadCheck, prints []*normalize.Trade, observed
 			c.last = last
 			c.frontier = maxTime(c.frontier, last.TS)
 			if run == len(newer) && limit.After(c.frontier) {
-				c.frontier = limit // nothing after the newest REST print either
+				c.frontier = limit
 			}
 			s.proveTo(c, minTime(c.frontier, now), sourceHead, now)
 			if run == len(newer) {
@@ -596,10 +548,10 @@ func (s *Sealer) HeadResult(check HeadCheck, prints []*normalize.Trade, observed
 			newer = newer[run:]
 		}
 		if newer[0].TS.After(limit) {
-			return // the missing IDs may still be in flight
+			return
 		}
 	}
-	// A hole: prints the stream did not deliver within the head delay.
+
 	var lo time.Time
 	if c.last != nil {
 		lo = c.last.TS
@@ -630,7 +582,6 @@ func lessPrint(a, b *normalize.Trade, ids bool) bool {
 	return a.TradeID < b.TradeID
 }
 
-// record is the bar's typed row: an unproven bar always says why.
 func (s *Sealer) record(key flow.Key, complete bool, now time.Time) map[string]any {
 	bar := s.acc.Bars[key]
 	row := s.acc.Record(key, &complete, true, now)
@@ -649,7 +600,6 @@ func unprovenReason(proofs []flow.Proof) string {
 	return Unproven
 }
 
-// provisional writes an open bar: never complete, bar_version 0.
 func (s *Sealer) provisional(key flow.Key, now time.Time) {
 	if !s.acc.Dirty[key] {
 		return
@@ -667,7 +617,6 @@ func (s *Sealer) provisional(key flow.Key, now time.Time) {
 	s.put("mkt.flow_bars_1m", key.IID+":"+key.MinuteISO(), row)
 }
 
-// seal writes a minute final (bar_version 1) and keeps it for late prints.
 func (s *Sealer) seal(key flow.Key, complete bool, method string, now time.Time) {
 	row := s.record(key, complete, now)
 	version := s.versions[key] + 1
@@ -683,7 +632,6 @@ func (s *Sealer) seal(key flow.Key, complete bool, method string, now time.Time)
 	s.put("mkt.flow_bars_1m", key.IID+":"+key.MinuteISO(), row)
 }
 
-// revise rewrites a sealed bar that changed: bar_version + 1, revised, and the reason.
 func (s *Sealer) revise(key flow.Key, reason string, now time.Time) {
 	sl := s.seals[key]
 	bar := s.acc.Bars[key]
@@ -717,7 +665,6 @@ func flowSummary(row map[string]any) map[string]any {
 	return out
 }
 
-// release lets a sealed bar go; its version stays for a later revision.
 func (s *Sealer) release(key flow.Key) {
 	if sl := s.seals[key]; sl != nil {
 		s.versions[key] = sl.version
@@ -736,14 +683,11 @@ func (s *Sealer) release(key flow.Key) {
 	delete(s.wrote, key)
 }
 
-// RESTSameFlow is REST_SAME_FLOW: the fields a REST rebuild must reproduce for a stored
-// bar to stand as written.
 var RESTSameFlow = []string{
 	"n_buy", "n_sell", "buy_qty", "sell_qty", "sum_sq_qty", "buy_notional", "sell_notional",
 	"open", "high", "low", "close", "first_trade_id", "last_trade_id",
 }
 
-// SameFlow is _same_flow(stored, audited).
 func SameFlow(stored, audited map[string]any) bool {
 	value := func(row map[string]any, field string) (string, bool) {
 		item, ok := row[field]
@@ -786,23 +730,20 @@ func SameFlow(stored, audited map[string]any) bool {
 		x, e1 := pydec.Parse(a)
 		y, e2 := pydec.Parse(b)
 		if e1 != nil || e2 != nil || !x.Equal(y) {
-			return false // Decimal equality: 1.50 == 1.5
+			return false
 		}
 	}
 	return true
 }
 
-// Held is a copy of what the sealer holds for one minute: its prints, proofs and the
-// seal, for a REST rebuild of the minute.
 type Held struct {
 	Trades   []*normalize.Trade
 	Coverage []flow.Proof
 	Sealed   map[string]any
-	Version  int64 // version of the sealed bar, 0 when unsealed or unknown
-	Live     bool  // an unsealed bar is held
+	Version  int64
+	Live     bool
 }
 
-// Hold is the held state of a minute.
 func (s *Sealer) Hold(key flow.Key) Held {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -820,21 +761,13 @@ func (s *Sealer) Hold(key flow.Key) Held {
 	return h
 }
 
-// Rebuilt applies a REST rebuild of one minute (_persist_rest_flow_ranges). bar holds the
-// minute's prints (REST and held, in order) without proofs; proofs are the REST ranges
-// that cover the minute, and they follow the held proofs they repair. An open bar is
-// replaced by the rebuilt one (prints streamed meanwhile are kept) and sealed when the
-// minute is proven; a sealed one is revised only when the rebuild differs and is not an
-// incomplete replacement of a complete bar. held is false when the sealer does not hold
-// the minute: the caller writes it against the stored row.
 func (s *Sealer) Rebuilt(key flow.Key, bar *flow.Bar, proofs []flow.Proof, now time.Time) (held bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	live := s.acc.Bars[key]
 	minute := key.MinuteTime()
 	if live == nil {
-		// A recent minute the stream has not reached yet becomes live, so streamed prints
-		// continue on top of the REST ones; an older one is written against its stored row.
+
 		c := s.chains[key.IID]
 		if c == nil || c.conn == 0 || c.first.IsZero() || minute.Before(pytime.MinuteFloor(c.first)) ||
 			!minute.Add(time.Minute).After(now.Add(-3*time.Minute)) {
@@ -854,7 +787,7 @@ func (s *Sealer) Rebuilt(key flow.Key, bar *flow.Bar, proofs []flow.Proof, now t
 		row := s.record(key, complete, now)
 		storedComplete := sl.record["complete"] == true
 		if storedComplete && (row["complete"] != true || SameFlow(sl.record, row)) {
-			s.acc.Bars[key] = live // never replace a complete bar with an incomplete one
+			s.acc.Bars[key] = live
 			return true
 		}
 		for _, t := range bar.Trades {
@@ -883,7 +816,6 @@ func containsTrade(trades []*normalize.Trade, id string) bool {
 	return false
 }
 
-// addToBar adds a print to a rebuilt bar through a one-bar accumulator.
 func addToBar(bar *flow.Bar, t *normalize.Trade) {
 	acc := flow.New()
 	key := flow.KeyOf(bar.InstrumentID, t.TS)
@@ -891,7 +823,6 @@ func addToBar(bar *flow.Bar, t *normalize.Trade) {
 	acc.Add(t, false)
 }
 
-// Version is the version of a sealed minute, if this process knows it.
 func (s *Sealer) Version(key flow.Key) (int64, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -902,7 +833,6 @@ func (s *Sealer) Version(key flow.Key) (int64, bool) {
 	return v, ok
 }
 
-// Forget records the version a minute was written with outside the sealer.
 func (s *Sealer) Forget(key flow.Key, version int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -911,17 +841,15 @@ func (s *Sealer) Forget(key flow.Key, version int64) {
 	}
 }
 
-// Chain state for the stream state rows.
 type ChainState struct {
 	Conn    int64
 	Start   time.Time
 	Proved  time.Time
 	Last    *normalize.Trade
 	Repairs int
-	Sealed  time.Time // every minute before this is sealed or released
+	Sealed  time.Time
 }
 
-// State is the chain state of an instrument.
 func (s *Sealer) State(iid string) (ChainState, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -945,7 +873,6 @@ func (s *Sealer) State(iid string) (ChainState, bool) {
 	return st, true
 }
 
-// Drop forgets an instrument that left the hot set once its bars are written.
 func (s *Sealer) Drop(iid string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

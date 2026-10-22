@@ -72,8 +72,7 @@ async def test_explicit_replay_session_boundaries(tmp_path, monkeypatch, second_
     sent, archived = [], []
 
     async def send(service, payload):
-        # The transport actor chooses distinct facts. EventToolService remains
-        # responsible for the real one-event-per-session boundary.
+
         sid = payload.get("session_id")
         if sid is None:
             sid = "native-" + str(len(await repo.list("ops.agent_sessions")) + 1)
@@ -153,8 +152,7 @@ async def test_explicit_replay_session_boundaries(tmp_path, monkeypatch, second_
     assert len(report["output"]["events"]) == event_count
     assert len({sid for _, sid in sent}) == event_count
     assert set(archived) == {sid for _, sid in sent}
-    # ULIDs created in the same millisecond have random suffix order. Assert
-    # each input's link, independently of storage-key enumeration order.
+
     observations = report["output"]["observations"]
     assert len(observations) == 2
     assert {o["item_id"]: o["link_type"] for o in observations} == {

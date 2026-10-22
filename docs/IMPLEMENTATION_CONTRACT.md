@@ -26,7 +26,7 @@ At module boundaries use JSON-compatible dict records with names from Technical 
 ## Storage interface
 
 `Repository` protocol, `MemoryRepository` for explicit tests, `PostgresRepository(database_url)` with async `open()`, `close()`, `migrate()`.
-- `await repo.put(collection, key, record, *, immutable=False) -> dict`: named collections are full spec table names, e.g. evt.events, mkt.flow_bars_1m. Preserve indexed typed columns in SQL; JSON document access is an interface over these named tables, not a substitute single KV table. Immutable append records reject conflicting overwrite, same contents idempotent.
+- `await repo.put(collection, key, record, *, immutable=False) -> dict`: named collections are full spec table names, e.g. evt.events; the market series (mkt.flow_bars_1m and the rest) are ClickHouse tables. Preserve indexed typed columns; JSON document access is an interface over these named tables, not a substitute single KV table. Immutable append records reject conflicting overwrite, same contents idempotent.
 - `await repo.get(collection,key) -> dict|None`
 - `await repo.list(collection, *, filters=None, limit=1000) -> list[dict]`: top-level exact equality filters. Consumers sort and time-bound results; use sufficient explicit limits. Pagination/range helper may be added as needed.
 - `await repo.delete(collection,key)` allowed for mutable state only.

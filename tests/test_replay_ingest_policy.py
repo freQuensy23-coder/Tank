@@ -3,39 +3,33 @@
 import copy
 import json
 import os
-import uuid
-from urllib.parse import urlsplit, urlunsplit
+from contextlib import AsyncExitStack
 
 import httpx
 import pytest
 
 from tank.replay import run_operational_replay
 from tank.settings import Settings
-from tank.storage import MemoryRepository, PostgresRepository
+from tank.storage import MemoryRepository
 from tank.util import sha256
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
-async def test_fresh_import_rederives_policy_without_old_classifier_outputs(tmp_path, backend):
-    admin = None
-    database = None
-    repo = None
-    if backend == "postgres":
-        import psycopg
-        from psycopg import sql
-
-        url = os.getenv("TANK_TEST_DATABASE_URL")
-        if not url:
-            pytest.skip("Explicit disposable PostgreSQL administrator DSN required")
-        database = "tank_replay_policy_" + uuid.uuid4().hex[:12]
-        admin = await psycopg.AsyncConnection.connect(url, autocommit=True)
-        await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
-        repo = await PostgresRepository(urlunsplit(urlsplit(url)._replace(path="/" + database))).open()
-    else:
-        repo = MemoryRepository()
-    try:
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def test_fresh_import_rederives_policy_without_old_classifier_outputs(
+    tmp_path, backend, postgres_template
+):
+    async with AsyncExitStack() as resources:
         if backend == "postgres":
-            await repo.migrate()
+            url = os.getenv("TANK_TEST_DATABASE_URL")
+            if not url:
+                pytest.skip("Explicit disposable PostgreSQL administrator DSN required")
+            repo = await resources.enter_async_context(postgres_template.repository(url))
+        else:
+            repo = MemoryRepository()
+            resources.push_async_callback(repo.close)
         at = "2026-09-21T15:02:00Z"
         cfg = {
             "registry": {},
@@ -131,11 +125,3 @@ async def test_fresh_import_rederives_policy_without_old_classifier_outputs(tmp_
                 assert stored["relevance"]["decision"] is None
                 assert stored["relevance"]["pending_reason"]
         assert await repo.list("ops.agent_sessions") == []
-    finally:
-        if repo:
-            await repo.close()
-        if admin:
-            from psycopg import sql
-
-            await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(database)))
-            await admin.close()

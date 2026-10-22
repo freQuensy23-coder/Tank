@@ -4,8 +4,6 @@ Read-only: never repairs captures, changes cutoffs, invents outcomes, or runs a
 model. Prepared inputs and a completed acceptance run are separate obligations.
 """
 
-from __future__ import annotations
-
 import hashlib
 import io
 import json
@@ -320,8 +318,7 @@ def check_ready(root, case):
     input_hash = digest({k: v for k, v in packet.items() if k != "input_sha256"})
     if packet.get("input_sha256") != input_hash:
         errors.append("missing or incorrect input digest")
-    # Replay outputs bind the whole input envelope, including its internal
-    # payload checksum. Keep that identity distinct from the payload checksum.
+
     input_identity = digest(packet)
     sources = [r.get("record", {}) for r in records if r.get("collection") == "ingest.source_items"]
     if name not in MARKET_CASES and not sources:

@@ -1,7 +1,5 @@
 """Transactional PostgreSQL storage. MemoryRepository is an explicit test double only."""
 
-from __future__ import annotations
-
 import asyncio
 import copy
 import hashlib
@@ -10,7 +8,7 @@ import logging
 import random
 import time
 import weakref
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import timedelta
 from pathlib import Path
@@ -27,7 +25,6 @@ from tank.market_storage import (
 )
 from tank.models import (
     APPEND_ONLY,
-    PARTITIONED,
     SERIAL_TABLES,
     TABLE_COLUMNS,
     TIMESTAMP_PRECISION_FIELDS,
@@ -100,8 +97,7 @@ class Repository(Protocol):
     async def finish_job(self, job_id): ...
     async def fail_job(self, job_id, error, *, retry_after=1): ...
     async def recover_jobs(self): ...
-    async def prune_market(self, before): ...
-    async def maintain_partitions(self, *, extra_days=None, include_history=True): ...
+    async def prune_market(self, before, *, book_before=None, trades_before=None): ...
     async def prune_jobs(self, before): ...
     async def preserved_market_windows(self): ...
     async def latest_before(self, collection, time_field, cutoff, *, filters=None): ...
@@ -126,21 +122,17 @@ class Repository(Protocol):
     def iter_range(self, collection, time_field, *, start=None, end=None, filters=None, batch_size=10000): ...
 
 
-# Job types whose RUNNING count is capped at claim time. A REACTION_CAPTURE holds a
-# pooled connection through long reads; a backlog of them took 6 of 8 workers and
-# drained the pool (r110, 03:52Z), so one runs at a time and other types never wait.
 log = logging.getLogger(__name__)
 
+BASELINE = "001_schema.sql"
+
 RUNNING_CAPS = {"REACTION_CAPTURE": 1}
-# Due jobs of these types are claimed earliest expiry first within their priority: a
-# capture backlog must not let a checkpoint expire behind ones with hours of slack
-# (FR-R-01; captures expire at checkpoint + 6 h, 03 §3.8).
+
+
 EARLIEST_EXPIRY_FIRST = ("REACTION_CAPTURE",)
 CLAIM_SLOW_S, DELIVER_LATE_S = 0.5, 1.0
-# Event analysis goes before reaction captures (lead ruling 2026-10-21, E2E #9: a card has
-# 480 s, a capture has checkpoint + 6 h). A capture is not claimed while any analysis job
-# is running or due, or while an event known in the last FRESH_EVENT_S has no FULL card,
-# unless it would expire within EXPIRY_SAFETY_S.
+
+
 YIELDS_TO_ANALYSIS = ("REACTION_CAPTURE",)
 ANALYSIS_TYPES = ("RUN_MARKET_TRUTH", "FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE")
 FRESH_EVENT_S, EXPIRY_SAFETY_S = 600, 1200
@@ -326,8 +318,7 @@ class MemoryRepository(QueueMixin):
         if outer:
             await self._mutex.acquire()
             self._owner = asyncio.current_task()
-        # Stored domain documents are copy-on-write; only queue claims mutate rows in place.
-        # Copy mappings rather than every historical market document for each test insert.
+
         saved = {collection: rows.copy() for collection, rows in self._data.items()}
         if "ops.jobs" in saved:
             saved["ops.jobs"] = copy.deepcopy(saved["ops.jobs"])
@@ -341,6 +332,15 @@ class MemoryRepository(QueueMixin):
             if outer:
                 self._owner = None
                 self._mutex.release()
+
+    @asynccontextmanager
+    async def _read(self):
+        """Read consistent state without a write transaction's rollback snapshot."""
+        if self._owner is asyncio.current_task():
+            yield self
+        else:
+            async with self._mutex:
+                yield self
 
     @asynccontextmanager
     async def lock(self, key):
@@ -409,14 +409,14 @@ class MemoryRepository(QueueMixin):
 
     async def get(self, collection, key):
         _table(collection)
-        async with self.transaction():
+        async with self._read():
             return copy.deepcopy(self._data.get(collection, {}).get(str(key)))
 
     async def list(self, collection, *, filters=None, limit=1000):
         _table(collection)
         if limit < 0:
             raise ValueError("limit must be nonnegative")
-        async with self.transaction():
+        async with self._read():
             return copy.deepcopy(
                 [
                     r
@@ -615,7 +615,7 @@ def _projection(collection, record):
                 if isinstance(element, dict) and id_field:
                     element = element.get(id_field)
                 if not isinstance(element, str):
-                    raise ValueError(  # noqa: TRY004 - invalid record schema, not a Python argument type
+                    raise ValueError(
                         f"{collection}.{column} requires text values"
                         + (f" or objects carrying {id_field}" if id_field else "")
                     )
@@ -638,7 +638,6 @@ def _projection(collection, record):
             metadata = stamp.fields(field, precision_field=precision_field)
             values.update({key: value for key, value in metadata.items() if key != field})
         else:
-            # Copy only explicit unknown reasons; the repository does not infer source policies.
             for name in names:
                 if record.get(name + "_reason") is not None:
                     values[precision_field + "_reason"] = record[name + "_reason"]
@@ -677,7 +676,7 @@ async def _stable_transaction(conn):
             context.__aexit__(type(error), error, error.__traceback__)
         )
         if exit_cancelled and not isinstance(error, asyncio.CancelledError):
-            raise exit_cancelled
+            raise exit_cancelled from error
         if not suppressed:
             raise
     else:
@@ -699,25 +698,17 @@ class PostgresRepository(QueueMixin):
 
         class CancellationSafeConnection(AsyncConnection):
             async def wait(connection, *args, **kwargs):
-                # Deliver the first cancellation to psycopg so it cancels/drains the
-                # actual server query. Further caller cancels must not interrupt that
-                # protocol recovery and leave ACTIVE results ahead of ROLLBACK.
+
                 operation = asyncio.create_task(super().wait(*args, **kwargs))
                 try:
                     return await asyncio.shield(operation)
                 except asyncio.CancelledError:
                     if not operation.done():
                         operation.cancel()
-                    try:
+                    with suppress(asyncio.CancelledError):
                         await _finish_critical(operation)
-                    except asyncio.CancelledError:
-                        pass
                     raise
 
-        # Each backend caches the catalog of ~3,500 relations (mostly market partitions,
-        # 90-180 MiB per backend), so connections are recycled: idle ones close after
-        # 2 minutes and every one is replaced after 10. max_size stays 16 because
-        # advisory locks hold a connection for their body and waiters hold one each.
         self._pool = AsyncConnectionPool(
             self.database_url,
             open=False,
@@ -741,9 +732,7 @@ class PostgresRepository(QueueMixin):
     async def transaction(self):
         existing = self._connection.get()
         task = asyncio.current_task()
-        # ContextVars are copied into spawned tasks. A child must borrow its own
-        # connection, never use the parent's transaction. Weak bindings also avoid
-        # retaining a completed parent task/borrowed connection in long-lived children.
+
         if existing is not None and existing[1]() is task:
             async with _stable_transaction(existing[0]()):
                 yield self
@@ -773,8 +762,6 @@ class PostgresRepository(QueueMixin):
         digest = int.from_bytes(hashlib.sha256(str(key).encode()).digest()[:8], "big", signed=True)
         existing = self._connection.get()
         if existing is None or existing[1]() is not asyncio.current_task():
-            # Wait without holding a pooled connection: a blocked waiter used to keep one
-            # for the whole wait, so many waiters on one key drained the pool (r109).
             while True:
                 async with self.transaction():
                     row = await (
@@ -784,7 +771,7 @@ class PostgresRepository(QueueMixin):
                         yield self
                         return
                 await asyncio.sleep(random.uniform(0.05, 0.2))
-        # Inside an open transaction the connection cannot be returned; wait on it.
+
         async with self.transaction():
             await self._conn().execute("SELECT pg_advisory_xact_lock(%s)", (digest,))
             yield self
@@ -815,13 +802,9 @@ class PostgresRepository(QueueMixin):
 
             async def release():
                 try:
-                    # A cancelled lock acquisition might have succeeded on the
-                    # server. Always attempt unlock, even if acquire raised.
                     async with _stable_transaction(conn):
                         await conn.execute("SELECT pg_advisory_unlock(%s)", (digest,))
-                except BaseException:  # noqa: BLE001 - cleanup must close even on repeated cancellation
-                    # Closing a bad session also releases any session lock;
-                    # never return a locked or protocol-damaged connection.
+                except BaseException:
                     await conn.close()
                 await pool.putconn(conn)
 
@@ -829,13 +812,22 @@ class PostgresRepository(QueueMixin):
             if cancelled:
                 raise cancelled
 
-    async def migrate(self, *, target=None, market_export_dir=None, legacy_bundle_dir=None):
+    async def migrate(self, *, target=None):
         async with self._migration_connection() as conn:
             async with _stable_transaction(conn):
                 await conn.execute("CREATE SCHEMA IF NOT EXISTS ops")
                 await conn.execute(
                     "CREATE TABLE IF NOT EXISTS ops.schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
                 )
+                adopted = await (
+                    await conn.execute(
+                        "SELECT EXISTS (SELECT 1 FROM ops.schema_migrations) AND NOT EXISTS "
+                        "(SELECT 1 FROM ops.schema_migrations WHERE version=%s) AS adopt",
+                        (BASELINE,),
+                    )
+                ).fetchone()
+                if adopted["adopt"]:
+                    await conn.execute("INSERT INTO ops.schema_migrations(version) VALUES (%s)", (BASELINE,))
             for path in sorted((Path(__file__).parent / "migrations").glob("*.sql")):
                 if target is not None and path.name > target:
                     break
@@ -846,27 +838,7 @@ class PostgresRepository(QueueMixin):
                         )
                     ).fetchone()
                     if exists is None:
-                        if path.name == "027_typed_market.sql":
-                            from tank.market_migration import prepare_market_migration
-
-                            market_export = await prepare_market_migration(self, market_export_dir)
-                        if path.name.startswith(("032_", "033_", "034_", "035_")):
-                            from tank.market_migration import prepare_archive_cleanup
-
-                            await prepare_archive_cleanup(self, legacy_bundle_dir, path.name)
                         await conn.execute(path.read_text(), prepare=False)
-                        if path.name == "027_typed_market.sql":
-                            from tank.market_migration import finish_market_migration
-
-                            await finish_market_migration(self)
-                            if market_export:
-                                market_export.update(collection_clock().fields("created_at"))
-                                await self.put(
-                                    "ops.market_migration_exports",
-                                    market_export["export_id"],
-                                    market_export,
-                                    immutable=True,
-                                )
                         await conn.execute(
                             "INSERT INTO ops.schema_migrations(version) VALUES (%s)", (path.name,)
                         )
@@ -880,16 +852,6 @@ class PostgresRepository(QueueMixin):
 
         _table(collection)
         key, record = str(key), jsonable(record)
-        projected = _projection(collection, record)
-        if collection in PARTITIONED and projected.get(PARTITIONED[collection]) is not None:
-            day = parse_time(projected[PARTITIONED[collection]]).date()
-            partition_name = collection + "_" + day.strftime("%Y%m%d")
-            async with self.transaction():
-                exists = await (
-                    await self._conn().execute("SELECT to_regclass(%s) AS name", (partition_name,))
-                ).fetchone()
-            if exists["name"] is None:
-                await self.maintain_partitions(extra_days={collection: {day}})
         async with self.lock(f"record:{collection}:{key}"):
             conn = self._conn()
             table = sql.Identifier(*collection.split("."))
@@ -929,26 +891,17 @@ class PostgresRepository(QueueMixin):
             query = sql.SQL(
                 "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT(storage_key) DO UPDATE SET {}"
             ).format(table, columns, sql.SQL(",").join(sql.Placeholder() for _ in names), assignments)
-            if collection in PARTITIONED:
-                if old:
-                    query = sql.SQL("UPDATE {} SET {} WHERE storage_key=%s").format(
-                        table,
-                        sql.SQL(",").join(sql.SQL("{}=%s").format(sql.Identifier(n)) for n in names[1:]),
-                    )
-                    await conn.execute(query, [*values[1:], key])
-                else:
-                    query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
-                        table, columns, sql.SQL(",").join(sql.Placeholder() for _ in names)
-                    )
-                    await conn.execute(query, values)
-            else:
-                await conn.execute(query, values)
+            await conn.execute(query, values)
             return copy.deepcopy(record)
 
     async def get(self, collection, key):
         from psycopg import sql
 
+        from tank import clickhouse_market as chm
+
         _table(collection)
+        if (ch := chm.client(self, collection)) is not None:
+            return await chm.get(ch, collection, key)
         async with self.transaction():
             row = await (
                 await self._conn().execute(
@@ -976,7 +929,7 @@ class PostgresRepository(QueueMixin):
         _table(collection)
         if limit < 0:
             raise ValueError("limit must be nonnegative")
-        # JSONB containment preserves exact structured top-level values and nulls.
+
         clauses, args = [], []
         for k, v in (filters or {}).items():
             clauses.append(sql.SQL("document -> %s = %s"))
@@ -1009,22 +962,22 @@ class PostgresRepository(QueueMixin):
             return [_read_record(collection, r) for r in rows]
 
     async def delete(self, collection, key):
-        from psycopg import errors, sql
+        from psycopg import sql
 
         _table(collection)
         if collection in MARKET_COLUMNS:
-            try:
-                async with self.transaction():
-                    await self._conn().execute(
-                        sql.SQL("DELETE FROM {} WHERE storage_key=%s").format(
-                            sql.Identifier(*collection.split("."))
-                        ),
-                        (str(key),),
-                    )
-            except errors.RaiseException as error:
-                if str(error).startswith("immutable sealed raw archive"):
-                    raise ImmutableRecordError(str(error)) from error
-                raise
+            from tank import clickhouse_market as chm
+
+            if (ch := chm.client(self, collection)) is not None:
+                await chm.delete(ch, collection, key)
+                return
+            async with self.transaction():
+                await self._conn().execute(
+                    sql.SQL("DELETE FROM {} WHERE storage_key=%s").format(
+                        sql.Identifier(*collection.split("."))
+                    ),
+                    (str(key),),
+                )
             return
         async with self.lock(f"record:{collection}:{key}"):
             row = await (
@@ -1046,8 +999,7 @@ class PostgresRepository(QueueMixin):
         started = time.monotonic()
         job = await self._claim_job()
         elapsed = time.monotonic() - started
-        # Timing evidence for the 10 s delivery target (01 §9); the elapsed time includes
-        # the wait for a pooled connection.
+
         late = None
         if job and job.get("type") == "DELIVER" and job.get("attempts") == 1 and job.get("run_after"):
             late = (utcnow() - parse_time(job["run_after"])).total_seconds()
@@ -1063,12 +1015,7 @@ class PostgresRepository(QueueMixin):
     async def _claim_job(self):
         async with self.transaction():
             conn = self._conn()
-            # Capped types: try (never wait) for each type's claim lock. A type whose lock
-            # another claimer holds is skipped this round; every other type is claimable,
-            # so a stalled capture claim can no longer queue DELIVER behind it (r114 E2E #6:
-            # 7.7 s pickup while claimers waited in pg_advisory_xact_lock). The RUNNING
-            # count is read by the next statement, after the lock, so it sees every
-            # capture claimed before the lock was released.
+
             held = (
                 await (
                     await conn.execute(
@@ -1201,137 +1148,34 @@ async def _preserved_windows(repo):
     return windows
 
 
-async def _maintain_partitions(self, *, extra_days=None, include_history=True):
-    """Create future UTC partitions and atomically split occupied historical DEFAULT days.
+async def _prune_market(self, before, *, book_before=None, trades_before=None):
+    """Prune capture after backup, preserving whole UTC days overlapping MAJOR+ windows.
 
-    Existing documents and typed values move verbatim. NOT VALID legacy completeness checks
-    remain NOT VALID on the attached child, so moving history cannot invent missing data.
-    """
-    if not isinstance(self, PostgresRepository):
-        return 0
-    from psycopg import sql
-
-    created = 0
-    for collection, ts in PARTITIONED.items():
-        schema, name = collection.split(".")
-        historical = sql.Identifier(schema, name + "_historical")
-        days = {(utcnow() + timedelta(days=offset)).date() for offset in range(15)}
-        days.update((extra_days or {}).get(collection, ()))
-        if include_history and extra_days is None:
-            async with self.transaction():
-                rows = await (
-                    await self._conn().execute(
-                        sql.SQL(
-                            "SELECT DISTINCT date_trunc('day',{} AT TIME ZONE 'UTC')::date AS day FROM {} WHERE {} IS NOT NULL"
-                        ).format(sql.Identifier(ts), historical, sql.Identifier(ts))
-                    )
-                ).fetchall()
-                days.update(row["day"] for row in rows)
-        for day in sorted(days):
-            async with self.lock("tank:partition_maintenance"):
-                partition_name = name + "_" + day.strftime("%Y%m%d")
-                exists = await (
-                    await self._conn().execute(
-                        "SELECT to_regclass(%s) AS name", (schema + "." + partition_name,)
-                    )
-                ).fetchone()
-                if exists["name"] is not None:
-                    continue
-                start = parse_time(day.isoformat())
-                end = start + timedelta(days=1)
-                await self._conn().execute(
-                    sql.SQL("LOCK TABLE {} IN ACCESS EXCLUSIVE MODE").format(sql.Identifier(schema, name))
-                )
-                occupied = await (
-                    await self._conn().execute(
-                        sql.SQL("SELECT 1 FROM {} WHERE {} >= %s AND {} < %s LIMIT 1").format(
-                            historical, sql.Identifier(ts), sql.Identifier(ts)
-                        ),
-                        (start, end),
-                    )
-                ).fetchone()
-                child = sql.Identifier(schema, partition_name)
-                parent = sql.Identifier(schema, name)
-                if occupied:
-                    # Standalone child accepts pre-existing legacy rows before matching inherited
-                    # constraints are reattached with their original validation state.
-                    await self._conn().execute(
-                        sql.SQL("CREATE TABLE {} (LIKE {} INCLUDING DEFAULTS INCLUDING STORAGE)").format(
-                            child, parent
-                        )
-                    )
-                    copied = await self._conn().execute(
-                        sql.SQL("INSERT INTO {} SELECT * FROM {} WHERE {} >= %s AND {} < %s").format(
-                            child, historical, sql.Identifier(ts), sql.Identifier(ts)
-                        ),
-                        (start, end),
-                    )
-                    copied_count = copied.rowcount
-                    checks = await (
-                        await self._conn().execute(
-                            "SELECT conname,pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid=%s::regclass AND contype='c'",
-                            (collection,),
-                        )
-                    ).fetchall()
-                    for check in checks:
-                        await self._conn().execute(
-                            sql.SQL("ALTER TABLE {} ADD CONSTRAINT {} {}").format(
-                                child, sql.Identifier(check["conname"]), sql.SQL(check["definition"])
-                            )
-                        )
-                    await self._conn().execute("SELECT set_config('tank.partition_relocation','on',true)")
-                    removed = await self._conn().execute(
-                        sql.SQL("DELETE FROM {} WHERE {} >= %s AND {} < %s").format(
-                            historical, sql.Identifier(ts), sql.Identifier(ts)
-                        ),
-                        (start, end),
-                    )
-                    if removed.rowcount != copied_count:
-                        raise RuntimeError("Partition relocation row count mismatch")
-                    await self._conn().execute("SELECT set_config('tank.partition_relocation','off',true)")
-                    await self._conn().execute(
-                        sql.SQL("ALTER TABLE {} ATTACH PARTITION {} FOR VALUES FROM ({}) TO ({})").format(
-                            parent, child, sql.Literal(start), sql.Literal(end)
-                        )
-                    )
-                else:
-                    await self._conn().execute(
-                        sql.SQL("CREATE TABLE {} PARTITION OF {} FOR VALUES FROM ({}) TO ({})").format(
-                            child, parent, sql.Literal(start), sql.Literal(end)
-                        )
-                    )
-                created += 1
-    return created
-
-
-MemoryRepository.maintain_partitions = _maintain_partitions
-PostgresRepository.maintain_partitions = _maintain_partitions
-
-
-async def _prune_market(self, before):
-    """Prune capture after backup, preserving whole UTC partitions overlapping MAJOR+ windows.
-
-    Normalized series use the caller's cutoff (normally90days). Raw Parquet file
-    retention is handled separately; sealed archive manifests remain immutable.
+    ClickHouse drops whole daily partitions of the exchange series: the caller's cutoff
+    (normally 90 days), book summaries at `book_before` (72 h, 03 §14, no event-window
+    exception) and prints at `trades_before`. PostgreSQL keeps only supply observations,
+    capture gaps and tier transitions, deleted by the same cutoff and preserved days.
     """
     cutoff = parse_time(before)
     temporal = {
-        "mkt.klines_1m": "open_time",
-        "mkt.flow_bars_1m": "minute_start",
-        "mkt.book_summaries": "exchange_ts",
-        "mkt.oi_obs": "ts",
-        "mkt.funding_obs": "as_of",
-        "mkt.liq_obs": "ts",
-        "mkt.tickers_24h": "ts",
         "mkt.supply_obs": "ts",
-        # Gaps describe the series above and share their retention (tank-market, W11).
         "mkt.capture_gaps": "observed_at",
-        # Capture tiers in force at a cutoff (03 §5.10); mutable since migration 042.
         "ops.capture_tier_transitions": "effective_at",
     }
+    if isinstance(self, MemoryRepository):
+        temporal.update(
+            {
+                "mkt.klines_1m": "open_time",
+                "mkt.flow_bars_1m": "minute_start",
+                "mkt.book_summaries": "exchange_ts",
+                "mkt.oi_obs": "ts",
+                "mkt.funding_obs": "as_of",
+                "mkt.liq_obs": "ts",
+                "mkt.tickers_24h": "ts",
+            }
+        )
     counts = {}
     async with self.lock("tank:market_retention"):
-        # Retention is by whole UTC partition across all instruments, including benchmarks.
         days = set()
         for _, start, end in await _preserved_windows(self):
             day = start.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -1348,11 +1192,8 @@ async def _prune_market(self, before):
         if isinstance(self, PostgresRepository):
             from psycopg import sql
 
-            await self.maintain_partitions(include_history=False)
-            await self._conn().execute("SELECT set_config('tank.retention_purge','on',true)")
             for collection, ts in temporal.items():
-                age = cutoff
-                args = [age]
+                args = [cutoff]
                 clauses = []
                 for start, end in spans:
                     clauses.append(
@@ -1360,29 +1201,49 @@ async def _prune_market(self, before):
                     )
                     args.extend([start, end])
                 protect = sql.SQL(" OR ").join(clauses) if clauses else sql.SQL("FALSE")
-                mutable = sql.SQL("TRUE")
                 cursor = await self._conn().execute(
-                    sql.SQL("DELETE FROM {} WHERE {} < %s AND {} AND NOT ({})").format(
-                        sql.Identifier(*collection.split(".")), sql.Identifier(ts), mutable, protect
+                    sql.SQL("DELETE FROM {} WHERE {} < %s AND NOT ({})").format(
+                        sql.Identifier(*collection.split(".")), sql.Identifier(ts), protect
                     ),
                     args,
                 )
                 counts[collection] = cursor.rowcount
-            await self._conn().execute("SELECT set_config('tank.retention_purge','off',true)")
         else:
+            if book_before is not None:
+                book_cutoff = parse_time(book_before)
+                for key, row in list(self._data.get("mkt.book_summaries", {}).items()):
+                    if row.get("exchange_ts") and parse_time(row["exchange_ts"]) < book_cutoff:
+                        del self._data["mkt.book_summaries"][key]
+                        self._immutable.discard(("mkt.book_summaries", key))
             for collection, ts in temporal.items():
-                age = cutoff
                 deleted = 0
                 for key, row in list(self._data.get(collection, {}).items()):
                     if not row.get(ts):
                         continue
                     at = parse_time(row[ts])
                     protected = any(start <= at < end for start, end in spans)
-                    if at < age and not protected and (collection, key) not in self._immutable:
+                    if at < cutoff and not protected and (collection, key) not in self._immutable:
                         del self._data[collection][key]
                         self._immutable.discard((collection, key))
                         deleted += 1
                 counts[collection] = deleted
+    ch = getattr(self, "clickhouse", None)
+    if ch is not None:
+        from tank import clickhouse_market as chm
+
+        preserved = set()
+        for start, end in spans:
+            day = start
+            while day < end:
+                preserved.add(day)
+                day += timedelta(days=1)
+        counts["clickhouse_partitions_dropped"] = await chm.prune(
+            ch,
+            cutoff,
+            preserved,
+            book_cutoff=parse_time(book_before) if book_before is not None else None,
+            trades_cutoff=parse_time(trades_before) if trades_before is not None else None,
+        )
     return counts
 
 
@@ -1400,6 +1261,12 @@ async def _range_page(
     if limit < 1:
         raise ValueError("limit must be positive")
     start_dt, end_dt = parse_time(start) if start else None, parse_time(end) if end else None
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(self, collection)) is not None:
+        return await chm.range_page(
+            ch, collection, time_field, start=start_dt, end=end_dt, filters=filters, limit=limit, after=after
+        )
     if isinstance(self, PostgresRepository):
         from psycopg import sql
         from psycopg.types.json import Jsonb
@@ -1417,7 +1284,6 @@ async def _range_page(
             clauses.extend(extra)
             args.extend(values)
         elif filters:
-            # Containment hits the GIN document index; equality preserves exact top-level objects.
             clauses.append(sql.SQL("document @> %s"))
             args.append(Jsonb(jsonable(filters)))
             for key, value in filters.items():
@@ -1569,6 +1435,10 @@ async def _latest_before(self, collection, time_field, cutoff, *, filters=None):
     if TABLE_COLUMNS[collection].get(time_field) != "timestamptz":
         raise ValueError(f"{collection}.{time_field} is not a typed timestamp column")
     cutoff = parse_time(cutoff)
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(self, collection)) is not None:
+        return await chm.latest_before(ch, collection, time_field, cutoff, filters=filters)
     if isinstance(self, PostgresRepository):
         from psycopg import sql
         from psycopg.types.json import Jsonb
@@ -1633,8 +1503,7 @@ def _exact_predicate(collection, filters):
             if value is None:
                 clauses.append(sql.SQL("{} IS NULL").format(sql.Identifier(key)))
                 continue
-            # Equality on a known value preserves exact NULL behavior and lets
-            # PostgreSQL seek the typed column's ordinary B-tree index.
+
             clauses.append(sql.SQL("{} = %s").format(sql.Identifier(key)))
             args.append(
                 Jsonb(jsonable(value))
@@ -1667,8 +1536,13 @@ async def _iter_all(self, collection, *, filters=None, batch_size=1000):
     if batch_size < 1:
         raise ValueError("batch_size must be positive")
     after = None
+    from tank import clickhouse_market as chm
+
+    ch = chm.client(self, collection)
     while True:
-        if isinstance(self, PostgresRepository):
+        if ch is not None:
+            page = await chm.all_page(ch, collection, filters=filters, after=after, limit=batch_size)
+        elif isinstance(self, PostgresRepository):
             from psycopg import sql
 
             clauses, args = _exact_predicate(collection, filters)
@@ -1683,7 +1557,7 @@ async def _iter_all(self, collection, *, filters=None, batch_size=1000):
                 rows = await (await self._conn().execute(query, [*args, batch_size])).fetchall()
             page = [(r["storage_key"], _read_record(collection, r)) for r in rows]
         else:
-            async with self.transaction():
+            async with self._read():
                 page = []
                 for key, row in sorted(self._data.get(collection, {}).items()):
                     if after is not None and key <= after:
@@ -1712,6 +1586,12 @@ async def _list_latest(self, collection, time_field, *, filters=None, limit=100,
         raise ValueError("limit must be nonnegative")
     if limit == 0:
         return []
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(self, collection)) is not None:
+        return await chm.list_latest(
+            ch, collection, time_field, filters=filters, limit=limit, start=start, end=end
+        )
     if isinstance(self, PostgresRepository):
         from psycopg import sql
 
@@ -1783,8 +1663,24 @@ async def _iter_late_arrivals(
     end = parse_time(end) if end is not None else None
     market_end = parse_time(market_end)
     after = None
+    from tank import clickhouse_market as chm
+
+    ch = chm.client(self, collection)
     while True:
-        if isinstance(self, PostgresRepository):
+        if ch is not None:
+            page = await chm.late_page(
+                ch,
+                collection,
+                arrival_field,
+                market_field,
+                since=since,
+                end=end,
+                market_end=market_end,
+                filters=filters,
+                after=after,
+                limit=batch_size,
+            )
+        elif isinstance(self, PostgresRepository):
             from psycopg import sql
 
             clauses, args = _exact_predicate(collection, filters)

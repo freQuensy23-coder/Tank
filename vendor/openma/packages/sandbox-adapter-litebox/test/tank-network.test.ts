@@ -20,7 +20,7 @@ async function replayEvidence() {
     guest_root: "/replay/evidence",
     files: [],
     identity_key: ["instrument_id", "trade_id"],
-    writer: { library: "pyarrow", version: "test", compression: "zstd" },
+    format: "jsonl",
     sealed_at: "2026-10-18T13:00:00Z",
     sealed_at_prec: "COLLECTION_ONLY",
     sealed_at_prec_reason: null,
@@ -106,7 +106,7 @@ it("analysis enables internet and injects only curated read-only credentials", a
   expect(state.options[0].cpus).toBe(1);
   await s.destroy?.();
 });
-it("replay allows only explicit database host and omits outside API secrets", async () => {
+it("replay uses only the database IP and omits outside API secrets", async () => {
   const s = await sandboxFactory(
     {
       sessionId: "tank-replay-test",
@@ -127,7 +127,7 @@ it("replay allows only explicit database host and omits outside API secrets", as
   await s.exec("true");
   expect(state.options[0].network).toEqual({
     mode: "enabled",
-    allowNet: ["postgres", "172.29.0.2"],
+    allowNet: ["172.29.0.2"],
   });
   expect(state.commands.at(-1)[2]).toEqual({
     TANK_DB_URL: "postgresql://readonly@postgres/tank_replay",
@@ -173,17 +173,11 @@ it("local verified OCI layout reaches the native SimpleBox loader independently 
   await s.destroy?.();
 });
 
-it("replay rejects missing database resolution and unrestricted policy", async () => {
+it("replay rejects unrestricted policy before allocation", async () => {
   const ctx = {
     sessionId: "tank-invalid",
     workdir: "/tmp/tank-invalid",
   } as any;
-  await expect(
-    sandboxFactory(ctx, {
-      TANK_SANDBOX_REPLAY: "1",
-      TANK_SANDBOX_ALLOWED_NET: '["postgres"]',
-    }),
-  ).rejects.toThrow("not resolved");
   await expect(
     sandboxFactory(ctx, {
       TANK_SANDBOX_REPLAY: "1",

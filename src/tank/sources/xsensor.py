@@ -1,10 +1,9 @@
 """Dedicated read-only X sensor: operator session and bounded list capture (02 §3.7)."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 import re
+from contextlib import suppress
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -47,8 +46,7 @@ class XSensor:
             await self._open_context()
             try:
                 await self._bootstrap_storage_state(Path(self.settings.x_profile_dir))
-            except Exception:  # noqa: BLE001 — secret-bearing browser errors must never escape
-                # A bad X input must not terminate the shared public-page context.
+            except Exception:
                 if not self.shared_browser:
                     await self.close()
                 raise ValueError(
@@ -110,8 +108,7 @@ class XSensor:
             ):
                 raise TypeError("Invalid local storage")
             validated_origins.append((url, entries))
-        # Validate the complete export before applying credentials to the profile.
-        # Persistent contexts require explicit cookie and origin-storage imports.
+
         await self.context.add_cookies(cookies)
         for url, entries in validated_origins:
             page = await self.context.new_page()
@@ -152,7 +149,7 @@ class XSensor:
         try:
             await button.click(timeout=5000)
             return True
-        except Exception:  # noqa: BLE001 — one unexpandable post must not fail the list read
+        except Exception:
             return False
 
     async def capture_page(self, page, kind):
@@ -189,8 +186,7 @@ class XSensor:
                     articles = page.locator("article")
                     for idx in range(await articles.count()):
                         node = articles.nth(idx)
-                        # The status permalink containing the outer time identifies the author;
-                        # quote cards have their own links and must not replace that identity.
+
                         times = node.locator("time[datetime]")
                         if not await times.count():
                             continue
@@ -227,7 +223,7 @@ class XSensor:
                             ):
                                 related.append({"author": m.group(1), "status_id": m.group(2)})
                         social = await node.locator('[data-testid="socialContext"]').all_text_contents()
-                        # X wraps the "… reposted" label in the reposter's profile link.
+
                         reposter_links = await node.locator('[data-testid="socialContext"]').evaluate_all(
                             '(nodes)=>nodes.map(n=>(n.closest("a[href]")||n.querySelector("a[href]")||{getAttribute:()=>null}).getAttribute("href"))'
                         )
@@ -243,7 +239,6 @@ class XSensor:
                             '(nodes)=>nodes.map(n=>({type:n.tagName.toLowerCase(),alt:n.getAttribute("alt")||null,src:n.getAttribute("src")||null,poster:n.getAttribute("poster")||null}))'
                         )
                         if members and (reposter or handle).lower() not in members:
-                            # Neither author nor reposter is in the list: thread context or promotion.
                             continue
                         result[status_id] = {
                             "external_id": status_id,
@@ -262,7 +257,6 @@ class XSensor:
                             "url": f"https://x.com/{handle}/status/{status_id}",
                             "published_at": await time.get_attribute("datetime"),
                             "published_at_precision": "EXACT",
-                            # The post's own DOM is its raw payload (02 §7.2).
                             "_payload": (await node.evaluate("n => n.outerHTML")).encode(),
                         }
                     if reached:
@@ -271,21 +265,17 @@ class XSensor:
                     await page.mouse.wheel(0, 1200)
                     await page.wait_for_timeout(1200)
                     if stalled > 5:
-                        # A stalled viewport cannot prove that unseen history is
-                        # complete. Return new posts, retain the old checkpoint,
-                        # and expose a gap instead of failing the whole batch.
                         if checkpoint and not reached:
                             self.scan_status = "GAP_LIMIT"
                         break
                     if asyncio.get_running_loop().time() - scan_started >= 30:
-                        # Without a stored checkpoint (first scan) there is no gap to report.
                         if checkpoint:
                             self.scan_status = "GAP_LIMIT"
                         break
                 else:
                     if checkpoint:
                         self.scan_status = "GAP_LIMIT"
-                # Fetch quote/repost status pages because list quote cards truncate long text.
+
                 detail = await self.context.new_page()
                 try:
                     for item in result.values():
@@ -299,7 +289,7 @@ class XSensor:
                                 )
                                 await self.capture_page(detail, "X_QUOTED_STATUS_HTML")
                                 await detail.wait_for_selector("article", timeout=5000)
-                            except Exception:  # noqa: BLE001 — missing/deleted quote must not discard other posts
+                            except Exception:
                                 item.setdefault("quoted_unavailable", []).append(
                                     {"status_id": related["status_id"], "reason": "QUOTE_UNAVAILABLE"}
                                 )
@@ -308,7 +298,7 @@ class XSensor:
                             found = False
                             for index in range(await candidates.count()):
                                 candidate = candidates.nth(index)
-                                # Cards without a permalinked time (e.g. promoted or withheld) are not the quote.
+
                                 permalink = candidate.locator("time").first.locator("xpath=ancestor::a[1]")
                                 if not await permalink.count():
                                     continue
@@ -359,7 +349,5 @@ class XSensor:
             started = asyncio.get_running_loop().time()
             await poll()
             remaining = max(0, 15 - (asyncio.get_running_loop().time() - started))
-            try:
+            with suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=remaining)
-            except TimeoutError:
-                pass

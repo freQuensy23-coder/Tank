@@ -1,7 +1,3 @@
-// Package config is the part of tank.settings and the MarketService constructor the
-// capture service needs: settings from the environment and Docker secrets, the versioned
-// configuration (registry, semantics, thresholds, API limits) read as yaml.safe_load
-// reads it, and the config and code versions every row carries.
 package config
 
 import (
@@ -17,10 +13,8 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// DefaultUserAgent is Settings.user_agent before configured_values applies the contact.
 const DefaultUserAgent = "TankV0/1.0 (operator contact not configured)"
 
-// Settings are the process settings (TANK_* environment, Docker secrets).
 type Settings struct {
 	DatabaseURL   string
 	ConfigDir     string
@@ -30,8 +24,6 @@ type Settings struct {
 	CodeVersion   string
 }
 
-// Writer names the rows the service claims or reports (capture requests, the request
-// ledger): it is the only writer of the market tables.
 const Writer = "tank-capture"
 
 func env(name, fallback string) string {
@@ -41,8 +33,6 @@ func env(name, fallback string) string {
 	return fallback
 }
 
-// escape is urllib.parse.quote(value, safe=""): everything but unreserved characters is
-// percent-encoded, with upper-case hex.
 func escape(value string) string {
 	var b strings.Builder
 	for i := 0; i < len(value); i++ {
@@ -56,8 +46,6 @@ func escape(value string) string {
 	return b.String()
 }
 
-// databaseURL is TANK_DATABASE_URL, else the URL tank.settings builds from the
-// tank_db_password Docker secret (the Compose role "tank" at postgres:5432).
 func databaseURL() (string, error) {
 	if url := env("TANK_DATABASE_URL", ""); url != "" {
 		return url, nil
@@ -77,7 +65,6 @@ func databaseURL() (string, error) {
 	return "postgresql://tank:" + escape(password) + "@postgres:5432/tank", nil
 }
 
-// LoadSettings reads the settings and resolves the config and code versions.
 func LoadSettings() (Settings, error) {
 	s := Settings{
 		ConfigDir:  env("TANK_CONFIG_DIR", "/config"),
@@ -96,21 +83,19 @@ func LoadSettings() (Settings, error) {
 	return s, nil
 }
 
-// Config is the loaded configuration the capture service runs with.
 type Config struct {
 	Settings
-	Tokens        map[string]map[string]any // registry tokens by token_id
+	Tokens        map[string]map[string]any
 	TokenOrder    []string
-	Instruments   map[string]*venue.Instrument // active instruments by id
-	Order         []string                     // active instrument ids in registry order
-	Registry      map[string]map[string]any    // the registry dict of each active instrument
+	Instruments   map[string]*venue.Instrument
+	Order         []string
+	Registry      map[string]map[string]any
 	SectorBaskets []map[string]any
-	Semantics     []map[string]any // semantics.yaml metrics
+	Semantics     []map[string]any
 	Thresholds    map[string]any
-	APILimits     []map[string]any // api_limits.yaml limits
+	APILimits     []map[string]any
 }
 
-// ReadYAML is Settings.load_config: a configuration file that must hold a mapping.
 func ReadYAML(dir, name string) (map[string]any, error) {
 	if !strings.HasSuffix(name, ".yaml") && !strings.HasSuffix(name, ".yml") {
 		name += ".yaml"
@@ -149,8 +134,6 @@ func mappings(v any, what string) ([]map[string]any, error) {
 	return out, nil
 }
 
-// Load reads the registry, semantics, thresholds, API limits and the sources contact as
-// MarketService.__init__ and configured_values do.
 func Load(s Settings) (*Config, error) {
 	c := &Config{Settings: s, Tokens: map[string]map[string]any{}, Instruments: map[string]*venue.Instrument{}, Registry: map[string]map[string]any{}}
 	registry, err := ReadYAML(s.ConfigDir, "registry")
@@ -176,7 +159,7 @@ func Load(s Settings) (*Config, error) {
 		return nil, err
 	}
 	for _, r := range instruments {
-		// r.get("active", True): a missing flag is active, an explicit null is not.
+
 		if active, ok := r["active"]; ok && !pyval.Truthy(active) {
 			continue
 		}
@@ -221,7 +204,6 @@ func Load(s Settings) (*Config, error) {
 	return c, nil
 }
 
-// Threshold is float(thresholds.get(name, def)); a missing or null value is def.
 func (c *Config) Threshold(name string, def float64) float64 {
 	v, ok := c.Thresholds[name]
 	if !ok || v == nil {
@@ -250,8 +232,4 @@ func (c *Config) Threshold(name string, def float64) float64 {
 	return def
 }
 
-// Schema is the schema the service writes: the market tables core reads.
-func (c *Config) Schema() string { return "mkt" }
-
-// LockKey is the advisory lock of the single writer of the market tables.
 func (c *Config) LockKey() string { return "tank:capture:writer" }

@@ -13,7 +13,6 @@ from tank.market_schema import (
     MARKET_ALIASES,
     MARKET_COLUMNS,
     MARKET_IDENTITIES,
-    MARKET_PARTITIONS,
     MARKET_REQUIRED,
 )
 
@@ -28,7 +27,6 @@ def render():
         },
         "aliases": MARKET_ALIASES,
         "identities": {name: list(identity) for name, identity in MARKET_IDENTITIES.items()},
-        "partitions": MARKET_PARTITIONS,
         "required": MARKET_REQUIRED,
     }
     return json.dumps(payload, indent=1, sort_keys=True) + "\n"

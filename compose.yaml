@@ -30,6 +30,8 @@ services:
       TANK_X_STORAGE_STATE_PATH: /run/secrets/x_session
       TANK_BACKUP_DIR: /backup
       TANK_X_ENABLED: ${TANK_X_ENABLED:-false}
+      # Exchange market series (HLD §7.1); password: secret tank_db_password.
+      TANK_CLICKHOUSE_URL: http://tank@clickhouse:8123
     secrets:
     - oma_api_key
     - opencode_api_key
@@ -51,8 +53,46 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      clickhouse:
+        condition: service_healthy
       openma:
         condition: service_healthy
+    logging: *id001
+    networks:
+    - tank-net
+  clickhouse:
+    # Exchange market series and per-trade prints (HLD §7.1): written by tank-capture, read by
+    # core (user tank) and by agent sandboxes (read-only user tank_agent, initdb).
+    image: clickhouse/clickhouse-server:25.8
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: tank
+      CLICKHOUSE_PASSWORD_FILE: /run/secrets/tank_db_password
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1'
+    secrets:
+    - tank_db_password
+    - tank_agent_db_password
+    volumes:
+    - clickhouse-data:/var/lib/clickhouse
+    - ./deploy/clickhouse/tank.xml:/etc/clickhouse-server/config.d/tank.xml:ro
+    - ./deploy/clickhouse/initdb:/docker-entrypoint-initdb.d:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test:
+      - CMD-SHELL
+      - clickhouse-client --user tank --password "$$(cat /run/secrets/tank_db_password)" -q "SELECT 1"
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '3.0'
+          memory: 3G
     logging: *id001
     networks:
     - tank-net
@@ -63,15 +103,13 @@ services:
       dockerfile: Dockerfile
       args:
         GIT_SHA: ${TANK_CAPTURE_GIT_SHA:-dev}
-    profiles:
-    - capture
     restart: unless-stopped
     init: true
     environment:
       TANK_CONFIG_DIR: /config
-      TANK_CAPTURE_MODE: ${TANK_CAPTURE_MODE:-shadow}
       TANK_CAPTURE_HEALTH_ADDR: ':8791'
-      GOMEMLIMIT: 640MiB
+      TANK_CLICKHOUSE_URL: http://tank@clickhouse:8123
+      GOMEMLIMIT: 1400MiB
     secrets:
     - tank_db_password
     volumes:
@@ -81,6 +119,8 @@ services:
       read_only: true
     depends_on:
       postgres:
+        condition: service_healthy
+      clickhouse:
         condition: service_healthy
     healthcheck:
       test:
@@ -94,8 +134,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 768M
+          cpus: '3.0'
+          memory: 1536M
         reservations:
           memory: 256M
     logging: *id001
@@ -161,7 +201,7 @@ services:
     networks:
     - tank-net
   postgres:
-    image: postgres:16
+    image: postgres:16-bookworm
     shm_size: 512m
     restart: unless-stopped
     environment:
@@ -215,6 +255,7 @@ volumes:
   tank-browser: {}
   codex-auth: {}
   pg-data: {}
+  clickhouse-data: {}
   openma-data: {}
   sealed-replay-evidence: {}
   backup:

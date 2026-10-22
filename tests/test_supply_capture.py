@@ -1,9 +1,7 @@
 """Regressions from authenticated Etherscan coverage probes, using synthetic responses."""
 
 import os
-import uuid
 from decimal import Decimal
-from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 import pytest
@@ -12,7 +10,7 @@ import yaml
 from tank.market.service import MarketService
 from tank.market.supply import SupplyCapture
 from tank.settings import Settings
-from tank.storage import MemoryRepository, PostgresRepository
+from tank.storage import MemoryRepository
 
 
 def lending_market(tmp_path, transport, *, catalog=True, repo=None, tokens=None):
@@ -148,34 +146,18 @@ async def test_lending_invalid_free_endpoint_schema_is_not_cached(tmp_path):
         await market.http.aclose()
 
 
-@pytest.fixture(params=["memory", "postgres"])
-async def lending_repository(request):
+@pytest.fixture(
+    params=["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
+async def lending_repository(request, postgres_template):
     if request.param == "memory":
         yield await MemoryRepository().open()
         return
     dsn = os.getenv("TANK_TEST_DATABASE_URL")
     if not dsn:
         pytest.skip("Requires isolated PostgreSQL; creates and drops its own lending proof database")
-    import psycopg
-    from psycopg import sql
-
-    name = "tank_lending_boundary_" + uuid.uuid4().hex[:12]
-    admin = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
-    repo = None
-    created = False
-    try:
-        await admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
-        created = True
-        target = urlunsplit(urlsplit(dsn)._replace(path="/" + name))
-        repo = await PostgresRepository(target).open()
-        await repo.migrate()
+    async with postgres_template.repository(dsn) as repo:
         yield repo
-    finally:
-        if repo is not None:
-            await repo.close()
-        if created:
-            await admin.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
-        await admin.close()
 
 
 async def test_lending_collect_flush_typed_storage_and_22_token_cache(tmp_path, lending_repository):
@@ -392,11 +374,11 @@ def test_supply_kind_is_refreshed_before_its_age_reaches_the_cadence():
     0.9 x cadence, or two poll cycles (longest pass + loop sleep) before it, whichever is earlier."""
     from tank.market.supply import refresh_due
 
-    cycle = 120 + 60  # a 2-minute pass plus the loop sleep
-    assert refresh_due(19440, 21600, cycle) and not refresh_due(19439, 21600, cycle)  # 0.9 x 6 h
-    assert refresh_due(540, 900, cycle) and not refresh_due(539, 900, cycle)  # 900 - 2 x 180 s
-    assert refresh_due(1440, 1800, cycle) and not refresh_due(1439, 1800, cycle)  # LENDING
-    # A pass longer than half the cadence refreshes every pass, never later than the cadence.
+    cycle = 120 + 60
+    assert refresh_due(19440, 21600, cycle) and not refresh_due(19439, 21600, cycle)
+    assert refresh_due(540, 900, cycle) and not refresh_due(539, 900, cycle)
+    assert refresh_due(1440, 1800, cycle) and not refresh_due(1439, 1800, cycle)
+
     assert refresh_due(0, 900, 600)
 
 
@@ -418,11 +400,11 @@ async def test_poll_refreshes_a_kind_before_its_cadence_elapses(tmp_path):
     assert calls == ["https://yields.llama.fi/lendBorrow"]
     now = utcnow()
     market._supply_longest_pass_s = 120.0
-    # LENDING (1800 s) at 1700 s: past 0.9 x cadence, refreshed now rather than after 1800 s.
+
     stale = market._supply_refresh["test:T", "lending"] = now - timedelta(seconds=1700)
-    # FUNDAMENTALS (21600 s) at 19000 s: not yet due (0.9 x 6 h = 19440 s).
+
     before = market._supply_refresh["test:T", "fundamentals"] = now - timedelta(seconds=19000)
     await capture.poll(set())
-    assert market._supply_refresh["test:T", "lending"] > stale  # refreshed this pass
+    assert market._supply_refresh["test:T", "lending"] > stale
     assert market._supply_refresh["test:T", "fundamentals"] == before
     await market.http.aclose()

@@ -12,9 +12,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// PyYAML's YAML 1.1 implicit resolvers (yaml/resolver.py), in the order they are tried.
-// yaml.v3 resolves plain scalars by YAML 1.2, which differs (yes/on are strings there,
-// 1e3 is a float there); safe_load is what Tank reads the configuration with.
 var (
 	yamlBool  = regexp.MustCompile(`^(?:yes|Yes|YES|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF)$`)
 	yamlFloat = regexp.MustCompile(`^(?:[-+]?(?:[0-9][0-9_]*)\.[0-9_]*(?:[eE][-+][0-9]+)?|\.[0-9][0-9_]*(?:[eE][-+][0-9]+)?|[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$`)
@@ -23,9 +20,6 @@ var (
 	yamlMerge = regexp.MustCompile(`^(?:<<)$`)
 )
 
-// implicit is the tag PyYAML's resolver gives a plain scalar ("" for str). A resolver is
-// tried only for the first characters it is registered with, in registration order, and
-// the empty scalar has only the null resolver (resolver.py).
 func implicit(value string) string {
 	if value == "" {
 		return "null"
@@ -43,15 +37,12 @@ func implicit(value string) string {
 	case in("~nN") && yamlNull.MatchString(value):
 		return "null"
 	}
-	// Timestamps keep their text: PyYAML would build a date or datetime, and no
-	// configuration value capture reads is one.
+
 	return ""
 }
 
-// sexagesimal is PyYAML's base-60 notation (1:30 == 90).
 func sexagesimal(value string) []string { return strings.Split(value, ":") }
 
-// constructInt is SafeConstructor.construct_yaml_int.
 func constructInt(text string) (any, error) {
 	value := strings.ReplaceAll(text, "_", "")
 	sign := int64(1)
@@ -94,7 +85,6 @@ func constructInt(text string) (any, error) {
 	return parse(value, 10)
 }
 
-// constructFloat is SafeConstructor.construct_yaml_float.
 func constructFloat(text string) (any, error) {
 	value := strings.ToLower(strings.ReplaceAll(text, "_", ""))
 	sign := 1.0
@@ -172,7 +162,6 @@ func scalar(n *yaml.Node) (any, error) {
 	return n.Value, nil
 }
 
-// key renders a mapping key the way tank.util.jsonable does (str(k)).
 func key(v any) string {
 	if s, ok := v.(string); ok {
 		return s
@@ -183,8 +172,6 @@ func key(v any) string {
 	return pyval.Str(v)
 }
 
-// pythonValue converts a yaml.v3 node tree to the values yaml.safe_load builds: str,
-// int, float, bool, None, dict (later keys win, << merges) and list.
 func pythonValue(n *yaml.Node) (any, error) {
 	switch n.Kind {
 	case yaml.DocumentNode:
@@ -212,7 +199,7 @@ func pythonValue(n *yaml.Node) (any, error) {
 		for i := 0; i+1 < len(n.Content); i += 2 {
 			k, v := n.Content[i], n.Content[i+1]
 			if k.Kind == yaml.ScalarNode && k.Style == 0 && implicit(k.Value) == "merge" {
-				// flatten_mapping: merged keys never override explicit ones.
+
 				sources := []*yaml.Node{v}
 				if v.Kind == yaml.SequenceNode {
 					sources = v.Content
@@ -254,7 +241,6 @@ func pythonValue(n *yaml.Node) (any, error) {
 	return nil, fmt.Errorf("unsupported YAML node kind %d", n.Kind)
 }
 
-// SafeLoad is yaml.safe_load for one document.
 func SafeLoad(data []byte) (any, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {

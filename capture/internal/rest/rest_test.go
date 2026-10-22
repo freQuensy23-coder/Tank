@@ -34,7 +34,6 @@ type recorded struct {
 	UserAgent   string
 }
 
-// exchange is a RoundTripper serving canned responses in order and recording requests.
 type exchange struct {
 	mu        sync.Mutex
 	responses []canned
@@ -179,8 +178,6 @@ func call(ctx context.Context, a *Adapter, v vector) (any, error) {
 	return nil, fmt.Errorf("unknown call %s", v.Call)
 }
 
-// TestAdaptersMatchPython replays the reference's canned responses: the same requests
-// (method, URL, query, JSON body), the same results and the same errors.
 func TestAdaptersMatchPython(t *testing.T) {
 	for _, v := range loadVectors(t) {
 		t.Run(v.Name, func(t *testing.T) {
@@ -285,13 +282,13 @@ func TestHyperliquidContextsAreShared(t *testing.T) {
 	if used := ledger.Used("hyperliquid|60.0|600.0", 60); used != 20 {
 		t.Fatalf("a cache hit took budget: %v", used)
 	}
-	// A caller's change never reaches the shared response.
+
 	btc["markPx"] = "changed"
 	again, _ := NewAdapter(hlInstrument("BTC"), c, 0).Ticker(ctx)
 	if pyval.Str(again["markPx"]) != "83210.0" {
 		t.Fatal("cached response mutated")
 	}
-	mono = mono.Add(time.Second) // 10 s after the fetch
+	mono = mono.Add(time.Second)
 	if _, err := NewAdapter(hlInstrument("BTC"), c, 0).Ticker(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +313,7 @@ func TestHyperliquidFundingHistoryPerSettlementHour(t *testing.T) {
 	if len(ex.requests) != 1 {
 		t.Fatalf("same request and hour fetched %d times", len(ex.requests))
 	}
-	clock = clock.Add(30 * time.Minute) // 13:04: the next settlement hour
+	clock = clock.Add(30 * time.Minute)
 	body, err := c.Do(ctx, "POST", Hyperliquid, nil, payload, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -490,7 +487,6 @@ func num(s string) any {
 	return v
 }
 
-// params2 is a canonical text of query parameters.
 func params2(m map[string]string) string {
 	out := map[string]any{}
 	for k, v := range m {

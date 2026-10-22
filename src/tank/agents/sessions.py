@@ -8,7 +8,7 @@ import asyncio
 import copy
 import json
 import time
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -16,21 +16,20 @@ import httpx
 from httpx_sse import aconnect_sse
 
 from tank.agents import workflow
+from tank.agents.pipeline import ConfigurationError
+from tank.agents.security import redact_tool_arguments
+from tank.agents.wire import tool_wire_result
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, iso, sha256
 
-from .pipeline import ConfigurationError
-from .security import redact_tool_arguments
-from .wire import tool_wire_result
-
 REST_TIMEOUT_S = 30
-# Host capacity (user decision 2026-10-20): at most this many sessions run a turn at once.
+
 DEFAULT_MAX_RUNNING_SESSIONS = 2
 ADMITTED_JOB_TYPES = ("AGENT_MESSAGE", "SCOUT_REVIEW")
-# A deferred turn sleeps this long unless wake_waiting() schedules it earlier.
+
 ADMISSION_SLEEP_S = 60
-# Stream events that can change Tank state. Everything else (agent text, thinking,
-# built-in sandbox tools, span starts, echoes) is inert: it needs no session write.
+
+
 MATERIAL_EVENT_TYPES = {
     "agent.custom_tool_use",
     "user.custom_tool_result",
@@ -44,7 +43,7 @@ MATERIAL_EVENT_TYPES = {
     "span.model_request_end",
     "host.analysis_incomplete",
 }
-# Verified idle sessions are re-checked for archiving on this many run-loop ticks.
+
 IDLE_RECHECK_TICKS = 60
 
 
@@ -62,7 +61,6 @@ def material_event(event):
     )
 
 
-# Admission reads only these fields: full session documents carry long message logs.
 SESSION_ADMISSION_FIELDS = ("session_id", "status", "runtime_status", "active_message_id")
 JOB_ADMISSION_FIELDS = ("job_id", "status", "priority", "payload", "slot_waiting_since", "slot_admitted")
 BUSY_RUNTIME_STATES = {"PENDING", "RUNNING", "REQUIRES_ACTION"}
@@ -103,8 +101,7 @@ class SessionService:
         self.repo, self.settings, self.tool_dispatch = repo, settings, tool_dispatch
         self.http = http or httpx.AsyncClient(timeout=REST_TIMEOUT_S)
         self.owns_http = http is None
-        # Long-lived idle subscriptions must not consume control-plane slots
-        # needed to acknowledge tools. Turn admission is capped separately (admit).
+
         self.stream_http = stream_http or (
             http
             if http is not None
@@ -124,8 +121,7 @@ class SessionService:
         self.closed = False
 
     def clock_timestamp(self):
-        # Passing this module's clock explicitly also respects replay's virtual
-        # clock. Native producers observe this new local processing instant.
+
         return collection_clock(iso())
 
     def event_timestamp(self, event):
@@ -196,8 +192,7 @@ class SessionService:
 
     async def request(self, method, path, **kwargs):
         headers = self.headers(kwargs.pop("idem", None))
-        # Injected replay clients may also serve SSE with read=None. Every REST
-        # call still needs a finite transport deadline independently of that client.
+
         kwargs.setdefault("timeout", REST_TIMEOUT_S)
         response = await self.http.request(method, self.url(path), headers=headers, **kwargs)
         response.raise_for_status()
@@ -250,8 +245,7 @@ class SessionService:
         identity = event_id or item_id or payload.get("proposal_id")
         if not identity:
             raise ValueError("Session needs event, item or proposal identity")
-        # Session creation does not promise idempotency. Reconcile the durable
-        # metadata marker before creating, including recovery after a lost reply.
+
         marker = sha256(
             {
                 "identity": identity,
@@ -412,8 +406,7 @@ class SessionService:
                 if session.get("runtime_status") != "RUNNING":
                     session["runtime_status"] = "PENDING"
                 await self.repo.put("ops.agent_sessions", sid, session)
-            # This scope is deliberately OUTSIDE the advisory transaction: the
-            # intent must be committed before the native input can be accepted.
+
             session = await self.post_message_intent(sid, key)
         self.start_stream(sid)
         return session
@@ -678,8 +671,6 @@ class SessionService:
         if not before["complete"]:
             for identity in before.get("failed_input_ids", []):
                 if before["execution_states"][identity]["state"] == "FAILED":
-                    # This is a host receipt of an authenticated committed queue
-                    # failure, not a fabricated provider/model event.
                     await self.process_event(
                         sid,
                         {
@@ -692,10 +683,9 @@ class SessionService:
                         },
                     )
             return before
-        # Never hold session/event locks while catch-up re-enters event processing.
+
         await self.catch_up(sid)
-        # The agent owns whether a source warrants an event or observation.
-        # Completion is proved by OpenMA's committed execution state.
+
         current = await self.repo.get("ops.agent_sessions", sid)
         drained = await self.execution_barrier(current)
         if not drained["complete"] or drained["accepted_input_ids"] != before["accepted_input_ids"]:
@@ -723,7 +713,7 @@ class SessionService:
             for message in current.get("message_log", []):
                 if message["message_id"] in outcomes:
                     message["source_completion_verified"] = copy.deepcopy(outcomes[message["message_id"]])
-                    # Legacy semantic playbook proofs are no longer completion gates.
+
                     if "workflow_completion_verified" in message:
                         message["legacy_workflow_completion_verified"] = message.pop(
                             "workflow_completion_verified"
@@ -836,8 +826,7 @@ class SessionService:
         recovered = {**descriptor, **self.clock_timestamp().fields("recovered_at")}
         session.update(descriptor)
         session["recovered_prompt_descriptor"] = recovered
-        # Hydration may follow a newer processing-ordinal or event-binding
-        # write. Persist only the recovered descriptor onto the current row.
+
         async with self.repo.lock("session:" + session["session_id"]):
             current = await self.repo.get("ops.agent_sessions", session["session_id"])
             current.update(descriptor)
@@ -952,10 +941,6 @@ class SessionService:
             and event["name"] in {"get_market_truth", "get_decision", "web_search", "fetch_page"}
             and (not prior or prior.get("status") not in ("DONE", "REFUSED", "ERROR"))
         ):
-            # External waits must not hold a pooled connection or advisory
-            # transaction. Market jobs also need committed queue intents before
-            # separate workers can run. Per-session event processing still
-            # serializes execution; the ledger below commits the result before ACK.
             try:
                 if event["name"] == "get_decision":
                     prepared = await self.invoke_tool(
@@ -965,10 +950,9 @@ class SessionService:
                     decision_market_refresh_completed = True
                 else:
                     slow_result = await self.invoke_tool(session, event["name"], event["input"], call_id)
-            except Exception as error:  # noqa: BLE001 - complete the durable tool error protocol; cancellation remains recoverable
+            except Exception as error:
                 slow_error, slow_error_status = self.tool_failure(error)
-            # Only market refresh ran for get_decision. The actual decision and
-            # condition consumption keep the original atomic ledger transaction.
+
             slow_ready = not decision_market_refresh_completed
         async with self.repo.lock("tool:" + key):
             stored = await self.repo.get("ops.tool_calls", key)
@@ -1030,8 +1014,6 @@ class SessionService:
                 refusal_status = slow_error_status
                 captured = None
                 try:
-                    # A rejected mutation rolls back before its refusal ledger
-                    # is committed, allowing the agent to correct its arguments.
                     async with AsyncExitStack() as mutation:
                         if stored["tool"] in {
                             "record_event",
@@ -1065,7 +1047,7 @@ class SessionService:
                                 ),
                             )
                         )
-                except Exception as error:  # noqa: BLE001 - rollback mutation, then durably return a bounded tool error
+                except Exception as error:
                     refusal, refusal_status = self.tool_failure(error)
                 if not refusal and isinstance(result, CapturedToolResult):
                     captured = result
@@ -1196,26 +1178,17 @@ class SessionService:
         if event.get("type") in ("event_start", "event_delta") or not event.get("id"):
             return
         if not material_event(event) or seen_key(event) in self.seen_events.get(sid, ()):
-            # Inert or already handled by this process: no session read or write. The
-            # resume cursor advances with the next material write; replaying inert
-            # events after a restart is harmless. A copy carrying an execution_id the
-            # handled one lacked (SSE vs history) is not skipped: it records the receipt.
             if seq is not None:
                 self.pending_seq[sid] = max(int(seq), self.pending_seq.get(sid, 0))
             return
         key = sid + ":" + event["id"]
         async with self.event_locks.setdefault(sid, asyncio.Lock()):
-            # Full durable payload is kept in the tool ledger; marker is stored
-            # in session's log only after every side effect and response succeeds.
             session = await self.repo.get("ops.agent_sessions", sid)
             if session.get("status") in ("FAILED", "ENDED"):
                 return
             before = copy.deepcopy(session)
             kind = event["type"]
             if kind == "host.analysis_incomplete":
-                # Older controllers may have committed an unsent semantic
-                # repair intent. Retain that evidence without executing it or
-                # turning an agent's choice into a native-session failure.
                 async with self.repo.lock("session:" + sid):
                     current = await self.repo.get("ops.agent_sessions", sid)
                     current.setdefault("host_analysis_outcomes", {}).setdefault(
@@ -1384,8 +1357,6 @@ class SessionService:
                 and native_retry_status.get("type") == "retrying"
             )
             if not superseded_failure and (native_retrying or kind == "session.status_rescheduled"):
-                # OpenMA still owns this execution and its bounded native retry.
-                # Do not consume a host retry or archive it before it settles.
                 session["runtime_status"] = "PENDING"
             if not superseded_failure and (
                 (kind == "session.error" and not native_retrying)
@@ -1409,8 +1380,7 @@ class SessionService:
                 retry = active.get("retry_count", 0) if active else session.get("retry_count", 0)
                 if retry < 1 and body:
                     message_id = active["message_id"] if active else "legacy"
-                    # Commit retry intent before HTTP. A lost ACK is recovered
-                    # with the same original failure, body and idempotency key.
+
                     async with self.repo.lock("session:" + sid):
                         durable = await self.repo.get("ops.agent_sessions", sid)
                         event = dict(event)
@@ -1529,8 +1499,7 @@ class SessionService:
             self.seen_events.setdefault(sid, set()).add(seen_key(event))
 
     async def catch_up(self, sid):
-        # Scan from the beginning: provider page tokens may be ephemeral, while
-        # dedup ids are durable. Never advance past an unfinished tool.
+
         page = None
         while True:
             params = {"limit": 100, "order": "asc"}
@@ -1557,8 +1526,7 @@ class SessionService:
                 if message.event == "ping":
                     continue
                 data = json.loads(message.data)
-                # Native Node streams wrap {seq,event}; strict managed API emits
-                # flat durable event bodies. Numeric SSE ids are native cursors.
+
                 event = data.get("event", data) if "seq" in data else data
                 seq = data.get("seq")
                 if seq is None and message.id and message.id.isdigit():
@@ -1651,7 +1619,7 @@ class SessionService:
                 await self.request("POST", f"sessions/{sid}/archive", json={})
                 session["status"] = "ENDED"
                 await self.repo.put("ops.agent_sessions", sid, session)
-            # The turn is settled even when its logical event remains OPEN.
+
             return True
 
     async def follow(self, sid):
@@ -1659,8 +1627,6 @@ class SessionService:
         while not self.closed:
             stream_task = None
             try:
-                # Subscribe before list reconciliation to close the history/live
-                # gap even when the strict API ignores Last-Event-ID.
                 stream_task = asyncio.create_task(self.stream(sid))
                 await self.catch_up(sid)
                 session = await self.repo.get("ops.agent_sessions", sid)
@@ -1702,8 +1668,6 @@ class SessionService:
             except asyncio.CancelledError:
                 raise
             except (httpx.HTTPError, ValueError, KeyError, RuntimeError):
-                # No provider errors, bodies or headers enter logs (may include
-                # credentials). Durable state remains for reconciliation.
                 delay = min(delay * 2, 30)
             finally:
                 if stream_task and not stream_task.done():
@@ -1822,8 +1786,7 @@ class SessionService:
                 sid = session["session_id"]
                 settled = session.get("runtime_status") == "IDLE" and not session.get("active_message_id")
                 following = sid in self.tasks and not self.tasks[sid].done()
-                # A verified idle session has nothing to follow; it is only re-checked
-                # now and then for archiving (its event may have closed meanwhile).
+
                 if settled and not following and tick % IDLE_RECHECK_TICKS:
                     continue
                 if await self.finish_if_idle(sid):
@@ -1831,10 +1794,8 @@ class SessionService:
                 self.start_stream(sid)
             tick += 1
             await self.wake_waiting()
-            try:
+            with suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=5)
-            except TimeoutError:
-                pass
 
     async def close(self):
         self.closed = True

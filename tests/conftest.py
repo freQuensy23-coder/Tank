@@ -1,7 +1,5 @@
 """Credential-free, offline-by-default pytest boundary. Never imported by Tank."""
 
-from __future__ import annotations
-
 import atexit
 import builtins
 import io
@@ -11,22 +9,31 @@ import re
 import socket
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
+import pytest_asyncio
+
+pytest_plugins = (
+    "test_market_service",
+    "test_storage_typed_market",
+    "test_capture_parity",
+)
 
 TEST_DATABASE_VARIABLES = frozenset(
     {"TANK_TEST_DATABASE_URL", "TANK_E2E_DATABASE_URL", "TANK_SOURCE_TEST_DATABASE_URL"}
 )
 TEST_FLAGS = frozenset({"TANK_BROWSER_TESTS"})
+TEST_CLICKHOUSE = "CLICKHOUSE_TEST_URL"
 
 
 def scrub_inherited_environment(environment):
     """Inspect names only; discard operator configuration without reading values."""
     for name in tuple(environment):
         upper = name.upper()
-        if name in TEST_DATABASE_VARIABLES | TEST_FLAGS:
+        if name in TEST_DATABASE_VARIABLES | TEST_FLAGS | {TEST_CLICKHOUSE}:
             continue
         if (
             upper in {"NETRC", "DBUS_SESSION_BUS_ADDRESS", "NPM_CONFIG_USERCONFIG", "CURL_HOME"}
@@ -56,7 +63,7 @@ def scrub_inherited_environment(environment):
 
 def test_database_hosts(environment):
     hosts = set()
-    for name in TEST_DATABASE_VARIABLES:
+    for name in (*TEST_DATABASE_VARIABLES, TEST_CLICKHOUSE):
         value = environment.get(name)
         if not value:
             continue
@@ -65,7 +72,6 @@ def test_database_hosts(environment):
             if host:
                 hosts.add(host.casefold().rstrip("."))
         else:
-            # libpq conninfo is supported without connecting or looking up DNS.
             from psycopg.conninfo import conninfo_to_dict
 
             for host in conninfo_to_dict(value).get("host", "").split(","):
@@ -95,11 +101,10 @@ def check_test_databases(environment):
             raise pytest.UsageError(f"{name} must name a dedicated tank_test_* database, not {database!r}")
 
 
-# Run before test-module collection: collection cannot inherit operator settings.
 check_test_databases(os.environ)
 scrub_inherited_environment(os.environ)
-# Sandbox home/config lookup as well as explicit settings; browser binaries are
-# public cached executables, so preserve only their known cache location.
+
+
 _operator_home = Path.home()
 _browser_cache = (
     _operator_home / "Library" / "Caches" / "ms-playwright"
@@ -255,21 +260,51 @@ if _ORIGINAL_SENDMSG is not None:
     socket.socket.sendmsg = _sendmsg
 
 
+@contextmanager
+def _synthetic_settings_defaults():
+    """Compile dynamic X defaults once; each test still owns its synthetic home."""
+    from pydantic_core import PydanticUndefined
+
+    from tank.settings import Settings
+
+    defaults = {
+        "x_storage_state_path": lambda: _OFFLINE_HOME / "FAKE-absent-x-state.json",
+        "x_profile_dir": lambda: _OFFLINE_HOME / "FAKE-browser-profile",
+    }
+    original = {
+        name: (Settings.model_fields[name].default, Settings.model_fields[name].default_factory)
+        for name in defaults
+    }
+    try:
+        for name, factory in defaults.items():
+            Settings.model_fields[name].default = PydanticUndefined
+            Settings.model_fields[name].default_factory = factory
+        Settings.model_rebuild(force=True)
+        yield
+    finally:
+        for name, (default, factory) in original.items():
+            Settings.model_fields[name].default = default
+            Settings.model_fields[name].default_factory = factory
+        Settings.model_rebuild(force=True)
+
+
+@pytest.fixture(scope="session")
+def _offline_settings_defaults():
+    with _synthetic_settings_defaults():
+        yield
+
+
 @pytest.fixture(autouse=True)
-def offline_credentials(monkeypatch, tmp_path):
+def offline_credentials(monkeypatch, tmp_path, _offline_settings_defaults):
     """Synthetic default locations; explicit constructor/fake env values still win."""
     from pydantic_settings.sources import DotEnvSettingsSource
 
-    # Keep dynamic default factories real while resolving auth inside this test's
-    # synthetic home. Tests may still explicitly override CODEX_HOME/Path.home.
     synthetic_home = tmp_path / "offline-home"
     synthetic_home.mkdir()
     monkeypatch.setenv("HOME", str(synthetic_home))
     monkeypatch.setenv("CODEX_HOME", str(synthetic_home / ".codex"))
     monkeypatch.setattr(sys.modules[__name__], "_OFFLINE_HOME", synthetic_home)
 
-    # Pydantic constructs this source before settings_customise_sources, so block
-    # the reader itself: neither default .env nor an inherited path is opened.
     monkeypatch.setattr(DotEnvSettingsSource, "_read_env_files", lambda self: {})
     empty = tmp_path / "offline-empty-secrets"
     empty.mkdir()
@@ -280,25 +315,6 @@ def offline_credentials(monkeypatch, tmp_path):
             raise RuntimeError("offline Docker SQL probes require an explicit local unix endpoint")
         monkeypatch.setenv("DOCKER_HOST", docker_endpoint)
         monkeypatch.setenv("DOCKER_CONFIG", str(tmp_path / "FAKE-empty-docker-config"))
-    from tank.settings import Settings
-
-    # Defaults, rather than environment overrides, preserve Docker-secret and
-    # explicit fake environment precedence (notably x_session bootstrap).
-    defaults = {
-        "codex_auth_path": tmp_path / "FAKE-absent-codex-auth.json",
-        "x_storage_state_path": tmp_path / "FAKE-absent-x-state.json",
-        "x_profile_dir": tmp_path / "FAKE-browser-profile",
-    }
-    original = {name: Settings.model_fields[name].default for name in defaults}
-    for name, value in defaults.items():
-        Settings.model_fields[name].default = value
-    Settings.model_rebuild(force=True)
-    try:
-        yield
-    finally:
-        for name, value in original.items():
-            Settings.model_fields[name].default = value
-        Settings.model_rebuild(force=True)
 
 
 @pytest.fixture(autouse=True)
@@ -307,3 +323,23 @@ def _fresh_quote_usd_history(monkeypatch):
     from tank.market import normalize
 
     monkeypatch.setattr(normalize, "QUOTE_USD_HISTORY", {})
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--postgres-schema-template",
+        metavar="tank_test_NAME",
+        help="Clone each migrated test database from this externally prepared, sealed schema seed",
+    )
+
+
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
+async def postgres_template(request):
+    """Create databases lazily; memory-only runs never inspect database settings."""
+    from postgres_helpers import PostgresTemplate
+
+    owner = PostgresTemplate(schema_template=request.config.getoption("postgres_schema_template"))
+    try:
+        yield owner
+    finally:
+        await owner.close()

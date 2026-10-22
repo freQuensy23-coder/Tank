@@ -1,7 +1,3 @@
-// Package restparity runs a recorded REST poll cycle (capture/testdata/rest) through
-// tank-capture's runtime exactly as scripts/capture/rest_parity.py runs it through
-// MarketService.poll_once: the same responses must give identical typed rows (klines,
-// tickers, OI, funding, marks), fingerprints and REST-normalized trades.
 package restparity
 
 import (
@@ -30,7 +26,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// Exchange is one recorded request and its response.
 type Exchange struct {
 	Method string            `json:"method"`
 	URL    string            `json:"url"`
@@ -40,7 +35,6 @@ type Exchange struct {
 	Body   string            `json:"body"`
 }
 
-// Payload is a recorded fixture.
 type Payload struct {
 	RecordedAt  string     `json:"recorded_at"`
 	Fixture     string     `json:"fixture"`
@@ -48,13 +42,14 @@ type Payload struct {
 	Exchanges   []Exchange `json:"exchanges"`
 }
 
-// Load reads capture/testdata/rest/<fixture>.json.gz.
 func Load(path string) (*Payload, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return nil, err
@@ -72,11 +67,8 @@ func Load(path string) (*Payload, error) {
 	return &p, nil
 }
 
-// timeParams vary with the clock a request is built at; they never select a response.
 var timeParams = map[string]bool{"startTime": true, "endTime": true, "start": true, "end": true, "since": true, "after": true, "before": true}
 
-// Match is the selector of a request: method, URL without query, the non-time query
-// parameters and the Hyperliquid request type and coin.
 func Match(method, url string, params map[string]string, body map[string]any) string {
 	var keys []string
 	for k := range params {
@@ -98,7 +90,6 @@ func Match(method, url string, params map[string]string, body map[string]any) st
 	return strings.Join(parts, " ")
 }
 
-// transport answers requests with the recorded responses, in recorded order per selector.
 type transport struct {
 	mu     sync.Mutex
 	byKey  map[string][]Exchange
@@ -162,6 +153,10 @@ func (noStore) Range(context.Context, string, string, time.Time, time.Time, map[
 func (noStore) Projection(context.Context, string, []string, string, time.Time, time.Time, []string) ([]map[string]any, error) {
 	return nil, nil
 }
+func (noStore) Earliest(context.Context, string, string, time.Time, time.Time, map[string]any) (time.Time, bool, error) {
+	return time.Time{}, false, nil
+}
+func (noStore) PruneFetches(context.Context, time.Time) (int64, error) { return 0, nil }
 func (noStore) LatestTrades(context.Context, []string, time.Time) (map[string]map[string]any, error) {
 	return nil, nil
 }
@@ -175,7 +170,6 @@ func (noStore) ClaimRequest(context.Context, string, time.Time) (map[string]any,
 }
 func (noStore) FinishRequest(context.Context, map[string]any) error { return nil }
 
-// Run polls every fixture instrument once and normalizes one trades page of each.
 func Run(p *Payload) (*parity.Output, error) {
 	meta := map[string]any{"instruments": p.Instruments, "recorded_at": p.RecordedAt}
 	instruments := parity.Instruments(meta)
@@ -208,7 +202,7 @@ func Run(p *Payload) (*parity.Output, error) {
 		svc.PollOnce(ctx, inst.ID)
 		page, _, err := venues.Venue(inst, 0).Trades(ctx, nil, nil, nil)
 		if err != nil {
-			continue // Hyperliquid lists no REST trades
+			continue
 		}
 		fx := normalize.NewFX()
 		for _, raw := range page {
@@ -221,7 +215,7 @@ func Run(p *Payload) (*parity.Output, error) {
 	}
 	for _, r := range rows.rows {
 		if r.Collection == "mkt.capture_gaps" {
-			// A gap's id is random; its kind and reason are the comparable part.
+
 			out.Errors = append(out.Errors, []any{r.Row["instrument_id"], r.Row["kind"], r.Row["reason"]})
 			continue
 		}

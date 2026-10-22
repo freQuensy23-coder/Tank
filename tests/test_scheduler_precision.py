@@ -112,7 +112,6 @@ async def test_retention_json_records_clock_and_offset_cutoffs(tmp_path):
         prune_market=AsyncMock(), prune_jobs=AsyncMock(), get=AsyncMock(return_value=None), put=AsyncMock()
     )
     scheduler = Scheduler(repo, SimpleNamespace(), None, None)
-    scheduler.prune_raw_files = AsyncMock(return_value=[])
     await scheduler.retention(parse_time(STAMP), tmp_path)
     metadata = json.loads((tmp_path / "RETENTION_COMPLETE.json").read_text())
     assert metadata["completed_at_prec"] == "COLLECTION_ONLY"
@@ -162,8 +161,7 @@ async def test_provenance_only_addition_does_not_create_late_data_revision(monke
             "anchor": {"type": "T1", "ts": STAMP},
         }
     )
-    # Simulate the unchanged legacy row lacking provenance siblings; retain its
-    # measurement fingerprint rather than synthesizing a historical timestamp.
+
     legacy = {key: value for key, value in original.items() if not key.endswith(("_prec", "_prec_reason"))}
     repo = MemoryRepository()
     scheduler.repo = repo

@@ -436,8 +436,6 @@ MARKET_COLUMNS = {
         "result": "jsonb",
         "semantic_fingerprint": "text",
     },
-    # tank-capture (capture/README.md): stream state per instrument and stream, which
-    # Data Confidence reads instead of in-process socket state when capture is external.
     "mkt.capture_streams": {
         "code_version": "text",
         "config_version": "text",
@@ -475,7 +473,6 @@ MARKET_COLUMNS = {
         "recent_polls": "jsonb",
         "semantic_fingerprint": "text",
     },
-    # Bounded repairs Tank asks of tank-capture (03 §5.1 fill order before Market Truth).
     "mkt.capture_requests": {
         "budget_s": "numeric",
         "code_version": "text",
@@ -546,15 +543,6 @@ MARKET_IDENTITIES = {
     "mkt.backfill_runs": ("backfill_id",),
     "mkt.capture_streams": ("instrument_id", "stream"),
     "mkt.capture_requests": ("request_id",),
-}
-
-MARKET_PARTITIONS = {
-    "mkt.flow_bars_1m": "minute_start",
-    "mkt.klines_1m": "open_time",
-    "mkt.oi_obs": "ts",
-    "mkt.liq_obs": "ts",
-    "mkt.book_summaries": "exchange_ts",
-    "mkt.tickers_24h": "ts",
 }
 
 MARKET_REQUIRED = {

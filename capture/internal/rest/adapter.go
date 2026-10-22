@@ -15,7 +15,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// Base URLs of the listed public REST endpoints (02 §4).
 const (
 	Binance     = "https://api.binance.com"
 	BinanceUSDM = "https://fapi.binance.com"
@@ -26,12 +25,8 @@ const (
 	Hyperliquid = "https://api.hyperliquid.xyz/info"
 )
 
-// ErrNoTradeHistory is the SemanticError of a venue without listed REST trade history
-// (02 §4.7: Hyperliquid); its minutes stay incomplete (03 §5.1).
 var ErrNoTradeHistory error = &pyval.SemanticError{Msg: "NO_LISTED_TRADE_BACKFILL"}
 
-// Adapter is tank.market.adapters.VenueAdapter for one instrument; Priority is the gate
-// priority of its requests (lower first; negative ones take shared budgets ahead).
 type Adapter struct {
 	Inst     *venue.Instrument
 	Client   *Client
@@ -39,14 +34,12 @@ type Adapter struct {
 	key      string
 }
 
-// NewAdapter is VenueAdapter(instrument, request) with requests at priority.
 func NewAdapter(inst *venue.Instrument, c *Client, priority int) *Adapter {
 	return &Adapter{Inst: inst, Client: c, Priority: priority, key: inst.Key()}
 }
 
 func (a *Adapter) now() time.Time { return a.Client.Now().UTC().Truncate(time.Microsecond) }
 
-// get is VenueAdapter.get: Kraken pairs go without the slash.
 func (a *Adapter) get(ctx context.Context, base, path string, params map[string]string) (any, error) {
 	if strings.HasPrefix(a.key, "kraken") {
 		if pair, ok := params["pair"]; ok {
@@ -56,12 +49,10 @@ func (a *Adapter) get(ctx context.Context, base, path string, params map[string]
 	return a.Client.Do(ctx, "GET", base+path, params, nil, a.Priority)
 }
 
-// info is VenueAdapter.info: a Hyperliquid info request.
 func (a *Adapter) info(ctx context.Context, payload map[string]any) (any, error) {
 	return a.Client.Do(ctx, "POST", Hyperliquid, nil, payload, a.Priority)
 }
 
-// result is VenueAdapter.result: the venue envelope checked and unwrapped.
 func (a *Adapter) result(body any) (any, error) {
 	switch {
 	case strings.HasPrefix(a.key, "okx"):
@@ -103,7 +94,6 @@ func (a *Adapter) result(body any) (any, error) {
 	return body, nil
 }
 
-// isZero is value == 0 for a JSON value (False == 0 in Python, a string never is).
 func isZero(v any) bool {
 	switch x := v.(type) {
 	case json.Number:
@@ -154,8 +144,6 @@ func first(v any, what string) (map[string]any, error) {
 	return object(l[0], what)
 }
 
-// pairValue is next(v for key, v in rows.items() if key != "last") of a Kraken result
-// (one pair per request).
 func pairValue(v any) (any, error) {
 	m, err := object(v, "Kraken result")
 	if err != nil {
@@ -169,19 +157,14 @@ func pairValue(v any) (any, error) {
 	return nil, fmt.Errorf("Kraken result holds no pair")
 }
 
-// timestamp is datetime.timestamp() of a microsecond time: exact microseconds / 10**6.
 func timestamp(t time.Time) float64 { return float64(t.UTC().UnixMicro()) / 1e6 }
 
-// millis is int(parse_time(t).timestamp() * 1000).
 func millis(t time.Time) int64 { return int64(timestamp(t) * 1000) }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
 
-// category is the Bybit category of the instrument: "spot" or "linear".
 func (a *Adapter) category() string { return strings.SplitN(a.key, ".", 2)[1] }
 
-// Discover is VenueAdapter.discover: instrument units come from the semantics registry
-// (03 §2.10); only OKX ctVal and Hyperliquid meta are read (02 §4.4, §4.7).
 func (a *Adapter) Discover(ctx context.Context) (map[string]any, error) {
 	s := a.Inst.Symbol
 	switch a.key {
@@ -260,11 +243,10 @@ func (a *Adapter) Discover(ctx context.Context) (map[string]any, error) {
 		}
 		return nil, fmt.Errorf("coroutine raised StopIteration")
 	}
-	// Base-unit quantities by the semantics registry; no metadata endpoint is listed.
+
 	return map[string]any{"contract_multiplier": "1", "metadata_status": "SEMANTICS_REGISTRY"}, nil
 }
 
-// lotSize is str(10 ** -int(szDecimals)): an int for 0 decimals, else a float repr.
 func lotSize(decimals int64) string {
 	if decimals <= 0 {
 		return itoa(int64(math.Pow(10, float64(-decimals))))
@@ -273,7 +255,6 @@ func lotSize(decimals int64) string {
 	return floatRepr(f)
 }
 
-// metaAndContexts is the shared Hyperliquid [meta, contexts] response.
 func (a *Adapter) metaAndContexts(ctx context.Context) (map[string]any, []any, error) {
 	body, err := a.info(ctx, map[string]any{"type": "metaAndAssetCtxs"})
 	if err != nil {
@@ -294,7 +275,6 @@ func (a *Adapter) metaAndContexts(ctx context.Context) (map[string]any, []any, e
 	return meta, contexts, nil
 }
 
-// Klines is VenueAdapter.klines: the newest candles, or a [start, end] page.
 func (a *Adapter) Klines(ctx context.Context, start, end *time.Time) ([]any, error) {
 	s := a.Inst.Symbol
 	k := a.key
@@ -390,7 +370,6 @@ func (a *Adapter) Klines(ctx context.Context, start, end *time.Time) ([]any, err
 	return list(body, "klines response")
 }
 
-// Ticker is VenueAdapter.ticker: the venue's 24h ticker of the instrument.
 func (a *Adapter) Ticker(ctx context.Context) (map[string]any, error) {
 	s := a.Inst.Symbol
 	k := a.key
@@ -469,8 +448,6 @@ func (a *Adapter) Ticker(ctx context.Context) (map[string]any, error) {
 	return nil, fmt.Errorf("coroutine raised StopIteration")
 }
 
-// Derivatives is the result of VenueAdapter.derivatives: open interest points, the
-// current funding context, settled funding, the funding interval (hours) and the mark.
 type Derivatives struct {
 	OI       []any
 	Current  map[string]any
@@ -479,7 +456,6 @@ type Derivatives struct {
 	Mark     any
 }
 
-// Derivatives is VenueAdapter.derivatives.
 func (a *Adapter) Derivatives(ctx context.Context) (*Derivatives, error) {
 	s := a.Inst.Symbol
 	switch a.key {
@@ -585,7 +561,7 @@ func (a *Adapter) Derivatives(ctx context.Context) (*Derivatives, error) {
 		if err != nil {
 			return nil, err
 		}
-		// Mark and index come from the listed WebSocket channels only (02 §4.4).
+
 		return &Derivatives{oiRows, current, settledRows, interval.String(), nil}, nil
 	case "bybit.linear":
 		body, err := a.get(ctx, Bybit, "/v5/market/open-interest", map[string]string{
@@ -652,8 +628,6 @@ func (a *Adapter) Derivatives(ctx context.Context) (*Derivatives, error) {
 	return &Derivatives{OI: []any{}, Settled: []any{}}, nil
 }
 
-// Trades is VenueAdapter.trades: one page of public prints and the venue cursor for the
-// next one (nil when the venue pages by time or has none).
 func (a *Adapter) Trades(ctx context.Context, start, end *time.Time, cursor any) ([]any, any, error) {
 	s := a.Inst.Symbol
 	k := a.key
@@ -684,8 +658,7 @@ func (a *Adapter) Trades(ctx context.Context, start, end *time.Time, cursor any)
 		if pyval.Truthy(cursor) {
 			params["after"] = pyval.Str(cursor)
 		} else if end != nil {
-			// The first page starts at end by time (records earlier than `after`); later
-			// pages follow exact trade IDs, so a repair never walks back from now.
+
 			params["type"], params["after"] = "2", itoa(millis(*end)+1)
 		}
 		params["instId"], params["limit"] = s, "100"
@@ -763,12 +736,10 @@ func (a *Adapter) Trades(ctx context.Context, start, end *time.Time, cursor any)
 		next, err := need(result.(map[string]any), "last")
 		return rows, next, err
 	}
-	// 02 §4.7 lists no REST trade history: those minutes stay incomplete (03 §5.1).
+
 	return nil, nil, ErrNoTradeHistory
 }
 
-// OIHistory is VenueAdapter.oi_history: one page, newest first, of Bybit linear 5-min
-// OI samples in [start, end] (02 §4.6) and the next page cursor ("" at the end).
 func (a *Adapter) OIHistory(ctx context.Context, start, end time.Time, cursor string) ([]any, string, error) {
 	if a.key != "bybit.linear" {
 		return nil, "", pyval.Semantic("NO_LISTED_OI_HISTORY")
@@ -797,8 +768,6 @@ func (a *Adapter) OIHistory(ctx context.Context, start, end time.Time, cursor st
 	return rows, pyval.Str(next), nil
 }
 
-// RecentTrades is the newest page of public prints (a head check): the venue's recent
-// trade list without a cursor, at most limit prints. Hyperliquid lists none.
 func (a *Adapter) RecentTrades(ctx context.Context, limit int) ([]any, error) {
 	s := a.Inst.Symbol
 	k := a.key
@@ -841,7 +810,7 @@ func (a *Adapter) RecentTrades(ctx context.Context, limit int) ([]any, error) {
 		}
 		return list(body, "Coinbase trades")
 	case strings.HasPrefix(k, "kraken"):
-		// Without `since`, Kraken returns its most recent `count` prints, oldest first.
+
 		body, err := a.get(ctx, Kraken, "/0/public/Trades", map[string]string{"pair": s, "count": n})
 		if err != nil {
 			return nil, err

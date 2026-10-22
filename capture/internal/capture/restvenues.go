@@ -7,7 +7,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// RESTVenues is the runtime's REST surface over internal/rest.
 func RESTVenues(client *rest.Client) Venues { return restVenues{client} }
 
 type restVenues struct{ client *rest.Client }
@@ -34,8 +33,6 @@ func (a restAdapter) IndependentBook(ctx context.Context, stream map[string]any)
 	return a.Adapter.IndependentBook(ctx, stream, nil)
 }
 
-// PollOnce is MarketService.poll_once(instrument_id) with every kind: listed metadata,
-// the stablecoin USD rate, derivatives, klines and the 24h ticker.
 func (s *Service) PollOnce(ctx context.Context, iid string) {
 	s.poll(ctx, iid, pollKinds{derivatives: true, klines: true, ticker: true}, 0)
 }

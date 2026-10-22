@@ -1,8 +1,0 @@
-id	expect	exit	command
-X01-scout-list	ok	0	tank scout list
-X02-scout-decide	ok	0	tank scout decide PRP-TANKOPS-CLI-1 APPROVE_FOR_SANDBOX
-X03-scout-decide-bad-action	fail	2	tank scout decide PRP-TANKOPS-CLI-1 SHIP_IT
-X04-reaction-recapture-no-checkpoint	fail	1	tank reaction EVT-01M5D5FWWET2R21F7J4N30JGC1 --token-id T --recapture POST_1H --reason operator recapture check
-X05-reaction-recapture-no-reason	fail	2	tank reaction EVT-01M5D5FWWET2R21F7J4N30JGC1 --token-id T --recapture POST_1H
-X06-archive-fetch	ok	0	tank archive fetch BTCUSDT 2026-10-01
-X07-archive-fetch-bad-date	fail	2	tank archive fetch BTCUSDT 2026-13-01

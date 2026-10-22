@@ -7,8 +7,6 @@ fixtures use declared authored messages; their generated delivery intents remain
 QUEUED without a historical receipt, transport, or delivery acceptance claim.
 """
 
-from __future__ import annotations
-
 import copy
 import hashlib
 import json
@@ -75,8 +73,6 @@ def missing_capture_error(call):
     return error.get("type") == "ReplayError" and isinstance(reason, str) and "insufficient_fixture" in reason
 
 
-# Market reconstruction separates exchange observation time from later collection.
-# Source/agent evidence never receives this exception.
 def _market_record(row):
     return row.get("collection") in {
         "replay.market_snapshots",
@@ -89,7 +85,6 @@ def _market_record(row):
         "mkt.tickers_24h",
         "mkt.supply_obs",
         "mkt.supply",
-        "mkt.trades",
     }
 
 
@@ -156,8 +151,7 @@ def _semantic_end(value, fixed_interval=None):
                 and entry is not None
             ):
                 stamp = _market_timestamp(value, key)
-                # A reference proof's COLLECTION_ONLY observed_at is its actual
-                # assembly clock. Its boundary and last trade remain semantic.
+
                 if stamp.value is not None and not (
                     key == "observed_at" and stamp.precision == "COLLECTION_ONLY"
                 ):
@@ -167,7 +161,6 @@ def _semantic_end(value, fixed_interval=None):
         if value.get("minute_start") is not None:
             times.append(parse_time(_market_timestamp(value, "minute_start").value) + timedelta(seconds=60))
         if value.get("open_time") is not None:
-            # Unknown bucket width cannot establish a pre-cutoff close/high.
             if (
                 not (value.get("interval_s") or fixed_interval)
                 or float(value.get("interval_s") or fixed_interval) <= 0
@@ -304,8 +297,7 @@ class ReplayInputs:
             if self.exclusive_boundary(bound) and _point_at_boundary(row["record"], bound):
                 return False
             receipts = [parse_time(row["available_at"]), *_receipt_times(row["record"])]
-            # Only this row's explicitly declared post-cutoff reconstruction
-            # may bypass collection time. Within-run late receipts never do.
+
             historical = (
                 max(receipts) > parse_time(self.cutoff)
                 and self.assembled_at is not None
@@ -529,7 +521,7 @@ def freeze(path, value):
             handle.write(content)
     except FileExistsError:
         if path.read_text() != content:
-            raise ReplayError(f"immutable replay artifact differs: {path}")
+            raise ReplayError(f"immutable replay artifact differs: {path}") from None
     return path
 
 
@@ -541,9 +533,7 @@ async def replay_bundle(bundle_path, repo, settings, *, runner=None, output_dir=
     Custom runners are useful for offline tests; none imply native acceptance.
     """
     inputs = load_inputs(bundle_path, settings)
-    # A reused repository could expose rows absent from the packet through domain
-    # tools. Refuse it before importing anything, including apparently harmless
-    # registry/session/queue state. This invariant is stronger than URL matching.
+
     from tank.models import TABLE_COLUMNS
 
     for collection in TABLE_COLUMNS:
@@ -627,49 +617,6 @@ class ReplayMarketReader:
                 "source_capture_claim": False,
                 "historical_market_acceptance_claim": False,
             }
-        manifests = (self.evidence_capture or {}).get("rebuild_manifests", [])
-        if manifests:
-            from types import SimpleNamespace
-
-            from tank.market.archive import TradeArchive
-            from tank.market.flow import FlowAccumulator
-            from tank.market.service import MarketService
-
-            instruments = [
-                row for row in self.inputs.registry.get("instruments", []) if row.get("token_id") == token_id
-            ]
-            ids = {row["instrument_id"] for row in instruments}
-            boundary_flow = FlowAccumulator()
-            MarketService._register_capture_boundaries(
-                SimpleNamespace(flow=boundary_flow), ids, cutoff, anchor
-            )
-            for instrument in instruments:
-                iid = instrument["instrument_id"]
-                selected = [row for row in manifests if row["instrument_id"] == iid]
-                if not selected:
-                    continue
-                boundaries = sorted(
-                    {
-                        point
-                        for (identity, _), points in boundary_flow.boundaries.items()
-                        if identity == iid
-                        for point in points
-                    }
-                )
-                rebuilt = TradeArchive.rebuild_window(
-                    selected,
-                    iid,
-                    min(boundaries),
-                    cutoff,
-                    boundaries=boundaries,
-                    purpose="REPLAY",
-                    instrument=instrument,
-                )
-                for field in ("flow_bars", "flow_segments", "reference_points"):
-                    result[field] = [
-                        row for row in result.get(field, []) if row.get("instrument_id") != iid
-                    ] + rebuilt[field]
-                result.setdefault("replay_raw_provenance", []).append(rebuilt["provenance"])
         if anchor is not None:
             if parse_time(anchor["ts"]) > parse_time(cutoff):
                 raise ReplayError("market anchor exceeds replay cutoff")
@@ -761,14 +708,13 @@ async def run_captured_tools(inputs, repo):
             for name in captured.keys() & actual.keys():
                 remember_ids(captured[name], actual[name], name)
         elif isinstance(captured, list) and isinstance(actual, list):
-            for before, after in zip(captured, actual):
+            for before, after in zip(captured, actual, strict=False):
                 remember_ids(before, after, key)
         elif key.endswith("_id") and isinstance(captured, str) and isinstance(actual, str):
             if captured in identities and identities[captured] != actual:
                 raise ReplayError("captured identity maps to conflicting replay identities")
             identities[captured] = actual
 
-    # The isolated CLI owns the process. These patches must never overlap live work.
     with ExitStack() as stack:
         stack.callback(empty_secrets.cleanup)
         stack.callback(evidence_directory.cleanup)
@@ -799,11 +745,7 @@ async def run_captured_tools(inputs, repo):
                 for index, row in enumerate(inputs._records):
                     projected = row["record"]
                     revision_identity = (index, digest(projected))
-                    if revision_identity in seeded or row["collection"] in {
-                        "replay.market_snapshots",
-                        "mkt.trades",
-                        "mkt.raw_archives",
-                    }:
+                    if revision_identity in seeded or row["collection"] == "replay.market_snapshots":
                         continue
                     if inputs.record_visible(row, clock.now()):
                         collection = row["collection"]
@@ -834,8 +776,6 @@ async def run_captured_tools(inputs, repo):
                 context = copy.deepcopy(call.get("context", {}))
                 context["call_id"] = call["call_id"]
                 if call["tool"] in {"web_search", "fetch_page"}:
-                    # DDG and page readers are external observations. Never run
-                    # their clients during offline transcript reproduction.
                     captures = [
                         row
                         for row in inputs._tool_results
@@ -912,7 +852,7 @@ async def replay_fixture(repo, settings, fixture_id):
         raise ReplayError(f"insufficient_fixture: no captured packet for {fixture_id}")
     bundle_id = digest(json.loads(path.read_text()))
     directory = settings.data_dir / "replay" / "bundles" / bundle_id
-    # 03 §11.1: a fixture replays only as a fresh tank-replay session with stored tool results.
+
     result = await run_operational_replay(path, repo, settings)
     freeze(directory / "outputs.json", result)
     freeze(directory / "inputs.json", json.loads(path.read_text()))
@@ -1000,16 +940,13 @@ async def reproduce_bundle(repo, settings, sha, *, mode="fresh-session"):
         actual = await run_operational_replay(source, repo, settings)
     else:
         raise ReplayError("Unknown replay mode")
-    # Native session/run IDs are intentionally fresh. Compare reproduced domain
-    # output, never require identity equality with a prior remote execution.
+
     matches = actual["output_sha256"] == expected["output_sha256"]
     if mode == "captured-tools":
         if not matches:
             raise ReplayError("bundle reproduction differs from immutable output")
         return {"reproduced": True, "input_sha256": sha, "output_sha256": actual["output_sha256"]}
-    # A fresh analyst may choose different analysis and emits fresh identities.
-    # Preserve both immutable outputs and report differences; never rewrite the
-    # reference or advertise byte-identical analysis as a replay prerequisite.
+
     semantic_expected = semantic_verdict_output(expected["output"])
     semantic_actual = semantic_verdict_output(actual["output"])
     semantic_match = actual.get("status", "COMPLETED") == "COMPLETED" and semantic_expected == semantic_actual
@@ -1177,8 +1114,7 @@ async def resolve_replay_message_references(message, inputs, repo, substitutions
         ]
         if embedded is not None:
             originals.append(embedded)
-        # Explicit callback/delivery causality permits differing execution
-        # clocks/prices. Those complete fields remain in semantic comparison.
+
         bound = substitutions.get(identifier)
         if bound and originals:
             causal = [
@@ -1389,8 +1325,7 @@ def prepare_masked_packet(source_path, masked_path, private_map_path, replacemen
         return value
 
     masked = mask({k: v for k, v in packet.items() if k != "input_sha256"})
-    # Pins identify executable code/config versions; masking is a separate input
-    # transformation and must not rewrite these deployment identities.
+
     for key in ("config_version", "code_version", "cutoff"):
         masked[key] = packet[key]
     private = {"schema_version": 1, "source_sha256": digest(packet), "replacements": replacements}
@@ -1540,12 +1475,9 @@ async def replay_agent_session(
             if identity in imported or row["collection"] in {
                 "replay.market_snapshots",
                 "ops.tool_calls",
-                "mkt.trades",
-                "mkt.raw_archives",
             }:
                 continue
-            # Later domain outputs must be generated by the new agent/tools,
-            # never injected from the original run as its clock advances.
+
             if not baseline and not (
                 row["collection"].startswith("ingest.")
                 or _market_record(row)
@@ -1656,8 +1588,7 @@ async def replay_agent_session(
             and row["record"].get("status") == "DONE"
             and mapped_capture(row["record"].get("arguments", row["record"].get("input"))) == arguments
         ]
-        # Exact input plus chronological occurrence is transcript lineage, not a
-        # semantic guess. Stable packet order breaks equal timestamp ties.
+
         return (
             min(
                 candidates,
@@ -1729,9 +1660,7 @@ async def replay_agent_session(
                     "insufficient_fixture: one unambiguous original external tool result required"
                 )
             capture = min(matches, key=lambda row: parse_time(row["available_at"]))
-            # Returning a captured response is an observable input event. Move
-            # the simulation to its original availability, bounded by cutoff;
-            # the archived ledger itself never enters the sandbox database.
+
             capture_timestamp = propagate_timestamp(capture, "available_at")
             if parse_time(capture_timestamp.value) > clock.now():
                 await advance_clock(capture_timestamp)
@@ -1941,9 +1870,7 @@ async def replay_agent_session(
         )
         if not phase or any(row["phase_id"] == phase["phase_id"] for row in phase_checkpoints):
             return
-        # Retire this settled turn's HTTP follower before another phase can
-        # accept input. Its finally block must not cancel the next turn's SSE.
-        # The native session/workspace remains intact; send_message resumes it.
+
         follower = service.tasks.get(sid)
         if follower is not None and not follower.done():
             follower.cancel()
@@ -2010,12 +1937,8 @@ async def replay_agent_session(
             async for job in repo.iter_all("ops.jobs", filters={"status": "QUEUED"}):
                 if job["type"] == "DELIVER":
                     if inputs.fixture_reference:
-                        # A first reference has no historical publication/SENT
-                        # lineage. Preserve the real producer's intent exactly;
-                        # generated cards do not prove delivery or open a call.
                         continue
-                    # The captured SENT receipt advances time; actual delivery
-                    # code still enforces its fresh not-before/rate window.
+
                     outcome = await replay_delivery(job["payload"])
                     await repo.put("ops.jobs", job["job_id"], dict(job, result=outcome, status="DONE"))
                     continue
@@ -2125,9 +2048,7 @@ async def replay_agent_session(
                     ]
                     if any(missing_capture_error(call) for call in calls):
                         raise ReplayError("insufficient_fixture: required replay tool capture is absent")
-                    # Ordinary audited refusals/errors are delivered to the
-                    # fresh agent, which may correct its call as in production.
-                    # They must not be mistaken for a missing capture.
+
                     queued_deliveries = [
                         row
                         async for row in repo.iter_all(
@@ -2135,10 +2056,7 @@ async def replay_agent_session(
                         )
                     ]
                     execution = await service.completed_turn(sid)
-                    # Missing acceptance/correlation may be recoverable after a
-                    # lost HTTP acknowledgement. completed_turn reconciles durable
-                    # intents; absence is never a completion proof. The bounded
-                    # replay deadline reports an incomplete run if it stays unknown.
+
                     if (
                         execution["complete"]
                         and (inputs.fixture_reference or not queued_deliveries)
@@ -2209,8 +2127,6 @@ async def replay_agent_session(
                             break
                         next_payload = dict(resolved_message, replay_run_id=run_id)
                         if message["kind"] == "NEW_ITEM":
-                            # Preserve the recorded routing boundary. A new item
-                            # must not inherit the previous event's bound session.
                             source_id = message.get("replay_source_session_id")
                             current_evidence = (
                                 evidence_view.advance(clock.timestamp())
@@ -2354,10 +2270,9 @@ async def replay_agent_session(
             if worker:
                 worker.cancel()
                 await asyncio.gather(worker, return_exceptions=True)
-            # Followers must not race a terminal host abort or replay a late callback.
+
             await service.stop_followers()
-            # Creation/acceptance may have committed even if the HTTP reply was
-            # lost. Reconcile by this unique run, never touch original sessions.
+
             owned = [
                 row async for row in repo.iter_all("ops.agent_sessions", filters={"replay_run_id": run_id})
             ]
@@ -2369,12 +2284,12 @@ async def replay_agent_session(
                         receipt["local_finalization"] = await service.finalize_replay_abort(
                             row["session_id"], run_id, failure
                         )
-                    except Exception as exc:  # noqa: BLE001 - retain the original replay failure
+                    except Exception as exc:
                         receipt["local_finalization_error_type"] = type(exc).__name__
                 try:
                     await service.request("POST", f"sessions/{row['session_id']}/archive")
                     receipt["archived"] = True
-                except Exception as exc:  # noqa: BLE001 - cleanup receipts must preserve the primary run failure
+                except Exception as exc:
                     receipt["error_type"] = type(exc).__name__
                 cleanup.append(receipt)
             await service.close()

@@ -10,16 +10,10 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/schema"
 )
 
-// WriteChunk is WRITE_CHUNK: rows per write statement.
 const WriteChunk = 500
 
-// Unproven is UNPROVEN: the gap reason of a bar written incomplete only because its
-// writer holds no proof for the minute. It never replaces a stored complete bar.
 const Unproven = "STREAM_COVERAGE_UNPROVEN"
 
-// prepareRecords is _prepare_records: encoded, de-duplicated (funding and ticker
-// points of one identity merged) and fingerprinted records by storage key, in the
-// order the Python dict holds them.
 func prepareRecords(collection string, records []map[string]any, keys []string) ([]string, map[string]map[string]any, error) {
 	encoded := make([]map[string]any, len(records))
 	for i, r := range records {
@@ -94,7 +88,6 @@ func prepareRecords(collection string, records []map[string]any, keys []string) 
 	return order, unique, nil
 }
 
-// upsert is the statement _put_market_batch runs for a collection.
 func (s *Store) upsert(collection string) string {
 	if q, ok := s.statements.Load(collection); ok {
 		return q.(string)
@@ -105,7 +98,7 @@ func (s *Store) upsert(collection string) string {
 }
 
 func (s *Store) buildUpsert(collection string) string {
-	table := s.Table(collection)
+	table := liveTable(collection)
 	names := []string{"storage_key"}
 	for _, c := range schema.Columns[collection] {
 		names = append(names, c.Name)
@@ -123,12 +116,10 @@ func (s *Store) buildUpsert(collection string) string {
 		q := quote(name)
 		quoted[i] = q
 		unnest[i] = "$" + strconv.Itoa(i+1) + "::text[]"
-		switch k := kind(name); {
-		case k == "text[]":
+		switch k := kind(name); k {
+		case "text[]":
 			selection[i] = "CASE WHEN u." + q + " IS NULL THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(u." + q + "::jsonb)) END"
-		case collection == "mkt.liq_obs" && name == "id":
-			selection[i] = "coalesce(u." + q + "::bigint,nextval('" + s.schemaOf(collection) + ".liq_obs_id_seq'))"
-		case k == "text":
+		case "text":
 			selection[i] = "u." + q
 		default:
 			selection[i] = "u." + q + "::" + k
@@ -149,30 +140,9 @@ func (s *Store) buildUpsert(collection string) string {
 	source := "SELECT " + strings.Join(selection, ",") + " FROM unnest(" + strings.Join(unnest, ",") + ") AS u(" + strings.Join(quoted, ",") + ")"
 	head := "INSERT INTO " + table + " AS current (" + strings.Join(quoted, ",") + ") " + source + " ON CONFLICT (" + strings.Join(identity, ",") + ") DO UPDATE SET "
 	returning := " RETURNING " + selectList(collection, "current")
-	switch collection {
-	case "mkt.funding_obs", "mkt.tickers_24h":
-		mode := "ticker"
-		if collection == "mkt.funding_obs" {
-			mode = "funding"
-		}
-		merged := "ops.merge_market_point('" + mode + "',to_jsonb(current),to_jsonb(EXCLUDED))"
-		points := make([]string, len(quoted))
-		for i, q := range quoted {
-			points[i] = "point." + q
-		}
-		return head + "(" + strings.Join(quoted, ",") + ") = (SELECT " + strings.Join(points, ",") + " FROM jsonb_populate_record(NULL::" + table + "," + merged + ") AS point)" +
-			" WHERE ops.market_semantic(" + merged + ") IS DISTINCT FROM ops.market_semantic(to_jsonb(current))" + returning
-	case "mkt.flow_bars_1m":
-		return head + strings.Join(assignments, ",") + " WHERE current.semantic_fingerprint IS DISTINCT FROM EXCLUDED.semantic_fingerprint" +
-			" AND NOT (current.complete IS TRUE AND EXCLUDED.complete IS NOT TRUE AND coalesce(EXCLUDED.gap_reason,'" + Unproven + "') = '" + Unproven + "')" + returning
-	}
 	return head + strings.Join(assignments, ",") + " WHERE current.semantic_fingerprint IS DISTINCT FROM EXCLUDED.semantic_fingerprint" + returning
 }
 
-// PutMarketBatch is tank.market_storage.put_market_batch: one statement per WRITE_CHUNK
-// records that inserts new rows and updates stored ones whose semantic fingerprint
-// differs (a flow bar without proof never unproves a complete one; funding and ticker
-// points merge with the stored point). It returns the rows it changed, decoded.
 func (s *Store) PutMarketBatch(ctx context.Context, collection string, rows []map[string]any, keys []string) ([]map[string]any, error) {
 	return s.putMarketBatch(ctx, s.Pool, collection, rows, keys)
 }
@@ -203,6 +173,12 @@ func (s *Store) putMarketBatch(ctx context.Context, q querier, collection string
 func (s *Store) putChunk(ctx context.Context, q querier, collection string, rows []map[string]any, keys []string) ([]map[string]any, error) {
 	if len(rows) == 0 {
 		return nil, nil
+	}
+	if ClickHouseTables[collection] {
+		if err := s.series(collection); err != nil {
+			return nil, err
+		}
+		return s.chPutChunk(ctx, collection, rows, keys)
 	}
 	order, unique, err := prepareRecords(collection, rows, keys)
 	if err != nil {

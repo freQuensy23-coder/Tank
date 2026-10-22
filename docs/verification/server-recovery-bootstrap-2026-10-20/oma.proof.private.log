@@ -1,4 +1,0 @@
-[WARN  tini (8)] Tini is not running as PID 1 and isn't registered as a child subreaper.
-Zombie processes will not be re-parented to Tini, so zombie reaping won't work.
-To fix the problem, use the -s option or set the environment variable TINI_SUBREAPER to register Tini as a child subreaper, or run Tini as PID 1.
-{"tables": 97, "verified": true, "passed": true}

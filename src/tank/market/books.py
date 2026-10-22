@@ -1,16 +1,13 @@
 """Stateful level 2 books, continuity and venue checksum verification."""
 
-from __future__ import annotations
-
 import time
 import zlib
 from bisect import bisect_left, bisect_right, insort
 from decimal import Decimal
 
+from tank.market.normalize import SemanticError, decimal, precise, timestamp_fields, venue_key
 from tank.time_precision import collection_clock
 from tank.util import iso, jsonable
-
-from .normalize import SemanticError, decimal, precise, timestamp_fields, venue_key
 
 
 class OrderBook:
@@ -23,8 +20,7 @@ class OrderBook:
         self.gap_reason = "NO_SNAPSHOT"
         self.exchange_ts = None
         self.exchange_ts_prec = None
-        # Whether the venue checksum was verified on the current book state. Updates
-        # are verified at most once per VERIFY_S unless asked (a summary is due).
+
         self.verified = True
         self._next_verify = 0.0
         self.integrity_method = (
@@ -35,8 +31,7 @@ class OrderBook:
             else "DOCUMENTED_LEVEL2_DELIVERY"
         )
         self._strings = {"bid": {}, "ask": {}}
-        # Ascending prices per side, kept in step with bids/asks: best levels, the top
-        # levels of a checksum, depth trimming and the 2% window are slices, not sorts.
+
         self._prices = {"bid": [], "ask": []}
 
     def _levels(self, side, levels, *, snapshot=False):
@@ -78,23 +73,21 @@ class OrderBook:
         self.exchange_ts_prec = ts_prec if ts is not None else "COLLECTION_ONLY"
         self.integrity_ok = bool(self.bids and self.asks)
         self.gap_reason = None if self.integrity_ok else "EMPTY_BOOK"
-        # Serialized by the archive writer thread, not on the capture path.
-        self.pending_snapshot = (
-            {
-                "instrument_id": self.instrument["instrument_id"],
-                "market_type": self.instrument["market_type"],
-                "venue": self.instrument["venue"],
-                "venue_symbol": self.instrument["venue_symbol"],
-                **timestamp_fields("exchange_ts", self.exchange_ts, self.exchange_ts_prec),
-                **collection_clock().fields("received_ts"),
-                "bids": bids,
-                "asks": asks,
-                "sequence": sequence,
-                "checksum": checksum,
-                "quantity_basis": "PROVIDER_RAW_LEVEL_SIZE",
-                "contract_multiplier": self.instrument.get("contract_multiplier"),
-            }
-        )
+
+        self.pending_snapshot = {
+            "instrument_id": self.instrument["instrument_id"],
+            "market_type": self.instrument["market_type"],
+            "venue": self.instrument["venue"],
+            "venue_symbol": self.instrument["venue_symbol"],
+            **timestamp_fields("exchange_ts", self.exchange_ts, self.exchange_ts_prec),
+            **collection_clock().fields("received_ts"),
+            "bids": bids,
+            "asks": asks,
+            "sequence": sequence,
+            "checksum": checksum,
+            "quantity_basis": "PROVIDER_RAW_LEVEL_SIZE",
+            "contract_multiplier": self.instrument.get("contract_multiplier"),
+        }
         if checksum is not None:
             if venue_key(self.instrument).startswith("okx") and int(checksum) == 0:
                 self.integrity_method = "SEQ_ID_PREV_SEQ_ID_CHECKSUM_DEPRECATED_20260623"
@@ -123,7 +116,7 @@ class OrderBook:
         elif key.startswith("okx"):
             valid = previous is not None and int(previous) == int(self.sequence)
         else:
-            valid = True  # Kraken checksum and Coinbase full level2 delivery; Bybit u is not consecutive.
+            valid = True
         if not valid:
             self.integrity_ok = False
             self.gap_reason = "SEQUENCE_GAP"
@@ -139,7 +132,7 @@ class OrderBook:
                 excess = len(book) - 1000
                 if excess <= 0:
                     continue
-                # Drop the levels farthest from mid (usually one or two per update).
+
                 prices = self._prices[side]
                 far = prices[:excess] if side == "bid" else prices[-excess:]
                 for price in far:
@@ -158,14 +151,12 @@ class OrderBook:
                 self.verified = True
                 self._next_verify = time.monotonic() + self.VERIFY_S
             else:
-                # A wrong state persists, so the next verification still catches it;
-                # nothing is summarized from an unverified state.
                 self.verified = False
         return True
 
     def verify(self, expected):
         key = venue_key(self.instrument)
-        bids = self._prices["bid"][-25:][::-1]  # checksums cover the top 25 (OKX) / 10 (Kraken)
+        bids = self._prices["bid"][-25:][::-1]
         asks = self._prices["ask"][:25]
         if key.startswith("okx"):
             parts = []
@@ -233,8 +224,7 @@ class OrderBook:
             far = prices[0] if side == "bid" else prices[-1]
             covered = abs(far / mid - 1) * 100
             ranges[side] = covered
-            # Only levels within 2% of mid are sorted (a full book can hold tens of
-            # thousands of levels); |p/mid - 1| <= x  <=>  p on the right side of mid(1 ∓ x).
+
             if side == "bid":
                 near = prices[bisect_left(prices, mid * (1 - Decimal(".02"))) :][::-1]
             else:

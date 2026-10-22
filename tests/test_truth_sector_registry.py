@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 import yaml
-from test_truth_start_fixture import synthetic_start_snapshot
+from test_truth_start_fixture import compact_start_snapshot
 
 import tank.analysis.truth as truth
 from tank.util import parse_time
@@ -15,7 +15,7 @@ registry = yaml.safe_load((ROOT / "config/registry.yaml").read_text())
 
 
 def packet_for(token):
-    source = synthetic_start_snapshot()
+    source = compact_start_snapshot()
 
     def rename(value):
         if isinstance(value, str):
@@ -28,14 +28,29 @@ def packet_for(token):
 
     packet = rename(source)
     packet["tokens"] = copy.deepcopy(registry["tokens"])
-    # Genuine registry metadata; synthetic prices are explicitly unit-test controls.
-    peers = [r for r in packet["klines"] if r["token_id"] == token["token_id"]]
+
+    for domain in ("oi", "funding", "books", "semantics"):
+        packet.pop(domain, None)
+
+    first_venue = "A:spot:" + token["symbol"]
+    peers = [
+        row
+        for row in packet["klines"]
+        if row["token_id"] == token["token_id"] and row["instrument_id"] == first_venue
+    ]
+    end = parse_time(packet["cutoff"])
+    boundaries = {end - truth.timedelta(seconds=seconds) for seconds in (0, 900, 3600, 14400, 86400)}
+    boundaries.add(parse_time(packet["anchor"]["ts"]))
     for index, peer in enumerate(registry["tokens"]):
         if peer["token_id"] == token["token_id"]:
             continue
         for original in peers:
+            close = parse_time(original["open_time"]) + truth.timedelta(seconds=original["interval_s"])
+
+            if peer["symbol"] not in {"BTC", "ETH"} and close not in boundaries:
+                continue
             row = dict(original, token_id=peer["token_id"], instrument_id="peer:spot:" + peer["symbol"])
-            # Distinct peer returns exercise the equal-weight basket/fallback math.
+
             elapsed = (parse_time(row["open_time"]) - parse_time(packet["anchor"]["ts"])).total_seconds()
             row["c"] = str(float(row["c"]) * (1 + (index + 1) * elapsed / 1e9))
             packet["klines"].append(row)
@@ -74,7 +89,7 @@ def test_explicit_captured_basket_controls_measured_peer_returns():
     implicit = truth.relative_truth(packet, start, end)
     packet["sector_baskets"] = copy.deepcopy(registry["sector_baskets"])
     assert truth.relative_truth(packet, start, end) == implicit
-    # Explicit basket membership wins over stale token grouping for its constituents.
+
     basket = next(b for b in packet["sector_baskets"] if b["sector"] == "DEX_EXECUTION")
     basket["constituents"] = [token["token_id"], "aave:AAVE", "morpho:MORPHO"]
     changed = truth.relative_truth(packet, start, end)

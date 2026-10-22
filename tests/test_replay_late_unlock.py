@@ -72,7 +72,7 @@ def settings():
 def test_late_unlock_known_schedule_is_visible_for_past_and_upcoming_tranches(tmp_path, tranche):
     inputs = load_inputs(write(tmp_path, [unlock(tranche)]), settings())
     assert [row["date"] for row in inputs.records("mkt.unlocks")] == [tranche]
-    # BUCKET(1d) as of 1 Sep is known only at the end of that day.
+
     assert inputs.records("mkt.unlocks", cutoff="2026-09-01T12:00:00Z") == []
     assert len(inputs.records("mkt.unlocks", cutoff="2026-09-02T00:00:00Z")) == 1
     assert inputs.evidence_mode == "HISTORICAL_RECONSTRUCTION"

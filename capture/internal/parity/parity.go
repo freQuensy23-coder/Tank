@@ -1,7 +1,3 @@
-// Package parity runs recorded exchange frames through tank-capture's ports exactly as
-// scripts/capture/parity.py runs them through the Python reference: identical routing,
-// frame processing, rows, flow bars, fingerprints, watermarks and errors are the
-// parity contract.
 package parity
 
 import (
@@ -29,14 +25,12 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// Constants shared with scripts/capture/parity.py.
 const (
 	ConfigVersion = "parity-config"
 	CodeVersion   = "parity-code"
 	USDTRate      = "0.99950"
 )
 
-// Frame is one recorded frame (or a recorded REST snapshot).
 type Frame struct {
 	T            string `json:"t"`
 	Endpoint     string `json:"endpoint"`
@@ -45,19 +39,19 @@ type Frame struct {
 	InstrumentID string `json:"instrument_id"`
 }
 
-// Fixture is a recorded fixture file.
 type Fixture struct {
 	Meta   map[string]any
 	Frames []Frame
 }
 
-// Load reads capture/testdata/frames/<name>.jsonl.gz.
 func Load(path string) (*Fixture, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() {
+		_ = f.Close()
+	}()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		return nil, err
@@ -91,7 +85,6 @@ func Load(path string) (*Fixture, error) {
 	return fx, scanner.Err()
 }
 
-// Instruments are the fixture instruments with the runtime fields a live service holds.
 func Instruments(meta map[string]any) []*venue.Instrument {
 	var out []*venue.Instrument
 	for _, raw := range pyval.List(meta["instruments"]) {
@@ -108,7 +101,6 @@ func Instruments(meta map[string]any) []*venue.Instrument {
 	return out
 }
 
-// FrameClock is driven by the recorded receive times.
 type FrameClock struct{ T0, T time.Time }
 
 func (c *FrameClock) Now() time.Time            { return c.T }
@@ -116,14 +108,12 @@ func (c *FrameClock) Monotonic() time.Duration  { return c.T.Sub(c.T0) }
 func (c *FrameClock) set(value string)          { c.T = pytime.MustParse(value) }
 func (c *FrameClock) monotonicSeconds() float64 { return pipeline.Seconds(c.Monotonic()) }
 
-// RowOut is one queued typed row.
 type RowOut struct {
 	Collection string         `json:"collection"`
 	Key        string         `json:"key"`
 	Row        map[string]any `json:"row"`
 }
 
-// Output is the full result (the Python --dump shape).
 type Output struct {
 	Trades       []map[string]any  `json:"trades"`
 	Rows         []RowOut          `json:"rows"`
@@ -133,7 +123,6 @@ type Output struct {
 	Errors       [][]any           `json:"errors"`
 }
 
-// Run processes a fixture.
 func Run(fx *Fixture) (*Output, error) {
 	instruments := Instruments(fx.Meta)
 	if len(instruments) == 0 {
@@ -310,7 +299,6 @@ type queued struct {
 	payload any
 }
 
-// orderedLevels is a Python dict of price text -> qty text (insertion order kept).
 type orderedLevels struct {
 	order []string
 	qty   map[string]string
@@ -356,8 +344,6 @@ func fingerprint(collection string, row map[string]any) (string, error) {
 	return schema.Fingerprint(encoded, collection), nil
 }
 
-// Bars is the harness's bar pass (scripts/capture/parity.py flow_bars): the same
-// boundaries, coverage proofs and empty minutes on both sides, then every bar recorded.
 func Bars(acc *flow.Accumulator, instruments []*venue.Instrument, now time.Time) []map[string]any {
 	var out []map[string]any
 	for _, inst := range instruments {
@@ -399,7 +385,6 @@ func Bars(acc *flow.Accumulator, instruments []*venue.Instrument, now time.Time)
 	return out
 }
 
-// Digests is the committed summary of an output (scripts/capture/parity.py digests).
 func Digests(o *Output) map[string]any {
 	trades := make([]any, len(o.Trades))
 	for i, t := range o.Trades {

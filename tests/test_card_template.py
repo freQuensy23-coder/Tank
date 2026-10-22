@@ -339,8 +339,7 @@ def test_who_excludes_unjustified_links_and_never_repeats_primary_as_secondary()
     assert who.count("primary Uniswap (UNI)") == 1
     assert "secondary Uniswap (UNI)" not in who and "candidate" not in who
     assert "loser OutsideLoser" in who
-    # A credible secondary is shown with its recorded layer and state, and
-    # removes the no-secondaries explanation instead of listing all candidates.
+
     secondary = dict(
         primary,
         token_id="cow:COW",
@@ -377,7 +376,7 @@ def test_secondary_outside_universe_is_named_without_market_block():
     assert "secondary litentry (LIT) (ISSUER_PRODUCT, unverified BUILT)" in who
     assert "outside the token universe, no market block" in who
     assert "OTH" not in who
-    assert card.count("── ") == 1  # only World has a market block
+    assert card.count("── ") == 1
 
 
 def test_tokens_are_named_by_project_never_ticker_alone():
@@ -474,6 +473,7 @@ def test_actual_spot_exclusion_cause_reaches_the_card(source_reason):
     assert "bybit — INCOMPLETE" not in card
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize(
     "verdict,why",
     [
@@ -558,8 +558,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
             },
         )
         service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
-        # Publication depends on stored structured inputs, not a host-imposed
-        # order of this turn's calls or a second opinion about the prose.
+
         await repo.put("ops.agent_sessions", "card-session", {"session_id": "card-session", "event_id": eid})
         result = await service.dispatch(
             "publish_card",
@@ -579,8 +578,8 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
         assert why[1].removeprefix("Economic effect: ") in text
         lines = text.splitlines()
         assert alert["shown_tokens"] == [token]
-        assert "primary ETH" not in text  # Unselected universe token has no decision.
-        assert "── ethereum:ETH" not in text  # No invented WAIT/token block.
+        assert "primary ETH" not in text
+        assert "── ethereum:ETH" not in text
         assert len([line for line in lines if line.startswith("──")]) == 1
         assert lines[1].startswith("Scores ") and lines[2].startswith("Stage: ")
         assert not any(line.startswith(("IMPACT:", "SECONDARIES:")) for line in lines)
@@ -600,7 +599,6 @@ def test_header_preserves_agent_supplied_sentence_and_structured_action():
     verdict = "The institution chose this protocol as infrastructure for its planned network."
     card = compose_card(event, assessment, [beneficiary], [decision], [truth], verdict=verdict)
     assert card.splitlines()[0] == "MAJOR (M2) — " + verdict
-    assert verdict in card
     assert "WHAT TO DO: WAIT — Thesis A · Trade B" in card
     assert event["statement"].endswith("planned network.")
 
@@ -843,7 +841,10 @@ def test_falling_native_oi_is_stated_as_positions_closing():
     }
     values[4]["relative"]["windows"]["EVENT"]["r_raw"] = "0.54"
     market = render(values).split("MARKET TRUTH:", 1)[1].split("OUTLOOK:", 1)[0]
-    assert "event: open positions (synchronized native OI) -30.36% in WLD while price rose +54.00%: positions closing" in market
+    assert (
+        "event: open positions (synchronized native OI) -30.36% in WLD while price rose +54.00%: positions closing"
+        in market
+    )
 
 
 @pytest.mark.parametrize(
@@ -879,12 +880,16 @@ def test_btc_priced_line_names_the_benchmark_instead_of_a_missing_net_move():
     assert "Priced: EARLY · EVENT 3.00% raw; n/a (not available) net BTC" in render(values)
 
 
-
 @pytest.mark.parametrize(
     "data,certainty,move,expected",
     [
-        ("HIGH", "MEDIUM", "SPOT_LED_ACCUMULATION", "Event certainty MEDIUM: not confirmed by a HIGH-certainty source"),
-        ("HIGH", "MEDIUM", "UNKNOWN", "Move class unresolved: no class eligible (UNKNOWN)"),  # msg 19
+        (
+            "HIGH",
+            "MEDIUM",
+            "SPOT_LED_ACCUMULATION",
+            "Event certainty MEDIUM: not confirmed by a HIGH-certainty source",
+        ),
+        ("HIGH", "MEDIUM", "UNKNOWN", "Move class unresolved: no class eligible (UNKNOWN)"),
         ("HIGH", "HIGH", "SPOT_LED_ACCUMULATION", "none recorded"),
     ],
 )
@@ -912,5 +917,6 @@ def test_confidence_names_the_limiting_input(data, certainty, move, expected):
     values[4].update(truth)
     line = next(line for line in render(values).splitlines() if line.startswith("CONFIDENCE:"))
     assert line.endswith("main unknown: " + expected), line
-    assert decision["confidence_limiting"]["input"] == (None if expected == "none recorded" else
-                                                        "certainty" if "certainty" in expected else "class")
+    assert decision["confidence_limiting"]["input"] == (
+        None if expected == "none recorded" else "certainty" if "certainty" in expected else "class"
+    )

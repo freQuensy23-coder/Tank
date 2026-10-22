@@ -20,7 +20,6 @@ def prepare(archive: Path, destination: Path, *, boxlite_version="0.9.0", archit
         raise ValueError("OCI destination must be new")
     destination.mkdir(parents=True)
     try:
-        # "-" streams `docker save` output from stdin, so no intermediate archive is written.
         stream = str(archive) == "-"
         with (
             tarfile.open(fileobj=sys.stdin.buffer, mode="r|*") if stream else tarfile.open(archive, "r:*")

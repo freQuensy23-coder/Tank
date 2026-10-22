@@ -7,7 +7,7 @@ import pytest
 
 from tank.agents import ConfigurationError, Pipeline, SessionService
 from tank.storage import MemoryRepository
-from tank.util import iso, utcnow
+from tank.util import iso, sha256, utcnow
 
 
 def settings(**overrides):
@@ -345,7 +345,11 @@ async def test_new_scout_session_wire_protocol_and_isolation():
         )
     assert len(posted) == 3
     assert posted[2]["events"][0]["is_error"] is True
-    assert posted[0] == {"agent": "agt_s", "environment_id": "env_1", "metadata": posted[0]["metadata"]}
+    assert posted[0] == {
+        "agent": "agt_s",
+        "environment_id": "env_1",
+        "metadata": {"tank_identity": sha256({"identity": "p", "scout": True})},
+    }
     content = json.loads(posted[1]["events"][0]["content"][0]["text"])
     assert content["proposal"]["prp_id"] == "p"
 
@@ -374,8 +378,6 @@ async def test_stream_processing_preserves_concurrent_added_message():
     record = await repo.get("ops.agent_sessions", "ses_1")
     assert len(record["messages"]) == 1 and len(record["message_log"]) == 1
     assert record["last_event_seq"] == 9
-
-
 
 
 @pytest.mark.asyncio
@@ -467,8 +469,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
     ) as http:
         service = SessionService(repo, opts, tools.dispatch, http=http)
-        # Create the original FULL through production publication so its pinned
-        # shown_tokens and decision references exactly match real records.
+
         monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Original product card")
         await service.process_event(
             "ses_1",
@@ -525,10 +526,8 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         )
         invalidated = await repo.get("evt.events", "evt_1")
         assert invalidated["lifecycle"] == "INVALIDATED"
-        # Repeat the archive check over many nominal 10-second polling cycles;
-        # the analyst has not reached its EXIT decision yet.
-        for _ in range(30):
-            assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
+
+        assert not await service.can_archive(await repo.get("ops.agent_sessions", "ses_1"), invalidated)
         await service.process_event(
             "ses_1",
             {
@@ -559,7 +558,7 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         assert published["published"]
         alert = await repo.get("out.alerts", f"{published['alert_id']}:{published['version']}")
         assert alert["decisions"] == [decision["dec_id"]]
-        # Even an explicit finalized marker cannot bypass an open call or queued delivery.
+
         invalidated = await repo.get("evt.events", "evt_1")
         invalidated["session_finalized_at"] = iso()
         await repo.put("evt.events", "evt_1", invalidated)
@@ -620,7 +619,7 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
     creates, messages = [], []
 
     def handler(request):
-        assert request.url.host != "opencode.ai"  # Pending extraction has no event state to score.
+        assert request.url.host != "opencode.ai"
         if request.method == "GET":
             return httpx.Response(200, json={"data": [], "next_page": None})
         body = json.loads(request.content)
@@ -706,8 +705,6 @@ async def test_live_slow_and_recovered_tool_context_keep_session_provenance():
         assert context["code_version"] == "new_code"
         assert context["session_config_version"] == "old_config"
         assert context["session_code_version"] == "old_code"
-
-
 
 
 @pytest.mark.asyncio

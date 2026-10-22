@@ -13,11 +13,6 @@ from tank.settings import Settings, configured_values, resolve_versions
 from tank.time_precision import collection_clock
 from tank.util import iso, jsonable, new_id
 
-
-# The service is one process (02 §12), so Market Truth's worker threads and the event loop share
-# one GIL. The loop gives the GIL up on every socket read and waits up to the switch interval to
-# get it back; at CPython's 5 ms default, hundreds of stream reads a second fell behind a
-# computation and capture stalled for 10-58 s (r110, 21 Oct 04:04). 0.5 ms bounds that wait.
 GIL_SWITCH_INTERVAL_S = 0.0005
 
 
@@ -38,11 +33,16 @@ def run_db(fn, *, database_url=None, replay=False):
                 )
             settings = settings.model_copy(update={"database_url": database_url, "replay": True})
         repo = PostgresRepository(settings.database_url)
+        from tank import clickhouse_market
+
+        clickhouse = clickhouse_market.install(repo, settings)
         await repo.open()
         try:
             return await fn(repo, settings)
         finally:
             await repo.close()
+            if clickhouse is not None:
+                await clickhouse.close()
 
     try:
         output(asyncio.run(execute()))
@@ -85,18 +85,31 @@ def db():
 
 
 @db.command()
-@click.option(
-    "--market-export-dir",
-    type=click.Path(file_okay=False, path_type=Path),
-    help="Durable directory for verified Parquet export of legacy SQL trades before migration 027.",
-)
-def migrate(market_export_dir):
+def migrate():
     async def command(repo, settings):
-        await repo.migrate(
-            market_export_dir=market_export_dir,
-            legacy_bundle_dir=settings.data_dir / "bundles",
-        )
+        await repo.migrate()
+        if getattr(repo, "clickhouse", None) is not None:
+            from tank.clickhouse_market import ddl
+
+            for statement in ddl():
+                await repo.clickhouse.execute(statement)
         return {"status": "migrated"}
+
+    run_db(command)
+
+
+@db.command("clickhouse")
+def clickhouse_schema():
+    """Create the ClickHouse market tables (idempotent; HLD §7.1)."""
+
+    async def command(repo, settings):
+        if getattr(repo, "clickhouse", None) is None:
+            raise click.ClickException("TANK_CLICKHOUSE_URL is not set")
+        from tank.clickhouse_market import ddl
+
+        for statement in ddl():
+            await repo.clickhouse.execute(statement)
+        return {"status": "clickhouse schema applied", "statements": len(ddl())}
 
     run_db(command)
 
@@ -363,23 +376,6 @@ def coverage():
     run_db(command)
 
 
-@main.group()
-def archive():
-    """Verified Binance archive retrieval."""
-
-
-@archive.command("fetch")
-@click.argument("symbol")
-@click.argument("date", type=click.DateTime(formats=["%Y-%m-%d"]))
-def archive_fetch(symbol, date):
-    async def command(repo, settings):
-        from tank.market.archive import fetch_archive
-
-        return await fetch_archive(repo, settings, symbol, date.date().isoformat())
-
-    run_db(command)
-
-
 @main.command()
 @click.argument("fixture_id")
 @click.option(
@@ -516,7 +512,6 @@ def doctor():
 
         import yaml
 
-        # An unreadable sources/delivery file is reported by readiness_checks.
         with contextlib.suppress(OSError, ValueError, yaml.YAMLError):
             settings = settings.model_copy(update=configured_values(settings))
         checks = readiness_checks(settings)

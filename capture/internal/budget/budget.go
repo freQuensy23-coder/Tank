@@ -1,8 +1,3 @@
-// Package budget is one request budget per provider bucket and IP: the buckets
-// tank.market.rate_gate and MarketService._request_once charge, a ledger shared with
-// Tank core through PostgreSQL (ops.request_budget_acquire, migration 046), and the
-// per-process admission in front of it (rate_gate.PriorityGate, the host start spacing
-// and SharedRequestBudgets' urgent yielding).
 package budget
 
 import (
@@ -15,18 +10,14 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/pyval"
 )
 
-// Bucket is one SharedRequestBudgets.acquire(key, capacity, window_s, weight=weight).
 type Bucket struct {
 	Key               string
 	Capacity, WindowS float64
 	Weight            float64
 }
 
-// Name is the bucket's ledger name.
 func (b Bucket) Name() string { return BucketName(b.Key, b.WindowS, b.Capacity) }
 
-// BucketName is how core names a SharedRequestBudgets bucket (key, float(window_s),
-// float(capacity)) in the shared ledger: key|repr(float(window_s))|repr(float(capacity)).
 func BucketName(key string, windowS, capacity float64) string {
 	return key + "|" + floatRepr(windowS) + "|" + floatRepr(capacity)
 }
@@ -39,7 +30,6 @@ func floatRepr(f float64) string {
 	return s
 }
 
-// ErrInvalidBudget is SharedRequestBudgets.acquire's ValueError.
 var ErrInvalidBudget = errors.New("Invalid configured request budget")
 
 func valid(capacity, weight float64) error {
@@ -49,8 +39,6 @@ func valid(capacity, weight float64) error {
 	return nil
 }
 
-// BinanceWeight is tank.market.rate_gate.binance_request_weight: public endpoint weights
-// from the official Binance contracts; unknown endpoints fail closed.
 func BinanceWeight(host, path string, params map[string]string) (float64, error) {
 	limit, err := intParam(params, "limit", 100)
 	if err != nil {
@@ -128,7 +116,6 @@ func BinanceWeight(host, path string, params map[string]string) (float64, error)
 	return 0, errors.New("Unconfigured Binance request weight: " + path)
 }
 
-// intParam is int(params.get(name, def)).
 func intParam(params map[string]string, name string, def int64) (int64, error) {
 	value, ok := params[name]
 	if !ok {
@@ -141,7 +128,6 @@ func intParam(params map[string]string, name string, def int64) (int64, error) {
 	return n, nil
 }
 
-// okxCaps are public_request_constraints' OKX endpoint budgets and their scopes.
 var okxCaps = map[string]struct {
 	capacity float64
 	scope    string
@@ -159,8 +145,6 @@ var okxCaps = map[string]struct {
 	"/api/v5/market/tickers":              {10, "IP"},
 }
 
-// PublicConstraints is tank.market.rate_gate.public_request_constraints: verified public
-// provider budgets whose keys include the documented scope.
 func PublicConstraints(host, path string, params map[string]string, payload map[string]any) ([]Bucket, error) {
 	switch host {
 	case "api.bybit.com":
@@ -185,7 +169,7 @@ func PublicConstraints(host, path string, params map[string]string, payload map[
 		case "meta", "metaAndAssetCtxs":
 			weight = 20
 		case "fundingHistory":
-			weight = 45 // 20 + ceil(documented 500 time-range response rows / 20)
+			weight = 45
 		case "candleSnapshot":
 			request := pyval.Map(payload["req"])
 			rows := int64(5000)
@@ -216,7 +200,6 @@ func paramOr(params map[string]string, name, def string) string {
 	return def
 }
 
-// floorDiv is Python's integer floor division.
 func floorDiv(a, b int64) int64 {
 	q := a / b
 	if (a%b != 0) && ((a < 0) != (b < 0)) {
@@ -225,9 +208,6 @@ func floorDiv(a, b int64) int64 {
 	return q
 }
 
-// Constraints is the admit_budget plan of MarketService._request_once for one request:
-// the Kraken and Coinbase request rates, the Binance weights and their funding and
-// statistics buckets, then the public endpoint constraints, in the order acquired.
 func Constraints(host, path string, params map[string]string, payload map[string]any) ([]Bucket, error) {
 	var out []Bucket
 	switch host {
@@ -261,9 +241,6 @@ func Constraints(host, path string, params map[string]string, payload map[string
 	return append(out, public...), nil
 }
 
-// FetchConstraints are the buckets of a raw HTTP_FETCH capture request: the venue
-// budgets of Constraints where the endpoint is configured, otherwise a conservative
-// bucket per host so an unlisted path never runs unbudgeted.
 func FetchConstraints(host, path string, params map[string]string, payload map[string]any) []Bucket {
 	if buckets, err := Constraints(host, path, params, payload); err == nil && len(buckets) > 0 {
 		return buckets

@@ -55,10 +55,10 @@ async def test_inert_events_skip_session_io_and_cursor_advances_with_next_materi
         assert session["last_event_seq"] == 51
         assert session["processed_events"] == ["run"]
         puts = repo.session_puts
-        # A replayed material event already handled by this process costs nothing.
+
         await service.process_event("ses_1", {"id": "run", "type": "session.status_running"}, 51)
         assert repo.session_puts == puts
-        # Inert events after the last material one advance the cursor on the next write.
+
         await service.process_event("ses_1", {"id": "m52", "type": "agent.message", "content": []}, 52)
         await service.process_event("ses_1", {"id": "idle", "type": "session.status_idle"}, 53)
         assert (await repo.get("ops.agent_sessions", "ses_1"))["last_event_seq"] == 53

@@ -1,4 +1,4 @@
-"""Native turn completion does not enforce class assessment or publication."""
+"""Legacy completion proofs do not enforce class assessment or publication."""
 
 import copy
 import json
@@ -14,12 +14,13 @@ from tank.event_tools import EventToolService
 from tank.settings import Settings
 
 
-@pytest.mark.parametrize("backend", ["memory", "postgres"])
+@pytest.mark.parametrize(
+    "backend", ["memory", pytest.param("postgres", marks=[pytest.mark.integration, pytest.mark.postgres])]
+)
 @pytest.mark.parametrize(
     "case",
     [
-        "missing_exhaust",
-        "late_repair",
+        "no_assessment",
         "LOW",
         "MATERIAL",
         "SKIPPED",
@@ -30,8 +31,10 @@ from tank.settings import Settings
         "cache_revision",
     ],
 )
-async def test_new_origin_completion_does_not_require_class_or_card(tmp_path, backend, case):
-    async with fixture_repo(backend) as repo:
+async def test_legacy_origin_completion_does_not_require_class_or_card(
+    tmp_path, backend, case, postgres_template
+):
+    async with fixture_repo(backend, postgres_template) as repo:
         session, args = await seed(repo)
         session["message_log"][0]["body"] = {"type": "user.message", "content": []}
         await repo.put("ops.agent_sessions", "s", session)
@@ -101,7 +104,6 @@ async def test_new_origin_completion_does_not_require_class_or_card(tmp_path, ba
                 return await tools.dispatch("record_event", dict(args, item_id=name), system_context)
 
             if case == "corroboration":
-                # An earlier origin is setup, not a fabricated receipt of this turn.
                 prior = await tools.dispatch("record_event", args, system_context)
                 eid = prior["event_id"]
                 item = await repo.get("ingest.source_items", "i")
@@ -148,8 +150,6 @@ async def test_new_origin_completion_does_not_require_class_or_card(tmp_path, ba
                         },
                     )
                     if case in {"wrong_event", "bad_class"}:
-                        # Corrupt the actual producing receipt, not a legitimately
-                        # replaceable latest-EMS pointer used by later messages.
                         corrupted = copy.deepcopy(assessment)
                         if case == "wrong_event":
                             other = await seed_other("other")
@@ -158,7 +158,7 @@ async def test_new_origin_completion_does_not_require_class_or_card(tmp_path, ba
                             corrupted["result"]["class"] = "NOT_A_CLASS"
                         await repo.put("ops.tool_calls", "s:" + assessment["call_id"], corrupted)
             await service.process_event("s", idle("end-initial", accepted[-1]))
-            # Legacy semantic proof versions do not impose class or publication requirements.
+
             legacy = await repo.get("ops.agent_sessions", "s")
             legacy["message_log"][0]["turn_status"] = "DONE"
             legacy["verified_native_completion"] = await service.execution_barrier(legacy)

@@ -1,18 +1,38 @@
 """TDD §0 timestamp siblings distinguish chosen bounds from source provenance."""
 
-from pathlib import Path
-from runpy import run_path
 from types import SimpleNamespace
 
 import pytest
+from test_truth_start_fixture import synthetic_start_snapshot
 
 from tank.analysis.truth import MarketTruthService, compute_market_truth
+from tank.util import parse_time
 
 
 def packet():
-    value = run_path(str(Path(__file__).with_name("test_truth_start_fixture.py")))[
-        "synthetic_start_snapshot"
-    ]()
+    value = synthetic_start_snapshot()
+
+    keep = {"A:spot:T", "binance:perp:T"}
+    value["instruments"] = [r for r in value["instruments"] if r["instrument_id"] in keep]
+    value["semantics"] = [r for r in value["semantics"] if r["venue"] in {"A", "binance"}]
+    value["flow_bars"] = [
+        r for r in value["flow_bars"] if r["instrument_id"] == "A:spot:T" and r.get("reference_points")
+    ]
+    value["klines"] = [
+        r
+        for r in value["klines"]
+        if r["instrument_id"] in keep
+        and parse_time(r["open_time"])
+        in {parse_time("2026-10-16T08:00:00Z"), parse_time("2026-10-16T11:59:00Z")}
+    ]
+    for collection, stamp in (("oi", "ts"), ("funding", "settlement_time")):
+        value[collection] = [
+            r
+            for r in value[collection]
+            if parse_time(r[stamp])
+            in {parse_time("2026-10-16T08:00:00Z"), parse_time("2026-10-16T12:00:00Z")}
+        ]
+    value["books"] = [r for r in value["books"] if r["instrument_id"] == "A:spot:T"]
     value["anchor"]["ts_prec"] = "BUCKET(1h)"
     value["assembled_at"] = "2026-10-16T12:00:02Z"
     value["assembled_at_prec"] = "COLLECTION_ONLY"
@@ -86,6 +106,7 @@ def test_supplied_uncertain_cutoff_and_offset_window_bounds_keep_uncertainty(pre
     assert result["analysis_window"]["end_prec"] == precision
 
 
+@pytest.mark.integration
 def test_actual_book_canonical_exchange_timestamp_reaches_liquidity_precision():
     from tank.market.books import OrderBook
 

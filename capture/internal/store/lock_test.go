@@ -12,13 +12,12 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// fakeServer is the advisory-lock side of PostgreSQL: one holder backend at a time.
 type fakeServer struct {
 	mu        sync.Mutex
 	holder    uint32
 	next      uint32
-	down      int  // connects that fail before one succeeds
-	halfOpen  bool // a closed client connection keeps its backend (and lock) alive
+	down      int
+	halfOpen  bool
 	conns     map[uint32]*fakeConn
 	connects  int
 	terminate []uint32
@@ -40,7 +39,6 @@ func (f *fakeServer) connect(context.Context) (lockConn, error) {
 	return c, nil
 }
 
-// kill drops a backend as the server does: its session lock goes with it.
 func (f *fakeServer) kill(pid uint32) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -52,7 +50,6 @@ func (f *fakeServer) kill(pid uint32) {
 	}
 }
 
-// sever breaks a client connection while the server keeps its backend and lock.
 func (f *fakeServer) sever(pid uint32) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -199,7 +196,7 @@ func TestLockReacquiresAfterConnectionLoss(t *testing.T) {
 	defer l.Release()
 	first := f.holderPID()
 	f.mu.Lock()
-	f.down = 3 // the database is unreachable for a while
+	f.down = 3
 	f.mu.Unlock()
 	f.kill(first)
 	eventually(t, "lock not re-acquired", func() bool { return l.Held() && f.holderPID() != 0 && f.holderPID() != first })
@@ -218,7 +215,7 @@ func TestLockTerminatesItsOwnStaleSession(t *testing.T) {
 	}
 	defer l.Release()
 	stale := f.holderPID()
-	f.sever(stale) // the client sees a dead connection, the server still holds the lock
+	f.sever(stale)
 	eventually(t, "stale session not replaced", func() bool { return l.Held() && f.holderPID() != stale && f.holderPID() != 0 })
 	f.mu.Lock()
 	terminated := append([]uint32(nil), f.terminate...)
@@ -238,7 +235,7 @@ func TestLockLostToAnotherWriter(t *testing.T) {
 	defer l.Release()
 	first := f.holderPID()
 	f.mu.Lock()
-	f.down = 1 // the other writer gets in first
+	f.down = 1
 	f.mu.Unlock()
 	f.kill(first)
 	other, err := f.connect(context.Background())

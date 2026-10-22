@@ -16,7 +16,6 @@ type testClock struct{ t time.Time }
 func (c *testClock) Now() time.Time           { return c.t }
 func (c *testClock) Monotonic() time.Duration { return time.Duration(c.t.UnixNano()) }
 func (c *testClock) set(t time.Time)          { c.t = t }
-func (c *testClock) advance(d time.Duration)  { c.t = c.t.Add(d) }
 func at(base time.Time, s float64) time.Time {
 	return base.Add(time.Duration(s * float64(time.Second)))
 }
@@ -66,7 +65,6 @@ func (r *sealerRig) trade(id int, ts time.Time) *normalize.Trade {
 	}
 }
 
-// last is the newest written row of a minute.
 func (r *sealerRig) last(minute time.Time) map[string]any {
 	key := r.inst.ID + ":" + flow.KeyOf(r.inst.ID, minute).MinuteISO()
 	for i := len(r.rows) - 1; i >= 0; i-- {
@@ -92,7 +90,7 @@ func TestSealOnNextTradeAndConsecutiveIDs(t *testing.T) {
 	if row := r.last(base); row == nil || row["complete"] != false || row["bar_version"] != int64(0) {
 		t.Fatalf("open minute is written provisionally: %v", row)
 	}
-	// No print at or after the minute end yet: never sealed by a timer.
+
 	r.tick(at(base, 70))
 	if row := r.last(base); row["bar_version"] != int64(0) {
 		t.Fatalf("minute sealed without a later print: %v", row)
@@ -113,7 +111,7 @@ func TestTradeIDHoleWaitsForRepairBothMinutesIncluded(t *testing.T) {
 	base := r.clock.t
 	r.s.Connected(r.inst, 1, base, nil)
 	r.s.Trade(r.inst, r.trade(100, at(base, 50)), 1)
-	r.s.Trade(r.inst, r.trade(104, at(base, 70)), 1) // 101..103 missing
+	r.s.Trade(r.inst, r.trade(104, at(base, 70)), 1)
 	if len(r.repairs) != 1 || !r.repairs[0].start.Equal(base) || !r.repairs[0].end.After(at(base, 70)) {
 		t.Fatalf("hole repair [floor(before), after]: %v", r.repairs)
 	}
@@ -161,12 +159,12 @@ func TestQuietMinutesSealedByHeadCheckOnly(t *testing.T) {
 	if row["capture_proof"].(map[string]any)["sealed_by"] != sourceHead {
 		t.Fatalf("seal method: %v", row["capture_proof"])
 	}
-	// Minute 1 is quiet and ends before observed - delay (2:15): an empty complete bar.
+
 	quiet := r.last(minuteOf(base, 1))
 	if quiet == nil || quiet["complete"] != true || quiet["zero_trade_minute"] != true {
 		t.Fatalf("quiet minute sealed as a complete empty bar: %v", quiet)
 	}
-	// Minute 2 ends after observed - delay: still open.
+
 	if open := r.last(minuteOf(base, 2)); open != nil && open["bar_version"] != int64(0) {
 		t.Fatalf("minute past the proven head stays open: %v", open)
 	}
@@ -179,13 +177,13 @@ func TestHeadCheckContinuesChainOrReportsHole(t *testing.T) {
 	r.s.Trade(r.inst, r.trade(10, at(base, 10)), 1)
 	checks := r.tick(at(base, 110))
 	observed := at(base, 110)
-	// REST has 11 and 12 the stream has not delivered: they continue the chain.
+
 	r.s.HeadResult(checks[0], []*normalize.Trade{r.trade(10, at(base, 10)), r.trade(11, at(base, 40)), r.trade(12, at(base, 62))}, observed, false)
 	r.tick(observed)
 	if row := r.last(base); row["complete"] != true || row["n_buy"] != int64(2) {
 		t.Fatalf("contiguous REST prints continue the chain: %v", row)
 	}
-	// A later check finds 15 after 12: a hole repaired over REST.
+
 	r.clock.set(at(base, 400))
 	r.s.mu.Lock()
 	r.s.chains[r.inst.ID].headNext = time.Time{}
@@ -210,7 +208,7 @@ func TestRevisionOnLatePrintNeverSilent(t *testing.T) {
 	if row := r.last(base); row["bar_version"] != int64(1) {
 		t.Fatalf("sealed: %v", row)
 	}
-	r.s.Trade(r.inst, r.trade(3, at(base, 30)), 1) // a print for the sealed minute
+	r.s.Trade(r.inst, r.trade(3, at(base, 30)), 1)
 	row := r.last(base)
 	if row["bar_version"] != int64(2) || row["revised"] != true || row["n_buy"] != int64(2) {
 		t.Fatalf("late print is a revision: %v", row)
@@ -219,7 +217,7 @@ func TestRevisionOnLatePrintNeverSilent(t *testing.T) {
 	if rev["reason"] != "LATE_PRINT" || rev["version"] != int64(2) {
 		t.Fatalf("revision reason: %v", rev)
 	}
-	// The same print again changes nothing.
+
 	n := len(r.rows)
 	r.s.Trade(r.inst, r.trade(3, at(base, 30)), 1)
 	if len(r.rows) != n {
@@ -270,7 +268,7 @@ func TestReconnectBridgeKeepsMinutesOpenUntilRepaired(t *testing.T) {
 	if row := r.last(base); row["bar_version"] != int64(1) || row["complete"] != false {
 		t.Fatalf("unbridged minute sealed incomplete: %v", row)
 	}
-	// Minute 3 starts after the new socket started: proven by its own chain.
+
 	r.s.Trade(r.inst, r.trade(10, at(base, 245)), 2)
 	r.tick(at(base, 246))
 	if row := r.last(minuteOf(base, 3)); row == nil || row["complete"] != true {

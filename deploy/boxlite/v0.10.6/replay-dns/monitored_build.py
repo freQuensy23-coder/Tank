@@ -59,7 +59,7 @@ def run(
     }
     if shutil.disk_usage(root).free < FLOOR:
         raise RuntimeError("Host headroom below 8 GiB before phase")
-    # An existing container of this name is evidence, never permission to remove it.
+
     if subprocess.run(DOCKER + ["inspect", name], capture_output=True, check=False).returncode == 0:
         raise RuntimeError("Owned build phase name already exists")
     volume = subprocess.run(
@@ -140,7 +140,6 @@ def run(
                         timeout=10,
                     )
                     if disk.returncode != 0:
-                        # Recheck the phase exit before classifying a df race as failure.
                         if not json.loads(command(["inspect", cid]))[0]["State"]["Running"]:
                             continue
                         reason = "MONITOR_FAILED"
@@ -156,7 +155,6 @@ def run(
                     if time.monotonic() - started > seconds:
                         reason = "BUILD_PHASE_TIMEOUT"
                     if reason:
-                        # The full immutable ID belongs to this phase only.
                         command(["stop", "--time", "5", cid])
                         receipt["exit_code"] = json.loads(command(["inspect", cid]))[0]["State"]["ExitCode"]
                         break
@@ -168,7 +166,6 @@ def run(
                     follower.terminate()
                     follower.wait(timeout=5)
     finally:
-        # Interruptions must not leave compilation running after its monitor exits.
         if json.loads(command(["inspect", cid]))[0]["State"]["Running"]:
             command(["stop", "--time", "5", cid])
         receipt["elapsed_s"] = round(time.monotonic() - started, 3)

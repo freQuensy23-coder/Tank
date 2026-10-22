@@ -14,7 +14,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
 )
 
-// lockedClock is a test clock shared by goroutines.
 type lockedClock struct {
 	mu sync.Mutex
 	t  time.Time
@@ -41,8 +40,6 @@ func (c *lockedClock) set(t time.Time) {
 	}
 }
 
-// replayConn serves one endpoint's recorded frames, each only once the session has
-// processed the one before, at its recorded receive time.
 type replayConn struct {
 	s        *Service
 	endpoint string
@@ -81,9 +78,7 @@ func (c *replayConn) ReadMessage() (int, []byte, error) {
 		if f.REST != "" || f.Text == "" || (f.Endpoint != "" && f.Endpoint != c.endpoint) {
 			continue
 		}
-		// Each frame after the one before is processed; past the first 50 (buffered while
-		// members prepare) only once every member is prepared, so a socket's chain starts
-		// at the recorded time however slowly the test runs.
+
 		for c.processed() < c.sent || (c.sent >= 50 && c.preparing()) {
 			select {
 			case <-c.closed:
@@ -106,7 +101,6 @@ func (c *replayConn) SetReadDeadline(time.Time) error           { return nil }
 func (c *replayConn) SetPongHandler(func(string) error)         {}
 func (c *replayConn) Close() error                              { c.stop.Do(func() { close(c.closed) }); return nil }
 
-// replayVenue is the REST side of a replay: the recorded depth snapshot, no prints.
 type replayVenue struct {
 	fakeVenue
 	snapshot map[string]any
@@ -212,7 +206,7 @@ func replayFixture(t *testing.T, name string) {
 		case <-time.After(10 * time.Millisecond):
 		}
 	}
-	// Quiet minutes: a head check with no newer REST print proves them.
+
 	now := clock.Now()
 	for _, check := range s.seal.Tick(now) {
 		s.seal.HeadResult(check, nil, now, false)
@@ -237,8 +231,7 @@ func replayFixture(t *testing.T, name string) {
 		}
 		summaries[text(row["instrument_id"])]++
 	}
-	// The first whole minute after the socket started ended a head delay before the end:
-	// it is sealed for every instrument, complete.
+
 	first := pytime.MinuteFloor(start).Add(time.Minute)
 	if !first.Add(time.Minute + 45*time.Second).Before(end) {
 		t.Fatalf("fixture too short: %v..%v", start, end)

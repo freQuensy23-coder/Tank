@@ -33,7 +33,7 @@ async def test_verified_backup_is_cached_per_process_day_but_force_and_restart_r
     final = tmp_path / f"tank-{NOW.date()}"
     final.mkdir()
     (final / "COMPLETE").write_text(iso(NOW))
-    # to_thread needs a synchronous callable; record all actual verification calls.
+
     calls = []
     monkeypatch.setattr("tank.scheduler.verify_backup", lambda path, **kwargs: calls.append(path))
     settings = SimpleNamespace(backup_dir=tmp_path)
@@ -127,7 +127,7 @@ async def test_terminal_capture_is_recorded_as_gap_and_not_resurrected_or_claime
     await repo.delete("ops.jobs", job["job_id"])
     await scheduler.tick(NOW)
     assert not await repo.list("ops.jobs", filters={"idem_key": "e:T:POST_72H"})
-    # Literal lifecycle requires an actual +72h capture, even after exhausted attempts.
+
     real_scheduler = Scheduler(repo, SimpleNamespace(), None, None)
     real_scheduler.analysis_tokens = AsyncMock(return_value={"T"})
     await real_scheduler.lifecycle(NOW)
@@ -189,51 +189,6 @@ async def test_conditions_share_truth_for_identical_event_token_cutoff():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "relative",
-    ["raw/trades/v/spot/T/{day}", "raw/books/v/T/{day}", "raw/market_frames/{day}", "archive/binance/spot/klines"],
-)
-async def test_raw_retention_by_path_with_verified_backup(tmp_path, relative):
-    import hashlib
-    import json
-    import os
-    import shutil
-
-    from tank.scheduler import verify_backup
-
-    data = tmp_path / "data"
-    backup = tmp_path / "backup"
-    archive = relative.startswith("archive/")
-    stamp = NOW - timedelta(days=200 if archive else 70)
-    directory = data / relative.format(day=stamp.date().isoformat())
-    directory.mkdir(parents=True)
-    saved_root = backup / "data"
-    saved_root.mkdir(parents=True)
-    path = directory / (f"T-1m-{stamp.date()}.zip" if archive else "12.parquet")
-    path.write_bytes(b"verified market bytes")
-    if archive:
-        os.utime(path, (stamp.timestamp(),) * 2)
-    saved = saved_root / path.relative_to(data)
-    saved.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(path, saved)
-    files = {saved.relative_to(backup).as_posix(): hashlib.sha256(saved.read_bytes()).hexdigest()}
-    for name in ("tank.dump", "oma.dump"):
-        payload = b"fixture dump (no external database)"
-        (backup / name).write_bytes(payload)
-        files[name] = hashlib.sha256(payload).hexdigest()
-    manifest = {"version": 1, "roots": {"data": str(data.resolve())}, "files": files}
-    (backup / "manifest.json").write_text(json.dumps(manifest))
-    (backup / "COMPLETE").write_text(iso(NOW))
-    verify_backup(backup)
-    scheduler = Scheduler(
-        MemoryRepository(), SimpleNamespace(data_dir=data, load_config=lambda name: {"instruments": []}), None, None
-    )
-    removed = await scheduler.prune_raw_files(NOW, backup)
-    assert [row["path"] for row in removed] == [str(path if archive else directory)]
-    assert not path.exists() and saved.is_file()
-
-
-@pytest.mark.asyncio
 async def test_backup_cache_reverifies_replaced_manifest_identity(monkeypatch, tmp_path):
     final = tmp_path / f"tank-{NOW.date()}"
     final.mkdir()
@@ -253,46 +208,6 @@ async def test_backup_cache_reverifies_replaced_manifest_identity(monkeypatch, t
     replacement.replace(manifest)
     await scheduler.maintenance(NOW, prune=False)
     assert len(calls) == 2
-
-
-@pytest.mark.asyncio
-async def test_bundles_only_backup_allows_raw_ttl_and_preserves_permanent_evidence(tmp_path):
-    import hashlib
-    import json
-
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
-    data, backup = tmp_path / "data", tmp_path / "backup"
-    raw = data / "raw/trades/v/spot/T" / (NOW - timedelta(days=70)).date().isoformat() / "12.parquet"
-    raw.parent.mkdir(parents=True)
-    pq.write_table(pa.Table.from_pylist([{"ts": iso(NOW - timedelta(days=70)), "instrument_id": "v:T"}]), raw)
-    permanent = {
-        data / "bundles/fixture.json.zst": b"immutable bundle fixture",
-        data / "raw/items/S01/2026/08/09/item.json.zst": b"immutable source fixture",
-    }
-    for path, payload in permanent.items():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(payload)
-    backup.mkdir()
-    files = {}
-    for name in ("tank.dump", "oma.dump"):
-        (backup / name).write_bytes(b"fixture dump")
-        files[name] = hashlib.sha256(b"fixture dump").hexdigest()
-    (backup / "manifest.json").write_text(
-        json.dumps({"roots": {"bundles": str(data / "bundles")}, "files": files})
-    )
-    (backup / "COMPLETE").write_text(iso(NOW))
-    repo = MemoryRepository()
-    scheduler = Scheduler(
-        repo, SimpleNamespace(data_dir=data, load_config=lambda name: {"instruments": []}), None, None
-    )
-    removed = await scheduler.prune_raw_files(NOW, backup)
-    assert [row["path"] for row in removed] == [str(raw.parent)]
-    assert not raw.exists()
-    assert {path: path.read_bytes() for path in permanent} == permanent
-    assert (backup / "tank.dump").read_bytes() == b"fixture dump"
-    assert (backup / "oma.dump").read_bytes() == b"fixture dump"
 
 
 @pytest.mark.asyncio

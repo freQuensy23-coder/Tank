@@ -7,16 +7,13 @@ from decimal import Decimal
 
 import httpx
 
+from tank.agents.jev import MODEL, binding, classify
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, sha256, utcnow
 
-from .jev import MODEL, binding, classify
-
 JEV_PROMPT_VERSION = "jev-v2"
 
-# Jev reads questions literally and answers worse when `state` carries unrelated
-# material, so the state holds only the item (and the candidate event), each named
-# in the question, with boundary cases in the criteria.
+
 FILTER = "Is `item` about crypto: crypto assets, crypto exchanges, crypto regulation or enforcement, blockchain networks, or one of these projects: Bitcoin, Ethereum, Uniswap, PancakeSwap, Aerodrome, Curve, 1inch, 0x, CoW Protocol, Hyperliquid, Lighter, Aave, Morpho, Euler, Ondo, LayerZero, Quant, Avalanche, NEAR, Plasma, Ethena, World (Worldcoin)?"
 FILTER_CRITERIA = {
     "true": "About crypto, even if it reports nothing new or important.",
@@ -27,7 +24,7 @@ ROUTE_CRITERIA = {
     "true": "The same event, or a development of it: a confirmation, denial, stage change, new detail or new party.",
     "false": "A different event, even one about the same project, company, exchange or token.",
 }
-TEXT_LIMIT = 12000  # characters of item body; Jev 1.13 leaves its accurate mode above ~32 KB of text
+TEXT_LIMIT = 12000
 
 
 def _clean(value):
@@ -80,7 +77,7 @@ class Pipeline:
         author = _clean(item.get("author"))
         title = _clean(item.get("title"))
         body = _clean(item.get("text") or item.get("body"))
-        # Feeds often repeat the headline as the body, sometimes with the outlet name appended.
+
         if title and source:
             for separator in (" - ", " | ", " — "):
                 if title.casefold().endswith((separator + source).casefold()):
@@ -219,8 +216,7 @@ class Pipeline:
             item = await self.repo.get("ingest.source_items", payload["item_id"])
             if item is None:
                 raise KeyError(payload["item_id"])
-            # Source promotion can happen during the model request. Keep network
-            # work outside the shared ingestion lock, then re-read before writing.
+
             score = None
             if item.get("relevance", {}).get("decision") != "ALWAYS":
                 cutoff = self.cutoff("filter_cutoff")
@@ -274,7 +270,7 @@ class Pipeline:
         result = {e["entity_id"] if isinstance(e, dict) else e for e in item.get("entities", [])} | set(
             raw_tokens
         )
-        # Events store registry token ids (V3): a bare ticker or $TICKER on the item resolves to one.
+
         symbols = {
             str(row.get("symbol", "")).casefold(): row["token_id"] for row in registry.get("tokens", [])
         }
@@ -287,8 +283,7 @@ class Pipeline:
 
         for row in registry.get("entities", []):
             entity = row.get("entity_id")
-            # Display names are not matching rules: e.g. "near" needs its
-            # registered qualifier. The frozen registry is the only alias policy.
+
             hit = any(matches(name) for name in row.get("aliases", [])) or any(
                 matches(rule["alias"]) and any(matches(q) for q in rule["requires_any"])
                 for rule in row.get("qualified_aliases", [])
@@ -342,18 +337,16 @@ class Pipeline:
         return {"item": self.item_view(item), "event": self.event_view(event)}
 
     async def _candidate_events(self, identities, since, now):
-        # iter_range is half-open; PostgreSQL timestamps have microsecond
-        # resolution. Include the batch clock itself without admitting future rows.
+
         recent = {
             row["event_id"]
             async for row in self.repo.iter_range(
                 "ops.agent_sessions", "last_item_at", start=since, end=iso(now + timedelta(microseconds=1))
             )
-            # An event whose session failed is not open (03 §3.2).
             if row.get("event_id") and row.get("status") != "FAILED"
         }
         events = []
-        # Preserve stable event-key order, including the production tie rule.
+
         for event_id in sorted(recent):
             event = await self.repo.get("evt.events", event_id)
             if not event or event.get("lifecycle", event.get("status")) in (
@@ -394,9 +387,7 @@ class Pipeline:
             candidates = tuple(await self._candidate_events(identities, since, now))
             if candidates:
                 cutoff = self.cutoff("routing_cutoff")
-                # Each exact item/event question is independent. Collect every
-                # result before selecting so a failed pair cannot yield a partial
-                # winner; successful usage rows remain available on ordinary retry.
+
                 requests = [
                     asyncio.create_task(self.score(item, "same_event", self.routing_state(item, event)))
                     for event in candidates
@@ -411,14 +402,12 @@ class Pipeline:
                 for result in results:
                     if isinstance(result, BaseException):
                         raise result
-                # Reduce in the stable candidate order, independent of completion
-                # order, retaining the first event on equal probabilities.
+
                 for event, score in zip(candidates, results, strict=True):
                     scores[event["event_id"]] = score
                     if score >= cutoff and score > best_score:
                         best, best_score = event, score
-            # §3.1: only extracted events are candidates. With no qualifying
-            # candidate, enqueue NEW_ITEM immediately, identified by this item.
+
             added = best is not None
             message = {"kind": "ITEM_ADDED" if added else "NEW_ITEM", "item_id": item["item_id"]}
             if best:
@@ -429,8 +418,6 @@ class Pipeline:
                 "p_same": best_score if added else None,
             }
             async with self.repo.lock("ingest-dedup"), self.repo.transaction():
-                # A new observation or official-source promotion may arrive
-                # during Jev's call. Preserve that current ingestion record.
                 item = await self.repo.get("ingest.source_items", payload["item_id"])
                 if item is None:
                     raise KeyError(payload["item_id"])

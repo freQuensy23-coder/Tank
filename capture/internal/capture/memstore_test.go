@@ -2,6 +2,7 @@ package capture
 
 import (
 	"context"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -13,9 +14,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/schema"
 )
 
-// memStore is an in-memory Store and Writer: rows are visible once flushed, keyed by
-// collection and storage key, with the stored-row guards the PostgreSQL writer applies
-// to flow bars (a complete bar is never replaced by an unproven one).
 type memStore struct {
 	mu       sync.Mutex
 	queued   []points.Row
@@ -40,6 +38,10 @@ func (m *memStore) Flush(context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, r := range m.queued {
+
+		if r.Collection == "mkt.flow_bars_1m" && (r.Record["instrument_id"] == nil || r.Record["minute_start"] == nil) {
+			return fmt.Errorf("Missing typed market identity %s: [instrument_id minute_start]", r.Collection)
+		}
 		table := m.rows[r.Collection]
 		if table == nil {
 			table = map[string]map[string]any{}
@@ -57,7 +59,6 @@ func (m *memStore) Flush(context.Context) error {
 	return nil
 }
 
-// plain is a row as a reader decodes it: timestamps and decimals as their text.
 func plain(record map[string]any) map[string]any {
 	out := make(map[string]any, len(record))
 	for k, v := range record {
@@ -111,10 +112,29 @@ func (m *memStore) Projection(ctx context.Context, collection string, fields []s
 	var out []map[string]any
 	for _, id := range ids {
 		rows, _ := m.Range(ctx, collection, field, start, end, map[string]any{"instrument_id": id})
-		out = append(out, rows...)
+		for _, r := range rows {
+
+			p := make(map[string]any, len(fields))
+			for _, f := range fields {
+				if v, ok := r[f]; ok {
+					p[f] = v
+				}
+			}
+			out = append(out, p)
+		}
 	}
 	return out, nil
 }
+
+func (m *memStore) Earliest(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) (time.Time, bool, error) {
+	rows, _ := m.Range(ctx, collection, field, start, end, filters)
+	if len(rows) == 0 {
+		return time.Time{}, false, nil
+	}
+	return pytime.MustParse(rows[0][field]), true, nil
+}
+
+func (m *memStore) PruneFetches(context.Context, time.Time) (int64, error) { return 0, nil }
 
 func (m *memStore) LatestTrades(context.Context, []string, time.Time) (map[string]map[string]any, error) {
 	return map[string]map[string]any{}, nil
@@ -161,7 +181,6 @@ func (m *memStore) FinishRequest(_ context.Context, row map[string]any) error {
 	return nil
 }
 
-// bars are the stored flow bars of an instrument by minute.
 func (m *memStore) bars(iid string) map[string]map[string]any {
 	m.mu.Lock()
 	defer m.mu.Unlock()
