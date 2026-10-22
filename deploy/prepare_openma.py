@@ -202,14 +202,24 @@ def update_tools(config, *, client=None):
         wanted = analyst_tools(config)
 
         def custom(tools):
-            return {
-                tool.get("name"): json.dumps(
-                    {"description": tool.get("description"), "input_schema": tool.get("input_schema")},
-                    sort_keys=True,
-                )
-                for tool in tools
-                if tool.get("type") == "custom"
-            }
+            normalized = {}
+            for tool in tools:
+                if tool.get("type") == "custom":
+                    normalized[tool.get("name")] = json.dumps(
+                        {"description": tool.get("description"), "input_schema": tool.get("input_schema")},
+                        sort_keys=True,
+                    )
+                else:
+                    normalized["toolset:" + str(tool.get("type"))] = json.dumps(
+                        {
+                            "default": (tool.get("default_config") or {}).get("enabled"),
+                            "configs": {
+                                row.get("name"): row.get("enabled") for row in tool.get("configs", [])
+                            },
+                        },
+                        sort_keys=True,
+                    )
+            return normalized
 
         deployed, desired = custom(agent.get("tools", [])), custom(wanted)
         if deployed == desired:

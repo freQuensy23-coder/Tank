@@ -434,7 +434,12 @@ class TelegramInbox:
             if companion is None:
                 await self.prompt(row, target)
                 return
-            await self.question(companion, target, forwarded=row)
+            try:
+                await self.question(companion, target, forwarded=row)
+            except FileTooLarge:
+                await self.mark(row, "IGNORED", reason="FILE_TOO_LARGE", paired_with=companion["message_id"])
+                await self.notice(companion, TOO_LARGE_TEXT, "IGNORED", reason="FILE_TOO_LARGE")
+                return
             await self.mark(
                 row,
                 "PAIRED",

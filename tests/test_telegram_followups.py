@@ -1764,3 +1764,65 @@ async def test_question_to_a_remotely_terminated_session_answers_no_session():
         assert await service.send_message(payload) is None
     assert (await repo.get("out.user_questions", question_id))["answer_status"] == "NO_SESSION"
     assert (await repo.get("ops.agent_sessions", "ses_1"))["remote_state"]["status"] == "terminated"
+
+
+def test_update_tools_republishes_when_builtin_toolset_flags_drift(tmp_path):
+    import importlib.util
+    import shutil
+    from pathlib import Path
+
+    root = Path(__file__).parents[1]
+    spec = importlib.util.spec_from_file_location("prepare_openma", root / "deploy/prepare_openma.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    config = tmp_path / "config"
+    shutil.copytree(root / "config/skills/tank-event-analyst", config / "skills/tank-event-analyst")
+    (config / "openma.yaml").write_text("agent_id: agt_1\n")
+    deployed = [dict(tool) for tool in module.analyst_tools(config)]
+    toolset = dict(deployed[0])
+    toolset["configs"] = [
+        {**row, "enabled": not row["enabled"], "permission_policy": {"type": "always_allow"}}
+        if row["name"] == "browser"
+        else {**row, "permission_policy": {"type": "always_allow"}}
+        for row in toolset["configs"]
+    ]
+    deployed[0] = toolset
+    state = {"tools": deployed, "version": 2}
+
+    def handler(request):
+        if request.method == "POST":
+            state.update(tools=json.loads(request.content)["tools"], version=3)
+        return httpx.Response(200, json={"id": "agt_1", **state})
+
+    with httpx.Client(base_url="http://oma", transport=httpx.MockTransport(handler)) as client:
+        first = module.update_tools(config, client=client)
+        second = module.update_tools(config, client=client)
+    assert first["status"] == "UPDATED" and first["changed"] == ["toolset:agent_toolset_20260401"]
+    assert second["status"] == "CURRENT"
+
+
+@pytest.mark.asyncio
+async def test_too_large_file_in_a_pair_settles_both_messages():
+    from tank.telegram_inbox import HINT_TEXT, TOO_LARGE_TEXT
+
+    repo = MemoryRepository()
+    await seed(repo)
+    comment = message(
+        100,
+        date=1_800_017_000,
+        caption="Вот мой файл",
+        document={"file_id": "huge", "file_name": "big.bin"},
+    )
+    forward = message(
+        101,
+        date=1_800_017_000,
+        text="AAVE exploit card",
+        forward_origin={"type": "user", "sender_user": {"id": BOT}, "date": 1_800_000_000},
+    )
+    telegram = FakeTelegram([{"update_id": 1, "message": comment}, {"update_id": 2, "message": forward}])
+    await run_inbox(repo, telegram, now=1_800_017_100)
+    await run_inbox(repo, telegram, now=1_800_017_500)
+    assert (await repo.get("ops.telegram_messages", f"{USER}:100"))["status"] == "IGNORED"
+    assert (await repo.get("ops.telegram_messages", f"{USER}:101"))["status"] == "IGNORED"
+    texts = [body["text"] for body in telegram.sent]
+    assert texts == [TOO_LARGE_TEXT] and HINT_TEXT not in texts
