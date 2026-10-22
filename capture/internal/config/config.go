@@ -19,7 +19,6 @@ type Settings struct {
 	DatabaseURL   string
 	ConfigDir     string
 	HealthAddr    string
-	DataDir       string
 	UserAgent     string
 	ConfigVersion string
 	CodeVersion   string
@@ -70,7 +69,6 @@ func LoadSettings() (Settings, error) {
 	s := Settings{
 		ConfigDir:  env("TANK_CONFIG_DIR", "/config"),
 		HealthAddr: env("TANK_CAPTURE_HEALTH_ADDR", ":8791"),
-		DataDir:    env("TANK_DATA_DIR", "/data"),
 		UserAgent:  DefaultUserAgent,
 	}
 	url, err := databaseURL()
@@ -233,7 +231,5 @@ func (c *Config) Threshold(name string, def float64) float64 {
 	}
 	return def
 }
-
-func (c *Config) Schema() string { return "mkt" }
 
 func (c *Config) LockKey() string { return "tank:capture:writer" }

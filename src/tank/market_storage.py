@@ -190,6 +190,15 @@ def merge_point(collection, old, incoming):
 async def put_market_batch(self, collection, records, *, keys=None):
     records = list(records)
     keys = None if keys is None else list(keys)
+    from tank import clickhouse_market as chm
+
+    if (ch := chm.client(self, collection)) is not None:
+        changed = []
+        for at in range(0, len(records), WRITE_CHUNK):
+            part = None if keys is None else keys[at : at + WRITE_CHUNK]
+            changed += await chm.put_batch(ch, collection, records[at : at + WRITE_CHUNK], part)
+        _note_writes(self, collection, changed)
+        return changed
     if not hasattr(self, "_conn") or len(records) <= WRITE_CHUNK:
         return await _put_market_batch(self, collection, records, keys=keys)
 
@@ -347,8 +356,6 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
             "CASE WHEN u.{} IS NULL THEN NULL ELSE ARRAY(SELECT jsonb_array_elements_text(u.{})) END"
         ).format(sql.Identifier(n), sql.Identifier(n))
         if columns.get(n) == "text[]"
-        else sql.SQL("coalesce(u.id,nextval('mkt.liq_obs_id_seq'))")
-        if collection == "mkt.liq_obs" and n == "id"
         else sql.SQL("u.{}").format(sql.Identifier(n))
         for n in names
     )
@@ -377,37 +384,6 @@ async def _put_market_batch(self, collection, records, *, keys=None, _columns=No
         sql.SQL(",").join(map(sql.Identifier, identity)),
         assignments,
     )
-    if collection == "mkt.flow_bars_1m":
-        query = sql.SQL(
-            "INSERT INTO {} AS current ({}) {} ON CONFLICT ({}) DO UPDATE SET {} WHERE current.semantic_fingerprint IS DISTINCT FROM EXCLUDED.semantic_fingerprint"
-            " AND NOT (current.complete IS TRUE AND EXCLUDED.complete IS NOT TRUE AND coalesce(EXCLUDED.gap_reason, {}) = {}) RETURNING *"
-        ).format(
-            table,
-            sql.SQL(",").join(map(sql.Identifier, names)),
-            source,
-            sql.SQL(",").join(map(sql.Identifier, identity)),
-            assignments,
-            sql.Literal(UNPROVEN),
-            sql.Literal(UNPROVEN),
-        )
-    if collection in ("mkt.funding_obs", "mkt.tickers_24h"):
-        mode = "funding" if collection == "mkt.funding_obs" else "ticker"
-        merged = sql.SQL("ops.merge_market_point({},to_jsonb(current),to_jsonb(EXCLUDED))").format(
-            sql.Literal(mode)
-        )
-        query = sql.SQL(
-            "INSERT INTO {} AS current ({}) {} ON CONFLICT ({}) DO UPDATE SET ({}) = (SELECT {} FROM jsonb_populate_record(NULL::{}, {}) AS point) WHERE ops.market_semantic({}) IS DISTINCT FROM ops.market_semantic(to_jsonb(current)) RETURNING *"
-        ).format(
-            table,
-            sql.SQL(",").join(map(sql.Identifier, names)),
-            source,
-            sql.SQL(",").join(map(sql.Identifier, identity)),
-            sql.SQL(",").join(map(sql.Identifier, names)),
-            sql.SQL(",").join(sql.SQL("point.{}").format(sql.Identifier(n)) for n in names),
-            table,
-            merged,
-            merged,
-        )
     async with self.transaction():
         cursor = _json_as_text(self._conn().cursor())
         await cursor.execute(query, arrays)
@@ -869,8 +845,6 @@ async def iter_market_projection(
 
 async def market_series_counts(self, instrument_ids, start, cutoff, assembled_at=None):
     """Count complete finite positive closes of closed native 1m bars per instrument."""
-    from psycopg import sql
-
     if isinstance(instrument_ids, (str, bytes)):
         raise TypeError("instrument_ids must be identifiers")
     instrument_ids = list(instrument_ids)
@@ -887,37 +861,24 @@ async def market_series_counts(self, instrument_ids, start, cutoff, assembled_at
     if (ch := chm.client(self, "mkt.klines_1m")) is not None:
         counts.update(await chm.market_series_counts(ch, instrument_ids, start, cutoff, assembled_at))
         return counts
-    if not hasattr(self, "_conn"):
-        async for row in self.iter_market_projection(
-            "mkt.klines_1m",
-            ["instrument_id", "open_time", "c", "interval_s"],
-            "open_time",
-            start=start,
-            end=cutoff,
-            filters={"complete": True, "interval_s": 60},
-            instrument_ids=instrument_ids,
-            assembled_at=assembled_at,
+    async for row in self.iter_market_projection(
+        "mkt.klines_1m",
+        ["instrument_id", "open_time", "c", "interval_s"],
+        "open_time",
+        start=start,
+        end=cutoff,
+        filters={"complete": True, "interval_s": 60},
+        instrument_ids=instrument_ids,
+        assembled_at=assembled_at,
+    ):
+        close = Decimal(row["c"]) if row["c"] is not None else None
+        if (
+            close is not None
+            and close.is_finite()
+            and close > 0
+            and parse_time(row["open_time"]) + timedelta(seconds=60) <= cutoff
         ):
-            close = Decimal(row["c"]) if row["c"] is not None else None
-            if (
-                close is not None
-                and close.is_finite()
-                and close > 0
-                and parse_time(row["open_time"]) + timedelta(seconds=60) <= cutoff
-            ):
-                counts[row["instrument_id"]] += 1
-        return counts
-    args = [instrument_ids, start, cutoff, cutoff]
-    availability = sql.SQL("")
-    if assembled_at is not None:
-        availability = sql.SQL(" AND (recorded_at IS NULL OR recorded_at<=%s)")
-        args.append(assembled_at)
-    query = sql.SQL(
-        "SELECT instrument_id,count(*) AS n FROM mkt.klines_1m WHERE instrument_id=ANY(%s::text[]) AND open_time>=%s AND open_time<%s AND open_time+interval '60 seconds'<=%s AND interval_s=60 AND complete IS TRUE AND c>0 AND c<'Infinity'::numeric {} GROUP BY instrument_id"
-    ).format(availability)
-    async with self.transaction():
-        rows = await (await self._conn().execute(query, args)).fetchall()
-    counts.update({row["instrument_id"]: row["n"] for row in rows})
+            counts[row["instrument_id"]] += 1
     return counts
 
 
@@ -931,36 +892,18 @@ async def latest_market_trades(repo, instrument_ids, *, start):
 
     if (ch := chm.client(repo, "mkt.flow_bars_1m")) is not None:
         return await chm.latest_market_trades(ch, instrument_ids, start)
-    if not hasattr(repo, "_conn"):
-        latest = {}
-        async for row in repo.iter_all("mkt.flow_bars_1m"):
-            iid = row.get("instrument_id")
-            if (
-                iid not in instrument_ids
-                or not row.get("last_trade")
-                or parse_time(row["minute_start"]) < start
-            ):
-                continue
-            if iid not in latest or parse_time(row["minute_start"]) > parse_time(latest[iid]["minute_start"]):
-                latest[iid] = row
-        return [
-            {"instrument_id": iid, "last_trade": row["last_trade"]} for iid, row in sorted(latest.items())
-        ]
-    query = (
-        "SELECT point.instrument_id, point.last_trade FROM unnest(%s::text[]) AS scope(instrument_id) "
-        "CROSS JOIN LATERAL (SELECT instrument_id, last_trade FROM mkt.flow_bars_1m "
-        "WHERE instrument_id = scope.instrument_id AND minute_start >= %s AND last_trade IS NOT NULL "
-        "ORDER BY minute_start DESC LIMIT 1) AS point"
-    )
-    async with repo.transaction():
-        rows = await (await repo._conn().execute(query, [instrument_ids, start])).fetchall()
-    return [{"instrument_id": row["instrument_id"], "last_trade": row["last_trade"]} for row in rows]
+    latest = {}
+    async for row in repo.iter_all("mkt.flow_bars_1m"):
+        iid = row.get("instrument_id")
+        if iid not in instrument_ids or not row.get("last_trade") or parse_time(row["minute_start"]) < start:
+            continue
+        if iid not in latest or parse_time(row["minute_start"]) > parse_time(latest[iid]["minute_start"]):
+            latest[iid] = row
+    return [{"instrument_id": iid, "last_trade": row["last_trade"]} for iid, row in sorted(latest.items())]
 
 
 async def market_series_day_counts(repo, instrument_ids, start, end, assembled_at=None):
     """Complete finite positive 1m closes per (instrument, UTC day) for whole days in [start, end)."""
-    from psycopg import sql
-
     instrument_ids = sorted(set(instrument_ids))
     start, end = parse_time(start), parse_time(end)
     counts = {}
@@ -972,39 +915,21 @@ async def market_series_day_counts(repo, instrument_ids, start, end, assembled_a
         return await chm.market_series_day_counts(
             ch, instrument_ids, start, end, parse_time(assembled_at) if assembled_at is not None else None
         )
-    if not hasattr(repo, "_conn"):
-        async for row in repo.iter_market_projection(
-            "mkt.klines_1m",
-            ["instrument_id", "open_time", "c", "interval_s"],
-            "open_time",
-            start=start,
-            end=end,
-            filters={"complete": True, "interval_s": 60},
-            instrument_ids=instrument_ids,
-            assembled_at=assembled_at,
-        ):
-            close = Decimal(row["c"]) if row["c"] is not None else None
-            opened = parse_time(row["open_time"])
-            if close is not None and close.is_finite() and close > 0 and opened < end:
-                day = opened.replace(hour=0, minute=0, second=0, microsecond=0)
-                counts[row["instrument_id"], day] = counts.get((row["instrument_id"], day), 0) + 1
-        return counts
-    args = [instrument_ids, start, end]
-    availability = sql.SQL("")
-    if assembled_at is not None:
-        availability = sql.SQL(" AND (recorded_at IS NULL OR recorded_at<=%s)")
-        args.append(parse_time(assembled_at))
-    query = sql.SQL(
-        "SELECT instrument_id, date_trunc('day', open_time AT TIME ZONE 'UTC') AS day, count(*) AS n "
-        "FROM mkt.klines_1m WHERE instrument_id=ANY(%s::text[]) AND open_time>=%s AND open_time<%s "
-        "AND interval_s=60 AND complete IS TRUE AND c>0 AND c<'Infinity'::numeric {} GROUP BY 1, 2"
-    ).format(availability)
-    async with repo.transaction():
-        rows = await (await repo._conn().execute(query, args)).fetchall()
-    from datetime import UTC
-
-    for row in rows:
-        counts[row["instrument_id"], row["day"].replace(tzinfo=UTC)] = row["n"]
+    async for row in repo.iter_market_projection(
+        "mkt.klines_1m",
+        ["instrument_id", "open_time", "c", "interval_s"],
+        "open_time",
+        start=start,
+        end=end,
+        filters={"complete": True, "interval_s": 60},
+        instrument_ids=instrument_ids,
+        assembled_at=assembled_at,
+    ):
+        close = Decimal(row["c"]) if row["c"] is not None else None
+        opened = parse_time(row["open_time"])
+        if close is not None and close.is_finite() and close > 0 and opened < end:
+            day = opened.replace(hour=0, minute=0, second=0, microsecond=0)
+            counts[row["instrument_id"], day] = counts.get((row["instrument_id"], day), 0) + 1
     return counts
 
 
@@ -1016,23 +941,13 @@ async def market_kline_days_recorded_since(repo, since, end):
 
     if (ch := chm.client(repo, "mkt.klines_1m")) is not None:
         return await chm.market_kline_days_recorded_since(ch, since, end)
-    if not hasattr(repo, "_conn"):
-        async for row in repo.iter_late_arrivals(
-            "mkt.klines_1m", "recorded_at", "open_time", since=since, market_end=end
-        ):
-            opened = parse_time(row["open_time"])
-            if opened < end:
-                days.add((row["instrument_id"], opened.replace(hour=0, minute=0, second=0, microsecond=0)))
-        return days
-    query = (
-        "SELECT DISTINCT instrument_id, date_trunc('day', open_time AT TIME ZONE 'UTC') AS day "
-        "FROM mkt.klines_1m WHERE recorded_at>=%s AND open_time<%s"
-    )
-    async with repo.transaction():
-        rows = await (await repo._conn().execute(query, [since, end])).fetchall()
-    from datetime import UTC
-
-    return {(row["instrument_id"], row["day"].replace(tzinfo=UTC)) for row in rows}
+    async for row in repo.iter_late_arrivals(
+        "mkt.klines_1m", "recorded_at", "open_time", since=since, market_end=end
+    ):
+        opened = parse_time(row["open_time"])
+        if opened < end:
+            days.add((row["instrument_id"], opened.replace(hour=0, minute=0, second=0, microsecond=0)))
+    return days
 
 
 def _identity_key(collection, row):

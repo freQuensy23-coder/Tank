@@ -126,7 +126,7 @@ print(json.dumps({"ids": ids, "tokens": list({t["token_id"]: t for t in r["token
 	if len(c.APILimits) == 0 {
 		t.Error("api limits")
 	}
-	if c.Schema() != "mkt" || c.LockKey() != "tank:capture:writer" {
+	if c.LockKey() != "tank:capture:writer" {
 		t.Error("the service writes mkt under the single-writer lock")
 	}
 }

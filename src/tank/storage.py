@@ -25,7 +25,6 @@ from tank.market_storage import (
 )
 from tank.models import (
     APPEND_ONLY,
-    PARTITIONED,
     SERIAL_TABLES,
     TABLE_COLUMNS,
     TIMESTAMP_PRECISION_FIELDS,
@@ -99,7 +98,6 @@ class Repository(Protocol):
     async def fail_job(self, job_id, error, *, retry_after=1): ...
     async def recover_jobs(self): ...
     async def prune_market(self, before, *, book_before=None, trades_before=None): ...
-    async def maintain_partitions(self, *, extra_days=None, include_history=True): ...
     async def prune_jobs(self, before): ...
     async def preserved_market_windows(self): ...
     async def latest_before(self, collection, time_field, cutoff, *, filters=None): ...
@@ -125,6 +123,8 @@ class Repository(Protocol):
 
 
 log = logging.getLogger(__name__)
+
+BASELINE = "001_schema.sql"
 
 RUNNING_CAPS = {"REACTION_CAPTURE": 1}
 
@@ -812,13 +812,22 @@ class PostgresRepository(QueueMixin):
             if cancelled:
                 raise cancelled
 
-    async def migrate(self, *, target=None, market_export_dir=None, legacy_bundle_dir=None):
+    async def migrate(self, *, target=None):
         async with self._migration_connection() as conn:
             async with _stable_transaction(conn):
                 await conn.execute("CREATE SCHEMA IF NOT EXISTS ops")
                 await conn.execute(
                     "CREATE TABLE IF NOT EXISTS ops.schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
                 )
+                adopted = await (
+                    await conn.execute(
+                        "SELECT EXISTS (SELECT 1 FROM ops.schema_migrations) AND NOT EXISTS "
+                        "(SELECT 1 FROM ops.schema_migrations WHERE version=%s) AS adopt",
+                        (BASELINE,),
+                    )
+                ).fetchone()
+                if adopted["adopt"]:
+                    await conn.execute("INSERT INTO ops.schema_migrations(version) VALUES (%s)", (BASELINE,))
             for path in sorted((Path(__file__).parent / "migrations").glob("*.sql")):
                 if target is not None and path.name > target:
                     break
@@ -829,27 +838,7 @@ class PostgresRepository(QueueMixin):
                         )
                     ).fetchone()
                     if exists is None:
-                        if path.name == "027_typed_market.sql":
-                            from tank.market_migration import prepare_market_migration
-
-                            market_export = await prepare_market_migration(self, market_export_dir)
-                        if path.name.startswith(("032_", "033_", "034_", "035_")):
-                            from tank.market_migration import prepare_archive_cleanup
-
-                            await prepare_archive_cleanup(self, legacy_bundle_dir, path.name)
                         await conn.execute(path.read_text(), prepare=False)
-                        if path.name == "027_typed_market.sql":
-                            from tank.market_migration import finish_market_migration
-
-                            await finish_market_migration(self)
-                            if market_export:
-                                market_export.update(collection_clock().fields("created_at"))
-                                await self.put(
-                                    "ops.market_migration_exports",
-                                    market_export["export_id"],
-                                    market_export,
-                                    immutable=True,
-                                )
                         await conn.execute(
                             "INSERT INTO ops.schema_migrations(version) VALUES (%s)", (path.name,)
                         )
@@ -863,16 +852,6 @@ class PostgresRepository(QueueMixin):
 
         _table(collection)
         key, record = str(key), jsonable(record)
-        projected = _projection(collection, record)
-        if collection in PARTITIONED and projected.get(PARTITIONED[collection]) is not None:
-            day = parse_time(projected[PARTITIONED[collection]]).date()
-            partition_name = collection + "_" + day.strftime("%Y%m%d")
-            async with self.transaction():
-                exists = await (
-                    await self._conn().execute("SELECT to_regclass(%s) AS name", (partition_name,))
-                ).fetchone()
-            if exists["name"] is None:
-                await self.maintain_partitions(extra_days={collection: {day}})
         async with self.lock(f"record:{collection}:{key}"):
             conn = self._conn()
             table = sql.Identifier(*collection.split("."))
@@ -912,20 +891,7 @@ class PostgresRepository(QueueMixin):
             query = sql.SQL(
                 "INSERT INTO {} ({}) VALUES ({}) ON CONFLICT(storage_key) DO UPDATE SET {}"
             ).format(table, columns, sql.SQL(",").join(sql.Placeholder() for _ in names), assignments)
-            if collection in PARTITIONED:
-                if old:
-                    query = sql.SQL("UPDATE {} SET {} WHERE storage_key=%s").format(
-                        table,
-                        sql.SQL(",").join(sql.SQL("{}=%s").format(sql.Identifier(n)) for n in names[1:]),
-                    )
-                    await conn.execute(query, [*values[1:], key])
-                else:
-                    query = sql.SQL("INSERT INTO {} ({}) VALUES ({})").format(
-                        table, columns, sql.SQL(",").join(sql.Placeholder() for _ in names)
-                    )
-                    await conn.execute(query, values)
-            else:
-                await conn.execute(query, values)
+            await conn.execute(query, values)
             return copy.deepcopy(record)
 
     async def get(self, collection, key):
@@ -996,22 +962,22 @@ class PostgresRepository(QueueMixin):
             return [_read_record(collection, r) for r in rows]
 
     async def delete(self, collection, key):
-        from psycopg import errors, sql
+        from psycopg import sql
 
         _table(collection)
         if collection in MARKET_COLUMNS:
-            try:
-                async with self.transaction():
-                    await self._conn().execute(
-                        sql.SQL("DELETE FROM {} WHERE storage_key=%s").format(
-                            sql.Identifier(*collection.split("."))
-                        ),
-                        (str(key),),
-                    )
-            except errors.RaiseException as error:
-                if str(error).startswith("immutable sealed raw archive"):
-                    raise ImmutableRecordError(str(error)) from error
-                raise
+            from tank import clickhouse_market as chm
+
+            if (ch := chm.client(self, collection)) is not None:
+                await chm.delete(ch, collection, key)
+                return
+            async with self.transaction():
+                await self._conn().execute(
+                    sql.SQL("DELETE FROM {} WHERE storage_key=%s").format(
+                        sql.Identifier(*collection.split("."))
+                    ),
+                    (str(key),),
+                )
             return
         async with self.lock(f"record:{collection}:{key}"):
             row = await (
@@ -1182,149 +1148,32 @@ async def _preserved_windows(repo):
     return windows
 
 
-async def _maintain_partitions(self, *, extra_days=None, include_history=True):
-    """Create future UTC partitions and atomically split occupied historical DEFAULT days.
-
-    Existing documents and typed values move verbatim. NOT VALID legacy completeness checks
-    remain NOT VALID on the attached child, so moving history cannot invent missing data.
-    """
-    if not isinstance(self, PostgresRepository):
-        return 0
-    from psycopg import sql
-
-    created = 0
-
-    async with self.transaction():
-        hyper = await (
-            await self._conn().execute(
-                "SELECT to_regclass('timescaledb_information.hypertables') IS NOT NULL AS installed"
-            )
-        ).fetchone()
-        hypertables = set()
-        if hyper["installed"]:
-            rows = await (
-                await self._conn().execute(
-                    "SELECT hypertable_schema || '.' || hypertable_name AS name FROM timescaledb_information.hypertables"
-                )
-            ).fetchall()
-            hypertables = {row["name"] for row in rows}
-    for collection, ts in PARTITIONED.items():
-        if collection in hypertables:
-            continue
-        schema, name = collection.split(".")
-        historical = sql.Identifier(schema, name + "_historical")
-        days = {(utcnow() + timedelta(days=offset)).date() for offset in range(15)}
-        days.update((extra_days or {}).get(collection, ()))
-        if include_history and extra_days is None:
-            async with self.transaction():
-                rows = await (
-                    await self._conn().execute(
-                        sql.SQL(
-                            "SELECT DISTINCT date_trunc('day',{} AT TIME ZONE 'UTC')::date AS day FROM {} WHERE {} IS NOT NULL"
-                        ).format(sql.Identifier(ts), historical, sql.Identifier(ts))
-                    )
-                ).fetchall()
-                days.update(row["day"] for row in rows)
-        for day in sorted(days):
-            async with self.lock("tank:partition_maintenance"):
-                partition_name = name + "_" + day.strftime("%Y%m%d")
-                exists = await (
-                    await self._conn().execute(
-                        "SELECT to_regclass(%s) AS name", (schema + "." + partition_name,)
-                    )
-                ).fetchone()
-                if exists["name"] is not None:
-                    continue
-                start = parse_time(day.isoformat())
-                end = start + timedelta(days=1)
-                await self._conn().execute(
-                    sql.SQL("LOCK TABLE {} IN ACCESS EXCLUSIVE MODE").format(sql.Identifier(schema, name))
-                )
-                occupied = await (
-                    await self._conn().execute(
-                        sql.SQL("SELECT 1 FROM {} WHERE {} >= %s AND {} < %s LIMIT 1").format(
-                            historical, sql.Identifier(ts), sql.Identifier(ts)
-                        ),
-                        (start, end),
-                    )
-                ).fetchone()
-                child = sql.Identifier(schema, partition_name)
-                parent = sql.Identifier(schema, name)
-                if occupied:
-                    await self._conn().execute(
-                        sql.SQL("CREATE TABLE {} (LIKE {} INCLUDING DEFAULTS INCLUDING STORAGE)").format(
-                            child, parent
-                        )
-                    )
-                    copied = await self._conn().execute(
-                        sql.SQL("INSERT INTO {} SELECT * FROM {} WHERE {} >= %s AND {} < %s").format(
-                            child, historical, sql.Identifier(ts), sql.Identifier(ts)
-                        ),
-                        (start, end),
-                    )
-                    copied_count = copied.rowcount
-                    checks = await (
-                        await self._conn().execute(
-                            "SELECT conname,pg_get_constraintdef(oid) AS definition FROM pg_constraint WHERE conrelid=%s::regclass AND contype='c'",
-                            (collection,),
-                        )
-                    ).fetchall()
-                    for check in checks:
-                        await self._conn().execute(
-                            sql.SQL("ALTER TABLE {} ADD CONSTRAINT {} {}").format(
-                                child, sql.Identifier(check["conname"]), sql.SQL(check["definition"])
-                            )
-                        )
-                    await self._conn().execute("SELECT set_config('tank.partition_relocation','on',true)")
-                    removed = await self._conn().execute(
-                        sql.SQL("DELETE FROM {} WHERE {} >= %s AND {} < %s").format(
-                            historical, sql.Identifier(ts), sql.Identifier(ts)
-                        ),
-                        (start, end),
-                    )
-                    if removed.rowcount != copied_count:
-                        raise RuntimeError("Partition relocation row count mismatch")
-                    await self._conn().execute("SELECT set_config('tank.partition_relocation','off',true)")
-                    await self._conn().execute(
-                        sql.SQL("ALTER TABLE {} ATTACH PARTITION {} FOR VALUES FROM ({}) TO ({})").format(
-                            parent, child, sql.Literal(start), sql.Literal(end)
-                        )
-                    )
-                else:
-                    await self._conn().execute(
-                        sql.SQL("CREATE TABLE {} PARTITION OF {} FOR VALUES FROM ({}) TO ({})").format(
-                            child, parent, sql.Literal(start), sql.Literal(end)
-                        )
-                    )
-                created += 1
-    return created
-
-
-MemoryRepository.maintain_partitions = _maintain_partitions
-PostgresRepository.maintain_partitions = _maintain_partitions
-
-
 async def _prune_market(self, before, *, book_before=None, trades_before=None):
-    """Prune capture after backup, preserving whole UTC partitions overlapping MAJOR+ windows.
+    """Prune capture after backup, preserving whole UTC days overlapping MAJOR+ windows.
 
-    Normalized series use the caller's cutoff (normally90days). Book summaries go at
-    `book_before` (72 h, 03 §14) with no event-window exception: their daily partitions
-    ending by then are dropped whole, so the disk space is returned. Raw Parquet file
-    retention is handled separately; sealed archive manifests remain immutable.
+    ClickHouse drops whole daily partitions of the exchange series: the caller's cutoff
+    (normally 90 days), book summaries at `book_before` (72 h, 03 §14, no event-window
+    exception) and prints at `trades_before`. PostgreSQL keeps only supply observations,
+    capture gaps and tier transitions, deleted by the same cutoff and preserved days.
     """
     cutoff = parse_time(before)
     temporal = {
-        "mkt.klines_1m": "open_time",
-        "mkt.flow_bars_1m": "minute_start",
-        "mkt.book_summaries": "exchange_ts",
-        "mkt.oi_obs": "ts",
-        "mkt.funding_obs": "as_of",
-        "mkt.liq_obs": "ts",
-        "mkt.tickers_24h": "ts",
         "mkt.supply_obs": "ts",
         "mkt.capture_gaps": "observed_at",
         "ops.capture_tier_transitions": "effective_at",
     }
+    if isinstance(self, MemoryRepository):
+        temporal.update(
+            {
+                "mkt.klines_1m": "open_time",
+                "mkt.flow_bars_1m": "minute_start",
+                "mkt.book_summaries": "exchange_ts",
+                "mkt.oi_obs": "ts",
+                "mkt.funding_obs": "as_of",
+                "mkt.liq_obs": "ts",
+                "mkt.tickers_24h": "ts",
+            }
+        )
     counts = {}
     async with self.lock("tank:market_retention"):
         days = set()
@@ -1343,47 +1192,8 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
         if isinstance(self, PostgresRepository):
             from psycopg import sql
 
-            await self.maintain_partitions(include_history=False)
-
-            installed = await (
-                await self._conn().execute(
-                    "SELECT to_regclass('timescaledb_information.chunks') IS NOT NULL AS installed"
-                )
-            ).fetchone()
-            hypertables = set()
-            if installed["installed"]:
-                rows = await (
-                    await self._conn().execute(
-                        "SELECT hypertable_schema||'.'||hypertable_name AS name, chunk_schema, chunk_name, "
-                        "range_start, range_end FROM timescaledb_information.chunks WHERE range_end <= %s",
-                        (cutoff,),
-                    )
-                ).fetchall()
-                dropped = 0
-                for row in rows:
-                    if row["name"] not in temporal:
-                        continue
-                    if any(row["range_start"] < end and start < row["range_end"] for start, end in spans):
-                        continue
-                    await self._conn().execute(
-                        sql.SQL("DROP TABLE {}").format(
-                            sql.Identifier(row["chunk_schema"], row["chunk_name"])
-                        )
-                    )
-                    dropped += 1
-                counts["hypertable_chunks_dropped"] = dropped
-                rows = await (
-                    await self._conn().execute(
-                        "SELECT hypertable_schema||'.'||hypertable_name AS name FROM timescaledb_information.hypertables"
-                    )
-                ).fetchall()
-                hypertables = {row["name"] for row in rows}
-            await self._conn().execute("SELECT set_config('tank.retention_purge','on',true)")
             for collection, ts in temporal.items():
-                if collection in hypertables:
-                    continue
-                age = cutoff
-                args = [age]
+                args = [cutoff]
                 clauses = []
                 for start, end in spans:
                     clauses.append(
@@ -1391,35 +1201,13 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
                     )
                     args.extend([start, end])
                 protect = sql.SQL(" OR ").join(clauses) if clauses else sql.SQL("FALSE")
-                mutable = sql.SQL("TRUE")
                 cursor = await self._conn().execute(
-                    sql.SQL("DELETE FROM {} WHERE {} < %s AND {} AND NOT ({})").format(
-                        sql.Identifier(*collection.split(".")), sql.Identifier(ts), mutable, protect
+                    sql.SQL("DELETE FROM {} WHERE {} < %s AND NOT ({})").format(
+                        sql.Identifier(*collection.split(".")), sql.Identifier(ts), protect
                     ),
                     args,
                 )
                 counts[collection] = cursor.rowcount
-            await self._conn().execute("SELECT set_config('tank.retention_purge','off',true)")
-            if book_before is not None:
-                book_cutoff = parse_time(book_before)
-                cursor = await self._conn().execute(
-                    "SELECT c.relname FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid "
-                    "WHERE i.inhparent = 'mkt.book_summaries'::regclass"
-                )
-                dropped = 0
-                for (name,) in await cursor.fetchall():
-                    digits = name.rsplit("_", 1)[-1].lstrip("p")
-                    if not (len(digits) == 8 and digits.isdigit()):
-                        continue
-                    day_end = parse_time(f"{digits[:4]}-{digits[4:6]}-{digits[6:]}T00:00:00Z") + timedelta(
-                        days=1
-                    )
-                    if day_end <= book_cutoff:
-                        await self._conn().execute(
-                            sql.SQL("DROP TABLE {}").format(sql.Identifier("mkt", name))
-                        )
-                        dropped += 1
-                counts["mkt.book_summaries_partitions_dropped"] = dropped
         else:
             if book_before is not None:
                 book_cutoff = parse_time(book_before)
@@ -1428,14 +1216,13 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
                         del self._data["mkt.book_summaries"][key]
                         self._immutable.discard(("mkt.book_summaries", key))
             for collection, ts in temporal.items():
-                age = cutoff
                 deleted = 0
                 for key, row in list(self._data.get(collection, {}).items()):
                     if not row.get(ts):
                         continue
                     at = parse_time(row[ts])
                     protected = any(start <= at < end for start, end in spans)
-                    if at < age and not protected and (collection, key) not in self._immutable:
+                    if at < cutoff and not protected and (collection, key) not in self._immutable:
                         del self._data[collection][key]
                         self._immutable.discard((collection, key))
                         deleted += 1

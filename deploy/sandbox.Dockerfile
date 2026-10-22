@@ -1,7 +1,7 @@
 # Build and export a verified local OCI layout; no credentials or registry publication.
 FROM python:3.12-bookworm
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git postgresql-client nodejs npm bash && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir pandas numpy scipy statsmodels pyarrow duckdb 'psycopg[binary]' httpx websockets
+RUN pip install --no-cache-dir pandas numpy scipy statsmodels duckdb 'psycopg[binary]' httpx websockets
 # Node is needed by OpenMA pi harness tools; image remains a Python3.12 environment.
 RUN mkdir -p /workspace /home/user/.skills
 WORKDIR /workspace

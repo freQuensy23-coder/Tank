@@ -545,15 +545,6 @@ MARKET_IDENTITIES = {
     "mkt.capture_requests": ("request_id",),
 }
 
-MARKET_PARTITIONS = {
-    "mkt.flow_bars_1m": "minute_start",
-    "mkt.klines_1m": "open_time",
-    "mkt.oi_obs": "ts",
-    "mkt.liq_obs": "ts",
-    "mkt.book_summaries": "exchange_ts",
-    "mkt.tickers_24h": "ts",
-}
-
 MARKET_REQUIRED = {
     "mkt.flow_bars_1m": [
         "instrument_id",

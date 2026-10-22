@@ -3079,7 +3079,7 @@ async def test_immediate_market_access_allows_effective_primary_change_without_p
     original_latest = service.repo.latest_before
 
     async def typed_only(collection, *args, **kwargs):
-        assert collection != "mkt.trades", "Raw trades must never be queried from PostgreSQL"
+        assert collection != "mkt.trades", "Prints never feed a typed latest read"
         return await original_latest(collection, *args, **kwargs)
 
     service.repo.latest_before = typed_only

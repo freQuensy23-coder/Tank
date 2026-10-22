@@ -1,4 +1,0 @@
-services:
-  tank:
-    image: sha256:94a6ac799d1814dd810471c36b2ba4e869c48928b36dc6216bca39e137112e24
-    pull_policy: never

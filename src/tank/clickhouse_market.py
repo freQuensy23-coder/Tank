@@ -1,9 +1,9 @@
-"""Exchange market series in ClickHouse (HLD §7.1): schema and the read side of core.
+"""Exchange market series and prints in ClickHouse (HLD §7.1): schema, reads and writes.
 
-tank-capture is the only writer of these tables (capture/internal/chstore). Core reads them
-through the same repository methods as before; each one routes a collection of
-MARKET_TABLES here when the repository has a ClickHouse client (`repo.clickhouse`), and
-returns exactly what its PostgreSQL branch returns (rows decoded by market_storage.decode).
+tank-capture writes these tables in production (capture/internal/store). Core reads them
+through the repository methods; every collection of MARKET_TABLES is served here
+(`repo.clickhouse`), rows decoded by market_storage.decode. A repository without a
+ClickHouse client keeps them only in memory (tests and replay).
 
 Tables are ReplacingMergeTree on the collection's identity, the newest `_version` wins, and
 every read selects FINAL, so a row reads as its last write. Numbers are stored as their
@@ -12,6 +12,8 @@ exact decimal text (some carry 100 digits), timestamps as DateTime64(6, UTC), JS
 
 import asyncio
 import json
+import re
+import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -20,7 +22,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 
 from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS, MARKET_IDENTITIES
-from tank.util import iso, parse_time
+from tank.util import canonical_json, iso, parse_time
 
 MARKET_TABLES = {
     "mkt.klines_1m": "open_time",
@@ -114,7 +116,8 @@ def ddl():
 class ClickHouse:
     """A small async client of the ClickHouse HTTP interface (server-side parameters)."""
 
-    def __init__(self, url, *, password=None, http=None):
+    def __init__(self, url, *, password=None, http=None, database="mkt"):
+        self.database = database
         parts = urlsplit(url)
         self.user = parts.username or "default"
         self.password = password if password is not None else (parts.password or "")
@@ -138,7 +141,7 @@ class ClickHouse:
         response = await self.http.post(
             self.base,
             params=request,
-            content=query.encode(),
+            content=(query if self.database == "mkt" else re.sub(r"\bmkt\b", self.database, query)).encode(),
             headers={"X-ClickHouse-User": self.user, "X-ClickHouse-Key": self.password},
         )
         if response.status_code != 200:
@@ -153,6 +156,11 @@ class ClickHouse:
 
     async def execute(self, query, params=None):
         await self._post(query, params)
+
+    async def insert(self, table, rows):
+        if rows:
+            body = "\n".join(json.dumps(row) for row in rows)
+            await self._post(f"INSERT INTO {table} FORMAT JSONEachRow\n{body}", None)
 
 
 def _json_lines(body):
@@ -212,7 +220,7 @@ def _filters(q, collection, filters):
         elif kind == "timestamptz":
             q.where(f"`{name}` = {q.param(parse_time(value), DT)}")
         elif kind == "jsonb":
-            raise ValueError(f"JSON filter {collection}.{name} is not supported on ClickHouse")
+            q.where(f"`{name}` = {q.param(canonical_json(value), 'String')}")
         elif kind == "numeric":
             q.where(f"toDecimal256OrNull(`{name}`, 30) = toDecimal256({q.param(value, 'String')}, 30)")
         else:
@@ -604,7 +612,7 @@ async def prune(ch, cutoff, preserved_days, *, book_cutoff=None, trades_cutoff=N
     keep = {day.strftime("%Y%m%d") for day in preserved_days}
     dropped = {}
     for row in rows:
-        collection = row["database"] + "." + row["table"]
+        collection = "mkt." + row["table"]
         limit = cutoffs.get(collection)
         if limit is None:
             continue
@@ -630,6 +638,125 @@ def install(repo, settings):
 
 
 def client(repo, collection):
-    """The ClickHouse client serving `collection` for this repository, else None."""
+    """The ClickHouse client serving `collection` for this repository, else None.
+
+    A database repository has no other store for the exchange series."""
+    if collection not in MARKET_TABLES:
+        return None
     ch = getattr(repo, "clickhouse", None)
-    return ch if ch is not None and collection in MARKET_TABLES else None
+    if ch is None and hasattr(repo, "_conn"):
+        raise RuntimeError(f"{collection} is stored in ClickHouse only; TANK_CLICKHOUSE_URL is not set")
+    return ch
+
+
+def _row(collection, record, key, version):
+    row = {"storage_key": key, "_version": version}
+    for name, kind in MARKET_COLUMNS[collection].items():
+        value = record.get(name)
+        if value is None:
+            if kind == "text[]":
+                row[name] = []
+            continue
+        if kind == "timestamptz":
+            row[name] = parse_time(value).astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")
+        elif kind == "jsonb":
+            row[name] = canonical_json(value)
+        elif kind == "numeric":
+            row[name] = str(value)
+        elif kind == "text[]":
+            row[name] = list(value)
+        else:
+            row[name] = value
+    return row
+
+
+NULL_REASONS = frozenset(
+    {
+        "NOT_SUPPORTED",
+        "SOURCE_FAILED",
+        "INCOMPLETE",
+        "UNVERIFIED_SEMANTICS",
+        "NOT_APPLICABLE",
+        "NOT_ESTIMABLE",
+        "PENDING",
+    }
+)
+REASONED = {"mkt.flow_bars_1m": ("buy_usd", "sell_usd", "size_buckets")}
+
+
+class RequiredFieldError(ValueError):
+    def __init__(self, collection, field):
+        super().__init__(f"{collection}: required_{field}")
+        self.constraint = "required_" + field
+
+
+def _check_required(collection, value):
+    """Every required field is set; a missing USD conversion carries its own valid reason."""
+    from tank.market_schema import MARKET_REQUIRED
+
+    for field in MARKET_REQUIRED.get(collection, ()):
+        if value.get(field) is None:
+            raise RequiredFieldError(collection, field)
+    reasons = value.get("null_reasons") or {}
+    for field in REASONED.get(collection, ()):
+        if value.get(field) is None and (
+            not isinstance(reasons.get(field), str) or reasons[field] not in NULL_REASONS
+        ):
+            raise RequiredFieldError(collection, field)
+
+
+async def put_batch(ch, collection, records, keys=None):
+    """Write typed rows the way tank-capture does; return the rows that changed.
+
+    A complete flow bar is never replaced by an unproven one, funding and ticker points
+    merge into the stored row, and an unchanged fingerprint is not written again."""
+    from tank.market_storage import _prepare_records, _unproves, decode, merge_point
+
+    unique = _prepare_records(collection, records, keys, MARKET_COLUMNS[collection], False)
+    if not unique:
+        return []
+    identity = MARKET_IDENTITIES[collection]
+    values = {key: decode(collection, prepared) for key, prepared in unique.items()}
+
+    def ident(key, value):
+        return tuple(key if name == "storage_key" else value.get(name) for name in identity)
+
+    def literal(name, value):
+        if name != "storage_key" and MARKET_COLUMNS[collection][name] == "timestamptz":
+            return f"toDateTime64('{_literal(parse_time(value))}', 6, 'UTC')"
+        return _literal([value])[1:-1]
+
+    tuples = ",".join(
+        "("
+        + ",".join(literal(name, part) for name, part in zip(identity, ident(key, value), strict=True))
+        + ")"
+        for key, value in values.items()
+    )
+    q = Query()
+    q.where(f"({','.join(f'`{name}`' for name in identity)}) IN ({tuples})")
+    stored = {}
+    for row in await _select(ch, collection, q, "storage_key"):
+        record = _record(collection, row)
+        stored[ident(row["storage_key"], record)] = record
+    changed, rows = [], []
+    version = time.time_ns()
+    for value in values.values():
+        _check_required(collection, value)
+    for key, value in values.items():
+        old = stored.get(ident(key, value), {})
+        if old and collection in ("mkt.funding_obs", "mkt.tickers_24h"):
+            value = merge_point(collection, old, value)
+        if old.get("semantic_fingerprint") == value["semantic_fingerprint"] or _unproves(
+            collection, old, value
+        ):
+            continue
+        changed.append(value)
+        rows.append(_row(collection, value, key, version))
+    await ch.insert(collection, rows)
+    return changed
+
+
+async def delete(ch, collection, key):
+    q = Query()
+    q.where(f"storage_key = {q.param(str(key), 'String')}")
+    await ch.execute(f"DELETE FROM {collection} WHERE {q.predicate()}", q.params)

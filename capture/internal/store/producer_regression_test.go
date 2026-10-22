@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -16,13 +17,28 @@ import (
 
 func regressionStore(t *testing.T) (*Store, string) {
 	t.Helper()
-	s := open(t, "mkt")
 	prefix := os.Getenv("TANK_CAPTURE_REGRESSION_ID")
 	if prefix == "" {
-		prefix = "producer-" + suffix()
-		cleanup(t, s, "instrument_id", prefix+"%", "mkt.tickers_24h", "mkt.funding_obs", "mkt.oi_obs", "mkt.liq_obs")
+		return chStore(t), "producer"
 	}
-	return s, prefix
+	raw := os.Getenv("CLICKHOUSE_TEST_URL")
+	if raw == "" {
+		t.Skip("CLICKHOUSE_TEST_URL not set")
+	}
+	ch, err := NewClickHouse(raw, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Store{CH: ch}, prefix
+}
+
+func regressionCount(t *testing.T, s *Store, query string, params map[string]string) string {
+	t.Helper()
+	rows, err := s.CH.Rows(context.Background(), query, params)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("%s: %v %v", query, rows, err)
+	}
+	return fmt.Sprint(rows[0]["n"])
 }
 
 func regressionEqual(t *testing.T, got, want any) {
@@ -97,11 +113,7 @@ func TestProducerPrecisionFundingAndMissingUSD(t *testing.T) {
 			regressionEqual(t, saved["synchronized_eligible"], false)
 		}
 	}
-	var n int
-	if err := s.Pool.QueryRow(ctx, "SELECT count(*) FROM mkt.oi_obs WHERE instrument_id LIKE $1 AND ts_prec=timestamp_precision", prefix+":%").Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	regressionEqual(t, n, 5)
+	regressionEqual(t, regressionCount(t, s, "SELECT count() AS n FROM mkt.oi_obs FINAL WHERE startsWith(instrument_id, {p:String}) AND ts_prec = timestamp_precision", map[string]string{"p": prefix + ":"}), "5")
 	contradictory := with(first, "ts_prec", "COLLECTION_ONLY")
 	if _, err := s.PutMarketBatch(ctx, "mkt.oi_obs", []map[string]any{contradictory}, nil); err == nil || !strings.Contains(strings.ToLower(err.Error()), "conflict") {
 		t.Fatalf("conflicting precision must fail: %v", err)
@@ -277,16 +289,6 @@ func TestProducerTickerFundingIdentityAfterRestart(t *testing.T) {
 	fund(p, settled, "SETTLED", "PUBLIC_REST")
 	fund(restarted, settled, "SETTLED", "WEBSOCKET")
 	flush()
-	var tickers, funds int
-	var tickerUnique, fundingUnique bool
-	if err := s.Pool.QueryRow(ctx, "SELECT count(*),coalesce(bool_and(n=1),false) FROM (SELECT instrument_id,ts,count(*) AS n FROM mkt.tickers_24h WHERE instrument_id=ANY($1) GROUP BY instrument_id,ts) q", []string{inst.ID, legacy.ID}).Scan(&tickers, &tickerUnique); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.Pool.QueryRow(ctx, "SELECT count(*),coalesce(bool_and(n=1),false) FROM (SELECT kind,count(*) AS n FROM mkt.funding_obs WHERE instrument_id=$1 GROUP BY kind) q", inst.ID).Scan(&funds, &fundingUnique); err != nil {
-		t.Fatal(err)
-	}
-	regressionEqual(t, tickers, 3)
-	regressionEqual(t, tickerUnique, true)
-	regressionEqual(t, funds, 2)
-	regressionEqual(t, fundingUnique, true)
+	regressionEqual(t, regressionCount(t, s, "SELECT count() AS n FROM mkt.tickers_24h FINAL WHERE instrument_id IN ({a:String}, {b:String})", map[string]string{"a": inst.ID, "b": legacy.ID}), "3")
+	regressionEqual(t, regressionCount(t, s, "SELECT count() AS n FROM mkt.funding_obs FINAL WHERE instrument_id = {a:String}", map[string]string{"a": inst.ID}), "2")
 }

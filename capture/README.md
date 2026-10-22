@@ -3,25 +3,25 @@
 `tank-capture` is the only process that talks to crypto exchanges for market data. It
 holds the public WebSocket streams, repairs gaps over REST, polls klines, 24h tickers,
 open interest and funding, builds the 1m flow bars and 10 s book summaries with their
-completeness proofs, and writes them into the typed market tables (`mkt.*`). Tank core
-reads market data from PostgreSQL only.
+completeness proofs, and writes them and every print into ClickHouse (database `mkt`).
+Tank core reads market data from ClickHouse only.
 
 The interface is tables. There are no files between the two processes.
 
-| Table | Writer | Reader | Purpose |
-|---|---|---|---|
-| `mkt.flow_bars_1m`, `mkt.book_summaries`, `mkt.klines_1m`, `mkt.tickers_24h`, `mkt.oi_obs`, `mkt.funding_obs`, `mkt.liq_obs` | capture | core | market data, same schemas and semantics as the in-process capture |
-| `mkt.capture_gaps` | capture | core | explicit gap evidence |
-| `mkt.capture_streams` | capture | core | stream state per instrument and stream (Data Confidence) |
-| `mkt.hot_tokens` | core | capture | escalations: the hot set capture subscribes |
-| `mkt.backfill_runs` | core creates `PENDING`, capture runs it | core | pre-event capture obligation and readiness |
-| `mkt.capture_requests` | core creates `PENDING`, capture runs it | core | bounded window repair before a Market Truth run |
-| `ops.request_budget_ledger`, `ops.request_budget_blocks` | both | both | one request budget per provider bucket and IP |
+| Table | Store | Writer | Reader | Purpose |
+|---|---|---|---|---|
+| `mkt.flow_bars_1m`, `mkt.book_summaries`, `mkt.klines_1m`, `mkt.tickers_24h`, `mkt.oi_obs`, `mkt.funding_obs`, `mkt.liq_obs` | ClickHouse | capture | core | market series (ReplacingMergeTree on their identity, read with `FINAL`) |
+| `mkt.trades` | ClickHouse | capture | core, agent | every print |
+| `mkt.capture_gaps` | PostgreSQL | capture | core | explicit gap evidence |
+| `mkt.capture_streams` | PostgreSQL | capture | core | stream state per instrument and stream (Data Confidence) |
+| `mkt.hot_tokens` | PostgreSQL | core | capture | escalations: the hot set capture subscribes |
+| `mkt.backfill_runs` | PostgreSQL | core creates `PENDING`, capture runs it | core | pre-event capture obligation and readiness |
+| `mkt.capture_requests` | PostgreSQL | core creates `PENDING`, capture runs it | core | bounded window repair before a Market Truth run |
+| `ops.request_budget_ledger`, `ops.request_budget_blocks` | PostgreSQL | both | both | one request budget per provider bucket and IP |
 
-`src/tank/migrations/046_capture_service.sql` creates the new tables, the
-`bar_version`/`revised` flow bar columns, the `tank_capture` notifications and the
-budget functions. Apply it with `tank db migrate` before starting the service; the
-service refuses to start without it.
+`tank db migrate` creates the PostgreSQL tables (`src/tank/migrations/001_schema.sql`)
+and the ClickHouse tables (`tank.clickhouse_market.ddl`). The service refuses to start
+before the PostgreSQL schema is in place or without `TANK_CLICKHOUSE_URL`.
 
 ## Running
 
@@ -34,7 +34,8 @@ start it. Environment:
 
 | Variable | Default | |
 |---|---|---|
-| `TANK_DATABASE_URL` | built from `/run/secrets/tank_db_password` | PostgreSQL URL (role `tank`) |
+| `TANK_DATABASE_URL` | built from `/run/secrets/tank_db_password` | PostgreSQL URL (role `tank`): requests, gaps, streams, hot set, ledger, writer lock |
+| `TANK_CLICKHOUSE_URL` | required | ClickHouse HTTP URL; the password is the one of `TANK_DATABASE_URL` |
 | `TANK_CONFIG_DIR` | `/config` | the versioned configuration (`registry.yaml`, `semantics.yaml`, `thresholds.yaml`, `api_limits.yaml`, `sources.yaml`) |
 | `TANK_CAPTURE_HEALTH_ADDR` | `:8791` | `GET /healthz` (200 when the writer lock is held and the last flush is recent), `GET /status` |
 
@@ -118,7 +119,8 @@ host for every process for `Retry-After`; a 418 closes it and is never retried; 
 | `cmd/tank-capture` | the service |
 | `cmd/capture-parity` | the parity harness binary (`scripts/capture/parity.py --go`) |
 | `internal/config` | configuration, settings and versions |
-| `internal/store` | PostgreSQL: typed writes with `tank.market_storage` semantics, reads, lock, notifications (a private schema isolates the PostgreSQL tests) |
+| `internal/store` | typed market writes and reads in ClickHouse with `tank.market_storage` semantics; PostgreSQL requests, gaps, streams, lock, notifications |
+| `internal/rawstore` | every print into `mkt.trades` |
 | `internal/budget` | the shared request ledger, per-host admission and venue request weights |
 | `internal/rest` | the venue REST adapters (`tank.market.adapters`) |
 | `internal/capture` | hot set, stream groups, the flow sealer, repairs, obligations, pollers, stream state |
@@ -134,15 +136,11 @@ uv run python scripts/capture/parity.py --check --go capture/bin/capture-parity
 
 The parity harness feeds the same recorded frames (`testdata/frames`) through the
 Python reference (`tank.market`) and the Go port and requires identical trades, rows,
-bars, fingerprints and watermarks. PostgreSQL tests run when `TANK_TEST_DATABASE_URL`
+bars, fingerprints and watermarks. ClickHouse tests run when `CLICKHOUSE_TEST_URL` is set
+(a disposable server with the `mkt` tables), PostgreSQL tests when `TANK_TEST_DATABASE_URL`
 is set.
 
 ## Not in tank-capture
 
-- The Binance Vision daily archives (`data.binance.vision`): the 90-day kline and metrics
-  bootstrap and the aggTrades fill of windows older than REST retention. With
-  `TANK_EXTERNAL_CAPTURE` core does not fetch them either.
-- The raw trade and book Parquet journals (`raw/trades`, `raw/books`): the interface is
-  tables.
 - Discovered instrument metadata (OKX `ctVal`, Hyperliquid `szDecimals`) is held in memory;
   `reg.instruments` keeps the registry's values.

@@ -1,10 +1,13 @@
 package store
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,9 +16,6 @@ import (
 	"github.com/freQuensy23-coder/Tank/capture/internal/points"
 	"github.com/freQuensy23-coder/Tank/capture/internal/pytime"
 	"github.com/freQuensy23-coder/Tank/capture/internal/venue"
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type writerBatch struct {
@@ -24,37 +24,41 @@ type writerBatch struct {
 	failed     bool
 }
 
-type writerTraceKey struct{}
-
 type writerTrace struct {
-	mu         sync.Mutex
-	statements map[string]string
-	batches    []writerBatch
-	inject     func()
-	injected   bool
+	next     http.RoundTripper
+	mu       sync.Mutex
+	batches  []writerBatch
+	reject   func(collection string, body []byte) bool
+	inject   func()
+	injected bool
 }
 
-func (tr *writerTrace) TraceQueryStart(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
-	collection, ok := tr.statements[data.SQL]
-	if !ok {
-		return ctx
+func (tr *writerTrace) RoundTrip(req *http.Request) (*http.Response, error) {
+	query := req.URL.Query().Get("query")
+	if !strings.HasPrefix(query, "INSERT INTO ") || req.Body == nil {
+		return tr.next.RoundTrip(req)
 	}
-	keys, ok := data.Args[0].([]*string)
-	if !ok {
-		panic("typed writer storage-key argument changed")
+	collection := strings.Fields(query)[2]
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, err
 	}
-	return context.WithValue(ctx, writerTraceKey{}, writerBatch{collection: collection, rows: len(keys)})
-}
-
-func (tr *writerTrace) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
-	batch, ok := ctx.Value(writerTraceKey{}).(writerBatch)
-	if !ok {
-		return
+	batch := writerBatch{collection: collection, rows: bytes.Count(body, []byte{'\n'}) + 1}
+	if tr.reject != nil && tr.reject(collection, body) {
+		batch.failed = true
+		tr.mu.Lock()
+		tr.batches = append(tr.batches, batch)
+		tr.mu.Unlock()
+		return &http.Response{StatusCode: http.StatusInternalServerError, Body: io.NopCloser(strings.NewReader("rejected tail")), Header: http.Header{}, Request: req}, nil
 	}
-	batch.failed = data.Err != nil
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	resp, err := tr.next.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
 	tr.mu.Lock()
 	tr.batches = append(tr.batches, batch)
-	inject := batch.collection == "mkt.klines_1m" && batch.rows == FlushRows && !batch.failed && !tr.injected
+	inject := collection == "mkt.klines_1m" && batch.rows == FlushRows && !tr.injected
 	if inject {
 		tr.injected = true
 	}
@@ -62,6 +66,7 @@ func (tr *writerTrace) TraceQueryEnd(ctx context.Context, _ *pgx.Conn, data pgx.
 	if inject {
 		tr.inject()
 	}
+	return resp, nil
 }
 
 func (tr *writerTrace) snapshot() []writerBatch {
@@ -71,27 +76,17 @@ func (tr *writerTrace) snapshot() []writerBatch {
 }
 
 func TestWriterLiveChunksAndFailureRetry(t *testing.T) {
-	s := open(t, "mkt_shadow_"+suffix())
+	s := chStore(t)
 	ctx := context.Background()
-	iid := "writer-live-" + suffix() + ":BTC"
+	iid := "writer-live:BTC"
 	w := NewWriter(s)
 	base := time.Date(2026, 10, 21, 0, 0, 0, 0, time.UTC)
-	tr := &writerTrace{statements: map[string]string{}}
-	for _, collection := range []string{"mkt.klines_1m", "mkt.tickers_24h", "mkt.flow_bars_1m"} {
-		tr.statements[s.upsert(collection)] = collection
+	tr := &writerTrace{next: http.DefaultTransport}
+	tr.reject = func(collection string, body []byte) bool {
+		return collection == "mkt.klines_1m" && bytes.Contains(body, []byte(`"c":"0"`))
 	}
-	cfg := s.Pool.Config()
-	cfg.ConnConfig.Tracer = tr
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	s.Pool.Close()
-	s.Pool = pool
+	s.CH.HTTP = &http.Client{Transport: tr, Timeout: time.Minute}
 
-	if _, err := s.Pool.Exec(ctx, "ALTER TABLE "+s.Table("mkt.klines_1m")+" ADD CONSTRAINT writer_tail_rejected CHECK (c <> 0)"); err != nil {
-		t.Fatal(err)
-	}
 	for i := 0; i < 2*FlushRows+1; i++ {
 		close := "2"
 		if i == 2*FlushRows {
@@ -112,10 +107,9 @@ func TestWriterLiveChunksAndFailureRetry(t *testing.T) {
 	tr.inject = func() {
 		w.Sink(points.Row{Collection: "mkt.flow_bars_1m", Key: flowKey, Record: flowRow(iid, pytime.ISO(base))})
 	}
-	err = w.Flush(ctx)
-	var failure *pgconn.PgError
-	if !errors.As(err, &failure) || failure.Code != "23514" || failure.ConstraintName != "writer_tail_rejected" {
-		t.Fatalf("expected actual PostgreSQL tail failure, got %v", err)
+	err := w.Flush(ctx)
+	if err == nil || !strings.Contains(err.Error(), "rejected tail") {
+		t.Fatalf("expected the tail insert to fail, got %v", err)
 	}
 	expected := []writerBatch{
 		{"mkt.tickers_24h", 1, false},
@@ -125,7 +119,7 @@ func TestWriterLiveChunksAndFailureRetry(t *testing.T) {
 		{"mkt.klines_1m", 1, true},
 	}
 	if got := tr.snapshot(); !reflect.DeepEqual(got, expected) {
-		t.Fatalf("actual SQL batch order = %v; want %v", got, expected)
+		t.Fatalf("insert order = %v; want %v", got, expected)
 	}
 	tailKey := fmt.Sprintf("%s:k%d", iid, 2*FlushRows)
 	if w.Pending() != 1 || !reflect.DeepEqual(w.order, []string{"mkt.klines_1m"}) {
@@ -138,11 +132,14 @@ func TestWriterLiveChunksAndFailureRetry(t *testing.T) {
 	if !w.LastFlush().IsZero() {
 		t.Fatal("failed flush was marked complete")
 	}
-	var count int
-	if err := s.Pool.QueryRow(ctx, "SELECT count(*) FROM "+s.Table("mkt.klines_1m")+" WHERE instrument_id=$1", iid).Scan(&count); err != nil {
-		t.Fatal(err)
+	count := func() string {
+		rows, err := s.CH.Rows(ctx, "SELECT count() AS n FROM mkt.klines_1m FINAL WHERE instrument_id = {iid:String}", map[string]string{"iid": iid})
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("count: %v %v", rows, err)
+		}
+		return fmt.Sprint(rows[0]["n"])
 	}
-	regressionEqual(t, count, 2*FlushRows)
+	regressionEqual(t, count(), fmt.Sprint(2*FlushRows))
 	if missing, err := s.Get(ctx, "mkt.klines_1m", tailKey); err != nil || missing != nil {
 		t.Fatalf("failed tail persisted: %v %v", missing, err)
 	}
@@ -161,8 +158,5 @@ func TestWriterLiveChunksAndFailureRetry(t *testing.T) {
 		t.Fatal("successful retry not fully drained")
 	}
 	regressionEqual(t, regressionRow(t, s, "mkt.klines_1m", tailKey)["c"], "3")
-	if err := s.Pool.QueryRow(ctx, "SELECT count(*) FROM "+s.Table("mkt.klines_1m")+" WHERE instrument_id=$1", iid).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	regressionEqual(t, count, 2*FlushRows+1)
+	regressionEqual(t, count(), fmt.Sprint(2*FlushRows+1))
 }

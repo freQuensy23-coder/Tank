@@ -267,8 +267,14 @@ func chDecode(collection string, row map[string]any) (map[string]any, string, er
 	return decodeRow(collection, fields, values)
 }
 
-func (s *Store) clickhouse(collection string) bool {
-	return s.CH != nil && ClickHouseTables[collection]
+func (s *Store) series(collection string) error {
+	if !ClickHouseTables[collection] {
+		return fmt.Errorf("%s is not a ClickHouse market series", collection)
+	}
+	if s.CH == nil {
+		return fmt.Errorf("%s: ClickHouse is not configured", collection)
+	}
+	return nil
 }
 
 func (s *Store) chSelect(ctx context.Context, collection, where string, params map[string]string, tail string) ([]map[string]any, []string, error) {

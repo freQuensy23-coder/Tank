@@ -1,7 +1,0 @@
-services:
-  tank:
-    image: sha256:1c828c59acad147aa14f4f62c9c3932f4d25442721077f33c5a6089b0b7a9c9a
-    pull_policy: never
-    cpus: '1.0'
-    mem_limit: 1g
-    read_only: true

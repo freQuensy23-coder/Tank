@@ -62,9 +62,7 @@ async def test_external_schema_clones_isolate_writes_keep_blank_upgrades_and_pre
                 )[0] is None
                 assert (
                     await (
-                        await conn.execute(
-                            "SELECT to_regclass('mkt.funding_obs_instrument_kind_funding_time_key_idx')"
-                        )
+                        await conn.execute("SELECT to_regclass('ops.request_budget_ledger_bucket_at_idx')")
                     ).fetchone()
                 )[0] is not None
             async with factory.repository(admin_dsn, migrated=False) as blank:

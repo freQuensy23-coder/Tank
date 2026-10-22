@@ -97,7 +97,6 @@ def prepare(config, output, *, apply=False, client=None):
                         "numpy",
                         "scipy",
                         "statsmodels",
-                        "pyarrow",
                         "duckdb",
                         "psycopg[binary]",
                         "httpx",

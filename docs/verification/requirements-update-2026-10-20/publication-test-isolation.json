@@ -1,8 +1,0 @@
-{
-  "seed_job_id": "JOB-01M5CDPVASSRMEYYH60CF1R7T0",
-  "seed_status": "QUEUED",
-  "seed_attempts": 0,
-  "admin_foreign_job_unchanged": true,
-  "owned_test_databases_remaining": 0,
-  "owned_transport_databases_remaining": 0
-}

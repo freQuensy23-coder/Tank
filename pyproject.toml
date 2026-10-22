@@ -19,7 +19,6 @@ dependencies = [
   "PyYAML>=6,<7",
   "numpy>=2,<3",
   "pandas>=2.2,<3",
-  "pyarrow>=18,<24",
   "websockets>=14,<17",
   "playwright>=1.49,<2",
   "zstandard>=0.23,<1",

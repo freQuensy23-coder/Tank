@@ -26,13 +26,14 @@ TEST_DATABASE_VARIABLES = frozenset(
     {"TANK_TEST_DATABASE_URL", "TANK_E2E_DATABASE_URL", "TANK_SOURCE_TEST_DATABASE_URL"}
 )
 TEST_FLAGS = frozenset({"TANK_BROWSER_TESTS"})
+TEST_CLICKHOUSE = "CLICKHOUSE_TEST_URL"
 
 
 def scrub_inherited_environment(environment):
     """Inspect names only; discard operator configuration without reading values."""
     for name in tuple(environment):
         upper = name.upper()
-        if name in TEST_DATABASE_VARIABLES | TEST_FLAGS:
+        if name in TEST_DATABASE_VARIABLES | TEST_FLAGS | {TEST_CLICKHOUSE}:
             continue
         if (
             upper in {"NETRC", "DBUS_SESSION_BUS_ADDRESS", "NPM_CONFIG_USERCONFIG", "CURL_HOME"}
@@ -62,7 +63,7 @@ def scrub_inherited_environment(environment):
 
 def test_database_hosts(environment):
     hosts = set()
-    for name in TEST_DATABASE_VARIABLES:
+    for name in (*TEST_DATABASE_VARIABLES, TEST_CLICKHOUSE):
         value = environment.get(name)
         if not value:
             continue

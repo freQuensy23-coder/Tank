@@ -1,8 +1,0 @@
-{
-  "scope": "READ_ONLY_IMAGE_IDENTITY_SHELL_ONLY_NO_PG_SERVER",
-  "image": "postgres@sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4",
-  "image_id": "sha256:0ea6700a3b4f0ae6ce746519073558aed4d88a79d8d07622a9a644946c7319c4",
-  "architecture": "amd64",
-  "identity": "uid=999(postgres) gid=999(postgres) groups=999(postgres),101(ssl-cert)",
-  "services_started": false
-}

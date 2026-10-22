@@ -249,7 +249,7 @@ async def test_postgres_reopen_keeps_jobs_and_typed_columns(repo):
     assert len(rows) >= 45
 
 
-async def test_market_projection_partition_update_and_retention(repo):
+async def test_market_projection_update_and_retention(repo):
     token, instrument = new_id("tok"), new_id("ins")
     await repo.put("reg.instruments", instrument, {"instrument_id": instrument, "token_id": token})
     event = new_id("evt")
@@ -278,21 +278,7 @@ async def test_market_projection_partition_update_and_retention(repo):
     await repo.prune_market(utcnow() - timedelta(days=90))
     assert (await repo.get("mkt.flow_bars_1m", key))["buy_qty"] == "13.3"
     assert await repo.get("mkt.flow_bars_1m", stale_key) is None
-    if isinstance(repo, PostgresRepository):
-        async with repo.transaction():
-            result = await (
-                await repo._conn().execute(
-                    "SELECT buy_qty,buy_usd FROM mkt.flow_bars_1m WHERE storage_key=%s", (key,)
-                )
-            ).fetchone()
-            assert str(result["buy_qty"]) == "13.3"
-            assert str(result["buy_usd"]) == "24.6"
-            partitions = await (
-                await repo._conn().execute(
-                    "SELECT count(*) AS n FROM pg_inherits WHERE inhparent='mkt.flow_bars_1m'::regclass"
-                )
-            ).fetchone()
-            assert partitions["n"] >= 16
+    assert (await repo.get("mkt.flow_bars_1m", key))["buy_usd"] == "24.6"
 
 
 async def test_indexed_range_pages_equal_timestamps_exclusive_end(repo):
@@ -443,7 +429,7 @@ async def test_deployed_agent_role_select_only(repo):
             "reg.tokens",
             "ingest.source_items",
             "evt.events",
-            "mkt.flow_bars_1m",
+            "mkt.supply_obs",
             "ana.decisions",
             "out.alerts",
             "ops.jobs",
@@ -563,14 +549,12 @@ async def test_normalized_retention_keeps_whole_event_day(repo):
     assert await repo.get("mkt.flow_bars_1m", expired) is None
     assert await repo.get("mkt.flow_bars_1m", preserved)
     assert await repo.get("mkt.flow_bars_1m", current)
-    with pytest.raises(ValueError, match="Unknown collection"):
-        await repo.get("mkt.trades", "unsupported-current-raw-sql")
 
 
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.parametrize("repo", ["postgres"], indirect=True)
-async def test_sql_typed_completeness_serials_and_independent_partitions(repo):
+async def test_sql_typed_completeness_and_serials(repo):
     if not isinstance(repo, PostgresRepository):
         pytest.skip("Actual typed SQL constraints require PostgreSQL")
     import psycopg
@@ -599,8 +583,6 @@ async def test_sql_typed_completeness_serials_and_independent_partitions(repo):
             ).fetchone()
             ids.append(row["id"])
     assert all(i > 0 for i in ids) and len(set(ids)) == 2
-
-    assert await repo.maintain_partitions() >= 0
 
 
 @pytest.mark.integration
@@ -632,67 +614,6 @@ async def test_agent_new_connection_defaults_read_only(repo):
             await connection.execute("DELETE FROM evt.events WHERE false")
     finally:
         await connection.close()
-
-
-@pytest.mark.integration
-@pytest.mark.postgres
-@pytest.mark.parametrize("repo", ["postgres"], indirect=True)
-async def test_default_typed_partition_drain_preserves_exact_row(repo):
-    if not isinstance(repo, PostgresRepository):
-        pytest.skip("Actual partition relocation requires PostgreSQL")
-    at = utcnow() - timedelta(days=1500)
-    key = new_id("historical-aggregate")
-    async with repo.transaction():
-        while (
-            await (
-                await repo._conn().execute(
-                    "SELECT to_regclass(%s) AS name", ("mkt.flow_bars_1m_" + at.strftime("%Y%m%d"),)
-                )
-            ).fetchone()
-        )["name"] is not None:
-            at -= timedelta(days=1)
-    await repo.put(
-        "mkt.flow_bars_1m",
-        key,
-        {"instrument_id": key, "minute_start": iso(at), "buy_qty": "1.2345678901234567890123456789"},
-    )
-    original = await repo.get("mkt.flow_bars_1m", key)
-    async with repo.transaction():
-        before = await (
-            await repo._conn().execute(
-                "SELECT tableoid::regclass::text AS physical FROM mkt.flow_bars_1m WHERE storage_key=%s",
-                (key,),
-            )
-        ).fetchone()
-    assert before["physical"] == "mkt.flow_bars_1m_historical"
-
-    await repo.maintain_partitions(include_history=False)
-    assert await repo.get("mkt.flow_bars_1m", key) == original
-    async with repo.transaction():
-        physical = await (
-            await repo._conn().execute(
-                "SELECT tableoid::regclass::text AS physical FROM mkt.flow_bars_1m WHERE storage_key=%s",
-                (key,),
-            )
-        ).fetchone()
-    assert physical["physical"] == before["physical"]
-    await repo.maintain_partitions()
-    assert await repo.get("mkt.flow_bars_1m", key) == original
-    async with repo.transaction():
-        after = await (
-            await repo._conn().execute(
-                "SELECT tableoid::regclass::text AS physical,buy_qty FROM mkt.flow_bars_1m WHERE storage_key=%s",
-                (key,),
-            )
-        ).fetchone()
-    assert after["physical"] == "mkt.flow_bars_1m_" + at.strftime("%Y%m%d")
-    assert str(after["buy_qty"]) == "1.2345678901234567890123456789"
-    await repo.put(
-        "mkt.flow_bars_1m",
-        key,
-        {"instrument_id": key, "minute_start": iso(at), "buy_qty": "2.2345678901234567890123456789"},
-    )
-    assert (await repo.get("mkt.flow_bars_1m", key))["buy_qty"] == "2.2345678901234567890123456789"
 
 
 async def test_late_arrivals_use_availability_not_original_receipt(repo):

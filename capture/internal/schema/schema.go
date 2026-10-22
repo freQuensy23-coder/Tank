@@ -29,8 +29,6 @@ var (
 
 	Identities map[string][]string
 
-	Partitions map[string]string
-
 	Required map[string][]string
 	kinds    map[string]map[string]string
 )
@@ -40,7 +38,6 @@ func init() {
 		Columns    map[string][][2]string       `json:"columns"`
 		Aliases    map[string]map[string]string `json:"aliases"`
 		Identities map[string][]string          `json:"identities"`
-		Partitions map[string]string            `json:"partitions"`
 		Required   map[string][]string          `json:"required"`
 	}
 	if err := json.Unmarshal(exported, &raw); err != nil {
@@ -54,7 +51,7 @@ func init() {
 			kinds[collection][c[0]] = c[1]
 		}
 	}
-	Aliases, Identities, Partitions, Required = raw.Aliases, raw.Identities, raw.Partitions, raw.Required
+	Aliases, Identities, Required = raw.Aliases, raw.Identities, raw.Required
 }
 
 func Kind(collection, name string) string { return kinds[collection][name] }

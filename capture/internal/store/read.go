@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/freQuensy23-coder/Tank/capture/internal/pydec"
@@ -20,10 +19,13 @@ func (s *Store) Get(ctx context.Context, collection, key string) (map[string]any
 	if !schema.Known(collection) {
 		return nil, fmt.Errorf("unknown market collection %s", collection)
 	}
-	if s.clickhouse(collection) {
+	if ClickHouseTables[collection] {
+		if err := s.series(collection); err != nil {
+			return nil, err
+		}
 		return s.chGet(ctx, collection, key)
 	}
-	rows, err := s.Pool.Query(ctx, "SELECT "+selectList(collection, "")+" FROM "+s.Table(collection)+" WHERE storage_key=$1", key)
+	rows, err := s.Pool.Query(ctx, "SELECT "+selectList(collection, "")+" FROM "+liveTable(collection)+" WHERE storage_key=$1", key)
 	if err != nil {
 		return nil, err
 	}
@@ -71,96 +73,24 @@ func typedArgument(collection, column, kind string, value any) (any, error) {
 	return nil, fmt.Errorf("%s.%s: unknown column type %s", collection, column, kind)
 }
 
-func exactPredicate(collection string, filters map[string]any, args []any) ([]string, []any, error) {
-	names := make([]string, 0, len(filters))
-	for k := range filters {
-		names = append(names, k)
-	}
-	sort.Strings(names)
-	var clauses []string
-	for _, name := range names {
-		value := filters[name]
-		column := name
-		if target, ok := schema.Aliases[collection][name]; ok {
-			column = target
-		}
-		kind := schema.Kind(collection, column)
-		if kind == "" {
-			return nil, nil, fmt.Errorf("Unknown typed market filter %s.%s", collection, name)
-		}
-		if isNone(value) {
-			clauses = append(clauses, quote(column)+" IS NULL")
-			continue
-		}
-		arg, err := typedArgument(collection, column, kind, value)
-		if err != nil {
-			return nil, nil, err
-		}
-		args = append(args, arg)
-		clauses = append(clauses, quote(column)+" = $"+strconv.Itoa(len(args))+"::"+kind)
-	}
-	return clauses, args, nil
-}
-
-func bound(clauses []string, args []any, column, operator string, t time.Time) ([]string, []any) {
-	if t.IsZero() {
-		return clauses, args
-	}
-	args = append(args, t)
-	return append(clauses, column+" "+operator+" $"+strconv.Itoa(len(args))), args
-}
-
 func (s *Store) Range(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) ([]map[string]any, error) {
 	if schema.Kind(collection, field) != "timestamptz" {
 		return nil, fmt.Errorf("%s.%s is not a typed timestamp column", collection, field)
 	}
-	if s.clickhouse(collection) {
-		return s.chRange(ctx, collection, field, start, end, filters)
-	}
-	column := quote(field)
-	clauses := []string{column + " IS NOT NULL"}
-	var args []any
-	clauses, args = bound(clauses, args, column, ">=", start)
-	clauses, args = bound(clauses, args, column, "<", end)
-	extra, args, err := exactPredicate(collection, filters, args)
-	if err != nil {
+	if err := s.series(collection); err != nil {
 		return nil, err
 	}
-	clauses = append(clauses, extra...)
-	query := "SELECT " + selectList(collection, "") + " FROM " + s.Table(collection) + " WHERE " + strings.Join(clauses, " AND ") + " ORDER BY " + column + ",storage_key"
-	rows, err := s.Pool.Query(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	out, _, err := collectRows(collection, rows)
-	return out, err
+	return s.chRange(ctx, collection, field, start, end, filters)
 }
 
 func (s *Store) Earliest(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) (time.Time, bool, error) {
 	if schema.Kind(collection, field) != "timestamptz" {
 		return time.Time{}, false, fmt.Errorf("%s.%s is not a typed timestamp column", collection, field)
 	}
-	if s.clickhouse(collection) {
-		return s.chEarliest(ctx, collection, field, start, end, filters)
-	}
-	column := quote(field)
-	clauses := []string{column + " IS NOT NULL"}
-	var args []any
-	clauses, args = bound(clauses, args, column, ">=", start)
-	clauses, args = bound(clauses, args, column, "<", end)
-	extra, args, err := exactPredicate(collection, filters, args)
-	if err != nil {
+	if err := s.series(collection); err != nil {
 		return time.Time{}, false, err
 	}
-	clauses = append(clauses, extra...)
-	var first *time.Time
-	if err := s.Pool.QueryRow(ctx, "SELECT min("+column+") FROM "+s.Table(collection)+" WHERE "+strings.Join(clauses, " AND "), args...).Scan(&first); err != nil {
-		return time.Time{}, false, err
-	}
-	if first == nil {
-		return time.Time{}, false, nil
-	}
-	return first.UTC(), true, nil
+	return s.chEarliest(ctx, collection, field, start, end, filters)
 }
 
 func (s *Store) Projection(ctx context.Context, collection string, fields []string, field string, start, end time.Time, instrumentIDs []string) ([]map[string]any, error) {
@@ -175,9 +105,7 @@ func (s *Store) Projection(ctx context.Context, collection string, fields []stri
 	if len(fields) == 0 || len(fields) > 100 {
 		return nil, fmt.Errorf("Projection requires unique fields")
 	}
-	selected := make([]string, len(fields))
-	expressions := make([]string, len(fields))
-	for i, requested := range fields {
+	for _, requested := range fields {
 		if seen[requested] {
 			return nil, fmt.Errorf("Projection requires unique fields")
 		}
@@ -186,21 +114,9 @@ func (s *Store) Projection(ctx context.Context, collection string, fields []stri
 		if target, ok := aliases[requested]; ok {
 			column = target
 		}
-		kind := "text"
-		if column != "storage_key" {
-			if kind = schema.Kind(collection, column); kind == "" {
-				return nil, fmt.Errorf("Unknown typed market projection field")
-			}
+		if column != "storage_key" && schema.Kind(collection, column) == "" {
+			return nil, fmt.Errorf("Unknown typed market projection field")
 		}
-		selected[i] = kind
-		expr := quote(column)
-		switch kind {
-		case "numeric", "jsonb":
-			expr += "::text"
-		case "text[]":
-			expr = "array_to_json(" + expr + ")::text"
-		}
-		expressions[i] = expr + " AS " + quote("p"+strconv.Itoa(i))
 	}
 	if instrumentIDs != nil {
 		if schema.Kind(collection, "instrument_id") == "" {
@@ -210,41 +126,10 @@ func (s *Store) Projection(ctx context.Context, collection string, fields []stri
 			return nil, nil
 		}
 	}
-	if s.clickhouse(collection) {
-		return s.chProjection(ctx, collection, fields, field, start, end, instrumentIDs)
-	}
-	column := quote(field)
-	clauses := []string{column + " IS NOT NULL"}
-	var args []any
-	clauses, args = bound(clauses, args, column, ">=", start)
-	clauses, args = bound(clauses, args, column, "<", end)
-	if instrumentIDs != nil {
-		args = append(args, instrumentIDs)
-		clauses = append(clauses, "instrument_id=ANY($"+strconv.Itoa(len(args))+"::text[])")
-	}
-	query := "SELECT " + strings.Join(expressions, ",") + " FROM " + s.Table(collection) + " WHERE " + strings.Join(clauses, " AND ") + " ORDER BY " + column + ",storage_key"
-	rows, err := s.Pool.Query(ctx, query, args...)
-	if err != nil {
+	if err := s.series(collection); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []map[string]any
-	for rows.Next() {
-		values, err := rows.Values()
-		if err != nil {
-			return nil, err
-		}
-		row := make(map[string]any, len(fields))
-		for i, requested := range fields {
-			v, err := decodeValue(selected[i], values[i])
-			if err != nil {
-				return nil, fmt.Errorf("%s.%s: %w", collection, requested, err)
-			}
-			row[requested] = v
-		}
-		out = append(out, row)
-	}
-	return out, rows.Err()
+	return s.chProjection(ctx, collection, fields, field, start, end, instrumentIDs)
 }
 
 func (s *Store) LatestTrades(ctx context.Context, ids []string, start time.Time) (map[string]map[string]any, error) {
@@ -261,32 +146,10 @@ func (s *Store) LatestTrades(ctx context.Context, ids []string, start time.Time)
 		}
 	}
 	sort.Strings(scope)
-	if s.clickhouse("mkt.flow_bars_1m") {
-		return s.chLatestTrades(ctx, scope, start)
-	}
-	query := "SELECT point.instrument_id, point.last_trade::text FROM unnest($1::text[]) AS scope(instrument_id) " +
-		"CROSS JOIN LATERAL (SELECT instrument_id, last_trade FROM " + s.Table("mkt.flow_bars_1m") + " " +
-		"WHERE instrument_id = scope.instrument_id AND minute_start >= $2 AND last_trade IS NOT NULL " +
-		"ORDER BY minute_start DESC LIMIT 1) AS point"
-	rows, err := s.Pool.Query(ctx, query, scope, start)
-	if err != nil {
+	if err := s.series("mkt.flow_bars_1m"); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var iid, text string
-		if err := rows.Scan(&iid, &text); err != nil {
-			return nil, err
-		}
-		value, err := loadJSON(text)
-		if err != nil {
-			return nil, err
-		}
-		if m, ok := value.(map[string]any); ok {
-			out[iid] = m
-		}
-	}
-	return out, rows.Err()
+	return s.chLatestTrades(ctx, scope, start)
 }
 
 func (s *Store) LatestRecords(ctx context.Context, collection string, groupBy []string, timeField string, instrumentIDs []string) ([]map[string]any, error) {
@@ -301,8 +164,6 @@ func (s *Store) LatestRecords(ctx context.Context, collection string, groupBy []
 	if schema.Kind(collection, timeField) != "timestamptz" {
 		return nil, fmt.Errorf("Latest market time_field must be a typed timestamp")
 	}
-	var query string
-	var args []any
 	if instrumentIDs != nil {
 		if schema.Kind(collection, "instrument_id") == "" {
 			return nil, fmt.Errorf("instrument_ids requires a typed instrument scope")
@@ -321,33 +182,10 @@ func (s *Store) LatestRecords(ctx context.Context, collection string, groupBy []
 		}
 		instrumentIDs = scope
 	}
-	if s.clickhouse(collection) {
-		return s.chLatestRecords(ctx, collection, groupBy, timeField, instrumentIDs)
-	}
-	groups := make([]string, len(groupBy))
-	for i, g := range groupBy {
-		groups[i] = quote(g)
-	}
-	if instrumentIDs != nil && len(groupBy) == 1 && groupBy[0] == "instrument_id" {
-		query = "SELECT " + selectList(collection, "point") + " FROM unnest($1::text[]) AS scope(instrument_id) " +
-			"CROSS JOIN LATERAL (SELECT * FROM " + s.Table(collection) + " WHERE instrument_id = scope.instrument_id " +
-			"ORDER BY " + quote(timeField) + " DESC NULLS LAST,storage_key DESC LIMIT 1) AS point"
-		args = append(args, instrumentIDs)
-	} else {
-		where := "TRUE"
-		if instrumentIDs != nil {
-			where = "instrument_id = ANY($1::text[])"
-			args = append(args, instrumentIDs)
-		}
-		query = "SELECT DISTINCT ON (" + strings.Join(groups, ",") + ") " + selectList(collection, "") + " FROM " + s.Table(collection) +
-			" WHERE " + where + " ORDER BY " + strings.Join(groups, ",") + "," + quote(timeField) + " DESC NULLS LAST,storage_key DESC"
-	}
-	rows, err := s.Pool.Query(ctx, query, args...)
-	if err != nil {
+	if err := s.series(collection); err != nil {
 		return nil, err
 	}
-	out, _, err := collectRows(collection, rows)
-	return out, err
+	return s.chLatestRecords(ctx, collection, groupBy, timeField, instrumentIDs)
 }
 
 func (s *Store) HotTokens(ctx context.Context) ([]map[string]any, error) {

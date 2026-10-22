@@ -14,17 +14,17 @@
 
 ## 1. Topology
 
-One Linux host runs everything in Docker Compose: the Tank service — one asynchronous Python process built from modules (§5) — in the container `tank`, the OpenMA server that hosts the agent sessions and their sandboxes in `openma`, and PostgreSQL in `postgres`; data lives in Docker volumes. Nothing depends on the host beyond Docker and KVM for the sandboxes (§8). The service only reads (HTTPS/WSS); the agents' sandboxes have unrestricted internet access (§11).
+One Linux host runs everything in Docker Compose: the Tank service — one asynchronous Python process built from modules (§5) — in the container `tank`, the OpenMA server that hosts the agent sessions and their sandboxes in `openma`, PostgreSQL in `postgres` and ClickHouse, which holds all exchange market history, in `clickhouse`; data lives in Docker volumes. Nothing depends on the host beyond Docker and KVM for the sandboxes (§8). The service only reads (HTTPS/WSS); the agents' sandboxes have unrestricted internet access (§11).
 
 ![Tank V0 — technical view](diagrams/tank_v0_technical_view.svg)
 
-*Technical view: the Tank service and its modules, PostgreSQL, OpenMA, files, external sources and services. Modules call each other inside the service; work that must survive a restart is a job in PostgreSQL (§5), and only the `sessions` module talks to OpenMA. Data flows: §6.*
+*Technical view: the Tank service and its modules, PostgreSQL, ClickHouse, OpenMA, files, external sources and services. Modules call each other inside the service; work that must survive a restart is a job in PostgreSQL (§5), and only the `sessions` module talks to OpenMA. Data flows: §6.*
 
 ---
 
 ## 2. Design rules
 
-1. Adapters isolate each source; everything downstream reads canonical rows from PostgreSQL.
+1. Adapters isolate each source; everything downstream reads canonical rows: market data from ClickHouse, everything else from PostgreSQL.
 2. Raw first: every payload is written to disk with SHA-256 before parsing.
 3. Native units and per-venue data first; venue fields are read by the semantics registry (03 §2.10), and composites combine only fields of the same meaning and unit.
 4. One frozen cutoff per analysis; every value carries observation time and precision.
@@ -35,7 +35,7 @@ One Linux host runs everything in Docker Compose: the Tank service — one async
 9. Every escalation, retry and scheduled capture has an expiry.
 10. Tokens are identified by contract (03 §2.11), never by ticker.
 11. No silent fallbacks: when a dependency fails, the step waits and retries, and missing data shows as n/a with the reason. Tank never switches on its own to a broader, cheaper or proxy path (01 §9, Failures).
-12. One service: Tank is a single asyncio process built from modules; only PostgreSQL and OpenMA run beside it, each in its own container, and every piece of work that must survive a restart is a job in PostgreSQL (§5).
+12. One service: Tank is a single asyncio process built from modules; only PostgreSQL, ClickHouse and OpenMA run beside it, each in its own container, and every piece of work that must survive a restart is a job in PostgreSQL (§5).
 
 ---
 
@@ -256,13 +256,13 @@ Every token has at least three spot venues and two perpetual venues. Binance spo
 
 ## 5. Service and modules (Python 3.12, asyncio)
 
-Tank is one service: a single Python 3.12 asyncio process, `tank serve`, built as a modular monolith. Modules call each other directly. Long-lived loops and stream tasks read the sources and the markets; every piece of work that must survive a restart or wait for its turn is a job in PostgreSQL (`ops.jobs`), run by the service's own async workers (03 §3.8). CPU-heavy steps (Market Truth, Parquet writes) run in a thread pool, so the streams never stall.
+Tank is one service: a single Python 3.12 asyncio process, `tank serve`, built as a modular monolith. Modules call each other directly. Long-lived loops and stream tasks read the sources and the markets; every piece of work that must survive a restart or wait for its turn is a job in PostgreSQL (`ops.jobs`), run by the service's own async workers (03 §3.8). CPU-heavy steps (Market Truth) run in a thread pool, so the streams never stall.
 
 | Module | Libraries | Runs as | Responsibility |
 |---|---|---|---|
 | `sources` | `httpx`, `feedparser`, `selectolax` | One polling loop per source | S01–S18, S20–S28, S30–S34 at each source's cadence (15 s while escalated): conditional GET, raw capture, `source_items` row + FILTER_ITEM or ROUTE_ITEM job; S14 diffs |
 | `xsensor` | `playwright` (async API) | One loop with one headless Chromium | S29 (the X list, every 60 s) and S19 (a page that needs a browser): raw capture, `source_items` row + FILTER_ITEM or ROUTE_ITEM job |
-| `market` | `websockets`, `httpx`, `orjson`, `numpy`, `pyarrow` | One task per venue WebSocket connection; base-tier pollers | Hot tier: trades, books, liquidations and mark/funding streams of the hot set; REST backfill of trade-ID gaps after a reconnect; 1m per-venue flow bars, size buckets, 10 s book summaries, completeness flags, hourly Parquet. Base tier: klines, tickers, OI, funding. A token that turns hot is subscribed on every covered market and gets the pre-event backfill. Archive downloads; DefiLlama (unlock datasets daily); Etherscan |
+| `market` | `websockets`, `httpx`, `orjson`, `numpy` | One task per venue WebSocket connection; base-tier pollers | Hot tier: trades, books, liquidations and mark/funding streams of the hot set; REST backfill of trade-ID gaps after a reconnect; 1m per-venue flow bars, size buckets, 10 s book summaries, completeness flags; the series and every print go to ClickHouse. Base tier: klines, tickers, OI, funding. A token that turns hot is subscribed on every covered market and gets the pre-event backfill. Archive downloads; DefiLlama (unlock datasets daily); Etherscan |
 | `jobs` | `psycopg` | 8 async workers | Claim the next due job from `ops.jobs` by priority, run it under its timeout, write the result and the next job; on start, return jobs left RUNNING to the queue |
 | `pipeline` | `httpx` | FILTER_ITEM and ROUTE_ITEM jobs | Jev filter and routing (03 §3.1); a routed item becomes an AGENT_MESSAGE job |
 | `sessions` | `httpx`, `httpx-sse`, `ddgs` | AGENT_MESSAGE and SCOUT_REVIEW jobs; one stream task per working session | The only module that talks to OpenMA: opens one session per event and posts its messages (03 §3.2); follows a session's stream while the agent works; runs each custom tool the agent calls against PostgreSQL, DuckDuckGo and the web, and answers with `user.custom_tool_result`; a slow tool (`get_market_truth`) is answered when its job finishes |
@@ -288,6 +288,7 @@ sequenceDiagram
   participant SRC as Source (e.g. S09 Binance)
   participant ING as tank · sources
   participant DB as PostgreSQL
+  participant CH as ClickHouse
   participant JOB as tank · job workers
   participant JEV as Jev via OpenRouter
   participant SES as tank · sessions
@@ -318,7 +319,7 @@ sequenceDiagram
   OMA->>SES: set_beneficiaries, get_market_truth
   SES->>DB: ESCALATE_TOKENS and RUN_MARKET_TRUTH jobs
   JOB->>MKT: ESCALATE_TOKENS: subscribe on every covered market, backfill −24h
-  MKT->>DB: flow bars, books, OI, funding, liquidations
+  MKT->>CH: flow bars, prints, books, OI, funding, liquidations
   JOB->>DB: RUN_MARKET_TRUTH: Market Truth (no LLM)
   SES->>OMA: get_market_truth result
   OMA->>SES: get_decision, publish_card FULL
@@ -329,7 +330,7 @@ sequenceDiagram
 
 ### 6.2 Market data
 
-Inside `market`, one task per WebSocket connection: messages → per-venue parser applies semantics (aggressor side, units) → dedup by trade ID → 1m flow bar per venue/instrument (complete only if the stream was connected and IDs were continuous for that minute) → PostgreSQL summary rows + hourly Parquet files of raw trades. Book diffs → in-memory book per venue → 10 s summaries (spread, depth bands, covered range). Its REST pollers write klines, OI, funding and 24h volumes; Parquet writes run in a worker thread.
+Inside `market`, one task per WebSocket connection: messages → per-venue parser applies semantics (aggressor side, units) → dedup by trade ID → 1m flow bar per venue/instrument (complete only if the stream was connected and IDs were continuous for that minute) → ClickHouse: the bar rows and every print (`mkt.trades`). Book diffs → in-memory book per venue → 10 s summaries (spread, depth bands, covered range). Its REST pollers write klines, OI, funding and 24h volumes to ClickHouse.
 
 ### 6.3 Re-evaluation
 
@@ -343,7 +344,7 @@ A MAJOR+ class from the agent's `set_assessment` → pre-event windows computed 
 
 ## 7. Storage
 
-### 7.1 PostgreSQL 16 with TimescaleDB (database `tank`)
+### 7.1 Databases: PostgreSQL 16 (database `tank`) and ClickHouse (database `mkt`)
 
 | Schema | Tables | Retention |
 |---|---|---|
@@ -366,12 +367,11 @@ DDL for the core tables is in 03 §14.
 | Path | Content | Retention |
 |---|---|---|
 | `raw/items/{source_id}/{yyyy}/{mm}/{dd}/{item_id}.json.zst` | Raw payloads | Permanent |
-| — | Prints are in ClickHouse `mkt.trades` (§7.1), not in files | — |
 | — | Order-book levels are not stored (§7.1) | — |
 | `archive/binance/…` | Downloaded archive files + `.CHECKSUM` | Cache, 180 days |
 | `bundles/{sha256}.json.zst` | Evidence bundles | Permanent |
 
-Sizing estimate: raw trades ≈ 0.5 GB/day compressed at 15 hot tokens; books ≈ 0.3 GB/day; base-tier tables ≈ 30 MB/day. A 1 TB SSD holds well over a year at this rate.
+Sizing estimate (ClickHouse): prints ≈ 0.5 GB/day compressed at 15 hot tokens; book summaries ≈ 0.3 GB/day; base-tier series ≈ 30 MB/day. A 1 TB SSD holds well over a year at this rate.
 
 ---
 
@@ -380,10 +380,11 @@ Sizing estimate: raw trades ≈ 0.5 GB/day compressed at 15 hot tokens; books �
 | Item | V0 setting |
 |---|---|
 | Host | Any Linux server (x86-64 or arm64) with Docker Engine, Compose v2 and KVM (`/dev/kvm`) for OpenMA's sandboxes; 32 GB RAM, 1 TB SSD, wired network |
-| Services | `compose.yaml` with three services, each `restart: unless-stopped`: `tank` runs `tank serve`, `openma` runs the OpenMA server, `postgres` runs PostgreSQL; logs through Docker's logging driver with rotation |
+| Services | `compose.yaml` with four services, each `restart: unless-stopped`: `tank` runs `tank serve`, `openma` runs the OpenMA server, `postgres` runs PostgreSQL, `clickhouse` runs ClickHouse; logs through Docker's logging driver with rotation |
 | Database | Image `postgres:16`, data in the volume `pg-data`: the service and OpenMA connect over the Compose network; the read-only role `tank_agent` connects from the sandboxes on the address they reach (`pg_hba.conf`: that role, that subnet, SCRAM); no port is published outside the host |
+| Market database | Image `clickhouse/clickhouse-server:25.8`, data in the volume `clickhouse-data`, 3 GB / 3 CPU, no system log tables; tank-capture writes and the service reads over HTTP on the Compose network as user `tank`; the read-only user `tank_agent` (same password as the PostgreSQL role) is accepted only from the sandboxes' address; no port is published outside the host |
 | OpenMA | Container `openma` built by Compose from the upstream `open-managed-agents` source at the pinned commit `85d5361f535c7221de975838dc48444e468cc02e` with Tank's overlay applied by `deploy/prepare_openma_source.py` (each edit is checked against the original file's SHA-256 and match count, so a different commit is refused). The pinned upstream does not run Tank as released, and the overlay fixes exactly that: PostgreSQL 16 (untyped nullable query parameters, epoch timestamps stored as strings); tool arguments renamed by the case mapper (`item_id` → `itemId`); the agent tool config that cannot enable `browser` or disable the `schedule` tools; the browser running inside the session sandbox; an environment's network policy and credentials passed to the sandbox (upstream ignores networking, so the replay sandbox would have internet); custom-tool results that resume the model on the first result of a group (the session waits for every result of the tools called in one step, then resumes the model once; messages that arrive meanwhile queue in order and survive an OpenMA restart); BoxLite's file transfer, which refuses paths under the sandbox's mounts (`/tmp`, `/mnt/session/outputs`, `/replay/evidence`) because it writes to the image beneath them (OpenMA's file reads and writes run as a process inside the VM instead, BoxLite's own workaround, so the VM's mounts and permissions apply); a Dockerfile built on Node 22 although its pnpm needs Node 24; the console build, skipped with `SKIP_CONSOLE=1`. The litebox runtime is BoxLite v0.10.6 built from `deploy/boxlite`; `DATABASE_URL` = database `oma` on `postgres`; `SANDBOX_PROVIDER=litebox` with `/dev/kvm` passed into the container (one libkrun microVM per session); the Model Card for `gpt-6.1-sol` is a custom provider (`pi_config.api: openai-responses`) whose `base_url` is Tank's `codex_gateway` (`http://tank:8790/v1`), called with the internal key `codex_gateway_key`; OpenMA never holds the ChatGPT sign-in; port 8787 on the Compose network only; agents and skills uploaded from the config repository on deploy |
-| Agent sandbox | Environment `tank-analysis`: image `tank-analysis`, built from `deploy/sandbox.Dockerfile` and exported as a local OCI layout (the OpenMA API takes no image per environment): Python 3.12 with `pandas`, `numpy`, `scipy`, `statsmodels`, `pyarrow`, `duckdb`, `psycopg[binary]`, `httpx`, `websockets`; `postgresql-client`, Node.js for the pi harness tools, Playwright 1.64.0 with its Chromium and Tank's browser worker; no network allowlist or denylist; env `TANK_DB_URL` (role `tank_agent`), `ETHERSCAN_API_KEY` and `OPENROUTER_API_KEY` — in V0 the keys sit in the environment and the skill forbids printing them or sending them anywhere but their own API; a credential vault comes with production. Environment `tank-replay` for fixture replays: the same image; the only reachable address is the replay database (its resolved private IP is the single allowlist entry), and `TANK_DB_URL` points at it (03 §11.1) |
+| Agent sandbox | Environment `tank-analysis`: image `tank-analysis`, built from `deploy/sandbox.Dockerfile` and exported as a local OCI layout (the OpenMA API takes no image per environment): Python 3.12 with `pandas`, `numpy`, `scipy`, `statsmodels`, `duckdb`, `psycopg[binary]`, `httpx`, `websockets`; `postgresql-client`, Node.js for the pi harness tools, Playwright 1.64.0 with its Chromium and Tank's browser worker; no network allowlist or denylist; env `TANK_DB_URL` (role `tank_agent`; the same credentials open ClickHouse at `http://clickhouse:8123` read-only), `ETHERSCAN_API_KEY` and `OPENROUTER_API_KEY` — in V0 the keys sit in the environment and the skill forbids printing them or sending them anywhere but their own API; a credential vault comes with production. Environment `tank-replay` for fixture replays: the same image; the only reachable address is the replay database (its resolved private IP is the single allowlist entry), and `TANK_DB_URL` points at it (03 §11.1) |
 | Image | `tank`, built from the repository's `Dockerfile`: Python 3.12, `asyncio`, dependencies pinned in `uv.lock`, Playwright Chromium; volumes `tank-data` (`/data`), `tank-browser` (the X profile), `codex-auth` (the ChatGPT sign-in) and `backup` (an external disk on the host) |
 | Configuration | Git repository on the host, mounted read-only at `/config`: `sources.yaml` (incl. article patterns of §3), `semantics.yaml`, `registry.yaml` (tokens, identities, aliases, instruments, sector baskets), `dependency_map.yaml`, `exchange_addresses.yaml`, `thresholds.yaml`, `skills/` (the agents' skills and tool schemas), `templates/`; loaded on start and on `SIGHUP` (`docker compose kill -s HUP tank`); commit hash stored as `config_version` on every output |
 | Secrets | Docker Compose secrets — files outside the repository, readable only by the operator, mounted read-only into the containers that use them: `oma_api_key`, `oma_root_secret`, `openrouter_api_key`, `telegram_bot_token`, `etherscan_api_key`, `tank_agent_db_password`, `x_session`, `codex_gateway_key`; the ChatGPT sign-in sits in the `tank` volume `codex-auth` (writable: the gateway saves refreshed tokens there), the Etherscan and OpenRouter keys and the `tank_agent` password also by the environment `tank-analysis`; never written to logs or bundles |
@@ -422,7 +423,7 @@ Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a
 ## 11. Security
 
 - No exchange API keys exist in V0; every market endpoint used is public. Etherscan and OpenRouter keys are service keys. OpenAI is reached with the operator's ChatGPT sign-in, which stays in the `tank` container (volume `codex-auth`): OpenMA and the sandboxes never see it, and `codex_gateway` answers only on the Compose network, to OpenMA's internal key.
-- Secrets are Docker secrets, mounted read-only only into the containers that use them. PostgreSQL and OpenMA are reachable only on the Compose network — PostgreSQL also from the sandboxes, for `tank_agent` only — and no port is published outside the host.
+- Secrets are Docker secrets, mounted read-only only into the containers that use them. PostgreSQL, ClickHouse and OpenMA are reachable only on the Compose network — PostgreSQL and ClickHouse also from the sandboxes, for `tank_agent` only — and no port is published outside the host.
 - Agent sandboxes: one microVM per session with unrestricted internet. Whatever the agent reads there is data, not instructions (skill `tank-data`, 03 §3.2). It reads Tank's data only as `tank_agent`, has the Etherscan and OpenRouter keys in its environment and is forbidden by the skill to print them or send them anywhere but their own API (a vault replaces this in production), holds neither the Telegram bot token nor the operator's X session, and changes Tank's state only through Tank's tools; cards leave only through `publish_card`.
 - The X session (secret `x_session`, profile volume `tank-browser`) belongs to the operator; the sensor only reads the list page.
 - Each source's terms and rate limits are recorded in `sources.yaml`; request budgets stay ≤ 50% of documented limits; sec.gov ≤ 10 requests/s with a declared User-Agent; DuckDuckGo at most one search every 2 s (no published limit; the terms-of-service risk is accepted, 01 D9).

@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"io"
 	"net/url"
 	"strings"
 	"time"
@@ -26,7 +25,6 @@ var FetchHosts = map[string]bool{
 
 type Fetcher interface {
 	Fetch(ctx context.Context, method, rawURL string, params, headers map[string]string, body any, priority int) (*rest.Fetched, error)
-	Download(ctx context.Context, rawURL string, dst io.Writer, priority int) (int, int64, error)
 }
 
 const fetchPriority = -1

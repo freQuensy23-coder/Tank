@@ -1,3 +1,0 @@
-SET
-psql:<stdin>:21: NOTICE:  038: removed 4705 METRIC_SEMANTICS rows from qa.reviews
-DO

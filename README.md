@@ -43,7 +43,7 @@ Pytest disables operator dotenv files, credential paths and external Python netw
 | `event_tools` | Persistence of agent claims and judgments, registry identity resolution, beneficiary records and publication gate |
 | `market` | Venue discovery, REST/WS capture, normalization, archives and fundamentals |
 | `analysis` | Market Truth, confidence, outlook, grades, actions, card composition |
-| `storage` | PostgreSQL migrations, immutable records, partitioned market tables and durable jobs |
+| `storage` | PostgreSQL migrations, immutable records and durable jobs; market series and prints routed to ClickHouse (`clickhouse_market`) |
 | `runtime`, `scheduler`, `delivery` | Eight job workers, conditions, milestones, reactions, operations and Telegram delivery |
 | `replay`, `calibration` | Isolated replay and reviewed threshold calibration |
 | `review` | Frozen evidence, horizon outcomes, versioned labels and S1–S9 with explicit coverage |

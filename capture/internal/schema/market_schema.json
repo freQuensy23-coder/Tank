@@ -2000,14 +2000,6 @@
    "storage_key"
   ]
  },
- "partitions": {
-  "mkt.book_summaries": "exchange_ts",
-  "mkt.flow_bars_1m": "minute_start",
-  "mkt.klines_1m": "open_time",
-  "mkt.liq_obs": "ts",
-  "mkt.oi_obs": "ts",
-  "mkt.tickers_24h": "ts"
- },
  "required": {
   "mkt.backfill_runs": [
    "backfill_id"

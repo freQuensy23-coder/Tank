@@ -369,61 +369,6 @@ type rawResponse struct {
 	header http.Header
 }
 
-func (c *Client) Download(ctx context.Context, rawURL string, dst io.Writer, priority int) (int, int64, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return 0, 0, err
-	}
-	host := u.Hostname()
-	for attempt := 0; attempt < Attempts; attempt++ {
-		if err := c.Gate.AdmitBuckets(ctx, host, budget.FetchConstraints(host, u.Path, nil, nil), priority); err != nil {
-			return 0, 0, err
-		}
-		release, err := c.Gate.Enter(ctx, host, priority)
-		if err != nil {
-			return 0, 0, err
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-		if err != nil {
-			release()
-			return 0, 0, err
-		}
-		if c.UserAgent != "" {
-			req.Header.Set("User-Agent", c.UserAgent)
-		}
-		resp, err := c.HTTP.Do(req)
-		if err != nil {
-			release()
-			c.count(host, false)
-			if ctx.Err() != nil {
-				return 0, 0, ctx.Err()
-			}
-			return 0, 0, fmt.Errorf("%s: %s", host, errorName(err))
-		}
-		var n int64
-		if resp.StatusCode == http.StatusOK {
-			n, err = io.Copy(dst, resp.Body)
-		}
-		_ = resp.Body.Close()
-		retry, oerr := c.Gate.Observe(ctx, host, resp.StatusCode, resp.Header)
-		release()
-		if err != nil {
-			c.count(host, false)
-			return resp.StatusCode, n, fmt.Errorf("%s: %s", host, errorName(err))
-		}
-		if oerr != nil {
-			c.count(host, false)
-			return resp.StatusCode, n, oerr
-		}
-		if retry {
-			continue
-		}
-		c.count(host, resp.StatusCode < 400)
-		return resp.StatusCode, n, nil
-	}
-	return 0, 0, fmt.Errorf("%s: rate limited after bounded retries", host)
-}
-
 func (c *Client) raw(ctx context.Context, method string, u *url.URL, params, headers map[string]string, body any) (*rawResponse, error) {
 	target := *u
 	if len(params) > 0 {

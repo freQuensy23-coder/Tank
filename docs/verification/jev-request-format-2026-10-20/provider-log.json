@@ -1,9 +1,0 @@
-{
- "requests": 260,
- "status": {
-  "200": 260
- },
- "retries_429": 0,
- "latency_p50_s": 0.26,
- "latency_max_s": 1.79
-}

@@ -21,28 +21,30 @@ import sys
 from collections import defaultdict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from common import iso, parse, query, seconds, utcnow, write_json
+from common import iso, market_query, parse, query, seconds, utcnow, write_json
 
 LIMIT = 0.01
 
 HOT_GAP_PREFIXES = ("STREAM", "RECONNECT", "TRADE_INTEGRITY", "ORDER_BOOK_STREAM")
 
-KLINES = """
-SELECT instrument_id, count(DISTINCT open_time) AS minutes
-  FROM mkt.klines_1m
- WHERE open_time >= :'since' AND open_time < :'until' AND source_archive IS NULL
+SINCE = "parseDateTime64BestEffort({since:String}, 6, 'UTC')"
+UNTIL = "parseDateTime64BestEffort({until:String}, 6, 'UTC')"
+KLINES = f"""
+SELECT instrument_id, uniqExact(open_time) AS minutes
+  FROM mkt.klines_1m FINAL
+ WHERE open_time >= {SINCE} AND open_time < {UNTIL} AND source_archive IS NULL
  GROUP BY instrument_id
 """
-OI = """
-SELECT instrument_id, count(*) AS n, count(DISTINCT date_trunc('minute', ts)) AS distinct_minutes
-  FROM mkt.oi_obs
- WHERE ts >= :'since' AND ts < :'until' AND source_archive IS NULL
+OI = f"""
+SELECT instrument_id, count() AS n, uniqExact(toStartOfMinute(ts)) AS distinct_minutes
+  FROM mkt.oi_obs FINAL
+ WHERE ts >= {SINCE} AND ts < {UNTIL} AND source_archive IS NULL
  GROUP BY instrument_id
 """
-FUNDING = """
-SELECT instrument_id, count(DISTINCT date_trunc('minute', as_of)) AS polls
-  FROM mkt.funding_obs
- WHERE as_of >= :'since' AND as_of < :'until' AND source_archive IS NULL
+FUNDING = f"""
+SELECT instrument_id, uniqExact(toStartOfMinute(as_of)) AS polls
+  FROM mkt.funding_obs FINAL
+ WHERE as_of >= {SINCE} AND as_of < {UNTIL} AND source_archive IS NULL
  GROUP BY instrument_id
 """
 INSTRUMENTS = """
@@ -185,9 +187,9 @@ def market(since, until):
     p = {"since": since, "until": until}
     window_s = seconds(until, since)
     inst = query(INSTRUMENTS)
-    kl = {r["instrument_id"]: r["minutes"] for r in query(KLINES, p)}
-    oi = {r["instrument_id"]: r["distinct_minutes"] for r in query(OI, p)}
-    fu = {r["instrument_id"]: r["polls"] for r in query(FUNDING, p)}
+    kl = {r["instrument_id"]: int(r["minutes"]) for r in market_query(KLINES, p)}
+    oi = {r["instrument_id"]: int(r["distinct_minutes"]) for r in market_query(OI, p)}
+    fu = {r["instrument_id"]: int(r["polls"]) for r in market_query(FUNDING, p)}
     base = []
     for i in inst:
         iid = i["instrument_id"]

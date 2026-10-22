@@ -81,9 +81,9 @@ func run(log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	log.Info("starting", "schema", cfg.Schema(), "config_version", cfg.ConfigVersion,
+	log.Info("starting", "config_version", cfg.ConfigVersion,
 		"code_version", cfg.CodeVersion, "instruments", len(cfg.Instruments))
-	st, err := store.Open(ctx, cfg.DatabaseURL, cfg.Schema())
+	st, err := store.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return err
 	}
@@ -122,8 +122,7 @@ func run(log *slog.Logger) error {
 		CanWrite: func() bool { l := held.Load(); return l != nil && l.Held() },
 		Leading:  leading,
 		Fetcher:  client, Log: log,
-		DataDir: cfg.DataDir,
-		Raw:     rawstore.New(ch, cfg.CodeVersion, cfg.ConfigVersion, log),
+		Raw: rawstore.New(ch, cfg.CodeVersion, cfg.ConfigVersion, log),
 	}, st, writer, capture.RESTVenues(client), dial(cfg.UserAgent), clock)
 	health.set(svc, nil)
 	runCtx, cancel := context.WithCancel(ctx)

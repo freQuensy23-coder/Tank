@@ -11,12 +11,12 @@ async function fixture(fn, withFile = true) {
   const root = join(base, "test-run");
   await fs.mkdir(root);
   const bytes = Buffer.from(
-    "public test bytes; filesystem contract only, not Parquet validity",
+    "public test bytes; filesystem contract only, not print validity",
   );
   const hash = sha(bytes);
   const cutoff = "2026-10-18T12:00:00Z";
   const file = {
-    relative_path: hash + ".parquet",
+    relative_path: hash + ".jsonl",
     sha256: hash,
     byte_length: bytes.length,
     row_count: 1,
@@ -32,7 +32,7 @@ async function fixture(fn, withFile = true) {
         origin_kind: "NORMALIZED_TRADES",
       },
     ],
-    guest_path: "/replay/evidence/" + hash + ".parquet",
+    guest_path: "/replay/evidence/" + hash + ".jsonl",
     projection_cutoff: cutoff,
     projection_cutoff_prec: "EXACT",
     projection_cutoff_prec_reason: null,
@@ -48,7 +48,7 @@ async function fixture(fn, withFile = true) {
     guest_root: "/replay/evidence",
     files: withFile ? [file] : [],
     identity_key: ["instrument_id", "trade_id"],
-    writer: { library: "pyarrow", version: "test", compression: "zstd" },
+    format: "jsonl",
     sealed_at: "2026-10-18T13:00:00Z",
     sealed_at_prec: "COLLECTION_ONLY",
     sealed_at_prec_reason: null,

@@ -80,7 +80,6 @@ class Scheduler:
         self.background = {}
         self.closing = False
         self._verified_backups = {}
-        self._raw_retention_lock = asyncio.Lock()
         self._reaction_slots = asyncio.Semaphore(REACTION_MEASUREMENT_SLOTS)
 
     def threshold(self, name, fixture_default):
@@ -200,8 +199,6 @@ class Scheduler:
         if (now.hour, now.minute) >= (heartbeat_hour, heartbeat_minute):
             await self.heartbeat(now)
         self.launch("backup", lambda: self.maintenance(now))
-        self.launch("raw-retention", lambda: self.raw_retention(now))
-        self.launch("partitions", lambda: self.partition_maintenance(now))
 
     async def ensure_reactions(self, event, *, now=None):
         """Open the pack outside the analyst transaction; only POST windows are jobs.
@@ -351,36 +348,6 @@ class Scheduler:
             },
         )
         log.error("Reaction capture gap: %s; +72h lifecycle capture requirement remains unsatisfied", key)
-
-    async def raw_retention(self, now):
-        """Run raw-cache TTL once per UTC day, independently of external backup."""
-        now = parse_time(now)
-        async with self._raw_retention_lock:
-            marker = await self.repo.get("ops.scheduler_checkpoints", "raw-retention")
-            if marker and parse_time(marker["at"]).date() == now.date():
-                return []
-            removed = await self.prune_raw_files(now, None)
-            await self.repo.put(
-                "ops.scheduler_checkpoints",
-                "raw-retention",
-                {
-                    "checkpoint_id": "raw-retention",
-                    **collection_clock(now).fields("at"),
-                    "state": {"removed_count": len(removed)},
-                },
-            )
-            return removed
-
-    async def partition_maintenance(self, now):
-        marker = await self.repo.get("ops.scheduler_checkpoints", "partitions")
-        if marker and now - parse_time(marker["at"]) < timedelta(hours=1):
-            return
-        await self.repo.maintain_partitions()
-        await self.repo.put(
-            "ops.scheduler_checkpoints",
-            "partitions",
-            {"checkpoint_id": "partitions", **collection_clock(now).fields("at"), "state": {}},
-        )
 
     async def active_events(self, now, *, states=None, include_recent_terminal=True):
         states = states or ("DETECTED", "SCORED", "TRACKED", "ANALYZING", "ALERTED", "MONITORING", "COOLDOWN")
@@ -1720,12 +1687,11 @@ class Scheduler:
             collection_clock(now), -timedelta(days=self.threshold("jobs_retention_days", 30))
         )
         book_cutoff = parse_time(now) - timedelta(hours=self.threshold("book_summary_retention_hours", 72))
-        trades_cutoff = parse_time(now) - timedelta(days=self.threshold("hot_raw_retention_days", 30))
+        trades_cutoff = parse_time(now) - timedelta(days=self.threshold("trades_retention_days", 30))
         await self.repo.prune_market(
             market_cutoff.value, book_before=book_cutoff, trades_before=trades_cutoff
         )
         await self.repo.prune_jobs(jobs_cutoff.value)
-        removed = await self.raw_retention(now)
         marker.with_suffix(".json").write_text(
             json.dumps(
                 {
@@ -1736,26 +1702,7 @@ class Scheduler:
             )
         )
         marker.write_text(iso(now) + "\n")
-        return removed
-
-    async def prune_raw_files(self, now, backup):
-        """Expire raw market files by their HLD §7.2 path; MAJOR+ days are kept.
-
-        pg_dump and bundles do not contain raw caches; credentials and browser state are
-        never touched (tank.market.archive.prune_market_files).
-        """
-        from tank.market.archive import prune_market_files
-
-        removed = await asyncio.to_thread(
-            prune_market_files,
-            self.settings.data_dir,
-            now,
-            await self.repo.preserved_market_windows(),
-            hot_days=self.threshold("hot_raw_retention_days", 30),
-            archive_days=self.threshold("archive_retention_days", 180),
-            protected=protected_evidence_paths(self.settings).values(),
-        )
-        return [{"path": path, "reason": "MARKET_RAW_TTL"} for path in removed]
+        return []
 
     async def lifecycle(self, now):
         async for candidate in self.active_events(

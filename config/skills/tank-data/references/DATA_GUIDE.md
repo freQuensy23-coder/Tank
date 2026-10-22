@@ -488,7 +488,7 @@ Fixture
   sealed_outcome_ref: str            # not readable by the pipeline
 ```
 
-### 2.9 Storage mapping (PostgreSQL)
+### 2.9 Storage mapping (ClickHouse: exchange series and prints; PostgreSQL: everything else)
 
 | Table | Key | Notes |
 |---|---|---|
@@ -876,9 +876,9 @@ Every token has at least three spot venues and two perpetual venues. Binance spo
 ---
 
 
-# Design table contracts and deployed schema (PostgreSQL 16)
+# Design table contracts and deployed schema (PostgreSQL 16 and ClickHouse)
 
-The DDL excerpt below records the design document's table vocabulary and field meanings. It is not an executable dump of the deployed database. Versioned migrations define the implementation. Non-market registry/event/operational rows retain JSONB `document` plus typed projections. Market observations use the 15 explicit typed schemas below: no whole-row `document`, `extras` or SQL trade store. Their named JSONB fields hold domain structures such as boundary segments, coverage and per-field missing reasons. Inspect the live read-only schema before composing a query; do not assume that an illustrative primary-key declaration is the physical storage key.
+The DDL excerpt below records the design document's table vocabulary and field meanings. It is not an executable dump of the deployed database. Versioned migrations define the implementation. Non-market registry/event/operational rows retain JSONB `document` plus typed projections. Market series and prints are typed ClickHouse tables (the section "Market tables in ClickHouse"): no whole-row `document` or `extras`. Their named JSONB fields hold domain structures such as boundary segments, coverage and per-field missing reasons. Inspect the live read-only schema before composing a query; do not assume that an illustrative primary-key declaration is the physical storage key.
 
 ```sql
 SELECT table_schema, table_name
@@ -889,25 +889,31 @@ ORDER BY table_schema, table_name;
 
 SELECT column_name, data_type, is_nullable
 FROM information_schema.columns
-WHERE table_schema = 'mkt' AND table_name = 'oi_obs'
+WHERE table_schema = 'evt' AND table_name = 'events'
 ORDER BY ordinal_position;
+```
 
+Market series are in ClickHouse (the section "Market tables in ClickHouse"):
+
+```sql
 SELECT instrument_id, metric_key, ts, ts_prec, received_ts, oi_native, oi_usd, oi_usd_reason
-FROM mkt.oi_obs
-WHERE instrument_id = %s AND ts <= %s
+FROM mkt.oi_obs FINAL
+WHERE instrument_id = {i:String} AND ts <= {cutoff:DateTime64(6, 'UTC')}
 ORDER BY ts DESC
 LIMIT 20;
 ```
 
-Migration 026 adds nullable precision and precision-reason projections for the 88 declared SQL timestamp fields. It does not backfill old rows, assign exactness from ISO formatting or require newly declared precision on legacy values. SQL NULL precision means unknown; newly propagated legacy evidence carries reason `INCOMPLETE`. Read the precision and its reason with the timestamp. Registry clocks remain in JSONB: bootstrap recursively preserves captured `verified_at`, `resolved_at`, `checked_at` and `identity_reviewed_at` values and their declared precision; it never replaces a historical date with the current collection clock.
+Every declared timestamp column, in PostgreSQL and in ClickHouse, has nullable `<field>_prec` and `<field>_prec_reason` columns; exactness is never assigned from ISO formatting. A NULL precision means unknown, with its reason (`INCOMPLETE` when the source did not declare it). Read the precision and its reason with the timestamp. Registry clocks remain in JSONB: bootstrap recursively preserves captured `verified_at`, `resolved_at`, `checked_at` and `identity_reviewed_at` values and their declared precision; it never replaces a historical date with the current collection clock.
 
 ```sql
 SELECT ts, ts_prec, ts_prec_reason,
        received_ts, received_ts_prec, received_ts_prec_reason
-FROM mkt.oi_obs
-WHERE instrument_id = %s AND ts <= %s
+FROM mkt.oi_obs FINAL
+WHERE instrument_id = {i:String} AND ts <= {cutoff:DateTime64(6, 'UTC')}
 ORDER BY ts DESC LIMIT 20;
+```
 
+```sql
 SELECT published_at, published_prec, published_prec_reason,
        published_at_bucket_size_s, observed_at, observed_at_prec
 FROM ingest.source_items
@@ -1278,308 +1284,367 @@ Etherscan reads use `GET https://api.etherscan.io/v2/api` with `chainid`, `modul
 The sandbox does not call exchange APIs or WebSockets. Exchange data is in the `mkt.*` tables below, written only by tank-capture; read it there.
 
 
-# Actual typed market tables after migration 027
+# Market tables in ClickHouse
 
-This column inventory is generated from the frozen `MARKET_COLUMNS` producer/storage contract, not an executable schema creation script. Inspect `information_schema` on the selected database to verify migration status and nullability. Numeric values remain Decimal/numeric; never turn unavailable USD into zero. Migration 027 has not been applied to the persistent local database at this guide revision. Existing local tables are not evidence that this new physical layout is deployed.
+The seven series and every print are in ClickHouse database `mkt` (HLD §7.1); the column lists below are generated from the producer contract (`MARKET_COLUMNS`). Each series is a `ReplacingMergeTree` on its identity: read it with `FINAL` so a rewritten row (a repair, a late print) reads as its last version, and filter on `instrument_id` and the time column so only the needed daily partitions are read. Decimal values are exact decimal text: compute with `toDecimal256(x, 18)` or `toFloat64(x)`, and never turn an unavailable USD value into zero. JSON columns are text: `JSONExtractString(last_trade, 'trade_id')`.
 
-Every print is in ClickHouse `mkt.trades` (30 days; days of MAJOR+ events kept): per-trade questions (sizes, bursts, who traded first) read it directly, minute aggregates come from `mkt.flow_bars_1m`. The column lists below are the ClickHouse columns of each table (PostgreSQL types as declared; `numeric` and `jsonb` are text in ClickHouse).
+Every print is in `mkt.trades` (30 days; days of MAJOR+ events kept): per-trade questions (sizes, bursts, who traded first) read it directly, minute aggregates come from `mkt.flow_bars_1m`.
 
 ```sql
 SELECT minute_start, minute_start_prec, buy_qty, sell_qty, sum_sq_qty,
-       first_trade, last_trade, boundary_segments, reference_points, null_reasons
-FROM mkt.flow_bars_1m
-WHERE instrument_id = %s AND minute_start >= %s AND minute_start < %s
+       first_trade_id, last_trade_id, complete, gap_reason
+FROM mkt.flow_bars_1m FINAL
+WHERE instrument_id = {i:String} AND minute_start >= {start:DateTime64(6, 'UTC')} AND minute_start < {end:DateTime64(6, 'UTC')}
 ORDER BY minute_start;
 
 SELECT instrument_id, kind, as_of, as_of_prec, rate, rate_8h_eq,
        funding_time, funding_time_prec, source_observations, null_reasons
-FROM mkt.funding_obs
-WHERE instrument_id = %s AND as_of <= %s
+FROM mkt.funding_obs FINAL
+WHERE instrument_id = {i:String} AND as_of <= {cutoff:DateTime64(6, 'UTC')}
 ORDER BY as_of DESC LIMIT 20;
+
+SELECT ts, side, price, qty_native, notional_usd
+FROM mkt.trades FINAL
+WHERE instrument_id = {i:String} AND ts >= {start:DateTime64(6, 'UTC')} AND ts < {end:DateTime64(6, 'UTC')}
+ORDER BY ts, trade_id;
 ```
 
 Ticker natural identity is instrument plus timestamp; funding identity is instrument plus kind plus as-of. Preserve component clocks and source observations when combining a mark/index/ticker point. Named structures such as `first_trade`, `boundary_segments`, `reference_points`, `source_observations`, `integrity`, `capture_proof` and `null_reasons` are evidence/provenance, not arbitrary row copies. Point/receipt/recording precision remains explicit; legacy unknown is null with its reason.
 
-## mkt.flow_bars_1m
-
-| Column | PostgreSQL type |
-|---|---|
-| `backfill_verified` | `boolean` |
-| `buy_qty` | `numeric` |
-| `buy_usd` | `numeric` |
-| `c` | `numeric` |
-| `capture_method` | `text` |
-| `code_version` | `text` |
-| `complete` | `boolean` |
-| `config_version` | `text` |
-| `first_trade_id` | `text` |
-| `gap_reason` | `text` |
-| `h` | `numeric` |
-| `instrument_id` | `text` |
-| `l` | `numeric` |
-| `last_trade_id` | `text` |
-| `market_type` | `text` |
-| `minute_start` | `timestamptz` |
-| `minute_start_prec` | `text` |
-| `minute_start_prec_reason` | `text` |
-| `n_buy` | `bigint` |
-| `n_sell` | `bigint` |
-| `notional_reason` | `text` |
-| `o` | `numeric` |
-| `quote_asset` | `text` |
-| `quote_volume` | `numeric` |
-| `received_ts` | `timestamptz` |
-| `received_ts_prec` | `text` |
-| `received_ts_prec_reason` | `text` |
-| `recorded_at` | `timestamptz` |
-| `recorded_at_prec` | `text` |
-| `recorded_at_prec_reason` | `text` |
-| `sell_qty` | `numeric` |
-| `sell_usd` | `numeric` |
-| `source_archive` | `text` |
-| `sum_sq_qty` | `numeric` |
-| `token_id` | `text` |
-| `trade_aggregation` | `text` |
-| `venue` | `text` |
-| `volume_usd` | `numeric` |
-| `vwap` | `numeric` |
-| `zero_trade_minute` | `boolean` |
-| `size_buckets` | `jsonb` |
-| `null_reasons` | `jsonb` |
-| `capture_proof` | `jsonb` |
-| `first_trade` | `jsonb` |
-| `last_trade` | `jsonb` |
-| `boundary_segments` | `jsonb` |
-| `reference_points` | `jsonb` |
-| `semantic_fingerprint` | `text` |
-
 ## mkt.klines_1m
 
-| Column | PostgreSQL type |
+| Column | ClickHouse type |
 |---|---|
-| `c` | `numeric` |
-| `code_version` | `text` |
-| `complete` | `boolean` |
-| `config_version` | `text` |
-| `h` | `numeric` |
-| `instrument_id` | `text` |
-| `interval_s` | `bigint` |
-| `l` | `numeric` |
-| `market_type` | `text` |
-| `n_trades` | `bigint` |
-| `o` | `numeric` |
-| `open_time` | `timestamptz` |
-| `open_time_prec` | `text` |
-| `open_time_prec_reason` | `text` |
-| `quote_asset` | `text` |
-| `quote_usd_rate` | `numeric` |
-| `quote_usd_rate_as_of` | `timestamptz` |
-| `quote_usd_rate_as_of_prec` | `text` |
-| `quote_usd_rate_as_of_prec_reason` | `text` |
-| `quote_volume` | `numeric` |
-| `quote_volume_method` | `text` |
-| `quote_volume_usd` | `numeric` |
-| `quote_volume_usd_reason` | `text` |
-| `received_ts` | `timestamptz` |
-| `received_ts_prec` | `text` |
-| `received_ts_prec_reason` | `text` |
-| `recorded_at` | `timestamptz` |
-| `recorded_at_prec` | `text` |
-| `recorded_at_prec_reason` | `text` |
-| `source_archive` | `text` |
-| `taker_buy_native` | `numeric` |
-| `taker_buy_quote` | `numeric` |
-| `token_id` | `text` |
-| `venue` | `text` |
-| `volume_native` | `numeric` |
-| `semantic_fingerprint` | `text` |
+| `storage_key` | `String` |
+| `c` | `Nullable(String)` |
+| `code_version` | `Nullable(String)` |
+| `complete` | `Nullable(Bool)` |
+| `config_version` | `Nullable(String)` |
+| `h` | `Nullable(String)` |
+| `instrument_id` | `String` |
+| `interval_s` | `Nullable(Int64)` |
+| `l` | `Nullable(String)` |
+| `market_type` | `Nullable(String)` |
+| `n_trades` | `Nullable(Int64)` |
+| `o` | `Nullable(String)` |
+| `open_time` | `DateTime64(6, 'UTC')` |
+| `open_time_prec` | `Nullable(String)` |
+| `open_time_prec_reason` | `Nullable(String)` |
+| `quote_asset` | `Nullable(String)` |
+| `quote_usd_rate` | `Nullable(String)` |
+| `quote_usd_rate_as_of` | `Nullable(DateTime64(6, 'UTC'))` |
+| `quote_usd_rate_as_of_prec` | `Nullable(String)` |
+| `quote_usd_rate_as_of_prec_reason` | `Nullable(String)` |
+| `quote_volume` | `Nullable(String)` |
+| `quote_volume_method` | `Nullable(String)` |
+| `quote_volume_usd` | `Nullable(String)` |
+| `quote_volume_usd_reason` | `Nullable(String)` |
+| `received_ts` | `Nullable(DateTime64(6, 'UTC'))` |
+| `received_ts_prec` | `Nullable(String)` |
+| `received_ts_prec_reason` | `Nullable(String)` |
+| `recorded_at` | `Nullable(DateTime64(6, 'UTC'))` |
+| `recorded_at_prec` | `Nullable(String)` |
+| `recorded_at_prec_reason` | `Nullable(String)` |
+| `source_archive` | `Nullable(String)` |
+| `taker_buy_native` | `Nullable(String)` |
+| `taker_buy_quote` | `Nullable(String)` |
+| `token_id` | `Nullable(String)` |
+| `venue` | `Nullable(String)` |
+| `volume_native` | `Nullable(String)` |
+| `semantic_fingerprint` | `Nullable(String)` |
+| `_version` | `UInt64` |
 
-## mkt.oi_obs
+## mkt.flow_bars_1m
 
-| Column | PostgreSQL type |
+| Column | ClickHouse type |
 |---|---|
-| `code_version` | `text` |
-| `config_version` | `text` |
-| `gap_reason` | `text` |
-| `index_as_of` | `timestamptz` |
-| `index_as_of_prec` | `text` |
-| `index_as_of_prec_reason` | `text` |
-| `index_price` | `numeric` |
-| `instrument_id` | `text` |
-| `mark_as_of` | `timestamptz` |
-| `mark_as_of_prec` | `text` |
-| `mark_as_of_prec_reason` | `text` |
-| `mark_price` | `numeric` |
-| `metric_key` | `text` |
-| `oi_native` | `numeric` |
-| `oi_usd` | `numeric` |
-| `oi_usd_reason` | `text` |
-| `raw_unit` | `text` |
-| `raw_value` | `numeric` |
-| `received_ts` | `timestamptz` |
-| `received_ts_prec` | `text` |
-| `received_ts_prec_reason` | `text` |
-| `recorded_at` | `timestamptz` |
-| `recorded_at_prec` | `text` |
-| `recorded_at_prec_reason` | `text` |
-| `semantic_confidence` | `text` |
-| `sidedness` | `text` |
-| `source_archive` | `text` |
-| `synchronized_eligible` | `boolean` |
-| `timestamp_precision` | `text` |
-| `token_id` | `text` |
-| `ts` | `timestamptz` |
-| `ts_prec` | `text` |
-| `ts_prec_reason` | `text` |
-| `ts_bucket_size_s` | `numeric` |
-| `semantic_fingerprint` | `text` |
-| `ts_bucket_anchor` | `text` |
-
-## mkt.funding_obs
-
-| Column | PostgreSQL type |
-|---|---|
-| `as_of` | `timestamptz` |
-| `as_of_prec` | `text` |
-| `as_of_prec_reason` | `text` |
-| `capture_source` | `text` |
-| `code_version` | `text` |
-| `config_version` | `text` |
-| `funding_time` | `timestamptz` |
-| `funding_time_prec` | `text` |
-| `funding_time_prec_reason` | `text` |
-| `instrument_id` | `text` |
-| `interval_h` | `numeric` |
-| `kind` | `text` |
-| `metric_key` | `text` |
-| `primary_source` | `text` |
-| `rate` | `numeric` |
-| `rate_8h_eq` | `numeric` |
-| `received_ts` | `timestamptz` |
-| `received_ts_prec` | `text` |
-| `received_ts_prec_reason` | `text` |
-| `recorded_at` | `timestamptz` |
-| `recorded_at_prec` | `text` |
-| `recorded_at_prec_reason` | `text` |
-| `semantic_confidence` | `text` |
-| `source_archive` | `text` |
-| `source_path` | `text` |
-| `token_id` | `text` |
-| `source_observations` | `jsonb` |
-| `source_disagreement` | `jsonb` |
-| `semantic_fingerprint` | `text` |
-| `null_reasons` | `jsonb` |
-
-## mkt.liq_obs
-
-| Column | PostgreSQL type |
-|---|---|
-| `id` | `bigint` |
-| `code_version` | `text` |
-| `config_version` | `text` |
-| `coverage` | `text` |
-| `instrument_id` | `text` |
-| `metric_key` | `text` |
-| `notional_usd` | `numeric` |
-| `price` | `numeric` |
-| `price_kind` | `text` |
-| `qty_native` | `numeric` |
-| `received_ts` | `timestamptz` |
-| `received_ts_prec` | `text` |
-| `received_ts_prec_reason` | `text` |
-| `recorded_at` | `timestamptz` |
-| `recorded_at_prec` | `text` |
-| `recorded_at_prec_reason` | `text` |
-| `side` | `text` |
-| `token_id` | `text` |
-| `ts` | `timestamptz` |
-| `ts_prec` | `text` |
-| `ts_prec_reason` | `text` |
-| `usd_reason` | `text` |
-| `null_reasons` | `jsonb` |
-| `semantic_fingerprint` | `text` |
+| `storage_key` | `String` |
+| `backfill_verified` | `Nullable(Bool)` |
+| `bar_version` | `Nullable(Int64)` |
+| `buy_qty` | `Nullable(String)` |
+| `buy_usd` | `Nullable(String)` |
+| `c` | `Nullable(String)` |
+| `capture_method` | `Nullable(String)` |
+| `code_version` | `Nullable(String)` |
+| `complete` | `Nullable(Bool)` |
+| `config_version` | `Nullable(String)` |
+| `first_trade_id` | `Nullable(String)` |
+| `gap_reason` | `Nullable(String)` |
+| `h` | `Nullable(String)` |
+| `instrument_id` | `String` |
+| `l` | `Nullable(String)` |
+| `last_trade_id` | `Nullable(String)` |
+| `market_type` | `Nullable(String)` |
+| `minute_start` | `DateTime64(6, 'UTC')` |
+| `minute_start_prec` | `Nullable(String)` |
+| `minute_start_prec_reason` | `Nullable(String)` |
+| `n_buy` | `Nullable(Int64)` |
+| `n_sell` | `Nullable(Int64)` |
+| `notional_reason` | `Nullable(String)` |
+| `o` | `Nullable(String)` |
+| `quote_asset` | `Nullable(String)` |
+| `quote_volume` | `Nullable(String)` |
+| `received_ts` | `Nullable(DateTime64(6, 'UTC'))` |
+| `received_ts_prec` | `Nullable(String)` |
+| `received_ts_prec_reason` | `Nullable(String)` |
+| `recorded_at` | `Nullable(DateTime64(6, 'UTC'))` |
+| `recorded_at_prec` | `Nullable(String)` |
+| `recorded_at_prec_reason` | `Nullable(String)` |
+| `revised` | `Nullable(Bool)` |
+| `sell_qty` | `Nullable(String)` |
+| `sell_usd` | `Nullable(String)` |
+| `source_archive` | `Nullable(String)` |
+| `sum_sq_qty` | `Nullable(String)` |
+| `token_id` | `Nullable(String)` |
+| `trade_aggregation` | `Nullable(String)` |
+| `venue` | `Nullable(String)` |
+| `volume_usd` | `Nullable(String)` |
+| `vwap` | `Nullable(String)` |
+| `zero_trade_minute` | `Nullable(Bool)` |
+| `size_buckets` | `Nullable(String)` |
+| `null_reasons` | `Nullable(String)` |
+| `capture_proof` | `Nullable(String)` |
+| `first_trade` | `Nullable(String)` |
+| `last_trade` | `Nullable(String)` |
+| `boundary_segments` | `Nullable(String)` |
+| `reference_points` | `Nullable(String)` |
+| `semantic_fingerprint` | `Nullable(String)` |
+| `_version` | `UInt64` |
 
 ## mkt.book_summaries
 
-| Column | PostgreSQL type |
+| Column | ClickHouse type |
 |---|---|
-| `best_ask` | `numeric` |
-| `best_bid` | `numeric` |
-| `code_version` | `text` |
-| `config_version` | `text` |
-| `confirmation_observed_at` | `timestamptz` |
-| `confirmation_observed_at_prec` | `text` |
-| `confirmation_observed_at_prec_reason` | `text` |
-| `exchange_ts` | `timestamptz` |
-| `exchange_ts_prec` | `text` |
-| `exchange_ts_prec_reason` | `text` |
-| `gap_reason` | `text` |
-| `instrument_id` | `text` |
-| `integrity_method` | `text` |
-| `integrity_ok` | `boolean` |
-| `levels_received` | `bigint` |
-| `metric_key` | `text` |
-| `mid` | `numeric` |
-| `quote_asset` | `text` |
-| `quote_usd_rate` | `numeric` |
-| `raw_levels_range_pct` | `numeric` |
-| `raw_levels_scope` | `text` |
-| `received_ts` | `timestamptz` |
-| `received_ts_prec` | `text` |
-| `received_ts_prec_reason` | `text` |
-| `recorded_at` | `timestamptz` |
-| `recorded_at_prec` | `text` |
-| `recorded_at_prec_reason` | `text` |
-| `second_path_confirmed` | `boolean` |
-| `second_path_reason` | `text` |
-| `spread_bps` | `numeric` |
-| `token_id` | `text` |
-| `depth` | `jsonb` |
-| `bids` | `jsonb` (always null: levels are not stored) |
-| `asks` | `jsonb` (always null: levels are not stored) |
-| `range_covered_pct` | `jsonb` |
-| `independent_rest` | `jsonb` |
-| `semantic_fingerprint` | `text` |
+| `storage_key` | `String` |
+| `best_ask` | `Nullable(String)` |
+| `best_bid` | `Nullable(String)` |
+| `code_version` | `Nullable(String)` |
+| `config_version` | `Nullable(String)` |
+| `confirmation_observed_at` | `Nullable(DateTime64(6, 'UTC'))` |
+| `confirmation_observed_at_prec` | `Nullable(String)` |
+| `confirmation_observed_at_prec_reason` | `Nullable(String)` |
+| `exchange_ts` | `DateTime64(6, 'UTC')` |
+| `exchange_ts_prec` | `Nullable(String)` |
+| `exchange_ts_prec_reason` | `Nullable(String)` |
+| `gap_reason` | `Nullable(String)` |
+| `instrument_id` | `String` |
+| `integrity_method` | `Nullable(String)` |
+| `integrity_ok` | `Nullable(Bool)` |
+| `levels_received` | `Nullable(Int64)` |
+| `metric_key` | `Nullable(String)` |
+| `mid` | `Nullable(String)` |
+| `quote_asset` | `Nullable(String)` |
+| `quote_usd_rate` | `Nullable(String)` |
+| `raw_levels_range_pct` | `Nullable(String)` |
+| `raw_levels_scope` | `Nullable(String)` |
+| `received_ts` | `Nullable(DateTime64(6, 'UTC'))` |
+| `received_ts_prec` | `Nullable(String)` |
+| `received_ts_prec_reason` | `Nullable(String)` |
+| `recorded_at` | `Nullable(DateTime64(6, 'UTC'))` |
+| `recorded_at_prec` | `Nullable(String)` |
+| `recorded_at_prec_reason` | `Nullable(String)` |
+| `second_path_confirmed` | `Nullable(Bool)` |
+| `second_path_reason` | `Nullable(String)` |
+| `spread_bps` | `Nullable(String)` |
+| `token_id` | `Nullable(String)` |
+| `depth` | `Nullable(String)` |
+| `bids` | `Nullable(String)` |
+| `asks` | `Nullable(String)` |
+| `range_covered_pct` | `Nullable(String)` |
+| `independent_rest` | `Nullable(String)` |
+| `semantic_fingerprint` | `Nullable(String)` |
+| `_version` | `UInt64` |
+
+## mkt.oi_obs
+
+| Column | ClickHouse type |
+|---|---|
+| `storage_key` | `String` |
+| `code_version` | `Nullable(String)` |
+| `config_version` | `Nullable(String)` |
+| `gap_reason` | `Nullable(String)` |
+| `index_as_of` | `Nullable(DateTime64(6, 'UTC'))` |
+| `index_as_of_prec` | `Nullable(String)` |
+| `index_as_of_prec_reason` | `Nullable(String)` |
+| `index_price` | `Nullable(String)` |
+| `instrument_id` | `String` |
+| `mark_as_of` | `Nullable(DateTime64(6, 'UTC'))` |
+| `mark_as_of_prec` | `Nullable(String)` |
+| `mark_as_of_prec_reason` | `Nullable(String)` |
+| `mark_price` | `Nullable(String)` |
+| `metric_key` | `String` |
+| `oi_native` | `Nullable(String)` |
+| `oi_usd` | `Nullable(String)` |
+| `oi_usd_reason` | `Nullable(String)` |
+| `raw_unit` | `Nullable(String)` |
+| `raw_value` | `Nullable(String)` |
+| `received_ts` | `Nullable(DateTime64(6, 'UTC'))` |
+| `received_ts_prec` | `Nullable(String)` |
+| `received_ts_prec_reason` | `Nullable(String)` |
+| `recorded_at` | `Nullable(DateTime64(6, 'UTC'))` |
+| `recorded_at_prec` | `Nullable(String)` |
+| `recorded_at_prec_reason` | `Nullable(String)` |
+| `semantic_confidence` | `Nullable(String)` |
+| `sidedness` | `Nullable(String)` |
+| `source_archive` | `Nullable(String)` |
+| `synchronized_eligible` | `Nullable(Bool)` |
+| `timestamp_precision` | `Nullable(String)` |
+| `token_id` | `Nullable(String)` |
+| `ts` | `DateTime64(6, 'UTC')` |
+| `ts_prec` | `Nullable(String)` |
+| `ts_prec_reason` | `Nullable(String)` |
+| `ts_bucket_size_s` | `Nullable(String)` |
+| `ts_bucket_anchor` | `Nullable(String)` |
+| `semantic_fingerprint` | `Nullable(String)` |
+| `_version` | `UInt64` |
+
+## mkt.funding_obs
+
+| Column | ClickHouse type |
+|---|---|
+| `storage_key` | `String` |
+| `as_of` | `DateTime64(6, 'UTC')` |
+| `as_of_prec` | `Nullable(String)` |
+| `as_of_prec_reason` | `Nullable(String)` |
+| `capture_source` | `Nullable(String)` |
+| `code_version` | `Nullable(String)` |
+| `config_version` | `Nullable(String)` |
+| `funding_time` | `Nullable(DateTime64(6, 'UTC'))` |
+| `funding_time_prec` | `Nullable(String)` |
+| `funding_time_prec_reason` | `Nullable(String)` |
+| `instrument_id` | `String` |
+| `interval_h` | `Nullable(String)` |
+| `kind` | `String` |
+| `metric_key` | `Nullable(String)` |
+| `primary_source` | `Nullable(String)` |
+| `rate` | `Nullable(String)` |
+| `rate_8h_eq` | `Nullable(String)` |
+| `received_ts` | `Nullable(DateTime64(6, 'UTC'))` |
+| `received_ts_prec` | `Nullable(String)` |
+| `received_ts_prec_reason` | `Nullable(String)` |
+| `recorded_at` | `Nullable(DateTime64(6, 'UTC'))` |
+| `recorded_at_prec` | `Nullable(String)` |
+| `recorded_at_prec_reason` | `Nullable(String)` |
+| `semantic_confidence` | `Nullable(String)` |
+| `source_archive` | `Nullable(String)` |
+| `source_path` | `Nullable(String)` |
+| `token_id` | `Nullable(String)` |
+| `source_observations` | `Nullable(String)` |
+| `source_disagreement` | `Nullable(String)` |
+| `semantic_fingerprint` | `Nullable(String)` |
+| `null_reasons` | `Nullable(String)` |
+| `_version` | `UInt64` |
+
+## mkt.liq_obs
+
+| Column | ClickHouse type |
+|---|---|
+| `storage_key` | `String` |
+| `id` | `Nullable(Int64)` |
+| `code_version` | `Nullable(String)` |
+| `config_version` | `Nullable(String)` |
+| `coverage` | `Nullable(String)` |
+| `instrument_id` | `Nullable(String)` |
+| `metric_key` | `Nullable(String)` |
+| `notional_usd` | `Nullable(String)` |
+| `price` | `Nullable(String)` |
+| `price_kind` | `Nullable(String)` |
+| `qty_native` | `Nullable(String)` |
+| `received_ts` | `Nullable(DateTime64(6, 'UTC'))` |
+| `received_ts_prec` | `Nullable(String)` |
+| `received_ts_prec_reason` | `Nullable(String)` |
+| `recorded_at` | `Nullable(DateTime64(6, 'UTC'))` |
+| `recorded_at_prec` | `Nullable(String)` |
+| `recorded_at_prec_reason` | `Nullable(String)` |
+| `side` | `Nullable(String)` |
+| `token_id` | `Nullable(String)` |
+| `ts` | `DateTime64(6, 'UTC')` |
+| `ts_prec` | `Nullable(String)` |
+| `ts_prec_reason` | `Nullable(String)` |
+| `usd_reason` | `Nullable(String)` |
+| `null_reasons` | `Nullable(String)` |
+| `semantic_fingerprint` | `Nullable(String)` |
+| `_version` | `UInt64` |
 
 ## mkt.tickers_24h
 
-| Column | PostgreSQL type |
+| Column | ClickHouse type |
 |---|---|
-| `capture_source` | `text` |
-| `code_version` | `text` |
-| `config_version` | `text` |
-| `index_as_of` | `timestamptz` |
-| `index_as_of_prec` | `text` |
-| `index_as_of_prec_reason` | `text` |
-| `index_price` | `numeric` |
-| `index_reason` | `text` |
-| `instrument_id` | `text` |
-| `kind` | `text` |
-| `last` | `numeric` |
-| `mark_as_of` | `timestamptz` |
-| `mark_as_of_prec` | `text` |
-| `mark_as_of_prec_reason` | `text` |
-| `mark_price` | `numeric` |
-| `quote_asset` | `text` |
-| `quote_volume` | `numeric` |
-| `received_ts` | `timestamptz` |
-| `received_ts_prec` | `text` |
-| `received_ts_prec_reason` | `text` |
-| `recorded_at` | `timestamptz` |
-| `recorded_at_prec` | `text` |
-| `recorded_at_prec_reason` | `text` |
-| `source_provenance_complete` | `boolean` |
-| `token_id` | `text` |
-| `ts` | `timestamptz` |
-| `ts_prec` | `text` |
-| `ts_prec_reason` | `text` |
-| `usd_reason` | `text` |
-| `volume_native` | `numeric` |
-| `volume_usd` | `numeric` |
-| `field_sources` | `jsonb` |
-| `unclocked_components` | `jsonb` |
-| `capture_sources` | `text[]` |
-| `semantic_fingerprint` | `text` |
+| `storage_key` | `String` |
+| `capture_source` | `Nullable(String)` |
+| `code_version` | `Nullable(String)` |
+| `config_version` | `Nullable(String)` |
+| `index_as_of` | `Nullable(DateTime64(6, 'UTC'))` |
+| `index_as_of_prec` | `Nullable(String)` |
+| `index_as_of_prec_reason` | `Nullable(String)` |
+| `index_price` | `Nullable(String)` |
+| `index_reason` | `Nullable(String)` |
+| `instrument_id` | `String` |
+| `kind` | `Nullable(String)` |
+| `last` | `Nullable(String)` |
+| `mark_as_of` | `Nullable(DateTime64(6, 'UTC'))` |
+| `mark_as_of_prec` | `Nullable(String)` |
+| `mark_as_of_prec_reason` | `Nullable(String)` |
+| `mark_price` | `Nullable(String)` |
+| `quote_asset` | `Nullable(String)` |
+| `quote_volume` | `Nullable(String)` |
+| `received_ts` | `Nullable(DateTime64(6, 'UTC'))` |
+| `received_ts_prec` | `Nullable(String)` |
+| `received_ts_prec_reason` | `Nullable(String)` |
+| `recorded_at` | `Nullable(DateTime64(6, 'UTC'))` |
+| `recorded_at_prec` | `Nullable(String)` |
+| `recorded_at_prec_reason` | `Nullable(String)` |
+| `source_provenance_complete` | `Nullable(Bool)` |
+| `token_id` | `Nullable(String)` |
+| `ts` | `DateTime64(6, 'UTC')` |
+| `ts_prec` | `Nullable(String)` |
+| `ts_prec_reason` | `Nullable(String)` |
+| `usd_reason` | `Nullable(String)` |
+| `volume_native` | `Nullable(String)` |
+| `volume_usd` | `Nullable(String)` |
+| `field_sources` | `Nullable(String)` |
+| `unclocked_components` | `Nullable(String)` |
+| `capture_sources` | `Array(String)` |
+| `semantic_fingerprint` | `Nullable(String)` |
+| `_version` | `UInt64` |
+
+## mkt.trades
+
+| Column | ClickHouse type |
+|---|---|
+| `instrument_id` | `String` |
+| `trade_id` | `String` |
+| `ts` | `DateTime64(6, 'UTC')` |
+| `token_id` | `LowCardinality(String)` |
+| `venue` | `LowCardinality(String)` |
+| `market_type` | `LowCardinality(String)` |
+| `venue_symbol` | `LowCardinality(String)` |
+| `side` | `LowCardinality(String)` |
+| `price` | `Decimal(38, 18)` |
+| `qty_native` | `Decimal(38, 18)` |
+| `quote_notional` | `Nullable(Decimal(38, 18))` |
+| `notional_usd` | `Nullable(Decimal(38, 18))` |
+| `quote_asset` | `LowCardinality(String)` |
+| `usd_reason` | `LowCardinality(Nullable(String))` |
+| `metric_key` | `LowCardinality(String)` |
+| `trade_aggregation` | `LowCardinality(String)` |
+| `raw_first_id` | `Nullable(String)` |
+| `raw_last_id` | `Nullable(String)` |
+| `sequence` | `Nullable(String)` |
+| `sequence_semantics` | `LowCardinality(Nullable(String))` |
+| `capture_source` | `LowCardinality(String)` |
+| `ts_prec` | `LowCardinality(Nullable(String))` |
+| `ts_prec_reason` | `LowCardinality(Nullable(String))` |
+| `received_ts` | `Nullable(DateTime64(6, 'UTC'))` |
+| `received_ts_prec` | `LowCardinality(Nullable(String))` |
+| `received_ts_prec_reason` | `LowCardinality(Nullable(String))` |
+| `code_version` | `LowCardinality(String)` |
+| `config_version` | `LowCardinality(String)` |
+| `_version` | `UInt64` |
+
+# Market control and fundamentals tables in PostgreSQL
+
+Read with `TANK_DB_URL`. These hold no exchange series or prints.
 
 ## mkt.supply_obs
 
@@ -1711,31 +1776,6 @@ Ticker natural identity is instrument plus timestamp; funding identity is instru
 | `token_id` | `text` |
 | `semantic_fingerprint` | `text` |
 
-## mkt.capture_state
-
-| Column | PostgreSQL type |
-|---|---|
-| `code_version` | `text` |
-| `config_version` | `text` |
-| `instrument_id` | `text` |
-| `last_trade_id` | `text` |
-| `last_ts` | `timestamptz` |
-| `last_ts_prec` | `text` |
-| `last_ts_prec_reason` | `text` |
-| `received_ts` | `timestamptz` |
-| `received_ts_prec` | `text` |
-| `received_ts_prec_reason` | `text` |
-| `recorded_at` | `timestamptz` |
-| `recorded_at_prec` | `text` |
-| `recorded_at_prec_reason` | `text` |
-| `token_id` | `text` |
-| `updated_at` | `timestamptz` |
-| `updated_at_prec` | `text` |
-| `updated_at_prec_reason` | `text` |
-| `last_trade` | `jsonb` |
-| `missing_id_ranges` | `jsonb` |
-| `semantic_fingerprint` | `text` |
-
 ## mkt.capture_gaps
 
 | Column | PostgreSQL type |
@@ -1763,38 +1803,6 @@ Ticker natural identity is instrument plus timestamp; funding identity is instru
 | `start_prec_reason` | `text` |
 | `status` | `text` |
 | `token_id` | `text` |
-| `semantic_fingerprint` | `text` |
-
-## mkt.raw_archives
-
-| Column | PostgreSQL type |
-|---|---|
-| `archive_id` | `text` |
-| `byte_length` | `bigint` |
-| `checksum_scope` | `text` |
-| `code_version` | `text` |
-| `config_version` | `text` |
-| `hour_start` | `timestamptz` |
-| `hour_start_prec` | `text` |
-| `hour_start_prec_reason` | `text` |
-| `import_complete` | `boolean` |
-| `instrument_id` | `text` |
-| `journal_path` | `text` |
-| `kind` | `text` |
-| `parquet_path` | `text` |
-| `path` | `text` |
-| `received_ts` | `timestamptz` |
-| `received_ts_prec` | `text` |
-| `received_ts_prec_reason` | `text` |
-| `recorded_at` | `timestamptz` |
-| `recorded_at_prec` | `text` |
-| `recorded_at_prec_reason` | `text` |
-| `row_count` | `bigint` |
-| `sha256` | `text` |
-| `source_url` | `text` |
-| `status` | `text` |
-| `token_id` | `text` |
-| `integrity` | `jsonb` |
 | `semantic_fingerprint` | `text` |
 
 ## mkt.backfill_runs
@@ -1826,7 +1834,6 @@ Ticker natural identity is instrument plus timestamp; funding identity is instru
 | `token_id` | `text` |
 | `result` | `jsonb` |
 | `semantic_fingerprint` | `text` |
-
 
 # Current executable information-source manifest
 

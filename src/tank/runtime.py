@@ -363,7 +363,6 @@ class Runtime:
         from tank.bootstrap import sync_registry
 
         await sync_registry(self.repo, self.settings)
-        await self.repo.maintain_partitions(include_history=False)
 
     async def run(self, stop=None):
         from tank.sources.rate_limits import shared_request_budgets

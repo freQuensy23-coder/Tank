@@ -9,7 +9,7 @@ import {sandboxFactory} from '../src/litebox';
 const roots:string[]=[];
 async function env(address='172.29.0.2',hosts='["postgres"]'){
   const root=await mkdtemp(join(tmpdir(),'native-ip-policy-'));roots.push(root);const run='isolated-prefix';await mkdir(join(root,run));const cutoff='2026-10-19T00:00:00Z';
-  const data=JSON.stringify({schema:'tank.replay-evidence.v1',run_id:run,input_sha256:'a'.repeat(64),cutoff,cutoff_prec:'EXACT',cutoff_prec_reason:null,guest_root:'/replay/evidence',files:[],identity_key:['instrument_id','trade_id'],writer:{library:'pyarrow',version:'offline',compression:'zstd'},sealed_at:cutoff,sealed_at_prec:'COLLECTION_ONLY',sealed_at_prec_reason:null})+'\n';await writeFile(join(root,run,'manifest.json'),data);
+  const data=JSON.stringify({schema:'tank.replay-evidence.v1',run_id:run,input_sha256:'a'.repeat(64),cutoff,cutoff_prec:'EXACT',cutoff_prec_reason:null,guest_root:'/replay/evidence',files:[],identity_key:['instrument_id','trade_id'],format:'jsonl',sealed_at:cutoff,sealed_at_prec:'COLLECTION_ONLY',sealed_at_prec_reason:null})+'\n';await writeFile(join(root,run,'manifest.json'),data);
   return {SANDBOX_IMAGE:'synthetic-no-pull',TANK_SANDBOX_REPLAY:'1',TANK_SANDBOX_ALLOWED_NET:hosts,TANK_SANDBOX_DATABASE_IPV4:address,TANK_SANDBOX_REPLAY_DB_URL:`postgresql://synthetic_readonly@${address}/tank_replay`,TANK_REPLAY_EVIDENCE_ROOT:root,TANK_REPLAY_RUN_ID:run,TANK_REPLAY_EVIDENCE_SHA256:createHash('sha256').update(data).digest('hex'),TANK_REPLAY_CUTOFF:cutoff};
 }
 afterEach(async()=>{observed.options.length=0;for(const root of roots.splice(0))await rm(root,{recursive:true,force:true});});

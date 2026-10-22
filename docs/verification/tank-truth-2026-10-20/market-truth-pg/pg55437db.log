@@ -1,4 +1,0 @@
-START 2026-10-20T16:58:26Z tests/test_market_condition_snapshot.py::test_real_postgres_loader_to_condition_compute_selective_read_footprint tests/test_market_typed_capture.py::test_actual_postgres_batch_producer_restart_and_late_minute
-..                                                                       [100%]
-2 passed in 35.66s
-EXIT 0 2026-10-20T16:59:03Z

@@ -1,8 +1,0 @@
-route pairs: positives 31 hard negatives (v1>=0.5) 39 easy negatives 20 | filter items 40 | requests (v1 + v2 formats) 260
-provider {"requests": 260, "status": {"200": 260}, "retries_429": 0, "latency_p50_s": 0.26, "latency_max_s": 1.79}
-v1_openrouter route: mean same 0.752 mean different 0.446 separation (P[same > different]) 0.831 | at 0.5: same passed 29 / 31 different passed 39 / 59 | at 0.7: same passed 20 / 31 different passed 13 / 59
-v1_openrouter filter at 0.5: crypto passed 16 / 20 non-crypto passed 0 / 20
-v1 route: mean same 0.75 mean different 0.436 separation (P[same > different]) 0.836 | at 0.5: same passed 29 / 31 different passed 34 / 59 | at 0.7: same passed 21 / 31 different passed 11 / 59
-v1 filter at 0.5: crypto passed 16 / 20 non-crypto passed 0 / 20
-v2 route: mean same 0.761 mean different 0.442 separation (P[same > different]) 0.812 | at 0.5: same passed 26 / 31 different passed 32 / 59 | at 0.7: same passed 24 / 31 different passed 18 / 59
-v2 filter at 0.5: crypto passed 18 / 20 non-crypto passed 0 / 20

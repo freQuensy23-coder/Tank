@@ -36,7 +36,6 @@ def main():
         "numpy",
         "scipy",
         "statsmodels",
-        "pyarrow",
         "duckdb",
         "psycopg",
         "httpx",
