@@ -547,7 +547,7 @@ Fixture
   sealed_outcome_ref: str            # not readable by the pipeline
 ```
 
-### 2.9 Storage mapping (PostgreSQL; market series and prints in ClickHouse)
+### 2.9 Storage mapping (ClickHouse: exchange series and prints; PostgreSQL: everything else)
 
 | Table | Key | Notes |
 |---|---|---|
