@@ -32,7 +32,6 @@ EXCHANGE_FETCH_HOSTS = frozenset(
 )
 
 FETCH_BUDGET_S = 45.0
-ARCHIVE_BUDGET_S = 600.0
 FETCH_GRACE_S = 3.0
 TERMINAL = ("COMPLETE", "FAILED", "EXPIRED")
 CONDITIONAL_HEADERS = ("if-none-match", "if-modified-since")
@@ -101,16 +100,3 @@ async def capture_fetch(
     return httpx.Response(
         int(result["status_code"]), content=content, headers=response_headers, request=http_request
     )
-
-
-async def capture_archive(repo, url, *, budget_s=ARCHIVE_BUDGET_S):
-    """Ask tank-capture to store one Binance public-data archive file (data.binance.vision zip).
-
-    tank-capture checks it against the published .CHECKSUM and stores it on the shared data
-    volume; this returns {path, sha256, bytes, checksum_text}. Core reads the file, never the site.
-    """
-    request_id, row = await _capture_request(repo, "ARCHIVE_FETCH", {"url": url}, budget_s)
-    if row.get("status") != "COMPLETE":
-        reason = row.get("reason") or row.get("status") or "NO_ANSWER"
-        raise RuntimeError(f"tank-capture archive {request_id}: {reason}")
-    return row["result"]

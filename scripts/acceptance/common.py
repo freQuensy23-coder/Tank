@@ -1,7 +1,8 @@
-"""Read-only access to the deployed Tank database for acceptance measurements.
+"""Read-only access to the deployed Tank databases for acceptance measurements.
 
-Every query runs inside a READ ONLY transaction through psql in the Postgres
-container, so these scripts can never write production data and need no secrets.
+PostgreSQL queries run inside a READ ONLY transaction through psql in the Postgres
+container; market series queries run with readonly=1 through clickhouse-client in the
+ClickHouse container. These scripts can never write production data and need no secrets.
 """
 
 import json
@@ -12,6 +13,7 @@ from datetime import UTC, datetime
 
 PG_CONTAINER = os.environ.get("TANK_PG_CONTAINER", "tank-postgres-1")
 PG_DATABASE = os.environ.get("TANK_PG_DATABASE", "tank")
+CH_CONTAINER = os.environ.get("TANK_CH_CONTAINER", "tank-clickhouse-1")
 
 
 def query(sql, params=None):
@@ -41,6 +43,20 @@ def query(sql, params=None):
     if out.returncode != 0:
         raise RuntimeError("psql failed: " + out.stderr.strip()[-500:])
     return json.loads(out.stdout)
+
+
+def market_query(sql, params=None):
+    """Return rows of ClickHouse `sql` as dicts; `params` bind as {name:String} parameters."""
+    args = ["docker", "exec", "-i", CH_CONTAINER, "sh", "-c"]
+    command = 'clickhouse-client --user tank --password "$(cat /run/secrets/tank_db_password)" --readonly 1'
+    for key, value in (params or {}).items():
+        command += f" --param_{key}='{value}'"
+    out = subprocess.run(
+        [*args, command + " --format JSONEachRow"], input=sql, capture_output=True, text=True, check=False
+    )
+    if out.returncode != 0:
+        raise RuntimeError("clickhouse-client failed: " + out.stderr.strip()[-500:])
+    return [json.loads(line) for line in out.stdout.splitlines() if line]
 
 
 def parse(ts):

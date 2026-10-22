@@ -85,7 +85,6 @@ def _market_record(row):
         "mkt.tickers_24h",
         "mkt.supply_obs",
         "mkt.supply",
-        "mkt.trades",
     }
 
 
@@ -618,47 +617,6 @@ class ReplayMarketReader:
                 "source_capture_claim": False,
                 "historical_market_acceptance_claim": False,
             }
-        manifests = (self.evidence_capture or {}).get("rebuild_manifests", [])
-        if manifests:
-            from tank.market.archive import TradeArchive
-            from tank.market.capture import capture_boundary_points
-            from tank.market.flow import FlowAccumulator
-
-            instruments = [
-                row for row in self.inputs.registry.get("instruments", []) if row.get("token_id") == token_id
-            ]
-            ids = {row["instrument_id"] for row in instruments}
-            boundary_flow = FlowAccumulator()
-            points = capture_boundary_points(cutoff, anchor)
-            for iid in ids:
-                boundary_flow.register_boundaries(iid, points)
-            for instrument in instruments:
-                iid = instrument["instrument_id"]
-                selected = [row for row in manifests if row["instrument_id"] == iid]
-                if not selected:
-                    continue
-                boundaries = sorted(
-                    {
-                        point
-                        for (identity, _), points in boundary_flow.boundaries.items()
-                        if identity == iid
-                        for point in points
-                    }
-                )
-                rebuilt = TradeArchive.rebuild_window(
-                    selected,
-                    iid,
-                    min(boundaries),
-                    cutoff,
-                    boundaries=boundaries,
-                    purpose="REPLAY",
-                    instrument=instrument,
-                )
-                for field in ("flow_bars", "flow_segments", "reference_points"):
-                    result[field] = [
-                        row for row in result.get(field, []) if row.get("instrument_id") != iid
-                    ] + rebuilt[field]
-                result.setdefault("replay_raw_provenance", []).append(rebuilt["provenance"])
         if anchor is not None:
             if parse_time(anchor["ts"]) > parse_time(cutoff):
                 raise ReplayError("market anchor exceeds replay cutoff")
@@ -787,11 +745,7 @@ async def run_captured_tools(inputs, repo):
                 for index, row in enumerate(inputs._records):
                     projected = row["record"]
                     revision_identity = (index, digest(projected))
-                    if revision_identity in seeded or row["collection"] in {
-                        "replay.market_snapshots",
-                        "mkt.trades",
-                        "mkt.raw_archives",
-                    }:
+                    if revision_identity in seeded or row["collection"] == "replay.market_snapshots":
                         continue
                     if inputs.record_visible(row, clock.now()):
                         collection = row["collection"]
@@ -1521,8 +1475,6 @@ async def replay_agent_session(
             if identity in imported or row["collection"] in {
                 "replay.market_snapshots",
                 "ops.tool_calls",
-                "mkt.trades",
-                "mkt.raw_archives",
             }:
                 continue
 

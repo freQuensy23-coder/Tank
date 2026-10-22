@@ -58,12 +58,6 @@ linters:
       linters:
       - staticcheck
       text: 'ST1005: error strings should not be capitalized'
-      source: return nil, nil, fmt\.Errorf\("Unknown typed market filter %s\.%s",
-        collection, name\)
-    - path: (^|/)internal/store/read\.go$
-      linters:
-      - staticcheck
-      text: 'ST1005: error strings should not be capitalized'
       source: return nil, fmt\.Errorf\("Market projection requires a typed market
         time field"\)
     - path: (^|/)internal/store/read\.go$

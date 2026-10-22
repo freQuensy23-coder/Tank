@@ -49,7 +49,7 @@ def schema_template_marker():
     root = Path(storage.__file__).parent
     paths = [
         *_migration_paths(),
-        *(root / name for name in ("storage.py", "market_migration.py", "market_schema.py")),
+        *(root / name for name in ("storage.py", "market_schema.py")),
     ]
     digest = hashlib.sha256(b"tank-test-schema-template-v1\0")
     for path in paths:
@@ -78,6 +78,29 @@ async def _finish(operation):
     if cancellation is not None:
         raise cancellation
     return result
+
+
+async def _attach_clickhouse(repo, name):
+    """Each case's exchange series live in its own ClickHouse database (CLICKHOUSE_TEST_URL)."""
+    import os
+
+    from tank import clickhouse_market as chm
+
+    url = os.environ.get("CLICKHOUSE_TEST_URL")
+    if not url:
+        return
+    repo.clickhouse = chm.ClickHouse(url, database="mkt_" + re.sub(r"[^a-z0-9_]", "_", name.lower()))
+    for statement in chm.ddl():
+        await repo.clickhouse.execute(statement)
+
+
+async def _detach_clickhouse(repo):
+    ch = getattr(repo, "clickhouse", None)
+    if ch is not None:
+        try:
+            await ch.execute("DROP DATABASE IF EXISTS mkt")
+        finally:
+            await ch.close()
 
 
 async def _drop_database(admin_dsn, name):
@@ -233,12 +256,14 @@ class PostgresTemplate:
         repo = PostgresRepository(make_conninfo(admin_dsn, dbname=name))
         try:
             await repo.open()
+            await _attach_clickhouse(repo, name)
             yield repo
         finally:
 
             async def cleanup():
                 try:
                     await repo.close()
+                    await _detach_clickhouse(repo)
                 finally:
                     await _drop_database(admin_dsn, name)
 

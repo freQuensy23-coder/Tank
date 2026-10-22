@@ -20,7 +20,7 @@ async function replayEvidence() {
     guest_root: "/replay/evidence",
     files: [],
     identity_key: ["instrument_id", "trade_id"],
-    writer: { library: "pyarrow", version: "test", compression: "zstd" },
+    format: "jsonl",
     sealed_at: "2026-10-18T13:00:00Z",
     sealed_at_prec: "COLLECTION_ONLY",
     sealed_at_prec_reason: null,

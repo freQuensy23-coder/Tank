@@ -1,5 +1,0 @@
-Usage: python -m tank.cli review label [OPTIONS] SUBJECT {CATCH|LATE|FALSE_ALA
-                                       RM|NOISE|CORRECT_SILENCE|MISS}
-Try 'python -m tank.cli review label --help' for help.
-
-Error: MISS requires --miss-reason

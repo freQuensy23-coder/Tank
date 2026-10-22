@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from tank.market_schema import MARKET_COLUMNS, MARKET_PARTITIONS
+from tank.market_schema import MARKET_COLUMNS
 
 type Record = dict[str, Any]
 TABLE_COLUMNS = {
@@ -389,13 +389,6 @@ TABLE_COLUMNS = {
         "human_action": "text",
         "decided_at": "timestamptz",
     },
-    "mkt.trades": {
-        "instrument_id": "text",
-        "trade_id": "text",
-        "token_id": "text",
-        "ts": "timestamptz",
-        "received_ts": "timestamptz",
-    },
     "mkt.capture_gaps": {
         "gap_id": "text",
         "instrument_id": "text",
@@ -418,16 +411,6 @@ APPEND_ONLY = frozenset(
         "qa.reviews",
     ]
 )
-
-PARTITIONED = {
-    "mkt.klines_1m": "open_time",
-    "mkt.flow_bars_1m": "minute_start",
-    "mkt.book_summaries": "exchange_ts",
-    "mkt.oi_obs": "ts",
-    "mkt.liq_obs": "ts",
-    "mkt.tickers_24h": "ts",
-    "mkt.trades": "ts",
-}
 
 TABLE_COLUMNS["ops.jobs"].update(created_at="timestamptz", finished_at="timestamptz")
 TABLE_COLUMNS["mkt.backfill_runs"] = {
@@ -628,7 +611,6 @@ REQUIRED_FIELDS = {
 SERIAL_TABLES = frozenset(["evt.state_changes", "mkt.liq_obs", "out.deliveries", "ops.llm_usage"])
 
 MARKET_TIME_FIELDS = {
-    "mkt.trades": "ts",
     "mkt.flow_bars_1m": "minute_start",
     "mkt.klines_1m": "open_time",
     "mkt.book_summaries": "exchange_ts",
@@ -724,7 +706,6 @@ TIMESTAMP_PRECISION_FIELDS = {
     "qa.fixtures": {"cutoff": "cutoff_prec"},
     "qa.replay_runs": {"at": "at_prec"},
     "scout.expansion_proposals": {"decided_at": "decided_at_prec"},
-    "mkt.trades": {"ts": "ts_prec", "received_ts": "received_ts_prec", "recorded_at": "recorded_at_prec"},
     "mkt.capture_gaps": {"start": "start_prec", "end": "end_prec", "observed_at": "observed_at_prec"},
     "mkt.backfill_runs": {
         "anchor": "anchor_prec",
@@ -744,7 +725,6 @@ for _table_name in tuple(TABLE_COLUMNS):
     if _table_name.startswith("mkt."):
         TABLE_COLUMNS.pop(_table_name)
 TABLE_COLUMNS.update(MARKET_COLUMNS)
-PARTITIONED = MARKET_PARTITIONS
 TIMESTAMP_PRECISION_FIELDS.update(
     {
         _table_name: {
@@ -753,14 +733,3 @@ TIMESTAMP_PRECISION_FIELDS.update(
         for _table_name, columns in MARKET_COLUMNS.items()
     }
 )
-
-TABLE_COLUMNS["ops.market_migration_exports"] = {
-    "export_id": "text",
-    "manifest_path": "text",
-    "manifest_sha256": "text",
-    "row_count": "bigint",
-    "created_at": "timestamptz",
-    "created_at_prec": "text",
-    "created_at_prec_reason": "text",
-}
-APPEND_ONLY = APPEND_ONLY | {"ops.market_migration_exports"}

@@ -1,4 +1,0 @@
-Usage: python -m tank.cli review list [OPTIONS]
-Try 'python -m tank.cli review list --help' for help.
-
-Error: Invalid value: expects next_after of the previous page: a JSON [time, key] pair

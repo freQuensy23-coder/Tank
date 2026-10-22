@@ -1,9 +1,0 @@
-{
-  "cards": [],
-  "pagination": {
-    "limit": 100,
-    "returned": 0,
-    "has_more": false,
-    "next_after": null
-  }
-}

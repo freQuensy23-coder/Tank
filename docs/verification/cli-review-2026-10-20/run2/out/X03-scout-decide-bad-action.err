@@ -1,5 +1,0 @@
-Usage: python -m tank.cli scout decide [OPTIONS] PRP_ID
-                                       {APPROVE_FOR_SANDBOX|TEST_MORE|REJECT}
-Try 'python -m tank.cli scout decide --help' for help.
-
-Error: Invalid value for '{APPROVE_FOR_SANDBOX|TEST_MORE|REJECT}': 'SHIP_IT' is not one of 'APPROVE_FOR_SANDBOX', 'TEST_MORE', 'REJECT'.

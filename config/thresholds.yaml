@@ -51,10 +51,9 @@ base_kline_interval_s: 60
 base_oi_funding_interval_s: 300
 hot_oi_funding_interval_s: 60
 base_retention_days: 90
-hot_raw_retention_days: 30
+trades_retention_days: 30
 jobs_retention_days: 30
 backup_snapshots_kept: 3  # until the backup has its own disk (lead ruling 2026-10-20)
-archive_retention_days: 180
 # Order-book summaries (03 §14): 72 h, no event-window exception.
 book_summary_retention_hours: 72
 # 24h tickers: a 24 h volume needs no 20 s samples.

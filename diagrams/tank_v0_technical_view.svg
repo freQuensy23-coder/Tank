@@ -18,7 +18,7 @@
 <rect x="0" y="0" width="1800" height="2045" fill="#FFFFFF"/>
 <rect x="378" y="150" width="1016" height="1865.0" rx="12" fill="#FBFCFD" stroke="#9FB3C8" stroke-width="1.2" stroke-dasharray="6 4"/>
 <text x="32.0" y="46.0" font-size="22" fill="#1F2933" text-anchor="start" xml:space="preserve"><tspan font-weight="700">Tank V0 — how it works: technical view</tspan></text>
-<text x="32.0" y="70.0" font-size="13" fill="#52606D" text-anchor="start" xml:space="preserve">One Tank service, PostgreSQL and OpenMA in Docker on one Linux host. The service only reads; the agent sandboxes have open internet. Tank holds no exchange keys and cannot trade.</text>
+<text x="32.0" y="70.0" font-size="13" fill="#52606D" text-anchor="start" xml:space="preserve">One Tank service, PostgreSQL, ClickHouse and OpenMA in Docker on one Linux host. The service only reads; the agent sandboxes have open internet. Tank holds no exchange keys and cannot trade.</text>
 <text x="32.0" y="92.0" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">Source: 02 HLD v2.2 and 03 TDD (16 Oct 2026). Tank is one asyncio process built from modules; durable work is a job in <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ops.jobs</tspan>; only <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sessions</tspan> talks to OpenMA.</text>
 <rect x="1422.0" y="26.0" width="22.0" height="12.0" rx="3" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
 <text x="1452.0" y="36.5" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">External source</text>
@@ -62,8 +62,8 @@
 <text x="433.0" y="601.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">liquidations; a trade-ID gap is backfilled over REST</text>
 <text x="422.0" y="619.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="433.0" y="619.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">In the same module: 1-min flow bars per venue (aggressor side, size</text>
-<text x="433.0" y="634.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">buckets, completeness), 10 s book summaries, hourly Parquet written</text>
-<text x="433.0" y="649.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">in a worker thread</text>
+<text x="433.0" y="634.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">buckets, completeness), 10 s book summaries; series and every print</text>
+<text x="433.0" y="649.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">written to ClickHouse</text>
 <text x="422.0" y="667.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="433.0" y="667.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Base tier: 22 tokens, 181 series — klines every 60 s, OI + funding every</text>
 <text x="433.0" y="682.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">300 s</text>
@@ -193,8 +193,8 @@
 <text x="433.0" y="1552.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">evt</tspan> — events, claims, state changes, EMS, beneficiary</text>
 <text x="433.0" y="1567.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">maps</text>
 <text x="422.0" y="1587.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="1587.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mkt</tspan> — klines, flow bars, book summaries, OI, funding,</text>
-<text x="433.0" y="1602.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">liquidations, unlocks, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">hot_tokens</tspan></text>
+<text x="433.0" y="1587.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mkt</tspan> — unlocks, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">hot_tokens</tspan>, capture requests, gaps</text>
+<text x="433.0" y="1602.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">and streams (market series and prints: ClickHouse)</text>
 <text x="422.0" y="1622.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="433.0" y="1622.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">ana</tspan> — market truth, outlooks, decisions, open calls</text>
 <text x="422.0" y="1642.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
@@ -205,9 +205,9 @@
 <text x="422.0" y="1697.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="433.0" y="1697.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">scout</tspan> — proposals · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">qa</tspan> — reviews, fixtures, replays</text>
 <text x="422.0" y="1717.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="1717.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">Base-tier market data 90 days; event windows and audit</text>
-<text x="433.0" y="1732.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">tables permanent; volume <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">pg-data</tspan>, Compose network</text>
-<text x="433.0" y="1747.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">only</text>
+<text x="433.0" y="1717.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">Domain and audit tables permanent; ClickHouse mkt:</text>
+<text x="433.0" y="1732.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">base tier 90 days, prints 30 days; volumes <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">pg-data</tspan>,</text>
+<text x="433.0" y="1747.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">clickhouse-data</tspan>; Compose network only</text>
 <text x="422.0" y="1767.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="433.0" y="1767.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">Also hosts OpenMA's own database <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">oma</tspan>: agents, skills,</text>
 <text x="433.0" y="1782.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="306.0">sessions, event logs</text>
@@ -232,11 +232,11 @@
 <text x="842.0" y="1669.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="853.0" y="1669.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">One microVM per session: the agent creates files and runs any command and script</text>
 <text x="842.0" y="1687.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="853.0" y="1687.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Python 3.12 · pandas, numpy, scipy, statsmodels, pyarrow, duckdb, psycopg, httpx</text>
+<text x="853.0" y="1687.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Python 3.12 · pandas, numpy, scipy, statsmodels, duckdb, psycopg, httpx</text>
 <text x="842.0" y="1705.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="853.0" y="1705.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Internet: unrestricted</text>
 <text x="842.0" y="1723.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="853.0" y="1723.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Database <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan>: read-only role <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank_agent</tspan></text>
+<text x="853.0" y="1723.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">PostgreSQL <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan> and ClickHouse <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">mkt</tspan>: read-only <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank_agent</tspan></text>
 <text x="842.0" y="1741.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="853.0" y="1741.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="498.0">Etherscan and OpenRouter keys in the environment; the skill forbids printing or sending them</text>
 <rect x="32.0" y="250.0" width="318.0" height="235.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
@@ -280,16 +280,16 @@
 <text x="55.0" y="784.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">DefiLlama API + unlock datasets</text>
 <text x="44.0" y="802.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="55.0" y="802.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Etherscan API v2: 17 Binance and 323 OKX wallets</text>
-<text x="394.0" y="174.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Any Linux host with Docker Compose and KVM · 32 GB RAM · 1 TB SSD · services <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">openma</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">postgres</tspan>, each restart: unless-stopped · secrets as Docker secrets</text>
+<text x="394.0" y="174.0" font-size="11.5" fill="#52606D" text-anchor="start" xml:space="preserve">Any Linux host with Docker Compose and KVM · 32 GB RAM · 1 TB SSD · services <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">openma</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">postgres</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">clickhouse</tspan>, each restart: unless-stopped · secrets as Docker secrets</text>
 <rect x="394.0" y="1823.0" width="235.5" height="176.0" rx="8" fill="#F6F3FC" stroke="#805AD5" stroke-width="1.2"/>
 <text x="404.0" y="1845.0" font-size="12.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="215.5"><tspan font-weight="700">Volume </tspan><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-data</tspan></text>
 <text x="405.0" y="1867.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="416.0" y="1867.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">raw/items</tspan> — raw payloads from</text>
 <text x="416.0" y="1881.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sources</tspan> and <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">xsensor</tspan>; permanent</text>
 <text x="405.0" y="1898.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="416.0" y="1898.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">raw/trades</tspan>, <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">raw/books</tspan> — Parquet</text>
-<text x="416.0" y="1912.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">from <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">market</tspan>; 30 days, event windows</text>
-<text x="416.0" y="1926.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">permanent</text>
+<text x="416.0" y="1898.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">replay/evidence</tspan> — sealed JSONL</text>
+<text x="416.0" y="1912.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">prints from ClickHouse, one per</text>
+<text x="416.0" y="1926.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">replay run</text>
 <text x="405.0" y="1943.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="416.0" y="1943.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">archive/binance</tspan> — from <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">market</tspan>;</text>
 <text x="416.0" y="1957.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">180 days</text>

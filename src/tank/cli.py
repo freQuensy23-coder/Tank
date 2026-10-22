@@ -85,17 +85,9 @@ def db():
 
 
 @db.command()
-@click.option(
-    "--market-export-dir",
-    type=click.Path(file_okay=False, path_type=Path),
-    help="Durable directory for verified Parquet export of legacy SQL trades before migration 027.",
-)
-def migrate(market_export_dir):
+def migrate():
     async def command(repo, settings):
-        await repo.migrate(
-            market_export_dir=market_export_dir,
-            legacy_bundle_dir=settings.data_dir / "bundles",
-        )
+        await repo.migrate()
         if getattr(repo, "clickhouse", None) is not None:
             from tank.clickhouse_market import ddl
 

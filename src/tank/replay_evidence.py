@@ -1,13 +1,12 @@
-"""Seal cutoff-bounded, run-only raw market evidence; never restore raw rows to SQL."""
+"""Seal cutoff-bounded, run-only print evidence from the replay packet (mkt.trades rows)."""
 
 import hashlib
+import json
 import os
 import re
 from collections import defaultdict
 from pathlib import Path
 
-from tank.market.archive import TradeArchive
-from tank.market_migration import read_verified_legacy_raw
 from tank.time_precision import Timestamp, collection_clock, propagate_timestamp
 from tank.util import canonical_json, parse_time, sha256
 
@@ -24,16 +23,12 @@ def _durable_file(path, content):
 
 
 def seal_replay_evidence(inputs, run_id, destination, *, input_sha256, cutoff=None):
-    """Return a verified sealed manifest and native rebuild manifests.
+    """Return a verified sealed manifest of the packet's prints before the cutoff.
 
-    Legacy packet rows and migration exports are preserved as explicit Parquet
-    derivations, not silently dropped or inserted into PostgreSQL. No coverage is
-    invented for legacy rows. Guest files contain only trades strictly before the
-    requested cutoff; original future-bearing files stay outside the sealed root.
+    Each instrument's prints are one canonical JSON-lines file named by its sha256.
+    Guest files contain only prints strictly before the requested cutoff and received
+    by then (or historical receipts within the packet's assembly).
     """
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
     cutoff = cutoff or propagate_timestamp({"cutoff": inputs.cutoff}, "cutoff")
     if not isinstance(cutoff, Timestamp) or cutoff.value is None:
         raise ReplayEvidenceError("Replay evidence requires a declared cutoff timestamp")
@@ -115,31 +110,9 @@ def seal_replay_evidence(inputs, run_id, destination, *, input_sha256, cutoff=No
                 clipped.update(cutoff.fields("end"))
             coverage[source["instrument_id"]].append(clipped)
 
-    native = [
-        dict(row["record"], replay_available_at=row.get("available_at"))
-        for row in inputs._records
-        if row["collection"] == "mkt.raw_archives" and row["record"].get("kind") == "NORMALIZED_TRADES"
-    ]
-    native += inputs.config.get("replay_trade_archives", [])
-    for manifest in native:
-        prefix = manifest.get("byte_length") if manifest.get("checksum_scope") == "JOURNAL_PREFIX" else None
-        rows = TradeArchive.read_verified(manifest["path"], manifest["sha256"], byte_length=prefix)
-        source = {
-            "source_ref": manifest["path"],
-            "source_sha256": manifest["sha256"],
-            "instrument_id": manifest["instrument_id"],
-            "origin_kind": "NORMALIZED_TRADES",
-            **(
-                {"available_at": manifest["replay_available_at"]}
-                if manifest.get("replay_available_at")
-                else {}
-            ),
-        }
-        add(rows, source, TradeArchive.validated_coverage(manifest, native))
-        host_audit.append({"source_manifest": manifest, "verified_rows": len(rows)})
-
-    legacy = [row for row in inputs._records if row["collection"] == "mkt.trades"]
-    for row in legacy:
+    for row in inputs._records:
+        if row["collection"] != "mkt.trades":
+            continue
         record = row["record"]
         add(
             [record],
@@ -147,86 +120,38 @@ def seal_replay_evidence(inputs, run_id, destination, *, input_sha256, cutoff=No
                 "source_ref": "packet:" + input_sha256 + "#" + row["key"],
                 "source_sha256": sha256(row),
                 "instrument_id": record.get("instrument_id"),
-                "origin_kind": "LEGACY_PACKET_RAW_ROWS",
+                "origin_kind": "PACKET_PRINTS",
                 **({"available_at": row["available_at"]} if row.get("available_at") else {}),
             },
         )
-        host_audit.append({"legacy_record_key": row["key"], "record_sha256": sha256(row)})
-    export = inputs.config.get("replay_legacy_raw_export")
-    if export:
-        for sql_row in read_verified_legacy_raw(export):
-            record = sql_row.get("document")
-            if not isinstance(record, dict):
-                raise ReplayEvidenceError("Verified legacy SQL export lacks its original normalized document")
-            add(
-                [record],
-                {
-                    "source_ref": "legacy-sql:" + str(sql_row.get("storage_key")),
-                    "source_sha256": sha256(sql_row),
-                    "instrument_id": record.get("instrument_id"),
-                    "origin_kind": "LEGACY_SQL_RAW_EVIDENCE_V1",
-                },
-            )
-            host_audit.append(
-                {"legacy_storage_key": sql_row.get("storage_key"), "row_sha256": sha256(sql_row)}
-            )
+        host_audit.append({"record_key": row["key"], "record_sha256": sha256(row)})
 
-    files, rebuild = [], []
+    files = []
     for iid in sorted(groups):
         rows = sorted(groups[iid].values(), key=lambda row: (row["ts"], str(row["trade_id"])))
-        columns = sorted({key for row in rows for key in row})
-        table = (
-            pa.Table.from_pylist([{key: row.get(key) for key in columns} for row in rows])
-            if rows
-            else pa.table(
-                {
-                    "instrument_id": pa.array([], type=pa.string()),
-                    "trade_id": pa.array([], type=pa.string()),
-                    "ts": pa.array([], type=pa.string()),
-                }
-            )
-        )
-        temporary = root / "projection.staging.parquet"
-        pq.write_table(table, temporary, compression="zstd")
-        with temporary.open("rb") as handle:
-            os.fsync(handle.fileno())
-            digest = hashlib.file_digest(handle, "sha256").hexdigest()
-        relative = digest + ".parquet"
+        content = "".join(canonical_json(row) + "\n" for row in rows).encode()
+        digest = hashlib.sha256(content).hexdigest()
+        relative = digest + ".jsonl"
         path = root / relative
-        temporary.replace(path)
-
-        verified = TradeArchive.read_verified(path, digest)
-        if canonical_json(verified) != canonical_json(rows):
-            raise ReplayEvidenceError("Parquet projection changed normalized source values")
+        if not path.exists():
+            _durable_file(path, content)
+        if [json.loads(line) for line in path.read_bytes().splitlines()] != rows:
+            raise ReplayEvidenceError("Sealed print file changed normalized source values")
         sources = provenance[iid]
-        entry = {
-            "relative_path": relative,
-            "sha256": digest,
-            "byte_length": path.stat().st_size,
-            "kind": "NORMALIZED_TRADES",
-            "instrument_id": iid,
-            "row_count": len(rows),
-            "source_ref": sources[0]["source_ref"],
-            "source_sha256": sources[0]["source_sha256"],
-            "source_refs": sources,
-            "guest_path": "/replay/evidence/" + relative,
-            **cutoff.fields("projection_cutoff"),
-            "coverage": coverage[iid],
-        }
-        files.append(entry)
-        rebuild.append(
+        files.append(
             {
-                "archive_id": "REPLAY-" + digest,
-                "path": str(path),
+                "relative_path": relative,
                 "sha256": digest,
-                "checksum_scope": "FILE",
+                "byte_length": len(content),
                 "kind": "NORMALIZED_TRADES",
                 "instrument_id": iid,
                 "row_count": len(rows),
-                "byte_length": path.stat().st_size,
-                "integrity": {"coverage": coverage[iid]},
-                "replay_guest_path": entry["guest_path"],
+                "source_ref": sources[0]["source_ref"],
+                "source_sha256": sources[0]["source_sha256"],
+                "source_refs": sources,
+                "guest_path": "/replay/evidence/" + relative,
                 **cutoff.fields("projection_cutoff"),
+                "coverage": coverage[iid],
             }
         )
     manifest = {
@@ -237,7 +162,7 @@ def seal_replay_evidence(inputs, run_id, destination, *, input_sha256, cutoff=No
         "guest_root": "/replay/evidence",
         "files": files,
         "identity_key": ["instrument_id", "trade_id"],
-        "writer": {"library": "pyarrow", "version": pa.__version__, "compression": "zstd"},
+        "format": "jsonl",
         **collection_clock().fields("sealed_at"),
     }
     encoded = (canonical_json(manifest) + "\n").encode()
@@ -253,7 +178,6 @@ def seal_replay_evidence(inputs, run_id, destination, *, input_sha256, cutoff=No
         "manifest": manifest,
         "manifest_sha256": hashlib.sha256(encoded).hexdigest(),
         "sealed_root": str(root),
-        "rebuild_manifests": rebuild,
     }
 
 
@@ -309,8 +233,6 @@ class ReplayEvidenceView:
             os.fsync(descriptor)
         finally:
             os.close(descriptor)
-        for manifest in sealed["rebuild_manifests"]:
-            manifest["path"] = str(root / Path(manifest["path"]).name)
         sealed["sealed_root"] = str(root)
         self.capture.clear()
         self.capture.update(sealed)

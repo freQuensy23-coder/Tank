@@ -112,7 +112,6 @@ async def test_retention_json_records_clock_and_offset_cutoffs(tmp_path):
         prune_market=AsyncMock(), prune_jobs=AsyncMock(), get=AsyncMock(return_value=None), put=AsyncMock()
     )
     scheduler = Scheduler(repo, SimpleNamespace(), None, None)
-    scheduler.prune_raw_files = AsyncMock(return_value=[])
     await scheduler.retention(parse_time(STAMP), tmp_path)
     metadata = json.loads((tmp_path / "RETENTION_COMPLETE.json").read_text())
     assert metadata["completed_at_prec"] == "COLLECTION_ONLY"

@@ -346,7 +346,7 @@ def validate(packet, market_record, *, private_mask_path=None, input_path=None):
             _verify_receipts(record, assembled)
         elif row["record"].get("artifact_kind") == "REFERENCE_MISSING_MARKET_INPUTS":
             validate_missing_market(row, packet, reference)
-        elif not market_record(row) and row["collection"] != "mkt.raw_archives":
+        elif not market_record(row):
             raise ValueError("First fixture cannot seed event, verdict, session, call or delivery state")
     for message in messages:
         source = sources.get(message.get("item_id"))

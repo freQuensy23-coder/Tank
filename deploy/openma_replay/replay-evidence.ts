@@ -14,7 +14,7 @@ const TOP_FIELDS = new Set([
   "guest_root",
   "files",
   "identity_key",
-  "writer",
+  "format",
   "sealed_at",
   "sealed_at_prec",
   "sealed_at_prec_reason",
@@ -143,16 +143,7 @@ export async function verifyReplayEvidence(options: {
       text(manifest.sealed_at),
     "sealing collection provenance is required",
   );
-  assert(
-    object(manifest.writer) &&
-      Object.keys(manifest.writer).every((key) =>
-        ["library", "version", "compression"].includes(key),
-      ) &&
-      manifest.writer.library === "pyarrow" &&
-      text(manifest.writer.version) &&
-      manifest.writer.compression === "zstd",
-    "unsupported projection writer",
-  );
+  assert(manifest.format === "jsonl", "unsupported projection format");
   assert(Array.isArray(manifest.files), "files must be an explicit list");
   assert(
     SHA.test(String(manifest.input_sha256)),
@@ -172,7 +163,7 @@ export async function verifyReplayEvidence(options: {
       "file hash is required",
     );
     assert(
-      entry.relative_path === entry.sha256 + ".parquet" &&
+      entry.relative_path === entry.sha256 + ".jsonl" &&
         !names.has(String(entry.relative_path)),
       "file must have a unique content-addressed flat path",
     );

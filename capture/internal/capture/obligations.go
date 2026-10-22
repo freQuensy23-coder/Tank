@@ -206,9 +206,6 @@ func (s *Service) runRequest(ctx context.Context, row map[string]any) {
 	case "HTTP_FETCH":
 		s.runFetch(ctx, row, budget, finish)
 		return
-	case "ARCHIVE_FETCH":
-		s.runArchive(ctx, row, budget, finish)
-		return
 	}
 	start, err1 := pytime.Parse(row["start"])
 	end, err2 := pytime.Parse(row["end"])

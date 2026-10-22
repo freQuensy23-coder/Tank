@@ -98,8 +98,7 @@ type Options struct {
 
 	Raw RawTrades
 
-	DataDir string
-	Log     *slog.Logger
+	Log *slog.Logger
 }
 
 type RawTrades interface {

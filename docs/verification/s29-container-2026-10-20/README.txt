@@ -1,2 +1,0 @@
-docker run --rm -v /etc/tank/secrets/x_session:/run/secrets/x_session:ro -v /srv/tank/src:/app/src:ro -v /srv/tank/config:/config:ro -v <dir>:/work -e TANK_CONFIG_DIR=/config --entrypoint /opt/tank/venv/bin/python tank-v0:server-r87-4bdae9b21870 /work/s29_poll.py /work/s29-poll.json
-(main 68e8656; image r87 with its own Chromium; x_session mounted read-only as compose.x.yaml does; throwaway profile and data dir)
