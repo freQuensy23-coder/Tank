@@ -1185,3 +1185,63 @@ async def test_ambiguous_forward_of_own_messages_is_refused():
         assert await inbox.forwarded_target(forward, BOT) is None
         forward["text"] = "другое"
         assert await inbox.forwarded_target(forward, BOT) is None
+
+
+@pytest.mark.asyncio
+async def test_prompt_is_sent_once_even_if_marking_the_forward_fails():
+    repo = MemoryRepository()
+    await seed(repo)
+    forward = message(
+        70,
+        date=1_800_010_000,
+        text="AAVE exploit card",
+        forward_origin={"type": "user", "sender_user": {"id": BOT}, "date": 1_800_000_000},
+    )
+    telegram = FakeTelegram([{"update_id": 1, "message": forward}])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        await inbox.poll(timeout=0)
+        row = await repo.get("ops.telegram_messages", f"{USER}:70")
+        target = await inbox.forwarded_target(row["message"], BOT)
+        original = inbox.mark
+
+        async def broken(*args, **kwargs):
+            raise RuntimeError("lost write")
+
+        inbox.mark = broken
+        with pytest.raises(RuntimeError):
+            await inbox.prompt(row, target)
+        inbox.mark = original
+        await inbox.prompt(row, target)
+    assert [body["text"] for body in telegram.sent] == [PROMPT_TEXT]
+    assert (await repo.get("ops.telegram_messages", f"{USER}:70"))["status"] == "PROMPTED"
+
+
+def test_update_tools_republishes_when_a_tool_definition_changes(tmp_path):
+    import importlib.util
+    import shutil
+    from pathlib import Path
+
+    root = Path(__file__).parents[1]
+    spec = importlib.util.spec_from_file_location("prepare_openma", root / "deploy/prepare_openma.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    config = tmp_path / "config"
+    shutil.copytree(root / "config/skills/tank-event-analyst", config / "skills/tank-event-analyst")
+    (config / "openma.yaml").write_text("agent_id: agt_1\n")
+    stale = [dict(tool) for tool in module.analyst_tools(config)]
+    stale[-1] = {**stale[-1], "description": "old"}
+    stale.append({"type": "custom", "name": "retired_tool", "description": "x", "input_schema": {}})
+    state = {"tools": stale, "version": 7}
+    posts = []
+
+    def handler(request):
+        if request.method == "POST":
+            posts.append(json.loads(request.content))
+            state.update(tools=posts[-1]["tools"], version=8)
+        return httpx.Response(200, json={"id": "agt_1", **state})
+
+    with httpx.Client(base_url="http://oma", transport=httpx.MockTransport(handler)) as client:
+        result = module.update_tools(config, client=client)
+    assert result["status"] == "UPDATED" and result["removed"] == ["retired_tool"]
+    assert result["changed"] == [stale[-2]["name"]] and result["added"] == []

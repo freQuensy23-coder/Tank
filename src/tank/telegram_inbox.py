@@ -284,8 +284,8 @@ class TelegramInbox:
                 try:
                     await self.handle(current, now)
                 except FileTooLarge:
-                    await self.notice(current, TOO_LARGE_TEXT)
                     await self.mark(current, "IGNORED", reason="FILE_TOO_LARGE")
+                    await self.notice(current, TOO_LARGE_TEXT)
 
     async def authorized(self, message):
         chat = message["chat"]
@@ -322,8 +322,8 @@ class TelegramInbox:
         text = message.get("text") or message.get("caption") or ""
         attachment = media(message)
         if attachment and attachment["size"] > UPLOAD_LIMIT:
-            await self.notice(row, TOO_LARGE_TEXT)
             await self.mark(row, "IGNORED", reason="FILE_TOO_LARGE")
+            await self.notice(row, TOO_LARGE_TEXT)
             return
         reply = message.get("reply_to_message") or {}
         age = now - message.get("date", now)
@@ -333,8 +333,8 @@ class TelegramInbox:
                 return
             target = await self.forwarded_target(message, bot)
             if target is None:
-                await self.notice(row, NO_SESSION_TEXT)
                 await self.mark(row, "UNMATCHED")
+                await self.notice(row, NO_SESSION_TEXT)
                 if companion:
                     await self.mark(companion, "PAIRED", paired_with=row["message_id"])
                 return
@@ -356,8 +356,8 @@ class TelegramInbox:
                 await self.question(row, target)
                 return
             if (reply.get("from") or {}).get("id") == bot:
-                await self.notice(row, NO_SESSION_TEXT)
                 await self.mark(row, "UNMATCHED")
+                await self.notice(row, NO_SESSION_TEXT)
                 return
         if message["chat"].get("type") != "private" or not (text or attachment):
             await self.mark(row, "IGNORED", reason="NOT_A_QUESTION")
@@ -366,8 +366,8 @@ class TelegramInbox:
             return
         if age < PAIR_WINDOW_S:
             return
-        await self.notice(row, HINT_TEXT)
         await self.mark(row, "IGNORED", reason="NO_REFERENCE")
+        await self.notice(row, HINT_TEXT)
 
     async def companion(self, row, *, forwarded):
         """The comment sent with a forward (or the forward sent with a comment) by the same user."""
@@ -643,25 +643,42 @@ class TelegramInbox:
                 **collection_clock(utcnow()).fields("asked_at"),
             },
         )
-        result = await self.send(row["chat_id"], PROMPT_TEXT, row["message_id"])
-        await self.repo.put(
-            "out.deliveries",
-            new_id("delivery"),
-            {
+        prior = [
+            delivery
+            async for delivery in self.repo.iter_all(
+                "out.deliveries",
+                filters={"question_id": question_id, "channel": ANSWER_CHANNEL, "purpose": "PROMPT"},
+            )
+        ]
+        if not prior:
+            ledger = {
                 "channel": ANSWER_CHANNEL,
                 "question_id": question_id,
                 "session_id": target["session_id"],
                 "purpose": "PROMPT",
                 "chat_id": row["chat_id"],
-                "status": "SENT",
                 "attempt": 1,
-                "message_ref": str(result["message_id"]),
-                "telegram_date": result.get("date"),
                 "text": target.get("text"),
-                **collection_clock(utcnow()).fields("at"),
-            },
-            immutable=True,
-        )
+            }
+            await self.repo.put(
+                "out.deliveries",
+                new_id("delivery"),
+                {**ledger, "status": "GENERATED", **collection_clock(utcnow()).fields("at")},
+                immutable=True,
+            )
+            result = await self.send(row["chat_id"], PROMPT_TEXT, row["message_id"])
+            await self.repo.put(
+                "out.deliveries",
+                new_id("delivery"),
+                {
+                    **ledger,
+                    "status": "SENT",
+                    "message_ref": str(result["message_id"]),
+                    "telegram_date": result.get("date"),
+                    **collection_clock(utcnow()).fields("at"),
+                },
+                immutable=True,
+            )
         await self.mark(
             row,
             "PROMPTED",

@@ -200,16 +200,35 @@ def update_tools(config, *, client=None):
         current.raise_for_status()
         agent = current.json().get("data", current.json())
         wanted = analyst_tools(config)
-        names = {tool.get("name") for tool in agent.get("tools", []) if tool.get("type") == "custom"}
-        missing = sorted({tool["name"] for tool in wanted if tool.get("type") == "custom"} - names)
-        if not missing:
+
+        def custom(tools):
+            return {
+                tool.get("name"): json.dumps(
+                    {"description": tool.get("description"), "input_schema": tool.get("input_schema")},
+                    sort_keys=True,
+                )
+                for tool in tools
+                if tool.get("type") == "custom"
+            }
+
+        deployed, desired = custom(agent.get("tools", [])), custom(wanted)
+        if deployed == desired:
             return {"status": "CURRENT", "agent_version": agent.get("version")}
+        missing = sorted(set(desired) - set(deployed))
+        changed = sorted(name for name in set(desired) & set(deployed) if desired[name] != deployed[name])
+        removed = sorted(set(deployed) - set(desired))
         response = client.post(
             "/v1/agents/" + settings["agent_id"], json={"tools": wanted, "version": agent["version"]}
         )
         response.raise_for_status()
         updated = response.json().get("data", response.json())
-        return {"status": "UPDATED", "agent_version": updated.get("version"), "added": missing}
+        return {
+            "status": "UPDATED",
+            "agent_version": updated.get("version"),
+            "added": missing,
+            "changed": changed,
+            "removed": removed,
+        }
     finally:
         if owns:
             client.close()
