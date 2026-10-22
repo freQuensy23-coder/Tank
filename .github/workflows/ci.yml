@@ -107,6 +107,7 @@ jobs:
           - image: tank-openma
             context: ./vendor/openma
             file: vendor/openma/Dockerfile
+            build_args: SKIP_CONSOLE=1
           - image: tank-sandbox
             context: .
             file: deploy/sandbox.Dockerfile
@@ -135,7 +136,9 @@ jobs:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           push: ${{ github.event_name == 'push' }}
-          build-args: GIT_SHA=${{ github.sha }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            ${{ matrix.build_args }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
