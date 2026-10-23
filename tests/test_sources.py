@@ -585,7 +585,7 @@ async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path):
                         }
                     ],
                 },
-                {"source_id": "S29", "feeds": [{"url": "https://x.com/i/lists/PRIVATE", "kind": "x"}]},
+                {"source_id": "S29", "feeds": [{"url": "https://api.apify.example/run-sync", "kind": "x"}]},
             ],
         ),
         http=http,
@@ -594,7 +594,7 @@ async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path):
     assert [r["status"] for r in results] == ["PASS", "HTTP_ERROR", "UNAVAILABLE", "UNAVAILABLE"]
     assert results[0]["item_count"] == 1 and results[1]["http_status"] == 403
     assert len(calls) == 2 and not repo.jobs and not repo.rows
-    assert "PRIVATE" not in json.dumps(results)
+    assert results[3]["reason"] == "X runs through a paid Apify actor run; excluded from the HTTP smoke"
     assert results[0]["payload_sha256"] == sha256(RSS) and not list(tmp_path.rglob("*.zst"))
 
     await svc.check()
@@ -649,62 +649,6 @@ def test_robinhood_canonical_article_metadata_same_origin_only():
     rows = parsers.article_links(html, feed)
     assert len(rows) == 1 and rows[0]["title"] == "Protocol release"
     assert rows[0]["url"] == "https://robinhood.com/us/en/newsroom/protocol-release"
-
-
-@pytest.mark.browser
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_x_real_browser_local_dom_full_quote_repost_and_checkpoint(tmp_path):
-    """Synthetic X DOM executed in Chromium; no real X request/profile is used."""
-    import os
-
-    if os.getenv("TANK_BROWSER_TESTS") != "1":
-        pytest.skip("Opt-in real Chromium test requires TANK_BROWSER_TESTS=1")
-    from tank.sources.xsensor import XSensor as BrowserReader
-
-    reader = BrowserReader(
-        SimpleNamespace(
-            x_profile_dir=tmp_path / "synthetic-x-profile",
-            x_session=None,
-        )
-    )
-    list_html = """<html><body>
-      <article><a href="/actual_author/status/100"><time datetime="2026-10-17T12:00:00Z"></time></a>
-      <div data-testid="tweetText" id="original">Short</div>
-      <button data-testid="tweet-text-show-more-link" onclick="document.getElementById('original').textContent='Full original text beyond truncation';this.remove()">Show more</button>
-      <a href="/quoted_author/status/50">Quote</a><div data-testid="tweetText">Truncated quote</div></article>
-      <article><div data-testid="socialContext"><a href="/tracked_reposter">Tracked reposter reposted</a></div>
-      <a href="/original_poster/status/99"><time datetime="2026-10-17T11:00:00Z"></time></a><div data-testid="tweetText">Original reposted text</div></article>
-      <article><a href="/previous/status/98"><time datetime="2026-10-17T10:00:00Z"></time></a><div data-testid="tweetText">Previously seen</div></article>
-    </body></html>"""
-    quote_html = """<article><a href="/quoted_author/status/50"><time datetime="2026-10-16T10:00:00Z"></time></a><div data-testid="tweetText">Complete quoted post text from its status page</div></article>"""
-    try:
-        await reader.open()
-
-        async def route(request_route):
-            url = request_route.request.url
-            if "/i/lists/local-test" in url:
-                await request_route.fulfill(status=200, content_type="text/html", body=list_html)
-            elif "/quoted_author/status/50" in url:
-                await request_route.fulfill(status=200, content_type="text/html", body=quote_html)
-            else:
-                await request_route.abort()
-
-        await reader.context.route("**/*", route)
-        rows, reached = await reader.posts("local-test", "98")
-        assert reached and [r["external_id"] for r in rows] == ["100", "99"]
-        assert (
-            rows[0]["author"] == "actual_author" and rows[0]["text"] == "Full original text beyond truncation"
-        )
-        assert rows[0]["quoted"] == "Complete quoted post text from its status page"
-        assert rows[0]["related_authors"] == [{"author": "quoted_author", "status_id": "50"}]
-        assert (
-            rows[1]["author"] == "original_poster"
-            and rows[1]["repost_context"] == "Tracked reposter reposted"
-        )
-        assert rows[1]["url"] == "https://x.com/original_poster/status/99"
-    finally:
-        await reader.close()
 
 
 @pytest.mark.integration
@@ -968,233 +912,6 @@ async def test_control_ticks_do_not_overpoll_failed_normal_cadence(tmp_path, mon
     await http.aclose()
 
 
-@pytest.mark.browser
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_x_storage_state_seeds_persistent_profile_once_without_remote_reads(tmp_path):
-    import os
-    import time
-
-    if os.getenv("TANK_BROWSER_TESTS") != "1":
-        pytest.skip("Requires TANK_BROWSER_TESTS=1")
-    from tank.sources.xsensor import XSensor as BrowserReader
-
-    secret = tmp_path / "synthetic-x-secret.json"
-    profile = tmp_path / "profile"
-    secret.write_text(
-        json.dumps(
-            {
-                "cookies": [
-                    {
-                        "name": "auth_token",
-                        "value": "synthetic-auth-only",
-                        "domain": ".x.com",
-                        "path": "/",
-                        "expires": time.time() + 86400,
-                        "httpOnly": True,
-                        "secure": True,
-                        "sameSite": "Lax",
-                    },
-                    {
-                        "name": "unrelated_private_cookie",
-                        "value": "must-not-import",
-                        "domain": ".unrelated.example",
-                        "path": "/",
-                        "expires": time.time() + 86400,
-                        "secure": True,
-                        "sameSite": "Lax",
-                    },
-                ],
-                "origins": [
-                    {
-                        "origin": "https://x.com",
-                        "localStorage": [{"name": "synthetic-key", "value": "synthetic-local-only"}],
-                    },
-                    {
-                        "origin": "https://unrelated.example",
-                        "localStorage": [{"name": "do-not-import", "value": "other-origin"}],
-                    },
-                ],
-            }
-        )
-    )
-    config = SimpleNamespace(x_profile_dir=profile, x_session=secret.read_text())
-    reader = BrowserReader(config)
-    try:
-        await reader.open()
-        cookies = await reader.context.cookies()
-        assert [(c["name"], c["value"]) for c in cookies] == [("auth_token", "synthetic-auth-only")]
-        page = await reader.context.new_page()
-        await page.route(
-            "**/*", lambda route: route.fulfill(status=200, content_type="text/html", body="<html></html>")
-        )
-        await page.goto("https://x.com")
-        assert await page.evaluate("localStorage.getItem('synthetic-key')") == "synthetic-local-only"
-        await page.close()
-        marker = profile / ".tank-x-session-seeded.json"
-        assert set(json.loads(marker.read_text())) == {"version", "seeded_at"}
-        assert marker.stat().st_mode & 0o777 == 0o600
-        assert profile.stat().st_mode & 0o777 == 0o700
-    finally:
-        await reader.close()
-
-    secret.write_text("INVALID SECRET MUST NOT BE READ AFTER INITIALIZATION")
-    reader = BrowserReader(config)
-    try:
-        await reader.open()
-        assert any(
-            c["name"] == "auth_token" and c["value"] == "synthetic-auth-only"
-            for c in await reader.context.cookies()
-        )
-        page = await reader.context.new_page()
-        await page.route(
-            "**/*", lambda route: route.fulfill(status=200, content_type="text/html", body="<html></html>")
-        )
-        await page.goto("https://x.com")
-        assert await page.evaluate("localStorage.getItem('synthetic-key')") == "synthetic-local-only"
-        await page.close()
-    finally:
-        await reader.close()
-
-
-@pytest.mark.browser
-@pytest.mark.integration
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "state",
-    [
-        {
-            "cookies": [
-                {
-                    "name": "auth_token",
-                    "value": "NEVER_PRINT_TEST_SECRET",
-                    "domain": ".x.com",
-                    "path": "/",
-                    "expires": 1,
-                }
-            ]
-        },
-        {
-            "cookies": [
-                {
-                    "name": "auth_token",
-                    "value": "NEVER_PRINT_TEST_SECRET",
-                    "domain": ".unrelated.example",
-                    "path": "/",
-                    "expires": -1,
-                }
-            ]
-        },
-        {"cookies": "NEVER_PRINT_TEST_SECRET"},
-    ],
-)
-async def test_invalid_expired_x_bootstrap_fails_without_secret_leak(tmp_path, state):
-    import os
-
-    if os.getenv("TANK_BROWSER_TESTS") != "1":
-        pytest.skip("Requires TANK_BROWSER_TESTS=1")
-    from tank.sources.xsensor import XSensor as BrowserReader
-
-    secret = tmp_path / "secret"
-    secret.write_text(json.dumps(state))
-    profile = tmp_path / "profile"
-    reader = BrowserReader(SimpleNamespace(x_profile_dir=profile, x_session=secret.read_text()))
-    with pytest.raises(ValueError, match="invalid, expired, or unreadable") as error:
-        await reader.open()
-    assert "NEVER_PRINT_TEST_SECRET" not in str(error.value)
-    assert not (profile / ".tank-x-session-seeded.json").exists()
-    assert reader.context is None and reader.driver is None
-
-
-@pytest.mark.browser
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_x_media_empty_quotes_repost_priority_raw_html_and_deleted_checkpoint(tmp_path):
-    import os
-
-    if os.getenv("TANK_BROWSER_TESTS") != "1":
-        pytest.skip("Requires TANK_BROWSER_TESTS=1")
-    from pathlib import Path
-
-    from selectolax.parser import HTMLParser
-
-    from tank.sources.xsensor import XSensor as BrowserReader
-
-    repo = Repo()
-    config = settings(
-        tmp_path,
-        [
-            {
-                "source_id": "S29",
-                "name": "X",
-                "feeds": [{"kind": "x", "url": "https://x.com/i/lists/synthetic"}],
-                "list_id": "synthetic",
-            }
-        ],
-    )
-    config.x_profile_dir = tmp_path / "synthetic-profile"
-    config.x_session = None
-    svc = SourceService(repo, config)
-    svc.accounts = {
-        "official_org": {"role": "ORGANIZATION", "entity_id": "uniswap"},
-        "other_account": {"role": "OTHER", "entity_id": "other"},
-    }
-    await repo.put(
-        "ops.source_checkpoints", "S29:0", {"status_id": "777-deleted", "recent_status_ids": ["98"]}
-    )
-    html = """<html><body><article><div data-testid="socialContext"><a href="/official_org">Official reposted</a></div><a href="/media_original/status/100"><time datetime="2026-10-17T12:00:00Z"></time></a><div data-testid="tweetPhoto"><img alt="Protocol diagram" src="/synthetic.png"></div><div role="link"><a href="/quoted_q/status/51">Quoted author</a><div data-testid="tweetText">Shown quote text</div></div></article><article><div data-testid="socialContext"><a href="/other_account">Other reposted</a></div><a href="/original_poster/status/99"><time datetime="2026-10-17T11:00:00Z"></time></a><div data-testid="tweetText">Actual original text</div><a href="/empty_quote/status/50">Quoted media</a></article><article><a href="/old/status/98"><time datetime="2026-10-17T10:00:00Z"></time></a><div data-testid="tweetText">Old known post</div></article></body></html>"""
-    quote = '<article><a href="/empty_quote/status/50"><time datetime="2026-10-16T12:00:00Z"></time></a><div data-testid="tweetPhoto"><img alt="Quote diagram"></div></article>'
-    svc.xsensor = BrowserReader(config)
-    try:
-        await svc.xsensor.open()
-
-        async def route(r):
-            if "/i/lists/synthetic" in r.request.url:
-                await r.fulfill(status=200, content_type="text/html", body=html)
-            elif "/empty_quote/status/50" in r.request.url:
-                await r.fulfill(status=200, content_type="text/html", body=quote)
-            elif "/quoted_q/status/51" in r.request.url:
-                await r.fulfill(
-                    status=200,
-                    content_type="text/html",
-                    body='<article><a href="/quoted_q/status/51"><time datetime="2026-10-16T12:00:00Z"></time></a><div data-testid="tweetText">Full quoted text with its original author</div></article>',
-                )
-            else:
-                await r.abort()
-
-        await svc.xsensor.context.route("**/*", route)
-        result = await svc.poll_once("S29")
-        assert result["status"] == "HEALTHY" and result["items"] == 2
-        records = [v for (c, _), v in repo.rows.items() if c == "ingest.source_items"]
-        media = next(r for r in records if r["external_id"] == "100")
-        other = next(r for r in records if r["external_id"] == "99")
-        assert (
-            media["text"] == ""
-            and media["author"] == "media_original"
-            and media["monitored_author"] == "official_org"
-        )
-        assert media["relevance"]["decision"] == "ALWAYS" and media["author_role"] == "ORGANIZATION"
-        assert media["quoted_posts"] == [
-            {"status_id": "51", "author": "quoted_q", "text": "Full quoted text with its original author"}
-        ]
-        assert other["author_role"] == "OTHER" and other["deferrable"]
-        assert other["quoted_unavailable"] == [{"status_id": "50", "reason": "MEDIA_ONLY_OR_EMPTY"}]
-        raw = zstandard.ZstdDecompressor().decompress(Path(media["raw_ref"]).read_bytes())
-
-        articles = HTMLParser(raw).css("article")
-        assert len(articles) == 1
-        assert articles[0].css_first('a[href="/media_original/status/100"]') is not None
-        assert b"Protocol diagram" in raw
-        assert b"/original_poster/status/99" not in raw and b"Old known post" not in raw
-        assert (await repo.get("ops.source_checkpoints", "S29:0"))["status_id"] == "100"
-        assert [(args[0], kw["priority"]) for args, kw in repo.jobs] == [
-            ("ROUTE_ITEM", 1),
-            ("FILTER_ITEM", 2),
-        ]
-    finally:
-        await svc.close()
-
-
 def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path):
     from tank.settings import Settings
 
@@ -1288,7 +1005,7 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(tmp_path, m
 @pytest.mark.browser
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_public_renderer_is_isolated_from_x_profile_and_secret(tmp_path):
+async def test_public_renderer_is_isolated_from_x_settings(tmp_path):
     import os
 
     if os.getenv("TANK_BROWSER_TESTS") != "1":
@@ -1318,47 +1035,15 @@ async def test_public_renderer_is_isolated_from_x_profile_and_secret(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_xsensor_has_own_feed_loop_and_service_delegates_s29(tmp_path, monkeypatch):
-    import asyncio
-
-    from tank.sources.xsensor import XSensor
-
-    sensor = XSensor(SimpleNamespace(x_profile_dir=tmp_path / "unused-x-profile", x_session=None))
-    stop = asyncio.Event()
-    polls = []
-
-    async def poll():
-        polls.append("X")
-        stop.set()
-
-    await sensor.run(stop, poll)
-    assert polls == ["X"] and sensor.context is None
-    source = {"source_id": "S29", "feeds": [{"kind": "x", "url": "https://x.com/i/lists/synthetic"}]}
-    service = SourceService(Repo(), settings(tmp_path, [source]))
-    stop = asyncio.Event()
-    delegated = []
-
-    async def run(event, poll_callback):
-        delegated.append((event, callable(poll_callback)))
-        event.set()
-
-    monkeypatch.setattr(service.xsensor, "run", run)
-    await service.run(stop)
-    assert delegated == [(stop, True)]
-
-
-@pytest.mark.asyncio
 async def test_disabled_x_never_reads_network_profile_or_account_list(tmp_path, monkeypatch):
     import asyncio
     from unittest.mock import AsyncMock
 
-    source = {"source_id": "S29", "feeds": [{"kind": "x", "url": "https://x.com/i/lists/{list_id}"}]}
+    source = {"source_id": "S29", "feeds": [{"kind": "x", "url": "https://api.apify.example/run-sync"}]}
     config = settings(tmp_path, [source])
     config.x_enabled = False
     service = SourceService(Repo(), config)
-    sensor_run = AsyncMock(side_effect=AssertionError("Disabled X must not start"))
     sensor_posts = AsyncMock(side_effect=AssertionError("Disabled X must not poll"))
-    monkeypatch.setattr(service.xsensor, "run", sensor_run)
     monkeypatch.setattr(service.xsensor, "posts", sensor_posts)
     result = await service.poll_once("S29")
     assert result["status"] == "DISABLED" and result["reason"] == "X_DISABLED_BY_OPERATOR"
@@ -1367,7 +1052,6 @@ async def test_disabled_x_never_reads_network_profile_or_account_list(tmp_path, 
     stop = asyncio.Event()
     stop.set()
     await service.run(stop)
-    sensor_run.assert_not_called()
     sensor_posts.assert_not_called()
     assert service.repo.rows == {}
 
