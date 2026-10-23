@@ -1505,7 +1505,7 @@ Rate limit ⚙: at most one update per event per 15 min, except START, EXIT and 
 
 - The card is template-first: classes, numbers, windows, units, enums and condition texts come from structured data. The agent supplies only the verdict sentence and the 2–3 WHY bullets in `publish_card`, written from the facts the tools returned.
 - The VERIFIED / NOT VERIFIED line is built from the claims: verified claims with their source; unverified claims with what is missing (e.g., "no OpenAI or World announcement").
-- At most ⚙3 token blocks; card length ≤ ⚙3,500 characters.
+- At most ⚙3 token blocks; card length ≤ ⚙5,000 characters.
 - Missing fields print as `n/a (<reason>)`.
 
 Wording rules. They are written in the skill: the agent follows them in the verdict and WHY bullets, and the template's own text is written so it never breaks them. Tank does not check the card's prose; a broken rule is found in review (§11.5).
@@ -1527,7 +1527,7 @@ Wording rules. They are written in the skill: the agent follows them in the verd
 
 ### 7.6 Delivery and ledger
 
-- Telegram Bot API `sendMessage`, `parse_mode=HTML`, chat "Tank Alerts" for cards and "Tank Ops" for notices. Updates set `reply_parameters.message_id` to the first card's message.
+- Telegram Bot API sendRichMessage with explicit rich_message.blocks for new cards in "Tank Alerts"; a compact, bordered table replaces the abbreviated Scores line. Its seven rows show the full dimension name, score out of 10 (or "Not assessed"), and saved rationale. Freeze the rich payload in the alert and evidence bundle before queueing delivery. Keep a readable text representation for follow-up context. Legacy cards and "Tank Ops" notices use sendMessage with parse_mode=HTML. Updates set reply_parameters.message_id to the first card. The rendered card, including table cells, is limited to 5,000 characters and Telegram's 500-block limit.
 - Before sending, the ledger is checked for (`alert_id`, `version`, `channel`) = SENT; if present, nothing is re-sent.
 - Retries with exponential backoff (1, 2, 4, 8, 16 s), honoring rate-limit `retry_after`. After the last attempt the status is FAILED and Tank Ops gets DELIVERY_FAILED.
 - Operator chat: delivery failure; daily heartbeat at ⚙08:00 UTC (alerts in 24 h, hot-set size, queue lag, LLM spending).
@@ -1697,7 +1697,7 @@ Every number the rules use, with its basis. A number without a basis is not used
 | Relative | History behind normal ranges and β | Stored base tier, at least 7 d | 90-day base tier (01 §9); 7 d = one weekly cycle |
 | | β adjustment | (2/3)·β + 1/3 | Blume adjustment (standard) |
 | Lifecycle | Event closes; open call expires | 7 d without news and no pending milestone; 7 d | Longest forecast horizon (01 FR-O-01) |
-| Alerting | Update rate limit; card max chars | 15 min; 3,500 | 01 FR-A-04, FR-A-05 |
+| Alerting | Update rate limit; card max chars | 15 min; 5,000 | 01 FR-A-04, FR-A-05 |
 | | Heartbeat | 08:00 UTC | 01 §7.2 |
 | Capture & polling | Per-source intervals; escalated interval; escalation expiry | 01 §4.2 max delays (02 §3); 15 s; 2 h | 01 §4.2, FR-D-02 |
 | | Hot-set cap | 15 | 01 FR-B-03 |
