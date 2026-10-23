@@ -2655,43 +2655,56 @@ async def test_instrument_snapshot_written_only_when_it_changes(tmp_path, collec
         assert repo.snapshot_writes == 2
 
 
-def test_one_poll_of_a_venue_list_is_one_item_however_many_symbols_changed():
+def test_one_poll_of_a_venue_list_groups_symbols_that_made_the_same_move():
     from tank.sources.polling import instrument_changes
 
     feed = {"url": "https://api.kraken.com/0/public/AssetPairs", "venue": "kraken", "market_type": "SPOT"}
-    previous = {
-        "ABCUSD": {"status": "online"},
-        "DEFUSD": {"status": "online"},
-        "GHIUSD": {"status": "online"},
-    }
-    snapshot = {
-        "ABCUSD": {"status": "cancel_only"},
-        "DEFUSD": {"status": "cancel_only"},
-        "GHIUSD": {"status": "online"},
-    }
     pages = [(b"page", "2026-10-23T14:00:00Z")]
-    found_on = dict.fromkeys(snapshot, 0)
-    rows, digest = instrument_changes(snapshot, previous, feed, pages, found_on, "2026-10-23T14:00:05Z")
-    assert len(rows) == 1
-    row = rows[0]
-    assert row["change"] == "STATE_UPDATE"
-    assert row["title"] == "kraken SPOT: 2 instrument changes (2 STATE_UPDATE)"
-    assert row["external_id"] == f"kraken|SPOT|changes|{digest}"
-    assert row["observed_at"] == "2026-10-23T14:00:00Z" and row["_payload"] == b"page"
-    assert [c["symbol"] for c in json.loads(row["text"])["changes"]] == ["ABCUSD", "DEFUSD"]
-
-    del snapshot["GHIUSD"]
+    online = {"status": "online"}
+    cancel = {"status": "cancel_only"}
+    previous = {"ABCUSD": online, "ABCEUR": online, "DEFUSD": online, "GHIUSD": online}
+    snapshot = {
+        "ABCUSD": cancel,
+        "ABCEUR": cancel,
+        "DEFUSD": cancel,
+        "GHIUSD": online,
+        "NEWUSD": {"base": "NEW", "status": "online"},
+        "NEWEUR": {"base": "NEW", "status": "online"},
+        "OTHUSD": {"base": "OTH", "status": "online"},
+    }
     rows, _ = instrument_changes(
         snapshot, previous, feed, pages, dict.fromkeys(snapshot, 0), "2026-10-23T14:00:05Z"
     )
-    assert rows[0]["change"] == "MIXED" and rows[0]["observed_at"] == "2026-10-23T14:00:05Z"
-    assert rows[0]["title"] == "kraken SPOT: 3 instrument changes (1 REMOVED, 2 STATE_UPDATE)"
+    by_title = {row["title"]: row for row in rows}
+    assert sorted(by_title) == [
+        "OTHUSD instrument change",
+        "kraken SPOT: 2 NEW instruments ADDED",
+        "kraken SPOT: 3 instruments STATE_UPDATE online → cancel_only",
+    ]
+    delisting = by_title["kraken SPOT: 3 instruments STATE_UPDATE online → cancel_only"]
+    assert delisting["change"] == "STATE_UPDATE"
+    assert delisting["observed_at"] == "2026-10-23T14:00:00Z" and delisting["_payload"] == b"page"
+    assert [c["symbol"] for c in json.loads(delisting["text"])["changes"]] == ["ABCEUR", "ABCUSD", "DEFUSD"]
+    assert by_title["kraken SPOT: 2 NEW instruments ADDED"]["change"] == "ADDED"
+    assert json.loads(by_title["OTHUSD instrument change"]["text"])["before"] is None
 
-    one = {
-        "ABCUSD": {"status": "cancel_only"},
-        "DEFUSD": {"status": "online"},
-        "GHIUSD": {"status": "online"},
-    }
-    rows, _ = instrument_changes(one, previous, feed, pages, dict.fromkeys(one, 0), "2026-10-23T14:00:05Z")
-    assert [row["title"] for row in rows] == ["ABCUSD instrument change"]
-    assert json.loads(rows[0]["text"]) == {"before": {"status": "online"}, "after": {"status": "cancel_only"}}
+
+def test_a_grouped_change_keeps_its_own_identity_when_the_list_returns_to_an_earlier_snapshot():
+    from tank.sources.polling import instrument_changes
+
+    feed = {"url": "https://api.kraken.com/0/public/AssetPairs", "venue": "kraken", "market_type": "SPOT"}
+    pages = [(b"page", "2026-10-23T14:00:00Z")]
+    online, cancel = {"status": "online"}, {"status": "cancel_only"}
+    first = {"A": online, "B": online, "C": online, "D": online}
+    second = {"A": cancel, "B": cancel, "C": online, "D": online}
+    third = {"A": cancel, "B": cancel, "C": cancel, "D": cancel}
+
+    def ids(snapshot, previous):
+        rows, digest = instrument_changes(snapshot, previous, feed, pages, dict.fromkeys(snapshot, 0), "x")
+        return [row["external_id"] for row in rows], digest
+
+    forward, at_second = ids(second, first)
+    other, _ = ids(third, second)
+    back, back_digest = ids(second, third)
+    assert back_digest == at_second
+    assert len({*forward, *other, *back}) == 3

@@ -7,7 +7,6 @@ in acquisition order; failed originals stay in the checkpoint's pending batches.
 import asyncio
 import json
 import re
-from collections import Counter
 from copy import deepcopy
 from dataclasses import asdict
 from datetime import timedelta
@@ -30,8 +29,9 @@ def count_read(state, name, *, ok, n=1):
 def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
     """S14 diff against the previous snapshot and the snapshot digest (CPU-bound, runs in a thread).
 
-    All symbols that changed in one poll of a venue list form one item, so a venue-wide change such
-    as a delisting reaches routing and the analyst once instead of once per symbol.
+    Symbols that made the same move in one poll of a venue list form one item: one status
+    transition (a venue-wide delisting reaches routing and the analyst once, not once per pair)
+    or one newly listed base asset. Independent moves stay separate items.
     """
     if previous is not None and str(feed.get("venue", "")).lower() == "coinbase":
         previous = deepcopy(previous)
@@ -52,43 +52,66 @@ def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
     def kind(current, old):
         return "REMOVED" if current is None else "ADDED" if old is None else "STATE_UPDATE"
 
-    on_pages = {found_on[symbol] for symbol, _, _ in changed if symbol in found_on}
-    if len(on_pages) == 1 and all(symbol in found_on for symbol, _, _ in changed):
-        payload, observed_at = pages[on_pages.pop()]
-    else:
-        payload, observed_at = b"\n".join(p for p, _ in pages), completed_at
+    def status(entry):
+        return (entry or {}).get("status")
+
+    def action(change):
+        _, current, old = change
+        if old is None:
+            return ("ADDED", (current or {}).get("base"))
+        return (kind(current, old), status(old), status(current))
+
     venue, market_type = feed.get("venue"), feed.get("market_type")
-    row = {"url": feed["url"], "published_at": None, "observed_at": observed_at, "_payload": payload}
-    if len(changed) == 1:
-        symbol, current, old = changed[0]
-        return [
+    groups = {}
+    for change in changed:
+        groups.setdefault(action(change), []).append(change)
+    rows = []
+    for key, group in groups.items():
+        on_pages = {found_on[symbol] for symbol, _, _ in group if symbol in found_on}
+        if len(on_pages) == 1 and all(symbol in found_on for symbol, _, _ in group):
+            payload, observed_at = pages[on_pages.pop()]
+        else:
+            payload, observed_at = b"\n".join(p for p, _ in pages), completed_at
+        row = {
+            "url": feed["url"],
+            "published_at": None,
+            "observed_at": observed_at,
+            "_payload": payload,
+            "change": key[0],
+        }
+        if len(group) == 1:
+            symbol, current, old = group[0]
+            rows.append(
+                {
+                    **row,
+                    "external_id": f"{venue}|{market_type}|{symbol}|{sha256(current)}",
+                    "title": f"{symbol} instrument change",
+                    "text": json.dumps({"before": old, "after": current}, sort_keys=True),
+                }
+            )
+            continue
+        what = (
+            f"{key[1]} instruments ADDED"
+            if key[0] == "ADDED"
+            else f"instruments {key[0]} {key[1]} → {key[2]}"
+        )
+        rows.append(
             {
                 **row,
-                "external_id": f"{venue}|{market_type}|{symbol}|{sha256(current)}",
-                "title": f"{symbol} instrument change",
-                "text": json.dumps({"before": old, "after": current}, sort_keys=True),
-                "change": kind(current, old),
+                "external_id": f"{venue}|{market_type}|changes|{sha256(group)}",
+                "title": f"{venue} {market_type}: {len(group)} {what}",
+                "text": json.dumps(
+                    {
+                        "changes": [
+                            {"symbol": symbol, "change": key[0], "before": old, "after": current}
+                            for symbol, current, old in group
+                        ]
+                    },
+                    sort_keys=True,
+                ),
             }
-        ], digest
-    kinds = Counter(kind(current, old) for _, current, old in changed)
-    counts = ", ".join(f"{n} {name}" for name, n in sorted(kinds.items()))
-    return [
-        {
-            **row,
-            "external_id": f"{venue}|{market_type}|changes|{digest}",
-            "title": f"{venue} {market_type}: {len(changed)} instrument changes ({counts})",
-            "text": json.dumps(
-                {
-                    "changes": [
-                        {"symbol": symbol, "change": kind(current, old), "before": old, "after": current}
-                        for symbol, current, old in changed
-                    ]
-                },
-                sort_keys=True,
-            ),
-            "change": next(iter(kinds)) if len(kinds) == 1 else "MIXED",
-        }
-    ], digest
+        )
+    return rows, digest
 
 
 class SourcePoller:
