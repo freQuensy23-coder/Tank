@@ -20,6 +20,7 @@ from tank.runtime import Runtime
 from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import MemoryRepository
+from tank.telegram_rich import score_summary
 from tank.util import iso, utcnow
 
 
@@ -161,7 +162,7 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(tmp_path,
         "evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": eid, "class": "STRUCTURAL_SHOCK"}
     )
     monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card")
+    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
     result = await service.dispatch(
         "publish_card",
         {"event_id": eid, "kind": "PARTIAL", "verdict": "A material event", "why": ["Official release"]},
