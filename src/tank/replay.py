@@ -648,13 +648,14 @@ async def run_captured_tools(inputs, repo):
 
     import tempfile
 
-    empty_secrets = tempfile.TemporaryDirectory(prefix="tank-replay-empty-secrets-")
     settings = ReplaySettings(
         replay=True,
         config_version=inputs.config_version,
         code_version=inputs.code_version,
         _env_file=None,
-        secrets_dir=Path(empty_secrets.name),
+        tank_db_password=None,
+        oma_db_password=None,
+        x_session=None,
         openma_api_key=None,
         openrouter_api_key=None,
         telegram_token=None,
@@ -716,7 +717,6 @@ async def run_captured_tools(inputs, repo):
             identities[captured] = actual
 
     with ExitStack() as stack:
-        stack.callback(empty_secrets.cleanup)
         stack.callback(evidence_directory.cleanup)
         original_iso = util.iso
 

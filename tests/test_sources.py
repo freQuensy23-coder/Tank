@@ -665,7 +665,7 @@ async def test_x_real_browser_local_dom_full_quote_repost_and_checkpoint(tmp_pat
     reader = BrowserReader(
         SimpleNamespace(
             x_profile_dir=tmp_path / "synthetic-x-profile",
-            x_storage_state_path=tmp_path / "absent-synthetic-secret",
+            x_session=None,
         )
     )
     list_html = """<html><body>
@@ -1018,7 +1018,7 @@ async def test_x_storage_state_seeds_persistent_profile_once_without_remote_read
             }
         )
     )
-    config = SimpleNamespace(x_profile_dir=profile, x_storage_state_path=secret)
+    config = SimpleNamespace(x_profile_dir=profile, x_session=secret.read_text())
     reader = BrowserReader(config)
     try:
         await reader.open()
@@ -1098,7 +1098,7 @@ async def test_invalid_expired_x_bootstrap_fails_without_secret_leak(tmp_path, s
     secret = tmp_path / "secret"
     secret.write_text(json.dumps(state))
     profile = tmp_path / "profile"
-    reader = BrowserReader(SimpleNamespace(x_profile_dir=profile, x_storage_state_path=secret))
+    reader = BrowserReader(SimpleNamespace(x_profile_dir=profile, x_session=secret.read_text()))
     with pytest.raises(ValueError, match="invalid, expired, or unreadable") as error:
         await reader.open()
     assert "NEVER_PRINT_TEST_SECRET" not in str(error.value)
@@ -1133,7 +1133,7 @@ async def test_x_media_empty_quotes_repost_priority_raw_html_and_deleted_checkpo
         ],
     )
     config.x_profile_dir = tmp_path / "synthetic-profile"
-    config.x_storage_state_path = tmp_path / "absent-secret"
+    config.x_session = None
     svc = SourceService(repo, config)
     svc.accounts = {
         "official_org": {"role": "ORGANIZATION", "entity_id": "uniswap"},
@@ -1323,11 +1323,7 @@ async def test_xsensor_has_own_feed_loop_and_service_delegates_s29(tmp_path, mon
 
     from tank.sources.xsensor import XSensor
 
-    sensor = XSensor(
-        SimpleNamespace(
-            x_profile_dir=tmp_path / "unused-x-profile", x_storage_state_path=tmp_path / "absent-secret"
-        )
-    )
+    sensor = XSensor(SimpleNamespace(x_profile_dir=tmp_path / "unused-x-profile", x_session=None))
     stop = asyncio.Event()
     polls = []
 

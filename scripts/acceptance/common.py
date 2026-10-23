@@ -48,7 +48,7 @@ def query(sql, params=None):
 def market_query(sql, params=None):
     """Return rows of ClickHouse `sql` as dicts; `params` bind as {name:String} parameters."""
     args = ["docker", "exec", "-i", CH_CONTAINER, "sh", "-c"]
-    command = 'clickhouse-client --user tank --password "$(cat /run/secrets/tank_db_password)" --readonly 1'
+    command = 'clickhouse-client --user tank --password "$CLICKHOUSE_PASSWORD" --readonly 1'
     for key, value in (params or {}).items():
         command += f" --param_{key}='{value}'"
     out = subprocess.run(

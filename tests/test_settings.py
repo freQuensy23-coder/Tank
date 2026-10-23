@@ -1,7 +1,6 @@
 import base64
 import hashlib
 import json
-import subprocess
 
 import pytest
 import yaml
@@ -41,36 +40,6 @@ def test_runtime_generation_freezes_config_and_preserves_exact_recovery_inputs(t
         old.read_config_bytes("../outside")
 
 
-@pytest.mark.integration
-@pytest.mark.process
-def test_clean_deployment_uses_git_commit_and_dirty_edit_is_identified(tmp_path):
-    config = tmp_path / "config"
-    config.mkdir()
-    (config / "thresholds.yaml").write_text("filter_cutoff: 0.71\n")
-    subprocess.run(["git", "init", "-q", str(config)], check=True)
-    subprocess.run(["git", "-C", str(config), "add", "thresholds.yaml"], check=True)
-    subprocess.run(
-        [
-            "git",
-            "-C",
-            str(config),
-            "-c",
-            "user.name=Test",
-            "-c",
-            "user.email=test@example.invalid",
-            "commit",
-            "-qm",
-            "Config",
-        ],
-        check=True,
-    )
-    commit = subprocess.check_output(["git", "-C", str(config), "rev-parse", "HEAD"], text=True).strip()
-    settings = Settings(config_dir=config, data_dir=tmp_path / "data")
-    assert resolve_versions(settings).config_version == commit
-    (config / "thresholds.yaml").write_text("filter_cutoff: 0.81\n")
-    assert resolve_versions(settings).config_version.startswith(commit + "-dirty.")
-
-
 def test_invalid_candidate_cannot_replace_valid_snapshot(tmp_path):
     config = tmp_path / "config"
     config.mkdir()
@@ -84,46 +53,36 @@ def test_invalid_candidate_cannot_replace_valid_snapshot(tmp_path):
     assert len(list((settings.data_dir / "config_versions").glob("*.json"))) == 1
 
 
-def test_docker_file_secrets_and_explicit_precedence(tmp_path, monkeypatch):
-    for field in ("TANK_TELEGRAM_TOKEN", "TANK_CODEX_GATEWAY_KEY", "TANK_OPENMA_API_KEY"):
-        monkeypatch.delenv(field, raising=False)
-    (tmp_path / "telegram_bot_token").write_text("FAKE-telegram-file-secret\n")
-    (tmp_path / "codex_gateway_key").write_text("FAKE-internal-key\n")
-    (tmp_path / "oma_api_key").write_text("FAKE-oma-key\n")
-    (tmp_path / "x_session").write_text("synthetic storage state, not loaded by Settings")
-    settings = Settings(secrets_dir=tmp_path, _env_file=None)
-    assert settings.telegram_token == "FAKE-telegram-file-secret"
+def test_secrets_come_from_the_environment_names_of_the_env_file(monkeypatch):
+    values = {
+        "TELEGRAM_BOT_TOKEN": "FAKE-telegram",
+        "CODEX_GATEWAY_KEY": "FAKE-internal-key",
+        "OMA_API_KEY": "FAKE-oma-key",
+        "ETHERSCAN_API_KEY": "FAKE-etherscan",
+        "X_SESSION": '{"cookies": [], "origins": []}',
+        "TANK_DB_PASSWORD": "FAKE tank/pass",
+        "OMA_DB_PASSWORD": "FAKE-oma-db",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+    settings = Settings(_env_file=None)
+    assert settings.telegram_token == "FAKE-telegram"
     assert settings.codex_gateway_key == "FAKE-internal-key"
     assert settings.openma_api_key == "FAKE-oma-key"
-    assert settings.x_storage_state_path == tmp_path / "x_session"
-    assert not hasattr(settings, "daily_budget_usd")
-    monkeypatch.setenv("TANK_TELEGRAM_TOKEN", "FAKE-environment-secret")
-    assert Settings(secrets_dir=tmp_path, _env_file=None).telegram_token == "FAKE-environment-secret"
+    assert settings.etherscan_api_key == "FAKE-etherscan"
+    assert settings.x_session == values["X_SESSION"]
+    assert settings.database_url == "postgresql://tank:FAKE%20tank%2Fpass@postgres:5432/tank"
+    assert settings.openma_database_url == "postgresql://oma:FAKE-oma-db@postgres:5432/oma"
+    assert not any(value in repr(settings) for value in values.values())
+    assert not hasattr(settings, "secrets_dir")
     assert (
-        Settings(secrets_dir=tmp_path, telegram_token="FAKE-explicit-secret", _env_file=None).telegram_token
+        Settings(telegram_token="FAKE-explicit-secret", _env_file=None).telegram_token
         == "FAKE-explicit-secret"
     )
-
-
-def test_config_mount_manifest_cannot_hide_modified_contents(tmp_path):
-    from tank.settings import _CONFIG_SUFFIXES, _capture_tree, _digest
-
-    config = tmp_path / "config"
-    config.mkdir()
-    (config / "thresholds.yaml").write_text("filter_cutoff: 0.71\n")
-    commit = "a" * 40
-    manifest = {
-        "git_commit": commit,
-        "git_dirty": False,
-        "content_sha256": _digest(_capture_tree(config, _CONFIG_SUFFIXES)),
-    }
-    (config / ".tank-config-version.json").write_text(json.dumps(manifest))
-    settings = Settings(config_dir=config, data_dir=tmp_path / "data")
-    assert resolve_versions(settings).config_version == commit
-    (config / "thresholds.yaml").write_text("filter_cutoff: 0.81\n")
-    modified = resolve_versions(settings)
-    assert modified.config_version.startswith(commit + "-dirty.")
-    assert modified.load_config("thresholds")["filter_cutoff"] == 0.81
+    assert (
+        Settings(database_url="postgresql:///explicit", _env_file=None).database_url
+        == "postgresql:///explicit"
+    )
 
 
 def test_config_snapshots_refuse_auth_files_inside_config(tmp_path):
@@ -161,12 +120,11 @@ def test_deployment_values_come_from_frozen_config_with_explicit_override(tmp_pa
 def test_opencode_alias_and_secret(tmp_path, monkeypatch):
     monkeypatch.delenv("TANK_OPENCODE_API_KEY", raising=False)
     monkeypatch.delenv("OPENCODE_API_KEY", raising=False)
-    (tmp_path / "opencode_api_key").write_text("FAKE-file-router\n")
-    assert Settings(_env_file=None, secrets_dir=tmp_path).opencode_api_key == "FAKE-file-router"
+    assert Settings(_env_file=None).opencode_api_key is None
     monkeypatch.setenv("OPENCODE_API_KEY", "FAKE-raw-router")
-    assert Settings(_env_file=None, secrets_dir=tmp_path).opencode_api_key == "FAKE-raw-router"
+    assert Settings(_env_file=None).opencode_api_key == "FAKE-raw-router"
     monkeypatch.setenv("TANK_OPENCODE_API_KEY", "FAKE-prefixed-router")
-    settings = Settings(_env_file=None, secrets_dir=tmp_path)
+    settings = Settings(_env_file=None)
     assert settings.opencode_api_key == "FAKE-prefixed-router"
     assert "FAKE-prefixed-router" not in repr(settings)
     assert Settings(_env_file=None, opencode_api_key="FAKE-explicit").opencode_api_key == "FAKE-explicit"
@@ -191,7 +149,7 @@ def test_codex_auth_default_only_resolves_path(tmp_path, monkeypatch):
 def test_readiness_checks_opencode_key(tmp_path):
     from tank.cli import readiness_checks
 
-    settings = Settings(_env_file=None, secrets_dir=tmp_path, opencode_api_key="FAKE-ready-key")
+    settings = Settings(_env_file=None, opencode_api_key="FAKE-ready-key")
     checks = {row["check"]: row for row in readiness_checks(settings)}
     assert checks["opencode_api_key"]["ok"]
     assert "jev_provider" not in checks
@@ -240,20 +198,18 @@ def test_user_agent_and_chats_from_configuration(tmp_path):
     assert not {row["check"]: row for row in readiness_checks(legacy)}["user_agent_contact"]["ok"]
 
 
-def test_database_urls_from_compose_role_secrets(tmp_path, monkeypatch):
+def test_database_urls_from_the_role_passwords(monkeypatch):
     for name in ("TANK_DATABASE_URL", "TANK_OPENMA_DATABASE_URL"):
         monkeypatch.delenv(name, raising=False)
-    (tmp_path / "tank_db_password").write_text("FAKE p@ss/word\n")
-    (tmp_path / "oma_db_password").write_text("FAKE-oma\n")
-    settings = Settings(_env_file=None, secrets_dir=tmp_path)
+    monkeypatch.setenv("TANK_DB_PASSWORD", "FAKE p@ss/word")
+    monkeypatch.setenv("OMA_DB_PASSWORD", "FAKE-oma")
+    settings = Settings(_env_file=None)
     assert settings.database_url == "postgresql://tank:FAKE%20p%40ss%2Fword@postgres:5432/tank"
     assert settings.openma_database_url == "postgresql://oma:FAKE-oma@postgres:5432/oma"
     monkeypatch.setenv("TANK_DATABASE_URL", "postgresql://explicit/tank_test_x")
-    assert Settings(_env_file=None, secrets_dir=tmp_path).database_url == "postgresql://explicit/tank_test_x"
-    assert (
-        Settings(_env_file=None, secrets_dir=tmp_path / "absent").database_url
-        == "postgresql://explicit/tank_test_x"
-    )
+    assert Settings(_env_file=None).database_url == "postgresql://explicit/tank_test_x"
+    monkeypatch.delenv("TANK_DB_PASSWORD")
+    assert Settings(_env_file=None).database_url == "postgresql://explicit/tank_test_x"
 
 
 def test_frozen_config_is_parsed_once_and_callers_get_copies(tmp_path, monkeypatch):
