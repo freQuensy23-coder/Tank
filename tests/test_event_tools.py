@@ -1831,6 +1831,7 @@ async def test_other_tank_item_quote_read_through_real_session_is_admissible(ser
     )
     x["claims"][0].update(quote="Fee switch approved.", state_claim="APPROVED")
     x.pop("item_id")
+    x["tokens"] = ["World (WLD)"]
     await sessions.tool(session, {"id": "extract", "name": "record_event", "input": x})
     result = (await service.repo.get("ops.tool_calls", "item-proof-session:extract"))["result"]
     assert result["accepted_claims"][0]["evidence"] == [{"item_id": "i", "quote": "Fee switch approved."}]
@@ -3528,7 +3529,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             args.update(
                 item_id=item["item_id"],
                 statement=quote,
-                tokens=["world:WLD"],
+                tokens=["World (WLD)"],
                 entities=[{"name": "SEC", "entity_id": "sec", "role": "REGULATOR"}],
                 event_time={"value": stamp, "precision": "EXACT", "quote": quote},
                 public_at={

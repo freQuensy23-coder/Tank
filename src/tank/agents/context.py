@@ -63,6 +63,12 @@ PRIVATE_FIELDS = {
     "defillama_protocol_slug",
     "fee_protocol_slug",
     "unlock_slug",
+    "created_by",
+    "updated_by",
+    "last_shown_by",
+    "rearmed_from",
+    "cancelled_by",
+    "opened_by_alert",
 }
 LITERAL_FIELDS = {"text", "quoted", "title", "quote", "url", "query"}
 DIAGNOSTIC_FIELDS = {"error", "errors", "reason", "diagnostic", "diagnostics"}
@@ -93,7 +99,8 @@ def identifier_field(key):
 
 
 def private_field(key):
-    return str(key) in PRIVATE_FIELDS or identifier_field(key)
+    name = re.sub(r"([a-z])([A-Z])", r"\1_\2", str(key)).lower()
+    return name in PRIVATE_FIELDS or name.endswith("_provenance") or identifier_field(key)
 
 
 def clean_text(text):
@@ -430,7 +437,7 @@ class ModelContext:
         matches = [
             r["token_id"]
             for r in self.registry.get("tokens", [])
-            if str(name).casefold()
+            if str(name).removeprefix("$").casefold()
             in {
                 self.token_name(r["token_id"]).casefold(),
                 str(r.get("symbol", "")).casefold(),
@@ -440,6 +447,8 @@ class ModelContext:
         ]
         if len(set(matches)) > 1:
             raise ValueError("Token name is ambiguous; include the project and ticker as displayed")
+        if not matches and str(name).casefold() in {key.casefold() for key in self.tokens}:
+            raise ValueError("Use the displayed project name and ticker, not an internal token reference")
         return matches[0] if matches else name
 
     def entity_key(self, name):
@@ -551,8 +560,20 @@ class ModelContext:
                 ),
                 {},
             )
-            trigger = active.get("payload") or self.session.get("last_payload") or {}
-            if tool in {"record_event", "add_observation"}:
+            trigger = (active.get("payload") if active else self.session.get("last_payload")) or {}
+            if tool == "add_observation":
+                source = trigger.get("item_id") or (
+                    self.session.get("item_id") if not active and not trigger else None
+                )
+                if source and result.get("item_id", source) != source:
+                    raise ValueError(
+                        "The observation uses the incoming source; cite other documents in claim evidence"
+                    )
+                if source:
+                    result["item_id"] = source
+                elif not result.get("item_id"):
+                    raise ValueError("Choose the displayed source document for this follow-up observation")
+            elif tool == "record_event":
                 result["item_id"] = trigger.get("item_id") or self.session.get("item_id")
             else:
                 result.setdefault("item_id", trigger.get("item_id") or self.session.get("item_id"))

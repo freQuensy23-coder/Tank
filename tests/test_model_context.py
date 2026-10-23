@@ -498,3 +498,210 @@ async def test_same_token_watch_descriptions_distinguish_predecessors_and_roles(
     assert result["accepted"]
     assert (await repo.get("ana.watch_conditions", old["cond_id"]))["status"] == old["status"]
     assert (await repo.get("ana.watch_conditions", current["cond_id"]))["status"] == "CANCELLED"
+
+
+@pytest.mark.parametrize("name", ["Bitcoin (BTC)", "BTC", "$BTC", "bitcoin"])
+async def test_model_token_arguments_resolve_display_names_and_tickers(context, name):
+    repo, settings, session, _ = context
+    assert await ModelContext(repo, settings, session).arguments("get_token_facts", {"token": name}) == {
+        "token": "bitcoin:BTC"
+    }
+
+
+@pytest.mark.parametrize(
+    "tool,arguments",
+    [
+        ("get_token_facts", {"token": "bitcoin:BTC"}),
+        ("get_market_truth", {"tokens": ["world:WLD"]}),
+        ("get_registry", {"entity_or_token": "uniswap:UNI"}),
+        ("set_beneficiaries", {"edges": [{"token": "cow:COW"}]}),
+    ],
+)
+async def test_current_model_cannot_pass_registry_keys_in_token_arguments(context, tool, arguments):
+    repo, settings, session, _ = context
+    session["event_id"] = new_id("evt")
+    with pytest.raises(ValueError, match="project name and ticker"):
+        await ModelContext(repo, settings, session).arguments(tool, arguments)
+
+
+def test_automatic_skill_contracts_contain_no_registry_token_keys():
+    settings = Settings(_env_file=None)
+    root = Path(__file__).resolve().parents[1] / "config/skills"
+    keys = [row["token_id"] for row in settings.load_config("registry")["tokens"]]
+    for skill in ("tank-event-analyst", "tank-scout"):
+        for path in (root / skill).glob("*"):
+            if path.suffix not in {".md", ".json"}:
+                continue
+            text = path.read_text()
+            assert not any(key in text for key in keys), path
+
+
+async def test_watch_audit_relationships_are_removed_entirely_without_mutating_storage(context):
+    repo, settings, session, _ = context
+    row = {
+        "cond_id": new_id("CND"),
+        "token_id": "uniswap:UNI",
+        "human_text": "Coverage becomes high",
+        "expr": {"metric": "dc.class", "op": "==", "value": "HIGH"},
+        "created_at": "2026-10-23T10:00:00Z",
+        "status": "CANCELLED",
+        "created_by": new_id("DEC"),
+        "updatedBy": new_id("DEC"),
+        "last_shown_by": new_id("DEC"),
+        "rearmed_from": new_id("CND"),
+        "cancelled_by": "AGENT",
+        "cancel_provenance": {"session_id": session["session_id"], "code_version": "old"},
+        "producingSessionProvenance": {"session_id": session["session_id"]},
+    }
+    await repo.put("ana.watch_conditions", row["cond_id"], row)
+    public = await ModelContext(repo, settings, session).result("get_decision", {"conditions": [row]})
+    assert public == {
+        "conditions": [
+            {
+                "condition": {
+                    "text": row["human_text"],
+                    "conditions": row["expr"],
+                    "token": "Uniswap (UNI)",
+                    "created_at": row["created_at"],
+                },
+                "token": "Uniswap (UNI)",
+                "human_text": row["human_text"],
+                "expr": row["expr"],
+                "created_at": row["created_at"],
+                "status": row["status"],
+            }
+        ]
+    }
+    assert await repo.get("ana.watch_conditions", row["cond_id"]) == row
+
+
+@pytest.mark.parametrize("kind", ["MILESTONE", "CONDITION_FIRED", "CALL_EXPIRED", "USER_QUESTION"])
+async def test_callback_without_source_requires_explicit_observation_document(context, kind):
+    repo, settings, session, item = context
+    session.update(
+        event_id=new_id("evt"),
+        active_message_id="active",
+        message_log=[{"message_id": "active", "payload": {"kind": kind}}],
+        last_payload={"kind": "ITEM_ADDED", "item_id": item["item_id"]},
+    )
+    boundary = ModelContext(repo, settings, session)
+    with pytest.raises(ValueError, match="Choose the displayed source document"):
+        await boundary.arguments("add_observation", {"claims": []})
+
+
+async def test_incoming_source_binding_rejects_override_but_allows_other_claim_evidence(context):
+    repo, settings, session, item = context
+    session["event_id"] = new_id("evt")
+    other = {**item, "item_id": new_id("itm"), "url": "https://example.org/other"}
+    boundary = ModelContext(repo, settings, session)
+    public = await boundary.result("fetch_page", other)
+    with pytest.raises(ValueError, match="incoming source"):
+        await boundary.arguments("add_observation", {"document": public["document"]})
+    args = await boundary.arguments(
+        "add_observation",
+        {
+            "claims": [{"evidence": [{"document": public["document"], "quote": other["text"]}]}],
+        },
+    )
+    assert args["item_id"] == item["item_id"]
+    assert args["claims"][0]["evidence"][0]["item_id"] == other["item_id"]
+
+
+async def test_milestone_callback_confirms_from_selected_fetched_official_document(context):
+    from datetime import timedelta
+
+    from tank.util import utcnow
+
+    repo, settings, session, opening = context
+    opening.update(source_id="S29", observed_at=iso(utcnow() - timedelta(days=2)))
+    await repo.put("ingest.source_items", opening["item_id"], opening)
+    session.update(
+        event_id=new_id("evt"),
+        active_message_id="milestone-callback",
+        message_log=[{"message_id": "milestone-callback", "payload": {"kind": "MILESTONE"}}],
+        last_payload={"kind": "ITEM_ADDED", "item_id": opening["item_id"]},
+    )
+    await repo.put("ops.agent_sessions", session["session_id"], session)
+    await repo.put(
+        "evt.events",
+        session["event_id"],
+        {
+            "event_id": session["event_id"],
+            "certainty": "HIGH",
+            "event_state": "PROPOSED",
+            "statement": "Application awaits approval",
+            "lifecycle": "SCORED",
+        },
+    )
+    posts = []
+    quote = "The SEC approved the application."
+    url = "https://www.sec.gov/news/approval"
+
+    def receive(request):
+        if request.method == "GET" and str(request.url) == url:
+            return httpx.Response(
+                200, text=f"<html><body>{quote}</body></html>", headers={"content-type": "text/html"}
+            )
+        posts.append(json.loads(request.content))
+        return httpx.Response(200, json={"data": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
+        domain = EventToolService(repo, settings, None, None, http=http)
+        due = iso()
+        await domain.dispatch(
+            "schedule_milestone",
+            {
+                "event_id": session["event_id"],
+                "source": "S01",
+                "milestone": "Approval",
+                "due_at": due,
+            },
+            {},
+        )
+        sessions = SessionService(repo, settings, domain.dispatch, http=http)
+        await sessions.tool(session, {"id": "fetch-proof", "name": "fetch_page", "input": {"url": url}})
+        fetched_call = await repo.get("ops.tool_calls", session["session_id"] + ":fetch-proof")
+        assert fetched_call["status"] == "DONE", fetched_call.get("result")
+        public = json.loads(posts[-1]["events"][0]["content"][0]["text"])
+        assert_public(public)
+        assert public["document"]["url"] == url
+        args = {
+            "document": public["document"],
+            "link": "CORROBORATION",
+            "freshness": "FRESH",
+            "public_at": {"value": due, "precision": "EXACT", "basis": "Official release", "quote": None},
+            "milestone_outcome": {"outcome": "Application approved", "quote": quote},
+            "claims": [
+                {
+                    "type": "MILESTONE",
+                    "subject": "SEC",
+                    "predicate": "approved",
+                    "object": "application",
+                    "state_claim": "APPROVED",
+                    "directionality": "BOTH",
+                    "evidence_class": "PRIMARY_FACT",
+                    "verified": True,
+                    "quote": quote,
+                    "evidence": [{"document": public["document"], "quote": quote}],
+                }
+            ],
+        }
+        validate_schema(
+            args, settings.read_config_json("skills/tank-event-analyst/add_observation.schema.json")
+        )
+        await sessions.tool(session, {"id": "observe-proof", "name": "add_observation", "input": args})
+    call = await repo.get("ops.tool_calls", session["session_id"] + ":observe-proof")
+    assert call["status"] == "DONE", call.get("result")
+    fetched_item = fetched_call["result"]["item_id"]
+    assert call["arguments"]["item_id"] == fetched_item != opening["item_id"]
+    observations = await repo.list("evt.event_observations")
+    assert len(observations) == 1 and observations[0]["item_id"] == fetched_item
+    claim = call["result"]["accepted_claims"][0]
+    assert claim["obs_id"] == observations[0]["obs_id"]
+    assert claim["evidence"] == [{"item_id": fetched_item, "quote": quote}]
+    event = await repo.get("evt.events", session["event_id"])
+    assert event["next_milestone"] is None and event["milestone_resolved"]
+    assert event["milestone_resolutions"][-1]["quotes"] == [quote]
+    escalations = await repo.list("ops.source_escalations")
+    assert escalations and all(row["status"] == "CONFIRMED" for row in escalations)
+    assert await repo.get("ingest.source_items", opening["item_id"]) == opening

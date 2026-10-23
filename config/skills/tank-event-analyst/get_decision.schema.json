@@ -6,7 +6,7 @@
   "properties": {
     "token": {
       "type": "string",
-      "description": "Registry token, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
+      "description": "Displayed project name and ticker, e.g. 'Bitcoin (BTC)' or 'World (WLD)'. An unambiguous ticker such as BTC or $BTC is also accepted."
     }
   },
   "required": [

@@ -4,6 +4,44 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "excerpt": {
+          "type": "string"
+        }
+      },
+      "anyOf": [
+        {
+          "required": [
+            "url"
+          ]
+        },
+        {
+          "required": [
+            "title",
+            "observed_at"
+          ]
+        },
+        {
+          "required": [
+            "excerpt",
+            "observed_at"
+          ]
+        }
+      ],
+      "description": "For a callback without an incoming source, select the displayed document establishing this observation by URL and observation time. Required for milestone, watch or question follow-ups without a source. Omit when an incoming source is already supplied."
+    },
     "link": {
       "enum": [
         "CORROBORATION",
@@ -280,7 +318,7 @@
           "evidence": {
             "type": "array",
             "minItems": 1,
-            "description": "Agent-supplied exact source document containing this claim's quote. For text read with fetch_page or web_search, use that returned document, not the discovery document merely because its URL matches. The root tool document remains the trigger/origin. Tank preserves these references without semantic rewriting.",
+            "description": "Agent-supplied exact source document containing this claim's quote. For text read with fetch_page or web_search, use that returned document, not the discovery document merely because its URL matches. The observation source is the incoming source, or the root document selected for a callback without one. Tank preserves these references without semantic rewriting.",
             "items": {
               "type": "object",
               "additionalProperties": false,
@@ -420,5 +458,5 @@
     "public_at",
     "freshness"
   ],
-  "description": "Add claims from the current source to the current event. Cite documents by their displayed URL and observation time. Replace prior claims by quoting them in supersedes_claims."
+  "description": "Add claims to the current event. The host binds an incoming source automatically; for a callback without one, select the displayed source in document. Cite claim evidence by displayed URL and observation time. Replace prior claims by quoting them in supersedes_claims."
 }

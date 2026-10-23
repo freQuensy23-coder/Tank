@@ -137,7 +137,7 @@
       "properties": {
         "token": {
           "type": "string",
-          "description": "Registry token, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
+          "description": "Displayed project name and ticker, e.g. 'Bitcoin (BTC)' or 'World (WLD)'. An unambiguous ticker such as BTC or $BTC is also accepted."
         }
       },
       "required": [
@@ -634,11 +634,49 @@
   },
   {
     "name": "add_observation",
-    "description": "Add claims from the current source to the current event. Cite documents by their displayed URL and observation time. Replace prior claims by quoting them in supersedes_claims.",
+    "description": "Add claims to the current event. The host binds an incoming source automatically; for a callback without one, select the displayed source in document. Cite claim evidence by displayed URL and observation time. Replace prior claims by quoting them in supersedes_claims.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "document": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "observed_at": {
+              "type": "string"
+            },
+            "excerpt": {
+              "type": "string"
+            }
+          },
+          "anyOf": [
+            {
+              "required": [
+                "url"
+              ]
+            },
+            {
+              "required": [
+                "title",
+                "observed_at"
+              ]
+            },
+            {
+              "required": [
+                "excerpt",
+                "observed_at"
+              ]
+            }
+          ],
+          "description": "For a callback without an incoming source, select the displayed document establishing this observation by URL and observation time. Required for milestone, watch or question follow-ups without a source. Omit when an incoming source is already supplied."
+        },
         "link": {
           "enum": [
             "CORROBORATION",
@@ -915,7 +953,7 @@
               "evidence": {
                 "type": "array",
                 "minItems": 1,
-                "description": "Agent-supplied exact source document containing this claim's quote. For text read with fetch_page or web_search, use that returned document, not the discovery document merely because its URL matches. The root tool document remains the trigger/origin. Tank preserves these references without semantic rewriting.",
+                "description": "Agent-supplied exact source document containing this claim's quote. For text read with fetch_page or web_search, use that returned document, not the discovery document merely because its URL matches. The observation source is the incoming source, or the root document selected for a callback without one. Tank preserves these references without semantic rewriting.",
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
@@ -3075,7 +3113,7 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 10,
-                "description": "TDD \u00a74.7 exposure rubric: 10 = sole required rail with counterparty evidence; 8 = required LIVE rail; 6 = likely rail with BUILT, SUBMITTED or APPROVED integration; 4 = compatible candidate; 2 = thematic connection; 0 = none. Supply the evidence and integration state supporting the selected level."
+                "description": "TDD §4.7 exposure rubric: 10 = sole required rail with counterparty evidence; 8 = required LIVE rail; 6 = likely rail with BUILT, SUBMITTED or APPROVED integration; 4 = compatible candidate; 2 = thematic connection; 0 = none. Supply the evidence and integration state supporting the selected level."
               },
               "edge_certainty": {
                 "enum": [
@@ -3372,7 +3410,7 @@
           "type": "array",
           "items": {
             "type": "string",
-            "description": "Registry token, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
+            "description": "Displayed project name and ticker, e.g. 'Bitcoin (BTC)' or 'World (WLD)'. An unambiguous ticker such as BTC or $BTC is also accepted."
           }
         },
         "cutoff": {
@@ -3418,7 +3456,7 @@
       "properties": {
         "token": {
           "type": "string",
-          "description": "Registry token, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
+          "description": "Displayed project name and ticker, e.g. 'Bitcoin (BTC)' or 'World (WLD)'. An unambiguous ticker such as BTC or $BTC is also accepted."
         }
       },
       "required": [
@@ -3428,7 +3466,7 @@
   },
   {
     "name": "publish_card",
-    "description": "Request publication using the canonical template. Supply a plain-language WHAT explanation, a neutral factual headline verdict and 2\u20133 WHY bullets, following skill wording rules L1\u2013L12. Tank applies lifecycle, alert eligibility and update policy, composes structured values from authoritative MarketTruth/Decision outputs, stores immutable evidence and queues delivery. Tank does not lint or repair prose and does not require a fixed tool-call order. Returns publication status or refusal for the deterministic publication gate. An accepted ordinary UPDATE during cooldown is persisted and queued until delivery_not_before; published=true with delivery_status=QUEUED is not a transport acknowledgment. STALE state-change updates are not published. Delivery sends the accepted immutable payload without a second semantic eligibility judgment.",
+    "description": "Request publication using the canonical template. Supply a plain-language WHAT explanation, a neutral factual headline verdict and 2–3 WHY bullets, following skill wording rules L1–L12. Tank applies lifecycle, alert eligibility and update policy, composes structured values from authoritative MarketTruth/Decision outputs, stores immutable evidence and queues delivery. Tank does not lint or repair prose and does not require a fixed tool-call order. Returns publication status or refusal for the deterministic publication gate. An accepted ordinary UPDATE during cooldown is persisted and queued until delivery_not_before; published=true with delivery_status=QUEUED is not a transport acknowledgment. STALE state-change updates are not published. Delivery sends the accepted immutable payload without a second semantic eligibility judgment.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -3442,7 +3480,7 @@
         },
         "what": {
           "type": "string",
-          "description": "WHAT exactly happened, in 1\u20133 short plain-language sentences. Explain the concrete change, what the named protocol/product/token does and what it enables for users; unpack jargon. For a token integration, explain the token's purpose and relevant distinctive feature. Ground the explanation in evidence, preserve stage and uncertainty, and state unknowns. Displayed unchanged below the final card headline. At most 500 characters.",
+          "description": "WHAT exactly happened, in 1–3 short plain-language sentences. Explain the concrete change, what the named protocol/product/token does and what it enables for users; unpack jargon. For a token integration, explain the token's purpose and relevant distinctive feature. Ground the explanation in evidence, preserve stage and uncertainty, and state unknowns. Displayed unchanged below the final card headline. At most 500 characters.",
           "minLength": 1,
           "maxLength": 500,
           "pattern": "\\S"
