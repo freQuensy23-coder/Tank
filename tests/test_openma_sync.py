@@ -99,6 +99,7 @@ class FakeOpenMA:
             if request.method == "POST":
                 body = json.loads(request.content)
                 assert body["version"] == agent["version"]
+                assert all(isinstance(v, str) for v in body["metadata"].values())
                 agent.update({k: v for k, v in body.items() if k != "version"})
                 agent["tools"] = [self.normalized(tool) for tool in body["tools"]]
                 agent["version"] += 1
@@ -134,7 +135,7 @@ async def test_first_start_versions_every_skill_and_agent_then_nothing_changes(t
     assert fake.cards[0]["api_key"] == "synthetic-gateway-key"
     analyst = fake.agents[CONFIG["agent_id"]]
     assert [s["skill_id"] for s in analyst["skills"]] == ["skill_tank-event-analyst", "skill_tank-data"]
-    assert analyst["metadata"]["tank_skills"]["tank-data"]["sha256"] == openma_sync.skill_digest(
+    assert json.loads(analyst["metadata"]["tank_skills"])["tank-data"]["sha256"] == openma_sync.skill_digest(
         settings, "tank-data"
     )
     names = {tool.get("name") for tool in analyst["tools"]}
@@ -143,6 +144,19 @@ async def test_first_start_versions_every_skill_and_agent_then_nothing_changes(t
     second = await run(settings, fake)
     assert set(second["skills"].values()) == {"CURRENT"} and set(second["agents"].values()) == {"CURRENT"}
     assert fake.writes("/v1/agents/") == [] and fake.writes("/v1/skills") == []
+
+
+async def test_the_serve_settings_without_a_snapshot_upload_every_skill_file(tmp_path):
+    settings = Settings(
+        config_dir=ROOT / "config",
+        data_dir=tmp_path / "data",
+        openma_api_key="synthetic-oma-key",
+        codex_gateway_key="synthetic-gateway-key",
+        _env_file=None,
+    )
+    fake = FakeOpenMA(settings_for(ROOT / "config", tmp_path))
+    report = await run(settings, fake)
+    assert report["skills"] == dict.fromkeys(openma_sync.SKILLS, "NEW_VERSION")
 
 
 def copied_config(tmp_path):

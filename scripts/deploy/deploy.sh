@@ -29,11 +29,12 @@ roll() {
   for svc in postgres clickhouse openma; do
     if [ "$(content "tank-$svc-1")" = "$(content "ghcr.io/frequensy23-coder/tank/tank-$svc:$v")" ]; then
       echo "$svc unchanged"
+      compose "$v" up -d --no-deps --no-recreate "$svc"
     else
       echo "$svc recreate $(date -u +%T)"
       compose "$v" up -d --no-deps "$svc"
-      healthy "tank-$svc-1" || { echo "$svc not healthy"; return 1; }
     fi
+    healthy "tank-$svc-1" || { echo "$svc not healthy"; return 1; }
   done
   old_cap=$(docker ps -q --filter label=com.docker.compose.project=tank --filter label=com.docker.compose.service=tank-capture)
   echo "tank-capture standby next to ${old_cap:-none} $(date -u +%T)"

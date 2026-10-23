@@ -196,7 +196,7 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(service, 
         sha256(zstandard.ZstdDecompressor().decompress(physical.read_bytes())) == result["evidence_bundle_id"]
     )
     assert bundle["payload"]["source_items"][0]["text"] == "Product announced"
-    jobs = await service.repo.list("ops.jobs")
+    jobs = [job for job in await service.repo.list("ops.jobs") if job["payload"].get("alert_id")]
     assert len(jobs) == 1
     assert jobs[0]["type"] == "DELIVER"
     assert jobs[0]["payload"]["channel"] == "telegram:alerts"
@@ -1235,7 +1235,16 @@ async def test_material_update_is_queued_once_and_delivered_after_window(service
             assert published["publication_receipt"]["disposition"] == "PUBLISHED"
         assert len(await service.repo.list("out.alerts")) == 2
         assert len(await service.repo.list("out.evidence_bundles")) == 2
-        assert len(await service.repo.list("ops.jobs", filters={"type": "DELIVER"})) == 2
+        assert (
+            len(
+                [
+                    job
+                    for job in await service.repo.list("ops.jobs", filters={"type": "DELIVER"})
+                    if job["payload"].get("alert_id")
+                ]
+            )
+            == 2
+        )
         later = now + timedelta(minutes=16)
         for module in ("tank.analysis.cards", "tank.event_tools", "tank.delivery"):
             monkeypatch.setattr(module + ".utcnow", lambda: later)
@@ -3403,7 +3412,7 @@ async def test_bundle_directory_sync_failure_never_creates_database_reference(se
     assert not await service.repo.list("out.evidence_bundles")
     assert not await service.repo.list("out.alerts")
     assert not await service.repo.list("out.deliveries")
-    assert not await service.repo.list("ops.jobs")
+    assert all(job["payload"].get("notice_id") for job in await service.repo.list("ops.jobs"))
 
 
 @pytest.mark.parametrize(
@@ -4688,7 +4697,16 @@ async def test_old_trigger_updates_stage_but_does_not_publish_or_resurface_on_ti
     timer = await service.dispatch("publish_card", args, {"trigger_kind": "CONDITION_MET"})
     assert not timer["published"] and timer["reason"] == "NO_MATERIAL_CHANGE"
     assert len(await service.repo.list("out.alerts", filters={"event_id": eid})) == 1
-    assert len(await service.repo.list("ops.jobs", filters={"type": "DELIVER"})) == 1
+    assert (
+        len(
+            [
+                job
+                for job in await service.repo.list("ops.jobs", filters={"type": "DELIVER"})
+                if job["payload"].get("alert_id")
+            ]
+        )
+        == 1
+    )
     stored = await service.repo.get("evt.events", eid)
     assert "publication_trigger_freshness" not in stored
     assert "publication_stage_freshness" not in stored
@@ -5153,7 +5171,11 @@ async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_th
     )
     alert = await service.repo.get("out.alerts", f"{result['alert_id']}:1")
     assert parse_time(alert["generated_at"]) >= written["at"]
-    job = (await service.repo.list("ops.jobs", filters={"type": "DELIVER"}))[0]
+    job = next(
+        job
+        for job in await service.repo.list("ops.jobs", filters={"type": "DELIVER"})
+        if job["payload"].get("alert_id")
+    )
     assert parse_time(job["run_after"]) == parse_time(alert["generated_at"])
     assert alert["delivery_not_before"] == alert["generated_at"]
 
@@ -5208,7 +5230,7 @@ async def test_named_cutoff_precisions_are_accepted_as_buckets(service, truth_jo
     assert result["cutoff_prec_normalized"] == {"from": "MINUTE", "to": "BUCKET(1m)"}
 
 
-async def test_publish_card_keeps_market_truth_once_and_reads_each_collection_once(service, monkeypatch):
+async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_reads(service, monkeypatch):
     """E2E #6 (r114): publish_card took 22 s. The card's card_struct copied the
     1.8 MB Market Truth, the bundle's request_log repeated it, and collections
     were re-read. Now card_struct references the immutable truth row, an exact
@@ -5265,4 +5287,5 @@ async def test_publish_card_keeps_market_truth_once_and_reads_each_collection_on
         "evt.event_observations",
         "ana.contradictions",
     ):
-        assert reads.count(collection) == 1, (collection, reads.count(collection))
+        expected = 2 if collection == "evt.event_observations" else 1
+        assert reads.count(collection) == expected, (collection, reads.count(collection))

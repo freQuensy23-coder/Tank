@@ -13,6 +13,7 @@ from urllib.parse import parse_qsl, unquote, urlparse
 import httpx
 import zstandard
 
+from tank.ops_progress import event_progress, item_progress, tool_progress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.time_precision import (
     Timestamp,
@@ -578,6 +579,7 @@ class EventToolService:
                                 "error": "Use add_observation for the session event",
                             }
                     result = await getattr(self, tool)(arguments, ctx)
+                    await tool_progress(self.repo, self.settings, tool, arguments, ctx, result)
 
             if tool == "set_assessment" and self.scheduler is not None:
                 await self.scheduler.ensure_reactions(await self.require("evt.events", event_id))
@@ -999,7 +1001,16 @@ class EventToolService:
         existing = await self.repo.get("ingest.source_items", iid)
         if existing:
             return existing
-        return await self.repo.put("ingest.source_items", iid, row)
+        await self.repo.put("ingest.source_items", iid, row)
+        await item_progress(
+            self.repo,
+            self.settings,
+            iid,
+            "EVIDENCE_FETCHED",
+            "Источник запрошен агентом; Jev не требуется",
+            event_id=c.get("event_id"),
+        )
+        return row
 
     async def web_search(self, a, c):
         from tank.search import DuckDuckGoSearchService, SearchError
@@ -1193,7 +1204,11 @@ class EventToolService:
             raise ValueError("certainty and reason required")
         if not x["is_event"]:
             item["extraction_status"] = "SKIPPED"
+            item["extraction_reason"] = x["certainty_reason"]
             await self.repo.put("ingest.source_items", item["item_id"], item)
+            await item_progress(
+                self.repo, self.settings, item["item_id"], "AGENT_REJECTED", x["certainty_reason"]
+            )
             return {"is_event": False}
         eid = new_id("evt")
         obs = new_id("obs")
@@ -1273,6 +1288,9 @@ class EventToolService:
         )
         item["extraction_status"] = "DONE"
         await self.repo.put("ingest.source_items", item["item_id"], item)
+        await item_progress(
+            self.repo, self.settings, item["item_id"], "EVENT_RECORDED", x["statement"], event_id=eid
+        )
         if c.get("session_id"):
             async with self.repo.lock("session:" + c["session_id"]):
                 session = await self.repo.get("ops.agent_sessions", c["session_id"])
@@ -1525,6 +1543,9 @@ class EventToolService:
         )
         item["extraction_status"] = "DONE"
         await self.repo.put("ingest.source_items", item["item_id"], item)
+        await item_progress(
+            self.repo, self.settings, item["item_id"], "OBSERVATION_ADDED", link, event_id=event["event_id"]
+        )
         return {
             "event_state": event["event_state"],
             "accepted_claims": claims,
@@ -1847,6 +1868,14 @@ class EventToolService:
                 x.update(partial_required=True, **deadline_stamp.fields("first_card_deadline"))
                 event.update(deadline_stamp.fields("first_card_deadline"))
                 await self.repo.put("evt.events", eid, event)
+        await event_progress(
+            self.repo,
+            self.settings,
+            eid,
+            "ASSESSED",
+            f"Класс: {klass}; " + "; ".join(str(reason) for reason in x.get("class_reasons", [])),
+            key=ems,
+        )
         return x
 
     async def set_beneficiaries(self, a, c):

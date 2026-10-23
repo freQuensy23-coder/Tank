@@ -99,7 +99,9 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
 
         tools = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
         async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            service = SessionService(repo, config(), tools.dispatch, http=client)
+            session_settings = config()
+            session_settings.ops_progress_enabled = True
+            service = SessionService(repo, session_settings, tools.dispatch, http=client)
             count = 0
             execution_id = "input"
 
@@ -200,7 +202,10 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
                     assert event["monitoring_at_prec"] == "COLLECTION_ONLY"
                     assert "thresholds" not in event
                     assert not await repo.list("out.alerts")
-                    assert not await repo.list("ops.jobs", filters={"type": "DELIVER"})
+                    assert not any(
+                        job["payload"].get("alert_id")
+                        for job in await repo.list("ops.jobs", filters={"type": "DELIVER"})
+                    )
             last = (await repo.get("ops.tool_calls", "s:tool-" + str(count)))["remote_event_id"]
             await service.process_event("s", idle("end", last))
             result = await service.completed_turn("s")
@@ -211,9 +216,19 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
                 )
                 assert (await repo.get("ops.agent_sessions", "s"))["event_id"] == eid
             assert result["complete"]
+            progress = await repo.list("out.ops_notices", filters={"kind": "ITEM_PROGRESS"})
+            stages = {row["stage"] for row in progress}
+            assert ("AGENT_REJECTED" if case == "NO_EVENT" else "AGENT_COMPLETED") in stages
+            if case not in {"NO_EVENT", "HYDRATE"}:
+                assert "ASSESSED" in stages
+            if case == "STALE_GATE":
+                assert "PUBLICATION_BLOCKED" in stages
+            if case in {"SHOCK_RESUME", "FULL_EMPTY_SET"}:
+                assert "ALERT_QUEUED" in stages and "ALERT_SENT" not in stages
             requests_before = len(posts)
             assert (await service.completed_turn("s"))["complete"]
             assert len(posts) == requests_before
+            assert await repo.list("out.ops_notices", filters={"kind": "ITEM_PROGRESS"}) == progress
             assert len(await repo.list("out.alerts")) == (
                 2 if case == "SHOCK_RESUME" else 1 if case == "FULL_EMPTY_SET" else 0
             )

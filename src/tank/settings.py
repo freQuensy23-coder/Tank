@@ -104,6 +104,7 @@ class Settings(BaseSettings):
     )
     telegram_alerts_chat: str | None = None
     telegram_ops_chat: str | None = None
+    ops_progress_enabled: bool = True
     etherscan_api_key: str | None = Field(
         default=None,
         repr=False,

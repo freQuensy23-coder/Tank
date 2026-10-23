@@ -403,6 +403,7 @@ WHAT TO DO: DON'T CHASE
 |---|---|
 | DELIVERY FAILED | A card could not be delivered after 5 attempts |
 | HEARTBEAT | Daily at 08:00 UTC |
+| ITEM PROGRESS | Every newly ingested unique material, including Jev/agent rejections, with processing stage and outcome; subsequent stage changes are reported in Ops independently of Alerts publication |
 
 ### 7.3 Evidence
 

@@ -65,10 +65,10 @@ async def test_observation_and_source_completion_are_atomic(
         before = await repo.get("evt.events", origin["event_id"])
         original_put = repo.put
 
-        async def put(table, key, row):
+        async def put(table, key, row, **kwargs):
             if table == "ingest.source_items" and key == second and fail_item_write:
                 raise RuntimeError("Injected source completion write failure")
-            return await original_put(table, key, row)
+            return await original_put(table, key, row, **kwargs)
 
         monkeypatch.setattr(repo, "put", put)
         arguments = dict(
