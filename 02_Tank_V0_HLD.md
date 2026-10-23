@@ -314,7 +314,7 @@ sequenceDiagram
   alt STRUCTURAL SHOCK
     OMA->>SES: publish_card PARTIAL
     SES->>DB: alert + DELIVER job
-    JOB->>TG: sendMessage
+    JOB->>TG: sendRichMessage
   end
   OMA->>SES: set_beneficiaries, get_market_truth
   SES->>DB: ESCALATE_TOKENS and RUN_MARKET_TRUTH jobs
@@ -324,7 +324,7 @@ sequenceDiagram
   SES->>OMA: get_market_truth result
   OMA->>SES: get_decision, publish_card FULL
   SES->>DB: outlook, grades, action (code); gate; alert + DELIVER job
-  JOB->>TG: sendMessage (or reply to the partial)
+  JOB->>TG: sendRichMessage (or reply to the partial)
   JOB->>DB: ledger SENT with message_id
 ```
 
@@ -388,7 +388,7 @@ Sizing estimate (ClickHouse): prints ≈ 0.5 GB/day compressed at 15 hot tokens;
 | Images | Built by CI from the repository and pushed to GHCR, tagged with the commit SHA: `tank` (the repository's `Dockerfile`: Python, `asyncio`, dependencies pinned in `uv.lock`, Playwright Chromium, the whole `config/`), `tank-capture`, `tank-openma` (with the `tank-analysis` sandbox layout), `tank-postgres`, `tank-clickhouse`; volumes `tank-data` (`/data`), `tank-browser` (the X profile), `codex-auth` (the ChatGPT sign-in) and `backup` (an external disk on the host) |
 | Configuration | The repository's `config/`, built into the `tank` image at `/app/config`: `sources.yaml` (incl. article patterns of §3), `semantics.yaml`, `registry.yaml` (tokens, identities, aliases, instruments, sector baskets), `dependency_map.yaml`, `exchange_addresses.yaml`, `thresholds.yaml`, `openma.yaml`, `skills/` (the agents' skills and tool schemas), `templates/`; loaded on start; a change is a commit and a deploy; the image's commit SHA is stored as `config_version` on every output |
 | Secrets | One file `/srv/tank-deploy/.env` on the host, outside the repository, readable only by root; Compose passes each container only its variables: `OMA_API_KEY`, `OMA_ROOT_SECRET`, `OMA_AUTH_SECRET`, `OPENROUTER_API_KEY`, `OPENCODE_API_KEY`, `TELEGRAM_BOT_TOKEN`, `ETHERSCAN_API_KEY`, the database passwords, `X_SESSION`, `CODEX_GATEWAY_KEY`; the ChatGPT sign-in sits in the `tank` volume `codex-auth` (writable: the gateway saves refreshed tokens there), the Etherscan and OpenRouter keys and the `tank_agent` password also by the environment `tank-analysis`; never written to logs or bundles |
-| Deployment | The GitHub workflow `deploy.yml`, started by hand for a commit of `main` (it refuses any other branch or commit), after that commit's CI built its images: it copies `compose.yaml` and `scripts/deploy/deploy.sh` to the host and runs it; the host pulls the images, restarts PostgreSQL, ClickHouse and OpenMA only when their image content changed, replaces `tank-capture` without losing a minute, restarts `tank` (which applies migrations and DDL and uploads changed agents and skills to OpenMA), checks the live system for up to 8 minutes and otherwise returns to the previous commit |
+| Deployment | The GitHub workflow `deploy.yml`, started by hand for a commit of `main`, after that commit's CI built its images: it copies `compose.yaml` and `scripts/deploy/deploy.sh` to the host and runs it; the host pulls the images, restarts PostgreSQL, ClickHouse and OpenMA only when their image content changed, replaces `tank-capture` without losing a minute, restarts `tank` (which applies migrations and DDL and uploads changed agents and skills to OpenMA), checks the live system for up to 8 minutes and otherwise returns to the previous commit |
 | Time | The host's NTP client (e.g. `chrony`); containers use the host clock |
 | Backups | Nightly `pg_dump` + `bundles/` copy to the volume `backup` (an external disk on the host) |
 
@@ -401,7 +401,7 @@ Concurrency: one asyncio event loop with 8 job workers; CPU-heavy steps run in a
 | Interface | Contract |
 |---|---|
 | External services | OpenAI (`gpt-6.1-sol`) on the operator's ChatGPT subscription — Codex sign-in, no API key — called by OpenMA through Tank's `codex_gateway` (03 §3.2); DuckDuckGo search (the `web_search` tool; no key, no official API); Jev through OpenRouter (`typesafe/jev-1.13`; FILTER_ITEM and ROUTE_ITEM, API key; 03 §3.1); Telegram Bot API (bot token); headless Chrome via Playwright with the operator's X session (S29) and for S19 rendering; Etherscan API v2 (free key); DefiLlama API and datasets (no key); venue public APIs (no keys). The agents' sandboxes reach any public site and API, these included, with neither the Telegram bot token nor the X session (§11). |
-| Telegram Bot API | `sendMessage` with `parse_mode=HTML` to chat "Tank Alerts" (cards) or "Tank Ops" (notices); updates use `reply_parameters.message_id` of the first card; message length ≤ 4,096 characters (cards capped at 3,500); the returned `message_id` is stored in the ledger. |
+| Telegram Bot API | sendRichMessage with structured blocks to "Tank Alerts": scores are a compact native table with full names, values and explanations. The frozen rich payload is stored with the alert and evidence bundle; cards are capped at 5,000 rendered characters and 500 blocks. Legacy cards and "Tank Ops" notices use sendMessage with parse_mode=HTML. Updates use reply_parameters.message_id of the first card; the returned message_id is stored in the ledger. |
 | Jev via OpenRouter | `POST https://openrouter.ai/api/v1/systemone` (Jev's System One API on OpenRouter), header `Authorization: Bearer <key>`, model `typesafe/jev-1.13`; one `noul` question per item (FILTER_ITEM) and per item and candidate event (ROUTE_ITEM); answers stored on the item; usage logged to `ops.llm_usage` (03 §3.1). |
 | OpenMA API | `http://openma:8787/v1/*` on the Compose network, with header `x-api-key`: `POST /v1/sessions`; `POST /v1/sessions/{id}/events` with `user.message` or `user.custom_tool_result`; `GET /v1/sessions/{id}/events/stream` (SSE, `Last-Event-ID` resume); `/v1/agents` and `/v1/skills` to deploy agent and skill versions (03 §3.2). OpenMA calls `gpt-6.1-sol` through Tank's `codex_gateway`; token usage from the sessions' model-request spans goes to `ops.llm_usage`. |
 | DuckDuckGo search | Python library `ddgs` 9.16.0: `DDGS().text(query, backend="duckduckgo", max_results=10)`. DuckDuckGo has no official web-search API; the library reads its results page, so there is no key and no charge (01 D9). At most one search every 2 s across the service; a rate-limit, block or timeout error is retried after 5, 15 and 45 s, then the error goes back to the agent; no other engine is used. Results (title, URL, snippet) are stored as evidence; searches are counted in `ops.llm_usage`. |

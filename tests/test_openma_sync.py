@@ -105,11 +105,11 @@ class FakeOpenMA:
             return httpx.Response(200, json=agent)
         if path.startswith("/v1/environments/"):
             return httpx.Response(200, json=self.environments[path.rsplit("/", 1)[1]])
-        if path.endswith("/versions/upload"):
+        if path.endswith("/versions") and request.method == "POST":
             skill = self.skills[path.split("/")[3]]
-            assert b'name="file"' in request.content
+            assert b'name="files[]"' in request.content and b"SKILL.md" in request.content
             skill["latest_version"] = str(int(skill["latest_version"]) + 1)
-            return httpx.Response(201, json={"version": skill["latest_version"]})
+            return httpx.Response(200, json={"type": "skill_version", "version": skill["latest_version"]})
         if path == "/v1/skills" and request.method == "POST":
             skill_id = f"skill_new_{len(self.skills)}"
             self.skills[skill_id] = {"id": skill_id, "latest_version": "1"}
@@ -228,16 +228,13 @@ def test_prompt_label_follows_the_analyst_skill_version():
 
 
 @pytest.mark.parametrize("name", openma_sync.SKILLS)
-def test_skill_archive_holds_exactly_the_baked_files(tmp_path, name):
-    import io
-    import zipfile
-
+def test_skill_upload_holds_exactly_the_baked_files(tmp_path, name):
     settings = settings_for(ROOT / "config", tmp_path)
-    archive = zipfile.ZipFile(io.BytesIO(openma_sync.skill_zip(settings, name)))
+    paths = [path for path, _ in openma_sync.skill_files(settings, name)]
     expected = sorted(
         p.relative_to(ROOT / "config/skills" / name).as_posix()
         for p in (ROOT / "config/skills" / name).rglob("*")
         if p.is_file()
     )
-    assert sorted(archive.namelist()) == expected
-    assert "SKILL.md" in archive.namelist()
+    assert sorted(paths) == expected
+    assert "SKILL.md" in paths

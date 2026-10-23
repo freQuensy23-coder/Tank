@@ -88,7 +88,6 @@ jobs:
     uses: ./.github/workflows/capture.yml
 
   image:
-    needs: [lint-python, lint-go, mypy, test, capture]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -137,9 +136,6 @@ jobs:
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY,,}/$IMAGE_NAME"
           echo "image=$image" >> "$GITHUB_OUTPUT"
-          if [[ "$GITHUB_EVENT_NAME" == push ]]; then
-            echo "branch_tag=$image:$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
-          fi
           content=$(for path in $CONTENT; do echo "$path $(git rev-parse "HEAD:$path" 2>/dev/null || echo missing)"; done | sha256sum | cut -d' ' -f1)
           echo "content=$content" >> "$GITHUB_OUTPUT"
       - name: Build the sandbox rootfs baked into OpenMA
@@ -173,8 +169,28 @@ jobs:
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.tank.content=${{ steps.name.outputs.content }}
-          tags: |
-            ${{ steps.name.outputs.image }}:${{ github.sha }}
-            ${{ steps.name.outputs.branch_tag }}
+          tags: ${{ steps.name.outputs.image }}:${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.image }}
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+  publish:
+    if: github.event_name == 'push'
+    needs: [lint-python, lint-go, mypy, test, capture, image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tag the tested images with the branch
+        run: |
+          for name in tank tank-capture tank-openma tank-postgres tank-clickhouse; do
+            image="ghcr.io/${GITHUB_REPOSITORY,,}/$name"
+            docker buildx imagetools create -t "$image:$GITHUB_REF_NAME" "$image:$GITHUB_SHA"
+          done
