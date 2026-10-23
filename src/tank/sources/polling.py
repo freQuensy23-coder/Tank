@@ -7,6 +7,7 @@ in acquisition order; failed originals stay in the checkpoint's pending batches.
 import asyncio
 import json
 import re
+from collections import Counter
 from copy import deepcopy
 from dataclasses import asdict
 from datetime import timedelta
@@ -27,44 +28,67 @@ def count_read(state, name, *, ok, n=1):
 
 
 def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
-    """S14 diff rows against the previous snapshot and the snapshot digest (CPU-bound, runs in a thread)."""
+    """S14 diff against the previous snapshot and the snapshot digest (CPU-bound, runs in a thread).
+
+    All symbols that changed in one poll of a venue list form one item, so a venue-wide change such
+    as a delisting reaches routing and the analyst once instead of once per symbol.
+    """
     if previous is not None and str(feed.get("venue", "")).lower() == "coinbase":
         previous = deepcopy(previous)
         for symbol, old in previous.items():
             if symbol in snapshot and "status_flags" not in old:
                 old["status_flags"] = snapshot[symbol].get("status_flags", {})
-    rows = []
-    if previous is not None:
-        for symbol in sorted(set(snapshot) | set(previous)):
-            if snapshot.get(symbol) != previous.get(symbol):
-                current, old = snapshot.get(symbol), previous.get(symbol)
-                rows.append(
-                    {
-                        "external_id": f"{feed.get('venue')}|{feed.get('market_type')}|{symbol}|{sha256(current)}",
-                        "title": f"{symbol} instrument change",
-                        "text": json.dumps({"before": old, "after": current}, sort_keys=True),
-                        "url": feed["url"],
-                        "published_at": None,
-                        **(
-                            {
-                                "observed_at": pages[found_on[symbol]][1],
-                                "_payload": pages[found_on[symbol]][0],
-                            }
-                            if symbol in found_on
-                            else {
-                                "observed_at": completed_at,
-                                "_payload": b"\n".join(p for p, _ in pages),
-                            }
-                        ),
-                        "change": "REMOVED"
-                        if current is None
-                        else "ADDED"
-                        if old is None
-                        else "STATE_UPDATE",
-                    }
-                )
     digest = sha256(snapshot)
-    return rows, digest
+    if previous is None:
+        return [], digest
+    changed = [
+        (symbol, snapshot.get(symbol), previous.get(symbol))
+        for symbol in sorted(set(snapshot) | set(previous))
+        if snapshot.get(symbol) != previous.get(symbol)
+    ]
+    if not changed:
+        return [], digest
+
+    def kind(current, old):
+        return "REMOVED" if current is None else "ADDED" if old is None else "STATE_UPDATE"
+
+    on_pages = {found_on[symbol] for symbol, _, _ in changed if symbol in found_on}
+    if len(on_pages) == 1 and all(symbol in found_on for symbol, _, _ in changed):
+        payload, observed_at = pages[on_pages.pop()]
+    else:
+        payload, observed_at = b"\n".join(p for p, _ in pages), completed_at
+    venue, market_type = feed.get("venue"), feed.get("market_type")
+    row = {"url": feed["url"], "published_at": None, "observed_at": observed_at, "_payload": payload}
+    if len(changed) == 1:
+        symbol, current, old = changed[0]
+        return [
+            {
+                **row,
+                "external_id": f"{venue}|{market_type}|{symbol}|{sha256(current)}",
+                "title": f"{symbol} instrument change",
+                "text": json.dumps({"before": old, "after": current}, sort_keys=True),
+                "change": kind(current, old),
+            }
+        ], digest
+    kinds = Counter(kind(current, old) for _, current, old in changed)
+    counts = ", ".join(f"{n} {name}" for name, n in sorted(kinds.items()))
+    return [
+        {
+            **row,
+            "external_id": f"{venue}|{market_type}|changes|{digest}",
+            "title": f"{venue} {market_type}: {len(changed)} instrument changes ({counts})",
+            "text": json.dumps(
+                {
+                    "changes": [
+                        {"symbol": symbol, "change": kind(current, old), "before": old, "after": current}
+                        for symbol, current, old in changed
+                    ]
+                },
+                sort_keys=True,
+            ),
+            "change": next(iter(kinds)) if len(kinds) == 1 else "MIXED",
+        }
+    ], digest
 
 
 class SourcePoller:

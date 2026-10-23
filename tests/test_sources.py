@@ -2653,3 +2653,45 @@ async def test_instrument_snapshot_written_only_when_it_changes(tmp_path, collec
         status[0] = "BREAK"
         assert (await svc.poll_once("S14"))["items"] == 1
         assert repo.snapshot_writes == 2
+
+
+def test_one_poll_of_a_venue_list_is_one_item_however_many_symbols_changed():
+    from tank.sources.polling import instrument_changes
+
+    feed = {"url": "https://api.kraken.com/0/public/AssetPairs", "venue": "kraken", "market_type": "SPOT"}
+    previous = {
+        "ABCUSD": {"status": "online"},
+        "DEFUSD": {"status": "online"},
+        "GHIUSD": {"status": "online"},
+    }
+    snapshot = {
+        "ABCUSD": {"status": "cancel_only"},
+        "DEFUSD": {"status": "cancel_only"},
+        "GHIUSD": {"status": "online"},
+    }
+    pages = [(b"page", "2026-10-23T14:00:00Z")]
+    found_on = dict.fromkeys(snapshot, 0)
+    rows, digest = instrument_changes(snapshot, previous, feed, pages, found_on, "2026-10-23T14:00:05Z")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["change"] == "STATE_UPDATE"
+    assert row["title"] == "kraken SPOT: 2 instrument changes (2 STATE_UPDATE)"
+    assert row["external_id"] == f"kraken|SPOT|changes|{digest}"
+    assert row["observed_at"] == "2026-10-23T14:00:00Z" and row["_payload"] == b"page"
+    assert [c["symbol"] for c in json.loads(row["text"])["changes"]] == ["ABCUSD", "DEFUSD"]
+
+    del snapshot["GHIUSD"]
+    rows, _ = instrument_changes(
+        snapshot, previous, feed, pages, dict.fromkeys(snapshot, 0), "2026-10-23T14:00:05Z"
+    )
+    assert rows[0]["change"] == "MIXED" and rows[0]["observed_at"] == "2026-10-23T14:00:05Z"
+    assert rows[0]["title"] == "kraken SPOT: 3 instrument changes (1 REMOVED, 2 STATE_UPDATE)"
+
+    one = {
+        "ABCUSD": {"status": "cancel_only"},
+        "DEFUSD": {"status": "online"},
+        "GHIUSD": {"status": "online"},
+    }
+    rows, _ = instrument_changes(one, previous, feed, pages, dict.fromkeys(one, 0), "2026-10-23T14:00:05Z")
+    assert [row["title"] for row in rows] == ["ABCUSD instrument change"]
+    assert json.loads(rows[0]["text"]) == {"before": {"status": "online"}, "after": {"status": "cancel_only"}}
