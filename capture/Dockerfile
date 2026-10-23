@@ -16,9 +16,6 @@ RUN --mount=type=cache,id=tank-capture-go-mod,target=/go/pkg/mod \
     -ldflags "-s -w -X github.com/freQuensy23-coder/Tank/capture/internal/config.Build=${GIT_SHA}" \
     -o /out/tank-capture ./cmd/tank-capture
 COPY config/ /out/config/
-RUN --mount=type=cache,id=tank-capture-go-mod,target=/go/pkg/mod \
-    --mount=type=cache,id=tank-capture-go-build-native,target=/root/.cache/go-build \
-    go run ./cmd/config-manifest /out/config "${GIT_SHA}"
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/tank-capture /tank-capture

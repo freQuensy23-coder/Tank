@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
 from types import MappingProxyType
@@ -46,7 +47,7 @@ def _digest(captured: dict[str, bytes]) -> str:
 
 def _config_version(build_sha: str | None, digest: str) -> str:
     """The commit the image was built from; a development checkout is identified by content."""
-    return build_sha or f"dev.{digest}"
+    return build_sha if build_sha and re.fullmatch(r"[0-9a-f]{40}", build_sha) else f"dev.{digest}"
 
 
 def _default_codex_auth_path() -> Path:

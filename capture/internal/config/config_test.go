@@ -216,8 +216,8 @@ func TestSettingsFromEnvironmentAndSecret(t *testing.T) {
 	if s.HealthAddr != ":8791" || s.ConfigDir != dir || !strings.HasPrefix(s.CodeVersion, "tank-capture/") {
 		t.Fatalf("defaults %+v", s)
 	}
-	if !strings.HasPrefix(s.ConfigVersion, "uncommitted.") && !strings.Contains(s.ConfigVersion, "-dirty.") {
-		t.Fatalf("an untracked temporary config is not a clean commit: %q", s.ConfigVersion)
+	if !strings.HasPrefix(s.ConfigVersion, "dev.") {
+		t.Fatalf("a build without its commit names the config by content: %q", s.ConfigVersion)
 	}
 	t.Setenv("TANK_DATABASE_URL", "postgresql://u@h/db")
 	if s, err = LoadSettings(); err != nil || s.DatabaseURL != "postgresql://u@h/db" {

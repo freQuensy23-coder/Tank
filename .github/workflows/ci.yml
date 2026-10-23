@@ -101,7 +101,7 @@ jobs:
           - image: tank
             context: .
             file: Dockerfile
-            content: Dockerfile .dockerignore pyproject.toml uv.lock src config deploy/tank_entrypoint.py deploy/prepare_openma.py deploy/prepare_config.py
+            content: Dockerfile .dockerignore pyproject.toml uv.lock src config
           - image: tank-capture
             context: .
             file: capture/Dockerfile
