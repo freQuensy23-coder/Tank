@@ -8,6 +8,7 @@ from datetime import timedelta
 
 from tank.agents.sessions import ADMITTED_JOB_TYPES, AdmissionDeferred
 from tank.delivery import DeliveryDeferred, DeliveryService
+from tank.ops_progress import job_failure_progress
 from tank.scheduler import Scheduler
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import parse_time, utcnow
@@ -304,6 +305,7 @@ class Runtime:
                 self.active_jobs.discard(job["job_id"])
 
     async def terminal_delivery_failure(self, job, reason):
+        await job_failure_progress(self.repo, getattr(self, "settings", None), job, reason)
         if job["type"] == "DELIVER":
             await self.delivery.terminal_failure(job["payload"], reason, job.get("attempts"))
         if job["type"] == "AGENT_MESSAGE" and job["payload"].get("kind") == "USER_QUESTION":
@@ -326,6 +328,17 @@ class Runtime:
         self._delivery_reconciled_at = now
 
         for status in ("FAILED", "EXPIRED"):
+            for kind in ("FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE", "RUN_MARKET_TRUTH", "ESCALATE_TOKENS"):
+                async for job in self.repo.iter_all("ops.jobs", filters={"type": kind, "status": status}):
+                    if not job.get("ops_progress_recorded_at"):
+                        await job_failure_progress(
+                            self.repo, getattr(self, "settings", None), job, job.get("last_error") or status
+                        )
+                        await self.repo.put(
+                            "ops.jobs",
+                            job["job_id"],
+                            {**job, **collection_clock(utcnow()).fields("ops_progress_recorded_at")},
+                        )
             async for job in self.repo.iter_all("ops.jobs", filters={"type": "DELIVER", "status": status}):
                 if not job.get("delivery_failure_recorded_at"):
                     await self.terminal_delivery_failure(job, status)

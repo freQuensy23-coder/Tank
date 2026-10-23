@@ -89,7 +89,7 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 	token := text(row["token_id"])
 	row["status"] = "RUNNING"
 	s.putRun(ctx, row)
-	instruments := s.tokenInstruments(token)
+	instruments := s.tokenInstruments(ctx, token)
 	ids := make([]string, len(instruments))
 	for i, inst := range instruments {
 		ids[i] = inst.ID
@@ -153,14 +153,23 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 	s.putRun(ctx, row)
 }
 
-func (s *Service) tokenInstruments(token string) []*venue.Instrument {
+func (s *Service) tokenInstruments(ctx context.Context, token string) []*venue.Instrument {
 	var out []*venue.Instrument
 	for _, iid := range s.opt.Order {
 		if inst := s.opt.Instruments[iid]; inst != nil && inst.TokenID == token && inst.Active {
-			out = append(out, inst)
+			out = append(out, s.resolved(ctx, iid))
 		}
 	}
 	return out
+}
+
+func (s *Service) resolved(ctx context.Context, iid string) *venue.Instrument {
+	if !s.discovered(iid) {
+		if err := s.discover(ctx, s.opt.Instruments[iid]); err != nil && ctx.Err() == nil {
+			s.gap(s.opt.Instruments[iid], "METADATA", err.Error(), nil, nil)
+		}
+	}
+	return s.instrument(iid)
 }
 
 func (s *Service) requests(ctx context.Context) {
@@ -229,7 +238,7 @@ func (s *Service) repairWindows(ctx context.Context, token string, start, end ti
 	}
 	lo := pytime.MinuteFloor(start)
 	hi := pytime.MinuteFloor(minTime(end, s.clock.Now().Add(-5*time.Second)))
-	instruments := s.tokenInstruments(token)
+	instruments := s.tokenInstruments(ctx, token)
 	var spot, perp []*venue.Instrument
 	for _, inst := range instruments {
 		if inst.Spot() {
@@ -687,7 +696,7 @@ func (s *Service) repairUnrepaired(ctx context.Context, token string, lo, hi tim
 	s.repairGateOnce.Do(func() { s.repairGate = make(chan struct{}, repairParallel) })
 	sem := s.repairGate
 	var wg sync.WaitGroup
-	for _, inst := range s.tokenInstruments(token) {
+	for _, inst := range s.tokenInstruments(ctx, token) {
 		gaps := s.unrepaired(ctx, inst.ID, lo, hi)
 		if len(gaps) == 0 {
 			continue

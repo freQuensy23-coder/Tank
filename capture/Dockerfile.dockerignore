@@ -1,0 +1,12 @@
+**
+!capture/go.mod
+!capture/go.sum
+!capture/cmd/
+!capture/cmd/**
+!capture/internal/
+!capture/internal/**
+!config/
+!config/**
+**/*_test.go
+**/testdata
+**/__pycache__

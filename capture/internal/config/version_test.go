@@ -14,21 +14,13 @@ func pythonVersion(t *testing.T, root string) string {
 from pathlib import Path
 from tank.settings import _CONFIG_SUFFIXES, _capture_tree, _config_version, _digest
 root = Path(sys.argv[1])
-print(_config_version(root, _digest(_capture_tree(root, _CONFIG_SUFFIXES))), end="")`, root)
+print(_config_version(None, _digest(_capture_tree(root, _CONFIG_SUFFIXES))), end="")`, root)
 	cmd.Dir = repoRoot()
 	out, err := cmd.Output()
 	if err != nil {
 		t.Skipf("tank Python environment unavailable: %v", err)
 	}
 	return string(out)
-}
-
-func gitRun(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.email=t@example.com", "-c", "user.name=t", "-c", "commit.gpgsign=false"}, args...)...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v: %v %s", args, err, out)
-	}
 }
 
 func TestCaptureTreeAndDigest(t *testing.T) {
@@ -82,7 +74,7 @@ func sorted(s []string) []string {
 	return out
 }
 
-func TestManifestVersion(t *testing.T) {
+func TestBuildVersion(t *testing.T) {
 	dir := t.TempDir()
 	write(t, dir, "registry.yaml", "tokens: []\n")
 	captured, err := CaptureTree(dir)
@@ -90,57 +82,12 @@ func TestManifestVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 	digest := Digest(captured)
+	defer func(saved string) { Build = saved }(Build)
 	commit := strings.Repeat("ab", 20)
-	cases := []struct{ manifest, want string }{
-		{`{"git_commit":"` + commit + `","content_sha256":"` + digest + `","git_dirty":false}`, commit},
-		{`{"git_commit":"` + commit + `","content_sha256":"` + digest + `","git_dirty":true}`, commit + "-dirty." + digest},
-		{`{"git_commit":"` + commit + `","content_sha256":"other","git_dirty":false}`, commit + "-dirty." + digest},
-		{`{"git_commit":"` + commit + `","content_sha256":"` + digest + `"}`, commit + "-dirty." + digest},
-	}
-	for _, c := range cases {
-		write(t, dir, ".tank-config-version.json", c.manifest)
-		got, err := ConfigVersion(dir)
-		if err != nil || got != c.want {
-			t.Errorf("manifest %s: %q %v, want %q", c.manifest, got, err, c.want)
+	for build, want := range map[string]string{"": "dev." + digest, "dev": "dev." + digest, commit: commit, "abc": "dev." + digest} {
+		Build = build
+		if got, err := ConfigVersion(dir); err != nil || got != want {
+			t.Errorf("build %q: %q %v, want %q", build, got, err, want)
 		}
-		if want := pythonVersion(t, dir); got != want {
-			t.Errorf("manifest %s: %q, Python %q", c.manifest, got, want)
-		}
-	}
-	write(t, dir, ".tank-config-version.json", `{"git_commit":"abc","content_sha256":"`+digest+`","git_dirty":false}`)
-	if _, err := ConfigVersion(dir); err == nil {
-		t.Fatal("a short commit must fail")
-	}
-}
-
-func TestGitVersion(t *testing.T) {
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git unavailable")
-	}
-	repo := t.TempDir()
-	gitRun(t, repo, "init", "-q")
-	config := filepath.Join(repo, "config")
-	write(t, config, "registry.yaml", "tokens: []\n")
-	write(t, config, "sub/semantics.yaml", "metrics: []\n")
-	write(t, repo, "outside.yaml", "x: 1\n")
-	gitRun(t, repo, "add", ".")
-	gitRun(t, repo, "commit", "-q", "-m", "c")
-	clean, err := ConfigVersion(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !fullCommit(clean) {
-		t.Fatalf("a clean committed config is its commit: %q", clean)
-	}
-	if want := pythonVersion(t, config); clean != want {
-		t.Fatalf("clean %q, Python %q", clean, want)
-	}
-	write(t, config, "registry.yaml", "tokens: [{token_id: a}]\n")
-	dirty, err := ConfigVersion(config)
-	if err != nil || !strings.HasPrefix(dirty, clean+"-dirty.") {
-		t.Fatalf("an edited config is dirty: %q %v", dirty, err)
-	}
-	if want := pythonVersion(t, config); dirty != want {
-		t.Fatalf("dirty %q, Python %q", dirty, want)
 	}
 }

@@ -94,11 +94,17 @@ class FakeTelegram:
         raise AssertionError(method)
 
 
-async def seed(repo, *, status="OPEN"):
+async def seed(repo, *, status="OPEN", rich_message=None):
     await repo.put(
         "out.alerts",
         "a:1",
-        {"alert_id": "a", "version": 1, "event_id": "evt_1", "card_text": "<b>AAVE</b> exploit card"},
+        {
+            "alert_id": "a",
+            "version": 1,
+            "event_id": "evt_1",
+            "card_text": "<b>AAVE</b> exploit card",
+            "rich_message": rich_message,
+        },
         immutable=True,
     )
     await repo.put(
@@ -1983,3 +1989,50 @@ async def test_reused_attachment_keeps_its_recorded_size():
         first = await inbox.attachments(None, "q_r", "ses_1", body)
         again = await inbox.attachments(None, "q_r", "ses_1", body)
     assert first[0]["size"] == 5 and again[0]["size"] == 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("forwarded", [False, True])
+async def test_rich_card_reference_and_rich_question_continue_original_session(forwarded):
+    from tank.telegram_rich import card_rich_message, score_summary
+
+    repo = MemoryRepository()
+    assessment = {"dims": {"economic_directness": {"value": 8, "rationale": "Fees reach UNI burn."}}}
+    rich = card_rich_message(f"MAJOR — UNI launch\n{score_summary(assessment)}\nStage: LIVE", assessment)
+    await seed(repo, rich_message=rich)
+    question_rich = {
+        "blocks": [{"type": "paragraph", "text": [{"type": "bold", "text": "Почему"}, " не оценён масштаб?"]}]
+    }
+    if forwarded:
+        comment = message(10, date=1_800_000_200, rich_message=question_rich)
+        forward = message(
+            11,
+            date=1_800_000_200,
+            rich_message=rich,
+            forward_origin={
+                "type": "user",
+                "sender_user": {"id": BOT, "is_bot": True},
+                "date": 1_800_000_000,
+            },
+        )
+        updates = [{"update_id": 1, "message": comment}, {"update_id": 2, "message": forward}]
+        key = question_id_for(USER, 10)
+    else:
+        reply = message(
+            9,
+            date=1_800_000_200,
+            rich_message=question_rich,
+            chat=int(ALERTS),
+            chat_type="supergroup",
+            reply_to_message={"message_id": 55, "from": {"id": BOT, "is_bot": True}, "rich_message": rich},
+        )
+        updates = [{"update_id": 1, "message": reply}]
+        key = question_id_for(ALERTS, 9)
+    telegram = FakeTelegram(updates)
+    await run_inbox(repo, telegram, now=1_800_000_201)
+    question = await repo.get("out.user_questions", key)
+    assert question["session_id"] == "ses_1"
+    assert question["text"] == "Почему не оценён масштаб?"
+    assert "Economic directness | 8 | Fees reach UNI burn." in question["reference"]["text"]
+    assert "Scores D8" not in question["reference"]["text"]
+    assert telegram.sent == []

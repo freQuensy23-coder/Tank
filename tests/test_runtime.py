@@ -92,7 +92,6 @@ def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tm
         (config_dir / (name + ".yaml")).write_text("{}\n")
     settings = Settings(
         config_dir=config_dir,
-        x_profile_dir=tmp_path / "profile",
         openma_api_key="sensitive-secret",
         x_list_id="REPLACE_WITH_LIST",
         user_agent="Tank contact not configured",
@@ -103,7 +102,7 @@ def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tm
     assert not by_name["openma_agent_id"] and not by_name["openma_scout_agent_id"]
     assert not by_name["openma_environment_id"] and not by_name["openma_replay_environment_id"]
     assert by_name["openma_api_key"]
-    assert not by_name["user_agent_contact"] and not by_name["x_profile"] and not by_name["s29_list_id"]
+    assert not by_name["user_agent_contact"] and not by_name["apify_api_token"]
     assert "sensitive-secret" not in json.dumps(checks)
 
 
@@ -129,12 +128,9 @@ def test_source_check_network_probes_are_explicit(monkeypatch):
     monkeypatch.setattr(tank.sources, "SourceService", Source)
     monkeypatch.setattr(cli, "run_db", lambda fn: asyncio.run(fn(None, None)))
     assert CliRunner().invoke(cli.main, ["sources", "check"]).exit_code == 0
-    assert calls[-1] == {"probe": False, "include_browser": False, "check_accounts": False}
-    assert (
-        CliRunner().invoke(cli.main, ["sources", "check", "--probe", "--browser", "--accounts"]).exit_code
-        == 0
-    )
-    assert calls[-1] == {"probe": True, "include_browser": True, "check_accounts": True}
+    assert calls[-1] == {"probe": False, "check_accounts": False}
+    assert CliRunner().invoke(cli.main, ["sources", "check", "--probe", "--accounts"]).exit_code == 0
+    assert calls[-1] == {"probe": True, "check_accounts": True}
 
 
 def test_manual_backup_defaults_to_no_retention_and_forwards_force(monkeypatch):
@@ -618,7 +614,6 @@ def test_doctor_only_checks_fake_subscription_auth_presence_and_internal_key(mon
     settings = SimpleNamespace(
         codex_auth_path=auth,
         codex_gateway_key="fake-internal-secret",
-        x_profile_dir=tmp_path / "profile",
         load_config=lambda name: {},
     )
     checks = readiness_checks(settings)

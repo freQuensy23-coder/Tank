@@ -392,6 +392,11 @@ def json_items(payload, source_id):
 
         def single(row):
             return dict(data, result=dict(data["result"], list=[row]))
+    elif source_id == "S19":
+        rows = data["results"]["response"]["hits"]["hits"]
+
+        def single(row):
+            return {"results": {"response": {"hits": {"hits": [row]}}}}
     elif source_id == "S24":
         if data.get("errors"):
             raise ValueError("Snapshot GraphQL error: " + str(data["errors"]))
@@ -487,6 +492,17 @@ def _json_items(payload, source_id):
                 "announcement_type": r.get("type"),
             }
             for r in data["result"]["list"]
+        ]
+    if source_id == "S19":
+        return [
+            {
+                "external_id": r["url"],
+                "title": r["title"],
+                "text": " ".join(re.sub(r"\bnull\b", " ", r["contentString"]).split()),
+                "url": r["url"],
+                **timestamp_fields(r["referenceDate"]),
+            }
+            for r in (hit["_source"] for hit in data["results"]["response"]["hits"]["hits"])
         ]
     if source_id == "S24":
         if data.get("errors"):

@@ -69,7 +69,7 @@ Values marked ⚙ are collected in §12 with their basis: a PRD requirement, an 
 | `ContradictionType` | FATAL, UNRESOLVED, DIAGNOSTIC, EXPLAINABLE |
 | `AlertKind` | PARTIAL, FULL, UPDATE |
 | `DeliveryStatus` | GENERATED, SENT, FAILED |
-| `OpsNoticeKind` | DELIVERY_FAILED, HEARTBEAT |
+| `OpsNoticeKind` | DELIVERY_FAILED, HEARTBEAT, ITEM_PROGRESS |
 | `EventLifecycle` | DETECTED, SCORED, TRACKED, ANALYZING, ALERTED, MONITORING, COOLDOWN, CLOSED, MERGED, INVALIDATED |
 | `ScoutHook` | BENEFICIARY_LAYER, MARKET_TRUTH_STATE, SOURCE_OPPORTUNITY, ALTERNATIVE_EXPLANATION |
 | `ScoutRecommendation` | SUBCATEGORY, TEST_MORE, NEW_CATEGORY, REJECT |
@@ -763,7 +763,7 @@ One event, one agent session. The first item of an event opens a session on Tank
 
 | Setting | Value |
 |---|---|
-| Platform | OpenMA, self-hosted (02 §5), through its Managed Agents API `/v1/*` at `http://openma:8787` on the Compose network; API key in the Docker secret `oma_api_key` |
+| Platform | OpenMA, self-hosted (02 §5), through its Managed Agents API `/v1/*` at `http://openma:8787` on the Compose network; API key `OMA_API_KEY` from the host `.env` |
 | Agent | `tank-event-analyst`, versioned in OpenMA: `model` = the OpenMA Model Card for `gpt-6.1-sol`: a custom provider (`pi_config.api: openai-responses`) whose `base_url` is Tank's `codex_gateway`, which signs each call with the operator's ChatGPT subscription (Codex sign-in, no API key; 02 §5), `model.effort` per §12, `harness: "pi"`, the skills `tank-event-analyst` and `tank-data`, Tank's custom tools below and OpenMA's built-in sandbox tools; no MCP servers |
 | Session | `POST /v1/sessions` per event in the environment `tank-analysis` (02 §8): the session's own litebox sandbox, a microVM where the agent creates and edits files and runs any command or script; Python 3.12 with `pandas`, `numpy`, `scipy`, `statsmodels`, `duckdb`, `psycopg`, `httpx`; unrestricted internet; read-only access as `tank_agent` to the database `tank` (`TANK_DB_URL`) and to ClickHouse `mkt` (`http://clickhouse:8123`, the same credentials). OpenMA keeps an append-only log of every message, tool call, command and output |
 | Messages | `POST /v1/sessions/{id}/events` with a `user.message`. OpenMA accepts a message while the agent is working, queues it and hands it over as soon as the current turn ends, so Tank never waits for a session to be free |
@@ -784,7 +784,7 @@ Messages into a session:
 
 **Skill `tank-event-analyst`.** A `SKILL.md` kept in the config repository under `skills/tank-event-analyst/` and uploaded to OpenMA on deploy; OpenMA inlines it into the system prompt at session start. It carries the class criteria, certainty rules, freshness grades, stage ladder, hard rules and card template verbatim from 01 §1.1, §6.2–6.3, §7.1 and §8, the claim rules V1–V7 (below) and the wording rules L1–L12 (§7.5), and this playbook:
 
-1. **NEW_ITEM.** Read the item and check what Tank already knows (`list_open_events`, `search_tank_items`). For a MEDIUM fact, check the official sources first (`fetch_page`, `search_tank_items`, `web_search`). Then `record_event`: facts with verbatim quotes, certainty with its reason, when the event really became public, freshness, stage. If the item reports no new fact, `record_event` with `is_event = false`, and stop. If the event is already open in another session, `merge_into` it, and stop.
+1. **NEW_ITEM.** Read the item and check its public history in both Tank (`list_open_events`, `search_tank_items` with `days: 90`) and the public internet (`web_search`, then `fetch_page` for dated sources). This novelty check applies to every certainty level, including HIGH. For a MEDIUM fact, also check the official sources first (`fetch_page`, `search_tank_items`, `web_search`). Then `record_event`: facts with verbatim quotes, certainty with its reason, when the event really became public, freshness, stage. If the item reports no new fact, `record_event` with `is_event = false`, and stop. If the event is already open in another session, `merge_into` it, and stop.
 2. **Class.** `set_assessment`: the criterion of 01 §6.3 with its quote, the seven scores with reasons, token capture, impact horizon. The tool applies §4.3 and returns the final class. LOW or MATERIAL → stop; the event stays TRACKED.
 3. **STRUCTURAL SHOCK** → `publish_card` PARTIAL at once.
 4. **MAJOR+** → `set_beneficiaries` (eight layers, §4.7) → `get_market_truth` for the analysis set → `get_decision` per token → `publish_card` FULL with the verdict sentence and 2–3 WHY bullets.
@@ -905,7 +905,7 @@ The agent records, for every item (`record_event`, `add_observation`), when the 
 | OLD | ≤ ⚙48 h |
 | STALE | > 48 h |
 
-The agent judges from the content, not from the time of the post: a founder posting now "yesterday we shipped X and told all the press" gives `public_at` = yesterday. It works from the item text, the source's publication time when the feed has one and the item's `observed_at`, and looks for an earlier appearance with `search_tank_items` and `web_search`, so a story that was public earlier is never graded fresh.
+The agent checks both Tank history (`search_tank_items` with `days: 90`) and the public internet (`web_search`, then `fetch_page` for dated original sources), including for HIGH-certainty official items. The three-day routing window does not limit historical research, and public searches can reach beyond Tank's retained history. Compare the specific fact and stage: an earlier plan and a newly confirmed launch or expansion are different developments. Record what was already public, its URLs and dates, and what the new item adds. Use the earliest supported publication of that specific development for `public_at`, with its actual precision and basis. For example, a founder posting now "yesterday we shipped X and told all the press" gives `public_at` = yesterday. Start the independent history checks together with the initial reads; if a check cannot finish within the recording deadline, record its scope and failure in `checked_sources` and `public_at.basis`, preserve timing uncertainty and continue the check after recording. Surprise is assessed against the retrieved public history; an incomplete check leaves it unknown with the specific unresolved question or failure in the rationale.
 
 The event keeps `public_at` and the grade of the observation that created it. Effects: a STALE event or state change never produces a card or an update (§7.4); the card prints the grade with the public and known times; wording rule L10 (§7.5): no "new", "fresh", "just" or "breaking" unless the grade is FRESH or NORMAL.
 
@@ -1505,7 +1505,7 @@ Rate limit ⚙: at most one update per event per 15 min, except START, EXIT and 
 
 - The card is template-first: classes, numbers, windows, units, enums and condition texts come from structured data. The agent supplies only the verdict sentence and the 2–3 WHY bullets in `publish_card`, written from the facts the tools returned.
 - The VERIFIED / NOT VERIFIED line is built from the claims: verified claims with their source; unverified claims with what is missing (e.g., "no OpenAI or World announcement").
-- At most ⚙3 token blocks; card length ≤ ⚙3,500 characters.
+- At most ⚙3 token blocks; card length ≤ ⚙5,000 characters.
 - Missing fields print as `n/a (<reason>)`.
 
 Wording rules. They are written in the skill: the agent follows them in the verdict and WHY bullets, and the template's own text is written so it never breaks them. Tank does not check the card's prose; a broken rule is found in review (§11.5).
@@ -1527,7 +1527,7 @@ Wording rules. They are written in the skill: the agent follows them in the verd
 
 ### 7.6 Delivery and ledger
 
-- Telegram Bot API `sendMessage`, `parse_mode=HTML`, chat "Tank Alerts" for cards and "Tank Ops" for notices. Updates set `reply_parameters.message_id` to the first card's message.
+- Telegram Bot API sendRichMessage with explicit rich_message.blocks for new cards in "Tank Alerts"; a compact, bordered table replaces the abbreviated Scores line. Its seven rows show the full dimension name, score out of 10 (or "Not assessed"), and saved rationale. Freeze the rich payload in the alert and evidence bundle before queueing delivery. Keep a readable text representation for follow-up context. Legacy cards and "Tank Ops" notices use sendMessage with parse_mode=HTML. Updates set reply_parameters.message_id to the first card. The rendered card, including table cells, is limited to 5,000 characters and Telegram's 500-block limit.
 - Before sending, the ledger is checked for (`alert_id`, `version`, `channel`) = SENT; if present, nothing is re-sent.
 - Retries with exponential backoff (1, 2, 4, 8, 16 s), honoring rate-limit `retry_after`. After the last attempt the status is FAILED and Tank Ops gets DELIVERY_FAILED.
 - Operator chat: delivery failure; daily heartbeat at ⚙08:00 UTC (alerts in 24 h, hot-set size, queue lag, LLM spending).
@@ -1697,7 +1697,7 @@ Every number the rules use, with its basis. A number without a basis is not used
 | Relative | History behind normal ranges and β | Stored base tier, at least 7 d | 90-day base tier (01 §9); 7 d = one weekly cycle |
 | | β adjustment | (2/3)·β + 1/3 | Blume adjustment (standard) |
 | Lifecycle | Event closes; open call expires | 7 d without news and no pending milestone; 7 d | Longest forecast horizon (01 FR-O-01) |
-| Alerting | Update rate limit; card max chars | 15 min; 3,500 | 01 FR-A-04, FR-A-05 |
+| Alerting | Update rate limit; card max chars | 15 min; 5,000 | 01 FR-A-04, FR-A-05 |
 | | Heartbeat | 08:00 UTC | 01 §7.2 |
 | Capture & polling | Per-source intervals; escalated interval; escalation expiry | 01 §4.2 max delays (02 §3); 15 s; 2 h | 01 §4.2, FR-D-02 |
 | | Hot-set cap | 15 | 01 FR-B-03 |
@@ -1733,14 +1733,14 @@ Values the operator provides at installation (kept outside the repository):
 | Value | Where it is stored |
 |---|---|
 | Contact e-mail for the User-Agent header | `sources.yaml` |
-| Telegram bot token; chat IDs of "Tank Alerts" and "Tank Ops" | Docker secret `telegram_bot_token`; `delivery.yaml` |
-| X List "tank-v0" with the 86 handles of 01 §4.3, and its list ID | operator's X account; `sources.yaml`; the signed-in session as the Docker secret `x_session` (Playwright storage state) |
+| Telegram bot token; chat IDs of "Tank Alerts" and "Tank Ops" | `.env` `TELEGRAM_BOT_TOKEN`; `delivery.yaml` |
+| The 86 X handles of 01 §4.3 | `x_accounts` in `registry.yaml`; the Apify token as `.env` `APIFY_API_TOKEN` |
 | ChatGPT sign-in for `gpt-6.1-sol` (the operator's subscription) | `auth.json` written by `codex login` on the operator's computer, copied once into the `tank` volume `codex-auth`; `codex_gateway` keeps it refreshed |
-| Internal key between OpenMA's Model Card and `codex_gateway` | Docker secret `codex_gateway_key` |
-| OpenMA root and auth secrets; OpenMA API key | Docker secrets `oma_root_secret` and `oma_api_key` |
-| OpenRouter API key (Jev) | Docker secret `openrouter_api_key`; environment `tank-analysis` (`OPENROUTER_API_KEY`) |
-| Etherscan API key | Docker secret `etherscan_api_key`; environment `tank-analysis` (`ETHERSCAN_API_KEY`) |
-| Password of the read-only role `tank_agent` (PostgreSQL and ClickHouse) | Docker secret `tank_agent_db_password`; environment `tank-analysis` (`TANK_DB_URL`) |
+| Internal key between OpenMA's Model Card and `codex_gateway` | `.env` `CODEX_GATEWAY_KEY` |
+| OpenMA root and auth secrets; OpenMA API key | `.env` `OMA_ROOT_SECRET`, `OMA_AUTH_SECRET` and `OMA_API_KEY` |
+| OpenRouter API key (Jev) | `.env` `OPENROUTER_API_KEY`; environment `tank-analysis` (`OPENROUTER_API_KEY`) |
+| Etherscan API key | `.env` `ETHERSCAN_API_KEY`; environment `tank-analysis` (`ETHERSCAN_API_KEY`) |
+| Password of the read-only role `tank_agent` (PostgreSQL and ClickHouse) | `.env` `TANK_AGENT_DB_PASSWORD`; environment `tank-analysis` (`TANK_DB_URL`) |
 
 ---
 

@@ -20,6 +20,8 @@ from tank.agents import workflow
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
+from tank.delivery import DeliveryDeferred
+from tank.ops_progress import session_progress
 from tank.telegram_inbox import DOCUMENT_LIMIT, question_message, record_answer
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, iso, sha256
@@ -569,6 +571,7 @@ class SessionService:
                 session.get("missing_fields", {}).pop("last_item_at", None)
                 session["last_item_at_reason"] = None
             await self.repo.put("ops.agent_sessions", sid, session)
+            await session_progress(self.repo, self.settings, session)
             return session
 
     async def recover_outbound_inputs(self, sid):
@@ -578,6 +581,7 @@ class SessionService:
                 if message.get("turn_status") == "ACCEPTING" and not message.get("sent_at"):
                     await self.post_message_intent(sid, message["message_id"])
         session = await self.repo.get("ops.agent_sessions", sid)
+        await session_progress(self.repo, self.settings, session)
         if session.get("pending_retry_event"):
             await self.process_event(sid, session["pending_retry_event"])
 
@@ -990,6 +994,7 @@ class SessionService:
             current["verified_source_completion"] = outcomes
             current["verified_native_completion"] = copy.deepcopy(after)
             await self.repo.put("ops.agent_sessions", sid, current)
+            await session_progress(self.repo, self.settings, current)
             return after
 
     def start_stream(self, sid):
@@ -1769,6 +1774,8 @@ class SessionService:
                 current.update(self.event_timestamp(event).fields("last_event_at"))
                 current.update(propagate_timestamp(event, "processed_at").fields("processed_at"))
                 await self.repo.put("ops.agent_sessions", sid, current)
+                if current.get("status") in {"FAILED", "ENDED"}:
+                    await session_progress(self.repo, self.settings, current)
             self.seen_events.setdefault(sid, set()).add(seen_key(event))
             if current.get("status") in ("FAILED", "ENDED") or (
                 kind == "session.status_idle"

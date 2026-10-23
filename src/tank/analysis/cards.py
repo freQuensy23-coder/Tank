@@ -8,6 +8,7 @@ from decimal import Decimal
 from urllib.parse import urlsplit
 
 from tank.analysis.decisions import POSITIVE_ACTIONS
+from tank.telegram_rich import CARD_TEXT_LIMIT, score_summary
 from tank.time_precision import bucket_duration, interval_bounds, propagate_timestamp
 from tank.util import parse_time, utcnow
 
@@ -140,6 +141,7 @@ def token_name(token, labels=None):
 def telegram_card_html(text):
     """Add visual hierarchy while escaping every agent-authored character."""
     labels = (
+        "WHAT",
         "VERIFIED",
         "NOT VERIFIED",
         "WHO",
@@ -201,7 +203,7 @@ def _percent(value):
 
 def _limits(event):
     config = event.get("thresholds") or {}
-    return int(config.get("card_max_chars", 3500)), int(config.get("update_rate_limit_s", 900))
+    return int(config.get("card_max_chars", CARD_TEXT_LIMIT)), int(config.get("update_rate_limit_s", 900))
 
 
 def _unknown(dc):
@@ -317,7 +319,7 @@ def _holders_revenue_text(truth):
 
 
 def compose_card(
-    event, assessment, beneficiaries, decisions, market_truths, *, kind="FULL", verdict="", why=None
+    event, assessment, beneficiaries, decisions, market_truths, *, kind="FULL", what="", verdict="", why=None
 ):
     if isinstance(market_truths, dict):
         market_truths = list(market_truths.values())
@@ -370,31 +372,13 @@ def compose_card(
                 + " — "
                 + str(claim.get("verification_missing") or "n/a (verification gap not supplied)")
             )
-    dims = assessment.get("dims", {})
-    labels = [
-        ("D", "economic_directness"),
-        ("M", "magnitude"),
-        ("P", "permanence"),
-        ("X", "distribution_expansion"),
-        ("F", "mechanical_flows"),
-        ("S", "surprise"),
-        ("I", "implementation"),
-    ]
-    score_parts = []
-    for label, key in labels:
-        dimension = dims.get(key) or {}
-        value = dimension.get("value")
-        reason = (
-            dimension.get("rationale")
-            or str(dimension.get("reason") or "estimate not supplied").replace("_", " ").lower()
-        )
-        score_parts.append(label + str(value) if value is not None else label + " n/a (" + reason + ")")
-    scores = "Scores " + " · ".join(score_parts)
+    scores = score_summary(assessment)
     stage = ("" if event.get("state_verified", event.get("verified")) is True else "unverified ") + _na(
         event.get("event_state", event.get("state"))
     )
     lines = [
         f"{_na(assessment.get('class', assessment.get('ems_class')), 'class unavailable').replace('STRUCTURAL_SHOCK', 'STRUCTURAL SHOCK')} ({_na(assessment.get('criterion', assessment.get('matched_criterion')), 'criterion unavailable')}) — {_na(verdict or event.get('statement'), 'neutral event statement unavailable')}",
+        *([f"WHAT: {what}"] if what else []),
         scores,
         f"Stage: {stage} · Certainty: {_na(assessment.get('certainty', event.get('certainty')))} · Data {header_data}",
         f"Fresh: {_na(event.get('freshness'))} · public {_clock(event, 'public_at', publication=True)} · known {_clock(event, 'known_to_us_at')}",
@@ -666,13 +650,13 @@ def compose_card(
             ],
             "newline_chars": len(lines) - 1,
             "editable_fields": [
-                "publish_card.verdict / why",
+                "publish_card.what / verdict / why",
                 "claims.subject / predicate / object / verification_missing via explicit supersedes_claim_ids",
                 "set_beneficiaries.layer_reasons / no_credible_secondary_reason / edges[].causal_chain",
                 "set_assessment.assessment.impact_horizon.dependencies / time_to_materiality",
             ],
             "guidance": (
-                "Shorten agent-authored structured text as well as verdict/WHY when needed; "
+                "Shorten agent-authored structured text as well as WHAT/verdict/WHY when needed; "
                 "publish-only shortening may be insufficient. Preserve all facts, remaining "
                 "uncertainties and required per-layer reasons. Replace claims explicitly; "
                 "do not invent verification or remove evidence. No text was truncated."

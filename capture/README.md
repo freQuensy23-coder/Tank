@@ -25,38 +25,24 @@ before the PostgreSQL schema is in place or without `TANK_CLICKHOUSE_URL`.
 
 ## Running
 
-```
-docker compose --profile capture up -d tank-capture
-```
-
-The service is in the `capture` Compose profile, so a plain `docker compose up` does not
-start it. Environment:
+`tank-capture` is a service of `compose.yaml` and is deployed with the others ([OPERATIONS.md](../docs/OPERATIONS.md#deployment)). Its image carries the config and settings; the host `.env` supplies only `TANK_DB_PASSWORD`. Environment:
 
 | Variable | Default | |
 |---|---|---|
-| `TANK_DATABASE_URL` | built from `/run/secrets/tank_db_password` | PostgreSQL URL (role `tank`): requests, gaps, streams, hot set, ledger, writer lock |
-| `TANK_CLICKHOUSE_URL` | required | ClickHouse HTTP URL; the password is the one of `TANK_DATABASE_URL` |
-| `TANK_CONFIG_DIR` | `/config` | the versioned configuration (`registry.yaml`, `semantics.yaml`, `thresholds.yaml`, `api_limits.yaml`, `sources.yaml`) |
-| `TANK_CAPTURE_HEALTH_ADDR` | `:8791` | `GET /healthz` (200 when the writer lock is held and the last flush is recent), `GET /status` |
+| `TANK_DATABASE_URL` | built from `TANK_DB_PASSWORD` | PostgreSQL URL (role `tank`): requests, gaps, streams, hot set, ledger, writer lock |
+| `TANK_CLICKHOUSE_URL` | `http://tank@clickhouse:8123` | ClickHouse HTTP URL; the password is `TANK_DB_PASSWORD` |
+| `TANK_CONFIG_DIR` | `/config` | the versioned configuration baked into the image (`registry.yaml`, `semantics.yaml`, `thresholds.yaml`, `api_limits.yaml`, `sources.yaml`) |
+| `TANK_CAPTURE_HEALTH_ADDR` | `:8791` | `GET /healthz` (200 when the writer lock is held and the last flush is recent), `GET /readyz`, `GET /status` |
 
-Core keeps its in-process capture while `TANK_EXTERNAL_CAPTURE` is unset or false (the
-default). With `TANK_EXTERNAL_CAPTURE=true` core starts no stream, poller, backfill or
-exchange REST request; it writes escalations and obligations and reads everything else.
+Core starts no stream, poller, backfill or exchange REST request; it writes escalations and obligations and reads everything else.
 
-## Deployment
+## Image
 
-Build the image with the commit it is built from, which becomes the `code_version` of
-every row it writes, using the same `--env-file` and overlays as the other services:
+CI builds the image from the repository root with `GIT_SHA` set to the commit, which becomes the `code_version` of every row it writes ([DOCKER_BUILDS.md](../docs/DOCKER_BUILDS.md)).
 
-```
-TANK_CAPTURE_GIT_SHA=$(git rev-parse HEAD) docker compose --profile capture build tank-capture
-```
-
-The image is a static binary on distroless, running as UID/GID 1000 like Tank: the shared
-`tank_db_password` secret is group 1000 readable (docs/OPERATIONS.md, Linux secret-file
-ownership). It publishes no port; the Compose healthcheck runs `/tank-capture healthcheck`,
-which calls `/healthz` inside the container. The container is limited to 1 CPU and 768 MiB
-(256 MiB reserved) with `GOMEMLIMIT=640MiB`, so the Go collector tightens before the limit.
+The image is a static binary on distroless, running as UID/GID 1000 like Tank. It publishes no port; the Compose healthcheck runs `/tank-capture healthcheck`,
+which calls `/healthz` inside the container. The container is limited to 3 CPUs and 1536 MiB
+(256 MiB reserved) with `GOMEMLIMIT=1400MiB`, so the Go collector tightens before the limit.
 
 ## Single writer
 
@@ -107,8 +93,7 @@ written as an empty bar.
 Every REST request takes its weight from the shared ledger (`ops.request_budget_acquire`)
 before it is sent, in the buckets `tank.sources.rate_limits` and
 `tank.market.rate_gate` define (at most half of each documented capacity; Kraken 1
-request/s in total). Core uses the same ledger when `TANK_EXTERNAL_CAPTURE` or
-`TANK_REQUEST_LEDGER` is set, so both processes share one budget per IP. A 429 closes the
+request/s in total). Core uses the same ledger, so both processes share one budget per IP. A 429 closes the
 host for every process for `Retry-After`; a 418 closes it and is never retried; a Binance
 `X-MBX-USED-WEIGHT-1M` at the venue limit closes the host for a minute.
 

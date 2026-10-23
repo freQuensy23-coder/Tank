@@ -211,6 +211,11 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
                     {
                         "item_id": "item",
                         "is_event": outcome != "SKIPPED",
+                        **(
+                            {"no_event_reason": "Opinion without a new factual claim"}
+                            if outcome == "SKIPPED"
+                            else {}
+                        ),
                         "statement": "Product announced",
                         "certainty": "MEDIUM",
                         "certainty_reason": "Synthetic fixture",

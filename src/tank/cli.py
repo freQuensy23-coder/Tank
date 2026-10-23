@@ -65,15 +65,24 @@ def serve():
     sys.setswitchinterval(GIL_SWITCH_INTERVAL_S)
 
     async def launch(repo, settings):
+        from tank import clickhouse_market, openma_sync
         from tank.runtime import RuntimeSupervisor
 
+        await repo.migrate()
+        if getattr(repo, "clickhouse", None) is not None:
+            for statement in clickhouse_market.ddl():
+                await repo.clickhouse.execute(statement)
         stop = asyncio.Event()
         reload_requested = asyncio.Event()
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, stop.set)
         loop.add_signal_handler(signal.SIGHUP, reload_requested.set)
-        await RuntimeSupervisor(repo, settings).run(stop, reload_requested)
+        openma = asyncio.create_task(openma_sync.keep_in_sync(settings, stop))
+        try:
+            await RuntimeSupervisor(repo, settings).run(stop, reload_requested)
+        finally:
+            openma.cancel()
         return {"status": "stopped"}
 
     run_db(launch)
@@ -345,15 +354,14 @@ def sources():
 
 @sources.command("check")
 @click.option("--probe", is_flag=True, help="Probe configured feed endpoints without ingestion.")
-@click.option("--browser", is_flag=True, help="Include browser-required source probes.")
 @click.option("--accounts", is_flag=True, help="Check configured X account identities.")
-def sources_check(probe, browser, accounts):
+def sources_check(probe, accounts):
     async def command(repo, settings):
         from tank.sources import SourceService
 
         service = SourceService(repo, settings)
         try:
-            return await service.check(probe=probe, include_browser=browser, check_accounts=accounts)
+            return await service.check(probe=probe, check_accounts=accounts)
         finally:
             if hasattr(service, "close"):
                 await service.close()
@@ -421,8 +429,6 @@ def readiness_checks(settings):
     """Report configuration readiness without exposing configuration/secret values."""
     import re
 
-    import yaml
-
     def configured(value):
         return bool(value) and not any(
             word in str(value).upper() for word in ("REPLACE_", "NOT CONFIGURED", "UNVERSIONED")
@@ -466,26 +472,7 @@ def readiness_checks(settings):
         )
     except OSError as exc:
         checks.append({"check": "codex_auth_file_present", "ok": False, "reason": type(exc).__name__})
-    if getattr(settings, "x_enabled", True):
-        try:
-            s29 = next(
-                (
-                    s
-                    for s in settings.load_config("sources").get("sources", [])
-                    if s.get("source_id") == "S29"
-                ),
-                {},
-            )
-            checks.append({"check": "s29_list_id", "ok": configured(s29.get("list_id"))})
-        except (OSError, ValueError, yaml.YAMLError) as exc:
-            checks.append({"check": "s29_list_id", "ok": False, "reason": type(exc).__name__})
-        profile = Path(settings.x_profile_dir)
-        try:
-            checks.append({"check": "x_profile", "ok": profile.is_dir() and any(profile.iterdir())})
-        except OSError as exc:
-            checks.append({"check": "x_profile", "ok": False, "reason": type(exc).__name__})
-    else:
-        checks.append({"check": "x_disabled_by_operator", "ok": True, "enabled": False})
+    checks.append({"check": "apify_api_token", "ok": configured(getattr(settings, "apify_api_token", None))})
     user_agent = getattr(settings, "user_agent", "")
     checks.append(
         {

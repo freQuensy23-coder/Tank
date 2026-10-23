@@ -121,7 +121,7 @@ async def test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches
 ):
     fixtures = [entry for entry in retained() if entry[0] in {206, 216}]
     pages = {row["url"]: payload for _, row, payload in fixtures}
-    settings = Settings(data_dir=tmp_path, x_enabled=False)
+    settings = Settings(data_dir=tmp_path)
     source = next(x for x in settings.load_config("sources")["sources"] if x["source_id"] == "S15")
     feed_url = source["feeds"][0]["url"]
     links = '<a href="/latest-updates">Latest Updates</a>' + "".join(
@@ -164,7 +164,15 @@ async def test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches
             assert all("latest-updates" not in url for url in seen)
             jobs, items = await repo.list("ops.jobs"), await repo.list("ingest.source_items")
 
-            assert {j["idem_key"] for j in jobs} == {x["item_id"] for x in items}
-            assert {j["type"] for j in jobs} == {"ROUTE_ITEM"}
+            assert {j["idem_key"] for j in jobs if j["type"] in {"FILTER_ITEM", "ROUTE_ITEM"}} == {
+                x["item_id"] for x in items
+            }
+            progress = await repo.list("out.ops_notices", filters={"kind": "ITEM_PROGRESS"})
+            assert {row["subject_id"] for row in progress} == {x["item_id"] for x in items}
+            assert {(row["subject_id"], row["stage"]) for row in progress} == {
+                (item["item_id"], stage) for item in items for stage in ("RECEIVED", "JEV_BYPASSED")
+            }
+            assert len(progress) == 2 * len(items)
+            assert {j["type"] for j in jobs} == {"ROUTE_ITEM", "DELIVER"}
         finally:
             await service.close()

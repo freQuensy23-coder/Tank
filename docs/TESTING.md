@@ -47,17 +47,15 @@ For portable parallel integration, the operator first provisions distinct dispos
 
 The opt-in parallel_postgres plugin runs before conftest. The controller preserves the exact templates for worker inheritance; each gwN worker replaces exactly one literal {worker} in dbname only. Every configured route is validated before any environment update. Shared DSNs, non-test database names, nested placeholders and placeholders in host/user/password/options are refused. Missing database variables are allowed for non-PostgreSQL integrations. The plugin never connects, creates or deletes databases, or loads dotenv/credential files. Supply enough precreated worker databases for the requested count. Use the ordinary serial command without this plugin for -n 0; a shared DSN is never a parallel recipe.
 
-Prepare the full integration prerequisites in the clean checkout after installing the frozen Python environment. These commands stage the data at the paths used by the tests and install the actual gateway package and Chromium; no external capture path or pi-ai environment variable is needed. Configure only the guarded disposable PostgreSQL routes described above, then run integration with the explicit browser flag:
+Prepare the full integration prerequisites in the clean checkout after installing the frozen Python environment. These commands stage the data at the paths used by the tests and install the actual gateway package; no external capture path or pi-ai environment variable is needed. Configure only the guarded disposable PostgreSQL routes described above, then run integration:
 
     npm ci --prefix tests/node-gateway --ignore-scripts --no-audit --no-fund
-    uv run python -m playwright install --with-deps chromium
     uv run python scripts/ci/stage_retained_fixtures.py
     uv run python tests/fixtures/supplementary-sources/stage.py
-    export TANK_BROWSER_TESTS=1
 
 The exact deployment-role SQL cases additionally require Docker and the postgres:16-bookworm image. They create their own labelled, network-isolated container and literal tank database on tmpfs, then remove only their owned container. They do not use the ordinary worker databases; missing prerequisites fail the selected run.
 
-The browser marker requires TANK_BROWSER_TESTS=1 and local Chromium. The node marker may require a prepared upstream package tree. The historical marker requires retained capture inputs. The process marker identifies tests launching a local child executable. The CI integration job stages the exact retained market and supplementary source inputs, installs the locked actual pi-ai gateway package, and provisions its PostgreSQL prerequisites. It records the selected collection and requires every collected case to pass; any skip, failure, missing case or empty report fails CI. Actual integration deadline tests intentionally wait about 20 seconds per case.
+The node marker may require a prepared upstream package tree. The historical marker requires retained capture inputs. The process marker identifies tests launching a local child executable. The CI integration job stages the exact retained market and supplementary source inputs, installs the locked actual pi-ai gateway package, and provisions its PostgreSQL prerequisites. It records the selected collection and requires every collected case to pass; any skip, failure, missing case or empty report fails CI. Actual integration deadline tests intentionally wait about 20 seconds per case.
 
 ## JavaScript and TypeScript
 
@@ -79,7 +77,7 @@ Run staged targets serially. The audit configuration uses absolute paths for its
 
 ## Go assets
 
-The active exchange collector is the Go module in capture/ (Go 1.25 or later in that release line). .github/workflows/capture.yml is its authoritative CI: go vet, go test -race with a migrated disposable PostgreSQL 16 database, recorded-frame/REST parity, generated-schema drift checks, and the selected Python reader suites. The ci.yml orchestrator calls capture.yml and test-suite.yml on every pull request and main/prod-main push; the reusable workflows have no duplicate direct triggers. All Python, Node and Go lanes, source lint, format and mypy must pass before either SHA-tagged image is published.
+The active exchange collector is the Go module in capture/ (Go 1.25 or later in that release line). .github/workflows/capture.yml is its authoritative CI: go vet, go test -race with a migrated disposable PostgreSQL 16 database, recorded-frame/REST parity, generated-schema drift checks, and the selected Python reader suites. The ci.yml orchestrator calls capture.yml and test-suite.yml on every pull request and main push; the reusable workflows have no duplicate direct triggers. All Python, Node and Go lanes, source lint, format and mypy must pass before either SHA-tagged image is published.
 
 The Python integration job also prepares Go and an offline module/build cache for the actual parity and PostgreSQL wrapper tests. Before a local full integration run, install the Go version required by capture/go.mod and prepare those caches once:
 
@@ -139,9 +137,7 @@ The cleanup establishes commands and conventions. A green result from the curren
 
 The pinned CI environment uses uv 0.11.7, Python 3.13.13, Node 24.22.0 and Go 1.25.14. Ruff, mypy and test tools are pinned in pyproject.toml and uv.lock; golangci-lint 2.5.0 is verified against its release archive SHA256. The source comment scanner checks Python tokens and Go lexical comments while preserving semantic directives. It excludes immutable history, upstream/vendor trees and retained fixture assets.
 
-Only successful pushes to main or prod-main publish ghcr.io/<owner>/<repository>/tank and tank-capture, tagged by the full commit SHA and branch. deploy.yml is workflow_dispatch only and uses the production environment. It accepts a full lowercase SHA belonging to the selected main/prod-main branch. Configure PROD_SSH_USER, PROD_SSH_HOST, PROD_SSH_KEY and PROD_SSH_KNOWN_HOSTS as production environment secrets. The production checkout must already be clean and at that exact commit; the workflow never resets or updates it.
-
-The deployment helper sends structured input over SSH stdin and uses the existing production `tank` Compose project with `/srv/tank/compose.yaml`, `/etc/tank/compose.server.yaml`, the retained recovery PostgreSQL resource override, and `/etc/tank/compose.env` for every config/up/ps/rollback command. It verifies the parsed project identity and both image revision labels, updates only the existing Tank and Go capture image tags, and waits for both services. If the update fails, it restores both prior image tags and recreates those two services. CI work does not execute deployment.
+Every push to main builds and pushes the five images ([DOCKER_BUILDS.md](DOCKER_BUILDS.md)), tagged by the full commit SHA, in parallel with the test lanes; `publish` adds the `main` tag after all of them pass. deploy.yml is workflow_dispatch only, runs only on main (any other branch, or a commit not on main, fails) and uses the production environment with the secrets PROD_SSH_USER, PROD_SSH_HOST, PROD_SSH_KEY and PROD_SSH_KNOWN_HOSTS. It waits for the commit's CI run, then runs `scripts/deploy/deploy.sh` on the host ([OPERATIONS.md](OPERATIONS.md#deployment)). CI work does not execute deployment.
 
 ## ClickHouse integration contracts
 

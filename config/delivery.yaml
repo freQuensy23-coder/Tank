@@ -3,4 +3,4 @@ ops_chat_id: '-1004481434974'
 legacy_cards_chat_id: '-1004408952606'
 parse_mode: HTML
 max_attempts: 5
-secrets: Docker secret telegram_bot_token at /run/secrets/telegram_bot_token
+secrets: TELEGRAM_BOT_TOKEN from the production .env

@@ -90,6 +90,7 @@ async function entrypointFixture(t, options = {}) {
     etherscan_api_key: "synthetic-etherscan-key",
     ...options.secrets,
   };
+  for (const [name, value] of Object.entries(secrets)) process.env[name.toUpperCase()] = value;
   const reads = [];
   const resolutions = [];
   const spawns = [];
@@ -108,10 +109,7 @@ async function entrypointFixture(t, options = {}) {
         reads.push(path);
         if (path === "/synthetic-native/boxlite-shim") return shim;
         if (path === "/synthetic-native/provenance.json") return provenance;
-        assert.equal(encoding, "utf8");
-        const name = path.replace("/run/secrets/", "");
-        assert.ok(Object.hasOwn(secrets, name), "Unexpected secret read");
-        return secrets[name];
+        throw new Error("Unexpected file read: " + path);
       },
     },
   });
@@ -191,10 +189,9 @@ test("main selects service and sandbox credentials and starts the child", async 
   );
   assert.equal(child.env.OPENROUTER_API_KEY, undefined);
   assert.equal(child.env.CODEX_AUTH, undefined);
-  assert.deepEqual(
-    f.reads.filter((path) => path.startsWith("/run/secrets/")).sort(),
-    Object.keys(f.secrets).map((name) => "/run/secrets/" + name).sort(),
-  );
+  for (const name of Object.keys(f.secrets)) {
+    assert.equal(child.env[name.toUpperCase()], undefined);
+  }
 });
 
 test("main forwards shutdown signals and preserves the child's exit outcome", async (t) => {
@@ -241,7 +238,6 @@ test("main refuses a public replay database route before spawning", async (t) =>
 
   await assert.rejects(f.main(), /private IPv4 service address/);
 
-  assert.ok(!f.reads.includes("/run/secrets/tank_replay_agent_db_password"));
   assert.deepEqual(f.spawns, []);
 });
 
@@ -250,7 +246,7 @@ test("main refuses empty required secrets before resolving or spawning", async (
     secrets: { oma_api_key: "  \n" },
   });
 
-  await assert.rejects(f.main(), /Empty required secret: oma_api_key/);
+  await assert.rejects(f.main(), /Empty required secret: OMA_API_KEY/);
 
   assert.deepEqual(f.resolutions, []);
   assert.deepEqual(f.spawns, []);

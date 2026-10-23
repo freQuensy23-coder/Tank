@@ -18,11 +18,10 @@ def test_operator_environment_is_removed_by_name():
         "DOCKER_HOST": "FAKE-remote-daemon",
         "NETRC": "FAKE-netrc-path",
         "TANK_TEST_DATABASE_URL": "postgresql://fake:fake@localhost/test",
-        "TANK_BROWSER_TESTS": "1",
         "PATH": "/fake/bin",
     }
     policy.scrub_inherited_environment(environment)
-    assert set(environment) == {"TANK_TEST_DATABASE_URL", "TANK_BROWSER_TESTS", "PATH"}
+    assert set(environment) == {"TANK_TEST_DATABASE_URL", "PATH"}
 
 
 def test_operator_dotenv_is_never_opened(tmp_path, monkeypatch):
@@ -35,10 +34,9 @@ def test_operator_dotenv_is_never_opened(tmp_path, monkeypatch):
 
 def test_default_secret_and_auth_locations_are_synthetic(tmp_path):
     settings = Settings()
-    assert settings.secrets_dir.is_relative_to(tmp_path)
     assert settings.codex_auth_path.is_relative_to(tmp_path)
-    assert settings.x_storage_state_path.is_relative_to(tmp_path)
-    assert settings.x_profile_dir.is_relative_to(tmp_path)
+    assert settings.apify_api_token is None
+    assert settings.tank_db_password is None
     assert settings.telegram_token is None
     assert settings.openma_api_key is None
     assert settings.codex_gateway_key is None

@@ -9,7 +9,6 @@ import re
 import socket
 import sys
 import tempfile
-from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -25,7 +24,6 @@ pytest_plugins = (
 TEST_DATABASE_VARIABLES = frozenset(
     {"TANK_TEST_DATABASE_URL", "TANK_E2E_DATABASE_URL", "TANK_SOURCE_TEST_DATABASE_URL"}
 )
-TEST_FLAGS = frozenset({"TANK_BROWSER_TESTS"})
 TEST_CLICKHOUSE = "CLICKHOUSE_TEST_URL"
 
 
@@ -33,7 +31,7 @@ def scrub_inherited_environment(environment):
     """Inspect names only; discard operator configuration without reading values."""
     for name in tuple(environment):
         upper = name.upper()
-        if name in TEST_DATABASE_VARIABLES | TEST_FLAGS | {TEST_CLICKHOUSE}:
+        if name in TEST_DATABASE_VARIABLES | {TEST_CLICKHOUSE}:
             continue
         if (
             upper in {"NETRC", "DBUS_SESSION_BUS_ADDRESS", "NPM_CONFIG_USERCONFIG", "CURL_HOME"}
@@ -106,11 +104,6 @@ scrub_inherited_environment(os.environ)
 
 
 _operator_home = Path.home()
-_browser_cache = (
-    _operator_home / "Library" / "Caches" / "ms-playwright"
-    if sys.platform == "darwin"
-    else _operator_home / ".cache" / "ms-playwright"
-)
 _OFFLINE_HOME = Path(tempfile.mkdtemp(prefix="tank-pytest-offline-home-"))
 os.environ.update(
     HOME=str(_OFFLINE_HOME),
@@ -121,8 +114,6 @@ os.environ.update(
     GIT_CONFIG_GLOBAL=os.devnull,
     GIT_CONFIG_NOSYSTEM="1",
 )
-if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ and _browser_cache.is_dir():
-    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(_browser_cache)
 
 
 def _cleanup_home():
@@ -260,42 +251,8 @@ if _ORIGINAL_SENDMSG is not None:
     socket.socket.sendmsg = _sendmsg
 
 
-@contextmanager
-def _synthetic_settings_defaults():
-    """Compile dynamic X defaults once; each test still owns its synthetic home."""
-    from pydantic_core import PydanticUndefined
-
-    from tank.settings import Settings
-
-    defaults = {
-        "x_storage_state_path": lambda: _OFFLINE_HOME / "FAKE-absent-x-state.json",
-        "x_profile_dir": lambda: _OFFLINE_HOME / "FAKE-browser-profile",
-    }
-    original = {
-        name: (Settings.model_fields[name].default, Settings.model_fields[name].default_factory)
-        for name in defaults
-    }
-    try:
-        for name, factory in defaults.items():
-            Settings.model_fields[name].default = PydanticUndefined
-            Settings.model_fields[name].default_factory = factory
-        Settings.model_rebuild(force=True)
-        yield
-    finally:
-        for name, (default, factory) in original.items():
-            Settings.model_fields[name].default = default
-            Settings.model_fields[name].default_factory = factory
-        Settings.model_rebuild(force=True)
-
-
-@pytest.fixture(scope="session")
-def _offline_settings_defaults():
-    with _synthetic_settings_defaults():
-        yield
-
-
 @pytest.fixture(autouse=True)
-def offline_credentials(monkeypatch, tmp_path, _offline_settings_defaults):
+def offline_credentials(monkeypatch, tmp_path):
     """Synthetic default locations; explicit constructor/fake env values still win."""
     from pydantic_settings.sources import DotEnvSettingsSource
 
@@ -306,9 +263,6 @@ def offline_credentials(monkeypatch, tmp_path, _offline_settings_defaults):
     monkeypatch.setattr(sys.modules[__name__], "_OFFLINE_HOME", synthetic_home)
 
     monkeypatch.setattr(DotEnvSettingsSource, "_read_env_files", lambda self: {})
-    empty = tmp_path / "offline-empty-secrets"
-    empty.mkdir()
-    monkeypatch.setenv("TANK_SECRETS_DIR", str(empty))
     docker_endpoint = os.environ.get("OPENMA_SQL_TEST_DOCKER_HOST")
     if docker_endpoint:
         if not docker_endpoint.startswith("unix://"):

@@ -16,10 +16,10 @@ assert.ok(/^\/proof\/[A-Za-z0-9_-]+\/boxlite$/.test(env.BOXLITE_HOME ?? ''), 'BO
 const databaseIp = env.TANK_NATIVE_DB_IPV4 ?? '';
 assert.ok(/^(10\.\d+|172\.(1[6-9]|2\d|3[01])|192\.168)\.\d+\.\d+$/.test(databaseIp), 'private database IPv4 required');
 const rootfs = env.TANK_NATIVE_ROOTFS ?? '/opt/tank-sandbox-oci';
-const secret = async name => (await readFile('/run/secrets/' + name, 'utf8')).trim();
+const secret = async name => { const value = (env[name] ?? '').trim(); assert.ok(value, name + ' required'); return value; };
 const url = (role, password, database) => `postgresql://${role}:${encodeURIComponent(password)}@${databaseIp}:5432/${database}`;
-const agentPassword = await secret('tank_agent_db_password');
-const replayPassword = await secret('tank_replay_agent_db_password');
+const agentPassword = await secret('TANK_AGENT_DB_PASSWORD');
+const replayPassword = await secret('TANK_REPLAY_AGENT_DB_PASSWORD');
 const hash = value => createHash('sha256').update(value).digest('hex');
 
 const PROBE = String.raw`

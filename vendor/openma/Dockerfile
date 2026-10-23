@@ -152,4 +152,19 @@ ENV BOXLITE_RUNTIME_DIR=/opt/tank-boxlite-runtime LD_LIBRARY_PATH=/opt/tank-boxl
 COPY --chown=node:node tank-overlay.json /app/tank-overlay.json
 USER root
 RUN install -d -o node -g node /app/replay-evidence
+COPY --from=sandbox / /opt/tank-sandbox-oci/
 USER node
+ENV BOXLITE_HOME=/app/data/boxlite \
+    TANK_REPLAY_EVIDENCE_ROOT=/app/replay-evidence \
+    LITEBOX_CPUS=2 \
+    LITEBOX_MEMORY_MIB=2048 \
+    SANDBOX_PROVIDER=litebox \
+    SANDBOX_IMAGE=tank-analysis:server-amd64 \
+    SANDBOX_ROOTFS_PATH=/opt/tank-sandbox-oci \
+    MEMORY_BLOB_DIR=/app/data/memory-blobs \
+    SESSION_OUTPUTS_DIR=/app/data/session-outputs \
+    FILES_BLOB_DIR=/app/data/files \
+    AUTH_DISABLED=0
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=30s CMD ["node", "-e", "fetch('http://localhost:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+ENTRYPOINT ["node", "/app/tank-deploy/openma_entrypoint.mjs"]
+CMD []

@@ -1199,6 +1199,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                         {
                             "event_id": eid,
                             "kind": "FULL" if item == "lead" else "UPDATE",
+                            "what": "Robinhood listing reported; token market coverage unavailable",
                             "verdict": "Robinhood listing reported; token market coverage unavailable",
                             "why": [
                                 "Listing report concerns a registered token",

@@ -494,14 +494,24 @@ def test_actual_spot_exclusion_cause_reaches_the_card(source_reason):
 async def test_current_full_publication_uses_literal_render_and_excludes_undecided_token(
     tmp_path, verdict, why
 ):
-    """Actual publish tool/composer/repository; no model/native/Telegram calls."""
+    """Actual publication, storage and delivery with a mocked Telegram transport."""
+    import json
+    from types import SimpleNamespace
+
+    import httpx
+
+    from tank.delivery import DeliveryService
     from tank.event_tools import EventToolService
     from tank.settings import Settings
     from tank.storage import MemoryRepository
+    from tank.telegram_rich import rich_message_text
     from tank.util import iso
 
     event, assessment, beneficiary, decision, truth = deepcopy(card_inputs())
     eid, token = "current-card-contract", "world:WLD"
+    what = (
+        "World approved access to its product. Approval permits the next step; availability is not confirmed."
+    )
     now = iso()
     event.update(
         event_id=eid,
@@ -565,6 +575,7 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
             {
                 "event_id": eid,
                 "kind": "FULL",
+                "what": what,
                 "verdict": verdict,
                 "why": why,
             },
@@ -581,7 +592,13 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
         assert "primary ETH" not in text
         assert "── ethereum:ETH" not in text
         assert len([line for line in lines if line.startswith("──")]) == 1
-        assert lines[1].startswith("Scores ") and lines[2].startswith("Stage: ")
+        assert lines[1] == "WHAT: " + what
+        assert lines[2].startswith("Scores ") and lines[3].startswith("Stage: ")
+        assert alert["card_struct"]["what"] == what
+        assert rich_message_text(alert["rich_message"]).splitlines()[1] == "WHAT: " + what
+        bundle = await repo.get("out.evidence_bundles", alert["evidence_bundle_id"])
+        assert bundle["payload"]["what"] == what
+        assert bundle["payload"]["rich_message"] == alert["rich_message"]
         assert not any(line.startswith(("IMPACT:", "SECONDARIES:")) for line in lines)
         outlook = text.split("OUTLOOK:", 1)[1].split("WHAT TO DO:", 1)[0]
         assert all("• " + name + ": " in outlook for name in ("Base", "Upside", "Failure"))
@@ -589,6 +606,21 @@ async def test_current_full_publication_uses_literal_render_and_excludes_undecid
         assert len(text) <= 3500 and "linter" not in alert
         assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == 1
         assert not any(row.get("status") == "SENT" for row in await repo.list("out.deliveries"))
+        sent = []
+
+        def send(request):
+            assert request.url.path.endswith("/sendRichMessage")
+            sent.append(json.loads(request.content)["rich_message"])
+            return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
+
+        delivery_settings = SimpleNamespace(
+            telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2"
+        )
+        async with httpx.AsyncClient(transport=httpx.MockTransport(send)) as http:
+            delivery = DeliveryService(repo, delivery_settings, http=http)
+            await delivery.deliver({"alert_id": alert["alert_id"], "version": alert["version"]})
+        assert sent == [alert["rich_message"]]
+        assert rich_message_text(sent[0]).splitlines()[1] == "WHAT: " + what
     finally:
         await repo.close()
 
@@ -750,9 +782,9 @@ def test_card_length_diagnostics_preserve_full_preview_and_structured_guidance()
     with pytest.raises(ValueError, match="CARD_LENGTH") as caught:
         render(inputs)
     diagnostic = json.loads(str(caught.value).split(": ", 1)[1])
-    assert diagnostic["max"] == 3500
+    assert diagnostic["max"] == 5000
     assert diagnostic["actual"] == len(diagnostic["preview"])
-    assert diagnostic["excess"] == diagnostic["actual"] - 3500
+    assert diagnostic["excess"] == diagnostic["actual"] - 5000
     assert (
         sum(s["chars"] for s in diagnostic["sections"]) + diagnostic["newline_chars"] == diagnostic["actual"]
     )
@@ -920,3 +952,57 @@ def test_confidence_names_the_limiting_input(data, certainty, move, expected):
     assert decision["confidence_limiting"]["input"] == (
         None if expected == "none recorded" else "certainty" if "certainty" in expected else "class"
     )
+
+
+@pytest.mark.parametrize("kind", ["PARTIAL", "FULL", "UPDATE"])
+def test_what_precedes_analysis_and_preserves_every_other_section(kind):
+    import html
+    import re
+
+    from tank.analysis.cards import telegram_card_html
+    from tank.telegram_rich import card_rich_message, rich_message_text
+
+    event, assessment, beneficiary, decision, truth = card_inputs()
+    args = (event, assessment, [beneficiary], [decision], [truth])
+    wording = {
+        "verdict": "External liquidity is available.",
+        "why": ["Access expanded", "Effect not quantified"],
+    }
+    what = "Uniswap добавил обмены через внешние источники ликвидности. Предложения доступны через приложение & API <v4>."
+    original = compose_card(*args, kind=kind, **wording)
+    card = compose_card(*args, kind=kind, what=what, **wording)
+    assert card.splitlines()[1] == "WHAT: " + what
+    assert card.replace("WHAT: " + what + "\n", "", 1) == original
+    formatted = telegram_card_html(card)
+    assert "<b>WHAT:</b> " + html.escape(what) in formatted
+    assert html.unescape(re.sub(r"</?b>", "", formatted)) == card
+    rich = card_rich_message(card, assessment)
+    assert rich["blocks"][1] == {
+        "type": "paragraph",
+        "text": [{"type": "bold", "text": "WHAT:"}, " " + what],
+    }
+    assert rich["blocks"][2]["type"] == "table"
+    assert rich_message_text(rich).splitlines()[1] == "WHAT: " + what
+
+
+def test_what_counts_toward_card_limit_without_truncation():
+    import json
+
+    from tank.telegram_rich import card_rich_message, rich_message_text
+
+    event, assessment, beneficiary, decision, truth = card_inputs()
+    args = (event, assessment, [beneficiary], [decision], [truth])
+    original = compose_card(*args)
+    what = "The protocol now connects users to external trading venues."
+    event["thresholds"] = {"card_max_chars": len(original)}
+    with pytest.raises(ValueError, match="CARD_LENGTH") as caught:
+        compose_card(*args, what=what)
+    diagnostics = json.loads(str(caught.value).removeprefix("CARD_LENGTH: "))
+    assert diagnostics["excess"] == len("WHAT: " + what + "\n")
+    assert "WHAT: " + what in diagnostics["preview"]
+    assert "publish_card.what / verdict / why" in diagnostics["editable_fields"]
+    assert any(section["section"] == "WHAT" for section in diagnostics["sections"])
+    event.pop("thresholds")
+    rich_limit = len(rich_message_text(card_rich_message(original, assessment)))
+    with pytest.raises(ValueError, match="CARD_LENGTH"):
+        card_rich_message(compose_card(*args, what=what), assessment, max_chars=rich_limit)

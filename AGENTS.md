@@ -24,4 +24,9 @@ The rules, workstreams and file ownership of the lead session are in /srv/tank-w
 - Run Ruff checks, Ruff formatting, and mypy against the current source. Preserve public Go error strings covered by parity contracts; .golangci.yml narrowly exempts their exact ST1005 source expressions.
 - Unit tests select `not integration`, must have zero skips, take less than 10 seconds per case including fixtures, and have p90 below 1 second. Run integration separately with its actual services and require the full collected case set to pass with zero skips.
 - Use pytest-xdist `-n auto` and normal available CPU/memory. Do not introduce artificial resource quotas, worker caps, or CPU affinity restrictions.
-- CI publishes qualified Tank and Go capture images after every required lane passes on main/prod-main. Production deployment is manual and requires the matching clean /srv/tank checkout; do not invoke it while doing CI maintenance.
+- CI builds and pushes the five images by commit SHA in parallel with the tests; only a commit whose whole CI run passed gets the `main` tag and can be deployed. Production deployment is the manual Deploy workflow, from main only; do not invoke it while doing CI maintenance.
+
+## Deployment
+
+- SSH access to the production server is not for deploys. Never deploy over SSH: no manual `docker compose` up/pull/restart, image changes or checkout updates in /srv/tank.
+- Every production deploy runs through the GitHub Actions `deploy` workflow (`.github/workflows/deploy.yml`), dispatched from the remote `main` branch.

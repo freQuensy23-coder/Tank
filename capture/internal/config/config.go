@@ -50,17 +50,9 @@ func databaseURL() (string, error) {
 	if url := env("TANK_DATABASE_URL", ""); url != "" {
 		return url, nil
 	}
-	path := filepath.Join(env("TANK_SECRETS_DIR", "/run/secrets"), "tank_db_password")
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", errors.New("TANK_DATABASE_URL is unset and no tank_db_password Docker secret is mounted")
-	}
-	if err != nil {
-		return "", err
-	}
-	password := strings.TrimSpace(string(data))
+	password := strings.TrimSpace(os.Getenv("TANK_DB_PASSWORD"))
 	if password == "" {
-		return "", errors.New("Docker secret tank_db_password is empty")
+		return "", errors.New("TANK_DB_PASSWORD is unset or empty")
 	}
 	return "postgresql://tank:" + escape(password) + "@postgres:5432/tank", nil
 }

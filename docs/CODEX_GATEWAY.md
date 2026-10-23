@@ -2,7 +2,7 @@
 
 Tank serves `POST /v1/responses` on `http://tank:8790` in its existing Python
 asyncio process. OpenMA's `gpt-6.1-sol` Model Card uses `api: openai-responses`,
-`base_url: http://tank:8790/v1`, and the Docker secret `codex_gateway_key` as its
+`base_url: http://tank:8790/v1`, and `CODEX_GATEWAY_KEY` from the host `.env` as its
 Bearer key. The gateway compares that key in constant time before reading the
 request body or the OAuth file. No host port is published.
 

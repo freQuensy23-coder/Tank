@@ -13,6 +13,7 @@ from urllib.parse import parse_qsl, unquote, urlparse
 import httpx
 import zstandard
 
+from tank.ops_progress import event_progress, item_progress, tool_progress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.time_precision import (
     Timestamp,
@@ -574,11 +575,13 @@ class EventToolService:
                                 "error": "Use add_observation for the session event",
                             }
                     result = await getattr(self, tool)(arguments, ctx)
+                    await tool_progress(self.repo, self.settings, tool, arguments, ctx, result)
 
             if tool == "set_assessment" and self.scheduler is not None:
                 await self.scheduler.ensure_reactions(await self.require("evt.events", event_id))
             return fit_result(result) if tool in READ_TOOLS else result
         result = await getattr(self, tool)(arguments, ctx)
+        await tool_progress(self.repo, self.settings, tool, arguments, ctx, result)
         return fit_result(result) if tool in READ_TOOLS else result
 
     async def rows(self, table, event_id=None, *, filters=None):
@@ -995,7 +998,16 @@ class EventToolService:
         existing = await self.repo.get("ingest.source_items", iid)
         if existing:
             return existing
-        return await self.repo.put("ingest.source_items", iid, row)
+        await self.repo.put("ingest.source_items", iid, row)
+        await item_progress(
+            self.repo,
+            self.settings,
+            iid,
+            "EVIDENCE_FETCHED",
+            "Источник запрошен агентом; Jev не требуется",
+            event_id=c.get("event_id"),
+        )
+        return row
 
     async def web_search(self, a, c):
         from tank.search import DuckDuckGoSearchService, SearchError
@@ -1189,7 +1201,12 @@ class EventToolService:
             raise ValueError("certainty and reason required")
         if not x["is_event"]:
             item["extraction_status"] = "SKIPPED"
+            item["extraction_decision"] = "NO_EVENT"
+            item["extraction_reason"] = x.get("no_event_reason") or ""
             await self.repo.put("ingest.source_items", item["item_id"], item)
+            await item_progress(
+                self.repo, self.settings, item["item_id"], "AGENT_REJECTED", item["extraction_reason"]
+            )
             return {"is_event": False}
         eid = new_id("evt")
         obs = new_id("obs")
@@ -1269,6 +1286,9 @@ class EventToolService:
         )
         item["extraction_status"] = "DONE"
         await self.repo.put("ingest.source_items", item["item_id"], item)
+        await item_progress(
+            self.repo, self.settings, item["item_id"], "EVENT_RECORDED", x["statement"], event_id=eid
+        )
         if c.get("session_id"):
             async with self.repo.lock("session:" + c["session_id"]):
                 session = await self.repo.get("ops.agent_sessions", c["session_id"])
@@ -1521,6 +1541,9 @@ class EventToolService:
         )
         item["extraction_status"] = "DONE"
         await self.repo.put("ingest.source_items", item["item_id"], item)
+        await item_progress(
+            self.repo, self.settings, item["item_id"], "OBSERVATION_ADDED", link, event_id=event["event_id"]
+        )
         return {
             "event_state": event["event_state"],
             "accepted_claims": claims,
@@ -1843,6 +1866,14 @@ class EventToolService:
                 x.update(partial_required=True, **deadline_stamp.fields("first_card_deadline"))
                 event.update(deadline_stamp.fields("first_card_deadline"))
                 await self.repo.put("evt.events", eid, event)
+        await event_progress(
+            self.repo,
+            self.settings,
+            eid,
+            "ASSESSED",
+            f"Класс: {klass}; " + "; ".join(str(reason) for reason in x.get("class_reasons", [])),
+            key=ems,
+        )
         return x
 
     async def set_beneficiaries(self, a, c):
@@ -2559,6 +2590,7 @@ class EventToolService:
             compose_card,
             publication_immediate,
         )
+        from tank.telegram_rich import CARD_TEXT_LIMIT, card_rich_message
 
         eid = a["event_id"]
         event = await self.require("evt.events", eid)
@@ -2830,6 +2862,9 @@ class EventToolService:
                 for truth, digest in zip(truths, truth_hashes, strict=True)
             ],
         }
+        what = a.get("what", "")
+        if what:
+            ctx["what"] = what
         verdict = a.get("verdict", "")
         why = a.get("why", [])
         if kind != "PARTIAL" and len(why) not in {2, 3}:
@@ -2857,7 +2892,18 @@ class EventToolService:
             for row in self.settings.load_config("registry").get("tokens", [])
         }
         text = compose_card(
-            event, assessment, beneficiaries, decisions, truths, kind=kind, verdict=verdict, why=why
+            event,
+            assessment,
+            beneficiaries,
+            decisions,
+            truths,
+            kind=kind,
+            what=what,
+            verdict=verdict,
+            why=why,
+        )
+        rich_message = card_rich_message(
+            text, assessment, max_chars=event["thresholds"].get("card_max_chars", CARD_TEXT_LIMIT)
         )
         previous_failed = previous and bool(
             await self.repo.list_latest(
@@ -2930,6 +2976,7 @@ class EventToolService:
             ),
             "code_version": self.settings.code_version,
             "model_ids": [],
+            "rich_message": rich_message,
             "producing_session_provenance": self.provenance(c),
             "agent_version": c.get("agent_version"),
             "skill_version": c.get("skill_version"),
@@ -2937,6 +2984,8 @@ class EventToolService:
             "tool_call_ids": [c["call_id"]] if c.get("call_id") else [],
             "request_log": [],
         }
+        if what:
+            bundle["what"] = what
         calls_by_key = {}
         if c.get("session_id"):
             for row in await self.rows("ops.tool_calls", filters={"session_id": c["session_id"]}):
@@ -3045,6 +3094,7 @@ class EventToolService:
             event_id=eid,
             **generated.fields("generated_at"),
             card_text=text,
+            rich_message=rich_message,
             card_struct=ctx,
             decisions=[
                 d["dec_id"]

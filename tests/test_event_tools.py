@@ -5,6 +5,7 @@ import pytest
 from tank.event_tools import EventToolService, freshness, validate_schema
 from tank.settings import Settings
 from tank.storage import MemoryRepository
+from tank.telegram_rich import score_summary
 from tank.util import iso, utcnow
 
 
@@ -162,7 +163,7 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(service, 
     from tank.util import sha256
 
     monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card")
+    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
     x = await seed(service)
     result = await service.dispatch("record_event", x, {})
     eid = result["event_id"]
@@ -177,6 +178,7 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(service, 
         {
             "event_id": eid,
             "kind": "PARTIAL",
+            "what": "Material partnership",
             "verdict": "Material partnership",
             "why": ["Defined access", "Relevant actor"],
         },
@@ -195,7 +197,7 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(service, 
         sha256(zstandard.ZstdDecompressor().decompress(physical.read_bytes())) == result["evidence_bundle_id"]
     )
     assert bundle["payload"]["source_items"][0]["text"] == "Product announced"
-    jobs = await service.repo.list("ops.jobs")
+    jobs = [job for job in await service.repo.list("ops.jobs") if job["payload"].get("alert_id")]
     assert len(jobs) == 1
     assert jobs[0]["type"] == "DELIVER"
     assert jobs[0]["payload"]["channel"] == "telegram:alerts"
@@ -651,6 +653,7 @@ async def test_structural_assessment_requires_agent_partial_without_parallel_pub
     args = {
         "event_id": extraction["event_id"],
         "kind": "PARTIAL",
+        "what": "World access approved",
         "verdict": "World access approved",
         "why": [],
     }
@@ -661,6 +664,14 @@ async def test_structural_assessment_requires_agent_partial_without_parallel_pub
     alert = await service.repo.get("out.alerts", result["alert_id"] + ":1")
     assert alert["kind"] == "PARTIAL"
     assert not alert["decisions"]
+    assert alert["rich_message"]["blocks"][1]["text"] == [
+        {"type": "bold", "text": "WHAT:"},
+        " " + args["what"],
+    ]
+    assert alert["card_struct"]["what"] == args["what"]
+    assert alert["rich_message"]["blocks"][2]["type"] == "table"
+    bundle = await service.repo.get("out.evidence_bundles", alert["evidence_bundle_id"])
+    assert bundle["payload"]["rich_message"] == alert["rich_message"]
     assert (
         await service.dispatch("publish_card", args, {"event_id": extraction["event_id"], "role": "analyst"})
     )["reason"] == "FIRST_CARD_ALREADY_GENERATED"
@@ -827,7 +838,9 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(serv
     import tank.analysis.cards as cards
 
     monkeypatch.setattr(cards, "alert_gate", lambda *a, **kw: (True, "TEST"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **kw: "Validated full card")
+    monkeypatch.setattr(
+        cards, "compose_card", lambda *a, **kw: "Validated full card" + "\n" + score_summary(a[1])
+    )
     x = await seed(service)
     result = await service.dispatch("record_event", x, {})
     eid = result["event_id"]
@@ -880,6 +893,7 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(serv
     args = {
         "event_id": eid,
         "kind": "FULL",
+        "what": "Approved fact",
         "verdict": "Approved fact",
         "why": ["Defined consequence", "Evidence available"],
     }
@@ -1019,6 +1033,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkey
         {
             "event_id": eid,
             "kind": "FULL",
+            "what": "Access approved",
             "verdict": "Access approved",
             "why": ["Defined access", "Primary event confirmed"],
         },
@@ -1052,6 +1067,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkey
             {
                 "event_id": eid,
                 "kind": "UPDATE",
+                "what": "Tracking window ended",
                 "verdict": "Tracking window ended",
                 "why": ["Call window expired", "Tracking ended"],
             },
@@ -1182,6 +1198,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(service
         {
             "event_id": eid,
             "kind": "FULL",
+            "what": "Access approved",
             "verdict": "Access approved",
             "why": ["Defined access", "Primary event confirmed"],
         },
@@ -1212,6 +1229,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(service
         args = {
             "event_id": eid,
             "kind": "UPDATE",
+            "what": "Data coverage limited",
             "verdict": "Data coverage limited",
             "why": ["Coverage decreased", "Execution confidence lower"],
         }
@@ -1221,7 +1239,16 @@ async def test_material_update_is_queued_once_and_delivered_after_window(service
             assert published["publication_receipt"]["disposition"] == "PUBLISHED"
         assert len(await service.repo.list("out.alerts")) == 2
         assert len(await service.repo.list("out.evidence_bundles")) == 2
-        assert len(await service.repo.list("ops.jobs", filters={"type": "DELIVER"})) == 2
+        assert (
+            len(
+                [
+                    job
+                    for job in await service.repo.list("ops.jobs", filters={"type": "DELIVER"})
+                    if job["payload"].get("alert_id")
+                ]
+            )
+            == 2
+        )
         later = now + timedelta(minutes=16)
         for module in ("tank.analysis.cards", "tank.event_tools", "tank.delivery"):
             monkeypatch.setattr(module + ".utcnow", lambda: later)
@@ -1294,7 +1321,13 @@ async def test_bundle_keeps_producing_model_and_separate_session_config(service)
     )
     published = await service.dispatch(
         "publish_card",
-        {"event_id": event["event_id"], "kind": "PARTIAL", "verdict": "World access approved", "why": []},
+        {
+            "event_id": event["event_id"],
+            "kind": "PARTIAL",
+            "what": "World access approved",
+            "verdict": "World access approved",
+            "why": [],
+        },
         {"event_id": event["event_id"], "role": "system"},
     )
     assert published["published"], published
@@ -1382,7 +1415,9 @@ async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata
     assert full == expected and full["measurement_metadata"]
     assert full["spot"]["W1H"]["coverage"]["n_complete"] == 0
     published = await service.dispatch(
-        "publish_card", {"event_id": eid, "kind": "PARTIAL", "verdict": "Approved fact", "why": []}, {}
+        "publish_card",
+        {"event_id": eid, "kind": "PARTIAL", "what": "Approved fact", "verdict": "Approved fact", "why": []},
+        {},
     )
     assert published["published"], published
     bundle = (await service.repo.get("out.evidence_bundles", published["evidence_bundle_id"]))["payload"]
@@ -1532,6 +1567,7 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
             {
                 "event_id": eid,
                 "kind": "FULL",
+                "what": "Access approved",
                 "verdict": "Access approved",
                 "why": ["Defined access", "Primary event confirmed"],
             },
@@ -1859,7 +1895,9 @@ async def test_terminal_event_cannot_publish_new_card(service, lifecycle):
         {"ems_id": "terminal-ems", "event_id": eid, "class": "STRUCTURAL_SHOCK"},
     )
     result = await service.dispatch(
-        "publish_card", {"event_id": eid, "kind": "PARTIAL", "verdict": "Approved fact", "why": []}, {}
+        "publish_card",
+        {"event_id": eid, "kind": "PARTIAL", "what": "Approved fact", "verdict": "Approved fact", "why": []},
+        {},
     )
     assert not result["published"] and result["reason"] == "TERMINAL_EVENT"
 
@@ -2086,6 +2124,7 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
             {
                 "event_id": eid,
                 "kind": "FULL",
+                "what": quote,
                 "verdict": quote,
                 "why": ["Access approved", "Execution data unavailable"],
             },
@@ -2393,7 +2432,11 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(servi
     import tank.analysis.cards as cards
     from tank.delivery import DeliveryService
 
-    monkeypatch.setattr(cards, "compose_card", lambda *args, **kwargs: "Synthetic safety update")
+    monkeypatch.setattr(
+        cards,
+        "compose_card",
+        lambda *args, **kwargs: "Synthetic safety update" + "\n" + score_summary(args[1]),
+    )
     eid = "repeat-safety"
     await service.repo.put(
         "evt.events",
@@ -2451,6 +2494,7 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(servi
     args = {
         "event_id": eid,
         "kind": "FULL",
+        "what": "Synthetic fact",
         "verdict": "Synthetic fact",
         "why": ["Primary fixture", "Safety fixture"],
     }
@@ -3286,7 +3330,7 @@ async def test_full_card_blocks_only_analysis_tokens_with_decisions(service, mon
     def compose(event, assessment, beneficiaries, *args, **kwargs):
         captured["blocks"] = [edge["token_id"] for edge in beneficiaries]
         captured["who"] = [edge["token_id"] for edge in event["beneficiary_edges"]]
-        return "Isolated token selection fixture"
+        return "Isolated token selection fixture\n" + score_summary(assessment)
 
     monkeypatch.setattr(cards, "compose_card", compose)
     result = await service.dispatch(
@@ -3294,6 +3338,7 @@ async def test_full_card_blocks_only_analysis_tokens_with_decisions(service, mon
         {
             "event_id": eid,
             "kind": "FULL",
+            "what": "World approved access",
             "verdict": "World approved access",
             "why": ["Quoted approval", "Supported capture"],
         },
@@ -3340,7 +3385,9 @@ async def test_bundle_directory_sync_failure_never_creates_database_reference(se
     from tank.analysis import cards
 
     monkeypatch.setattr(cards, "alert_gate", lambda *args, **kwargs: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *args, **kwargs: "Durability fixture")
+    monkeypatch.setattr(
+        cards, "compose_card", lambda *args, **kwargs: "Durability fixture" + "\n" + score_summary(args[1])
+    )
     extraction_args = await seed(service)
     made = await service.dispatch("record_event", extraction_args, {})
     eid = made["event_id"]
@@ -3366,14 +3413,20 @@ async def test_bundle_directory_sync_failure_never_creates_database_reference(se
     with pytest.raises(OSError, match="Synthetic bundle directory fsync failure"):
         await service.dispatch(
             "publish_card",
-            {"event_id": eid, "kind": "PARTIAL", "verdict": "Approved source fact", "why": []},
+            {
+                "event_id": eid,
+                "kind": "PARTIAL",
+                "what": "Approved source fact",
+                "verdict": "Approved source fact",
+                "why": [],
+            },
             {},
         )
     assert seen[-1] == "directory" and "file" in seen[:-1]
     assert not await service.repo.list("out.evidence_bundles")
     assert not await service.repo.list("out.alerts")
     assert not await service.repo.list("out.deliveries")
-    assert not await service.repo.list("ops.jobs")
+    assert all(job["payload"].get("notice_id") for job in await service.repo.list("ops.jobs"))
 
 
 @pytest.mark.parametrize(
@@ -3817,6 +3870,7 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
                 {
                     "event_id": eid,
                     "kind": "FULL",
+                    "what": approved,
                     "verdict": approved,
                     "why": ["What changed: World access approved.", "Economic effect: Not estimable."],
                 },
@@ -4488,6 +4542,7 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
     args = {
         "event_id": eid,
         "kind": "FULL",
+        "what": "Access approved",
         "verdict": "Access approved",
         "why": ["Official approval", "Defined access"],
     }
@@ -4581,7 +4636,9 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
 async def test_old_trigger_updates_stage_but_does_not_publish_or_resurface_on_timer(service, monkeypatch):
     import tank.analysis.cards as cards
 
-    monkeypatch.setattr(cards, "compose_card", lambda *args, **kwargs: "Stored stage update")
+    monkeypatch.setattr(
+        cards, "compose_card", lambda *args, **kwargs: "Stored stage update" + "\n" + score_summary(args[1])
+    )
     extracted = await seed(service)
     extracted["claims"][0]["state_claim"] = "APPROVED"
     created = await service.dispatch("record_event", extracted, {})
@@ -4596,6 +4653,7 @@ async def test_old_trigger_updates_stage_but_does_not_publish_or_resurface_on_ti
     args = {
         "event_id": eid,
         "kind": "FULL",
+        "what": "Approved",
         "verdict": "Approved",
         "why": ["Official fact", "Defined access"],
     }
@@ -4651,7 +4709,16 @@ async def test_old_trigger_updates_stage_but_does_not_publish_or_resurface_on_ti
     timer = await service.dispatch("publish_card", args, {"trigger_kind": "CONDITION_MET"})
     assert not timer["published"] and timer["reason"] == "NO_MATERIAL_CHANGE"
     assert len(await service.repo.list("out.alerts", filters={"event_id": eid})) == 1
-    assert len(await service.repo.list("ops.jobs", filters={"type": "DELIVER"})) == 1
+    assert (
+        len(
+            [
+                job
+                for job in await service.repo.list("ops.jobs", filters={"type": "DELIVER"})
+                if job["payload"].get("alert_id")
+            ]
+        )
+        == 1
+    )
     stored = await service.repo.get("evt.events", eid)
     assert "publication_trigger_freshness" not in stored
     assert "publication_stage_freshness" not in stored
@@ -4918,12 +4985,29 @@ def test_publish_card_schema_bounds_agent_text():
             Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/publish_card.schema.json"
         ).read_text()
     )
-    ok = {"event_id": "e", "kind": "FULL", "verdict": "v" * 160, "why": ["w" * 220, "x"]}
+    ok = {"event_id": "e", "kind": "FULL", "what": "я" * 500, "verdict": "v" * 160, "why": ["w" * 220, "x"]}
     validate_schema(ok, schema)
     with pytest.raises(ValueError, match=r"\$\.verdict: 161 characters, at most 160"):
         validate_schema(dict(ok, verdict="v" * 161), schema)
     with pytest.raises(ValueError, match=r"\$\.why\[0\]: 221 characters"):
         validate_schema(dict(ok, why=["w" * 221]), schema)
+
+    manifest = json.loads(
+        (Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/tools.json").read_text()
+    )
+    tool = next(tool for tool in manifest if tool["name"] == "publish_card")
+    assert tool["description"] == schema["description"]
+    assert tool["input_schema"] == {
+        key: value for key, value in schema.items() if key not in {"$schema", "title", "description"}
+    }
+    for kind in ("PARTIAL", "FULL", "UPDATE"):
+        payload = dict(ok, kind=kind)
+        validate_schema(payload, schema)
+        with pytest.raises(ValueError, match="what"):
+            validate_schema({key: value for key, value in payload.items() if key != "what"}, schema)
+        for invalid in ("", " \n\t", None, 42, "я" * 501):
+            with pytest.raises(ValueError, match=r"\$\.what"):
+                validate_schema(dict(payload, what=invalid), schema)
 
 
 async def test_token_facts_for_btc_fit_the_context(service):
@@ -5091,7 +5175,7 @@ async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_th
     from tank.util import parse_time
 
     monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card")
+    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
     written = {}
     original = event_tools.write_evidence_bundle
 
@@ -5111,12 +5195,16 @@ async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_th
     )
     result = await service.dispatch(
         "publish_card",
-        {"event_id": eid, "kind": "PARTIAL", "verdict": "v", "why": []},
+        {"event_id": eid, "kind": "PARTIAL", "what": "v", "verdict": "v", "why": []},
         {"event_id": eid, "call_id": "c", "role": "system"},
     )
     alert = await service.repo.get("out.alerts", f"{result['alert_id']}:1")
     assert parse_time(alert["generated_at"]) >= written["at"]
-    job = (await service.repo.list("ops.jobs", filters={"type": "DELIVER"}))[0]
+    job = next(
+        job
+        for job in await service.repo.list("ops.jobs", filters={"type": "DELIVER"})
+        if job["payload"].get("alert_id")
+    )
     assert parse_time(job["run_after"]) == parse_time(alert["generated_at"])
     assert alert["delivery_not_before"] == alert["generated_at"]
 
@@ -5173,7 +5261,7 @@ async def test_named_cutoff_precisions_are_accepted_as_buckets(service, truth_jo
     assert result["cutoff_prec_normalized"] == {"from": "MINUTE", "to": "BUCKET(1m)"}
 
 
-async def test_publish_card_keeps_market_truth_once_and_reads_each_collection_once(service, monkeypatch):
+async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_reads(service, monkeypatch):
     """E2E #6 (r114): publish_card took 22 s. The card's card_struct copied the
     1.8 MB Market Truth, the bundle's request_log repeated it, and collections
     were re-read. Now card_struct references the immutable truth row, an exact
@@ -5200,7 +5288,7 @@ async def test_publish_card_keeps_market_truth_once_and_reads_each_collection_on
     assert deduped[1] == calls[1] and calls[0]["result"]["market_truth"][0] is truth
 
     monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card")
+    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
     x = await seed(service)
     eid = (await service.dispatch("record_event", x, {}))["event_id"]
     event = await service.repo.get("evt.events", eid)
@@ -5219,7 +5307,7 @@ async def test_publish_card_keeps_market_truth_once_and_reads_each_collection_on
     monkeypatch.setattr(service.repo, "iter_all", counting)
     result = await service.dispatch(
         "publish_card",
-        {"event_id": eid, "kind": "PARTIAL", "verdict": "v", "why": []},
+        {"event_id": eid, "kind": "PARTIAL", "what": "v", "verdict": "v", "why": []},
         {"event_id": eid, "call_id": "c", "role": "system"},
     )
     assert result["published"]
@@ -5230,4 +5318,5 @@ async def test_publish_card_keeps_market_truth_once_and_reads_each_collection_on
         "evt.event_observations",
         "ana.contradictions",
     ):
-        assert reads.count(collection) == 1, (collection, reads.count(collection))
+        expected = 2 if collection == "evt.event_observations" else 1
+        assert reads.count(collection) == expected, (collection, reads.count(collection))

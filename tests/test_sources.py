@@ -53,7 +53,7 @@ class Repo:
 
         return deepcopy(self.rows.get((c, k)))
 
-    async def put(self, c, k, v):
+    async def put(self, c, k, v, *, immutable=False):
         self.rows[c, k] = dict(v)
         return v
 
@@ -358,7 +358,7 @@ def test_all_34_source_configurations():
             if feed["kind"] == "instruments":
                 assert feed["venue"] in {"binance", "coinbase", "kraken", "okx", "bybit", "hyperliquid"}
             if feed.get("method") == "POST":
-                assert feed["body"]
+                assert feed.get("body") or feed.get("form")
 
 
 def test_binance_rich_document():
@@ -559,11 +559,24 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path, pos
 @pytest.mark.asyncio
 async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path):
     calls = []
+    release = {
+        "url": "https://press.example.org/press-releases/news-room/2026/launch",
+        "title": "Fund launch",
+        "contentString": "Fund launch null null en-US null New York – Fund launched today.",
+        "referenceDate": "2026-09-08",
+    }
 
     def handle(request):
         calls.append(request)
         if request.url.host == "blocked.example.org":
             return httpx.Response(403, content=b"Forbidden")
+        if request.url.host == "press.example.org":
+            assert request.method == "POST" and dict(httpx.QueryParams(request.content.decode())) == {
+                "articleType": "press-release",
+                "start": "0",
+            }
+            body = {"results": {"response": {"hits": {"hits": [{"_source": release}]}}}}
+            return httpx.Response(200, json=body)
         return httpx.Response(200, content=RSS, headers={"content-type": "application/rss+xml"})
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
@@ -579,26 +592,34 @@ async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path):
                     "source_id": "S19",
                     "feeds": [
                         {
-                            "url": "https://rendered.example.org/press",
-                            "kind": "html",
-                            "article_pattern": "/press/[a-z]+",
+                            "url": "https://press.example.org/api/articleApi",
+                            "kind": "json",
+                            "method": "POST",
+                            "form": {"articleType": "press-release", "start": "0"},
                         }
                     ],
                 },
-                {"source_id": "S29", "feeds": [{"url": "https://x.com/i/lists/PRIVATE", "kind": "x"}]},
+                {"source_id": "S29", "feeds": [{"url": "https://api.apify.example/run-sync", "kind": "x"}]},
             ],
         ),
         http=http,
     )
     results = await svc.check(probe=True)
-    assert [r["status"] for r in results] == ["PASS", "HTTP_ERROR", "UNAVAILABLE", "UNAVAILABLE"]
-    assert results[0]["item_count"] == 1 and results[1]["http_status"] == 403
-    assert len(calls) == 2 and not repo.jobs and not repo.rows
-    assert "PRIVATE" not in json.dumps(results)
+    assert [r["status"] for r in results] == ["PASS", "HTTP_ERROR", "PASS", "UNAVAILABLE"]
+    assert (
+        results[0]["item_count"] == 1 and results[1]["http_status"] == 403 and results[2]["item_count"] == 1
+    )
+    assert len(calls) == 3 and not repo.jobs and not repo.rows
+    [item] = parsers.json_items(
+        json.dumps({"results": {"response": {"hits": {"hits": [{"_source": release}]}}}}), "S19"
+    )
+    assert item["text"] == "Fund launch en-US New York – Fund launched today."
+    assert item["external_id"] == release["url"] and item["published_at_precision"] == "BUCKET(1d)"
+    assert results[3]["reason"] == "X runs through a paid Apify actor run; excluded from the HTTP smoke"
     assert results[0]["payload_sha256"] == sha256(RSS) and not list(tmp_path.rglob("*.zst"))
 
     await svc.check()
-    assert len(calls) == 2
+    assert len(calls) == 3
     await http.aclose()
 
 
@@ -649,62 +670,6 @@ def test_robinhood_canonical_article_metadata_same_origin_only():
     rows = parsers.article_links(html, feed)
     assert len(rows) == 1 and rows[0]["title"] == "Protocol release"
     assert rows[0]["url"] == "https://robinhood.com/us/en/newsroom/protocol-release"
-
-
-@pytest.mark.browser
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_x_real_browser_local_dom_full_quote_repost_and_checkpoint(tmp_path):
-    """Synthetic X DOM executed in Chromium; no real X request/profile is used."""
-    import os
-
-    if os.getenv("TANK_BROWSER_TESTS") != "1":
-        pytest.skip("Opt-in real Chromium test requires TANK_BROWSER_TESTS=1")
-    from tank.sources.xsensor import XSensor as BrowserReader
-
-    reader = BrowserReader(
-        SimpleNamespace(
-            x_profile_dir=tmp_path / "synthetic-x-profile",
-            x_storage_state_path=tmp_path / "absent-synthetic-secret",
-        )
-    )
-    list_html = """<html><body>
-      <article><a href="/actual_author/status/100"><time datetime="2026-10-17T12:00:00Z"></time></a>
-      <div data-testid="tweetText" id="original">Short</div>
-      <button data-testid="tweet-text-show-more-link" onclick="document.getElementById('original').textContent='Full original text beyond truncation';this.remove()">Show more</button>
-      <a href="/quoted_author/status/50">Quote</a><div data-testid="tweetText">Truncated quote</div></article>
-      <article><div data-testid="socialContext"><a href="/tracked_reposter">Tracked reposter reposted</a></div>
-      <a href="/original_poster/status/99"><time datetime="2026-10-17T11:00:00Z"></time></a><div data-testid="tweetText">Original reposted text</div></article>
-      <article><a href="/previous/status/98"><time datetime="2026-10-17T10:00:00Z"></time></a><div data-testid="tweetText">Previously seen</div></article>
-    </body></html>"""
-    quote_html = """<article><a href="/quoted_author/status/50"><time datetime="2026-10-16T10:00:00Z"></time></a><div data-testid="tweetText">Complete quoted post text from its status page</div></article>"""
-    try:
-        await reader.open()
-
-        async def route(request_route):
-            url = request_route.request.url
-            if "/i/lists/local-test" in url:
-                await request_route.fulfill(status=200, content_type="text/html", body=list_html)
-            elif "/quoted_author/status/50" in url:
-                await request_route.fulfill(status=200, content_type="text/html", body=quote_html)
-            else:
-                await request_route.abort()
-
-        await reader.context.route("**/*", route)
-        rows, reached = await reader.posts("local-test", "98")
-        assert reached and [r["external_id"] for r in rows] == ["100", "99"]
-        assert (
-            rows[0]["author"] == "actual_author" and rows[0]["text"] == "Full original text beyond truncation"
-        )
-        assert rows[0]["quoted"] == "Complete quoted post text from its status page"
-        assert rows[0]["related_authors"] == [{"author": "quoted_author", "status_id": "50"}]
-        assert (
-            rows[1]["author"] == "original_poster"
-            and rows[1]["repost_context"] == "Tracked reposter reposted"
-        )
-        assert rows[1]["url"] == "https://x.com/original_poster/status/99"
-    finally:
-        await reader.close()
 
 
 @pytest.mark.integration
@@ -968,233 +933,6 @@ async def test_control_ticks_do_not_overpoll_failed_normal_cadence(tmp_path, mon
     await http.aclose()
 
 
-@pytest.mark.browser
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_x_storage_state_seeds_persistent_profile_once_without_remote_reads(tmp_path):
-    import os
-    import time
-
-    if os.getenv("TANK_BROWSER_TESTS") != "1":
-        pytest.skip("Requires TANK_BROWSER_TESTS=1")
-    from tank.sources.xsensor import XSensor as BrowserReader
-
-    secret = tmp_path / "synthetic-x-secret.json"
-    profile = tmp_path / "profile"
-    secret.write_text(
-        json.dumps(
-            {
-                "cookies": [
-                    {
-                        "name": "auth_token",
-                        "value": "synthetic-auth-only",
-                        "domain": ".x.com",
-                        "path": "/",
-                        "expires": time.time() + 86400,
-                        "httpOnly": True,
-                        "secure": True,
-                        "sameSite": "Lax",
-                    },
-                    {
-                        "name": "unrelated_private_cookie",
-                        "value": "must-not-import",
-                        "domain": ".unrelated.example",
-                        "path": "/",
-                        "expires": time.time() + 86400,
-                        "secure": True,
-                        "sameSite": "Lax",
-                    },
-                ],
-                "origins": [
-                    {
-                        "origin": "https://x.com",
-                        "localStorage": [{"name": "synthetic-key", "value": "synthetic-local-only"}],
-                    },
-                    {
-                        "origin": "https://unrelated.example",
-                        "localStorage": [{"name": "do-not-import", "value": "other-origin"}],
-                    },
-                ],
-            }
-        )
-    )
-    config = SimpleNamespace(x_profile_dir=profile, x_storage_state_path=secret)
-    reader = BrowserReader(config)
-    try:
-        await reader.open()
-        cookies = await reader.context.cookies()
-        assert [(c["name"], c["value"]) for c in cookies] == [("auth_token", "synthetic-auth-only")]
-        page = await reader.context.new_page()
-        await page.route(
-            "**/*", lambda route: route.fulfill(status=200, content_type="text/html", body="<html></html>")
-        )
-        await page.goto("https://x.com")
-        assert await page.evaluate("localStorage.getItem('synthetic-key')") == "synthetic-local-only"
-        await page.close()
-        marker = profile / ".tank-x-session-seeded.json"
-        assert set(json.loads(marker.read_text())) == {"version", "seeded_at"}
-        assert marker.stat().st_mode & 0o777 == 0o600
-        assert profile.stat().st_mode & 0o777 == 0o700
-    finally:
-        await reader.close()
-
-    secret.write_text("INVALID SECRET MUST NOT BE READ AFTER INITIALIZATION")
-    reader = BrowserReader(config)
-    try:
-        await reader.open()
-        assert any(
-            c["name"] == "auth_token" and c["value"] == "synthetic-auth-only"
-            for c in await reader.context.cookies()
-        )
-        page = await reader.context.new_page()
-        await page.route(
-            "**/*", lambda route: route.fulfill(status=200, content_type="text/html", body="<html></html>")
-        )
-        await page.goto("https://x.com")
-        assert await page.evaluate("localStorage.getItem('synthetic-key')") == "synthetic-local-only"
-        await page.close()
-    finally:
-        await reader.close()
-
-
-@pytest.mark.browser
-@pytest.mark.integration
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "state",
-    [
-        {
-            "cookies": [
-                {
-                    "name": "auth_token",
-                    "value": "NEVER_PRINT_TEST_SECRET",
-                    "domain": ".x.com",
-                    "path": "/",
-                    "expires": 1,
-                }
-            ]
-        },
-        {
-            "cookies": [
-                {
-                    "name": "auth_token",
-                    "value": "NEVER_PRINT_TEST_SECRET",
-                    "domain": ".unrelated.example",
-                    "path": "/",
-                    "expires": -1,
-                }
-            ]
-        },
-        {"cookies": "NEVER_PRINT_TEST_SECRET"},
-    ],
-)
-async def test_invalid_expired_x_bootstrap_fails_without_secret_leak(tmp_path, state):
-    import os
-
-    if os.getenv("TANK_BROWSER_TESTS") != "1":
-        pytest.skip("Requires TANK_BROWSER_TESTS=1")
-    from tank.sources.xsensor import XSensor as BrowserReader
-
-    secret = tmp_path / "secret"
-    secret.write_text(json.dumps(state))
-    profile = tmp_path / "profile"
-    reader = BrowserReader(SimpleNamespace(x_profile_dir=profile, x_storage_state_path=secret))
-    with pytest.raises(ValueError, match="invalid, expired, or unreadable") as error:
-        await reader.open()
-    assert "NEVER_PRINT_TEST_SECRET" not in str(error.value)
-    assert not (profile / ".tank-x-session-seeded.json").exists()
-    assert reader.context is None and reader.driver is None
-
-
-@pytest.mark.browser
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_x_media_empty_quotes_repost_priority_raw_html_and_deleted_checkpoint(tmp_path):
-    import os
-
-    if os.getenv("TANK_BROWSER_TESTS") != "1":
-        pytest.skip("Requires TANK_BROWSER_TESTS=1")
-    from pathlib import Path
-
-    from selectolax.parser import HTMLParser
-
-    from tank.sources.xsensor import XSensor as BrowserReader
-
-    repo = Repo()
-    config = settings(
-        tmp_path,
-        [
-            {
-                "source_id": "S29",
-                "name": "X",
-                "feeds": [{"kind": "x", "url": "https://x.com/i/lists/synthetic"}],
-                "list_id": "synthetic",
-            }
-        ],
-    )
-    config.x_profile_dir = tmp_path / "synthetic-profile"
-    config.x_storage_state_path = tmp_path / "absent-secret"
-    svc = SourceService(repo, config)
-    svc.accounts = {
-        "official_org": {"role": "ORGANIZATION", "entity_id": "uniswap"},
-        "other_account": {"role": "OTHER", "entity_id": "other"},
-    }
-    await repo.put(
-        "ops.source_checkpoints", "S29:0", {"status_id": "777-deleted", "recent_status_ids": ["98"]}
-    )
-    html = """<html><body><article><div data-testid="socialContext"><a href="/official_org">Official reposted</a></div><a href="/media_original/status/100"><time datetime="2026-10-17T12:00:00Z"></time></a><div data-testid="tweetPhoto"><img alt="Protocol diagram" src="/synthetic.png"></div><div role="link"><a href="/quoted_q/status/51">Quoted author</a><div data-testid="tweetText">Shown quote text</div></div></article><article><div data-testid="socialContext"><a href="/other_account">Other reposted</a></div><a href="/original_poster/status/99"><time datetime="2026-10-17T11:00:00Z"></time></a><div data-testid="tweetText">Actual original text</div><a href="/empty_quote/status/50">Quoted media</a></article><article><a href="/old/status/98"><time datetime="2026-10-17T10:00:00Z"></time></a><div data-testid="tweetText">Old known post</div></article></body></html>"""
-    quote = '<article><a href="/empty_quote/status/50"><time datetime="2026-10-16T12:00:00Z"></time></a><div data-testid="tweetPhoto"><img alt="Quote diagram"></div></article>'
-    svc.xsensor = BrowserReader(config)
-    try:
-        await svc.xsensor.open()
-
-        async def route(r):
-            if "/i/lists/synthetic" in r.request.url:
-                await r.fulfill(status=200, content_type="text/html", body=html)
-            elif "/empty_quote/status/50" in r.request.url:
-                await r.fulfill(status=200, content_type="text/html", body=quote)
-            elif "/quoted_q/status/51" in r.request.url:
-                await r.fulfill(
-                    status=200,
-                    content_type="text/html",
-                    body='<article><a href="/quoted_q/status/51"><time datetime="2026-10-16T12:00:00Z"></time></a><div data-testid="tweetText">Full quoted text with its original author</div></article>',
-                )
-            else:
-                await r.abort()
-
-        await svc.xsensor.context.route("**/*", route)
-        result = await svc.poll_once("S29")
-        assert result["status"] == "HEALTHY" and result["items"] == 2
-        records = [v for (c, _), v in repo.rows.items() if c == "ingest.source_items"]
-        media = next(r for r in records if r["external_id"] == "100")
-        other = next(r for r in records if r["external_id"] == "99")
-        assert (
-            media["text"] == ""
-            and media["author"] == "media_original"
-            and media["monitored_author"] == "official_org"
-        )
-        assert media["relevance"]["decision"] == "ALWAYS" and media["author_role"] == "ORGANIZATION"
-        assert media["quoted_posts"] == [
-            {"status_id": "51", "author": "quoted_q", "text": "Full quoted text with its original author"}
-        ]
-        assert other["author_role"] == "OTHER" and other["deferrable"]
-        assert other["quoted_unavailable"] == [{"status_id": "50", "reason": "MEDIA_ONLY_OR_EMPTY"}]
-        raw = zstandard.ZstdDecompressor().decompress(Path(media["raw_ref"]).read_bytes())
-
-        articles = HTMLParser(raw).css("article")
-        assert len(articles) == 1
-        assert articles[0].css_first('a[href="/media_original/status/100"]') is not None
-        assert b"Protocol diagram" in raw
-        assert b"/original_poster/status/99" not in raw and b"Old known post" not in raw
-        assert (await repo.get("ops.source_checkpoints", "S29:0"))["status_id"] == "100"
-        assert [(args[0], kw["priority"]) for args, kw in repo.jobs] == [
-            ("ROUTE_ITEM", 1),
-            ("FILTER_ITEM", 2),
-        ]
-    finally:
-        await svc.close()
-
-
 def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path):
     from tank.settings import Settings
 
@@ -1283,97 +1021,6 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(tmp_path, m
         assert ("www.sec.gov", 25, 60, 1) in calls
     finally:
         await service.close()
-
-
-@pytest.mark.browser
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_public_renderer_is_isolated_from_x_profile_and_secret(tmp_path):
-    import os
-
-    if os.getenv("TANK_BROWSER_TESTS") != "1":
-        pytest.skip("Requires TANK_BROWSER_TESTS=1")
-    from tank.sources.browser import BrowserReader
-
-    class ForbiddenXSettings:
-        def __getattr__(self, name):
-            raise AssertionError("Public renderer must never access X settings: " + name)
-
-    renderer = BrowserReader(ForbiddenXSettings())
-    try:
-        await renderer.open()
-        await renderer.context.route(
-            "**/*",
-            lambda route: route.fulfill(
-                status=200,
-                content_type="text/html",
-                body="<html><article><h1>Public issuer release</h1><p>Actual public text</p></article></html>",
-            ),
-        )
-        payload = await renderer.html("https://public.synthetic.example/release")
-        assert parsers.article(payload)["title"] == "Public issuer release"
-        assert not await renderer.context.cookies()
-    finally:
-        await renderer.close()
-
-
-@pytest.mark.asyncio
-async def test_xsensor_has_own_feed_loop_and_service_delegates_s29(tmp_path, monkeypatch):
-    import asyncio
-
-    from tank.sources.xsensor import XSensor
-
-    sensor = XSensor(
-        SimpleNamespace(
-            x_profile_dir=tmp_path / "unused-x-profile", x_storage_state_path=tmp_path / "absent-secret"
-        )
-    )
-    stop = asyncio.Event()
-    polls = []
-
-    async def poll():
-        polls.append("X")
-        stop.set()
-
-    await sensor.run(stop, poll)
-    assert polls == ["X"] and sensor.context is None
-    source = {"source_id": "S29", "feeds": [{"kind": "x", "url": "https://x.com/i/lists/synthetic"}]}
-    service = SourceService(Repo(), settings(tmp_path, [source]))
-    stop = asyncio.Event()
-    delegated = []
-
-    async def run(event, poll_callback):
-        delegated.append((event, callable(poll_callback)))
-        event.set()
-
-    monkeypatch.setattr(service.xsensor, "run", run)
-    await service.run(stop)
-    assert delegated == [(stop, True)]
-
-
-@pytest.mark.asyncio
-async def test_disabled_x_never_reads_network_profile_or_account_list(tmp_path, monkeypatch):
-    import asyncio
-    from unittest.mock import AsyncMock
-
-    source = {"source_id": "S29", "feeds": [{"kind": "x", "url": "https://x.com/i/lists/{list_id}"}]}
-    config = settings(tmp_path, [source])
-    config.x_enabled = False
-    service = SourceService(Repo(), config)
-    sensor_run = AsyncMock(side_effect=AssertionError("Disabled X must not start"))
-    sensor_posts = AsyncMock(side_effect=AssertionError("Disabled X must not poll"))
-    monkeypatch.setattr(service.xsensor, "run", sensor_run)
-    monkeypatch.setattr(service.xsensor, "posts", sensor_posts)
-    result = await service.poll_once("S29")
-    assert result["status"] == "DISABLED" and result["reason"] == "X_DISABLED_BY_OPERATOR"
-    assert (await service.check())[0]["status"] == "DISABLED"
-    assert all(row["status"] == "DISABLED" for row in await service.check(probe=True, check_accounts=True))
-    stop = asyncio.Event()
-    stop.set()
-    await service.run(stop)
-    sensor_run.assert_not_called()
-    sensor_posts.assert_not_called()
-    assert service.repo.rows == {}
 
 
 @pytest.mark.asyncio
@@ -2969,7 +2616,7 @@ async def test_instrument_snapshot_written_only_when_it_changes(tmp_path, collec
             super().__init__()
             self.snapshot_writes = 0
 
-        async def put(self, c, k, v):
+        async def put(self, c, k, v, *, immutable=False):
             self.snapshot_writes += k.endswith(":instruments")
             return await super().put(c, k, v)
 
@@ -2995,3 +2642,58 @@ async def test_instrument_snapshot_written_only_when_it_changes(tmp_path, collec
         status[0] = "BREAK"
         assert (await svc.poll_once("S14"))["items"] == 1
         assert repo.snapshot_writes == 2
+
+
+def test_one_poll_of_a_venue_list_groups_symbols_that_made_the_same_move():
+    from tank.sources.polling import instrument_changes
+
+    feed = {"url": "https://api.kraken.com/0/public/AssetPairs", "venue": "kraken", "market_type": "SPOT"}
+    pages = [(b"page", "2026-10-23T14:00:00Z")]
+    online = {"status": "online"}
+    cancel = {"status": "cancel_only"}
+    previous = {"ABCUSD": online, "ABCEUR": online, "DEFUSD": online, "GHIUSD": online}
+    snapshot = {
+        "ABCUSD": cancel,
+        "ABCEUR": cancel,
+        "DEFUSD": cancel,
+        "GHIUSD": online,
+        "NEWUSD": {"base": "NEW", "status": "online"},
+        "NEWEUR": {"base": "NEW", "status": "online"},
+        "OTHUSD": {"base": "OTH", "status": "online"},
+    }
+    rows, _ = instrument_changes(
+        snapshot, previous, feed, pages, dict.fromkeys(snapshot, 0), "2026-10-23T14:00:05Z"
+    )
+    by_title = {row["title"]: row for row in rows}
+    assert sorted(by_title) == [
+        "OTHUSD instrument change",
+        "kraken SPOT: 2 NEW instruments ADDED",
+        "kraken SPOT: 3 instruments STATE_UPDATE online → cancel_only",
+    ]
+    delisting = by_title["kraken SPOT: 3 instruments STATE_UPDATE online → cancel_only"]
+    assert delisting["change"] == "STATE_UPDATE"
+    assert delisting["observed_at"] == "2026-10-23T14:00:00Z" and delisting["_payload"] == b"page"
+    assert [c["symbol"] for c in json.loads(delisting["text"])["changes"]] == ["ABCEUR", "ABCUSD", "DEFUSD"]
+    assert by_title["kraken SPOT: 2 NEW instruments ADDED"]["change"] == "ADDED"
+    assert json.loads(by_title["OTHUSD instrument change"]["text"])["before"] is None
+
+
+def test_a_grouped_change_keeps_its_own_identity_when_the_list_returns_to_an_earlier_snapshot():
+    from tank.sources.polling import instrument_changes
+
+    feed = {"url": "https://api.kraken.com/0/public/AssetPairs", "venue": "kraken", "market_type": "SPOT"}
+    pages = [(b"page", "2026-10-23T14:00:00Z")]
+    online, cancel = {"status": "online"}, {"status": "cancel_only"}
+    first = {"A": online, "B": online, "C": online, "D": online}
+    second = {"A": cancel, "B": cancel, "C": online, "D": online}
+    third = {"A": cancel, "B": cancel, "C": cancel, "D": cancel}
+
+    def ids(snapshot, previous):
+        rows, digest = instrument_changes(snapshot, previous, feed, pages, dict.fromkeys(snapshot, 0), "x")
+        return [row["external_id"] for row in rows], digest
+
+    forward, at_second = ids(second, first)
+    other, _ = ids(third, second)
+    back, back_digest = ids(second, third)
+    assert back_digest == at_second
+    assert len({*forward, *other, *back}) == 3
