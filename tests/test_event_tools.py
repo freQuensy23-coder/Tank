@@ -178,6 +178,7 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(service, 
         {
             "event_id": eid,
             "kind": "PARTIAL",
+            "what": "Material partnership",
             "verdict": "Material partnership",
             "why": ["Defined access", "Relevant actor"],
         },
@@ -652,6 +653,7 @@ async def test_structural_assessment_requires_agent_partial_without_parallel_pub
     args = {
         "event_id": extraction["event_id"],
         "kind": "PARTIAL",
+        "what": "World access approved",
         "verdict": "World access approved",
         "why": [],
     }
@@ -662,7 +664,12 @@ async def test_structural_assessment_requires_agent_partial_without_parallel_pub
     alert = await service.repo.get("out.alerts", result["alert_id"] + ":1")
     assert alert["kind"] == "PARTIAL"
     assert not alert["decisions"]
-    assert alert["rich_message"]["blocks"][1]["type"] == "table"
+    assert alert["rich_message"]["blocks"][1]["text"] == [
+        {"type": "bold", "text": "WHAT:"},
+        " " + args["what"],
+    ]
+    assert alert["card_struct"]["what"] == args["what"]
+    assert alert["rich_message"]["blocks"][2]["type"] == "table"
     bundle = await service.repo.get("out.evidence_bundles", alert["evidence_bundle_id"])
     assert bundle["payload"]["rich_message"] == alert["rich_message"]
     assert (
@@ -886,6 +893,7 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(serv
     args = {
         "event_id": eid,
         "kind": "FULL",
+        "what": "Approved fact",
         "verdict": "Approved fact",
         "why": ["Defined consequence", "Evidence available"],
     }
@@ -1025,6 +1033,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkey
         {
             "event_id": eid,
             "kind": "FULL",
+            "what": "Access approved",
             "verdict": "Access approved",
             "why": ["Defined access", "Primary event confirmed"],
         },
@@ -1058,6 +1067,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(service, monkey
             {
                 "event_id": eid,
                 "kind": "UPDATE",
+                "what": "Tracking window ended",
                 "verdict": "Tracking window ended",
                 "why": ["Call window expired", "Tracking ended"],
             },
@@ -1188,6 +1198,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(service
         {
             "event_id": eid,
             "kind": "FULL",
+            "what": "Access approved",
             "verdict": "Access approved",
             "why": ["Defined access", "Primary event confirmed"],
         },
@@ -1218,6 +1229,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(service
         args = {
             "event_id": eid,
             "kind": "UPDATE",
+            "what": "Data coverage limited",
             "verdict": "Data coverage limited",
             "why": ["Coverage decreased", "Execution confidence lower"],
         }
@@ -1309,7 +1321,13 @@ async def test_bundle_keeps_producing_model_and_separate_session_config(service)
     )
     published = await service.dispatch(
         "publish_card",
-        {"event_id": event["event_id"], "kind": "PARTIAL", "verdict": "World access approved", "why": []},
+        {
+            "event_id": event["event_id"],
+            "kind": "PARTIAL",
+            "what": "World access approved",
+            "verdict": "World access approved",
+            "why": [],
+        },
         {"event_id": event["event_id"], "role": "system"},
     )
     assert published["published"], published
@@ -1397,7 +1415,9 @@ async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata
     assert full == expected and full["measurement_metadata"]
     assert full["spot"]["W1H"]["coverage"]["n_complete"] == 0
     published = await service.dispatch(
-        "publish_card", {"event_id": eid, "kind": "PARTIAL", "verdict": "Approved fact", "why": []}, {}
+        "publish_card",
+        {"event_id": eid, "kind": "PARTIAL", "what": "Approved fact", "verdict": "Approved fact", "why": []},
+        {},
     )
     assert published["published"], published
     bundle = (await service.repo.get("out.evidence_bundles", published["evidence_bundle_id"]))["payload"]
@@ -1547,6 +1567,7 @@ async def test_long_history_uses_bounded_current_snapshots_and_exact_refs(
             {
                 "event_id": eid,
                 "kind": "FULL",
+                "what": "Access approved",
                 "verdict": "Access approved",
                 "why": ["Defined access", "Primary event confirmed"],
             },
@@ -1874,7 +1895,9 @@ async def test_terminal_event_cannot_publish_new_card(service, lifecycle):
         {"ems_id": "terminal-ems", "event_id": eid, "class": "STRUCTURAL_SHOCK"},
     )
     result = await service.dispatch(
-        "publish_card", {"event_id": eid, "kind": "PARTIAL", "verdict": "Approved fact", "why": []}, {}
+        "publish_card",
+        {"event_id": eid, "kind": "PARTIAL", "what": "Approved fact", "verdict": "Approved fact", "why": []},
+        {},
     )
     assert not result["published"] and result["reason"] == "TERMINAL_EVENT"
 
@@ -2101,6 +2124,7 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
             {
                 "event_id": eid,
                 "kind": "FULL",
+                "what": quote,
                 "verdict": quote,
                 "why": ["Access approved", "Execution data unavailable"],
             },
@@ -2470,6 +2494,7 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(servi
     args = {
         "event_id": eid,
         "kind": "FULL",
+        "what": "Synthetic fact",
         "verdict": "Synthetic fact",
         "why": ["Primary fixture", "Safety fixture"],
     }
@@ -3313,6 +3338,7 @@ async def test_full_card_blocks_only_analysis_tokens_with_decisions(service, mon
         {
             "event_id": eid,
             "kind": "FULL",
+            "what": "World approved access",
             "verdict": "World approved access",
             "why": ["Quoted approval", "Supported capture"],
         },
@@ -3387,7 +3413,13 @@ async def test_bundle_directory_sync_failure_never_creates_database_reference(se
     with pytest.raises(OSError, match="Synthetic bundle directory fsync failure"):
         await service.dispatch(
             "publish_card",
-            {"event_id": eid, "kind": "PARTIAL", "verdict": "Approved source fact", "why": []},
+            {
+                "event_id": eid,
+                "kind": "PARTIAL",
+                "what": "Approved source fact",
+                "verdict": "Approved source fact",
+                "why": [],
+            },
             {},
         )
     assert seen[-1] == "directory" and "file" in seen[:-1]
@@ -3838,6 +3870,7 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
                 {
                     "event_id": eid,
                     "kind": "FULL",
+                    "what": approved,
                     "verdict": approved,
                     "why": ["What changed: World access approved.", "Economic effect: Not estimable."],
                 },
@@ -4509,6 +4542,7 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
     args = {
         "event_id": eid,
         "kind": "FULL",
+        "what": "Access approved",
         "verdict": "Access approved",
         "why": ["Official approval", "Defined access"],
     }
@@ -4619,6 +4653,7 @@ async def test_old_trigger_updates_stage_but_does_not_publish_or_resurface_on_ti
     args = {
         "event_id": eid,
         "kind": "FULL",
+        "what": "Approved",
         "verdict": "Approved",
         "why": ["Official fact", "Defined access"],
     }
@@ -4950,12 +4985,29 @@ def test_publish_card_schema_bounds_agent_text():
             Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/publish_card.schema.json"
         ).read_text()
     )
-    ok = {"event_id": "e", "kind": "FULL", "verdict": "v" * 160, "why": ["w" * 220, "x"]}
+    ok = {"event_id": "e", "kind": "FULL", "what": "я" * 500, "verdict": "v" * 160, "why": ["w" * 220, "x"]}
     validate_schema(ok, schema)
     with pytest.raises(ValueError, match=r"\$\.verdict: 161 characters, at most 160"):
         validate_schema(dict(ok, verdict="v" * 161), schema)
     with pytest.raises(ValueError, match=r"\$\.why\[0\]: 221 characters"):
         validate_schema(dict(ok, why=["w" * 221]), schema)
+
+    manifest = json.loads(
+        (Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/tools.json").read_text()
+    )
+    tool = next(tool for tool in manifest if tool["name"] == "publish_card")
+    assert tool["description"] == schema["description"]
+    assert tool["input_schema"] == {
+        key: value for key, value in schema.items() if key not in {"$schema", "title", "description"}
+    }
+    for kind in ("PARTIAL", "FULL", "UPDATE"):
+        payload = dict(ok, kind=kind)
+        validate_schema(payload, schema)
+        with pytest.raises(ValueError, match="what"):
+            validate_schema({key: value for key, value in payload.items() if key != "what"}, schema)
+        for invalid in ("", " \n\t", None, 42, "я" * 501):
+            with pytest.raises(ValueError, match=r"\$\.what"):
+                validate_schema(dict(payload, what=invalid), schema)
 
 
 async def test_token_facts_for_btc_fit_the_context(service):
@@ -5143,7 +5195,7 @@ async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_th
     )
     result = await service.dispatch(
         "publish_card",
-        {"event_id": eid, "kind": "PARTIAL", "verdict": "v", "why": []},
+        {"event_id": eid, "kind": "PARTIAL", "what": "v", "verdict": "v", "why": []},
         {"event_id": eid, "call_id": "c", "role": "system"},
     )
     alert = await service.repo.get("out.alerts", f"{result['alert_id']}:1")
@@ -5255,7 +5307,7 @@ async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_
     monkeypatch.setattr(service.repo, "iter_all", counting)
     result = await service.dispatch(
         "publish_card",
-        {"event_id": eid, "kind": "PARTIAL", "verdict": "v", "why": []},
+        {"event_id": eid, "kind": "PARTIAL", "what": "v", "verdict": "v", "why": []},
         {"event_id": eid, "call_id": "c", "role": "system"},
     )
     assert result["published"]

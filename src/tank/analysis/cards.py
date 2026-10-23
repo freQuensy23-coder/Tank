@@ -141,6 +141,7 @@ def token_name(token, labels=None):
 def telegram_card_html(text):
     """Add visual hierarchy while escaping every agent-authored character."""
     labels = (
+        "WHAT",
         "VERIFIED",
         "NOT VERIFIED",
         "WHO",
@@ -318,7 +319,7 @@ def _holders_revenue_text(truth):
 
 
 def compose_card(
-    event, assessment, beneficiaries, decisions, market_truths, *, kind="FULL", verdict="", why=None
+    event, assessment, beneficiaries, decisions, market_truths, *, kind="FULL", what="", verdict="", why=None
 ):
     if isinstance(market_truths, dict):
         market_truths = list(market_truths.values())
@@ -377,6 +378,7 @@ def compose_card(
     )
     lines = [
         f"{_na(assessment.get('class', assessment.get('ems_class')), 'class unavailable').replace('STRUCTURAL_SHOCK', 'STRUCTURAL SHOCK')} ({_na(assessment.get('criterion', assessment.get('matched_criterion')), 'criterion unavailable')}) — {_na(verdict or event.get('statement'), 'neutral event statement unavailable')}",
+        *([f"WHAT: {what}"] if what else []),
         scores,
         f"Stage: {stage} · Certainty: {_na(assessment.get('certainty', event.get('certainty')))} · Data {header_data}",
         f"Fresh: {_na(event.get('freshness'))} · public {_clock(event, 'public_at', publication=True)} · known {_clock(event, 'known_to_us_at')}",
@@ -648,13 +650,13 @@ def compose_card(
             ],
             "newline_chars": len(lines) - 1,
             "editable_fields": [
-                "publish_card.verdict / why",
+                "publish_card.what / verdict / why",
                 "claims.subject / predicate / object / verification_missing via explicit supersedes_claim_ids",
                 "set_beneficiaries.layer_reasons / no_credible_secondary_reason / edges[].causal_chain",
                 "set_assessment.assessment.impact_horizon.dependencies / time_to_materiality",
             ],
             "guidance": (
-                "Shorten agent-authored structured text as well as verdict/WHY when needed; "
+                "Shorten agent-authored structured text as well as WHAT/verdict/WHY when needed; "
                 "publish-only shortening may be insufficient. Preserve all facts, remaining "
                 "uncertainties and required per-layer reasons. Replace claims explicitly; "
                 "do not invent verification or remove evidence. No text was truncated."

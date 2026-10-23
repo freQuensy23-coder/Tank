@@ -2860,6 +2860,9 @@ class EventToolService:
                 for truth, digest in zip(truths, truth_hashes, strict=True)
             ],
         }
+        what = a.get("what", "")
+        if what:
+            ctx["what"] = what
         verdict = a.get("verdict", "")
         why = a.get("why", [])
         if kind != "PARTIAL" and len(why) not in {2, 3}:
@@ -2887,7 +2890,15 @@ class EventToolService:
             for row in self.settings.load_config("registry").get("tokens", [])
         }
         text = compose_card(
-            event, assessment, beneficiaries, decisions, truths, kind=kind, verdict=verdict, why=why
+            event,
+            assessment,
+            beneficiaries,
+            decisions,
+            truths,
+            kind=kind,
+            what=what,
+            verdict=verdict,
+            why=why,
         )
         rich_message = card_rich_message(
             text, assessment, max_chars=event["thresholds"].get("card_max_chars", CARD_TEXT_LIMIT)
@@ -2971,6 +2982,8 @@ class EventToolService:
             "tool_call_ids": [c["call_id"]] if c.get("call_id") else [],
             "request_log": [],
         }
+        if what:
+            bundle["what"] = what
         calls_by_key = {}
         if c.get("session_id"):
             for row in await self.rows("ops.tool_calls", filters={"session_id": c["session_id"]}):

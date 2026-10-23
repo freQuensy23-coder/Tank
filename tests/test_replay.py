@@ -1961,6 +1961,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
                             "input": {
                                 "event_id": "event",
                                 "kind": "UPDATE",
+                                "what": "Synthetic expiry update",
                                 "verdict": "Synthetic expiry update",
                                 "why": [
                                     "Tracking ended at the configured expiry",
@@ -2306,6 +2307,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                             "input": {
                                 "event_id": "event",
                                 "kind": "UPDATE",
+                                "what": "Synthetic condition review",
                                 "verdict": "Synthetic condition review",
                                 "why": [
                                     "Condition predicate was rechecked",
@@ -2754,7 +2756,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
                     assert result["class"] == "STRUCTURAL_SHOCK", result
                     await tool(
                         "publish_card",
-                        {"event_id": event_id, "kind": "PARTIAL", "verdict": body, "why": []},
+                        {"event_id": event_id, "kind": "PARTIAL", "what": body, "verdict": body, "why": []},
                         identity,
                     )
                 elif stage == 3:
@@ -2783,6 +2785,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
                         {
                             "event_id": event_id,
                             "kind": "FULL",
+                            "what": body,
                             "verdict": body,
                             "why": ["Official primary fixture fact", "No credible beneficiary established"],
                         },
