@@ -58,6 +58,7 @@ jobs:
           SSH_USER: ${{ secrets.PROD_SSH_USER }}
           SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
           SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+          APIFY_API_TOKEN: ${{ secrets.APIFY_API_TOKEN }}
           SHA: ${{ steps.target.outputs.sha }}
         run: |
           install -m 700 -d ~/.ssh
@@ -65,4 +66,6 @@ jobs:
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           ssh_opts=(-i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
           scp "${ssh_opts[@]}" compose.yaml scripts/deploy/deploy.sh "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
+          printf '%s\n' "$APIFY_API_TOKEN" | ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" \
+            'read -r t && test -n "$t" && cd /srv/tank-deploy && test -f .env && umask 077 && { grep -v "^APIFY_API_TOKEN=" .env; printf "APIFY_API_TOKEN=%s\n" "$t"; } > .env.new && mv .env.new .env'
           ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "/srv/tank-deploy/deploy.sh $SHA"
