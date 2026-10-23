@@ -91,6 +91,7 @@ DOCUMENT_LIMIT = 45 * 1024 * 1024
 UPLOAD_LIMIT = 20 * 1024 * 1024
 TOO_LARGE_TEXT = "Файл больше 20 МБ, Telegram не даёт боту его скачать. Пришлите файл поменьше."
 MEDIA_KINDS = ("document", "photo", "video", "audio", "voice", "animation")
+NOT_SENT = (RuntimeError, httpx.ConnectError, httpx.ConnectTimeout)
 
 
 def question_message(question):
@@ -746,7 +747,7 @@ class TelegramInbox:
                 caption=caption,
                 reply_to=question.get("reply_to_message_id"),
             )
-        except RuntimeError:
+        except NOT_SENT:
             await self.repo.put(
                 "out.deliveries",
                 new_id("delivery"),
@@ -825,7 +826,7 @@ class TelegramInbox:
             )
             try:
                 result = await self.send(row["chat_id"], text, row["message_id"])
-            except RuntimeError:
+            except NOT_SENT:
                 await self.repo.put(
                     "out.deliveries",
                     new_id("delivery"),
@@ -897,7 +898,7 @@ class TelegramInbox:
             )
             try:
                 result = await self.send(row["chat_id"], PROMPT_TEXT, row["message_id"])
-            except RuntimeError:
+            except NOT_SENT:
                 await self.repo.put(
                     "out.deliveries",
                     new_id("delivery"),
@@ -1054,7 +1055,7 @@ class TelegramInbox:
             )
             try:
                 result = await self.send(question["chat_id"], part, previous)
-            except RuntimeError:
+            except NOT_SENT:
                 await self.repo.put(
                     "out.deliveries",
                     new_id("delivery"),

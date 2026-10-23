@@ -1986,3 +1986,29 @@ async def test_known_oversize_file_in_a_pair_settles_both_messages():
     assert [body["text"] for body in telegram.sent] == [TOO_LARGE_TEXT]
     assert (await repo.get("ops.telegram_messages", f"{USER}:130"))["status"] == "IGNORED"
     assert (await repo.get("ops.telegram_messages", f"{USER}:131"))["status"] == "IGNORED"
+
+
+@pytest.mark.asyncio
+async def test_connection_failure_before_sending_keeps_the_notice_retryable():
+    from tank.telegram_inbox import HINT_TEXT
+
+    repo = MemoryRepository()
+    await seed(repo)
+    lonely = message(140, date=1_800_021_000, text="просто текст")
+    telegram = FakeTelegram([{"update_id": 1, "message": lonely}])
+    outage = {"left": 1}
+    original = telegram.__call__
+
+    def flaky(request):
+        if request.url.path.endswith("/sendMessage") and outage["left"]:
+            outage["left"] -= 1
+            raise httpx.ConnectError("connection refused", request=request)
+        return original(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(flaky)) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        await inbox.poll(timeout=0)
+        for step in range(3):
+            await inbox.sweep(now=1_800_021_100 + step * 400)
+    assert [body["text"] for body in telegram.sent] == [HINT_TEXT]
+    assert (await repo.get("ops.telegram_messages", f"{USER}:140"))["status"] == "IGNORED"
