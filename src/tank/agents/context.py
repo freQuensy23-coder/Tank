@@ -64,9 +64,10 @@ PRIVATE_FIELDS = {
     "fee_protocol_slug",
     "unlock_slug",
 }
+LITERAL_FIELDS = {"text", "quoted", "title", "quote", "url", "query"}
 OPAQUE = re.compile(
     r"\b(?:ITM|EVT|OBS|CLM|EMS|EDG|MTA|DEC|OUT|ALR|CND|STC|CAL|PRP|DLV|REQ|CTR|REV|FIX)-[A-Z0-9]{26}\b"
-    r"|\b(?:session|agent|skill|call|env|file|tgf|web|search|evt|itm|clm|obs|ems|mta|dec|cond|prp)_[A-Za-z0-9_-]+\b"
+    r"|\b(?:session|agent|skill|call|env|file|tgf|web|search|evt|itm|clm|obs|ems|mta|dec|cond|prp)_[A-Za-z0-9_-]{20,}\b"
     r"|\b[0-9a-fA-F]{32,64}\b"
     r"|\b[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}\b"
 )
@@ -94,7 +95,9 @@ def clean_value(value):
     """Final recursive guard for diagnostics, prose and unknown provider fields."""
     if isinstance(value, dict):
         return {
-            clean_text(str(key)): clean_value(item)
+            clean_text(str(key)): item
+            if key in LITERAL_FIELDS and isinstance(item, str)
+            else clean_value(item)
             for key, item in value.items()
             if not private_field(key) and not OPAQUE.search(str(key))
         }
@@ -110,7 +113,8 @@ def reject_private_input(value):
                 raise ValueError(
                     "Use source URLs, verbatim quotes and project names; internal fields are not accepted"
                 )
-            reject_private_input(item)
+            if key not in LITERAL_FIELDS or not isinstance(item, str):
+                reject_private_input(item)
     elif isinstance(value, list):
         for item in value:
             reject_private_input(item)
@@ -313,7 +317,9 @@ class ModelContext:
                     else key
                 )
                 if not OPAQUE.search(str(named)):
-                    result[named] = await self.project(item)
+                    result[named] = (
+                        item if key in LITERAL_FIELDS and isinstance(item, str) else await self.project(item)
+                    )
         return clean_value(result)
 
     async def result(self, tool, result):

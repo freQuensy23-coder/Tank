@@ -74,7 +74,7 @@ class Pipeline:
     @staticmethod
     def item_view(item):
         """The item as Jev sees it: source, author when it adds anything, title, body once, quote."""
-        source = _clean(item.get("source") or item.get("source_name") or item.get("source_id"))
+        source = _clean(item.get("source") or item.get("source_name"))
         author = _clean(item.get("author"))
         title = _clean(item.get("title"))
         body = _clean(item.get("text") or item.get("body"))

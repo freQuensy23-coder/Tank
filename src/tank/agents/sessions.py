@@ -18,7 +18,7 @@ import httpx
 from httpx_sse import aconnect_sse
 
 from tank.agents import workflow
-from tank.agents.context import CONTEXT_VERSION, ModelContext, clean_text
+from tank.agents.context import CONTEXT_VERSION, ModelContext
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
@@ -589,7 +589,7 @@ class SessionService:
                         question = await self.repo.get("out.user_questions", payload["question_id"])
                         if question is None:
                             raise KeyError(payload["question_id"])
-                        text = clean_text(question_message(await self.prepare_attachments(session, question)))
+                        text = question_message(await self.prepare_attachments(session, question))
                     body = {
                         "type": "user.message",
                         "content": [{"type": "text", "text": text}],

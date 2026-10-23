@@ -2116,3 +2116,21 @@ async def test_rich_card_reference_and_rich_question_continue_original_session(f
     assert "Economic directness | 8 | Fees reach UNI burn." in question["reference"]["text"]
     assert "Scores D8" not in question["reference"]["text"]
     assert telegram.sent == []
+
+
+async def test_question_text_keeps_user_filenames_and_literal_hashes():
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    question = await repo.get("out.user_questions", question_id)
+    question["text"] = "Read session_notes.csv; compare checksum " + "a" * 64
+    await repo.put("out.user_questions", question_id, question)
+    posts = []
+    async with httpx.AsyncClient(transport=httpx.MockTransport(openma(posts, []))) as http:
+        sessions = SessionService(repo, session_settings(), None, http=http)
+        sessions.start_stream = lambda sid: None
+        await sessions.send_message(
+            {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
+        )
+    text = posts[0][1]["events"][0]["content"][0]["text"]
+    assert question["text"] in text
+    assert question_id not in text and "session_id" not in text

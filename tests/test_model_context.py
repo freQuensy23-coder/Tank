@@ -319,3 +319,21 @@ async def test_document_without_url_or_title_uses_its_text_and_clock(context):
     assert await boundary.arguments("get_item", {"document": public["document"]}) == {
         "item_id": item["item_id"]
     }
+
+
+async def test_verbatim_source_content_survives_identifier_shaped_prose(context):
+    repo, settings, session, item = context
+    text = "The release includes session_notes.csv and checksum " + "a" * 64
+    item.update(text=text, title="agent_status update")
+    await repo.put("ingest.source_items", item["item_id"], item)
+    boundary = ModelContext(repo, settings, session)
+    public = await boundary.result("get_item", item)
+    assert public["text"] == text and public["title"] == item["title"]
+    assert "raw_sha256" not in public and "item_id" not in public
+    await boundary.arguments("web_search", {"query": text})
+    restored = await boundary.arguments(
+        "record_event",
+        {"claims": [{"quote": text, "evidence": [{"document": public["document"], "quote": text}]}]},
+    )
+    assert restored["claims"][0]["quote"] == text
+    assert restored["claims"][0]["evidence"] == [{"item_id": item["item_id"], "quote": text}]

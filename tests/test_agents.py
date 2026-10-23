@@ -1035,3 +1035,16 @@ async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static
     incomplete = service.agent_provenance({"agent": {"id": "agt_1", "version": 8}}, config["openma"], "agt_1")
     assert incomplete["prompt_version"] is None
     assert incomplete["prompt_label"] == "test" and "INCOMPLETE" in incomplete["prompt_version_reason"]
+
+
+def test_jev_source_view_does_not_substitute_internal_source_codes():
+    view = Pipeline.item_view(
+        {
+            "item_id": "internal",
+            "source_id": "S29",
+            "title": "Protocol launch",
+            "text": "New crypto protocol launches",
+        }
+    )
+    assert view["source"] == ""
+    assert "S29" not in json.dumps(view) and "item_id" not in view
