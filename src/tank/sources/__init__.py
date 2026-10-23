@@ -348,6 +348,10 @@ class SourceService:
                 "RECEIVED",
                 "Ожидает проверки Jev" if filtered else "Jev не требуется; ожидает маршрутизации к агенту",
             )
+            if not filtered:
+                await item_progress(
+                    self.repo, self.settings, item_id, "JEV_BYPASSED", "Источник проходит напрямую к агенту"
+                )
             await self.repo.enqueue(
                 "FILTER_ITEM" if filtered else "ROUTE_ITEM",
                 {"item_id": item_id},

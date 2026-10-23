@@ -68,11 +68,18 @@ async def test_every_ingested_material_reaches_ops_before_filtering_and_duplicat
     finally:
         await service.close()
     rows = await notices(repo)
-    assert len(rows) == 1 and rows[0]["stage"] == "RECEIVED"
+    expected = {"RECEIVED", "JEV_BYPASSED"} if decision == "ALWAYS" else {"RECEIVED"}
+    assert len(rows) == len(expected) and {row["stage"] for row in rows} == expected
     assert result["relevance"]["decision"] == decision
-    assert "All input" in rows[0]["text"] and "https://example.test/item" in rows[0]["text"]
+    assert all("All input" in row["text"] and "https://example.test/item" in row["text"] for row in rows)
     assert await repo.list("out.alerts") == []
-    assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == 1
+    assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == len(expected)
+    if decision == "ALWAYS":
+        assert await repo.list("ops.jobs", filters={"type": "FILTER_ITEM"}) == []
+        await Pipeline(repo, settings, http=object()).route_item({"item_id": result["item_id"]})
+        await Pipeline(repo, settings, http=object()).route_item({"item_id": result["item_id"]})
+        assert {row["stage"] for row in await notices(repo)} == expected | {"AGENT_QUEUED"}
+        assert len(await notices(repo)) == 3
 
 
 @pytest.mark.parametrize(
