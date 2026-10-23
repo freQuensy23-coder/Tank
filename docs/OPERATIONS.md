@@ -91,3 +91,18 @@ User decision 2026-10-20: Jev runs through OpenCode's System One endpoint (`http
 - Never put the key in source control, build arguments or images.
 
 The analyst and scout models keep using the Codex subscription gateway.
+
+
+## Source progress in Tank Ops
+
+Tank Ops receives every newly ingested unique material before relevance filtering. Repeated captures of the same source identity/content retain ingestion deduplication. There is no bulk replay of historical materials. Agent-fetched pages and search evidence are also reported as additional sources, explicitly without a Jev requirement.
+
+`ITEM_PROGRESS` notices include the source, title, a bounded text excerpt, source URL, item/event identifiers, the stage timestamp, Jev decision/score and the outcome or reason. Long source text and unusually long URLs are truncated to keep messages inside Telegram's UTF-16 length limit. These notices do not change the publication gates in Tank Alerts.
+
+The recorded stages cover receipt, Jev pass/rejection or policy bypass, waiting for agent admission, accepted agent input, registered events and added observations, agent rejection, significance assessment, publication refusal, queued cards, confirmed Telegram delivery, terminal delivery failure, completed agent turns, and failed/expired processing jobs. Agent acceptance and extraction do not imply that a card passed publication or reached Alerts. A completed native turn without an observation is shown explicitly. Below-MAJOR assessments remain visible even when the agent never attempts publication.
+
+Migration `003_ops_progress.sql` extends the existing notice-kind constraint without modifying historical notices. Notices use the existing durable, append-only Ops outbox and delivery ledger. Each distinct stage/outcome is idempotent; a replay of the same queue task or agent completion does not create the same notice again. Processing failure reconciliation and agent recovery restore missed terminal/acceptance notifications after a restart. Ingestion, filter/routing decisions and dispatched event-tool changes write their notice in the same transaction as their state change.
+
+Progress deliveries use priority 3, below Alerts and analysis jobs, with a seven-day delivery window and the existing five-attempt transport policy. A shared repository lock spaces successful progress messages at least 3.1 seconds apart; this intentional deferral does not consume a network attempt. Heavy input can therefore create an Ops backlog. Heartbeat and delivery-failure notices retain their existing behavior. A failed Ops message never recursively creates another Ops failure notice.
+
+`TANK_OPS_PROGRESS_ENABLED` defaults to `true`; set it to `false` to disable creation of new progress notices. Already queued notices still drain. Isolated replay runs suppress progress notices. No extra model calls are made for Ops reporting, and raw payloads, model transcripts and exception contents are not sent.

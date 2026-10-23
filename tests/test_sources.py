@@ -53,7 +53,7 @@ class Repo:
 
         return deepcopy(self.rows.get((c, k)))
 
-    async def put(self, c, k, v):
+    async def put(self, c, k, v, *, immutable=False):
         self.rows[c, k] = dict(v)
         return v
 
@@ -2965,7 +2965,7 @@ async def test_instrument_snapshot_written_only_when_it_changes(tmp_path, collec
             super().__init__()
             self.snapshot_writes = 0
 
-        async def put(self, c, k, v):
+        async def put(self, c, k, v, *, immutable=False):
             self.snapshot_writes += k.endswith(":instruments")
             return await super().put(c, k, v)
 
