@@ -1,23 +1,36 @@
 [
   {
     "name": "get_item",
-    "description": "Read a collected source item by canonical item_id. Returns stored text, quoted/reposted text, source, author/publisher, URL and timestamps with provenance and missing-data reasons. Use its exact stored quotes as evidence; do not replace unknown publication time with observation time.",
+    "description": "Read a displayed source document by URL and observation time; omit document to read the triggering source. Returns text, author, source and dates. Cite verbatim evidence.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "item_id": {
-          "type": "string"
+        "document": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "url": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            },
+            "observed_at": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "url"
+          ]
         }
       },
-      "required": [
-        "item_id"
-      ]
+      "required": []
     }
   },
   {
     "name": "search_tank_items",
-    "description": "Search collected source items by text over at most the preceding 90 days, returning at most 20 matching item IDs and excerpts. This queries stored observations without external network requests. Read the full item before citing an excerpt or deciding that two items describe the same event.",
+    "description": "Search collected source items by text over at most the preceding 90 days, returning at most 20 matching source URL and observation times and excerpts. This queries stored observations without external network requests. Read the full item before citing an excerpt or deciding that two items describe the same event.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -58,23 +71,33 @@
   },
   {
     "name": "get_event",
-    "description": "Read an event and its recorded claims, source quotes, observations, agent-supplied verification flags, stages, certainty with reason, contradictions and assessment. Returns stored state without changing or semantically rechecking it.",
+    "description": "Read the current event, or select a displayed event by its statement and public time. Returns claims, assessments and beneficiaries.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "event_id": {
-          "type": "string"
+        "event": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "type": "string"
+            },
+            "public_at": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "statement"
+          ]
         }
       },
-      "required": [
-        "event_id"
-      ]
+      "required": []
     }
   },
   {
     "name": "get_registry",
-    "description": "Read fixed registry identity and dependency information for an entity or token: canonical IDs, aliases, contracts, official accounts and sources, plus registered causal dependencies. Registry links identify candidates; they do not alone prove a current integration, economic effect or token capture.",
+    "description": "Read fixed registry identity and dependency information for an entity or token: project names, aliases, contracts, official accounts and sources, plus registered causal dependencies. Registry links identify candidates; they do not alone prove a current integration, economic effect or token capture.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -95,7 +118,7 @@
       "properties": {
         "token": {
           "type": "string",
-          "description": "Registry token_id, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
+          "description": "Registry token, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
         }
       },
       "required": [
@@ -144,12 +167,11 @@
   },
   {
     "name": "record_event",
-    "description": "Record this item as an event with an origin observation, or mark is_event false. Supply certainty and its reason, public time and precision, freshness, and atomic claims with verbatim quotes, explicit stages and verified flags. Follow the skill claim rules: you judge source authority, quote support, stage, timing and freshness. Tank stores these semantic fields as supplied; only entity resolution is performed by Tank. Null stages remain valid for non-stage or unknown claims. Deterministic event state transitions and downstream economic rules still apply. When a quote comes from a fetched page or search result, supply claim evidence with that result’s item_id; keep root item_id as the triggering collected item.",
+    "description": "Record the current source as a new event, or mark it as containing no new event. The host binds the triggering source and creates all stored relationships. Cite source documents by URL and observation time with verbatim quotes.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "item_id",
         "is_event",
         "statement",
         "certainty",
@@ -164,9 +186,6 @@
         "checked_sources"
       ],
       "properties": {
-        "item_id": {
-          "type": "string"
-        },
         "is_event": {
           "type": "boolean"
         },
@@ -192,18 +211,11 @@
             "additionalProperties": false,
             "required": [
               "name",
-              "entity_id",
               "role"
             ],
             "properties": {
               "name": {
                 "type": "string"
-              },
-              "entity_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
               },
               "role": {
                 "enum": [
@@ -381,15 +393,15 @@
               },
               "quote": {
                 "type": "string",
-                "description": "Verbatim atomic quote. Cite its actual saved document through evidence; a fetched page has its own item_id even when its URL matches the discovery item."
+                "description": "Verbatim atomic quote. Cite its actual saved document through evidence; a fetched page has its own document even when its URL matches the discovery item."
               },
               "approval_dependency": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
                   "scope",
-                  "token_ids",
-                  "claim_ids"
+                  "tokens",
+                  "claims"
                 ],
                 "properties": {
                   "scope": {
@@ -398,23 +410,39 @@
                       "TOKEN"
                     ]
                   },
-                  "token_ids": {
+                  "tokens": {
                     "type": "array",
                     "items": {
                       "type": "string",
                       "minLength": 1
                     }
                   },
-                  "claim_ids": {
+                  "claims": {
                     "type": "array",
-                    "minItems": 1,
                     "items": {
-                      "type": "string",
-                      "minLength": 1
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "quote": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        },
+                        "predicate": {
+                          "type": "string"
+                        },
+                        "object": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "quote"
+                      ]
                     }
                   }
                 },
-                "description": "Explicit model-authored thesis dependency. References must identify existing accepted causal RELATION claims; the service validates scope and token identity and does not infer dependencies from text."
+                "description": "Explicit model-authored thesis dependency. References must identify existing accepted causal RELATION claims; the service validates scope and project name and tickerentity and does not infer dependencies from text."
               },
               "verified": {
                 "type": "boolean",
@@ -430,18 +458,32 @@
               "evidence": {
                 "type": "array",
                 "minItems": 1,
-                "description": "Agent-supplied exact saved document containing this claim's quote. For text read with fetch_page or web_search, use that returned item_id, not the discovery item's ID merely because its URL matches. The root tool item_id remains the trigger/origin. Tank preserves these references without semantic rewriting.",
+                "description": "Agent-supplied exact source document containing this claim's quote. For text read with fetch_page or web_search, use that returned document, not the discovery document merely because its URL matches. The root tool document remains the trigger/origin. Tank preserves these references without semantic rewriting.",
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
                   "required": [
-                    "item_id",
+                    "document",
                     "quote"
                   ],
                   "properties": {
-                    "item_id": {
-                      "type": "string",
-                      "minLength": 1
+                    "document": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "url": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "observed_at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "url"
+                      ]
                     },
                     "quote": {
                       "type": "string",
@@ -478,17 +520,11 @@
   },
   {
     "name": "add_observation",
-    "description": "Add a sourced observation to an existing event and apply the event state machine. Supply public time and precision, freshness, and atomic claims with verbatim quotes, explicit stages and verified flags. When reassessed, supply certainty and its reason as optional updates; omission preserves existing values without implicit promotion. Follow the skill claim rules: you judge source authority, quote support, stage, timing and freshness. Tank stores these semantic fields as supplied; only entity resolution is performed by Tank. Null stages remain valid for non-stage or unknown claims. Deterministic event state transitions and downstream economic rules still apply. When a quote comes from a fetched page or search result, supply claim evidence with that result’s item_id; keep root item_id as the triggering collected item.",
+    "description": "Add claims from the current source to the current event. Cite documents by their displayed URL and observation time. Replace prior claims by quoting them in supersedes_claims.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "event_id": {
-          "type": "string"
-        },
-        "item_id": {
-          "type": "string"
-        },
         "link": {
           "enum": [
             "CORROBORATION",
@@ -584,15 +620,15 @@
               },
               "quote": {
                 "type": "string",
-                "description": "Verbatim atomic quote. Cite its actual saved document through evidence; a fetched page has its own item_id even when its URL matches the discovery item."
+                "description": "Verbatim atomic quote. Cite its actual saved document through evidence; a fetched page has its own document even when its URL matches the discovery item."
               },
               "approval_dependency": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
                   "scope",
-                  "token_ids",
-                  "claim_ids"
+                  "tokens",
+                  "claims"
                 ],
                 "properties": {
                   "scope": {
@@ -601,23 +637,39 @@
                       "TOKEN"
                     ]
                   },
-                  "token_ids": {
+                  "tokens": {
                     "type": "array",
                     "items": {
                       "type": "string",
                       "minLength": 1
                     }
                   },
-                  "claim_ids": {
+                  "claims": {
                     "type": "array",
-                    "minItems": 1,
                     "items": {
-                      "type": "string",
-                      "minLength": 1
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "quote": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        },
+                        "predicate": {
+                          "type": "string"
+                        },
+                        "object": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "quote"
+                      ]
                     }
                   }
                 },
-                "description": "Explicit model-authored thesis dependency. References must identify existing accepted causal RELATION claims; the service validates scope and token identity and does not infer dependencies from text."
+                "description": "Explicit model-authored thesis dependency. References must identify existing accepted causal RELATION claims; the service validates scope and project name and tickerentity and does not infer dependencies from text."
               },
               "verified": {
                 "type": "boolean",
@@ -630,29 +682,59 @@
                 ],
                 "description": "Agent-supplied explanation of what confirmation is missing for this unverified claim (for example, no announcement from the named organization). Tank preserves and displays it verbatim; null means the reason was not established. Keep it to about 10 words; it is printed in NOT VERIFIED."
               },
-              "supersedes_claim_ids": {
+              "supersedes_claims": {
                 "type": "array",
                 "items": {
-                  "type": "string"
-                },
-                "uniqueItems": true,
-                "description": "Existing prior claim IDs in this event explicitly replaced by this claim for current-card presentation. Old claims remain historical evidence. Omit references to unrelated claims or remaining uncertainties."
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "quote": {
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    },
+                    "predicate": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "quote"
+                  ]
+                }
               },
               "evidence": {
                 "type": "array",
                 "minItems": 1,
-                "description": "Agent-supplied exact saved document containing this claim's quote. For text read with fetch_page or web_search, use that returned item_id, not the discovery item's ID merely because its URL matches. The root tool item_id remains the trigger/origin. Tank preserves these references without semantic rewriting.",
+                "description": "Agent-supplied exact source document containing this claim's quote. For text read with fetch_page or web_search, use that returned document, not the discovery document merely because its URL matches. The root tool document remains the trigger/origin. Tank preserves these references without semantic rewriting.",
                 "items": {
                   "type": "object",
                   "additionalProperties": false,
                   "required": [
-                    "item_id",
+                    "document",
                     "quote"
                   ],
                   "properties": {
-                    "item_id": {
-                      "type": "string",
-                      "minLength": 1
+                    "document": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "url": {
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "observed_at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "url"
+                      ]
                     },
                     "quote": {
                       "type": "string",
@@ -743,8 +825,6 @@
         }
       },
       "required": [
-        "event_id",
-        "item_id",
         "link",
         "claims",
         "public_at",
@@ -754,17 +834,29 @@
   },
   {
     "name": "merge_into",
-    "description": "Merge this session event into an earlier open event that represents the same real-world development. The target must exist, remain open and satisfy session/event ownership checks. Preserves the evidence and source observations on the surviving event and marks the origin merged. Returns the surviving event; this does not create a new event or discard conflicting evidence.",
+    "description": "Merge the current event into a displayed event selected by its exact statement and public time.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "event_id": {
-          "type": "string"
+        "event": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "statement": {
+              "type": "string"
+            },
+            "public_at": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "statement"
+          ]
         }
       },
       "required": [
-        "event_id"
+        "event"
       ]
     }
   },
@@ -775,9 +867,6 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "event_id": {
-          "type": "string"
-        },
         "assessment": {
           "type": "object",
           "additionalProperties": false,
@@ -810,7 +899,25 @@
                     "evidence": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "quote": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          },
+                          "predicate": {
+                            "type": "string"
+                          },
+                          "object": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "quote"
+                        ]
                       }
                     },
                     "proposed_by": {
@@ -856,7 +963,25 @@
                     "evidence": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "quote": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          },
+                          "predicate": {
+                            "type": "string"
+                          },
+                          "object": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "quote"
+                        ]
                       }
                     },
                     "proposed_by": {
@@ -902,7 +1027,25 @@
                     "evidence": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "quote": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          },
+                          "predicate": {
+                            "type": "string"
+                          },
+                          "object": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "quote"
+                        ]
                       }
                     },
                     "proposed_by": {
@@ -948,7 +1091,25 @@
                     "evidence": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "quote": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          },
+                          "predicate": {
+                            "type": "string"
+                          },
+                          "object": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "quote"
+                        ]
                       }
                     },
                     "proposed_by": {
@@ -994,7 +1155,25 @@
                     "evidence": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "quote": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          },
+                          "predicate": {
+                            "type": "string"
+                          },
+                          "object": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "quote"
+                        ]
                       }
                     },
                     "proposed_by": {
@@ -1040,7 +1219,25 @@
                     "evidence": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "quote": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          },
+                          "predicate": {
+                            "type": "string"
+                          },
+                          "object": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "quote"
+                        ]
                       }
                     },
                     "proposed_by": {
@@ -1086,7 +1283,25 @@
                     "evidence": {
                       "type": "array",
                       "items": {
-                        "type": "string"
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "quote": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          },
+                          "predicate": {
+                            "type": "string"
+                          },
+                          "object": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "quote"
+                        ]
                       }
                     },
                     "proposed_by": {
@@ -1141,7 +1356,25 @@
                   "evidence": {
                     "type": "array",
                     "items": {
-                      "type": "string"
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "quote": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        },
+                        "predicate": {
+                          "type": "string"
+                        },
+                        "object": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "quote"
+                      ]
                     }
                   }
                 },
@@ -1235,9 +1468,26 @@
                     "type": "object",
                     "additionalProperties": false,
                     "properties": {
-                      "claim_id": {
-                        "type": "string",
-                        "minLength": 1
+                      "claim": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "quote": {
+                            "type": "string"
+                          },
+                          "subject": {
+                            "type": "string"
+                          },
+                          "predicate": {
+                            "type": "string"
+                          },
+                          "object": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "quote"
+                        ]
                       },
                       "due_at": {
                         "type": "string",
@@ -1250,7 +1500,7 @@
                       }
                     },
                     "required": [
-                      "claim_id",
+                      "claim",
                       "due_at",
                       "quote"
                     ]
@@ -1260,11 +1510,28 @@
                   "type": "object",
                   "additionalProperties": false,
                   "properties": {
-                    "claim_id": {
-                      "type": "string",
-                      "minLength": 1
+                    "claim": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "quote": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        },
+                        "predicate": {
+                          "type": "string"
+                        },
+                        "object": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "quote"
+                      ]
                     },
-                    "instrument_id": {
+                    "instrument": {
                       "type": "string",
                       "minLength": 1
                     },
@@ -1279,8 +1546,8 @@
                     }
                   },
                   "required": [
-                    "claim_id",
-                    "instrument_id",
+                    "claim",
+                    "instrument",
                     "quote",
                     "effective_at"
                   ],
@@ -1301,7 +1568,7 @@
                 "type": "object",
                 "additionalProperties": false,
                 "properties": {
-                  "token_id": {
+                  "token": {
                     "type": "string"
                   },
                   "headline_activity": {
@@ -1705,7 +1972,25 @@
                       "evidence": {
                         "type": "array",
                         "items": {
-                          "type": "string"
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "quote": {
+                              "type": "string"
+                            },
+                            "subject": {
+                              "type": "string"
+                            },
+                            "predicate": {
+                              "type": "string"
+                            },
+                            "object": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "quote"
+                          ]
                         }
                       }
                     },
@@ -1742,7 +2027,7 @@
                   }
                 },
                 "required": [
-                  "token_id",
+                  "token",
                   "headline_activity",
                   "eligible_activity",
                   "effective_fees",
@@ -1782,16 +2067,33 @@
                       "type": "string",
                       "minLength": 1
                     },
-                    "claim_id": {
-                      "type": "string",
-                      "minLength": 1
+                    "claim": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "quote": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        },
+                        "predicate": {
+                          "type": "string"
+                        },
+                        "object": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "quote"
+                      ]
                     }
                   },
                   "required": [
                     "value",
                     "unit",
                     "quote",
-                    "claim_id"
+                    "claim"
                   ]
                 },
                 "denominator": {
@@ -1810,16 +2112,33 @@
                       "type": "string",
                       "minLength": 1
                     },
-                    "claim_id": {
-                      "type": "string",
-                      "minLength": 1
+                    "claim": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "quote": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        },
+                        "predicate": {
+                          "type": "string"
+                        },
+                        "object": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "quote"
+                      ]
                     }
                   },
                   "required": [
                     "value",
                     "unit",
                     "quote",
-                    "claim_id"
+                    "claim"
                   ]
                 },
                 "denominator_window": {
@@ -1840,7 +2159,7 @@
             },
             "criterion_venue": {
               "type": "string",
-              "description": "Required for M1: the venue name or registry ID. Tank resolves exact registry names and aliases and applies the six-venue class rule. It never infers the venue from the quotation."
+              "description": "Required for M1: the venue name or registered name. Tank resolves exact registry names and aliases and applies the six-venue class rule. It never infers the venue from the quotation."
             }
           },
           "required": [
@@ -1853,31 +2172,27 @@
         }
       },
       "required": [
-        "event_id",
         "assessment"
       ]
     }
   },
   {
     "name": "set_beneficiaries",
-    "description": "Map positive beneficiaries, competitors and losers across the eight declared economic layers. Each edge needs accepted claim references, an explicit causal or share-loss chain, integration state/directionality and exposure 0..10. Token IDs must belong to the fixed registry universe; organization relevance alone does not prove token value capture. Supply reasons and NONE/UNKNOWN status for omitted layers. Negative token theses require explicit accepted causal evidence and a verbatim quote. Persists a versioned map and returns the token analysis set and per-layer reasons.",
+    "description": "Map positive beneficiaries, competitors and losers across the eight declared economic layers. Each edge needs accepted claim references, an explicit causal or share-loss chain, integration state/directionality and exposure 0..10. Project names and tickers must belong to the fixed registry universe; organization relevance alone does not prove token value capture. Supply reasons and NONE/UNKNOWN status for omitted layers. Negative token theses require explicit accepted causal evidence and a verbatim quote. Persists a versioned map and returns the token analysis set and per-layer reasons.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "event_id": {
-          "type": "string"
-        },
         "edges": {
           "type": "array",
           "items": {
             "type": "object",
             "additionalProperties": false,
             "properties": {
-              "entity_id": {
+              "entity": {
                 "type": "string"
               },
-              "token_id": {
+              "token": {
                 "type": [
                   "string",
                   "null"
@@ -1937,7 +2252,7 @@
                 "type": "number",
                 "minimum": 0,
                 "maximum": 10,
-                "description": "TDD §4.7 exposure rubric: 10 = sole required rail with counterparty evidence; 8 = required LIVE rail; 6 = likely rail with BUILT, SUBMITTED or APPROVED integration; 4 = compatible candidate; 2 = thematic connection; 0 = none. Supply the evidence and integration state supporting the selected level."
+                "description": "TDD \u00a74.7 exposure rubric: 10 = sole required rail with counterparty evidence; 8 = required LIVE rail; 6 = likely rail with BUILT, SUBMITTED or APPROVED integration; 4 = compatible candidate; 2 = thematic connection; 0 = none. Supply the evidence and integration state supporting the selected level."
               },
               "edge_certainty": {
                 "enum": [
@@ -1949,9 +2264,26 @@
               "evidence": {
                 "type": "array",
                 "items": {
-                  "type": "string"
-                },
-                "minItems": 1
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "quote": {
+                      "type": "string"
+                    },
+                    "subject": {
+                      "type": "string"
+                    },
+                    "predicate": {
+                      "type": "string"
+                    },
+                    "object": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "quote"
+                  ]
+                }
               },
               "credibility_reasons": {
                 "type": "array",
@@ -1965,7 +2297,7 @@
                 "required": [
                   "mechanism",
                   "quote",
-                  "claim_ids"
+                  "claims"
                 ],
                 "properties": {
                   "mechanism": {
@@ -1976,12 +2308,28 @@
                     "type": "string",
                     "minLength": 1
                   },
-                  "claim_ids": {
+                  "claims": {
                     "type": "array",
-                    "minItems": 1,
                     "items": {
-                      "type": "string",
-                      "minLength": 1
+                      "type": "object",
+                      "additionalProperties": false,
+                      "properties": {
+                        "quote": {
+                          "type": "string"
+                        },
+                        "subject": {
+                          "type": "string"
+                        },
+                        "predicate": {
+                          "type": "string"
+                        },
+                        "object": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "quote"
+                      ]
                     }
                   }
                 },
@@ -1989,8 +2337,8 @@
               }
             },
             "required": [
-              "entity_id",
-              "token_id",
+              "entity",
+              "token",
               "role",
               "layer",
               "direction",
@@ -2086,14 +2434,14 @@
                 "UNKNOWN"
               ]
             }
-          }
+          },
+          "required": []
         },
         "no_credible_secondary_reason": {
           "type": "string"
         }
       },
       "required": [
-        "event_id",
         "edges"
       ]
     }
@@ -2105,14 +2453,11 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "event_id": {
-          "type": "string"
-        },
         "tokens": {
           "type": "array",
           "items": {
             "type": "string",
-            "description": "Registry token_id, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
+            "description": "Registry token, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
           }
         },
         "cutoff": {
@@ -2145,7 +2490,6 @@
         }
       },
       "required": [
-        "event_id",
         "tokens"
       ]
     }
@@ -2157,30 +2501,23 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "event_id": {
-          "type": "string"
-        },
         "token": {
           "type": "string",
-          "description": "Registry token_id, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
+          "description": "Registry token, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
         }
       },
       "required": [
-        "event_id",
         "token"
       ]
     }
   },
   {
     "name": "publish_card",
-    "description": "Request publication using the canonical template. Supply only a neutral factual headline verdict and 2–3 WHY bullets, following skill wording rules L1–L12. Tank applies lifecycle, alert eligibility and update policy, composes structured values from authoritative MarketTruth/Decision outputs, stores immutable evidence and queues delivery. Tank does not lint or repair prose and does not require a fixed tool-call order. Returns alert ID/version or refusal for the deterministic publication gate. An accepted ordinary UPDATE during cooldown is persisted and queued until delivery_not_before; published=true with delivery_status=QUEUED is not a transport acknowledgment. STALE state-change updates are not published. Delivery sends the accepted immutable payload without a second semantic eligibility judgment.",
+    "description": "Publish the current event using its saved assessment and calculated market evidence. Supply only the card kind, headline and explanatory bullets.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "event_id": {
-          "type": "string"
-        },
         "kind": {
           "enum": [
             "PARTIAL",
@@ -2204,7 +2541,6 @@
         }
       },
       "required": [
-        "event_id",
         "kind",
         "verdict",
         "why"
@@ -2213,14 +2549,11 @@
   },
   {
     "name": "schedule_milestone",
-    "description": "Schedule a sourced milestone check for an existing event at due_at. Declare due_at precision or leave legacy precision unknown; an ISO timestamp alone is not proof of exact occurrence time. The supplied source identifies the primary evidence for the milestone. The durable check verifies the outcome when due and records the result through an evidenced observation; scheduling alone does not assert that the outcome occurred.",
+    "description": "Schedule a dated next step for the current event. Use the registered source name.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "event_id": {
-          "type": "string"
-        },
         "milestone": {
           "type": "string"
         },
@@ -2254,7 +2587,6 @@
         }
       },
       "required": [
-        "event_id",
         "milestone",
         "due_at",
         "source"
@@ -2263,7 +2595,7 @@
   },
   {
     "name": "propose_pattern",
-    "description": "Record a candidate reusable pattern for adversarial scout review, with supporting event examples, proposed rule and reason it is not already covered. Returns the proposal ID. This creates review work only; it does not approve a category, change production rules or expand the fixed token universe.",
+    "description": "Propose a reusable pattern with displayed claims or source documents as evidence. Returns its subject and review status.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -2277,7 +2609,62 @@
         "evidence": {
           "type": "array",
           "items": {
-            "type": "string"
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "quote": {
+                    "type": "string"
+                  },
+                  "subject": {
+                    "type": "string"
+                  },
+                  "predicate": {
+                    "type": "string"
+                  },
+                  "object": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "quote"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "statement": {
+                    "type": "string"
+                  },
+                  "public_at": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "statement"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "observed_at": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url"
+                ]
+              }
+            ]
           }
         }
       },
@@ -2313,22 +2700,31 @@
   },
   {
     "name": "set_watch_condition",
-    "description": "Change the monitoring rules of this session event. ARM adds your own rule for a token: Tank evaluates it every minute and, when every listed condition holds for persist_count consecutive windows, sends you CONDITION_FIRED in this session. Agent rules have role AGENT, never change deterministic decisions, and expire after expires_in_hours (default 72, at most 168). DISARM cancels an ARMED rule of the event by cond_id; get_decision may later re-arm its own deterministic rules. Metrics: spot.cohort.direction, spot.cohort.cwb_buy, spot.cohort.cwb_sell, spot.classification, deriv.native_oi_chg_pct, deriv.native_oi_vs_normal, deriv.oi_class, deriv.funding_vs_normal, mt.move_class, mt.divergence_state, dc.class, price.repricing_band, price.close_vs_level, price.vs_anchor_pct, liq.depth_p1_vs_pre, liq.spread_ratio, event.state, event.contradiction_fatal. Ordered operators need numeric metrics; event.* conditions fire on the first match. Windows: W15M, W1H (default), W4H, W24H; all market conditions of one rule use the same window.",
+    "description": "Change the monitoring rules of this session event. ARM adds your own rule for a token: Tank evaluates it every minute and, when every listed condition holds for persist_count consecutive windows, sends you CONDITION_FIRED in this session. Agent rules have role AGENT, never change deterministic decisions, and expire after expires_in_hours (default 72, at most 168). DISARM cancels an ARMED rule of the event by its displayed condition text; get_decision may later re-arm its own deterministic rules. Metrics: spot.cohort.direction, spot.cohort.cwb_buy, spot.cohort.cwb_sell, spot.classification, deriv.native_oi_chg_pct, deriv.native_oi_vs_normal, deriv.oi_class, deriv.funding_vs_normal, mt.move_class, mt.divergence_state, dc.class, price.repricing_band, price.close_vs_level, price.vs_anchor_pct, liq.depth_p1_vs_pre, liq.spread_ratio, event.state, event.contradiction_fatal. Ordered operators need numeric metrics; event.* conditions fire on the first match. Windows: W15M, W1H (default), W4H, W24H; all market conditions of one rule use the same window.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "event_id": {
-          "type": "string"
-        },
         "action": {
           "enum": [
             "ARM",
             "DISARM"
           ]
         },
-        "cond_id": {
-          "type": "string"
+        "condition": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "conditions": {
+              "type": "object"
+            }
+          },
+          "required": [
+            "text"
+          ]
         },
         "token": {
           "type": "string"
@@ -2390,7 +2786,6 @@
         }
       },
       "required": [
-        "event_id",
         "action"
       ]
     }

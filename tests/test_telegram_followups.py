@@ -865,12 +865,28 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
     stored = await repo.get("ops.telegram_file_payloads", item["file_key"])
     assert base64.b64decode(stored["content_base64"]) == b"col\n1\n" and item["filename"] == "my_data.csv"
     assert "content_base64" not in await repo.get("ops.telegram_files", item["file_key"])
-    text = question_message(question)
-    assert (
-        "Посчитай по этому файлу" in text
-        and item["file_key"] in text
-        and f"/workspace/uploads/{item['file_key'][-8:]}-my_data.csv" in text
-    )
+    mounts = []
+    uploads = []
+
+    def openma(request):
+        if request.url.path == "/v1/files":
+            uploads.append(request.content)
+            return httpx.Response(200, json={"id": "file_private"})
+        mounts.append(json.loads(request.content))
+        return httpx.Response(200, json={"id": "resource_private"})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(openma)) as http:
+        sessions = SessionService(repo, session_settings(), None, http=http)
+        session = await repo.get("ops.agent_sessions", "ses_1")
+        ready = await sessions.prepare_attachments(session, question)
+        again = await sessions.prepare_attachments(session, question)
+    text = question_message(ready)
+    assert "Посчитай по этому файлу" in text and item["file_key"] not in text
+    assert ready == again and len(uploads) == len(mounts) == 1
+    assert mounts[0]["file_id"] == "file_private"
+    assert mounts[0]["mount_path"] in text
+    assert mounts[0]["mount_path"].endswith("/attachment-1/my_data.csv")
+    assert "file_private" not in text and "psql" not in text
 
 
 @pytest.mark.asyncio
@@ -1632,7 +1648,7 @@ async def test_watch_mutation_hydrates_prompt_provenance_first():
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         service = SessionService(repo, session_settings(), dispatch, http=http)
-        result = await service.invoke_tool(session, "set_watch_condition", {"event_id": "evt_1"}, "call_w")
+        result = await service.invoke_tool(session, "set_watch_condition", {"action": "ARM"}, "call_w")
     assert calls == ["/v1/sessions/ses_1"] and len(result["prompt_version"]) == 64
 
 

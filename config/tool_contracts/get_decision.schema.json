@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "get_decision",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "token": {
+      "type": "string",
+      "description": "Registry token_id, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
+    }
+  },
+  "required": [
+    "event_id",
+    "token"
+  ],
+  "description": "Compute the deterministic token decision from the event assessment, beneficiary/capture evidence and current Market Truth. Returns action, economic/market/final grades, outlook, conditions, decisive facts and data limitations. Use these stored outputs for card numbers; independent sandbox calculations may inform judgment but do not replace authoritative decision or Market Truth figures."
+}

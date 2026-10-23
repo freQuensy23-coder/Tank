@@ -104,6 +104,9 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
             execution_id = "input"
 
             async def emit(tool, arguments):
+                arguments = {
+                    key: value for key, value in arguments.items() if key not in {"event_id", "item_id"}
+                }
                 nonlocal count
                 count += 1
                 call_id = "tool-" + str(count)

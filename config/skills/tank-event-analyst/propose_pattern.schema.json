@@ -13,7 +13,62 @@
     "evidence": {
       "type": "array",
       "items": {
-        "type": "string"
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "quote": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "predicate": {
+                "type": "string"
+              },
+              "object": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "quote"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "statement": {
+                "type": "string"
+              },
+              "public_at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "statement"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "observed_at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "url"
+            ]
+          }
+        ]
       }
     }
   },
@@ -22,5 +77,5 @@
     "subject",
     "evidence"
   ],
-  "description": "Record a candidate reusable pattern for adversarial scout review, with supporting event examples, proposed rule and reason it is not already covered. Returns the proposal ID. This creates review work only; it does not approve a category, change production rules or expand the fixed token universe."
+  "description": "Propose a reusable pattern with displayed claims or source documents as evidence. Returns its subject and review status."
 }

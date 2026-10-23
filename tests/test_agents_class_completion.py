@@ -75,6 +75,9 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
             count = 0
 
             async def emit(tool, arguments):
+                arguments = {
+                    key: value for key, value in arguments.items() if key not in {"event_id", "item_id"}
+                }
                 nonlocal count
                 count += 1
                 current = await repo.get("ops.agent_sessions", "s")
@@ -140,7 +143,16 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
                 eid = origin["result"].get("event_id")
                 if case == "merge":
                     target = await seed_other("target")
-                    await emit("merge_into", {"event_id": target["event_id"]})
+                    from tank.agents.context import ModelContext
+
+                    target_event = await repo.get("evt.events", target["event_id"])
+                    target_event["statement"] = "Separate target event"
+                    await repo.put("evt.events", target["event_id"], target_event)
+                    current = await repo.get("ops.agent_sessions", "s")
+                    await ModelContext(repo, tools.settings, current).result(
+                        "list_open_events", {"events": [target_event]}
+                    )
+                    await emit("merge_into", {"event": {"statement": "Separate target event"}})
                 if case in {"LOW", "MATERIAL", "wrong_event", "bad_class", "cache_revision"}:
                     assessment = await emit(
                         "set_assessment",

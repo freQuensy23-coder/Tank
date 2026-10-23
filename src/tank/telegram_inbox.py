@@ -104,10 +104,7 @@ def question_message(question):
     ]
     for item in question.get("attachments") or []:
         lines.append(
-            f"Пользователь приложил файл {item['filename']} ({item['size']} байт). Положить его в /workspace: "
-            f'mkdir -p /workspace/uploads && psql "$TANK_DB_URL" -Atc '
-            f"\"select document->>'content_base64' from ops.telegram_file_payloads where storage_key='{item['file_key']}'\" "
-            f"| base64 -d > '/workspace/uploads/{item['file_key'][-8:]}-{item['filename']}'"
+            f"Пользователь приложил файл {item['filename']} ({item['size']} байт): {item.get('path', 'файл недоступен')}."
         )
     lines.append(
         "Твоё последнее сообщение в этом ходе уйдёт пользователю ответом в Telegram; "

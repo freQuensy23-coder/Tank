@@ -2,17 +2,26 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "event_id": {
-      "type": "string"
-    },
     "action": {
       "enum": [
         "ARM",
         "DISARM"
       ]
     },
-    "cond_id": {
-      "type": "string"
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "conditions": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "text"
+      ]
     },
     "token": {
       "type": "string"
@@ -74,7 +83,6 @@
     }
   },
   "required": [
-    "event_id",
     "action"
   ]
 }

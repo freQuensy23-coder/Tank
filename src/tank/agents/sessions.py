@@ -5,6 +5,7 @@ stream ignores Last-Event-ID, while the native Node transport honors it.
 """
 
 import asyncio
+import base64
 import copy
 import json
 import time
@@ -17,6 +18,7 @@ import httpx
 from httpx_sse import aconnect_sse
 
 from tank.agents import workflow
+from tank.agents.context import CONTEXT_VERSION, ModelContext, clean_text
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
@@ -314,6 +316,7 @@ class SessionService:
         opened = self.clock_timestamp()
         session = {
             "session_id": sid,
+            "model_context_version": CONTEXT_VERSION,
             "event_id": event_id,
             "replay_run_id": replay_run_id,
             "replay_source_session_id": payload.get("replay_source_session_id"),
@@ -464,6 +467,44 @@ class SessionService:
             current.update(self.clock_timestamp().fields("tools_synced_at"))
             await self.repo.put("ops.agent_sessions", sid, current)
 
+    async def prepare_attachments(self, session, question):
+        question = copy.deepcopy(question)
+        for index, item in enumerate(question.get("attachments") or [], 1):
+            key = item["file_key"]
+            metadata = await self.repo.get("ops.telegram_files", key)
+            payload = await self.repo.get("ops.telegram_file_payloads", key)
+            if metadata is None or payload is None:
+                raise ValueError("The attached file is unavailable")
+            mount = (metadata.get("model_mounts") or {}).get(session["session_id"])
+            if not mount:
+                content = base64.b64decode(payload["content_base64"], validate=True)
+                uploaded = await self.request(
+                    "POST",
+                    "files",
+                    files={
+                        "file": (item["filename"], content, item.get("mime") or "application/octet-stream")
+                    },
+                )
+                uploaded = uploaded.get("data", uploaded)
+                stamp = str(
+                    question.get("created_at")
+                    or question.get("received_at")
+                    or metadata.get("stored_at")
+                    or "current-question"
+                ).replace(":", "-")
+                path = f"/workspace/uploads/{stamp}/attachment-{index}/{item['filename']}"
+                await self.request(
+                    "POST",
+                    f"sessions/{session['session_id']}/resources",
+                    json={"type": "file", "file_id": uploaded["id"], "mount_path": path},
+                    idem="mount:" + sha256({"session": session["session_id"], "file": key}),
+                )
+                mount = {"path": path, "file_id": uploaded["id"]}
+                metadata.setdefault("model_mounts", {})[session["session_id"]] = mount
+                await self.repo.put("ops.telegram_files", key, metadata)
+            item["path"] = mount["path"]
+        return question
+
     async def send_file(self, session, arguments, call_id):
         """send_telegram_file: read an output of this session and reply with it to the active follow-up."""
         active = next(
@@ -523,6 +564,7 @@ class SessionService:
         async with self.repo.lock("session-mapping:" + str(mapping_identity)):
             session = await self.resolve(payload)
         sid, key = session["session_id"], sha256(payload)
+        content = await ModelContext(self.repo, self.settings, session).message(payload, item)
         if payload.get("kind") == "USER_QUESTION" and await self.sync_tools(sid) == "BUSY":
             raise DeliveryDeferred(offset_schedule(collection_clock(), timedelta(seconds=30)))
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
@@ -541,22 +583,12 @@ class SessionService:
                     (row for row in session.get("message_log", []) if row["message_id"] == key), None
                 )
                 if intent is None:
-                    content = {"message": payload, "item": item}
-                    if payload.get("proposal_id"):
-                        content["proposal"] = await self.repo.get(
-                            "scout.expansion_proposals", payload["proposal_id"]
-                        )
-                        content["open_proposals"] = [
-                            row
-                            async for row in self.repo.iter_all("scout.expansion_proposals")
-                            if not row.get("human_action")
-                        ]
                     text = canonical_json(content)
                     if payload.get("question_id"):
                         question = await self.repo.get("out.user_questions", payload["question_id"])
                         if question is None:
                             raise KeyError(payload["question_id"])
-                        text = question_message(question)
+                        text = clean_text(question_message(await self.prepare_attachments(session, question)))
                     body = {
                         "type": "user.message",
                         "content": [{"type": "text", "text": text}],
@@ -1216,6 +1248,8 @@ class SessionService:
         if decision_market_refresh_completed:
             context["_decision_market_refresh_completed"] = True
             context["_decision_prepared_condition_ids"] = decision_prepared_condition_ids
+        fresh = await self.repo.get("ops.agent_sessions", session["session_id"]) or session
+        arguments = await ModelContext(self.repo, self.settings, fresh).arguments(tool, arguments)
         return await self.tool_dispatch(tool, arguments, context)
 
     def tool_failure(self, error):
@@ -1411,6 +1445,10 @@ class SessionService:
                     **completed.fields("completed_at"),
                 )
                 await self.repo.put("ops.tool_calls", key, stored)
+        current = await self.repo.get("ops.agent_sessions", sid) or session
+        projected = await ModelContext(self.repo, self.settings, current).result(
+            stored["tool"], stored["result"]
+        )
         body = {
             "type": "user.custom_tool_result",
             "custom_tool_use_id": call_id,
@@ -1418,7 +1456,7 @@ class SessionService:
                 {
                     "type": "text",
                     "text": canonical_json(
-                        tool_wire_result(stored["tool"], stored["result"], session_id=sid, call_id=call_id)
+                        tool_wire_result(stored["tool"], projected, session_id=sid, call_id=call_id)
                     ),
                 }
             ],
@@ -1426,7 +1464,16 @@ class SessionService:
         if stored.get("is_error"):
             body["is_error"] = True
         async with self.repo.lock("tool:" + key):
-            if stored.get("native_result_body") is None:
+            if (
+                stored.get("native_result_body") is None
+                or stored.get("model_context_version") != CONTEXT_VERSION
+            ):
+                if (
+                    stored.get("native_result_body")
+                    and stored.get("model_context_version") != CONTEXT_VERSION
+                ):
+                    stored["legacy_native_result_body"] = stored["native_result_body"]
+                stored["model_context_version"] = CONTEXT_VERSION
                 stored["native_result_body"] = copy.deepcopy(body)
                 await self.repo.put("ops.tool_calls", key, stored)
             body = copy.deepcopy(stored["native_result_body"])

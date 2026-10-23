@@ -4,7 +4,7 @@ scout_agent_id: agent_IfiasmbmBp8jHUa16iaKO
 environment_id: env_rKT0gPZkTp8auR0P0ae_C
 replay_environment_id: env_8Atn4un8vnLTHWyi3nYfI
 release: 85d5361f535c7221de975838dc48444e468cc02e
-prompt_version: baseline-3.1-public-novelty
+prompt_version: baseline-3.2-cleaner-context
 model_id: gpt-6.1-sol
 reasoning_effort: medium
 model_prices:

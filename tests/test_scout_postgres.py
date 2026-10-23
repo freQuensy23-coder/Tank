@@ -182,6 +182,7 @@ async def seed_event(tools, sessions):
         "next_milestone": None,
         "checked_sources": [],
     }
+    extraction.pop("item_id")
     await sessions.tool(analyst, {"id": "call_record", "name": "record_event", "input": extraction})
     recorded = await tools.repo.get("ops.tool_calls", "ses_analyst:call_record")
     assert recorded["status"] == "DONE", recorded["result"]
@@ -207,7 +208,11 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
             {
                 "id": "call_propose",
                 "name": "propose_pattern",
-                "input": {"hook": "MARKET_TRUTH_STATE", "subject": "Venue-led drift", "evidence": [claim]},
+                "input": {
+                    "hook": "MARKET_TRUTH_STATE",
+                    "subject": "Venue-led drift",
+                    "evidence": [{"quote": "Product announced"}],
+                },
             },
         )
         proposed = await repository.get("ops.tool_calls", "ses_analyst:call_propose")
@@ -225,8 +230,8 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
         create = openma.posted[0]
         assert create[0] == "/v1/sessions" and create[1]["agent"] == "agt_scout"
         message = json.loads(openma.posted[1][1]["events"][0]["content"][0]["text"])
-        assert message["proposal"]["prp_id"] == prp_id
-        assert [row["prp_id"] for row in message["open_proposals"]] == [prp_id]
+        assert message["proposal"]["concept_name"] == "Venue-led drift"
+        assert [row["concept_name"] for row in message["open_proposals"]] == ["Venue-led drift"]
 
         before = await snapshot(dsn)
         attempts = [
@@ -238,10 +243,9 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
             (
                 "record_review",
                 {
-                    "proposal_id": prp_id,
                     "verdict": "Already covered by existing move classes",
                     "reason": "No decision-relevant difference shown",
-                    "evidence": [claim],
+                    "evidence": [{"quote": "Product announced"}],
                     "scores": {"overlap": 8, "observability": 5, "reusability": 3, "decision_value": 2},
                     "recommendation": "REJECT",
                     "duplicate_of": None,

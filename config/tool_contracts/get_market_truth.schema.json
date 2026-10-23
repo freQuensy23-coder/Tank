@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "get_market_truth",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "tokens": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "Registry token_id, e.g. 'bitcoin:BTC' or 'world:WLD'. A ticker or $TICKER is resolved to it; any other name is refused."
+      }
+    },
+    "cutoff": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "cutoff_prec": {
+      "type": "string",
+      "anyOf": [
+        {
+          "enum": [
+            "EXACT",
+            "COLLECTION_ONLY",
+            "BUCKET",
+            "SECOND",
+            "MINUTE",
+            "HOUR"
+          ]
+        },
+        {
+          "pattern": "^BUCKET\\((?:[1-9][0-9]*(?:\\.[0-9]+)?|0\\.[0-9]*[1-9][0-9]*)(?:us|ms|s|m|h|d|w)\\)$"
+        }
+      ],
+      "description": "Explicit timestamp provenance; ISO formatting does not establish precision. BUCKET requires an explicit positive duration, embedded or in the companion bucket-size field. SECOND, MINUTE and HOUR are accepted as BUCKET(1s), BUCKET(1m) and BUCKET(1h)."
+    },
+    "cutoff_bucket_size_s": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Explicit bucket duration in seconds; only valid for BUCKET precision and must match any embedded duration."
+    }
+  },
+  "required": [
+    "event_id",
+    "tokens"
+  ],
+  "description": "Escalate the requested registered tokens for market collection/backfill, then assemble their Market Truth and Data Confidence. A supplied cutoff is a chosen analysis boundary with explicitly declared precision; otherwise the service selects the latest completed minute. Exchange/settlement times and completed-bar ends may not exceed that cutoff; receipt/assembly clocks describe later collection availability. Returns per-token context, observations, provenance, coverage and missing-data reasons."
+}

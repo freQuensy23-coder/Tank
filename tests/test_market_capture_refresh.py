@@ -237,7 +237,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
             "id": "decision",
             "type": "agent.custom_tool_use",
             "name": "get_decision",
-            "input": {"event_id": "e", "token": "T"},
+            "input": {"token": "T"},
         }
         try:
             async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
@@ -325,7 +325,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
             "id": "cancelled",
             "type": "agent.custom_tool_use",
             "name": "get_decision",
-            "input": {"event_id": "e", "token": "T"},
+            "input": {"token": "T"},
         }
         acks = []
 
@@ -440,7 +440,7 @@ async def test_condition_firing_during_refresh_wait_is_deferred_until_its_own_re
                 "id": "first-condition",
                 "type": "agent.custom_tool_use",
                 "name": "get_decision",
-                "input": {"event_id": "e", "token": "T"},
+                "input": {"token": "T"},
             }
             pending = asyncio.create_task(sessions.process_event("s", event, 8))
             try:

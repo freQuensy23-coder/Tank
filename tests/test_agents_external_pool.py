@@ -28,7 +28,7 @@ async def exercise_external_tool_burst(repo, tool):
     sessions = []
     template, _ = await seed(repo)
     for index in range(24):
-        session = dict(template, session_id=f"session-{index}")
+        session = dict(template, session_id=f"session-{index}", event_id="fixture-event")
         await repo.put("ops.agent_sessions", session["session_id"], session)
         sessions.append(session)
 

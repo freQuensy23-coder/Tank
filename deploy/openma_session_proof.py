@@ -17,9 +17,11 @@ import httpx
 import yaml
 
 sys.path.insert(0, "/srv/tank/src")
+from tank.agents.context import ModelContext
 from tank.agents.wire import tool_wire_result
 from tank.event_tools import EventToolService
 from tank.settings import Settings
+from tank.storage import MemoryRepository
 from tank.util import canonical_json
 
 out, base, proposed_path, config_dir = Path(sys.argv[1]), sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4])
@@ -108,7 +110,8 @@ posted = client.post(
     json={"events": [{"type": "user.message", "content": [{"type": "text", "text": prompt}]}]},
 )
 posted.raise_for_status()
-tools = EventToolService(None, Settings(config_dir=config_dir), None, None)
+tools = EventToolService(MemoryRepository(), Settings(config_dir=config_dir), None, None)
+model_context = ModelContext(tools.repo, tools.settings, {})
 seen, events, answered, deadline = set(), [], [], time.monotonic() + 900
 finished = None
 while time.monotonic() < deadline and not finished:
@@ -128,6 +131,7 @@ while time.monotonic() < deadline and not finished:
                 result = asyncio.run(getattr(tools, event["name"])(event.get("input") or {}, {}))
                 if event["name"] != "get_registry":
                     result = {"error": "deployment check permits only get_registry"}
+                result = asyncio.run(model_context.result(event["name"], result))
                 body = {
                     "type": "user.custom_tool_result",
                     "custom_tool_use_id": event["id"],

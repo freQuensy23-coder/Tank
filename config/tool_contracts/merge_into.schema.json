@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "merge_into",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "event_id"
+  ],
+  "description": "Merge this session event into an earlier open event that represents the same real-world development. The target must exist, remain open and satisfy session/event ownership checks. Preserves the evidence and source observations on the surviving event and marks the origin merged. Returns the surviving event; this does not create a new event or discard conflicting evidence."
+}
