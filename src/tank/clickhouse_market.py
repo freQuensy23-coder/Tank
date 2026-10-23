@@ -16,7 +16,6 @@ import re
 import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -629,11 +628,7 @@ def install(repo, settings):
     url = getattr(settings, "clickhouse_url", None)
     if not url or getattr(settings, "replay", False):
         return None
-    password = None
-    secret = Path(getattr(settings, "secrets_dir", "/run/secrets")) / "tank_db_password"
-    if secret.is_file():
-        password = secret.read_text().strip()
-    repo.clickhouse = ClickHouse(url, password=password)
+    repo.clickhouse = ClickHouse(url, password=getattr(settings, "tank_db_password", None))
     return repo.clickhouse
 
 

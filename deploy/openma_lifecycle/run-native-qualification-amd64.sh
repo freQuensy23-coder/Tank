@@ -3,6 +3,7 @@
 # Runs the prepared lifecycle proof (native-qualification.mjs) and then the network proof
 # (native-network-qualification.mjs) in the built OpenMA image, on one dedicated proof volume.
 set -u
+set -a; . /srv/tank-deploy/.env; set +a
 RUN=${RUN:-amd64-r86}
 IMAGE=${IMAGE:-tank-openma:server-r86-amd64}
 OCI=${OCI:-/srv/tank-assets/sandbox-oci-amd64}
@@ -76,8 +77,7 @@ docker run --name "$NETWORK" --network tank_tank-net --ip "$QUAL_IP" \
   --mount "type=volume,src=$VOLUME,dst=/proof" \
   --mount "type=bind,src=$OCI,dst=/opt/tank-sandbox-oci,readonly" \
   --mount "type=bind,src=$ASSETS,dst=/audit,readonly" \
-  --mount "type=bind,src=/etc/tank/secrets/tank_agent_db_password,dst=/run/secrets/tank_agent_db_password,readonly" \
-  --mount "type=bind,src=/etc/tank/secrets/tank_replay_agent_db_password,dst=/run/secrets/tank_replay_agent_db_password,readonly" \
+  -e TANK_AGENT_DB_PASSWORD -e TANK_REPLAY_AGENT_DB_PASSWORD \
   -e TANK_NATIVE_NETWORK_GO=AUTHORIZED_NATIVE_PROOF \
   -e TANK_NATIVE_PROOF_DIR=/proof/native-network \
   -e BOXLITE_HOME=/proof/native-lifecycle/boxlite \

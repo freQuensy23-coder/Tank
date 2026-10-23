@@ -4,8 +4,8 @@
 !uv.lock
 !src/
 !src/**
-!deploy/tank_entrypoint.py
-!deploy/prepare_openma.py
+!config/
+!config/**
 
 **/.git
 **/__pycache__

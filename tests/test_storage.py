@@ -416,7 +416,7 @@ async def test_deployed_agent_role_select_only(repo):
         assert database["db"] == "tank"
         db = await (await repo._conn().execute("SELECT 1 FROM pg_database WHERE datname='tank'")).fetchone()
         assert db is not None
-        script = Path(__file__).resolve().parents[1] / "deploy" / "read_only_role.sql"
+        script = Path(__file__).resolve().parents[1] / "src" / "tank" / "agent_grants.sql"
         await repo._conn().execute(script.read_text(), prepare=False)
         await repo._conn().execute("GRANT USAGE,CREATE ON SCHEMA reg TO tank")
         await repo._conn().execute("SET LOCAL ROLE tank")
@@ -598,7 +598,7 @@ async def test_agent_new_connection_defaults_read_only(repo):
         assert database["db"] == "tank"
         await repo._conn().execute(
             (
-                __import__("pathlib").Path(__file__).resolve().parents[1] / "deploy/read_only_role.sql"
+                __import__("pathlib").Path(__file__).resolve().parents[1] / "src/tank/agent_grants.sql"
             ).read_text(),
             prepare=False,
         )

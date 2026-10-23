@@ -766,37 +766,6 @@ async def test_agent_watch_rules_arm_disarm_and_survive_decision_reconciliation(
     assert (await repo.get("ana.watch_conditions", condition["cond_id"]))["cancelled_by"] == "AGENT"
 
 
-def test_update_tools_publishes_a_new_agent_version_only_when_tools_are_missing(tmp_path):
-    import importlib.util
-    import shutil
-    from pathlib import Path
-
-    root = Path(__file__).parents[1]
-    spec = importlib.util.spec_from_file_location("prepare_openma", root / "deploy/prepare_openma.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    config = tmp_path / "config"
-    shutil.copytree(root / "config/skills/tank-event-analyst", config / "skills/tank-event-analyst")
-    (config / "openma.yaml").write_text("agent_id: agt_1\n")
-    names = [tool["name"] for tool in module.analyst_tools(config) if tool.get("type") == "custom"]
-    posts = []
-    state = {"tools": [{"type": "custom", "name": "get_item"}], "version": 3}
-
-    def handler(request):
-        if request.method == "POST":
-            body = json.loads(request.content)
-            posts.append(body)
-            state.update(tools=body["tools"], version=body["version"] + 1)
-        return httpx.Response(200, json={"id": "agt_1", **state})
-
-    with httpx.Client(base_url="http://oma", transport=httpx.MockTransport(handler)) as client:
-        first = module.update_tools(config, client=client)
-        second = module.update_tools(config, client=client)
-    assert first["status"] == "UPDATED" and "send_telegram_file" in first["added"]
-    assert second == {"status": "CURRENT", "agent_version": 4}
-    assert posts[0]["version"] == 3 and "set_watch_condition" in names
-
-
 async def asked(repo, telegram, message_id=20, text="Почему не шорт?"):
     reply = message(
         message_id,
@@ -1223,36 +1192,6 @@ async def test_prompt_is_sent_once_even_if_marking_the_forward_fails():
         await inbox.prompt(row, target)
     assert [body["text"] for body in telegram.sent] == [PROMPT_TEXT]
     assert (await repo.get("ops.telegram_messages", f"{USER}:70"))["status"] == "PROMPTED"
-
-
-def test_update_tools_republishes_when_a_tool_definition_changes(tmp_path):
-    import importlib.util
-    import shutil
-    from pathlib import Path
-
-    root = Path(__file__).parents[1]
-    spec = importlib.util.spec_from_file_location("prepare_openma", root / "deploy/prepare_openma.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    config = tmp_path / "config"
-    shutil.copytree(root / "config/skills/tank-event-analyst", config / "skills/tank-event-analyst")
-    (config / "openma.yaml").write_text("agent_id: agt_1\n")
-    stale = [dict(tool) for tool in module.analyst_tools(config)]
-    stale[-1] = {**stale[-1], "description": "old"}
-    stale.append({"type": "custom", "name": "retired_tool", "description": "x", "input_schema": {}})
-    state = {"tools": stale, "version": 7}
-    posts = []
-
-    def handler(request):
-        if request.method == "POST":
-            posts.append(json.loads(request.content))
-            state.update(tools=posts[-1]["tools"], version=8)
-        return httpx.Response(200, json={"id": "agt_1", **state})
-
-    with httpx.Client(base_url="http://oma", transport=httpx.MockTransport(handler)) as client:
-        result = module.update_tools(config, client=client)
-    assert result["status"] == "UPDATED" and result["removed"] == ["retired_tool"]
-    assert result["changed"] == [stale[-2]["name"]] and result["added"] == []
 
 
 @pytest.mark.asyncio
@@ -1765,41 +1704,6 @@ async def test_question_to_a_remotely_terminated_session_answers_no_session():
         assert await service.send_message(payload) is None
     assert (await repo.get("out.user_questions", question_id))["answer_status"] == "NO_SESSION"
     assert (await repo.get("ops.agent_sessions", "ses_1"))["remote_state"]["status"] == "terminated"
-
-
-def test_update_tools_republishes_when_builtin_toolset_flags_drift(tmp_path):
-    import importlib.util
-    import shutil
-    from pathlib import Path
-
-    root = Path(__file__).parents[1]
-    spec = importlib.util.spec_from_file_location("prepare_openma", root / "deploy/prepare_openma.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    config = tmp_path / "config"
-    shutil.copytree(root / "config/skills/tank-event-analyst", config / "skills/tank-event-analyst")
-    (config / "openma.yaml").write_text("agent_id: agt_1\n")
-    deployed = [dict(tool) for tool in module.analyst_tools(config)]
-    toolset = dict(deployed[0])
-    toolset["configs"] = [
-        {**row, "enabled": not row["enabled"], "permission_policy": {"type": "always_allow"}}
-        if row["name"] == "browser"
-        else {**row, "permission_policy": {"type": "always_allow"}}
-        for row in toolset["configs"]
-    ]
-    deployed[0] = toolset
-    state = {"tools": deployed, "version": 2}
-
-    def handler(request):
-        if request.method == "POST":
-            state.update(tools=json.loads(request.content)["tools"], version=3)
-        return httpx.Response(200, json={"id": "agt_1", **state})
-
-    with httpx.Client(base_url="http://oma", transport=httpx.MockTransport(handler)) as client:
-        first = module.update_tools(config, client=client)
-        second = module.update_tools(config, client=client)
-    assert first["status"] == "UPDATED" and first["changed"] == ["toolset:agent_toolset_20260401"]
-    assert second["status"] == "CURRENT"
 
 
 @pytest.mark.asyncio

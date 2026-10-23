@@ -101,16 +101,24 @@ jobs:
           - image: tank
             context: .
             file: Dockerfile
+            content: Dockerfile .dockerignore pyproject.toml uv.lock src config
           - image: tank-capture
-            context: ./capture
+            context: .
             file: capture/Dockerfile
+            content: capture config
           - image: tank-openma
             context: ./vendor/openma
             file: vendor/openma/Dockerfile
             build_args: SKIP_CONSOLE=1
-          - image: tank-sandbox
-            context: .
-            file: deploy/sandbox.Dockerfile
+            content: vendor/openma deploy/sandbox.Dockerfile deploy/sandbox.Dockerfile.dockerignore deploy/openma_browser
+          - image: tank-postgres
+            context: ./deploy/postgres
+            file: deploy/postgres/Dockerfile
+            content: deploy/postgres
+          - image: tank-clickhouse
+            context: ./deploy/clickhouse
+            file: deploy/clickhouse/Dockerfile
+            content: deploy/clickhouse
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -125,23 +133,46 @@ jobs:
       - id: name
         env:
           IMAGE_NAME: ${{ matrix.image }}
+          CONTENT: ${{ matrix.content }}
         run: |
           image="ghcr.io/${GITHUB_REPOSITORY,,}/$IMAGE_NAME"
           echo "image=$image" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_EVENT_NAME" == push ]]; then
             echo "branch_tag=$image:$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
           fi
+          content=$(for path in $CONTENT; do echo "$path $(git rev-parse "HEAD:$path" 2>/dev/null || echo missing)"; done | sha256sum | cut -d' ' -f1)
+          echo "content=$content" >> "$GITHUB_OUTPUT"
+      - name: Build the sandbox rootfs baked into OpenMA
+        if: matrix.image == 'tank-openma'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: .
+          file: deploy/sandbox.Dockerfile
+          platforms: linux/amd64
+          outputs: type=oci,dest=${{ runner.temp }}/sandbox.tar,name=tank-analysis:server-amd64
+          cache-from: type=gha,scope=tank-sandbox
+          cache-to: type=gha,mode=max,scope=tank-sandbox
+      - name: Unpack the sandbox OCI layout
+        if: matrix.image == 'tank-openma'
+        run: |
+          mkdir -p "$RUNNER_TEMP/sandbox-oci"
+          tar -xf "$RUNNER_TEMP/sandbox.tar" -C "$RUNNER_TEMP/sandbox-oci"
+          test "$(cat "$RUNNER_TEMP/sandbox-oci/oci-layout")" = '{"imageLayoutVersion":"1.0.0"}'
+          test -f "$RUNNER_TEMP/sandbox-oci/index.json"
+          rm "$RUNNER_TEMP/sandbox.tar"
       - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.file }}
           push: ${{ github.event_name == 'push' }}
+          build-contexts: ${{ matrix.image == 'tank-openma' && format('sandbox={0}/sandbox-oci', runner.temp) || '' }}
           build-args: |
             GIT_SHA=${{ github.sha }}
             ${{ matrix.build_args }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.tank.content=${{ steps.name.outputs.content }}
           tags: |
             ${{ steps.name.outputs.image }}:${{ github.sha }}
             ${{ steps.name.outputs.branch_tag }}

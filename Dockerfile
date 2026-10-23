@@ -35,7 +35,18 @@ RUN useradd --create-home --uid 1000 tank \
 COPY src ./src
 RUN --mount=type=cache,id=tank-uv,target=/root/.cache/uv \
     uv sync --frozen --no-dev
-COPY deploy/tank_entrypoint.py deploy/prepare_openma.py /app/deploy/
+COPY config /app/config
+ARG GIT_SHA
+ENV TANK_BUILD_SHA=${GIT_SHA} \
+    TANK_CONFIG_DIR=/app/config \
+    TANK_DATA_DIR=/data \
+    TANK_OPENMA_URL=http://openma:8787 \
+    TANK_CODEX_GATEWAY_HOST=0.0.0.0 \
+    TANK_CODEX_GATEWAY_PORT=8790 \
+    TANK_CODEX_AUTH_PATH=/codex-auth/auth.json \
+    TANK_X_PROFILE_DIR=/browser \
+    TANK_BACKUP_DIR=/backup \
+    TANK_CLICKHOUSE_URL=http://tank@clickhouse:8123
 USER tank
-ENTRYPOINT ["/usr/bin/tini", "--", "/opt/tank/venv/bin/python", "/app/deploy/tank_entrypoint.py"]
+ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["tank", "serve"]

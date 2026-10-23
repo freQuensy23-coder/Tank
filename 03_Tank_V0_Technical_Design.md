@@ -763,7 +763,7 @@ One event, one agent session. The first item of an event opens a session on Tank
 
 | Setting | Value |
 |---|---|
-| Platform | OpenMA, self-hosted (02 §5), through its Managed Agents API `/v1/*` at `http://openma:8787` on the Compose network; API key in the Docker secret `oma_api_key` |
+| Platform | OpenMA, self-hosted (02 §5), through its Managed Agents API `/v1/*` at `http://openma:8787` on the Compose network; API key `OMA_API_KEY` from the host `.env` |
 | Agent | `tank-event-analyst`, versioned in OpenMA: `model` = the OpenMA Model Card for `gpt-6.1-sol`: a custom provider (`pi_config.api: openai-responses`) whose `base_url` is Tank's `codex_gateway`, which signs each call with the operator's ChatGPT subscription (Codex sign-in, no API key; 02 §5), `model.effort` per §12, `harness: "pi"`, the skills `tank-event-analyst` and `tank-data`, Tank's custom tools below and OpenMA's built-in sandbox tools; no MCP servers |
 | Session | `POST /v1/sessions` per event in the environment `tank-analysis` (02 §8): the session's own litebox sandbox, a microVM where the agent creates and edits files and runs any command or script; Python 3.12 with `pandas`, `numpy`, `scipy`, `statsmodels`, `duckdb`, `psycopg`, `httpx`; unrestricted internet; read-only access as `tank_agent` to the database `tank` (`TANK_DB_URL`) and to ClickHouse `mkt` (`http://clickhouse:8123`, the same credentials). OpenMA keeps an append-only log of every message, tool call, command and output |
 | Messages | `POST /v1/sessions/{id}/events` with a `user.message`. OpenMA accepts a message while the agent is working, queues it and hands it over as soon as the current turn ends, so Tank never waits for a session to be free |
@@ -1733,14 +1733,14 @@ Values the operator provides at installation (kept outside the repository):
 | Value | Where it is stored |
 |---|---|
 | Contact e-mail for the User-Agent header | `sources.yaml` |
-| Telegram bot token; chat IDs of "Tank Alerts" and "Tank Ops" | Docker secret `telegram_bot_token`; `delivery.yaml` |
-| X List "tank-v0" with the 86 handles of 01 §4.3, and its list ID | operator's X account; `sources.yaml`; the signed-in session as the Docker secret `x_session` (Playwright storage state) |
+| Telegram bot token; chat IDs of "Tank Alerts" and "Tank Ops" | `.env` `TELEGRAM_BOT_TOKEN`; `delivery.yaml` |
+| X List "tank-v0" with the 86 handles of 01 §4.3, and its list ID | operator's X account; `sources.yaml`; the signed-in session as `.env` `X_SESSION` (Playwright storage state) |
 | ChatGPT sign-in for `gpt-6.1-sol` (the operator's subscription) | `auth.json` written by `codex login` on the operator's computer, copied once into the `tank` volume `codex-auth`; `codex_gateway` keeps it refreshed |
-| Internal key between OpenMA's Model Card and `codex_gateway` | Docker secret `codex_gateway_key` |
-| OpenMA root and auth secrets; OpenMA API key | Docker secrets `oma_root_secret` and `oma_api_key` |
-| OpenRouter API key (Jev) | Docker secret `openrouter_api_key`; environment `tank-analysis` (`OPENROUTER_API_KEY`) |
-| Etherscan API key | Docker secret `etherscan_api_key`; environment `tank-analysis` (`ETHERSCAN_API_KEY`) |
-| Password of the read-only role `tank_agent` (PostgreSQL and ClickHouse) | Docker secret `tank_agent_db_password`; environment `tank-analysis` (`TANK_DB_URL`) |
+| Internal key between OpenMA's Model Card and `codex_gateway` | `.env` `CODEX_GATEWAY_KEY` |
+| OpenMA root and auth secrets; OpenMA API key | `.env` `OMA_ROOT_SECRET`, `OMA_AUTH_SECRET` and `OMA_API_KEY` |
+| OpenRouter API key (Jev) | `.env` `OPENROUTER_API_KEY`; environment `tank-analysis` (`OPENROUTER_API_KEY`) |
+| Etherscan API key | `.env` `ETHERSCAN_API_KEY`; environment `tank-analysis` (`ETHERSCAN_API_KEY`) |
+| Password of the read-only role `tank_agent` (PostgreSQL and ClickHouse) | `.env` `TANK_AGENT_DB_PASSWORD`; environment `tank-analysis` (`TANK_DB_URL`) |
 
 ---
 

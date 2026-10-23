@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       sha:
-        description: Qualified full commit SHA; defaults to the selected production branch head
+        description: Commit to deploy; empty deploys the head of prod-main
         required: false
         type: string
 
 permissions:
   contents: read
-  packages: read
+  actions: read
 
 concurrency:
   group: deploy-prod
@@ -18,25 +18,49 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.ref_name == 'main' || github.ref_name == 'prod-main'
+    if: github.ref_name == 'prod-main'
     runs-on: ubuntu-24.04
     environment: production
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
           fetch-depth: 0
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
-        with:
-          version: "0.11.7"
-          python-version: "3.13.13"
-      - name: Deploy qualified images to the matching production checkout
-        run: uv run --no-project --python 3.13.13 python scripts/ci/deploy_production.py
+      - id: target
         env:
-          DEPLOY_SHA: ${{ inputs.sha }}
-          PROD_SSH_USER: ${{ secrets.PROD_SSH_USER }}
-          PROD_SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
-          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
-          PROD_SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          sha=$(git rev-parse --verify "${INPUT_SHA:-HEAD}^{commit}")
+          git merge-base --is-ancestor "$sha" origin/prod-main
+          git checkout -q "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+      - name: Wait for the CI images of the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          for _ in $(seq 1 90); do
+            state=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${SHA}&event=push" \
+              -q '[.workflow_runs[] | .status + "/" + (.conclusion // "")][0] // "missing"')
+            case "$state" in
+              completed/success) exit 0 ;;
+              completed/*) echo "CI of ${SHA} finished: ${state}"; exit 1 ;;
+            esac
+            sleep 20
+          done
+          echo "CI of ${SHA} did not finish"; exit 1
+      - name: Deploy on the production host
+        env:
+          SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          SSH_USER: ${{ secrets.PROD_SSH_USER }}
+          SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
+          SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh_opts=(-i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
+          scp "${ssh_opts[@]}" compose.yaml scripts/deploy/deploy.sh "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "/srv/tank-deploy/deploy.sh $SHA"

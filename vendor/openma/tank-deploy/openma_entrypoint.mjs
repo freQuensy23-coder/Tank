@@ -37,9 +37,12 @@ export function verifyNativeQualification(shim, provenance, qualifications, syst
   return architecture;
 }
 
+const SECRETS = ['OMA_DB_PASSWORD', 'OMA_API_KEY', 'OMA_ROOT_SECRET', 'OMA_AUTH_SECRET', 'TANK_AGENT_DB_PASSWORD', 'TANK_REPLAY_AGENT_DB_PASSWORD', 'OPENROUTER_API_KEY', 'ETHERSCAN_API_KEY'];
+
 const secret = name => {
-  const value = readFileSync(`/run/secrets/${name}`, 'utf8').trim();
-  if (!value) throw Error(`Empty required secret: ${name}`);
+  const variable = name.toUpperCase();
+  const value = (process.env[variable] ?? '').trim();
+  if (!value) throw Error(`Empty required secret: ${variable}`);
   return value;
 };
 
@@ -79,6 +82,7 @@ export async function main() {
   process.env.TANK_SANDBOX_DB_URL = sandboxDatabaseRoute(process.env, secret);
   for (const [name, key] of Object.entries({ openrouter_api_key: 'TANK_SANDBOX_OPENROUTER_API_KEY', etherscan_api_key: 'TANK_SANDBOX_ETHERSCAN_API_KEY' })) process.env[key] = secret(name);
   process.env.TANK_SANDBOX_JEV_PROVIDER = 'openrouter';
+  for (const variable of SECRETS) delete process.env[variable];
   const child = spawn('pnpm', ['start'], { stdio: 'inherit', env: process.env });
   for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => child.kill(signal));
   child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));

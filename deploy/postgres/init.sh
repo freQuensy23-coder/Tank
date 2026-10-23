@@ -1,9 +1,6 @@
 #!/bin/sh
 set -eu
-export TANK_DB_PASSWORD="$(cat /run/secrets/tank_db_password)"
-export OMA_DB_PASSWORD="$(cat /run/secrets/oma_db_password)"
-export TANK_AGENT_DB_PASSWORD="$(cat /run/secrets/tank_agent_db_password)"
-export TANK_REPLAY_AGENT_DB_PASSWORD="$(cat /run/secrets/tank_replay_agent_db_password)"
+: "${TANK_DB_PASSWORD:?}" "${OMA_DB_PASSWORD:?}" "${TANK_AGENT_DB_PASSWORD:?}" "${TANK_REPLAY_AGENT_DB_PASSWORD:?}"
 psql --username "$POSTGRES_USER" --dbname postgres --set ON_ERROR_STOP=1 <<'SQL'
 \getenv tank_password TANK_DB_PASSWORD
 \getenv oma_password OMA_DB_PASSWORD
