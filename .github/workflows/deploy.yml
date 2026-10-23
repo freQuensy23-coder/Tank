@@ -53,6 +53,7 @@ jobs:
       - name: Deploy on the production host
         env:
           SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          SSH_USER: ${{ secrets.PROD_SSH_USER }}
           SSH_HOST: ${{ secrets.PROD_SSH_HOST }}
           SSH_KNOWN_HOSTS: ${{ secrets.PROD_SSH_KNOWN_HOSTS }}
           SHA: ${{ steps.target.outputs.sha }}
@@ -61,5 +62,5 @@ jobs:
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           ssh_opts=(-i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
-          scp "${ssh_opts[@]}" compose.yaml scripts/deploy/deploy.sh "$SSH_HOST:/srv/tank-deploy/"
-          ssh "${ssh_opts[@]}" "$SSH_HOST" "/srv/tank-deploy/deploy.sh $SHA"
+          scp "${ssh_opts[@]}" compose.yaml scripts/deploy/deploy.sh "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
+          ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "/srv/tank-deploy/deploy.sh $SHA"
