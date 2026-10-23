@@ -11,6 +11,7 @@ import time
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass
 from datetime import timedelta
+from urllib.parse import quote
 
 import httpx
 from httpx_sse import aconnect_sse
@@ -19,6 +20,8 @@ from tank.agents import workflow
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
+from tank.delivery import DeliveryDeferred
+from tank.telegram_inbox import DOCUMENT_LIMIT, question_message, record_answer
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, iso, sha256
 
@@ -61,7 +64,7 @@ def material_event(event):
     )
 
 
-SESSION_ADMISSION_FIELDS = ("session_id", "status", "runtime_status", "active_message_id")
+SESSION_ADMISSION_FIELDS = ("session_id", "status", "runtime_status", "active_message_id", "followups_only")
 JOB_ADMISSION_FIELDS = ("job_id", "status", "priority", "payload", "slot_waiting_since", "slot_admitted")
 BUSY_RUNTIME_STATES = {"PENDING", "RUNNING", "REQUIRES_ACTION"}
 
@@ -119,6 +122,7 @@ class SessionService:
         self.pending_seq = {}
         self.seen_events = {}
         self.closed = False
+        self.telegram = None
 
     def clock_timestamp(self):
 
@@ -347,7 +351,166 @@ class SessionService:
         await self.repo.put("ops.agent_sessions", sid, session)
         return session
 
+    async def continuable(self, payload):
+        """An archived or natively terminated session cannot take a follow-up question."""
+        question_id = payload["question_id"]
+        session = await self.repo.get("ops.agent_sessions", payload.get("session_id") or "")
+        if (
+            session is None
+            or session.get("termination_receipt")
+            or session.get("replay_run_id")
+            or getattr(self.settings, "replay", False)
+        ):
+            await record_answer(self.repo, question_id, None, status="NO_SESSION")
+            return False
+        if session.get("status") == "ENDED":
+            await record_answer(self.repo, question_id, None, status="ARCHIVED")
+            return False
+        try:
+            remote = await self.request("GET", f"sessions/{session['session_id']}")
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code != 404:
+                raise
+            remote = {"status": "terminated", "missing": True}
+        remote = remote.get("data", remote)
+        if remote.get("status") == "terminated" or remote.get("archived_at"):
+            async with self.repo.lock("session:" + session["session_id"]):
+                current = await self.repo.get("ops.agent_sessions", session["session_id"])
+                current["remote_state"] = {
+                    "status": remote.get("status"),
+                    "archived_at": remote.get("archived_at"),
+                    **self.clock_timestamp().fields("checked_at"),
+                }
+                await self.repo.put("ops.agent_sessions", session["session_id"], current)
+            status = "NO_SESSION" if remote.get("status") == "terminated" else "ARCHIVED"
+            await record_answer(self.repo, question_id, None, status=status)
+            return False
+        return True
+
+    def reopen_for_question(self, session, payload, key):
+        """Under the session lock: reopen a FAILED session and retire its unfinished turns, never this one."""
+        retired = set(session.get("retired_message_ids", []))
+        if session.get("status") == "FAILED":
+            for row in session.get("message_log", []):
+                if row.get("turn_status") == "DONE" or row["message_id"] == key:
+                    continue
+                retired.add(row["message_id"])
+                if row.get("payload", {}).get("kind") == "USER_QUESTION":
+                    row["turn_status"] = "FAILED"
+            session.setdefault("reopened", []).append(
+                {
+                    "question_id": payload["question_id"],
+                    "previous_status": session["status"],
+                    **self.clock_timestamp().fields("at"),
+                }
+            )
+            session.update(
+                status="OPEN", runtime_status="IDLE", active_message_id=None, pending_retry_event=None
+            )
+        retired.discard(key)
+        if retired or "retired_message_ids" in session:
+            session["retired_message_ids"] = sorted(retired)
+
+    def analyst_tools(self):
+        """The current analyst toolset: built-ins plus the custom tools of config/skills."""
+        reader = getattr(self.settings, "read_config_json", None)
+        if reader is None:
+            return None
+        custom = reader("skills/tank-event-analyst/tools.json")
+        return [
+            {
+                "type": "agent_toolset_20260401",
+                "default_config": {"enabled": True},
+                "configs": [
+                    {"name": name, "enabled": False}
+                    for name in ["web_search", "web_fetch", "schedule", "cancel_schedule", "list_schedules"]
+                ]
+                + [{"name": "browser", "enabled": True}],
+            }
+        ] + [dict(type="custom", **tool) for tool in custom]
+
+    async def sync_tools(self, sid):
+        """Before a follow-up, give an idle analyst session the current tools, so old sessions gain new ones."""
+        if getattr(self.settings, "replay", False):
+            return
+        session = await self.repo.get("ops.agent_sessions", sid)
+        if session is None or session.get("proposal_id"):
+            return None
+        tools = self.analyst_tools()
+        if not tools or session.get("tools_sha256") == sha256(tools):
+            return None
+        if session.get("active_message_id") or session.get("runtime_status") in BUSY_RUNTIME_STATES:
+            return "BUSY"
+        try:
+            await self.request("POST", f"sessions/{sid}", json={"agent": {"tools": tools}})
+            remote = await self.request("GET", f"sessions/{sid}")
+        except httpx.HTTPStatusError as error:
+            if error.response.status_code == 429 or error.response.status_code >= 500:
+                raise
+            return
+        remote = remote.get("data", remote)
+        descriptor = self.agent_provenance(remote, {}, session.get("agent_id"))
+        async with self.repo.lock("session:" + sid):
+            current = await self.repo.get("ops.agent_sessions", sid)
+            if descriptor.get("prompt_version"):
+                current.update(
+                    {
+                        key: value
+                        for key, value in descriptor.items()
+                        if key not in ("agent_id", "prompt_label")
+                    }
+                )
+            current["tools_sha256"] = sha256(tools)
+            current.update(self.clock_timestamp().fields("tools_synced_at"))
+            await self.repo.put("ops.agent_sessions", sid, current)
+
+    async def send_file(self, session, arguments, call_id):
+        """send_telegram_file: read an output of this session and reply with it to the active follow-up."""
+        active = next(
+            (
+                row
+                for row in session.get("message_log", [])
+                if row["message_id"] == session.get("active_message_id")
+            ),
+            None,
+        )
+        payload = (active or {}).get("payload") or {}
+        if payload.get("kind") != "USER_QUESTION" or getattr(self, "telegram", None) is None:
+            raise ValueError("send_telegram_file is available only while answering a Telegram follow-up")
+        filename = arguments.get("filename")
+        if (
+            not isinstance(filename, str)
+            or filename in ("", ".", "..")
+            or "/" in filename
+            or "\\" in filename
+        ):
+            raise ValueError("filename must be a plain name inside /mnt/session/outputs")
+        content = None
+        url = self.url(f"sessions/{session['session_id']}/outputs/{quote(filename, safe='')}")
+        for _ in range(10):
+            async with self.http.stream("GET", url, headers=self.headers()) as response:
+                if response.status_code == 200:
+                    received = bytearray()
+                    async for block in response.aiter_bytes():
+                        received.extend(block)
+                        if len(received) > DOCUMENT_LIMIT:
+                            raise ValueError("File exceeds the 45 MB Telegram bot limit")
+                    content = bytes(received)
+                    break
+                if response.status_code != 404:
+                    response.raise_for_status()
+            await asyncio.sleep(1)
+        if content is None:
+            raise ValueError(f"/mnt/session/outputs/{filename} was not found in this session")
+        if len(content) > DOCUMENT_LIMIT:
+            raise ValueError("File exceeds the 45 MB Telegram bot limit")
+        return await self.telegram.send_session_file(
+            payload["question_id"], call_id, filename, content, arguments.get("caption")
+        )
+
     async def send_message(self, payload):
+        if payload.get("kind") == "USER_QUESTION" and not await self.continuable(payload):
+            return None
         item = (
             await self.repo.get("ingest.source_items", payload["item_id"]) if payload.get("item_id") else None
         )
@@ -360,9 +523,17 @@ class SessionService:
         async with self.repo.lock("session-mapping:" + str(mapping_identity)):
             session = await self.resolve(payload)
         sid, key = session["session_id"], sha256(payload)
+        if payload.get("kind") == "USER_QUESTION" and await self.sync_tools(sid) == "BUSY":
+            raise DeliveryDeferred(offset_schedule(collection_clock(), timedelta(seconds=30)))
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             async with self.repo.lock("session:" + sid):
                 session = await self.repo.get("ops.agent_sessions", sid)
+                if payload.get("kind") == "USER_QUESTION":
+                    if session.get("status") == "ENDED" or session.get("termination_receipt"):
+                        status = "NO_SESSION" if session.get("termination_receipt") else "ARCHIVED"
+                        await record_answer(self.repo, payload["question_id"], None, status=status)
+                        return None
+                    self.reopen_for_question(session, payload, key)
                 if key in session.get("messages", []):
                     self.start_stream(sid)
                     return session
@@ -380,9 +551,15 @@ class SessionService:
                             async for row in self.repo.iter_all("scout.expansion_proposals")
                             if not row.get("human_action")
                         ]
+                    text = canonical_json(content)
+                    if payload.get("question_id"):
+                        question = await self.repo.get("out.user_questions", payload["question_id"])
+                        if question is None:
+                            raise KeyError(payload["question_id"])
+                        text = question_message(question)
                     body = {
                         "type": "user.message",
-                        "content": [{"type": "text", "text": canonical_json(content)}],
+                        "content": [{"type": "text", "text": text}],
                     }
                     intent = {
                         "message_id": key,
@@ -510,7 +687,11 @@ class SessionService:
         )
         required = set()
         unknown = []
+        retired = set(session.get("retired_message_ids", []))
+        calls = [call for call in calls if call.get("native_turn_message_id") not in retired]
         for message in session.get("message_log", []):
+            if message["message_id"] in retired:
+                continue
             identity = message.get("remote_event_id")
             if identity:
                 required.add(identity)
@@ -643,6 +824,150 @@ class SessionService:
         return outcomes
 
     async def completed_turn(self, sid):
+        result = await self.settled_turn(sid)
+        if result["complete"]:
+            await self.deliver_answers(sid)
+        return result
+
+    async def turn_answers(self, session, inputs=None):
+        """Per accepted message: the last agent text of its executions and whether its turn ended.
+
+        A turn ends when the newest execution owned by the message went idle with end_turn. History
+        is read newest first and only back to the oldest wanted input, never the whole session.
+        """
+        wanted = set(inputs or ())
+        recent, page = [], None
+        while True:
+            params = {"limit": 100, "order": "desc"}
+            if page:
+                params["page"] = page
+            data = await self.request("GET", f"sessions/{session['session_id']}/events", params=params)
+            for event in data.get("data", []):
+                recent.append(event)
+                wanted.discard(event.get("id"))
+            page = data.get("next_page")
+            if not page or (inputs and not wanted):
+                break
+        texts, ends, order, current = {}, {}, [], None
+        for event in reversed(recent):
+            kind = event.get("type")
+            if kind == "session.status_running":
+                current = event.get("execution_id")
+                if current and current not in order:
+                    order.append(current)
+            elif kind == "agent.message" and current:
+                text = "".join(
+                    block.get("text", "")
+                    for block in event.get("content", [])
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ).strip()
+                if text:
+                    texts[current] = text
+            elif kind == "session.status_idle" and event.get("execution_id"):
+                ends[event["execution_id"]] = (event.get("stop_reason") or {}).get("type") == "end_turn"
+        answers, attempts = {}, {}
+        for execution_id in order:
+            owner = await self.native_input_owner(session, execution_id)
+            if not owner:
+                continue
+            message_id, attempt = owner
+            if attempt < attempts.get(message_id, attempt):
+                continue
+            if attempt > attempts.get(message_id, attempt):
+                answers.pop(message_id, None)
+            attempts[message_id] = attempt
+            answer = answers.setdefault(message_id, {"text": None, "ended": False})
+            answer["ended"] = ends.get(execution_id, False)
+            if execution_id in texts:
+                answer["text"] = texts[execution_id]
+        return answers
+
+    async def deliver_answers(self, sid):
+        """Hand each settled follow-up question its answer, or its failure, exactly once.
+
+        Questions settle independently: a later queued turn never holds back an earlier answer.
+        """
+        session = await self.repo.get("ops.agent_sessions", sid)
+        if session is None:
+            return
+        stopped = session.get("status") in ("FAILED", "ENDED")
+        pending = [
+            row
+            for row in session.get("message_log", [])
+            if row.get("payload", {}).get("kind") == "USER_QUESTION" and not row.get("answer_recorded")
+        ]
+        if not pending:
+            return
+        live = any(row.get("remote_event_id") and row.get("turn_status") != "FAILED" for row in pending)
+        answers = (
+            await self.turn_answers(
+                session, [row["remote_event_id"] for row in pending if row.get("remote_event_id")]
+            )
+            if live
+            else {}
+        )
+        recorded = set()
+        for row in pending:
+            question_id = row["payload"]["question_id"]
+            answer = answers.get(row["message_id"], {})
+            if row.get("turn_status") == "FAILED" or (stopped and not answer.get("ended")):
+                await record_answer(self.repo, question_id, None, status="FAILED")
+            elif row.get("turn_status") == "DONE" or answer.get("ended"):
+                await record_answer(self.repo, question_id, answer.get("text"), status="ANSWERED")
+            else:
+                continue
+            recorded.add(row["message_id"])
+        if not recorded:
+            return
+        async with self.repo.lock("session:" + sid):
+            current = await self.repo.get("ops.agent_sessions", sid)
+            for row in current.get("message_log", []):
+                if row["message_id"] in recorded:
+                    row["answer_recorded"] = True
+            await self.repo.put("ops.agent_sessions", sid, current)
+
+    async def abandon_question(self, session_id, question_id):
+        """A question job gave up: retire its unsent intent so recovery never posts it later.
+
+        Returns False when the question already reached OpenMA; its answer will still arrive.
+        """
+        async with self.repo.lock("session:" + str(session_id)):
+            session = await self.repo.get("ops.agent_sessions", str(session_id))
+            if session is None:
+                return True
+            rows = [
+                row
+                for row in session.get("message_log", [])
+                if (row.get("payload") or {}).get("question_id") == question_id
+            ]
+            if any(row.get("remote_event_id") for row in rows):
+                return False
+            for row in rows:
+                row["turn_status"] = "FAILED"
+                row["answer_recorded"] = True
+            if rows:
+                retired = set(session.get("retired_message_ids", []))
+                retired.update(row["message_id"] for row in rows)
+                session["retired_message_ids"] = sorted(retired)
+                if session.get("active_message_id") in retired:
+                    session["active_message_id"] = None
+                await self.repo.put("ops.agent_sessions", session["session_id"], session)
+            return True
+
+    async def reconcile_answers(self):
+        """Questions still waiting after a restart or a lost terminal hand-off get their answer."""
+        sessions = set()
+        async for question in self.repo.iter_all("out.user_questions", filters={"status": "QUEUED"}):
+            sid = question.get("session_id")
+            if sid and not (sid in self.tasks and not self.tasks[sid].done()):
+                sessions.add(sid)
+        for sid in sorted(sessions):
+            try:
+                await self.deliver_answers(sid)
+            except (httpx.HTTPError, ValueError, KeyError):
+                continue
+
+    async def settled_turn(self, sid):
         """Read committed queue states, drain every history page, then recheck inputs."""
         await self.recover_outbound_inputs(sid)
         session = await self.repo.get("ops.agent_sessions", sid)
@@ -860,8 +1185,11 @@ class SessionService:
             "publish_card",
             "publish_update",
             "record_review",
+            "set_watch_condition",
         }:
             await self.hydrate_prompt_provenance(session)
+        if tool == "send_telegram_file" and not session.get("proposal_id"):
+            return await self.send_file(session, arguments, call_id)
         if session.get("proposal_id") and tool not in ("web_search", "search_tank_items", "record_review"):
             raise ValueError("Scout tool is outside reviewer permissions")
         if getattr(self.settings, "replay", False) and tool in ("web_search", "fetch_page"):
@@ -938,7 +1266,8 @@ class SessionService:
         decision_prepared_condition_ids = None
         if (
             not credential_reason
-            and event["name"] in {"get_market_truth", "get_decision", "web_search", "fetch_page"}
+            and event["name"]
+            in {"get_market_truth", "get_decision", "web_search", "fetch_page", "send_telegram_file"}
             and (not prior or prior.get("status") not in ("DONE", "REFUSED", "ERROR"))
         ):
             try:
@@ -1497,6 +1826,15 @@ class SessionService:
                 current.update(propagate_timestamp(event, "processed_at").fields("processed_at"))
                 await self.repo.put("ops.agent_sessions", sid, current)
             self.seen_events.setdefault(sid, set()).add(seen_key(event))
+            if current.get("status") in ("FAILED", "ENDED") or (
+                kind == "session.status_idle"
+                and (event.get("stop_reason") or {}).get("type") == "end_turn"
+                and any(
+                    row.get("payload", {}).get("kind") == "USER_QUESTION" and not row.get("answer_recorded")
+                    for row in current.get("message_log", [])
+                )
+            ):
+                await self.deliver_answers(sid)
 
     async def catch_up(self, sid):
 
@@ -1615,12 +1953,33 @@ class SessionService:
                 archive = not unfinished and not any(
                     row.get("turn_status") == "PENDING" for row in session.get("message_log", [])
                 )
+            if archive and not getattr(self.settings, "replay", False) and await self.followable(session):
+                archive = False
+                if not session.get("followups_only"):
+                    session["followups_only"] = True
+                    await self.repo.put("ops.agent_sessions", sid, session)
             if archive:
                 await self.request("POST", f"sessions/{sid}/archive", json={})
                 session["status"] = "ENDED"
                 await self.repo.put("ops.agent_sessions", sid, session)
 
             return True
+
+    async def followable(self, session):
+        """A session whose card or answer reached Telegram stays open for reader follow-ups."""
+        async for _ in self.repo.iter_all(
+            "out.user_questions", filters={"session_id": session["session_id"]}
+        ):
+            return True
+        if not session.get("event_id"):
+            return False
+        async for alert in self.repo.iter_all("out.alerts", filters={"event_id": session["event_id"]}):
+            async for _ in self.repo.iter_all(
+                "out.deliveries",
+                filters={"alert_id": alert["alert_id"], "channel": "telegram:alerts", "status": "SENT"},
+            ):
+                return True
+        return False
 
     async def follow(self, sid):
         delay = 1
@@ -1787,11 +2146,13 @@ class SessionService:
                 settled = session.get("runtime_status") == "IDLE" and not session.get("active_message_id")
                 following = sid in self.tasks and not self.tasks[sid].done()
 
-                if settled and not following and tick % IDLE_RECHECK_TICKS:
+                if settled and not following and (session.get("followups_only") or tick % IDLE_RECHECK_TICKS):
                     continue
                 if await self.finish_if_idle(sid):
                     continue
                 self.start_stream(sid)
+            if tick % IDLE_RECHECK_TICKS == 0:
+                await self.reconcile_answers()
             tick += 1
             await self.wake_waiting()
             with suppress(TimeoutError):

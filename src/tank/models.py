@@ -733,3 +733,26 @@ TIMESTAMP_PRECISION_FIELDS.update(
         for _table_name, columns in MARKET_COLUMNS.items()
     }
 )
+
+TABLE_COLUMNS["out.deliveries"]["question_id"] = "text"
+TABLE_COLUMNS["ops.telegram_messages"] = {
+    "chat_id": "text",
+    "message_id": "bigint",
+    "user_id": "text",
+    "status": "text",
+    "date": "bigint",
+    "pair_bucket": "bigint",
+}
+TABLE_COLUMNS["ops.telegram_files"] = {
+    "question_id": "text",
+    "session_id": "text",
+    "filename": "text",
+    "size": "bigint",
+}
+TABLE_COLUMNS["ops.telegram_file_payloads"] = {"file_key": "text"}
+TABLE_COLUMNS["out.user_questions"] = {
+    "question_id": "text",
+    "session_id": "text",
+    "event_id": "text",
+    "status": "text",
+}

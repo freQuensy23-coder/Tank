@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import logging
 from datetime import UTC, timedelta
-from decimal import Decimal, localcontext
+from decimal import Decimal, InvalidOperation, localcontext
 
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, new_id, parse_time, utcnow
@@ -53,6 +53,17 @@ def field(record, path):
     return value
 
 
+def same(actual, target):
+    """Equality that treats numeric text and numbers alike ("0.6" == 0.6) and everything else strictly."""
+    if isinstance(actual, bool) or isinstance(target, bool):
+        return isinstance(actual, bool) and isinstance(target, bool) and actual == target
+    try:
+        a, b = Decimal(str(actual)), Decimal(str(target))
+    except InvalidOperation:
+        return actual == target
+    return a == b if a.is_finite() and b.is_finite() else actual == target
+
+
 def compare(actual, op, target):
     if actual is None:
         return False
@@ -63,14 +74,19 @@ def compare(actual, op, target):
         if actual is None:
             return False
     if op in (">", ">=", "<", "<="):
-        a, b = Decimal(str(actual)), Decimal(str(target))
+        try:
+            a, b = Decimal(str(actual)), Decimal(str(target))
+        except InvalidOperation:
+            return False
+        if not (a.is_finite() and b.is_finite()):
+            return False
         return {">": a > b, ">=": a >= b, "<": a < b, "<=": a <= b}[op]
     if op == "==":
-        return actual == target
+        return same(actual, target)
     if op == "!=":
-        return actual != target
+        return not same(actual, target)
     if op == "in":
-        return actual in target
+        return any(same(actual, option) for option in target)
     raise ValueError(f"Unsupported watch operator: {op}")
 
 
@@ -759,6 +775,11 @@ class Scheduler:
                             cond["cond_id"],
                             condition=updated,
                             token_id=cond["token_id"],
+                            **(
+                                {"session_id": cond["session_id"]}
+                                if cond.get("agent_defined") and cond.get("session_id")
+                                else {}
+                            ),
                         )
                 else:
                     await self.repo.put("ana.watch_conditions", cond["cond_id"], updated)

@@ -3,9 +3,10 @@
 import asyncio
 import copy
 import os
+import re
 from contextlib import AsyncExitStack, suppress
 from datetime import timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlparse
 
@@ -48,7 +49,6 @@ IMPLEMENTATION = dict(zip(STATES, [0, 4, 6, 6, 7, 8, 10], strict=False))
 
 
 def _word(term, text):
-    import re
 
     return bool(term) and re.search(r"(?<!\w)" + re.escape(term) + r"(?!\w)", text, re.IGNORECASE)
 
@@ -114,6 +114,45 @@ READ_TOOLS = frozenset(
         "get_token_facts",
         "web_search",
         "fetch_page",
+    }
+)
+AGENT_WATCH_METRICS = frozenset(
+    {
+        "event.state",
+        "event.contradiction_fatal",
+        "spot.cohort.direction",
+        "spot.cohort.cwb_buy",
+        "spot.cohort.cwb_sell",
+        "spot.classification",
+        "deriv.native_oi_chg_pct",
+        "deriv.native_oi_vs_normal",
+        "deriv.oi_class",
+        "deriv.funding_vs_normal",
+        "mt.move_class",
+        "mt.divergence_state",
+        "dc.class",
+        "price.repricing_band",
+        "price.close_vs_level",
+        "price.vs_anchor_pct",
+        "liq.depth_p1_vs_pre",
+        "liq.spread_ratio",
+    }
+)
+MAX_AGENT_WATCHES = 10
+CATEGORICAL_WATCH_METRICS = frozenset(
+    {
+        "event.state",
+        "event.contradiction_fatal",
+        "milestone.outcome",
+        "spot.cohort.direction",
+        "spot.classification",
+        "deriv.native_oi_vs_normal",
+        "deriv.oi_class",
+        "deriv.funding_vs_normal",
+        "mt.move_class",
+        "mt.divergence_state",
+        "dc.class",
+        "price.repricing_band",
     }
 )
 SERIES_KEEP = 7
@@ -327,6 +366,7 @@ class EventToolService:
         "schedule_milestone",
         "propose_pattern",
         "record_review",
+        "set_watch_condition",
     }
 
     def __init__(
@@ -385,7 +425,12 @@ class EventToolService:
         """V3 for token arguments: a ticker or $TICKER becomes its registry
         token_id ("BTC" -> "bitcoin:BTC"). Other values pass unchanged; a tool
         that cannot use them names the token and the expected form."""
-        fields = {"get_decision": "token", "get_token_facts": "token", "get_market_truth": "tokens"}
+        fields = {
+            "get_decision": "token",
+            "get_token_facts": "token",
+            "get_market_truth": "tokens",
+            "set_watch_condition": "token",
+        }
         field = fields.get(tool)
         if field is None or field not in arguments:
             return arguments
@@ -419,6 +464,7 @@ class EventToolService:
             "get_decision",
             "publish_card",
             "schedule_milestone",
+            "set_watch_condition",
         }
         analyst = context.get("role") == "analyst" or (
             context.get("session_id") and context.get("role") not in {"system", "scout"}
@@ -509,6 +555,7 @@ class EventToolService:
             "publish_card",
             "schedule_milestone",
             "get_decision",
+            "set_watch_condition",
         }:
             async with AsyncExitStack() as locks:
                 if tool == "record_event" and ctx.get("session_id"):
@@ -2395,7 +2442,7 @@ class EventToolService:
             reconciled.append(condition)
             await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
         for old in existing:
-            if old["cond_id"] not in used and old.get("status") == "ARMED":
+            if old["cond_id"] not in used and old.get("status") == "ARMED" and not old.get("agent_defined"):
                 old.update(
                     status="CANCELLED",
                     **collection_clock(now).fields("cancelled_at"),
@@ -2409,6 +2456,102 @@ class EventToolService:
                 role.lower(): [condition["cond_id"] for condition in reconciled if condition["role"] == role]
                 for role in ["UPGRADE", "DOWNGRADE"]
             }
+
+    async def set_watch_condition(self, a, c):
+        """Arm an agent monitoring rule (role AGENT) or disarm any ARMED rule of the event."""
+        eid = a["event_id"]
+        await self.require("evt.events", eid)
+        now = utcnow()
+        if a["action"] == "DISARM":
+            condition = await self.repo.get("ana.watch_conditions", a.get("cond_id") or "")
+            if condition is None or condition.get("event_id") != eid:
+                raise ValueError("cond_id does not name a watch condition of this event")
+            if condition.get("status") != "ARMED":
+                return {"accepted": False, "reason": "NOT_ARMED", "status": condition.get("status")}
+            condition.update(
+                status="CANCELLED",
+                cancelled_by="AGENT",
+                cancel_provenance=self.provenance(c),
+                **collection_clock(now).fields("cancelled_at"),
+            )
+            await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
+            return {"accepted": True, "cond_id": condition["cond_id"], "status": "CANCELLED"}
+        token = a.get("token")
+        if not isinstance(token, str) or ":" not in token:
+            raise ValueError("ARM requires token as a registry token_id or ticker")
+        registry = self.settings.load_config("registry") if hasattr(self.settings, "load_config") else None
+        if registry is not None and token not in {row["token_id"] for row in registry.get("tokens", [])}:
+            raise ValueError(f"{token} is not a registry token; use a token_id from get_registry")
+        leaves = []
+        for leaf in a.get("conditions") or []:
+            if leaf["metric"] not in AGENT_WATCH_METRICS:
+                raise ValueError(
+                    "metric is not evaluated by the watch scheduler; use one of "
+                    + ", ".join(sorted(AGENT_WATCH_METRICS))
+                )
+            if leaf["metric"].startswith(("event.", "milestone.")) and leaf.get("persist_count", 1) > 1:
+                raise ValueError(
+                    "event.* and milestone.* conditions fire on the first match; omit persist_count"
+                )
+            if leaf["op"] == "in" and not isinstance(leaf["value"], list):
+                raise ValueError("op in requires a list value")
+            if leaf["op"] in (">", ">=", "<", "<=") and leaf["metric"] in CATEGORICAL_WATCH_METRICS:
+                raise ValueError(f"{leaf['metric']} is categorical; use ==, != or in")
+            if leaf["op"] in (">", ">=", "<", "<="):
+                try:
+                    number = Decimal(str(leaf["value"]))
+                except InvalidOperation:
+                    number = None
+                if isinstance(leaf["value"], bool) or number is None or not number.is_finite():
+                    raise ValueError(f"op {leaf['op']} requires a numeric value")
+            leaves.append(
+                {
+                    "metric": leaf["metric"],
+                    "window": leaf.get("window", "W1H"),
+                    "op": leaf["op"],
+                    "value": leaf["value"],
+                    "persist": {"count": leaf.get("persist_count", 1), "unit": "consecutive_windows"},
+                }
+            )
+        if not leaves:
+            raise ValueError("ARM requires at least one condition")
+        market_windows = {
+            leaf["window"] for leaf in leaves if not leaf["metric"].startswith(("event.", "milestone."))
+        }
+        if len(market_windows) > 1:
+            raise ValueError("All market conditions of one rule must use the same window")
+        expr = leaves[0] if len(leaves) == 1 else {"all": leaves}
+        active = [
+            row
+            for row in await self.rows("ana.watch_conditions", eid, filters={"status": "ARMED"})
+            if row.get("agent_defined")
+        ]
+        signature = canonical_json({"token_id": token, "expr": expr})
+        for row in active:
+            if canonical_json({"token_id": row["token_id"], "expr": row["expr"]}) == signature:
+                return {"accepted": True, "condition": row, "existing": True}
+        if len(active) >= MAX_AGENT_WATCHES:
+            raise ValueError(
+                f"At most {MAX_AGENT_WATCHES} agent rules may be ARMED per event; DISARM one first"
+            )
+        condition = {
+            "cond_id": new_id("CND"),
+            "event_id": eid,
+            "token_id": token,
+            "role": "AGENT",
+            "human_text": a.get("text") or "",
+            "expr": expr,
+            "status": "ARMED",
+            "agent_defined": True,
+            "created_by": "AGENT",
+            **collection_clock(now).fields("created_at"),
+            **offset_schedule(
+                collection_clock(now), timedelta(hours=int(a.get("expires_in_hours", 72)))
+            ).fields("expires_at"),
+            **self.provenance(c),
+        }
+        await self.repo.put("ana.watch_conditions", condition["cond_id"], condition)
+        return {"accepted": True, "condition": condition}
 
     async def publish_card(self, a, c):
         from tank.analysis.cards import (

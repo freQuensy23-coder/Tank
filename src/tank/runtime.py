@@ -26,6 +26,7 @@ SPEC_TIMEOUTS = {
     "MILESTONE_CHECK": 90,
     "REACTION_CAPTURE": 120,
     "SCOUT_REVIEW": 300,
+    "TELEGRAM_ANSWER": 10,
 }
 TIMEOUTS = {kind: seconds * TIMEOUT_SCALE for kind, seconds in SPEC_TIMEOUTS.items()}
 
@@ -53,6 +54,7 @@ class Runtime:
         delivery=None,
         scheduler=None,
         gateway=None,
+        inbox=None,
     ):
         from tank.logging import configure_logging
 
@@ -92,6 +94,13 @@ class Runtime:
         self.sources, self.market, self.truth = sources, market, truth
         self.pipeline, self.sessions, self.event_tools = pipeline, sessions, event_tools
         self.delivery = delivery or DeliveryService(repo, settings)
+        if inbox is None:
+            from tank.telegram_inbox import TelegramInbox
+
+            inbox = TelegramInbox(repo, settings)
+        self.inbox = inbox
+        if hasattr(self.sessions, "telegram"):
+            self.sessions.telegram = inbox
         self.scheduler = scheduler or Scheduler(repo, settings, market, truth)
         if hasattr(self.event_tools, "scheduler"):
             self.event_tools.scheduler = self.scheduler
@@ -106,6 +115,7 @@ class Runtime:
             "MILESTONE_CHECK": self.scheduler.milestone_check,
             "REACTION_CAPTURE": self.scheduler.reaction_capture,
             "SCOUT_REVIEW": self.scout_review,
+            "TELEGRAM_ANSWER": self.inbox.answer,
         }
 
     def validate(self):
@@ -296,6 +306,16 @@ class Runtime:
     async def terminal_delivery_failure(self, job, reason):
         if job["type"] == "DELIVER":
             await self.delivery.terminal_failure(job["payload"], reason, job.get("attempts"))
+        if job["type"] == "AGENT_MESSAGE" and job["payload"].get("kind") == "USER_QUESTION":
+            from tank.telegram_inbox import record_answer
+
+            abandon = getattr(getattr(self, "sessions", None), "abandon_question", None)
+            if abandon is None or await abandon(
+                job["payload"].get("session_id"), job["payload"]["question_id"]
+            ):
+                await record_answer(self.repo, job["payload"]["question_id"], None, status="FAILED")
+        if job["type"] == "TELEGRAM_ANSWER" and getattr(self, "inbox", None):
+            await self.inbox.answer_failed(job["payload"], reason)
 
     async def reconcile_delivery_failures(self):
         now = utcnow()
@@ -314,6 +334,17 @@ class Runtime:
                         job["job_id"],
                         {**job, **collection_clock(utcnow()).fields("delivery_failure_recorded_at")},
                     )
+            for kind in ("AGENT_MESSAGE", "TELEGRAM_ANSWER"):
+                async for job in self.repo.iter_all("ops.jobs", filters={"type": kind, "status": status}):
+                    if job.get("followup_failure_recorded_at"):
+                        continue
+                    if kind == "TELEGRAM_ANSWER" or job["payload"].get("kind") == "USER_QUESTION":
+                        await self.terminal_delivery_failure(job, status)
+                        await self.repo.put(
+                            "ops.jobs",
+                            job["job_id"],
+                            {**job, **collection_clock(utcnow()).fields("followup_failure_recorded_at")},
+                        )
 
     @staticmethod
     async def pause(stop, seconds):
@@ -355,7 +386,11 @@ class Runtime:
         intake_stop, market_stop, sessions_stop, workers_stop = [asyncio.Event() for _ in range(4)]
         producers = [
             asyncio.create_task(self.supervise(name, service, intake_stop), name=name)
-            for name, service in [("sources", self.sources), ("scheduler", self.scheduler)]
+            for name, service in [
+                ("sources", self.sources),
+                ("scheduler", self.scheduler),
+                *([("telegram", self.inbox)] if getattr(self, "inbox", None) else []),
+            ]
         ]
         support = [
             asyncio.create_task(self.supervise(name, service, flag), name=name)
@@ -448,6 +483,7 @@ class Runtime:
             self.sessions,
             self.pipeline,
             self.delivery,
+            getattr(self, "inbox", None),
             self.event_tools,
             self.gateway,
         ):
