@@ -868,8 +868,9 @@ sources:
     unknown_limit_policy: One actor run at a time; a failed run keeps the cursors.
   bucket: HIGH_VALUE_SOCIAL
   source_class: SOCIAL_LEAD
-  cost_class: PAID_API
-  auth: APIFY_API_TOKEN
+  cost_class: PAID
+  paid_gap_ref: docs/OPERATIONS.md (S29 through the Apify actor and its run cost)
+  auth: API_KEY
   adapter_status: PARTIAL
   adapter_status_basis: Offline parser tests and a live actor run (23 Oct 2026); no unattended acceptance
     claimed.

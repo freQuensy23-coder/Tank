@@ -12,6 +12,7 @@ from typing import Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
+from tank.logging import redact_text
 from tank.util import iso
 
 RUN_TIMEOUT_S = 130
@@ -113,11 +114,15 @@ class XSensor:
         known = {
             account.lower(): cursors[account.lower()] for account in accounts if account.lower() in cursors
         }
-        response = await self.http.post(
-            url,
-            json={"handles": accounts, "cursors": known} if known else {"handles": accounts},
-            headers={"Authorization": f"Bearer {self.token}"},
-            timeout=RUN_TIMEOUT_S,
-        )
-        response.raise_for_status()
+        try:
+            response = await self.http.post(
+                url,
+                json={"handles": accounts, "cursors": known} if known else {"handles": accounts},
+                headers={"Authorization": f"Bearer {self.token}"},
+                timeout=RUN_TIMEOUT_S,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            message = redact_text(str(exc), (self.token, repr(self.token)[1:-1]))
+            raise RuntimeError(f"Apify X run request failed: {message}") from None
         return scan(ApifyRun.model_validate_json(response.content), cursors, response.content)

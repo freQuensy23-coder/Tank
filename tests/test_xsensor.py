@@ -120,7 +120,7 @@ async def test_a_failed_or_unreadable_run_raises():
     sensor = XSensor(httpx.AsyncClient(transport=httpx.MockTransport(actor)), "FAKE-token")
     with pytest.raises(RuntimeError, match="PUBLIC_SOURCE_UNAVAILABLE"):
         await sensor.posts(URL, ["ethereum"], {"ethereum": "1"})
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(RuntimeError, match="Apify X run request failed: Client error '400 Bad Request'"):
         await sensor.posts(URL, ["ethereum"], {"ethereum": "1"})
     with pytest.raises(pydantic.ValidationError):
         await sensor.posts(URL, ["ethereum"], {"ethereum": "1"})
@@ -131,6 +131,17 @@ async def test_a_failed_or_unreadable_run_raises():
         URL, ["ethereum"], {"ethereum": "1"}
     )
     assert scan.failures == [AccountFailure(None, "COVERAGE")]
+    token = "FAKE secret\n"
+
+    def illegal_header(request):
+        raise httpx.LocalProtocolError("Illegal header value " + repr(("Bearer " + token).encode()))
+
+    with pytest.raises(RuntimeError) as leaked:
+        await XSensor(httpx.AsyncClient(transport=httpx.MockTransport(illegal_header)), token).posts(
+            URL, ["a"], {}
+        )
+    assert "FAKE" not in str(leaked.value) and "secret" not in str(leaked.value)
+    assert leaked.value.__cause__ is None
     with pytest.raises(ValueError, match="APIFY_API_TOKEN"):
         await XSensor(httpx.AsyncClient(), None).posts(URL, ["ethereum"], {})
 
