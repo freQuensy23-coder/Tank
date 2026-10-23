@@ -2,9 +2,9 @@
 
 The first CI result is measured from the pull request's `created_at`, including event delivery, runner queueing, environment preparation, every required test/lint lane and all five image builds. A later commit gets a new 240-second feedback window from that workflow run's `created_at`; the age of an existing MR is not a reason to reject every later change.
 
-The `CI 4 minute budget` job polls this run's jobs. It requires successful completion of all named lanes and all five image builds. Missing, skipped, cancelled, failed or late results cannot turn the gate green. It reserves five seconds for finishing and force-cancels only its own workflow when the budget expires. Individual MR jobs also have a four-minute ceiling. Publishing and deployment remain separate; this MR does not change production.
+The `CI 4 minute budget` job polls this run's jobs. It requires successful completion of all named lanes and all five image builds. Missing, skipped, cancelled, failed or late results cannot turn the gate green. It reserves five seconds for finishing and requests force-cancellation only of its own workflow when the budget expires. Individual MR jobs also have a four-minute ceiling. Publishing and deployment remain separate; this MR does not change production.
 
-GitHub-hosted runners do not guarantee scheduling latency. If the budget job itself is queued past the deadline, it rejects and cancels the run immediately when it starts. It cannot execute while queued. A physical guarantee that even queued work disappears at exactly 240 seconds requires an independently scheduled controller or reserved runner capacity; this workflow does not claim that infrastructure exists.
+GitHub-hosted runners do not guarantee scheduling latency. If the budget job itself is queued past the deadline, it rejects and cancels the run immediately when it starts. It cannot execute while queued. GitHub may also finish runner cleanup after accepting cancellation. A physical guarantee that work disappears at exactly 240 seconds requires an independently scheduled controller or reserved runner capacity; this workflow does not claim that infrastructure exists.
 
 ## Removing the measured delays
 
@@ -21,3 +21,5 @@ Every shard records the entire integration collection before execution and check
 ## Validation
 
 Regression tests cover the partition, missing/duplicate/failed/skipped cases, divergent manifests, the MR creation timestamp, later commits, missing CI lanes, late success and expired queue budgets. Full CI supplies the final runtime measurement; a fast cancellation is not evidence of a successful test run.
+
+The real PostgreSQL lock tests use a one-second heartbeat deadline and a 100 ms acquisition polling interval; the 10 ms fake-connection clock remains limited to in-memory lock tests. The real tests retain the 2.5-second exclusion assertion and explicit backend termination/reacquisition checks, and release acquired locks on assertion failure. This removes a race-detector failure caused by applying a 10 ms simulated-network budget to an actual PostgreSQL connection.
