@@ -1,6 +1,6 @@
 # Docker builds
 
-CI (`.github/workflows/ci.yml`, job `image`) builds every production image on each push to `main` and pushes it to GHCR as `ghcr.io/frequensy23-coder/tank/<image>:<commit sha>`. The deploy host only pulls them ([OPERATIONS.md](OPERATIONS.md#deployment)); it never builds.
+CI (`.github/workflows/ci.yml`, job `image`) builds every production image on each push to `main` and pushes it to GHCR as `ghcr.io/frequensy23-coder/tank/<image>:<commit sha>`, in parallel with the tests. The `publish` job adds the `main` tag once all tests and builds passed; the Deploy workflow accepts only a commit whose CI run succeeded. The deploy host only pulls them ([OPERATIONS.md](OPERATIONS.md#deployment)); it never builds.
 
 | Image | Context | Dockerfile |
 |---|---|---|
