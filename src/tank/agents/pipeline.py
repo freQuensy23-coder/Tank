@@ -236,6 +236,7 @@ class Pipeline:
                         relevance={
                             "decision": "SEND" if score >= cutoff else "SKIP",
                             "p_relevant": score,
+                            "cutoff": cutoff,
                             "model": score_record["resolved_model_id"],
                             "provider": score_record["jev_provider"],
                             "requested_model": score_record["requested_model_id"],

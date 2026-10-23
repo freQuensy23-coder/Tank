@@ -57,6 +57,7 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
         )
         if case == "NO_EVENT":
             args["is_event"] = False
+            args["no_event_reason"] = "Opinion without a new factual claim"
         if case == "STALE_GATE":
             args["public_at"]["value"] = iso(utcnow() - timedelta(days=3))
             args["freshness"] = "STALE"

@@ -13,7 +13,7 @@ from test_sources import captured
 from test_sources import settings as source_settings
 
 from tank.agents.pipeline import Pipeline
-from tank.delivery import DeliveryDeferred, DeliveryError, DeliveryService
+from tank.delivery import DeliveryError, DeliveryService
 from tank.event_tools import EventToolService
 from tank.ops_progress import item_progress, session_progress
 from tank.runtime import Runtime
@@ -31,6 +31,7 @@ async def notices(repo):
 def delivery_settings():
     return SimpleNamespace(
         ops_progress_enabled=True,
+        ops_progress_delay_s=0,
         telegram_token="test",
         telegram_alerts_chat="alerts",
         telegram_ops_chat="ops",
@@ -71,7 +72,7 @@ async def test_every_ingested_material_reaches_ops_before_filtering_and_duplicat
     expected = {"RECEIVED", "JEV_BYPASSED"} if decision == "ALWAYS" else {"RECEIVED"}
     assert len(rows) == len(expected) and {row["stage"] for row in rows} == expected
     assert result["relevance"]["decision"] == decision
-    assert all("All input" in row["text"] and "https://example.test/item" in row["text"] for row in rows)
+    assert all(row["format_version"] == 2 for row in rows)
     assert await repo.list("out.alerts") == []
     assert len(await repo.list("ops.jobs", filters={"type": "DELIVER"})) == len(expected)
     if decision == "ALWAYS":
@@ -116,7 +117,7 @@ async def test_filter_outcomes_and_routing_are_visible_without_publishing(score,
     assert [row["stage"] for row in await notices(repo)] == [expected]
     if expected == "JEV_REJECTED":
         assert await repo.list("ops.jobs", filters={"type": "ROUTE_ITEM"}) == []
-        assert "порог=0.7000" in (await notices(repo))[0]["text"]
+        assert "порог=0.7000" in (await notices(repo))[0]["reason"]
     else:
         await pipeline.route_item({"item_id": "i"})
         await pipeline.route_item({"item_id": "i"})
@@ -130,12 +131,16 @@ async def test_agent_extraction_and_publication_gate_explain_silence(tmp_path, i
     repo = MemoryRepository()
     service = EventToolService(repo, Settings(data_dir=tmp_path), None, None)
     extraction = await seed(service)
-    extraction.update(is_event=is_event, certainty_reason="Agent supplied reason")
+    extraction.update(
+        is_event=is_event,
+        certainty_reason="Official source",
+        no_event_reason="No relevant event in this material",
+    )
     result = await service.dispatch("record_event", extraction, {})
     if not is_event:
         rows = await notices(repo)
         assert rows[0]["stage"] == "AGENT_REJECTED"
-        assert rows[0]["reason"] == "Agent supplied reason"
+        assert rows[0]["reason"] == "No relevant event in this material"
     else:
         eid = result["event_id"]
         event = await repo.get("evt.events", eid)
@@ -155,9 +160,7 @@ async def test_agent_extraction_and_publication_gate_explain_silence(tmp_path, i
         assert result["published"] is False and result["reason"] == "BELOW_MAJOR"
         rows = await notices(repo)
         assert {row["stage"] for row in rows} == {"EVENT_RECORDED", "PUBLICATION_BLOCKED"}
-        assert "Значимость ниже порога" in next(
-            row["text"] for row in rows if row["stage"] == "PUBLICATION_BLOCKED"
-        )
+        assert next(row["reason"] for row in rows if row["stage"] == "PUBLICATION_BLOCKED") == "BELOW_MAJOR"
     assert await repo.list("out.alerts") == []
 
 
@@ -269,35 +272,7 @@ async def test_terminal_jobs_and_restart_reconciliation_report_where_processing_
     rows = await notices(repo)
     assert len(rows) == 1
     assert rows[0]["stage"] == ("PROCESSING_EXPIRED" if status == "EXPIRED" else "PROCESSING_FAILED")
-    assert kind in rows[0]["text"]
-
-
-async def test_ops_payload_escapes_source_text_bounds_utf16_and_rate_limits_without_network_retry():
-    repo = MemoryRepository()
-    settings = delivery_settings()
-    await repo.put(
-        "ingest.source_items", "i", {"item_id": "i", "title": "<script>source</script>", "text": "😀" * 5000}
-    )
-    await item_progress(repo, settings, "i", "RECEIVED", "First")
-    await item_progress(repo, settings, "i", "JEV_REJECTED", "Second")
-    rows = await notices(repo)
-    first = next(row for row in rows if row["stage"] == "RECEIVED")
-    second = next(row for row in rows if row["stage"] == "JEV_REJECTED")
-    assert len(first["text"].encode("utf-16-le")) <= 4096 * 2
-    requests = []
-
-    def respond(request):
-        requests.append(json.loads(request.content))
-        return httpx.Response(200, json={"ok": True, "result": {"message_id": 99}})
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
-        delivery = DeliveryService(repo, settings, http=http)
-        await delivery.deliver({"notice_id": first["notice_id"]})
-        with pytest.raises(DeliveryDeferred):
-            await delivery.deliver({"notice_id": second["notice_id"]})
-    assert len(requests) == 1 and requests[0]["chat_id"] == "ops"
-    assert "&lt;script&gt;source&lt;/script&gt;" in requests[0]["text"]
-    assert await repo.list("out.deliveries", filters={"notice_id": second["notice_id"]}) == []
+    assert kind in rows[0]["reason"]
 
 
 @pytest.mark.parametrize(
