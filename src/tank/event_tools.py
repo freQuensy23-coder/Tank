@@ -138,6 +138,7 @@ AGENT_WATCH_METRICS = frozenset(
         "liq.spread_ratio",
     }
 )
+MAX_AGENT_WATCHES = 10
 CATEGORICAL_WATCH_METRICS = frozenset(
     {
         "event.state",
@@ -2519,13 +2520,27 @@ class EventToolService:
         }
         if len(market_windows) > 1:
             raise ValueError("All market conditions of one rule must use the same window")
+        expr = leaves[0] if len(leaves) == 1 else {"all": leaves}
+        active = [
+            row
+            for row in await self.rows("ana.watch_conditions", eid, filters={"status": "ARMED"})
+            if row.get("agent_defined")
+        ]
+        signature = canonical_json({"token_id": token, "expr": expr})
+        for row in active:
+            if canonical_json({"token_id": row["token_id"], "expr": row["expr"]}) == signature:
+                return {"accepted": True, "condition": row, "existing": True}
+        if len(active) >= MAX_AGENT_WATCHES:
+            raise ValueError(
+                f"At most {MAX_AGENT_WATCHES} agent rules may be ARMED per event; DISARM one first"
+            )
         condition = {
             "cond_id": new_id("CND"),
             "event_id": eid,
             "token_id": token,
             "role": "AGENT",
             "human_text": a.get("text") or "",
-            "expr": leaves[0] if len(leaves) == 1 else {"all": leaves},
+            "expr": expr,
             "status": "ARMED",
             "agent_defined": True,
             "created_by": "AGENT",

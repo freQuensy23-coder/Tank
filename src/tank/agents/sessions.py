@@ -478,7 +478,12 @@ class SessionService:
         if payload.get("kind") != "USER_QUESTION" or getattr(self, "telegram", None) is None:
             raise ValueError("send_telegram_file is available only while answering a Telegram follow-up")
         filename = arguments.get("filename")
-        if not isinstance(filename, str) or not filename or "/" in filename or "\\" in filename:
+        if (
+            not isinstance(filename, str)
+            or filename in ("", ".", "..")
+            or "/" in filename
+            or "\\" in filename
+        ):
             raise ValueError("filename must be a plain name inside /mnt/session/outputs")
         content = None
         url = self.url(f"sessions/{session['session_id']}/outputs/{quote(filename, safe='')}")

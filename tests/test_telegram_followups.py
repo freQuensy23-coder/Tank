@@ -2048,3 +2048,46 @@ async def test_unmatched_forward_pair_settles_both_rows_together():
     assert [body["text"] for body in telegram.sent] == [NO_SESSION_TEXT]
     assert (await repo.get("ops.telegram_messages", f"{USER}:150"))["status"] == "UNMATCHED"
     assert (await repo.get("ops.telegram_messages", f"{USER}:151"))["status"] == "UNMATCHED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", [".", ".."])
+async def test_dot_segment_output_names_are_refused(name):
+    repo = MemoryRepository()
+    question_id = await ask(repo)
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    payload = {"kind": "USER_QUESTION", "session_id": "ses_1", "question_id": question_id}
+    session["message_log"].append({"message_id": "mq", "payload": payload, "turn_status": "RUNNING"})
+    session["active_message_id"] = "mq"
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(500))) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        service.telegram = TelegramInbox(repo, inbox_settings(), http=http)
+        with pytest.raises(ValueError, match="plain name"):
+            await service.send_file(session, {"filename": name}, "call_dot")
+
+
+@pytest.mark.asyncio
+async def test_agent_rules_are_coalesced_and_capped_per_event():
+    from tank.event_tools import MAX_AGENT_WATCHES, EventToolService
+
+    repo = MemoryRepository()
+    await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
+    tools = object.__new__(EventToolService)
+    tools.repo = repo
+    tools.settings = SimpleNamespace(config_version="c", code_version="v")
+
+    def arm(value):
+        return {
+            "event_id": "evt_1",
+            "action": "ARM",
+            "token": "bitcoin:BTC",
+            "conditions": [{"metric": "deriv.native_oi_chg_pct", "op": ">", "value": value}],
+        }
+
+    first = await tools.set_watch_condition(arm(1), {})
+    again = await tools.set_watch_condition(arm(1), {})
+    assert again["existing"] and again["condition"]["cond_id"] == first["condition"]["cond_id"]
+    for value in range(2, MAX_AGENT_WATCHES + 1):
+        await tools.set_watch_condition(arm(value), {})
+    with pytest.raises(ValueError, match="DISARM one first"):
+        await tools.set_watch_condition(arm(99), {})
