@@ -67,5 +67,5 @@ jobs:
           ssh_opts=(-i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes)
           scp "${ssh_opts[@]}" compose.yaml scripts/deploy/deploy.sh "$SSH_USER@$SSH_HOST:/srv/tank-deploy/"
           printf '%s\n' "$APIFY_API_TOKEN" | ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" \
-            'read -r t && test -n "$t" && cd /srv/tank-deploy && test -f .env && umask 077 && { grep -v "^APIFY_API_TOKEN=" .env; printf "APIFY_API_TOKEN=%s\n" "$t"; } > .env.new && mv .env.new .env'
+            'read -r t && test -n "$t" && cd /srv/tank-deploy && test -f .env && umask 077 && { grep -v "^APIFY_API_TOKEN=" .env > .env.new; [ $? -le 1 ]; } && printf "APIFY_API_TOKEN=%s\n" "$t" >> .env.new && mv .env.new .env'
           ssh "${ssh_opts[@]}" "$SSH_USER@$SSH_HOST" "/srv/tank-deploy/deploy.sh $SHA"
