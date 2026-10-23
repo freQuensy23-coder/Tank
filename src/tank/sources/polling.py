@@ -8,6 +8,7 @@ import asyncio
 import json
 import re
 from copy import deepcopy
+from dataclasses import asdict
 from datetime import timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -224,21 +225,15 @@ class SourcePoller:
         sid = source["source_id"]
         kind = str(feed.get("kind", feed.get("format", source.get("mode", "rss")))).lower()
         if sid == "S29":
-            rows, _ = await svc.xsensor.posts(
-                source.get("list_id"),
-                state.get("status_id"),
-                known_ids=state.get("recent_status_ids", []),
-                members=set(svc.accounts),
-            )
-            captures = svc.xsensor.pages
-            if not captures:
-                raise ValueError("X browser captured no list page")
+            accounts = [account["handle"].lstrip("@") for account in svc.accounts.values()]
+            result = await svc.xsensor.posts(feed["url"], accounts, state.get("account_cursors", {}))
             state.update(
-                payload_sha256=captures[0]["sha256"],
                 fetched_at=self.stamp(),
-                scan_status=svc.xsensor.scan_status,
+                account_cursors=result.cursors,
+                entry_errors=[asdict(failure) for failure in result.failures],
+                history_gap=result.gaps,
             )
-            return rows, state, kind
+            return result.rows, state, kind
         if sid == "S19":
             payload = await svc.browser.html(feed["url"])
             fetched = dict(state, payload_sha256=sha256(payload), fetched_at=self.stamp())
@@ -480,7 +475,7 @@ class SourcePoller:
         return rows, state
 
     async def acquire(self, source, index, *, due_only=False, escalated=False):
-        svc, sid = self.service, source["source_id"]
+        sid = source["source_id"]
         key, feed = f"{sid}:{index}", self.feed(source, index)
         async with self.lock(self.acquisition_locks, key):
             state = await self.state(key)
@@ -509,6 +504,7 @@ class SourcePoller:
                                 "discovery_checkpoint",
                                 "etag",
                                 "last_modified",
+                                "account_cursors",
                             )
                             if field in acquired
                             and (
@@ -521,16 +517,6 @@ class SourcePoller:
                                 or not acquired.get("entry_errors")
                             )
                         }
-                        if sid == "S29" and rows and svc.xsensor.scan_status != "GAP_LIMIT":
-                            coverage.update(
-                                status_id=rows[0]["external_id"],
-                                recent_status_ids=list(
-                                    dict.fromkeys(
-                                        [r["external_id"] for r in rows]
-                                        + current.get("recent_status_ids", [])
-                                    )
-                                )[:500],
-                            )
                         await self.queue_rows(
                             current,
                             key,
@@ -905,7 +891,7 @@ class SourcePoller:
         loops = [
             asyncio.create_task(self.loop(source, stop))
             for sid, source in self.service.sources.items()
-            if sid != "S29"
+            if sid != "S29" or getattr(self.service.settings, "x_enabled", True)
         ]
         try:
             if loops:
