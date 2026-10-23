@@ -65,6 +65,18 @@ PRIVATE_FIELDS = {
     "unlock_slug",
 }
 LITERAL_FIELDS = {"text", "quoted", "title", "quote", "url", "query"}
+DIAGNOSTIC_FIELDS = {"error", "errors", "reason", "diagnostic", "diagnostics"}
+REGISTRY_ARGUMENT_NAMES = {
+    "registry token_id": "project name and ticker",
+    "token_id": "token",
+    "token_ids": "tokens",
+    "entity_id": "project name",
+    "entity_ids": "project names",
+    "instrument_id": "venue, market type and symbol",
+    "instrument_ids": "venues, market types and symbols",
+    "source_id": "source name",
+    "source_ids": "source names",
+}
 OPAQUE = re.compile(
     r"\b(?:ITM|EVT|OBS|CLM|EMS|EDG|MTA|DEC|OUT|ALR|CND|STC|CAL|PRP|DLV|REQ|CTR|REV|FIX)-[A-Z0-9]{26}\b"
     r"|\b(?:session|agent|skill|call|env|file|tgf|web|search|evt|itm|clm|obs|ems|mta|dec|cond|prp)_[A-Za-z0-9_-]{20,}\b"
@@ -151,6 +163,18 @@ class ModelContext:
             self.sources = {r["source_id"]: r for r in settings.load_config("sources").get("sources", [])}
         except (KeyError, AttributeError):
             self.sources = {}
+        self.registry_labels = {
+            **{key: self.entity_name(key) for key in self.entities},
+            **{key: self.source_name(key) or "registered source" for key in self.sources},
+            **{key: self.instrument_name(key) for key in self.instruments},
+            **{key: self.token_name(key) for key in self.tokens},
+            **REGISTRY_ARGUMENT_NAMES,
+        }
+        self.registry_pattern = re.compile(
+            r"(?<![\w:-])(?:"
+            + "|".join(re.escape(key) for key in sorted(self.registry_labels, key=len, reverse=True))
+            + r")(?![\w:-]|\.[\w-])"
+        )
         self.catalog = copy.deepcopy(session.get("model_catalog") or {})
         self.additions = {}
 
@@ -177,6 +201,23 @@ class ModelContext:
     def source_name(self, key):
         row = self.sources.get(key) or {}
         return row.get("name") or row.get("url")
+
+    def diagnostic_text(self, value):
+        return "".join(
+            part
+            if part.startswith(("http://", "https://"))
+            else clean_text(self.registry_pattern.sub(lambda match: self.registry_labels[match[0]], part))
+            for part in re.split(r"(https?://[^\s<>\"]+)", value)
+        )
+
+    def condition_reference(self, row):
+        description = {"text": row.get("human_text"), "conditions": row.get("expr")}
+        if row.get("token_id"):
+            description["token"] = self.token_name(row["token_id"])
+        for field in ("role", "created_at"):
+            if row.get(field):
+                description[field] = row[field]
+        return description
 
     def remember(self, kind, key, description):
         if key and description:
@@ -213,16 +254,14 @@ class ModelContext:
         return description
 
     async def reference(self, kind, key):
-        if key in self.catalog.get(kind, {}):
-            return self.catalog[kind][key]
+        cached = self.catalog.get(kind, {}).get(key)
+        if cached and (kind != "conditions" or (cached.get("token") and cached.get("created_at"))):
+            return cached
         table, describe = {
             "documents": ("ingest.source_items", document_reference),
             "claims": ("evt.claims", claim_reference),
             "events": ("evt.events", event_reference),
-            "conditions": (
-                "ana.watch_conditions",
-                lambda r: {"text": r.get("human_text"), "conditions": r.get("expr")},
-            ),
+            "conditions": ("ana.watch_conditions", self.condition_reference),
             "proposals": ("scout.expansion_proposals", lambda r: {"subject": r.get("concept_name")}),
         }[kind]
         row = await self.repo.get(table, key) if key else None
@@ -230,11 +269,11 @@ class ModelContext:
             description = await self.describe_claim(row) if kind == "claims" else describe(row)
             self.remember(kind, key, description)
             return description
-        return None
+        return cached
 
-    async def project(self, value):
+    async def project(self, value, *, diagnostic=False):
         if isinstance(value, list):
-            return [await self.project(item) for item in value]
+            return [await self.project(item, diagnostic=diagnostic) for item in value]
         if isinstance(value, str):
             if value in self.tokens:
                 return self.token_name(value)
@@ -246,8 +285,8 @@ class ModelContext:
                 return self.source_name(value)
             for kind in ("claims", "documents", "events", "conditions", "proposals"):
                 if OPAQUE.fullmatch(value) and value in self.catalog.get(kind, {}):
-                    return clean_value(self.catalog[kind][value])
-            return clean_text(value)
+                    return clean_value(await self.reference(kind, value))
+            return self.diagnostic_text(value) if diagnostic else clean_text(value)
         if not isinstance(value, dict):
             return value
         result = {}
@@ -258,7 +297,7 @@ class ModelContext:
             (
                 "conditions",
                 "cond_id",
-                lambda r: {"text": r.get("human_text"), "conditions": r.get("expr")},
+                self.condition_reference,
                 "condition",
             ),
             ("proposals", "prp_id", lambda r: {"subject": r.get("concept_name")}, "proposal"),
@@ -318,7 +357,9 @@ class ModelContext:
                 )
                 if not OPAQUE.search(str(named)):
                     result[named] = (
-                        item if key in LITERAL_FIELDS and isinstance(item, str) else await self.project(item)
+                        item
+                        if key in LITERAL_FIELDS and isinstance(item, str) and not diagnostic
+                        else await self.project(item, diagnostic=diagnostic or key in DIAGNOSTIC_FIELDS)
                     )
         return clean_value(result)
 

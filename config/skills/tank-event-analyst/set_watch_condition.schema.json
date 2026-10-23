@@ -17,6 +17,18 @@
         },
         "conditions": {
           "type": "object"
+        },
+        "token": {
+          "type": "string",
+          "description": "The displayed project name and ticker; include it to distinguish otherwise identical watches on different tokens."
+        },
+        "role": {
+          "type": "string",
+          "description": "The displayed watch role, when needed to distinguish otherwise identical rules."
+        },
+        "created_at": {
+          "type": "string",
+          "description": "The displayed creation time, when needed to distinguish a re-armed watch from its predecessor."
         }
       },
       "required": [

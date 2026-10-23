@@ -3688,7 +3688,7 @@
   },
   {
     "name": "set_watch_condition",
-    "description": "Change the monitoring rules of this session event. ARM adds your own rule for a token: Tank evaluates it every minute and, when every listed condition holds for persist_count consecutive windows, sends you CONDITION_FIRED in this session. Agent rules have role AGENT, never change deterministic decisions, and expire after expires_in_hours (default 72, at most 168). DISARM cancels an ARMED rule of the event by its displayed condition text; get_decision may later re-arm its own deterministic rules. Metrics: spot.cohort.direction, spot.cohort.cwb_buy, spot.cohort.cwb_sell, spot.classification, deriv.native_oi_chg_pct, deriv.native_oi_vs_normal, deriv.oi_class, deriv.funding_vs_normal, mt.move_class, mt.divergence_state, dc.class, price.repricing_band, price.close_vs_level, price.vs_anchor_pct, liq.depth_p1_vs_pre, liq.spread_ratio, event.state, event.contradiction_fatal. Ordered operators need numeric metrics; event.* conditions fire on the first match. Windows: W15M, W1H (default), W4H, W24H; all market conditions of one rule use the same window.",
+    "description": "Change the monitoring rules of this session event. ARM adds your own rule for a token: Tank evaluates it every minute and, when every listed condition holds for persist_count consecutive windows, sends you CONDITION_FIRED in this session. Agent rules have role AGENT, never change deterministic decisions, and expire after expires_in_hours (default 72, at most 168). DISARM cancels an ARMED rule of the event by its displayed condition text, expression and token (include role and creation time when needed); get_decision may later re-arm its own deterministic rules. Metrics: spot.cohort.direction, spot.cohort.cwb_buy, spot.cohort.cwb_sell, spot.classification, deriv.native_oi_chg_pct, deriv.native_oi_vs_normal, deriv.oi_class, deriv.funding_vs_normal, mt.move_class, mt.divergence_state, dc.class, price.repricing_band, price.close_vs_level, price.vs_anchor_pct, liq.depth_p1_vs_pre, liq.spread_ratio, event.state, event.contradiction_fatal. Ordered operators need numeric metrics; event.* conditions fire on the first match. Windows: W15M, W1H (default), W4H, W24H; all market conditions of one rule use the same window.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -3708,6 +3708,18 @@
             },
             "conditions": {
               "type": "object"
+            },
+            "token": {
+              "type": "string",
+              "description": "The displayed project name and ticker; include it to distinguish otherwise identical watches on different tokens."
+            },
+            "role": {
+              "type": "string",
+              "description": "The displayed watch role, when needed to distinguish otherwise identical rules."
+            },
+            "created_at": {
+              "type": "string",
+              "description": "The displayed creation time, when needed to distinguish a re-armed watch from its predecessor."
             }
           },
           "required": [

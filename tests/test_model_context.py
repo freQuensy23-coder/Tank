@@ -9,7 +9,7 @@ import pytest
 
 from tank.agents.context import ModelContext, identifier_field
 from tank.agents.sessions import SessionService
-from tank.event_tools import EventToolService
+from tank.event_tools import EventToolService, validate_schema
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.util import iso, new_id, sha256
@@ -338,3 +338,156 @@ async def test_verbatim_source_content_survives_identifier_shaped_prose(context)
     )
     assert restored["claims"][0]["quote"] == text
     assert restored["claims"][0]["evidence"] == [{"item_id": item["item_id"], "quote": text}]
+
+
+async def test_real_domain_refusal_uses_display_names_and_keeps_raw_audit(context):
+    repo, settings, session, _ = context
+    session["event_id"] = new_id("evt")
+    await repo.put("ops.agent_sessions", session["session_id"], session)
+    await repo.put(
+        "evt.events", session["event_id"], {"event_id": session["event_id"], "current_ems_id": "ems"}
+    )
+    await repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": session["event_id"]})
+    await repo.put(
+        "evt.beneficiary_maps",
+        "map",
+        {"event_id": session["event_id"], "map_version": 1, "analysis_set": ["uniswap:UNI"]},
+    )
+    posts = []
+
+    def receive(request):
+        posts.append(json.loads(request.content))
+        return httpx.Response(200, json={"data": []})
+
+    tools = EventToolService(repo, settings, None, None)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(receive)) as http:
+        service = SessionService(repo, settings, tools.dispatch, http=http)
+        await service.tool(
+            session, {"id": "decision_error", "name": "get_decision", "input": {"token": "Uniswap (UNI)"}}
+        )
+    call = await repo.get("ops.tool_calls", session["session_id"] + ":decision_error")
+    assert call["status"] == "REFUSED"
+    assert "uniswap:UNI" in call["result"]["error"]["reason"]
+    text = posts[-1]["events"][0]["content"][0]["text"]
+    assert "uniswap:UNI" not in text and "token_id" not in text
+    assert "Uniswap (UNI)" in text and "project name and ticker" in text
+
+
+async def test_diagnostics_map_each_registry_kind_without_rewriting_source_quotes_or_urls(context):
+    repo, settings, session, _ = context
+    boundary = ModelContext(repo, settings, session)
+    text = "Use registry token_id uniswap:UNI, entity_id bitcoin, instrument_id binance:spot:BTCUSDT and source_id S01."
+    url = "https://example.org/uniswap:UNI?source_id=S01"
+    public = await boundary.result(
+        "test", {"error": {"reason": text, "details": [text, url]}, "quote": text, "text": text, "url": url}
+    )
+    reason = public["error"]["reason"]
+    for key in ("uniswap:UNI", "entity_id", "instrument_id", "source_id", "token_id", "S01"):
+        assert key not in reason
+    for label in (
+        boundary.token_name("uniswap:UNI"),
+        boundary.entity_name("bitcoin"),
+        boundary.instrument_name("binance:spot:BTCUSDT"),
+        boundary.source_name("S01"),
+    ):
+        assert label in reason
+    assert public["error"]["details"] == [reason, url]
+    assert public["quote"] == public["text"] == text and public["url"] == url
+
+
+@pytest.mark.parametrize("token", ["uniswap:UNI", "cow:COW"])
+@pytest.mark.parametrize("cached", [True, False])
+async def test_identical_watches_on_different_tokens_can_be_selected_and_cancelled(context, token, cached):
+    repo, settings, session, _ = context
+    session["event_id"] = new_id("evt")
+    await repo.put("evt.events", session["event_id"], {"event_id": session["event_id"]})
+    watches = [
+        {
+            "cond_id": new_id("CND"),
+            "event_id": session["event_id"],
+            "token_id": value,
+            "human_text": "Data confidence becomes high",
+            "expr": {"metric": "dc.class", "op": "==", "value": "HIGH"},
+            "status": "ARMED",
+        }
+        for value in ("uniswap:UNI", "cow:COW")
+    ]
+    for row in watches:
+        await repo.put("ana.watch_conditions", row["cond_id"], row)
+    if cached:
+        session["model_catalog"] = {
+            "conditions": {
+                row["cond_id"]: {"text": row["human_text"], "conditions": row["expr"]} for row in watches
+            }
+        }
+    await repo.put("ops.agent_sessions", session["session_id"], session)
+    boundary = ModelContext(repo, settings, session)
+    if cached:
+        public = await boundary.result(
+            "get_decision", {"conditions_shown": [row["cond_id"] for row in watches]}
+        )
+        descriptions = public["conditions_shown"]
+    else:
+        public = await boundary.result("get_decision", {"conditions": watches})
+        descriptions = [row["condition"] for row in public["conditions"]]
+    assert_public(public)
+    selected = next(
+        description for description in descriptions if description["token"] == boundary.token_name(token)
+    )
+    args = {"action": "DISARM", "condition": selected}
+    validate_schema(
+        args, settings.read_config_json("skills/tank-event-analyst/set_watch_condition.schema.json")
+    )
+    restarted = ModelContext(repo, settings, await repo.get("ops.agent_sessions", session["session_id"]))
+    restored = await restarted.arguments("set_watch_condition", args)
+    result = await EventToolService(repo, settings, None, None).dispatch(
+        "set_watch_condition", restored, {"session_id": session["session_id"], "role": "analyst"}
+    )
+    assert result["accepted"]
+    for row in watches:
+        expected = "CANCELLED" if row["token_id"] == token else "ARMED"
+        assert (await repo.get("ana.watch_conditions", row["cond_id"]))["status"] == expected
+
+
+@pytest.mark.parametrize("distinction", ["creation_time", "role"])
+async def test_same_token_watch_descriptions_distinguish_predecessors_and_roles(context, distinction):
+    repo, settings, session, _ = context
+    session["event_id"] = new_id("evt")
+    await repo.put("evt.events", session["event_id"], {"event_id": session["event_id"]})
+    old = {
+        "cond_id": new_id("CND"),
+        "event_id": session["event_id"],
+        "token_id": "uniswap:UNI",
+        "human_text": "Data confidence becomes high",
+        "expr": {"metric": "dc.class", "op": "==", "value": "HIGH"},
+        "role": "UPGRADE",
+        "created_at": "2026-10-23T00:00:00Z",
+        "status": "FIRED" if distinction == "creation_time" else "ARMED",
+    }
+    current = dict(old, cond_id=new_id("CND"), status="ARMED")
+    current.update(
+        {"created_at": "2026-10-23T01:00:00Z"} if distinction == "creation_time" else {"role": "AGENT"}
+    )
+    session["model_catalog"] = {"conditions": {}}
+    for row in (old, current):
+        await repo.put("ana.watch_conditions", row["cond_id"], row)
+        session["model_catalog"]["conditions"][row["cond_id"]] = {
+            "text": row["human_text"],
+            "conditions": row["expr"],
+            "token": "Uniswap (UNI)",
+        }
+    await repo.put("ops.agent_sessions", session["session_id"], session)
+    boundary = ModelContext(repo, settings, session)
+    public = await boundary.result("get_decision", {"conditions_shown": [old["cond_id"], current["cond_id"]]})
+    args = {"action": "DISARM", "condition": public["conditions_shown"][1]}
+    validate_schema(
+        args, settings.read_config_json("skills/tank-event-analyst/set_watch_condition.schema.json")
+    )
+    result = await EventToolService(repo, settings, None, None).dispatch(
+        "set_watch_condition",
+        await boundary.arguments("set_watch_condition", args),
+        {"session_id": session["session_id"], "role": "analyst"},
+    )
+    assert result["accepted"]
+    assert (await repo.get("ana.watch_conditions", old["cond_id"]))["status"] == old["status"]
+    assert (await repo.get("ana.watch_conditions", current["cond_id"]))["status"] == "CANCELLED"
