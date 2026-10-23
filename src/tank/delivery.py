@@ -10,7 +10,7 @@ import httpx
 from tank.analysis.cards import telegram_card_html
 from tank.ops_progress import event_progress
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
-from tank.util import new_id, parse_time, utcnow
+from tank.util import new_id, parse_time, sha256, utcnow
 
 DELIVERY_LOCK_WAIT_S = 6
 
@@ -135,7 +135,11 @@ class DeliveryService:
 
     async def deliver(self, payload):
         if payload.get("notice_id"):
-            error = await self._deliver(payload)
+            notice = await self.repo.get("out.ops_notices", payload["notice_id"])
+            if notice and notice.get("kind") == "ITEM_PROGRESS":
+                error = await self._deliver_progress(payload, notice)
+            else:
+                error = await self._deliver(payload)
         else:
             rows = await self._all(
                 "out.alerts", filters={"alert_id": payload["alert_id"], "version": payload["version"]}
@@ -150,6 +154,203 @@ class DeliveryService:
             if getattr(error, "terminal", False):
                 await self.terminal_failure(payload, error, 5)
             raise error
+
+    async def _deliver_progress(self, payload, notice):
+        from tank.ops_cards import render, snapshot, time_of
+
+        item_id = notice["subject_id"]
+        chat = str(self.settings.telegram_ops_chat or "")
+        if not self.settings.telegram_token or not chat:
+            raise ValueError("Telegram token and destination must be configured")
+        key = sha256({"item_id": item_id, "chat_id": chat})
+        async with AsyncExitStack() as locks:
+            await self._enter_delivery_lock(locks, "ops-card:" + key)
+            card = await self.repo.get("out.ops_cards", key)
+            if card and notice["notice_id"] in card.get("covered_notice_ids", []):
+                return None
+            data = await snapshot(self.repo, item_id)
+            if data is None:
+                return None
+            if data["item"].get("source_id") == "WEB" and data["item"].get("evidence_kind"):
+                return None
+            if card is None:
+                card = {"item_id": item_id, "chat_id": chat, "message_ref": None}
+                for previous in reversed(data["history"]):
+                    if previous.get("format_version") == 2:
+                        continue
+                    receipts = await self.repo.list_latest(
+                        "out.deliveries",
+                        "at",
+                        filters={
+                            "notice_id": previous["notice_id"],
+                            "channel": "telegram:ops",
+                            "status": "SENT",
+                            "chat_id": chat,
+                        },
+                        limit=1,
+                    )
+                    if receipts:
+                        card["message_ref"] = receipts[0]["message_ref"]
+                        card["adopted_notice_id"] = previous["notice_id"]
+                        break
+                await self.repo.put("out.ops_cards", key, card)
+            result = render(data)
+            digest = sha256(result["html"])
+            covered = [row["notice_id"] for row in data["history"]]
+            if card.get("render_digest") == digest:
+                await self.repo.put("out.ops_cards", key, {**card, "covered_notice_ids": covered})
+                return None
+            if card.get("blocked"):
+                return None
+            delay = getattr(self.settings, "ops_progress_delay_s", 15)
+            first = time_of(data["history"][0]) if data["history"] else utcnow()
+            if not card.get("message_ref"):
+                due = first + timedelta(seconds=delay)
+            else:
+                due = (
+                    parse_time(card["updated_at"]) + timedelta(seconds=min(delay, 5))
+                    if card.get("updated_at")
+                    else utcnow()
+                )
+            if utcnow() < due:
+                raise DeliveryDeferred(collection_clock(due))
+            await self._enter_delivery_lock(locks, "telegram-ops-progress")
+            backoff = await self.repo.get("ops.scheduler_checkpoints", "ops-progress-backoff")
+            if backoff and utcnow() < parse_time(backoff["state"]["until"]):
+                raise DeliveryDeferred(collection_clock(backoff["state"]["until"]))
+            latest = await self.repo.list_latest(
+                "out.deliveries", "at", filters={"channel": "telegram:ops", "status": "SENT"}, limit=1
+            )
+            if latest:
+                next_send = offset_schedule(propagate_timestamp(latest[0], "at"), timedelta(seconds=3.1))
+                if utcnow() < parse_time(next_send.value):
+                    raise DeliveryDeferred(next_send)
+            ledger = await self._all(
+                "out.deliveries", filters={"progress_card": key, "render_digest": digest}
+            )
+            attempt = max((row.get("attempt", 0) for row in ledger), default=0) + 1
+            if attempt > 5:
+                failure = DeliveryError("Ops card delivery exhausted five attempts")
+                failure.terminal = True
+                return failure
+            method = "editMessageText" if card.get("message_ref") else "sendMessage"
+            body = {
+                "chat_id": chat,
+                "text": result["html"],
+                "parse_mode": "HTML",
+                "link_preview_options": {"is_disabled": True},
+            }
+            if card.get("message_ref"):
+                body["message_id"] = int(card["message_ref"])
+            else:
+                body["disable_notification"] = True
+            transition = {
+                "notice_id": notice["notice_id"],
+                "channel": "telegram:ops",
+                "attempt": attempt,
+                "render_digest": digest,
+                "progress_card": key,
+                "rendered_notice_id": data["history"][-1]["notice_id"],
+                "method": method,
+                "status": "GENERATED",
+                **collection_clock().fields("at"),
+            }
+            await self.repo.put("out.deliveries", new_id("delivery"), transition, immutable=True)
+            code = None
+            try:
+                response = await self.http.post(
+                    f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}", json=body
+                )
+                response_data = response.json()
+                unchanged = (
+                    bool(card.get("message_ref"))
+                    and response.status_code == 400
+                    and "message is not modified" in str(response_data.get("description", "")).lower()
+                )
+                if not unchanged and (response.status_code != 200 or not response_data.get("ok")):
+                    code = response.status_code
+                    retry_after = max(
+                        2 ** (attempt - 1), (response_data.get("parameters") or {}).get("retry_after", 0)
+                    )
+                    if code == 429:
+                        stamp = collection_clock()
+                        await self.repo.put(
+                            "ops.scheduler_checkpoints",
+                            "ops-progress-backoff",
+                            {
+                                "checkpoint_id": "ops-progress-backoff",
+                                **stamp.fields("at"),
+                                "state": {
+                                    "until": offset_schedule(stamp, timedelta(seconds=retry_after)).value
+                                },
+                            },
+                        )
+                    raise DeliveryError(f"Telegram rejected Ops card (HTTP {code})", retry_after)
+                message_ref = (
+                    str(card["message_ref"])
+                    if card.get("message_ref")
+                    else str(response_data["result"]["message_id"])
+                )
+            except Exception as exc:
+                terminal = attempt == 5 or code in {400, 403}
+                await self.repo.put(
+                    "out.ops_cards",
+                    key,
+                    {
+                        **card,
+                        "delivery_status": "FAILED",
+                        "delivery_error": f"HTTP {code}" if code else type(exc).__name__,
+                        "blocked": code in {400, 403},
+                    },
+                )
+                await self.repo.put(
+                    "out.deliveries",
+                    new_id("delivery"),
+                    {
+                        **transition,
+                        **collection_clock().fields("at"),
+                        "status": "FAILED",
+                        "terminal": terminal,
+                        "error": f"HTTP {code}" if code else type(exc).__name__,
+                    },
+                    immutable=True,
+                )
+                failure = DeliveryError(
+                    "Ops card delivery failed", getattr(exc, "retry_after", 2 ** (attempt - 1))
+                )
+                failure.terminal = terminal
+                return failure
+            stamp = collection_clock()
+            async with self.repo.transaction():
+                await self.repo.put(
+                    "out.ops_cards",
+                    key,
+                    {
+                        **card,
+                        "message_ref": message_ref,
+                        "render_digest": digest,
+                        "rendered_html": result["html"],
+                        "covered_notice_ids": covered,
+                        "outcome": result["code"],
+                        "notice_id": data["history"][-1]["notice_id"],
+                        "delivery_status": "SENT",
+                        "delivery_error": None,
+                        **stamp.fields("updated_at"),
+                    },
+                )
+                await self.repo.put(
+                    "out.deliveries",
+                    new_id("delivery"),
+                    {
+                        **transition,
+                        **stamp.fields("at"),
+                        "status": "SENT",
+                        "message_ref": message_ref,
+                        "chat_id": chat,
+                    },
+                    immutable=True,
+                )
+            return None
 
     async def _deliver(self, payload):
         subject = payload.get("notice_id") or f"{payload['alert_id']}:{payload['version']}"
@@ -180,15 +381,6 @@ class DeliveryService:
                 record = rows[0] if rows else None
             if record is None:
                 raise ValueError("Delivery subject does not exist")
-            if notice and record.get("kind") == "ITEM_PROGRESS":
-                await self._enter_delivery_lock(locks, "telegram-ops-progress")
-                latest = await self.repo.list_latest(
-                    "out.deliveries", "at", filters={"channel": "telegram:ops", "status": "SENT"}, limit=1
-                )
-                if latest:
-                    next_send = offset_schedule(propagate_timestamp(latest[0], "at"), timedelta(seconds=3.1))
-                    if utcnow() < parse_time(next_send.value):
-                        raise DeliveryDeferred(next_send)
             if not notice:
                 prior = await self._all("out.alerts", filters={"event_id": record["event_id"]})
                 if record.get("kind") == "UPDATE" and any(
@@ -259,10 +451,12 @@ class DeliveryService:
                 ),
             }
             await self.repo.put("out.deliveries", new_id("delivery"), transition, immutable=True)
+            response_status = None
             try:
                 response = await self.http.post(
                     f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}", json=body
                 )
+                response_status = response.status_code
                 data = response.json()
                 if response.status_code != 200 or not data.get("ok"):
                     delay = max(2 ** (attempt - 1), data.get("parameters", {}).get("retry_after", 0))
@@ -288,6 +482,7 @@ class DeliveryService:
                         **failed_at.fields("failed_at"),
                         "status": "FAILED",
                         "error": type(exc).__name__,
+                        "http_status": response_status,
                     },
                     immutable=True,
                 )

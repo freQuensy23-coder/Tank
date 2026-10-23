@@ -6,6 +6,7 @@ from tank.time_precision import collection_clock, offset_schedule
 from tank.util import sha256
 
 STAGES = {
+    "ANALYSIS_UPDATED": "Обновлён результат анализа",
     "RECEIVED": "Получен материал",
     "EVIDENCE_FETCHED": "Агент получил дополнительный источник",
     "JEV_PASSED": "Фильтр Jev пройден",
@@ -25,17 +26,6 @@ STAGES = {
     "PROCESSING_FAILED": "Ошибка обработки",
     "PROCESSING_EXPIRED": "Истёк срок обработки",
 }
-REASONS = {
-    "BELOW_MAJOR": "Значимость ниже порога MAJOR",
-    "LOW_CERTAINTY": "Недостаточная достоверность",
-    "STALE": "Событие устарело",
-    "INVALIDATED": "Событие опровергнуто",
-    "NO_MATERIAL_CHANGE": "Нет существенных изменений для обновления карточки",
-    "STALE_STATE_CHANGE": "Изменение состояния устарело",
-    "TERMINAL_EVENT": "Событие закрыто или объединено с другим",
-    "FIRST_CARD_ALREADY_GENERATED": "Первая карточка уже подготовлена",
-    "NATIVE_TURN_COMPLETED_WITHOUT_OBSERVATION": "Агент завершил ход без регистрации события или наблюдения",
-}
 
 
 def enabled(settings):
@@ -50,11 +40,7 @@ def clipped(value, units):
     )
 
 
-def reason_text(reason):
-    return REASONS.get(reason, reason)
-
-
-async def item_progress(repo, settings, item_id, stage, reason="", *, event_id=None, key=None):
+async def item_progress(repo, settings, item_id, stage, reason="", *, event_id=None, key=None, details=None):
     if not enabled(settings) or not item_id:
         return
     item = await repo.get("ingest.source_items", item_id)
@@ -71,27 +57,6 @@ async def item_progress(repo, settings, item_id, stage, reason="", *, event_id=N
         if await repo.get("out.ops_notices", notice_id):
             return
         stamp = collection_clock()
-        relevance = item.get("relevance") or {}
-        decision = relevance.get("decision")
-        jev = {
-            "ALWAYS": "не требуется по политике источника",
-            "SEND": "пройден",
-            "SKIP": "отклонён",
-        }.get(decision, "ожидает проверки")
-        if relevance.get("p_relevant") is not None:
-            jev += f"; score={relevance['p_relevant']:.4f}"
-        lines = [
-            f"TANK OPS · {STAGES[stage]}",
-            f"Источник: {clipped(item.get('source_name') or item.get('source') or item.get('source_id'), 150)}",
-            clipped(item.get("title"), 250),
-            clipped(item.get("text") or item.get("body") or item.get("quoted"), 1100),
-            f"Ссылка: {clipped(item['url'], 500)}" if item.get("url") else "",
-            f"Jev: {jev}",
-            f"Результат: {clipped(reason_text(reason), 650)}" if reason else "",
-            f"Материал: {clipped(item_id, 160)}",
-            f"Событие: {clipped(event_id, 160)}" if event_id else "",
-            f"Этап зафиксирован: {stamp.value}",
-        ]
         await repo.put(
             "out.ops_notices",
             notice_id,
@@ -102,23 +67,30 @@ async def item_progress(repo, settings, item_id, stage, reason="", *, event_id=N
                 "stage": stage,
                 "event_id": event_id,
                 "reason": reason,
-                "text": "\n".join(line for line in lines if line),
+                "text": STAGES[stage],
+                "format_version": 2,
+                "details": details or {},
                 **stamp.fields("created_at"),
                 "created_by": "ops-progress",
             },
             immutable=True,
         )
+        if item.get("source_id") == "WEB" and item.get("evidence_kind"):
+            return
         await repo.enqueue(
             "DELIVER",
             {"notice_id": notice_id, "channel": "telegram:ops"},
             notice_id,
-            priority=3,
+            priority=2,
+            run_after=offset_schedule(
+                stamp, timedelta(seconds=getattr(settings, "ops_progress_delay_s", 15))
+            ),
             max_attempts=5,
             expires_at=offset_schedule(stamp, timedelta(days=7)),
         )
 
 
-async def event_progress(repo, settings, event_id, stage, reason="", *, key=None):
+async def event_progress(repo, settings, event_id, stage, reason="", *, key=None, details=None):
     if not enabled(settings) or not event_id:
         return
     items = {
@@ -128,7 +100,9 @@ async def event_progress(repo, settings, event_id, stage, reason="", *, key=None
         )
     }
     for item_id in sorted(items):
-        await item_progress(repo, settings, item_id, stage, reason, event_id=event_id, key=key)
+        await item_progress(
+            repo, settings, item_id, stage, reason, event_id=event_id, key=key, details=details
+        )
 
 
 async def tool_progress(repo, settings, tool, arguments, context, result):
@@ -149,6 +123,15 @@ async def tool_progress(repo, settings, tool, arguments, context, result):
             "ALERT_QUEUED" if published else "PUBLICATION_BLOCKED",
             reason,
             key=f"{result['alert_id']}:{result['version']}" if published else None,
+            details={
+                name: result[name]
+                for name in ("missing_market_truth", "missing_decisions", "publication_receipt")
+                if name in result
+            },
+        )
+    elif tool in {"set_beneficiaries", "get_market_truth", "get_decision"}:
+        await event_progress(
+            repo, settings, event_id, "ANALYSIS_UPDATED", tool, key=context.get("call_id") or sha256(result)
         )
 
 
@@ -163,18 +146,15 @@ async def session_progress(repo, settings, session):
         key = f"{session['session_id']}:{message['message_id']}:{message.get('retry_count', 0)}"
         status = message.get("turn_status")
         if status == "FAILED":
-            stage, reason = "PROCESSING_FAILED", "Ход агента завершился ошибкой или был прерван"
+            stage, reason = "PROCESSING_FAILED", "AGENT_EXECUTION_FAILED"
         elif status == "DONE":
             item = await repo.get("ingest.source_items", item_id)
             if item and item.get("extraction_status") == "SKIPPED":
                 stage = "AGENT_REJECTED"
-                reason = item.get("extraction_reason") or "Агент не зарегистрировал событие"
+                reason = item.get("extraction_reason") or ""
                 key = None
             else:
-                stage, reason = (
-                    "AGENT_COMPLETED",
-                    "Ход агента завершён; это не подтверждение публикации в Alerts",
-                )
+                stage, reason = "AGENT_COMPLETED", ""
         elif message.get("sent_at"):
             stage, reason = "AGENT_ACCEPTED", "Ожидается результат анализа"
         else:
