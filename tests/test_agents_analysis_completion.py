@@ -171,6 +171,9 @@ async def test_settled_turn_accepts_agent_choice_without_source_observation(
             sequence = 0
 
             async def emit(tool, arguments):
+                arguments = {
+                    key: value for key, value in arguments.items() if key not in {"event_id", "item_id"}
+                }
                 nonlocal sequence
                 sequence += 1
                 mapped = await repo.get("ops.agent_sessions", "s")
@@ -357,8 +360,6 @@ async def test_ignored_item_keeps_event_and_call_for_next_native_update(tmp_path
                     "execution_id": next_input,
                     "name": "add_observation",
                     "input": {
-                        "event_id": eid,
-                        "item_id": "launch",
                         "link": "STATE_UPDATE",
                         "claims": [
                             {

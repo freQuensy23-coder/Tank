@@ -4,9 +4,6 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "event_id": {
-      "type": "string"
-    },
     "milestone": {
       "type": "string"
     },
@@ -40,10 +37,9 @@
     }
   },
   "required": [
-    "event_id",
     "milestone",
     "due_at",
     "source"
   ],
-  "description": "Schedule a sourced milestone check for an existing event at due_at. Declare due_at precision or leave legacy precision unknown; an ISO timestamp alone is not proof of exact occurrence time. The supplied source identifies the primary evidence for the milestone. The durable check verifies the outcome when due and records the result through an evidenced observation; scheduling alone does not assert that the outcome occurred."
+  "description": "Schedule a dated next step for the current event. Use the registered source name."
 }

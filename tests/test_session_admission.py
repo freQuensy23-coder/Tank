@@ -165,7 +165,7 @@ async def test_cap_queues_turns_in_order_never_drops_and_running_session_bypasse
                 return httpx.Response(200, json={"id": "s_new"})
             sid = request.url.path.split("/")[3]
             text = json.loads(body["events"][0]["content"][0]["text"])
-            posted.append((sid, text["message"]["item_id"]))
+            posted.append((sid, text["item"]["text"].removeprefix("Item ")))
             return httpx.Response(200, json={"data": [{"id": "in_" + uuid.uuid4().hex[:6]}]})
 
         jobs = {}

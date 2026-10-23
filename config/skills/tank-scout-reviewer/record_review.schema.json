@@ -4,9 +4,6 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "proposal_id": {
-      "type": "string"
-    },
     "verdict": {
       "type": "string"
     },
@@ -16,7 +13,127 @@
     "evidence": {
       "type": "array",
       "items": {
-        "type": "string"
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "quote": {
+                "type": "string"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "predicate": {
+                "type": "string"
+              },
+              "object": {
+                "type": "string"
+              },
+              "sources": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "url": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "observed_at": {
+                      "type": "string"
+                    },
+                    "excerpt": {
+                      "type": "string"
+                    }
+                  },
+                  "anyOf": [
+                    {
+                      "required": [
+                        "url"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "title",
+                        "observed_at"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "excerpt",
+                        "observed_at"
+                      ]
+                    }
+                  ]
+                }
+              },
+              "verified": {
+                "type": "boolean"
+              },
+              "stage": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "quote"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "statement": {
+                "type": "string"
+              },
+              "public_at": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "statement"
+            ]
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "observed_at": {
+                "type": "string"
+              },
+              "excerpt": {
+                "type": "string"
+              }
+            },
+            "anyOf": [
+              {
+                "required": [
+                  "url"
+                ]
+              },
+              {
+                "required": [
+                  "title",
+                  "observed_at"
+                ]
+              },
+              {
+                "required": [
+                  "excerpt",
+                  "observed_at"
+                ]
+              }
+            ]
+          }
+        ]
       }
     },
     "scores": {
@@ -60,19 +177,31 @@
       ]
     },
     "duplicate_of": {
-      "type": [
-        "string",
-        "null"
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "subject": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "subject"
+          ]
+        },
+        {
+          "type": "null"
+        }
       ]
     }
   },
   "required": [
-    "proposal_id",
     "verdict",
     "reason",
     "evidence",
     "scores",
     "recommendation"
   ],
-  "description": "Record this proposal session's final adversarial review: all four rubric scores, recommendation, cited evidence and reason; optionally merge a semantic duplicate into an existing open proposal. Returns the persisted review/proposal. This never approves production categories or expands the token universe."
+  "description": "Record the current proposal review with scores, evidence, verdict and reason. Select an optional duplicate by its displayed subject."
 }

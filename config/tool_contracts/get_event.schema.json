@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "get_event",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "event_id"
+  ],
+  "description": "Read an event and its recorded claims, source quotes, observations, agent-supplied verification flags, stages, certainty with reason, contradictions and assessment. Returns stored state without changing or semantically rechecking it."
+}

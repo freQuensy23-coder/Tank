@@ -48,11 +48,16 @@ def test_stage_claim_contract_is_closed_synced_and_preserves_unknown(name):
 
 
 @pytest.mark.parametrize("reason", [None, "", "   "])
-def test_rejection_contract_requires_a_concrete_reason(reason):
+@pytest.mark.parametrize("public", [True, False])
+def test_rejection_contract_requires_a_concrete_reason(reason, public):
     from test_event_tools import extraction
 
-    schema = json.loads((DIRECTORY / "record_event.schema.json").read_text())
+    directory = DIRECTORY if public else DIRECTORY.parents[1] / "tool_contracts"
+    schema = json.loads((directory / "record_event.schema.json").read_text())
     value = extraction()
+    if public:
+        value.pop("item_id")
+        value["tokens"] = ["World (WLD)"]
     validate_schema(value, schema)
     value["is_event"] = False
     if reason is not None:

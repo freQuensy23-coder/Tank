@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
+from model_fixture import audited_result, model_arguments
 
 from tank.replay import ReplayClock, ReplayError, evaluate_frozen, load_inputs, replay_bundle
 from tank.settings import Settings
@@ -539,7 +540,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                                 "id": "replay-decision",
                                 "type": "agent.custom_tool_use",
                                 "name": "get_decision",
-                                "input": {"event_id": event_id, "token": "T"},
+                                "input": {"token": "T"},
                             },
                         )
                     )
@@ -561,8 +562,8 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
             elif event["type"] == "user.message" or event.get("custom_tool_use_id") == "replay-scope":
                 if event["type"] != "user.message":
                     refusal = json.loads(event["content"][0]["text"])
-                    assert refusal["accepted"] is False and refusal["reason"] == "EVENT_SCOPE"
-                    assert isinstance(refusal["error"], str)
+                    assert refusal["ok"] is False
+                    assert refusal["error"]["category"] == "VALIDATION"
                 await queue.put(
                     (
                         1,
@@ -571,8 +572,6 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                             "type": "agent.custom_tool_use",
                             "name": "add_observation",
                             "input": {
-                                "event_id": event_id,
-                                "item_id": item_id,
                                 "link": "CORROBORATION",
                                 "claims": [],
                                 "public_at": {
@@ -587,7 +586,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                     )
                 )
             else:
-                result = json.loads(event["content"][0]["text"])
+                result = await audited_result(repo, event)
                 if event["custom_tool_use_id"] == "replay-observation":
                     assert not event.get("is_error"), result
                     await queue.put(
@@ -597,7 +596,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                                 "id": "replay-truth",
                                 "type": "agent.custom_tool_use",
                                 "name": "get_market_truth",
-                                "input": {"event_id": event_id, "tokens": ["T"]},
+                                "input": {"tokens": ["T"]},
                             },
                         )
                     )
@@ -624,7 +623,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                                 "id": "replay-decision",
                                 "type": "agent.custom_tool_use",
                                 "name": "get_decision",
-                                "input": {"event_id": event_id, "token": "T"},
+                                "input": {"token": "T"},
                             },
                         )
                     )
@@ -708,7 +707,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
     assert report["status"] == "COMPLETED"
     if transient_case == "scope_refusal":
         refused = await repo.get("ops.tool_calls", report["session_id"] + ":replay-scope")
-        assert refused["result"]["reason"] == "EVENT_SCOPE" and refused["returned_at"]
+        assert refused["result"]["error"]["category"] == "VALIDATION" and refused["returned_at"]
 
     decision_receipts = [row for row in report["causal_tool_receipts"] if row["tool"] == "get_decision"]
     assert len(decision_receipts) == 1
@@ -1206,6 +1205,8 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
                 yield event
 
     async def emit(event):
+        if event.get("type") == "agent.custom_tool_use":
+            event = dict(event, input=await model_arguments(repo, config, event["name"], event["input"]))
         nonlocal seq
         seq += 1
         await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
@@ -1261,7 +1262,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
             accepted_inputs.append(accepted_id)
             if event["type"] == "user.message":
                 content = json.loads(event["content"][0]["text"])
-                item = content["message"]["item_id"]
+                item = content["item"]["text"]
                 if not sent:
                     assert await repo.get("ingest.source_items", "second") is None
                     original = await repo.get("ingest.source_items", "first")
@@ -1286,7 +1287,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
                     }
                 )
             else:
-                result = json.loads(event["content"][0]["text"])
+                result = await audited_result(repo, event)
                 if actor_stage == "get":
                     results.append(result)
                     actor_stage = "origin" if actor_item == "first" else "observation"
@@ -1864,6 +1865,8 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
                 yield await queue.get()
 
     async def emit(event):
+        if event.get("type") == "agent.custom_tool_use":
+            event = dict(event, input=await model_arguments(repo, config, event["name"], event["input"]))
         nonlocal seq
         seq += 1
         await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
@@ -1923,13 +1926,17 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
             if event["type"] == "user.message":
                 message = json.loads(event["content"][0]["text"])["message"]
                 messages.append(message)
-                actor_stage = "observation" if message.get("item_id") else "decision"
+                actor_stage = (
+                    "observation" if message.get("kind") in {"NEW_ITEM", "ITEM_ADDED"} else "decision"
+                )
                 await emit(
                     {
                         "id": "actor-" + actor_stage + "-" + str(len(messages)),
                         "type": "agent.custom_tool_use",
                         "execution_id": accepted_id,
-                        "name": "add_observation" if message.get("item_id") else "get_decision",
+                        "name": "add_observation"
+                        if message.get("kind") in {"NEW_ITEM", "ITEM_ADDED"}
+                        else "get_decision",
                         "input": {
                             "item_id": "source",
                             "event_id": "event",
@@ -1943,12 +1950,12 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
                             },
                             "freshness": "FRESH",
                         }
-                        if message.get("item_id")
+                        if message.get("kind") in {"NEW_ITEM", "ITEM_ADDED"}
                         else {"event_id": "event", "token": "T"},
                     }
                 )
             else:
-                result = json.loads(event["content"][0]["text"])
+                result = await audited_result(repo, event)
                 assert not result.get("error"), result
                 if actor_stage == "decision":
                     actor_stage = "publication"
@@ -2024,7 +2031,8 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
         assert "predicate does not fire" in report["divergence"]["reason"]
     else:
         assert calls[0]["status"] == "CLOSED" and calls[0]["closed_by"] == "EXPIRED"
-        assert messages[1]["call"]["call_id"] == calls[0]["call_id"]
+        assert "call_id" not in messages[1]["call"]
+        assert messages[1]["call"]["opened_at"] == calls[0]["opened_at"]
         assert report["timer_receipts"][0]["predicate"] == "RERUN_PRODUCTION_SCHEDULER"
     assert await repo.get("ana.calls", "original-call") is None
 
@@ -2184,6 +2192,8 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                 yield await queue.get()
 
     async def emit(event):
+        if event.get("type") == "agent.custom_tool_use":
+            event = dict(event, input=await model_arguments(repo, config, event["name"], event["input"]))
         nonlocal seq
         seq += 1
         if event["type"] == "session.status_idle":
@@ -2247,13 +2257,19 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
             if event["type"] == "user.message":
                 message = json.loads(event["content"][0]["text"])["message"]
                 messages.append(message)
-                actor_stage = "observation" if message.get("item_id") else "timer-truth"
+                actor_stage = (
+                    "observation" if message.get("kind") in {"NEW_ITEM", "ITEM_ADDED"} else "timer-truth"
+                )
                 await emit(
                     {
-                        "id": "observation" if message.get("item_id") else "timer-truth",
+                        "id": "observation"
+                        if message.get("kind") in {"NEW_ITEM", "ITEM_ADDED"}
+                        else "timer-truth",
                         "type": "agent.custom_tool_use",
                         "execution_id": accepted_id,
-                        "name": "add_observation" if message.get("item_id") else "get_market_truth",
+                        "name": "add_observation"
+                        if message.get("kind") in {"NEW_ITEM", "ITEM_ADDED"}
+                        else "get_market_truth",
                         "input": {
                             "item_id": "source",
                             "event_id": "event",
@@ -2267,12 +2283,12 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                             },
                             "freshness": "FRESH",
                         }
-                        if message.get("item_id")
+                        if message.get("kind") in {"NEW_ITEM", "ITEM_ADDED"}
                         else {"event_id": "event", "tokens": ["T"], "cutoff": trigger},
                     }
                 )
             else:
-                result = json.loads(event["content"][0]["text"])
+                result = await audited_result(repo, event)
                 assert not result.get("error"), result
                 if actor_stage == "observation":
                     actor_stage = "initial-decision"
@@ -2397,7 +2413,8 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
     assert report["status"] == ("COMPLETED" if state == "APPROVED" else "DIVERGED")
     if state == "APPROVED":
         assert conditions[0]["status"] == "FIRED"
-        assert messages[1]["condition"]["cond_id"] == conditions[0]["cond_id"]
+        assert "cond_id" not in messages[1]["condition"]
+        assert messages[1]["condition"]["expr"] == conditions[0]["expr"]
         assert [(c["status"], c["rearmed_from"]) for c in rearmed] == [("ARMED", conditions[0]["cond_id"])]
     else:
         assert conditions[0]["status"] == "ARMED"
@@ -2632,6 +2649,8 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
                 yield await queue.get()
 
     async def emit(event):
+        if event.get("type") == "agent.custom_tool_use":
+            event = dict(event, input=await model_arguments(repo, config, event["name"], event["input"]))
         nonlocal sequence
         sequence += 1
         if event["type"] == "session.status_idle":
@@ -2737,7 +2756,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
                     identity,
                 )
             else:
-                result = json.loads(event["content"][0]["text"])
+                result = await audited_result(repo, event)
                 assert not result.get("error"), result
                 stage += 1
                 if stage == 1:

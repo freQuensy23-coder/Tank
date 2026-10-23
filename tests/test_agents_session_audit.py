@@ -32,6 +32,7 @@ def settings(replay=False):
 async def seed(repo, **changes):
     record = {
         "session_id": "s",
+        "model_context_version": 1,
         "event_id": "e",
         "item_id": "one",
         "status": "OPEN",

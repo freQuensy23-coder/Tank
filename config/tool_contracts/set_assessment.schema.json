@@ -1,0 +1,1088 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "event_id": {
+      "type": "string"
+    },
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "dims": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "economic_directness": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "value": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rationale": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "proposed_by": {
+                  "enum": [
+                    "LLM",
+                    "RULE"
+                  ]
+                },
+                "caps_applied": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "value",
+                "rationale",
+                "evidence"
+              ]
+            },
+            "magnitude": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "value": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rationale": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "proposed_by": {
+                  "enum": [
+                    "LLM",
+                    "RULE"
+                  ]
+                },
+                "caps_applied": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "value",
+                "rationale",
+                "evidence"
+              ]
+            },
+            "permanence": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "value": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rationale": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "proposed_by": {
+                  "enum": [
+                    "LLM",
+                    "RULE"
+                  ]
+                },
+                "caps_applied": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "value",
+                "rationale",
+                "evidence"
+              ]
+            },
+            "distribution_expansion": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "value": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rationale": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "proposed_by": {
+                  "enum": [
+                    "LLM",
+                    "RULE"
+                  ]
+                },
+                "caps_applied": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "value",
+                "rationale",
+                "evidence"
+              ]
+            },
+            "mechanical_flows": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "value": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rationale": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "proposed_by": {
+                  "enum": [
+                    "LLM",
+                    "RULE"
+                  ]
+                },
+                "caps_applied": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "value",
+                "rationale",
+                "evidence"
+              ]
+            },
+            "surprise": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "value": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rationale": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "proposed_by": {
+                  "enum": [
+                    "LLM",
+                    "RULE"
+                  ]
+                },
+                "caps_applied": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "value",
+                "rationale",
+                "evidence"
+              ]
+            },
+            "implementation": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "value": {
+                  "type": [
+                    "number",
+                    "null"
+                  ],
+                  "minimum": 0,
+                  "maximum": 10
+                },
+                "reason": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "rationale": {
+                  "type": "string"
+                },
+                "evidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "proposed_by": {
+                  "enum": [
+                    "LLM",
+                    "RULE"
+                  ]
+                },
+                "caps_applied": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "value",
+                "rationale",
+                "evidence"
+              ]
+            }
+          },
+          "required": [
+            "economic_directness",
+            "magnitude",
+            "permanence",
+            "distribution_expansion",
+            "mechanical_flows",
+            "surprise",
+            "implementation"
+          ]
+        },
+        "structural_gates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "gate": {
+                "enum": [
+                  "G1",
+                  "G2",
+                  "G3",
+                  "G4",
+                  "G5",
+                  "G6"
+                ]
+              },
+              "satisfied": {
+                "type": "boolean"
+              },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "gate",
+              "satisfied",
+              "evidence"
+            ]
+          }
+        },
+        "class": {
+          "enum": [
+            "LOW",
+            "MATERIAL",
+            "MAJOR",
+            "STRUCTURAL_SHOCK"
+          ]
+        },
+        "criterion": {
+          "enum": [
+            "G1",
+            "G2",
+            "G3",
+            "G4",
+            "G5",
+            "G6",
+            "M1",
+            "M2",
+            "M3",
+            "M4",
+            "M5",
+            "M6",
+            "M7",
+            "MATERIAL",
+            "LOW"
+          ]
+        },
+        "criterion_quote": {
+          "type": "string",
+          "description": "Verbatim supporting quote for the selected criterion, matching a recorded verified claim quote. A quote about another subject does not establish the selected structural criterion."
+        },
+        "class_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "impact_horizon": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "impact_start": {
+              "enum": [
+                "NOW",
+                "DAYS",
+                "WEEKS",
+                "MONTHS",
+                "YEARS",
+                "UNKNOWN"
+              ]
+            },
+            "ramp_shape": {
+              "enum": [
+                "ONE_OFF",
+                "STEP",
+                "GRADUAL",
+                "RECURRING",
+                "CONDITIONAL"
+              ]
+            },
+            "dependencies": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "time_to_materiality": {
+              "type": "string"
+            },
+            "timing_confidence": {
+              "enum": [
+                "LOW",
+                "MEDIUM",
+                "HIGH"
+              ]
+            },
+            "timing_evidence": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "claim_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "due_at": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Agent-supplied primary-evidence ISO date or timezone-aware ISO datetime; preserve the actual source precision."
+                  },
+                  "quote": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "claim_id",
+                  "due_at",
+                  "quote"
+                ]
+              }
+            },
+            "immediate_market_access": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "claim_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "instrument_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "effective_at": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Primary quoted ISO effective date or timezone-aware ISO datetime."
+                }
+              },
+              "required": [
+                "claim_id",
+                "instrument_id",
+                "quote",
+                "effective_at"
+              ],
+              "description": "Agent-supplied evidence for an immediately effective market-access change, including its effective date and active registered instrument. Deterministic impact-horizon rules use these structured fields; Tank does not classify quote wording."
+            }
+          },
+          "required": [
+            "impact_start",
+            "ramp_shape",
+            "dependencies",
+            "time_to_materiality",
+            "timing_confidence"
+          ]
+        },
+        "capture_chains": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "token_id": {
+                "type": "string"
+              },
+              "headline_activity": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "type": [
+                      "number",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "unit": {
+                    "type": "string"
+                  },
+                  "window": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "observed_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "precision": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "coverage": {
+                    "type": [
+                      "number",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reason": {
+                    "enum": [
+                      null,
+                      "NOT_SUPPORTED",
+                      "SOURCE_FAILED",
+                      "INCOMPLETE",
+                      "NOT_APPLICABLE",
+                      "NOT_ESTIMABLE",
+                      "PENDING"
+                    ]
+                  }
+                },
+                "required": [
+                  "value",
+                  "unit",
+                  "window",
+                  "observed_at",
+                  "precision",
+                  "coverage",
+                  "reason"
+                ]
+              },
+              "eligible_activity": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "type": [
+                      "number",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "unit": {
+                    "type": "string"
+                  },
+                  "window": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "observed_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "precision": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "coverage": {
+                    "type": [
+                      "number",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reason": {
+                    "enum": [
+                      null,
+                      "NOT_SUPPORTED",
+                      "SOURCE_FAILED",
+                      "INCOMPLETE",
+                      "NOT_APPLICABLE",
+                      "NOT_ESTIMABLE",
+                      "PENDING"
+                    ]
+                  }
+                },
+                "required": [
+                  "value",
+                  "unit",
+                  "window",
+                  "observed_at",
+                  "precision",
+                  "coverage",
+                  "reason"
+                ]
+              },
+              "effective_fees": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "type": [
+                      "number",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "unit": {
+                    "type": "string"
+                  },
+                  "window": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "observed_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "precision": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "coverage": {
+                    "type": [
+                      "number",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reason": {
+                    "enum": [
+                      null,
+                      "NOT_SUPPORTED",
+                      "SOURCE_FAILED",
+                      "INCOMPLETE",
+                      "NOT_APPLICABLE",
+                      "NOT_ESTIMABLE",
+                      "PENDING"
+                    ]
+                  }
+                },
+                "required": [
+                  "value",
+                  "unit",
+                  "window",
+                  "observed_at",
+                  "precision",
+                  "coverage",
+                  "reason"
+                ]
+              },
+              "protocol_capture": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "type": [
+                      "number",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "unit": {
+                    "type": "string"
+                  },
+                  "window": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "observed_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "precision": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "coverage": {
+                    "type": [
+                      "number",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reason": {
+                    "enum": [
+                      null,
+                      "NOT_SUPPORTED",
+                      "SOURCE_FAILED",
+                      "INCOMPLETE",
+                      "NOT_APPLICABLE",
+                      "NOT_ESTIMABLE",
+                      "PENDING"
+                    ]
+                  }
+                },
+                "required": [
+                  "value",
+                  "unit",
+                  "window",
+                  "observed_at",
+                  "precision",
+                  "coverage",
+                  "reason"
+                ]
+              },
+              "token_flow_annual_usd": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "type": [
+                      "number",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "unit": {
+                    "type": "string"
+                  },
+                  "window": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "observed_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "precision": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "coverage": {
+                    "type": [
+                      "number",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reason": {
+                    "enum": [
+                      null,
+                      "NOT_SUPPORTED",
+                      "SOURCE_FAILED",
+                      "INCOMPLETE",
+                      "NOT_APPLICABLE",
+                      "NOT_ESTIMABLE",
+                      "PENDING"
+                    ]
+                  }
+                },
+                "required": [
+                  "value",
+                  "unit",
+                  "window",
+                  "observed_at",
+                  "precision",
+                  "coverage",
+                  "reason"
+                ]
+              },
+              "token_flow_pct_mcap": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "value": {
+                    "type": [
+                      "number",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "unit": {
+                    "type": "string"
+                  },
+                  "window": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "observed_at": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "precision": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "coverage": {
+                    "type": [
+                      "number",
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "reason": {
+                    "enum": [
+                      null,
+                      "NOT_SUPPORTED",
+                      "SOURCE_FAILED",
+                      "INCOMPLETE",
+                      "NOT_APPLICABLE",
+                      "NOT_ESTIMABLE",
+                      "PENDING"
+                    ]
+                  }
+                },
+                "required": [
+                  "value",
+                  "unit",
+                  "window",
+                  "observed_at",
+                  "precision",
+                  "coverage",
+                  "reason"
+                ]
+              },
+              "capture_recipient": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "token_mechanism": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "BUYBACK",
+                      "BURN",
+                      "STAKING_REWARD",
+                      "FEE_SHARE",
+                      "GAS",
+                      "COLLATERAL",
+                      "REQUIRED_LOCK",
+                      "NONE",
+                      "UNKNOWN"
+                    ]
+                  },
+                  "active": {
+                    "type": "boolean"
+                  },
+                  "conditional_on": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "evidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "type",
+                  "active",
+                  "evidence"
+                ]
+              },
+              "capture_score": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "minimum": 0,
+                "maximum": 10
+              },
+              "capture_class": {
+                "enum": [
+                  "DIRECT",
+                  "INDIRECT",
+                  "NARRATIVE_ONLY",
+                  "UNKNOWN"
+                ]
+              },
+              "conditional": {
+                "type": "boolean"
+              },
+              "caps_applied": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "token_id",
+              "headline_activity",
+              "eligible_activity",
+              "effective_fees",
+              "protocol_capture",
+              "token_mechanism",
+              "token_flow_annual_usd",
+              "token_flow_pct_mcap",
+              "capture_score"
+            ]
+          }
+        },
+        "magnitude_basis": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "enum": [
+                "TOKEN_MECHANICAL",
+                "USAGE_REVENUE",
+                "USAGE_ACTIVITY",
+                "ACCESS_DISTRIBUTION"
+              ]
+            },
+            "numerator": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "value": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "unit": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "claim_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "value",
+                "unit",
+                "quote",
+                "claim_id"
+              ]
+            },
+            "denominator": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "value": {
+                  "type": "number",
+                  "exclusiveMinimum": 0
+                },
+                "unit": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "quote": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "claim_id": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "value",
+                "unit",
+                "quote",
+                "claim_id"
+              ]
+            },
+            "denominator_window": {
+              "enum": [
+                "SPOT",
+                "ANNUALIZED",
+                "DAILY"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "numerator",
+            "denominator",
+            "denominator_window"
+          ],
+          "description": "Optional measured economic numerator/base for the existing magnitude rubric. Each number must match its quoted accepted claim; units and base window must match the rubric. Missing evidence remains NOT_ESTIMABLE, never an inferred number from rationale text."
+        },
+        "criterion_venue": {
+          "type": "string",
+          "description": "Required for M1: the venue name or registry ID. Tank resolves exact registry names and aliases and applies the six-venue class rule. It never infers the venue from the quotation."
+        }
+      },
+      "required": [
+        "dims",
+        "class",
+        "criterion",
+        "criterion_quote",
+        "impact_horizon"
+      ]
+    }
+  },
+  "required": [
+    "event_id",
+    "assessment"
+  ],
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Submit class and criterion, quoted evidence, dimension scores and reasons, economic capture chains and impact horizon. Use recorded claims and your source judgments; identify the M1 venue with criterion_venue. Provide structured measured magnitude bases, timing evidence and mechanism flags rather than expecting quote-keyword inference. Tank applies the deterministic class, capture and horizon rules and mandatory caps; it does not reclassify source certainty, verified flags or stages. A final MAJOR or STRUCTURAL_SHOCK escalates official source polling to 15 seconds for 2 hours and opens reaction tracking. Returns final class and applied caps. Returns LOW with NO_UNIVERSE_CONCERN when neither mentioned tokens nor current beneficiary edges concern a registry token. For a structural criterion, criterion_quote must match a verified claim quote; supplied selected structural gate evidence must reference those supporting claims. Reaction tracking computes PRE windows immediately and schedules only the five POST checkpoints; no agent reaction jobs are needed."
+}

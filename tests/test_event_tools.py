@@ -697,7 +697,7 @@ async def test_real_session_tool_refuses_cross_event_mutation(service):
     await service.repo.put("evt.events", "A", {"event_id": "A", "lifecycle": "DETECTED"})
     original = {"event_id": "B", "lifecycle": "DETECTED", "statement": "Untouched"}
     await service.repo.put("evt.events", "B", original)
-    session = {"session_id": "scope-session", "event_id": "A", "item_id": "i"}
+    session = {"session_id": "scope-session", "model_context_version": 1, "event_id": "A", "item_id": "i"}
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
     sessions = SessionService(service.repo, service.settings, service.dispatch)
     replies = []
@@ -719,12 +719,20 @@ async def test_real_session_tool_refuses_cross_event_mutation(service):
     )
     assert await service.repo.get("evt.events", "B") == original
     stored = await service.repo.get("ops.tool_calls", "scope-session:scope-call")
-    assert stored["result"]["reason"] == "EVENT_SCOPE"
+    assert stored["status"] == "REFUSED"
+    assert stored["result"]["error"]["category"] == "VALIDATION"
     assert stored["returned_at"]
     assert replies
     assert not await service.repo.list("ops.source_escalations")
 
-    await sessions.tool(session, {"id": "scope-read", "name": "get_event", "input": {"event_id": "B"}})
+    from tank.agents.context import ModelContext
+
+    await ModelContext(service.repo, service.settings, session).result(
+        "list_open_events", {"events": [original]}
+    )
+    await sessions.tool(
+        session, {"id": "scope-read", "name": "get_event", "input": {"event": {"statement": "Untouched"}}}
+    )
     assert (await service.repo.get("ops.tool_calls", "scope-session:scope-read"))["result"][
         "event"
     ] == original
@@ -737,7 +745,7 @@ async def test_novel_layer_proposal_survives_real_session_transaction(service):
     extracted = await service.dispatch("record_event", x, {})
     eid = extracted["event_id"]
     proof = extracted["accepted_claims"][0]["claim_id"]
-    session = {"session_id": "novel-session", "event_id": eid, "item_id": "i"}
+    session = {"session_id": "novel-session", "model_context_version": 1, "event_id": eid, "item_id": "i"}
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
     sessions = SessionService(service.repo, service.settings, service.dispatch)
 
@@ -752,7 +760,7 @@ async def test_novel_layer_proposal_survives_real_session_transaction(service):
         {
             "id": "novel-call",
             "name": "set_beneficiaries",
-            "input": {"event_id": eid, "edges": [{"layer": "NOVEL_LAYER", "evidence": [proof]}]},
+            "input": {"edges": [{"layer": "NOVEL_LAYER", "evidence": [{"quote": "Product announced"}]}]},
         },
     )
     ledger = await service.repo.get("ops.tool_calls", "novel-session:novel-call")
@@ -1791,10 +1799,16 @@ async def test_other_tank_item_quote_read_through_real_session_is_admissible(ser
             "source_id": "S01",
             "source_class": "PRIMARY",
             "text": "Fee switch approved.",
+            "url": "https://example.org/fee-switch",
             "observed_at": iso(),
         },
     )
-    session = {"session_id": "item-proof-session", "event_id": None, "item_id": "i"}
+    session = {
+        "session_id": "item-proof-session",
+        "model_context_version": 1,
+        "event_id": None,
+        "item_id": "i",
+    }
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
     sessions = SessionService(service.repo, service.settings, service.dispatch)
 
@@ -1805,9 +1819,19 @@ async def test_other_tank_item_quote_read_through_real_session_is_admissible(ser
 
     sessions.request = request
     await sessions.tool(
-        session, {"id": "read-other", "name": "get_item", "input": {"item_id": "other-primary"}}
+        session, {"id": "search-other", "name": "search_tank_items", "input": {"query": "Fee switch"}}
+    )
+    await sessions.tool(
+        session,
+        {
+            "id": "read-other",
+            "name": "get_item",
+            "input": {"document": {"url": "https://example.org/fee-switch"}},
+        },
     )
     x["claims"][0].update(quote="Fee switch approved.", state_claim="APPROVED")
+    x.pop("item_id")
+    x["tokens"] = ["World (WLD)"]
     await sessions.tool(session, {"id": "extract", "name": "record_event", "input": x})
     result = (await service.repo.get("ops.tool_calls", "item-proof-session:extract"))["result"]
     assert result["accepted_claims"][0]["evidence"] == [{"item_id": "i", "quote": "Fee switch approved."}]
@@ -3505,7 +3529,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
             args.update(
                 item_id=item["item_id"],
                 statement=quote,
-                tokens=["world:WLD"],
+                tokens=["World (WLD)"],
                 entities=[{"name": "SEC", "entity_id": "sec", "role": "REGULATOR"}],
                 event_time={"value": stamp, "precision": "EXACT", "quote": quote},
                 public_at={
@@ -3528,6 +3552,9 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
                     "quote": quote,
                 }
             ]
+            args.pop("item_id")
+            for entity in args["entities"]:
+                entity.pop("entity_id", None)
             await native.tool(session, {"id": "native-record", "name": "record_event", "input": args})
             ledger = await repo.get("ops.tool_calls", sid + ":native-record")
             if not resolved_snapshot:
@@ -3537,14 +3564,13 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
                 assert not await repo.list("evt.ems_assessments", filters={"session_id": sid})
             else:
                 assert ledger["status"] == "DONE", ledger
-                eid = ledger["result"]["event_id"]
                 session = await repo.get("ops.agent_sessions", sid)
                 await native.tool(
                     session,
                     {
                         "id": "native-assessment",
                         "name": "set_assessment",
-                        "input": {"event_id": eid, "assessment": unknown_assessment(quote=quote)},
+                        "input": {"assessment": unknown_assessment(quote=quote)},
                     },
                 )
                 assessed = await repo.get("ops.tool_calls", sid + ":native-assessment")
@@ -3689,6 +3715,9 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
         assert len(fetched) == 1
 
         async def tool(call_id, name, args):
+            from model_fixture import model_arguments
+
+            args = await model_arguments(service.repo, service.settings, name, args)
             await resumed.process_event(
                 sid, {"id": call_id, "type": "agent.custom_tool_use", "name": name, "input": args}
             )
@@ -4943,7 +4972,7 @@ def test_schema_refusal_names_allowed_cutoff_precisions():
             / "config/skills/tank-event-analyst/get_market_truth.schema.json"
         ).read_text()
     )
-    args = {"event_id": "e", "tokens": ["T"], "cutoff": "2026-10-20T19:07:00Z"}
+    args = {"tokens": ["T"], "cutoff": "2026-10-20T19:07:00Z"}
     validate_schema(dict(args, cutoff_prec="BUCKET(1m)"), schema)
     validate_schema(dict(args, cutoff_prec="EXACT"), schema)
     with pytest.raises(ValueError) as refused:
@@ -4985,7 +5014,7 @@ def test_publish_card_schema_bounds_agent_text():
             Path(__file__).resolve().parents[1] / "config/skills/tank-event-analyst/publish_card.schema.json"
         ).read_text()
     )
-    ok = {"event_id": "e", "kind": "FULL", "what": "я" * 500, "verdict": "v" * 160, "why": ["w" * 220, "x"]}
+    ok = {"kind": "FULL", "what": "я" * 500, "verdict": "v" * 160, "why": ["w" * 220, "x"]}
     validate_schema(ok, schema)
     with pytest.raises(ValueError, match=r"\$\.verdict: 161 characters, at most 160"):
         validate_schema(dict(ok, verdict="v" * 161), schema)
@@ -5223,9 +5252,7 @@ async def test_named_cutoff_precisions_are_accepted_as_buckets(service, truth_jo
         ).read_text()
     )
     for name in ("SECOND", "MINUTE", "HOUR"):
-        validate_schema(
-            {"event_id": "e", "tokens": ["T"], "cutoff": "2026-10-21T05:05:00Z", "cutoff_prec": name}, schema
-        )
+        validate_schema({"tokens": ["T"], "cutoff": "2026-10-21T05:05:00Z", "cutoff_prec": name}, schema)
     eid = "named-prec"
     await service.repo.put(
         "evt.events", eid, {"event_id": eid, "current_ems_id": "ems", "tokens_mentioned": ["T"]}

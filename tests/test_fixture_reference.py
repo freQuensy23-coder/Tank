@@ -3,6 +3,7 @@ import json
 from datetime import UTC
 
 import pytest
+from model_fixture import audited_result, model_arguments
 
 from tank.replay import ReplayError, digest, load_inputs, original_replay_messages
 from tank.settings import Settings
@@ -917,6 +918,8 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                 yield await queue.get()
 
     async def emit(event):
+        if event.get("type") == "agent.custom_tool_use":
+            event = dict(event, input=await model_arguments(repo, config, event["name"], event["input"]))
         nonlocal seq
         seq += 1
         if event["type"] == "session.status_idle":
@@ -988,8 +991,8 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
             identity = "accepted-" + str(len(accepted))
             accepted.append(identity)
             if event["type"] == "user.message":
-                message = json.loads(event["content"][0]["text"])["message"]
-                item = message["item_id"]
+                assert "item_id" not in json.loads(event["content"][0]["text"])["message"]
+                item = "lead" if not sent else "confirmation"
                 sent.append(item)
                 stage = "get"
                 assert all(
@@ -1015,7 +1018,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
                     return httpx.Response(200, json={"data": [{"id": identity}]})
                 await tool("get_item", {"item_id": item}, identity)
             else:
-                result = json.loads(event["content"][0]["text"])
+                result = await audited_result(repo, event)
                 if stage in {"get", "lookup"}:
                     if stage == "get":
                         assert result["item_id"] == item

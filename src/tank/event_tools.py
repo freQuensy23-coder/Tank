@@ -454,7 +454,15 @@ class EventToolService:
             stored_session = await self.repo.get("ops.agent_sessions", context["session_id"])
             if stored_session:
                 context["event_id"] = stored_session.get("event_id")
-                trigger = stored_session.get("last_payload") or {}
+                active = next(
+                    (
+                        row
+                        for row in stored_session.get("message_log", [])
+                        if row.get("message_id") == stored_session.get("active_message_id")
+                    ),
+                    {},
+                )
+                trigger = active.get("payload") or stored_session.get("last_payload") or {}
                 context["trigger_kind"] = trigger.get("kind")
                 context["trigger_item_id"] = trigger.get("item_id")
         scoped = {
@@ -530,11 +538,7 @@ class EventToolService:
                     "reason": "Noncanonical beneficiary layer requires scout review",
                     "proposal_ids": proposals,
                 }
-        schema_relative = (
-            "skills/"
-            + ("tank-scout-reviewer" if tool == "record_review" else "tank-event-analyst")
-            + f"/{tool}.schema.json"
-        )
+        schema_relative = f"tool_contracts/{tool}.schema.json"
         if self.settings.has_config(schema_relative):
             validate_schema(arguments, self.settings.read_config_json(schema_relative))
         arguments = self.resolve_token_arguments(tool, arguments)

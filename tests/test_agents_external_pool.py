@@ -27,8 +27,12 @@ async def exercise_external_tool_burst(repo, tool):
     entered, posts = set(), []
     sessions = []
     template, _ = await seed(repo)
+    from test_event_tools import complete_event_fixture
+
     for index in range(24):
-        session = dict(template, session_id=f"session-{index}")
+        event_id = f"fixture-event-{index}"
+        await repo.put("evt.events", event_id, complete_event_fixture(event_id))
+        session = dict(template, session_id=f"session-{index}", event_id=event_id)
         await repo.put("ops.agent_sessions", session["session_id"], session)
         sessions.append(session)
 
