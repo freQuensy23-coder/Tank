@@ -1950,3 +1950,39 @@ async def test_paired_size_notice_settles_both_rows_in_one_transaction():
     assert (await repo.get("ops.telegram_messages", f"{USER}:120"))["status"] == "IGNORED"
     assert (await repo.get("ops.telegram_messages", f"{USER}:121"))["status"] == "IGNORED"
     assert [body["text"] for body in telegram.sent].count(PROMPT_TEXT) == 0
+
+
+def test_equality_watches_compare_numeric_text_and_numbers():
+    from tank.scheduler import compare
+
+    breadth = {"kind": "EXACT_STRICT_MAJORITY", "value": "0.6", "strict_majority": True}
+    assert (
+        compare(breadth, "==", 0.6) and not compare(breadth, "!=", 0.6) and compare(breadth, "in", [0.5, 0.6])
+    )
+    assert compare("SELL", "==", "SELL") and not compare(True, "==", 1) and compare("NaN", "!=", "nan")
+
+
+@pytest.mark.asyncio
+async def test_known_oversize_file_in_a_pair_settles_both_messages():
+    from tank.telegram_inbox import TOO_LARGE_TEXT
+
+    repo = MemoryRepository()
+    await seed(repo)
+    comment = message(
+        130,
+        date=1_800_020_000,
+        caption="Файл",
+        document={"file_id": "big", "file_name": "b.zip", "file_size": 25 * 1024 * 1024},
+    )
+    forward = message(
+        131,
+        date=1_800_020_000,
+        text="AAVE exploit card",
+        forward_origin={"type": "user", "sender_user": {"id": BOT}, "date": 1_800_000_000},
+    )
+    telegram = FakeTelegram([{"update_id": 1, "message": comment}, {"update_id": 2, "message": forward}])
+    for step in range(3):
+        await run_inbox(repo, telegram, now=1_800_020_100 + step * 400)
+    assert [body["text"] for body in telegram.sent] == [TOO_LARGE_TEXT]
+    assert (await repo.get("ops.telegram_messages", f"{USER}:130"))["status"] == "IGNORED"
+    assert (await repo.get("ops.telegram_messages", f"{USER}:131"))["status"] == "IGNORED"

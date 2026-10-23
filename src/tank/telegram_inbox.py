@@ -420,7 +420,19 @@ class TelegramInbox:
         text = message.get("text") or message.get("caption") or ""
         attachment = media(message)
         if attachment and attachment["size"] > UPLOAD_LIMIT:
-            await self.notice(row, TOO_LARGE_TEXT, "IGNORED", reason="FILE_TOO_LARGE")
+            if message.get("forward_origin"):
+                partner = await self.pair(row)
+            else:
+                partner = await self.companion(row, forwarded=False)
+                if partner is not None:
+                    back = await self.pair(partner)
+                    partner = (
+                        partner if back is not None and back["message_id"] == row["message_id"] else None
+                    )
+            also = (
+                [(partner, {"reason": "FILE_TOO_LARGE", "paired_with": row["message_id"]})] if partner else []
+            )
+            await self.notice(row, TOO_LARGE_TEXT, "IGNORED", reason="FILE_TOO_LARGE", also=also)
             return
         reply = message.get("reply_to_message") or {}
         age = now - message.get("date", now)

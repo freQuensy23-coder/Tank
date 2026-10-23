@@ -53,6 +53,17 @@ def field(record, path):
     return value
 
 
+def same(actual, target):
+    """Equality that treats numeric text and numbers alike ("0.6" == 0.6) and everything else strictly."""
+    if isinstance(actual, bool) or isinstance(target, bool):
+        return isinstance(actual, bool) and isinstance(target, bool) and actual == target
+    try:
+        a, b = Decimal(str(actual)), Decimal(str(target))
+    except InvalidOperation:
+        return actual == target
+    return a == b if a.is_finite() and b.is_finite() else actual == target
+
+
 def compare(actual, op, target):
     if actual is None:
         return False
@@ -71,11 +82,11 @@ def compare(actual, op, target):
             return False
         return {">": a > b, ">=": a >= b, "<": a < b, "<=": a <= b}[op]
     if op == "==":
-        return actual == target
+        return same(actual, target)
     if op == "!=":
-        return actual != target
+        return not same(actual, target)
     if op == "in":
-        return actual in target
+        return any(same(actual, option) for option in target)
     raise ValueError(f"Unsupported watch operator: {op}")
 
 
