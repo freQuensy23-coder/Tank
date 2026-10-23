@@ -73,6 +73,7 @@ async def test_patched_actual_tool_uses_host_bound_item(tmp_path):
     )
     session = {
         "session_id": "s",
+        "model_context_version": 1,
         "item_id": "real-item",
         "config_version": "config",
         "code_version": "code",
