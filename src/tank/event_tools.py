@@ -585,6 +585,7 @@ class EventToolService:
                 await self.scheduler.ensure_reactions(await self.require("evt.events", event_id))
             return fit_result(result) if tool in READ_TOOLS else result
         result = await getattr(self, tool)(arguments, ctx)
+        await tool_progress(self.repo, self.settings, tool, arguments, ctx, result)
         return fit_result(result) if tool in READ_TOOLS else result
 
     async def rows(self, table, event_id=None, *, filters=None):
@@ -1204,10 +1205,11 @@ class EventToolService:
             raise ValueError("certainty and reason required")
         if not x["is_event"]:
             item["extraction_status"] = "SKIPPED"
-            item["extraction_reason"] = x["certainty_reason"]
+            item["extraction_decision"] = "NO_EVENT"
+            item["extraction_reason"] = x.get("no_event_reason") or ""
             await self.repo.put("ingest.source_items", item["item_id"], item)
             await item_progress(
-                self.repo, self.settings, item["item_id"], "AGENT_REJECTED", x["certainty_reason"]
+                self.repo, self.settings, item["item_id"], "AGENT_REJECTED", item["extraction_reason"]
             )
             return {"is_event": False}
         eid = new_id("evt")

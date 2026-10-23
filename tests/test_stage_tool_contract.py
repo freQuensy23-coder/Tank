@@ -45,3 +45,24 @@ def test_stage_claim_contract_is_closed_synced_and_preserves_unknown(name):
         validate_schema({**claim, "state_claim": stage}, claim_schema)
     with pytest.raises(ValueError):
         validate_schema({**claim, "state_claim": "ANNOUNCEMENT_MEANS_LIVE"}, claim_schema)
+
+
+@pytest.mark.parametrize("reason", [None, "", "   "])
+@pytest.mark.parametrize("public", [True, False])
+def test_rejection_contract_requires_a_concrete_reason(reason, public):
+    from test_event_tools import extraction
+
+    directory = DIRECTORY if public else DIRECTORY.parents[1] / "tool_contracts"
+    schema = json.loads((directory / "record_event.schema.json").read_text())
+    value = extraction()
+    if public:
+        value.pop("item_id")
+        value["tokens"] = ["World (WLD)"]
+    validate_schema(value, schema)
+    value["is_event"] = False
+    if reason is not None:
+        value["no_event_reason"] = reason
+    with pytest.raises(ValueError):
+        validate_schema(value, schema)
+    value["no_event_reason"] = "Мнение без нового фактического утверждения"
+    validate_schema(value, schema)

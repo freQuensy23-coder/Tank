@@ -47,10 +47,8 @@ class SourceService:
             verify=tls_context(),
         )
         self.owns_http = http is None
-        self.xsensor = XSensor(settings, shared_browser=bool(getattr(settings, "x_enabled", False)))
-        self.browser = BrowserReader(
-            settings, shared_sensor=self.xsensor if getattr(settings, "x_enabled", False) else None
-        )
+        self.xsensor = XSensor(self.http, getattr(settings, "apify_api_token", None))
+        self.browser = BrowserReader(settings)
         cfg = settings.load_config("sources")
         self.sources = {s["source_id"]: s for s in cfg["sources"]}
         self.source_host_limits = {}
@@ -437,17 +435,6 @@ class SourceService:
     async def _saved_health(self):
         results = []
         for sid, source in self.sources.items():
-            if sid == "S29" and not getattr(self.settings, "x_enabled", True):
-                results.append(
-                    {
-                        "source_id": sid,
-                        "configured": bool(source.get("feeds")),
-                        "states": [],
-                        "status": "DISABLED",
-                        "reason": "X_DISABLED_BY_OPERATOR",
-                    }
-                )
-                continue
             states = [
                 await self.repo.get("ops.source_checkpoints", f"{sid}:{i}")
                 for i, _ in enumerate(source.get("feeds", []))
@@ -467,8 +454,6 @@ class SourceService:
         return results
 
     async def _account_checks(self):
-        if not getattr(self.settings, "x_enabled", True):
-            return [{"source_id": "S29", "status": "DISABLED", "reason": "X_DISABLED_BY_OPERATOR"}]
         results = []
         for handle, account in self.accounts.items():
             try:
@@ -489,7 +474,6 @@ class SourceService:
 
     async def close(self):
         await self.browser.close()
-        await self.xsensor.close()
         if self.owns_http:
             await self.http.aclose()
 
@@ -512,8 +496,6 @@ class SourceService:
 
     async def run(self, stop):
         tasks = [asyncio.create_task(self.poller.run(stop))]
-        if "S29" in self.sources and getattr(self.settings, "x_enabled", True):
-            tasks.append(asyncio.create_task(self.xsensor.run(stop, lambda: self.control_once("S29"))))
         try:
             await asyncio.gather(*tasks)
         finally:

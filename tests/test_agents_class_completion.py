@@ -139,6 +139,7 @@ async def test_legacy_origin_completion_does_not_require_class_or_card(
             else:
                 if case == "SKIPPED":
                     args["is_event"] = False
+                    args["no_event_reason"] = "Opinion without a new factual claim"
                 origin = await emit("record_event", args)
                 eid = origin["result"].get("event_id")
                 if case == "merge":

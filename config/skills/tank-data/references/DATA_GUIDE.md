@@ -658,7 +658,7 @@ Seed for the beneficiary walk (§4.7). An edge supported only by this map starts
 
 Common to all HTTP sources: header `User-Agent: TankV0/1.0 (<operator contact e-mail>)`; conditional GET (`If-None-Match` / `If-Modified-Since`) where the server returns `ETag` / `Last-Modified`; timeout 20 s; 3 retries with 2/4/8 s backoff; escalated interval 15 s (01 FR-D-02). Each payload is stored raw with SHA-256 before parsing; items are deduplicated by the item key in the tables below.
 
-HTML page sources: Tank collects every link on the page that matches the source's article pattern below, resolves it to an absolute URL, and treats each URL not seen before as a new item; the article page is then fetched for its full text. Zero matches on a successful fetch marks the source DEGRADED (layout change). S19 is the only page that needs rendering in headless Chrome, so `tank-xsensor` polls it; all others work from plain HTTP in `tank-ingest`.
+HTML page sources: Tank collects every link on the page that matches the source's article pattern below, resolves it to an absolute URL, and treats each URL not seen before as a new item; the article page is then fetched for its full text. Zero matches on a successful fetch marks the source DEGRADED (layout change). S19 is the only page that needs rendering in headless Chromium; all others work from plain HTTP.
 
 ### 3.1 Regulators and market structure (CORE)
 
@@ -724,11 +724,11 @@ GitHub evidence is SOURCE_SIDE_SUPPORT: it can raise an integration claim to BUI
 
 ### 3.7 X (S29, SECONDARY)
 
-- Account set: the 86 handles in 01 §4.3, held in one private X List "tank-v0" on the operator's X account; the list ID is stored in `sources.yaml`.
-- Reader: the `xsensor` module, Playwright (async API) persistent context with Chromium inside the `tank` container; the profile lives in the volume `tank-browser` and is signed in to X once from the operator's session (a Playwright storage-state file exported on the operator's own computer and supplied as the `.env` variable `X_SESSION`); headless (`--headless=new`). If X blocks headless mode, running it headed under a virtual display (Xvfb) in the same container is the operator's decision. The same browser renders S19.
-- Every 60 s: open `https://x.com/i/lists/{list_id}`, read `article` elements top-down until the last stored status ID; per post store status ID (from the `/status/{id}` link), author handle, text, `time[datetime]`, quoted/reposted status IDs, and the full post URL.
+- Account set: the 86 handles in 01 §4.3, listed as `x_accounts` in `registry.yaml`.
+- Reader: one synchronous run of the Apify actor `fdfsfsdfasfa/tank-x-notifier` (build `direct`) every 120 s, authorized by `APIFY_API_TOKEN`; no X account or session. The actor reads each account's public profile page signed out and returns every visible own post, usually the latest five per account (no reposts, no protected accounts), with the next per-account cursors.
+- Per post: status ID, author handle, text, exact publish time and post URL; the raw evidence is the actor response. The first run for an account only records its cursor, so posts from before Tank watched it are never ingested; later, a post is new when its ID is above the cursor. An account that posted more than its profile shows between runs is reported as a history gap for that pass.
 - Handle check: `tank sources check` calls `https://publish.twitter.com/oembed?url=https://x.com/{handle}` for each handle (follows the redirect to `publish.x.com`; HTTP 200 = exists) and confirms the owner from the profile bio (`https://syndication.twitter.com/srv/timeline-profile/screen-name/{handle}`, rate-limited to a few requests per minute) or from the person's IQ.wiki, Wikidata or GitHub profile; all 86 passed on 16–17 Oct 2026 (e.g. @el33th4xor bio: "Founder and CEO @avalabs"; @vnovakovski: IQ.wiki "founder and CEO of Lighter"; @fleupold_: Devcon speaker page and GitHub bio "Technical lead at CowProtocol"). Organization handles were taken from the project's own website, docs or GitHub organization; people's handles from the official team page, IQ.wiki, Wikidata, GitHub or reputable news. Handles that must not be used: wrong person — @nathanallman (an unrelated account; Ondo's founder Nathan Allman used @nathanlallman and died on 25 May 2026); unconfirmed or squatted — @fleupold (Felix Leupold is @fleupold_), @CoWDAO, @HyperFoundation, @HyperliquidLabs, @worldcoin (re-registered in Mar 2026); HTTP 404 — @aerodromefi, @OndoFinance, @quant_network, @ethena_labs, @eulerlabs. Left out because no official source confirms the owner: @iliensinc (Hyperliquid co-founder), @MathisGD_ (Morpho co-founder), @chef_mochi (PancakeSwap). Left out as dormant or no longer at the project: @nearfoundation, @k06a, @PaoloTasca, @kevinsekniqi, @Tederminant, @John1wu.
-- Terms: automated reading of the X web UI carries terms-of-service risk (recorded in `terms_notes`).
+- Terms: the actor reads the public X web UI, which carries terms-of-service risk, and Apify bills each run (recorded in `terms_notes`).
 
 ### 3.8 News (SECONDARY)
 
@@ -1910,7 +1910,7 @@ This manifest is generated from current `sources.yaml` and takes precedence for 
 | S26 | BNY | 600 | html | GET https://www.bny.com/corporate/global/en/about-us/newsroom.html |
 | S27 | The Clearing House | 600 | html | GET https://www.theclearinghouse.org/About/Media/press-releases |
 | S28 | Anchorage Digital | 600 | html | GET https://www.anchorage.com/insights |
-| S29 | X | 60 | x | GET https://x.com/i/lists/{list_id} |
+| S29 | X | 120 | x | POST https://api.apify.com/v2/actors/rbf5CQKQgKNVl4SfO/run-sync?build=direct&memory=256&timeout=110 |
 | S30 | BBC News | 120 | rss | GET https://feeds.bbci.co.uk/news/business/rss.xml |
 | S30 | BBC News | 300 | rss | GET https://feeds.bbci.co.uk/news/technology/rss.xml |
 | S31 | Bloomberg | 120 | rss | GET https://feeds.bloomberg.com/markets/news.rss |

@@ -1500,6 +1500,14 @@ class Scheduler:
         spending_label = (
             f"known subtotal ${spend}; unknown cost records={unknown}" if unknown else f"${spend}"
         )
+        failed_ops_cards = len(
+            [1 async for _ in self.repo.iter_all("out.ops_cards", filters={"delivery_status": "FAILED"})]
+        )
+        ops_delivery = (
+            f"; Ops: не удалось доставить или обновить {failed_ops_cards} карточек"
+            if failed_ops_cards
+            else ""
+        )
         async with self.repo.transaction():
             await self.repo.put(
                 "out.ops_notices",
@@ -1507,7 +1515,7 @@ class Scheduler:
                 {
                     "notice_id": notice_id,
                     "kind": "HEARTBEAT",
-                    "text": f"Tank 24h: alerts={count}; hot tokens={len(hot_tokens)}; queue lag={lag:.0f}s; analysis backlog queued={backlog['queued']}, running={backlog['running']}; LLM spending={spending_label}",
+                    "text": f"Tank 24h: alerts={count}; hot tokens={len(hot_tokens)}; queue lag={lag:.0f}s; analysis backlog queued={backlog['queued']}, running={backlog['running']}; LLM spending={spending_label}{ops_delivery}",
                     **collection_clock(now).fields("created_at"),
                     "created_by": "scheduler",
                     "analysis_backlog": backlog,
@@ -1927,16 +1935,10 @@ def resolve_backup_reference(directory, reference, *, manifest=None):
 
 
 def protected_evidence_paths(settings):
-    """Credentials and browser state are never ordinary evidence/retention inputs."""
+    """Credentials are never ordinary evidence/retention inputs."""
     from pathlib import Path
 
     paths = {}
-    for field, label in [
-        ("x_profile_dir", "operator browser profile"),
-    ]:
-        value = getattr(settings, field, None)
-        if value is not None:
-            paths[label] = Path(value).resolve()
     auth = getattr(settings, "codex_auth_path", None)
     if auth is not None:
         paths["subscription sign-in directory"] = Path(auth).resolve().parent

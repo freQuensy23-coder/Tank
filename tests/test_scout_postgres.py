@@ -131,6 +131,7 @@ async def seed_event(tools, sessions):
     )
     analyst = {
         "session_id": "ses_analyst",
+        "model_context_version": 1,
         "event_id": None,
         "status": "OPEN",
         "runtime_status": "RUNNING",

@@ -8,6 +8,7 @@ import asyncio
 import json
 import re
 from copy import deepcopy
+from dataclasses import asdict
 from datetime import timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -26,43 +27,90 @@ def count_read(state, name, *, ok, n=1):
 
 
 def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
-    """S14 diff rows against the previous snapshot and the snapshot digest (CPU-bound, runs in a thread)."""
+    """S14 diff against the previous snapshot and the snapshot digest (CPU-bound, runs in a thread).
+
+    Symbols that made the same move in one poll of a venue list form one item: one status
+    transition (a venue-wide delisting reaches routing and the analyst once, not once per pair)
+    or one newly listed base asset. Independent moves stay separate items.
+    """
     if previous is not None and str(feed.get("venue", "")).lower() == "coinbase":
         previous = deepcopy(previous)
         for symbol, old in previous.items():
             if symbol in snapshot and "status_flags" not in old:
                 old["status_flags"] = snapshot[symbol].get("status_flags", {})
-    rows = []
-    if previous is not None:
-        for symbol in sorted(set(snapshot) | set(previous)):
-            if snapshot.get(symbol) != previous.get(symbol):
-                current, old = snapshot.get(symbol), previous.get(symbol)
-                rows.append(
-                    {
-                        "external_id": f"{feed.get('venue')}|{feed.get('market_type')}|{symbol}|{sha256(current)}",
-                        "title": f"{symbol} instrument change",
-                        "text": json.dumps({"before": old, "after": current}, sort_keys=True),
-                        "url": feed["url"],
-                        "published_at": None,
-                        **(
-                            {
-                                "observed_at": pages[found_on[symbol]][1],
-                                "_payload": pages[found_on[symbol]][0],
-                            }
-                            if symbol in found_on
-                            else {
-                                "observed_at": completed_at,
-                                "_payload": b"\n".join(p for p, _ in pages),
-                            }
-                        ),
-                        "change": "REMOVED"
-                        if current is None
-                        else "ADDED"
-                        if old is None
-                        else "STATE_UPDATE",
-                    }
-                )
     digest = sha256(snapshot)
+    if previous is None:
+        return [], digest
+    changed = [
+        (symbol, snapshot.get(symbol), previous.get(symbol))
+        for symbol in sorted(set(snapshot) | set(previous))
+        if snapshot.get(symbol) != previous.get(symbol)
+    ]
+    if not changed:
+        return [], digest
+
+    def kind(current, old):
+        return "REMOVED" if current is None else "ADDED" if old is None else "STATE_UPDATE"
+
+    def status(entry):
+        return (entry or {}).get("status")
+
+    def action(change):
+        _, current, old = change
+        if old is None:
+            return ("ADDED", (current or {}).get("base"))
+        return (kind(current, old), status(old), status(current))
+
+    venue, market_type = feed.get("venue"), feed.get("market_type")
+    groups = {}
+    for change in changed:
+        groups.setdefault(action(change), []).append(change)
+    rows = []
+    for key, group in groups.items():
+        on_pages = {found_on[symbol] for symbol, _, _ in group if symbol in found_on}
+        if len(on_pages) == 1 and all(symbol in found_on for symbol, _, _ in group):
+            payload, observed_at = pages[on_pages.pop()]
+        else:
+            payload, observed_at = b"\n".join(p for p, _ in pages), completed_at
+        row = {
+            "url": feed["url"],
+            "published_at": None,
+            "observed_at": observed_at,
+            "_payload": payload,
+            "change": key[0],
+        }
+        if len(group) == 1:
+            symbol, current, old = group[0]
+            rows.append(
+                {
+                    **row,
+                    "external_id": f"{venue}|{market_type}|{symbol}|{sha256(current)}",
+                    "title": f"{symbol} instrument change",
+                    "text": json.dumps({"before": old, "after": current}, sort_keys=True),
+                }
+            )
+            continue
+        what = (
+            f"{key[1]} instruments ADDED"
+            if key[0] == "ADDED"
+            else f"instruments {key[0]} {key[1]} → {key[2]}"
+        )
+        rows.append(
+            {
+                **row,
+                "external_id": f"{venue}|{market_type}|changes|{sha256(group)}",
+                "title": f"{venue} {market_type}: {len(group)} {what}",
+                "text": json.dumps(
+                    {
+                        "changes": [
+                            {"symbol": symbol, "change": key[0], "before": old, "after": current}
+                            for symbol, current, old in group
+                        ]
+                    },
+                    sort_keys=True,
+                ),
+            }
+        )
     return rows, digest
 
 
@@ -224,21 +272,15 @@ class SourcePoller:
         sid = source["source_id"]
         kind = str(feed.get("kind", feed.get("format", source.get("mode", "rss")))).lower()
         if sid == "S29":
-            rows, _ = await svc.xsensor.posts(
-                source.get("list_id"),
-                state.get("status_id"),
-                known_ids=state.get("recent_status_ids", []),
-                members=set(svc.accounts),
-            )
-            captures = svc.xsensor.pages
-            if not captures:
-                raise ValueError("X browser captured no list page")
+            accounts = [account["handle"].lstrip("@") for account in svc.accounts.values()]
+            result = await svc.xsensor.posts(feed["url"], accounts, state.get("account_cursors", {}))
             state.update(
-                payload_sha256=captures[0]["sha256"],
                 fetched_at=self.stamp(),
-                scan_status=svc.xsensor.scan_status,
+                account_cursors=result.cursors,
+                entry_errors=[asdict(failure) for failure in result.failures],
+                history_gap=result.gaps,
             )
-            return rows, state, kind
+            return result.rows, state, kind
         if sid == "S19":
             payload = await svc.browser.html(feed["url"])
             fetched = dict(state, payload_sha256=sha256(payload), fetched_at=self.stamp())
@@ -480,7 +522,7 @@ class SourcePoller:
         return rows, state
 
     async def acquire(self, source, index, *, due_only=False, escalated=False):
-        svc, sid = self.service, source["source_id"]
+        sid = source["source_id"]
         key, feed = f"{sid}:{index}", self.feed(source, index)
         async with self.lock(self.acquisition_locks, key):
             state = await self.state(key)
@@ -509,6 +551,7 @@ class SourcePoller:
                                 "discovery_checkpoint",
                                 "etag",
                                 "last_modified",
+                                "account_cursors",
                             )
                             if field in acquired
                             and (
@@ -521,16 +564,6 @@ class SourcePoller:
                                 or not acquired.get("entry_errors")
                             )
                         }
-                        if sid == "S29" and rows and svc.xsensor.scan_status != "GAP_LIMIT":
-                            coverage.update(
-                                status_id=rows[0]["external_id"],
-                                recent_status_ids=list(
-                                    dict.fromkeys(
-                                        [r["external_id"] for r in rows]
-                                        + current.get("recent_status_ids", [])
-                                    )
-                                )[:500],
-                            )
                         await self.queue_rows(
                             current,
                             key,
@@ -821,14 +854,6 @@ class SourcePoller:
 
     async def poll_once(self, source_id, *, due_only=False, escalated=False):
         source = self.service.sources[source_id]
-        if source_id == "S29" and not getattr(self.service.settings, "x_enabled", True):
-            return {
-                "source_id": source_id,
-                "items": 0,
-                "status": "DISABLED",
-                "reason": "X_DISABLED_BY_OPERATOR",
-                "errors": [],
-            }
 
         async def one_feed(index):
             acquired = await self.acquire(source, index, due_only=due_only, escalated=escalated)
@@ -902,11 +927,7 @@ class SourcePoller:
                 await asyncio.gather(waiter, return_exceptions=True)
 
     async def run(self, stop):
-        loops = [
-            asyncio.create_task(self.loop(source, stop))
-            for sid, source in self.service.sources.items()
-            if sid != "S29"
-        ]
+        loops = [asyncio.create_task(self.loop(source, stop)) for source in self.service.sources.values()]
         try:
             if loops:
                 await asyncio.gather(*loops)

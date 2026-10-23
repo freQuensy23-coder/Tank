@@ -325,7 +325,37 @@
         "LOW"
       ],
       "description": "Agent-supplied confidence in the event timing: HIGH for an exact primary timestamp, MEDIUM for bucket precision, LOW for collection time only. Optional; omission leaves declared timestamp precision as the timing-confidence basis."
+    },
+    "no_event_reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "When is_event is false, explain in one concrete sentence why this material is not an actionable event. This is the rejection decision, separate from certainty_reason about source reliability.",
+      "pattern": "\\S"
     }
   },
-  "description": "Record this item as an event with an origin observation, or mark is_event false. Supply certainty and its reason, public time and precision, freshness, and atomic claims with verbatim quotes, explicit stages and verified flags. Follow the skill claim rules: you judge source authority, quote support, stage, timing and freshness. Tank stores these semantic fields as supplied; only entity resolution is performed by Tank. Null stages remain valid for non-stage or unknown claims. Deterministic event state transitions and downstream economic rules still apply. When a quote comes from a fetched page or search result, supply claim evidence with that result\u2019s item_id; keep root item_id as the triggering collected item."
+  "description": "Record this item as an event with an origin observation, or mark is_event false. Supply certainty and its reason, public time and precision, freshness, and atomic claims with verbatim quotes, explicit stages and verified flags. Follow the skill claim rules: you judge source authority, quote support, stage, timing and freshness. Tank stores these semantic fields as supplied; only entity resolution is performed by Tank. Null stages remain valid for non-stage or unknown claims. Deterministic event state transitions and downstream economic rules still apply. When a quote comes from a fetched page or search result, supply claim evidence with that result’s item_id; keep root item_id as the triggering collected item.",
+  "anyOf": [
+    {
+      "properties": {
+        "is_event": {
+          "enum": [
+            true
+          ]
+        }
+      }
+    },
+    {
+      "properties": {
+        "is_event": {
+          "enum": [
+            false
+          ]
+        }
+      },
+      "required": [
+        "no_event_reason"
+      ]
+    }
+  ]
 }

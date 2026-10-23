@@ -229,6 +229,7 @@ TABLE_COLUMNS = {
         "model_id": "text",
         "prompt_version": "text",
     },
+    "out.ops_cards": {"item_id": "text", "chat_id": "text", "message_ref": "text"},
     "out.ops_notices": {
         "notice_id": "text",
         "kind": "text",

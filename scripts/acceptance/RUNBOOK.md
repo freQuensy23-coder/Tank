@@ -9,7 +9,7 @@ Paths below use `A=/srv/tank/scripts/acceptance` (after merge to `main`) and `RU
 1. tank-platform has deployed the stack: `docker compose -p tank` with services `postgres`, `clickhouse`, `openma` and `tank` running the pinned image.
 2. `tank doctor` passes inside the `tank` container, including the Telegram token, both chats, the OpenMA agent/environment ids and the OpenRouter key.
 3. The lead has given the go for Telegram delivery and for this run.
-4. For V0-A and V0-H, S29 needs X enabled (`TANK_X_ENABLED=true`, the 86-account list) because it is one of the 34 sources. With X disabled, V0-A cannot pass.
+4. For V0-A and V0-H, S29 reads the 86-account list through the Apify actor, so `APIFY_API_TOKEN` must be set; S29 is one of the 34 sources.
 5. Record the code, config and image tuple at the start, in `$RUN/start.json`: `docker inspect` of the tank and openma images, plus `git -C /srv/tank rev-parse HEAD`.
 
 ## V0-G: end to end, source → Telegram
