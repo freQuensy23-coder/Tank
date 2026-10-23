@@ -11,6 +11,13 @@
         "UPDATE"
       ]
     },
+    "what": {
+      "type": "string",
+      "description": "WHAT exactly happened, in 1\u20133 short plain-language sentences. Explain the concrete change, what the named protocol/product/token does and what it enables for users; unpack jargon. For a token integration, explain the token's purpose and relevant distinctive feature. Ground the explanation in evidence, preserve stage and uncertainty, and state unknowns. Displayed unchanged below the final card headline. At most 500 characters.",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "\\S"
+    },
     "verdict": {
       "type": "string",
       "description": "One neutral factual headline sentence for the canonical card, grounded in the event evidence. Not an action recommendation: actions come from get_decision. At most 160 characters.",
@@ -28,8 +35,9 @@
   },
   "required": [
     "kind",
+    "what",
     "verdict",
     "why"
   ],
-  "description": "Publish the current event using its saved assessment and calculated market evidence. Supply only the card kind, headline and explanatory bullets."
+  "description": "Request publication using the canonical template. Supply a plain-language WHAT explanation, a neutral factual headline verdict and 2\u20133 WHY bullets, following skill wording rules L1\u2013L12. Tank applies lifecycle, alert eligibility and update policy, composes structured values from authoritative MarketTruth/Decision outputs, stores immutable evidence and queues delivery. Tank does not lint or repair prose and does not require a fixed tool-call order. Returns publication status or refusal for the deterministic publication gate. An accepted ordinary UPDATE during cooldown is persisted and queued until delivery_not_before; published=true with delivery_status=QUEUED is not a transport acknowledgment. STALE state-change updates are not published. Delivery sends the accepted immutable payload without a second semantic eligibility judgment."
 }

@@ -16,6 +16,7 @@ from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import ImmutableRecordError, MemoryRepository
 from tank.telegram_inbox import TelegramInbox
+from tank.telegram_rich import rich_message_text
 
 pytestmark = [pytest.mark.integration]
 
@@ -676,11 +677,13 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 )
             decision = await invoke("get_decision", {"event_id": eid, "token": "T"})
             assert decision["action"] == ("START" if complete_market else "WAIT"), decision
+            what = "Binance approved listing T, allowing the exchange to add trading access for this token."
             published = await invoke(
                 "publish_card",
                 {
                     "event_id": eid,
                     "kind": "FULL",
+                    "what": what,
                     "verdict": "The synthetic listing was approved.",
                     "why": ["Primary synthetic evidence records approval.", "Market inputs are unavailable."],
                 },
@@ -689,10 +692,13 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
             alerts = await repo.list("out.alerts", filters={"event_id": eid})
             assert "linter" not in alerts[0]
             frozen = alerts[0]["card_text"]
+            assert frozen.splitlines()[1] == "WHAT: " + what
+            assert alerts[0]["card_struct"]["what"] == what
             if complete_market:
                 assert "EVENT" in frozen and "NATIVE_TOKEN" in frozen
             bundle = await repo.get("out.evidence_bundles", published["evidence_bundle_id"])
             assert bundle["payload"]["source_items"][0]["raw_sha256"] == sha
+            assert bundle["payload"]["what"] == what
             await session.close()
             await repo.close()
 
@@ -706,6 +712,7 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 len(sends) == 1
                 and (await repo.list("out.alerts", filters={"event_id": eid}))[0]["card_text"] == frozen
             )
+            assert rich_message_text(sends[0]["rich_message"]).splitlines()[1] == "WHAT: " + what
             tools = EventToolService(
                 repo,
                 settings,
@@ -771,11 +778,13 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 )
                 exited = await invoke("get_decision", {"event_id": eid, "token": "T"})
                 assert exited["action"] == "EXIT", exited
+                correction_what = "Binance cancelled the listing of T, withdrawing the planned access to trading on its exchange."
                 correction = await invoke(
                     "publish_card",
                     {
                         "event_id": eid,
                         "kind": "UPDATE",
+                        "what": correction_what,
                         "verdict": "The synthetic listing was officially cancelled.",
                         "why": [
                             "Primary synthetic evidence records cancellation.",
@@ -786,6 +795,17 @@ async def test_full_sse_pipeline_postgres(tmp_path, complete_market, monkeypatch
                 assert correction["published"], correction
                 await delivery.deliver({"alert_id": correction["alert_id"], "version": correction["version"]})
                 assert len(sends) == 2 and sends[-1]["reply_parameters"]["message_id"] == 901
+                assert (
+                    rich_message_text(sends[-1]["rich_message"]).splitlines()[1] == "WHAT: " + correction_what
+                )
+                previous = await repo.get(
+                    "out.alerts", published["alert_id"] + ":" + str(published["version"])
+                )
+                assert previous["card_struct"]["what"] == what
+                current = await repo.get(
+                    "out.alerts", correction["alert_id"] + ":" + str(correction["version"])
+                )
+                assert current["card_struct"]["what"] == correction_what
                 calls = await repo.list("ana.calls", filters={"event_id": eid})
                 assert len(calls) == 1 and calls[0]["status"] == "CLOSED"
 
@@ -1086,6 +1106,7 @@ async def test_runtime_autonomous_source_to_telegram(tmp_path, monkeypatch, capl
                         "publish_card",
                         {
                             "kind": "FULL",
+                            "what": "The synthetic listing was approved.",
                             "verdict": "The synthetic listing was approved.",
                             "why": [
                                 "Primary synthetic evidence records approval.",
