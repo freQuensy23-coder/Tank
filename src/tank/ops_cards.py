@@ -356,10 +356,10 @@ def outcome(data):
             "status": "Агент не оставил решения" if missing else "Отклонено агентом",
             "fields": fields,
             "reason": reason_text(reason)
-            if reason
-            else "Причина отказа не записана"
-            if explicit_rejection
-            else "Отсутствует запись события или явного отклонения",
+            if reason and (explicit_rejection or missing)
+            else "Отсутствует запись события или явного отклонения"
+            if missing
+            else "Причина отказа не записана",
         }
     if blocked:
         fields.append(("Alerts", "обновление отклонено" if receipt else "публикация отклонена"))

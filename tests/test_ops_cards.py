@@ -149,6 +149,16 @@ async def test_no_observation_is_missing_agent_decision_not_rejection(settings):
     assert "Отклонено агентом" not in card["text"]
 
 
+async def test_legacy_certainty_reason_is_not_presented_as_a_rejection_explanation(settings):
+    repo = MemoryRepository()
+    item = await source(repo, extraction_status="SKIPPED", extraction_reason="Официальный источник")
+    await item_progress(repo, settings, item["item_id"], "AGENT_REJECTED", "Официальный источник")
+    card = render(await snapshot(repo, item["item_id"]))
+    assert card["code"] == "AGENT_REJECTED"
+    assert "Причина отказа не записана" in card["text"]
+    assert "Официальный источник" not in card["text"]
+
+
 async def test_jev_rejection_shows_score_and_original_threshold(settings):
     repo = MemoryRepository()
     item = await source(
@@ -275,6 +285,7 @@ async def test_burst_is_one_message_and_later_change_edits_it_across_restart(
             assert requests[0][1]["disable_notification"] is True
             item.update(
                 extraction_status="SKIPPED",
+                extraction_decision="NO_EVENT",
                 extraction_reason="Материал повторяет ранее опубликованную новость",
             )
             await repo.put("ingest.source_items", item["item_id"], item)
