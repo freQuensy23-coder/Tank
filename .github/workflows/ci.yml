@@ -18,9 +18,26 @@ defaults:
     shell: bash
 
 jobs:
+  budget:
+    name: CI 4 minute budget
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Enforce the complete MR feedback budget
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/ci/ci_budget.py
+
   lint-python:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 4 || 5 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -42,7 +59,7 @@ jobs:
 
   lint-go:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 4 || 10 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -68,7 +85,7 @@ jobs:
 
   mypy:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 4 || 5 }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -89,7 +106,7 @@ jobs:
 
   image:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 4 || 30 }}
     permissions:
       contents: read
       packages: write
