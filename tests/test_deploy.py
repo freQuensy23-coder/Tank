@@ -125,36 +125,15 @@ def test_config_identity_manifest_matches_runtime_algorithm(tmp_path):
     assert module("prepare_config").prepare_config(config)["git_dirty"] is True
 
 
-def test_network_hba_confines_roles_and_rejects_broad_or_guessed_defaults(tmp_path):
-    helper = module("prepare_network")
-    text = helper.prepare("172.29.0.0/24", "10.21.0.0/24", tmp_path / "hba")
-    assert "host tank,tank_replay tank 172.29.0.0/24 scram-sha-256" in text
-    assert "host tank_replay tank_replay_agent 10.21.0.0/24 scram-sha-256" in text
-    assert "host tank tank_agent 10.21.0.0/24 scram-sha-256" in text
-    assert "172.29.0.19/32" in helper.prepare("172.29.0.0/24", "172.29.0.19/32", tmp_path / "nat-hba")
-    assert "local all postgres peer" in text
-    assert text.endswith("host all all ::/0 reject\n")
-    assert "host all all 0.0.0.0/0 reject" in text
-    for compose, sandbox in [
-        ("0.0.0.0/0", "10.21.0.0/24"),
-        ("172.29.0.1/24", "10.21.0.0/24"),
-        ("8.8.8.0/24", "10.21.0.0/24"),
-        ("172.29.0.0/30", "10.21.0.0/24"),
-    ]:
-        with pytest.raises(ValueError):
-            helper.prepare(compose, sandbox, tmp_path / "bad")
-
-
-def test_bootstrap_hba_denies_all_sandbox_roles_until_actual_source_is_observed(tmp_path):
-    helper = module("prepare_network")
-    text = helper.prepare("172.30.42.0/24", None, tmp_path / "bootstrap", bootstrap_only=True)
-    assert "host tank,tank_replay tank " in text
-    assert "host oma oma " in text
-    assert "host tank tank_agent " not in text
-    assert "host tank_replay tank_replay_agent " not in text
-    assert "host all all 0.0.0.0/0 reject" in text
-    with pytest.raises(ValueError):
-        helper.prepare("172.30.42.0/24", "172.30.42.3/32", tmp_path / "bad", bootstrap_only=True)
+def test_postgres_image_hba_confines_every_role_to_its_compose_address():
+    rules = (ROOT / "deploy/postgres/pg_hba.conf").read_text().splitlines()
+    assert rules[:2] == ["local all postgres peer", "local all all reject"]
+    assert "host tank,tank_replay tank 172.30.60.0/24 scram-sha-256" in rules
+    assert "host oma oma 172.30.60.0/24 scram-sha-256" in rules
+    assert "host tank tank_agent 172.30.60.10/32 scram-sha-256" in rules
+    assert "host tank_replay tank_replay_agent 172.30.60.10/32 scram-sha-256" in rules
+    assert rules[-2:] == ["host all all 0.0.0.0/0 reject", "host all all ::/0 reject"]
+    assert not any(rule.split()[-1] in ("trust", "password", "md5") for rule in rules)
 
 
 @pytest.mark.integration

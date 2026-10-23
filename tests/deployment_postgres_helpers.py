@@ -85,18 +85,15 @@ async def deployment_repository():
         socket = temporary / "socket"
         socket.mkdir()
         socket.chmod(0o777)
-        secret_dir = temporary / "secrets"
-        secret_dir.mkdir()
-        secret_dir.chmod(0o755)
-        for name in (
-            "tank_db_password",
-            "oma_db_password",
-            "tank_agent_db_password",
-            "tank_replay_agent_db_password",
-        ):
-            password = secret_dir / name
-            password.write_text(secrets.token_urlsafe(32))
-            password.chmod(0o444)
+        passwords = {
+            name: secrets.token_urlsafe(32)
+            for name in (
+                "TANK_DB_PASSWORD",
+                "OMA_DB_PASSWORD",
+                "TANK_AGENT_DB_PASSWORD",
+                "TANK_REPLAY_AGENT_DB_PASSWORD",
+            )
+        }
         dsn = make_conninfo(user="postgres", dbname="tank", host=str(socket))
 
         async def allocate():
@@ -116,9 +113,8 @@ async def deployment_repository():
                 "--mount",
                 f"type=bind,src={socket},dst=/socket",
                 "--mount",
-                f"type=bind,src={secret_dir},dst=/run/secrets,readonly",
-                "--mount",
-                f"type=bind,src={ROOT / 'deploy/postgres-init.sh'},dst=/docker-entrypoint-initdb.d/10-tank.sh,readonly",
+                f"type=bind,src={ROOT / 'deploy/postgres/init.sh'},dst=/docker-entrypoint-initdb.d/10-tank.sh,readonly",
+                *(argument for name, value in passwords.items() for argument in ("--env", f"{name}={value}")),
                 "--env",
                 "POSTGRES_HOST_AUTH_METHOD=trust",
                 image_id,
@@ -157,8 +153,8 @@ async def deployment_repository():
                 await _ready(container_id, owner, dsn)
             except Exception as error:
                 logs = await _docker("logs", container_id)
-                for password in secret_dir.iterdir():
-                    logs = logs.replace(password.read_text(), "<disposable-secret>")
+                for password in passwords.values():
+                    logs = logs.replace(password, "<disposable-secret>")
                 raise RuntimeError("Owned deployment PostgreSQL startup failed:\n" + logs[-8000:]) from error
             repo = await PostgresRepository(dsn).open()
             await repo.migrate()
