@@ -230,7 +230,7 @@ async def test_scout_writes_only_proposals_and_its_logs_on_postgres(repo, tmp_pa
 
         before = await snapshot(dsn)
         attempts = [
-            ("publish_card", {"event_id": eid, "kind": "FULL", "verdict": "x", "why": ["y"]}),
+            ("publish_card", {"event_id": eid, "kind": "FULL", "what": "x", "verdict": "x", "why": ["y"]}),
             ("set_assessment", {"event_id": eid, "assessment": {}}),
             ("record_event", {"item_id": "i"}),
             ("get_decision", {"event_id": eid, "token": "world:WLD"}),

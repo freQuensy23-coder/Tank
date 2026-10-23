@@ -241,6 +241,7 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
         {
             "event_id": eid,
             "kind": "FULL",
+            "what": "Access approved",
             "verdict": "Access approved",
             "why": ["Defined access", "Primary event confirmed"],
         },

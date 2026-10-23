@@ -156,6 +156,7 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
                         {
                             "event_id": eid,
                             "kind": "PARTIAL",
+                            "what": "Product announced",
                             "verdict": "Product announced",
                             "why": ["Official primary fact"],
                         },
@@ -181,6 +182,7 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
                         {
                             "event_id": eid,
                             "kind": "FULL",
+                            "what": "Product announced",
                             "verdict": "Product announced",
                             "why": ["Official primary fact", "No credible beneficiary established"],
                         },
@@ -190,7 +192,13 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
                 if case == "STALE_GATE":
                     publication = await emit(
                         "publish_card",
-                        {"event_id": eid, "kind": "FULL", "verdict": "No retained market claim", "why": []},
+                        {
+                            "event_id": eid,
+                            "kind": "FULL",
+                            "what": "No retained market claim",
+                            "verdict": "No retained market claim",
+                            "why": [],
+                        },
                     )
                     assert publication["result"]["publication_receipt"]["reason"] == "STALE"
                     assert publication["result"]["publication_receipt"]["disposition"] == "SUPPRESSED"

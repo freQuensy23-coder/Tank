@@ -106,7 +106,10 @@ def test_rich_text_reader_handles_nested_blocks_and_formatting():
 @pytest.mark.asyncio
 async def test_rich_delivery_retries_frozen_payload_and_threads_update_once():
     repo = MemoryRepository()
-    frozen = card_rich_message(f"MAJOR\n{score_summary(assessment())}\nStage: LIVE", assessment())
+    what = "Uniswap now uses external trading venues for swaps in its app & API."
+    frozen = card_rich_message(
+        f"MAJOR\nWHAT: {what}\n{score_summary(assessment())}\nStage: LIVE", assessment()
+    )
     for version in (1, 2):
         await repo.put(
             "out.alerts",
@@ -147,6 +150,9 @@ async def test_rich_delivery_retries_frozen_payload_and_threads_update_once():
         await service.deliver({"alert_id": "a", "version": 2})
     assert len(requests) == 3
     assert all(body["rich_message"] == frozen for _, body in requests)
+    assert all(
+        rich_message_text(body["rich_message"]).splitlines()[1] == "WHAT: " + what for _, body in requests
+    )
     assert requests[-1][1]["reply_parameters"] == {"message_id": 42}
     sent = await repo.list("out.deliveries", filters={"status": "SENT"})
     assert len(sent) == 2

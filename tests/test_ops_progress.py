@@ -143,7 +143,13 @@ async def test_agent_extraction_and_publication_gate_explain_silence(tmp_path, i
         await repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": eid, "class": "LOW"})
         result = await service.dispatch(
             "publish_card",
-            {"event_id": eid, "kind": "FULL", "verdict": "Low significance", "why": ["Below threshold"]},
+            {
+                "event_id": eid,
+                "kind": "FULL",
+                "what": "Low significance",
+                "verdict": "Low significance",
+                "why": ["Below threshold"],
+            },
             {"event_id": eid, "role": "system"},
         )
         assert result["published"] is False and result["reason"] == "BELOW_MAJOR"
@@ -172,7 +178,13 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(tmp_path,
     monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
     result = await service.dispatch(
         "publish_card",
-        {"event_id": eid, "kind": "PARTIAL", "verdict": "A material event", "why": ["Official release"]},
+        {
+            "event_id": eid,
+            "kind": "PARTIAL",
+            "what": "A material event",
+            "verdict": "A material event",
+            "why": ["Official release"],
+        },
         {"event_id": eid, "role": "system"},
     )
     assert "ALERT_QUEUED" in {row["stage"] for row in await notices(repo)}
