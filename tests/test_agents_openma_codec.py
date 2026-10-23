@@ -90,5 +90,6 @@ async def test_patched_actual_tool_uses_host_bound_item(tmp_path):
         await service.tool(session, {**result["realTool"], "input": {}})
     ledger = await repo.get("ops.tool_calls", "s:call_1")
     assert ledger["status"] == "DONE" and ledger["returned_at"]
-    assert ledger["arguments"] == {}
+    assert ledger["model_arguments"] == {}
+    assert ledger["arguments"] == {"item_id": "real-item"}
     assert ledger["result"]["item_id"] == "real-item"

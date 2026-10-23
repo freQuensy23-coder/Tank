@@ -217,7 +217,7 @@ async def test_other_events_watches_and_scout_proposals_use_meaningful_descripti
     repo, settings, session, _ = context
     event = {"event_id": new_id("evt"), "statement": "A separate launch", "public_at": "2026-10-22T10:00:00Z"}
     await repo.put("evt.events", event["event_id"], event)
-    session["event_id"] = event["event_id"]
+    session["event_id"] = new_id("evt")
     boundary = ModelContext(repo, settings, session)
     await boundary.result("list_open_events", {"events": [event]})
     assert await boundary.arguments(
@@ -225,7 +225,7 @@ async def test_other_events_watches_and_scout_proposals_use_meaningful_descripti
     ) == {"event_id": event["event_id"]}
     condition = {
         "cond_id": new_id("cond"),
-        "event_id": event["event_id"],
+        "event_id": session["event_id"],
         "human_text": "Spot coverage becomes complete",
         "expr": {"metric": "dc.class", "op": "==", "value": "HIGH"},
     }
@@ -233,7 +233,7 @@ async def test_other_events_watches_and_scout_proposals_use_meaningful_descripti
     restored = await boundary.arguments(
         "set_watch_condition", {"action": "DISARM", "condition": public["condition"]["condition"]}
     )
-    assert restored == {"action": "DISARM", "event_id": event["event_id"], "cond_id": condition["cond_id"]}
+    assert restored == {"action": "DISARM", "event_id": session["event_id"], "cond_id": condition["cond_id"]}
     proposal = {"prp_id": new_id("prp"), "concept_name": "New fee mechanism"}
     other = {"prp_id": new_id("prp"), "concept_name": "Existing fee mechanism"}
     for row in (proposal, other):
@@ -279,3 +279,43 @@ async def test_active_input_binds_origin_even_when_another_source_is_already_que
     )
     result = await ModelContext(repo, settings, session).arguments("record_event", {"is_event": False})
     assert result["item_id"] == item["item_id"]
+
+
+async def test_identical_claim_wording_can_be_distinguished_by_source_capture(context):
+    repo, settings, session, item = context
+    boundary = ModelContext(repo, settings, session)
+    claims = []
+    for observed in ("2026-10-21T10:00:00Z", "2026-10-22T10:00:00Z"):
+        document = {**item, "item_id": new_id("itm"), "observed_at": observed}
+        await repo.put("ingest.source_items", document["item_id"], document)
+        claims.append(
+            {
+                "claim_id": new_id("clm"),
+                "quote": "Product is live.",
+                "subject": "Project",
+                "predicate": "launched",
+                "object": "Product",
+                "verified": True,
+                "state_claim": "LIVE",
+                "evidence": [{"item_id": document["item_id"], "quote": "Product is live."}],
+            }
+        )
+    exposed = await boundary.result("record_event", {"accepted_claims": claims})
+    with pytest.raises(ValueError, match="ambiguous"):
+        boundary.claim_key({"quote": "Product is live."})
+    for original, public in zip(claims, exposed["accepted_claims"], strict=True):
+        assert_public(public)
+        assert boundary.claim_key(public["claim"]) == original["claim_id"]
+
+
+async def test_document_without_url_or_title_uses_its_text_and_clock(context):
+    repo, settings, session, item = context
+    item.pop("url")
+    item.pop("title")
+    await repo.put("ingest.source_items", item["item_id"], item)
+    boundary = ModelContext(repo, settings, session)
+    public = await boundary.result("get_item", item)
+    assert public["document"] == {"excerpt": item["text"], "observed_at": item["observed_at"]}
+    assert await boundary.arguments("get_item", {"document": public["document"]}) == {
+        "item_id": item["item_id"]
+    }

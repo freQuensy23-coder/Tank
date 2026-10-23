@@ -16,10 +16,29 @@
         },
         "observed_at": {
           "type": "string"
+        },
+        "excerpt": {
+          "type": "string"
         }
       },
-      "required": [
-        "url"
+      "anyOf": [
+        {
+          "required": [
+            "url"
+          ]
+        },
+        {
+          "required": [
+            "title",
+            "observed_at"
+          ]
+        },
+        {
+          "required": [
+            "excerpt",
+            "observed_at"
+          ]
+        }
       ]
     }
   },

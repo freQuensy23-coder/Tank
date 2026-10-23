@@ -1202,6 +1202,7 @@ class SessionService:
         decision_market_refresh_only=False,
         decision_market_refresh_completed=False,
         decision_prepared_condition_ids=None,
+        resolved_arguments=None,
     ):
         if tool in {
             "record_event",
@@ -1250,6 +1251,8 @@ class SessionService:
             context["_decision_prepared_condition_ids"] = decision_prepared_condition_ids
         fresh = await self.repo.get("ops.agent_sessions", session["session_id"]) or session
         arguments = await ModelContext(self.repo, self.settings, fresh).arguments(tool, arguments)
+        if resolved_arguments is not None:
+            resolved_arguments.update(copy.deepcopy(arguments))
         return await self.tool_dispatch(tool, arguments, context)
 
     def tool_failure(self, error):
@@ -1288,6 +1291,7 @@ class SessionService:
         original_hash = sha256(event["input"])
         safe_arguments, credential_reason = redact_tool_arguments(event["input"], self.settings)
         event = {**event, "input": safe_arguments}
+        resolved_arguments = {}
         slow_ready = bool(credential_reason)
         slow_result = None
         slow_error = (
@@ -1307,12 +1311,19 @@ class SessionService:
             try:
                 if event["name"] == "get_decision":
                     prepared = await self.invoke_tool(
-                        session, event["name"], event["input"], call_id, decision_market_refresh_only=True
+                        session,
+                        event["name"],
+                        event["input"],
+                        call_id,
+                        decision_market_refresh_only=True,
+                        resolved_arguments=resolved_arguments,
                     )
                     decision_prepared_condition_ids = prepared.get("prepared_condition_ids")
                     decision_market_refresh_completed = True
                 else:
-                    slow_result = await self.invoke_tool(session, event["name"], event["input"], call_id)
+                    slow_result = await self.invoke_tool(
+                        session, event["name"], event["input"], call_id, resolved_arguments=resolved_arguments
+                    )
             except Exception as error:
                 slow_error, slow_error_status = self.tool_failure(error)
 
@@ -1349,6 +1360,7 @@ class SessionService:
                         ),
                     ),
                     "arguments": event["input"],
+                    "model_arguments": event["input"],
                     "input": event["input"],
                     "input_sha256": original_hash,
                     "arguments_redacted": bool(credential_reason),
@@ -1398,8 +1410,9 @@ class SessionService:
                             else await self.invoke_tool(
                                 session,
                                 stored["tool"],
-                                stored["arguments"],
+                                stored.get("model_arguments", stored["input"]),
                                 call_id,
+                                resolved_arguments=resolved_arguments,
                                 **(
                                     {
                                         "decision_market_refresh_completed": True,
@@ -1436,6 +1449,8 @@ class SessionService:
                         )
                     }
                 )
+                if resolved_arguments:
+                    stored["arguments"] = copy.deepcopy(resolved_arguments)
                 completed = self.clock_timestamp()
                 stored.update(
                     result=result,

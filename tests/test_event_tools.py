@@ -3668,6 +3668,9 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
         assert len(fetched) == 1
 
         async def tool(call_id, name, args):
+            from model_fixture import model_arguments
+
+            args = await model_arguments(service.repo, service.settings, name, args)
             await resumed.process_event(
                 sid, {"id": call_id, "type": "agent.custom_tool_use", "name": name, "input": args}
             )

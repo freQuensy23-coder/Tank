@@ -119,7 +119,10 @@ def reject_private_input(value):
 
 
 def document_reference(row):
-    return {key: row[key] for key in ("url", "title", "observed_at") if row.get(key)}
+    description = {key: row[key] for key in ("url", "title", "observed_at") if row.get(key)}
+    if not row.get("url") and not row.get("title") and row.get("text"):
+        description["excerpt"] = str(row["text"])[:200]
+    return description
 
 
 def event_reference(row):
@@ -189,6 +192,22 @@ class ModelContext:
                     catalog.setdefault(kind, {}).update(values)
                 await self.repo.put("ops.agent_sessions", sid, stored)
 
+    async def describe_claim(self, row):
+        description = claim_reference(row)
+        sources = []
+        for entry in row.get("evidence") or []:
+            if isinstance(entry, dict) and entry.get("item_id"):
+                source = await self.reference("documents", entry["item_id"])
+                if source and source not in sources:
+                    sources.append(source)
+        if sources:
+            description["sources"] = sources
+        if "verified" in row:
+            description["verified"] = row["verified"]
+        if row.get("state_claim"):
+            description["stage"] = row["state_claim"]
+        return description
+
     async def reference(self, kind, key):
         if key in self.catalog.get(kind, {}):
             return self.catalog[kind][key]
@@ -204,7 +223,7 @@ class ModelContext:
         }[kind]
         row = await self.repo.get(table, key) if key else None
         if row:
-            description = describe(row)
+            description = await self.describe_claim(row) if kind == "claims" else describe(row)
             self.remember(kind, key, description)
             return description
         return None
@@ -222,7 +241,7 @@ class ModelContext:
             if value in self.sources:
                 return self.source_name(value)
             for kind in ("claims", "documents", "events", "conditions", "proposals"):
-                if value in self.catalog.get(kind, {}):
+                if OPAQUE.fullmatch(value) and value in self.catalog.get(kind, {}):
                     return clean_value(self.catalog[kind][value])
             return clean_text(value)
         if not isinstance(value, dict):
@@ -241,7 +260,7 @@ class ModelContext:
             ("proposals", "prp_id", lambda r: {"subject": r.get("concept_name")}, "proposal"),
         ):
             if value.get(field):
-                description = describe(value)
+                description = await self.describe_claim(value) if kind == "claims" else describe(value)
                 if not any(description.values()):
                     description = await self.reference(kind, value[field])
                 if description:
@@ -251,6 +270,12 @@ class ModelContext:
         for key, item in value.items():
             if key == "token_id" and item:
                 result["token"] = self.token_name(item)
+            elif key == "token_ids" and item:
+                result["tokens"] = [self.token_name(v) for v in item]
+            elif key == "instrument_ids" and item:
+                result["instruments"] = [self.instrument_name(v) for v in item]
+            elif key == "entity_ids" and item:
+                result["entities"] = [self.entity_name(v) for v in item]
             elif key == "entity_id" and item:
                 result["entity"] = self.entity_name(item)
             elif key == "instrument_id" and item:
@@ -280,7 +305,13 @@ class ModelContext:
                         refs.append(await self.project(entry))
                 result[key] = refs
             elif not private_field(key):
-                named = self.token_name(key) if key in self.tokens else key
+                named = (
+                    self.token_name(key)
+                    if key in self.tokens
+                    else self.instrument_name(key)
+                    if key in self.instruments
+                    else key
+                )
                 if not OPAQUE.search(str(named)):
                     result[named] = await self.project(item)
         return clean_value(result)
@@ -327,7 +358,7 @@ class ModelContext:
         await self.save()
         return clean_value(content)
 
-    def select(self, kind, description):
+    def select(self, kind, description, *, exclude=()):
         if (
             not isinstance(description, dict)
             or not description
@@ -337,7 +368,8 @@ class ModelContext:
         matches = [
             key
             for key, candidate in self.catalog.get(kind, {}).items()
-            if all(candidate.get(k) == v for k, v in description.items() if v is not None)
+            if key not in exclude
+            and all(candidate.get(k) == v for k, v in description.items() if v is not None)
         ]
         if len(matches) != 1:
             raise ValueError(
@@ -366,7 +398,10 @@ class ModelContext:
             r["entity_id"]
             for r in self.registry.get("entities", [])
             if str(name).casefold()
-            in {str(r.get("name", "")).casefold(), *[str(v).casefold() for v in r.get("aliases", [])]}
+            in {
+                str(r.get("name", "")).casefold(),
+                *[str(v).casefold() for v in r.get("aliases", []) + r.get("names", [])],
+            }
         ]
         if len(set(matches)) > 1:
             raise ValueError("Project name is ambiguous")
@@ -440,7 +475,7 @@ class ModelContext:
                 await self.reference(kind, self.session[field])
         if self.session.get("event_id"):
             async for row in self.repo.iter_all("evt.claims", filters={"event_id": self.session["event_id"]}):
-                self.remember("claims", row["claim_id"], claim_reference(row))
+                self.remember("claims", row["claim_id"], await self.describe_claim(row))
         result = self.restore(copy.deepcopy(arguments))
         if tool in SCOPED_TOOLS:
             if not self.session.get("event_id"):
@@ -449,7 +484,13 @@ class ModelContext:
         if tool in {"get_event", "merge_into"}:
             target = arguments.get("event")
             result.pop("event", None)
-            result["event_id"] = self.select("events", target) if target else self.session.get("event_id")
+            result["event_id"] = (
+                self.select(
+                    "events", target, exclude=(self.session.get("event_id"),) if tool == "merge_into" else ()
+                )
+                if target
+                else self.session.get("event_id")
+            )
             if not result["event_id"]:
                 raise ValueError("Select an event by its displayed statement and public time")
         if tool in {"record_event", "add_observation", "get_item"}:

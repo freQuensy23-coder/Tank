@@ -251,7 +251,8 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
                 ledger = await repo.get("ops.tool_calls", "s:decision")
                 assert ledger["status"] == "DONE" and not ledger.get("returned_at")
                 assert native_messages[0]["message"]["kind"] == "CONDITION_FIRED"
-                assert native_messages[0]["message"]["condition"]["cond_id"] == watch["cond_id"]
+                assert "cond_id" not in native_messages[0]["message"]["condition"]
+                assert native_messages[0]["message"]["condition"]["expr"] == watch["expr"]
                 decision = ledger["result"]
                 assert decision["mta_id"] != first["mta_id"]
                 fresh = await repo.get("ana.market_truth", decision["mta_id"])

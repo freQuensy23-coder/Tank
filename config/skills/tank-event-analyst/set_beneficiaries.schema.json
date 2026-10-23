@@ -97,6 +97,52 @@
                 },
                 "object": {
                   "type": "string"
+                },
+                "sources": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "url": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      },
+                      "observed_at": {
+                        "type": "string"
+                      },
+                      "excerpt": {
+                        "type": "string"
+                      }
+                    },
+                    "anyOf": [
+                      {
+                        "required": [
+                          "url"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "title",
+                          "observed_at"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "excerpt",
+                          "observed_at"
+                        ]
+                      }
+                    ]
+                  }
+                },
+                "verified": {
+                  "type": "boolean"
+                },
+                "stage": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -143,6 +189,52 @@
                       "type": "string"
                     },
                     "object": {
+                      "type": "string"
+                    },
+                    "sources": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": {
+                          "url": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "observed_at": {
+                            "type": "string"
+                          },
+                          "excerpt": {
+                            "type": "string"
+                          }
+                        },
+                        "anyOf": [
+                          {
+                            "required": [
+                              "url"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "title",
+                              "observed_at"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "excerpt",
+                              "observed_at"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "verified": {
+                      "type": "boolean"
+                    },
+                    "stage": {
                       "type": "string"
                     }
                   },

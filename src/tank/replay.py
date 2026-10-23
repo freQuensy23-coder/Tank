@@ -1604,10 +1604,11 @@ async def replay_agent_session(
 
         async def invoke_tool(self, session, tool, arguments, call_id, **internal):
             if tool not in {"web_search", "fetch_page"}:
+                resolved = internal.setdefault("resolved_arguments", {})
                 actual = await super().invoke_tool(session, tool, arguments, call_id, **internal)
                 if internal.get("decision_market_refresh_only"):
                     return actual
-                source = corresponding_tool_call(session, tool, arguments)
+                source = corresponding_tool_call(session, tool, resolved or arguments)
                 if source is not None:
                     consumed_source_calls.add(source["key"])
                     before = dict(identity_substitutions)
