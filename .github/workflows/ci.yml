@@ -164,7 +164,7 @@ jobs:
           platforms: linux/amd64
           outputs: type=oci,dest=${{ runner.temp }}/sandbox.tar,name=tank-analysis:server-amd64
           cache-from: type=gha,scope=tank-sandbox
-          cache-to: type=gha,mode=max,scope=tank-sandbox
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=tank-sandbox' || '' }}
       - name: Unpack the sandbox OCI layout
         if: matrix.image == 'tank-openma'
         run: |
@@ -188,7 +188,7 @@ jobs:
             org.tank.content=${{ steps.name.outputs.content }}
           tags: ${{ steps.name.outputs.image }}:${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          cache-to: ${{ github.event_name == 'push' && format('type=gha,mode=max,scope={0}', matrix.image) || '' }}
 
   publish:
     if: github.event_name == 'push'

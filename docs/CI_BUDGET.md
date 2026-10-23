@@ -12,6 +12,8 @@ In MR #22, run [39973960566](https://github.com/freQuensy23-coder/Tank/actions/r
 
 Main now reads S19 through the Franklin Templeton JSON endpoint and removes Playwright, Chromium installation and the browser test from Tank. This workflow preserves that removal: the Python integration jobs have no browser installation, browser smoke test or browser opt-in flag. The OpenMA sandbox browser remains as defined by main. Python is provisioned by setup-uv once instead of also running setup-python.
 
+MR image builds read the existing GitHub Actions layer caches but do not export them. The main push workflow populates the shared caches. Uploading large cached layers is not part of MR feedback: in run 39996451323, OpenMA finished building before the deadline but its cache export was still uploading when the budget expired. All five Dockerfiles are still built and must pass.
+
 Integration runs as three independent shards, each with its own PostgreSQL and ClickHouse services. A stable hash of the repository-relative test file selects its shard. Existing `-n auto --dist loadfile` behavior is preserved inside each shard, so tests that reset shared tables in one file remain together. Production 20-second timeout tests retain their real duration and all four parameter combinations.
 
 Every shard records the entire integration collection before execution and checks its assigned report with zero skips. The final `Python integration complete` job requires all three shards, identical full manifests, and exactly one passing JUnit entry for every collected integration case across the union. A missing shard, omitted case, duplicate case, collection drift, failure, error or skip fails CI. No test is moved out of the MR gate.
