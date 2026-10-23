@@ -14,6 +14,8 @@ import logging
 
 import httpx
 
+from tank.settings import resolve_versions
+
 log = logging.getLogger(__name__)
 
 SKILLS = ("tank-event-analyst", "tank-data", "tank-scout-reviewer")
@@ -45,11 +47,14 @@ RETRY_S = 30
 
 def skill_files(settings, name):
     prefix = f"skills/{name}/"
-    return [
+    files = [
         (path[len(prefix) :], settings.read_config_bytes(path))
         for path in sorted(settings._config_snapshot or {})
         if path.startswith(prefix)
     ]
+    if not files:
+        raise ValueError(f"Skill {name} has no files in the configuration snapshot")
+    return files
 
 
 def skill_digest(settings, name):
@@ -153,6 +158,8 @@ def registered_skills(agents):
 
 async def sync(settings, client):
     """One pass; returns what changed. Raises on an unreachable or refusing OpenMA."""
+    if settings._config_snapshot is None:
+        settings = resolve_versions(settings)
     config = settings.load_config("openma")
     client.headers.update({"anthropic-beta": BETA, "x-api-key": settings.openma_api_key or ""})
     report = {"skills": {}, "agents": {}, "environments": {}}
