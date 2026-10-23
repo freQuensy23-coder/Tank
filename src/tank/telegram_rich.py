@@ -62,7 +62,10 @@ def rich_message_text(message):
 
 def message_text(message):
     return (
-        message.get("text") or message.get("caption") or rich_message_text(message.get("rich_message") or {})
+        rich_message_text(message.get("rich_message") or {})
+        or message.get("text")
+        or message.get("caption")
+        or ""
     )
 
 
@@ -80,7 +83,12 @@ def score_summary(assessment):
 
 
 def score_table(assessment):
-    cells = [[{"text": label, "is_header": True} for label in ("Dimension", "Score / 10", "Reason")]]
+    cells = [
+        [
+            {"text": label, "is_header": True, "align": "left", "valign": "top"}
+            for label in ("Dimension", "Score / 10", "Reason")
+        ]
+    ]
     for label, key in SCORE_DIMENSIONS:
         dimension = (assessment.get("dims") or {}).get(key) or {}
         value = dimension.get("value")
@@ -90,9 +98,9 @@ def score_table(assessment):
         )
         cells.append(
             [
-                {"text": label},
-                {"text": "Not assessed" if value is None else str(value), "align": "center"},
-                {"text": reason},
+                {"text": label, "align": "left", "valign": "top"},
+                {"text": "Not assessed" if value is None else str(value), "align": "center", "valign": "top"},
+                {"text": reason, "align": "left", "valign": "top"},
             ]
         )
     return {

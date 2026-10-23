@@ -36,6 +36,11 @@ def test_native_table_preserves_zero_unknown_and_explanations_as_literal_text():
     assert table["type"] == "table"
     assert table["is_compact"] and table["is_bordered"] and table["is_striped"]
     assert len(table["cells"]) == 8
+    assert all(
+        cell["align"] in {"left", "center", "right"} and cell["valign"] == "top"
+        for row in table["cells"]
+        for cell in row
+    )
     assert [cell["text"] for cell in table["cells"][0]] == ["Dimension", "Score / 10", "Reason"]
     assert table["cells"][1][2]["text"] == markup
     assert table["cells"][2][1]["text"] == "Not assessed"
@@ -89,6 +94,7 @@ def test_rich_text_reader_handles_nested_blocks_and_formatting():
         }
     }
     text = message_text(message)
+    assert message_text({**message, "text": "fallback summary"}) == text
     assert text.startswith("UNI\nDetails\nValue 8/10🦄")
     assert "Distribution expansion | 0 | No new access." in text
     assert text.endswith("1. Item")
