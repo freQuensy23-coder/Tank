@@ -190,21 +190,21 @@ func write(t *testing.T, dir, name, content string) {
 }
 
 func TestSettingsFromEnvironmentAndSecret(t *testing.T) {
-	dir, secrets := t.TempDir(), t.TempDir()
+	dir := t.TempDir()
 	write(t, dir, "registry.yaml", "tokens: []\n")
 	t.Setenv("TANK_CONFIG_DIR", dir)
-	t.Setenv("TANK_SECRETS_DIR", secrets)
 	t.Setenv("TANK_DATABASE_URL", "")
 	t.Setenv("TANK_CAPTURE_MODE", "")
 	t.Setenv("TANK_CAPTURE_HEALTH_ADDR", "")
+	t.Setenv("TANK_DB_PASSWORD", "")
 	if _, err := LoadSettings(); err == nil {
-		t.Fatal("no URL and no secret must fail")
+		t.Fatal("no URL and no password must fail")
 	}
-	write(t, secrets, "tank_db_password", "  \n")
+	t.Setenv("TANK_DB_PASSWORD", "  \n")
 	if _, err := LoadSettings(); err == nil || !strings.Contains(err.Error(), "empty") {
-		t.Fatalf("an empty secret must fail: %v", err)
+		t.Fatalf("an empty password must fail: %v", err)
 	}
-	write(t, secrets, "tank_db_password", "p@ss:w/rd +%é~_.-\n")
+	t.Setenv("TANK_DB_PASSWORD", "p@ss:w/rd +%é~_.-\n")
 	s, err := LoadSettings()
 	if err != nil {
 		t.Fatal(err)

@@ -1,6 +1,0 @@
-.git
-bin
-testdata
-**/testdata
-**/*_test.go
-README.md
