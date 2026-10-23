@@ -2012,3 +2012,39 @@ async def test_connection_failure_before_sending_keeps_the_notice_retryable():
             await inbox.sweep(now=1_800_021_100 + step * 400)
     assert [body["text"] for body in telegram.sent] == [HINT_TEXT]
     assert (await repo.get("ops.telegram_messages", f"{USER}:140"))["status"] == "IGNORED"
+
+
+@pytest.mark.asyncio
+async def test_unmatched_forward_pair_settles_both_rows_together():
+    repo = MemoryRepository()
+    await seed(repo)
+    comment = message(150, date=1_800_022_000, text="Что это?")
+    forward = message(
+        151,
+        date=1_800_022_000,
+        text="Чужое сообщение",
+        forward_origin={"type": "user", "sender_user": {"id": BOT}, "date": 1_700_000_000},
+    )
+    telegram = FakeTelegram([{"update_id": 1, "message": comment}, {"update_id": 2, "message": forward}])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        await inbox.poll(timeout=0)
+        original = inbox.mark
+        calls = []
+
+        async def failing_second(row, status, **extra):
+            calls.append(row["message_id"])
+            if len(calls) == 2:
+                raise RuntimeError("write lost")
+            await original(row, status, **extra)
+
+        inbox.mark = failing_second
+        await inbox.sweep(now=1_800_022_100)
+        inbox.mark = original
+        first = {n: (await repo.get("ops.telegram_messages", f"{USER}:{n}"))["status"] for n in (150, 151)}
+        for step in range(1, 4):
+            await inbox.sweep(now=1_800_022_100 + step * 400)
+    assert first == {150: "RECEIVED", 151: "RECEIVED"}
+    assert [body["text"] for body in telegram.sent] == [NO_SESSION_TEXT]
+    assert (await repo.get("ops.telegram_messages", f"{USER}:150"))["status"] == "UNMATCHED"
+    assert (await repo.get("ops.telegram_messages", f"{USER}:151"))["status"] == "UNMATCHED"

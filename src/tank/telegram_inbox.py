@@ -455,9 +455,8 @@ class TelegramInbox:
                 return
             target = await self.forwarded_target(message, bot)
             if target is None:
-                await self.notice(row, NO_SESSION_TEXT, "UNMATCHED")
-                if companion:
-                    await self.mark(companion, "PAIRED", paired_with=row["message_id"])
+                also = [(companion, {"paired_with": row["message_id"]})] if companion else []
+                await self.notice(row, NO_SESSION_TEXT, "UNMATCHED", also=also)
                 return
             if companion is None:
                 await self.prompt(row, target)
