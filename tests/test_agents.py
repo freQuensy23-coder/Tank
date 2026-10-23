@@ -7,6 +7,7 @@ import pytest
 
 from tank.agents import ConfigurationError, Pipeline, SessionService
 from tank.storage import MemoryRepository
+from tank.telegram_rich import score_summary
 from tank.util import iso, sha256, utcnow
 
 
@@ -470,7 +471,9 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
     ) as http:
         service = SessionService(repo, opts, tools.dispatch, http=http)
 
-        monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Original product card")
+        monkeypatch.setattr(
+            cards, "compose_card", lambda *a, **k: "Original product card" + "\n" + score_summary(a[1])
+        )
         await service.process_event(
             "ses_1",
             {
@@ -539,7 +542,9 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(monkeypatch,
         )
         decision = (await repo.get("ops.tool_calls", "ses_1:decision_exit"))["result"]
         assert decision["action"] == "EXIT"
-        monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "EXIT: Official cancellation")
+        monkeypatch.setattr(
+            cards, "compose_card", lambda *a, **k: "EXIT: Official cancellation" + "\n" + score_summary(a[1])
+        )
         await service.process_event(
             "ses_1",
             {

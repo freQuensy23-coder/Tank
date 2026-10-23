@@ -20,6 +20,7 @@ from difflib import SequenceMatcher
 import httpx
 
 from tank.analysis.cards import telegram_card_html
+from tank.telegram_rich import message_text, rich_message_text
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import new_id, parse_time, sha256, utcnow
 
@@ -418,7 +419,7 @@ class TelegramInbox:
             await self.mark(row, "IGNORED", reason="UNAUTHORIZED")
             return
         bot = await self.bot()
-        text = message.get("text") or message.get("caption") or ""
+        text = message_text(message)
         attachment = media(message)
         if attachment and attachment["size"] > UPLOAD_LIMIT:
             if message.get("forward_origin"):
@@ -517,7 +518,7 @@ class TelegramInbox:
                 continue
             if bool(body.get("forward_origin")) == forwarded or body.get("reply_to_message"):
                 continue
-            if forwarded and not (body.get("text") or body.get("caption") or media(body)):
+            if forwarded and not (message_text(body) or media(body)):
                 continue
             if abs(body.get("date", 0) - date) <= PAIR_WINDOW_S:
                 candidates.append(other)
@@ -569,7 +570,11 @@ class TelegramInbox:
             "event_id": alert["event_id"],
             "alert_id": alert["alert_id"],
             "version": alert["version"],
-            "text": plain(telegram_card_html(alert["card_text"])) if alert.get("card_text") else None,
+            "text": " ".join(rich_message_text(alert["rich_message"]).split())
+            if alert.get("rich_message")
+            else plain(telegram_card_html(alert["card_text"]))
+            if alert.get("card_text")
+            else None,
         }
 
     async def answer_target(self, delivery):
@@ -610,7 +615,7 @@ class TelegramInbox:
             "session_id": row["session_id"],
             "event_id": row.get("event_id"),
             "question_id": row.get("question_id"),
-            "text": body.get("text") or body.get("caption") or (media(body) or {}).get("filename"),
+            "text": message_text(body) or (media(body) or {}).get("filename"),
         }
 
     async def forwarded_target(self, message, bot):
@@ -627,7 +632,7 @@ class TelegramInbox:
         if date is None:
             return None
         if sender is not None and sender == (message.get("from") or {}).get("id"):
-            text = plain(message.get("text") or message.get("caption") or "")
+            text = plain(message_text(message))
             matches = [
                 row
                 async for row in self.repo.iter_all(
@@ -637,17 +642,13 @@ class TelegramInbox:
                 and row.get("session_id")
                 and row["message_id"] != message["message_id"]
             ]
-            exact = [
-                row
-                for row in matches
-                if plain(row["message"].get("text") or row["message"].get("caption") or "") == text
-            ] or matches
+            exact = [row for row in matches if plain(message_text(row["message"])) == text] or matches
             if len({row["session_id"] for row in exact}) != 1:
                 return None
             return self.message_target(exact[0])
         if sender != bot:
             return None
-        text = plain(message.get("text") or message.get("caption") or "")
+        text = plain(message_text(message))
         start = datetime.fromtimestamp(date - FORWARD_MATCH_S, UTC)
         end = datetime.fromtimestamp(date + FORWARD_MATCH_S, UTC)
         candidates = []
@@ -978,7 +979,7 @@ class TelegramInbox:
                     "session_id": target["session_id"],
                     "event_id": target.get("event_id"),
                     "status": "QUEUED",
-                    "text": message.get("text") or message.get("caption") or "",
+                    "text": message_text(message),
                     "chat_id": row["chat_id"],
                     "user_id": row["user_id"],
                     "reply_to_message_id": row["message_id"],

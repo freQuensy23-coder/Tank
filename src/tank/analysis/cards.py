@@ -8,6 +8,7 @@ from decimal import Decimal
 from urllib.parse import urlsplit
 
 from tank.analysis.decisions import POSITIVE_ACTIONS
+from tank.telegram_rich import CARD_TEXT_LIMIT, score_summary
 from tank.time_precision import bucket_duration, interval_bounds, propagate_timestamp
 from tank.util import parse_time, utcnow
 
@@ -201,7 +202,7 @@ def _percent(value):
 
 def _limits(event):
     config = event.get("thresholds") or {}
-    return int(config.get("card_max_chars", 3500)), int(config.get("update_rate_limit_s", 900))
+    return int(config.get("card_max_chars", CARD_TEXT_LIMIT)), int(config.get("update_rate_limit_s", 900))
 
 
 def _unknown(dc):
@@ -370,26 +371,7 @@ def compose_card(
                 + " — "
                 + str(claim.get("verification_missing") or "n/a (verification gap not supplied)")
             )
-    dims = assessment.get("dims", {})
-    labels = [
-        ("D", "economic_directness"),
-        ("M", "magnitude"),
-        ("P", "permanence"),
-        ("X", "distribution_expansion"),
-        ("F", "mechanical_flows"),
-        ("S", "surprise"),
-        ("I", "implementation"),
-    ]
-    score_parts = []
-    for label, key in labels:
-        dimension = dims.get(key) or {}
-        value = dimension.get("value")
-        reason = (
-            dimension.get("rationale")
-            or str(dimension.get("reason") or "estimate not supplied").replace("_", " ").lower()
-        )
-        score_parts.append(label + str(value) if value is not None else label + " n/a (" + reason + ")")
-    scores = "Scores " + " · ".join(score_parts)
+    scores = score_summary(assessment)
     stage = ("" if event.get("state_verified", event.get("verified")) is True else "unverified ") + _na(
         event.get("event_state", event.get("state"))
     )

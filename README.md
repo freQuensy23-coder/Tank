@@ -1,5 +1,7 @@
 # Tank V0 — Major Event Hunter
 
+The main branch contains the specifications and production code together. CI builds images from main; the manual Deploy workflow deploys a qualified commit from that branch.
+
 Tank collects public information and market data, maintains one OpenMA analysis session per event, computes market assessments and long-position guidance in Python, and delivers evidence-backed decision cards to Telegram. It has no exchange trading credentials or order execution path. The revised deployment uses three Linux Docker Compose services: Tank, OpenMA and PostgreSQL 16. Tank's internal Codex gateway connects OpenMA to the operator's ChatGPT subscription; there are no local token or spending caps.
 
 The implementation follows the three specifications in this directory and recorded operator changes. On 18 October 2026 the operator selected OpenRouter for Jev, using the existing OpenRouter key and plain HTTP with the documented System One endpoint and namespaced `typesafe/jev-1.13` model. Analysis remains on the Codex subscription gateway. Current acceptance evidence and unresolved specification conflicts are tracked in [docs/IMPLEMENTATION_STATUS.md](docs/IMPLEMENTATION_STATUS.md). Operational installation is described in [docs/OPERATIONS.md](docs/OPERATIONS.md).

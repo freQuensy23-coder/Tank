@@ -750,9 +750,9 @@ def test_card_length_diagnostics_preserve_full_preview_and_structured_guidance()
     with pytest.raises(ValueError, match="CARD_LENGTH") as caught:
         render(inputs)
     diagnostic = json.loads(str(caught.value).split(": ", 1)[1])
-    assert diagnostic["max"] == 3500
+    assert diagnostic["max"] == 5000
     assert diagnostic["actual"] == len(diagnostic["preview"])
-    assert diagnostic["excess"] == diagnostic["actual"] - 3500
+    assert diagnostic["excess"] == diagnostic["actual"] - 5000
     assert (
         sum(s["chars"] for s in diagnostic["sections"]) + diagnostic["newline_chars"] == diagnostic["actual"]
     )
