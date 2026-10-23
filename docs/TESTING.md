@@ -79,7 +79,7 @@ Run staged targets serially. The audit configuration uses absolute paths for its
 
 ## Go assets
 
-The active exchange collector is the Go module in capture/ (Go 1.25 or later in that release line). .github/workflows/capture.yml is its authoritative CI: go vet, go test -race with a migrated disposable PostgreSQL 16 database, recorded-frame/REST parity, generated-schema drift checks, and the selected Python reader suites. The ci.yml orchestrator calls capture.yml and test-suite.yml on every pull request and main/prod-main push; the reusable workflows have no duplicate direct triggers. All Python, Node and Go lanes, source lint, format and mypy must pass before either SHA-tagged image is published.
+The active exchange collector is the Go module in capture/ (Go 1.25 or later in that release line). .github/workflows/capture.yml is its authoritative CI: go vet, go test -race with a migrated disposable PostgreSQL 16 database, recorded-frame/REST parity, generated-schema drift checks, and the selected Python reader suites. The ci.yml orchestrator calls capture.yml and test-suite.yml on every pull request and main push; the reusable workflows have no duplicate direct triggers. All Python, Node and Go lanes, source lint, format and mypy must pass before either SHA-tagged image is published.
 
 The Python integration job also prepares Go and an offline module/build cache for the actual parity and PostgreSQL wrapper tests. Before a local full integration run, install the Go version required by capture/go.mod and prepare those caches once:
 
@@ -139,7 +139,7 @@ The cleanup establishes commands and conventions. A green result from the curren
 
 The pinned CI environment uses uv 0.11.7, Python 3.13.13, Node 24.22.0 and Go 1.25.14. Ruff, mypy and test tools are pinned in pyproject.toml and uv.lock; golangci-lint 2.5.0 is verified against its release archive SHA256. The source comment scanner checks Python tokens and Go lexical comments while preserving semantic directives. It excludes immutable history, upstream/vendor trees and retained fixture assets.
 
-Every push to main or prod-main builds and publishes the five images ([DOCKER_BUILDS.md](DOCKER_BUILDS.md)), tagged by the full commit SHA. deploy.yml is workflow_dispatch only, runs only on prod-main and uses the production environment with the secrets PROD_SSH_USER, PROD_SSH_HOST, PROD_SSH_KEY and PROD_SSH_KNOWN_HOSTS. It waits for the commit's CI run, then runs `scripts/deploy/deploy.sh` on the host ([OPERATIONS.md](OPERATIONS.md#deployment)). CI work does not execute deployment.
+Every push to main builds and publishes the five images ([DOCKER_BUILDS.md](DOCKER_BUILDS.md)), tagged by the full commit SHA. deploy.yml is workflow_dispatch only, runs only on main (any other branch, or a commit not on main, fails) and uses the production environment with the secrets PROD_SSH_USER, PROD_SSH_HOST, PROD_SSH_KEY and PROD_SSH_KNOWN_HOSTS. It waits for the commit's CI run, then runs `scripts/deploy/deploy.sh` on the host ([OPERATIONS.md](OPERATIONS.md#deployment)). CI work does not execute deployment.
 
 ## ClickHouse integration contracts
 

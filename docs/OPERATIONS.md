@@ -4,7 +4,7 @@ Production runs five Compose services on openclaw-dp: `tank`, `tank-capture` (ex
 
 ## Deployment
 
-There is one way to deploy: the **Deploy** workflow (`.github/workflows/deploy.yml`), started by hand on `prod-main` with an optional commit SHA (default: the branch head).
+There is one way to deploy: the **Deploy** workflow (`.github/workflows/deploy.yml`), started by hand on `main` with an optional commit SHA of `main` (default: its head). It fails for any other branch or for a commit that is not on `main`.
 
 1. CI (`ci.yml`) has already built and pushed every image of that commit to GHCR as `ghcr.io/frequensy23-coder/tank/<service>:<sha>`: `tank`, `tank-capture`, `tank-openma` (with the sandbox OCI layout baked in), `tank-postgres` and `tank-clickhouse`. The images contain all code, config, migrations, DDL, OpenMA agent definitions, skills and the PostgreSQL HBA rules. Nothing is built, generated or copied on the server.
 2. The workflow waits for that commit's CI run to succeed, copies `compose.yaml` and `scripts/deploy/deploy.sh` to `/srv/tank-deploy/` on the host and runs `deploy.sh <sha>` there.

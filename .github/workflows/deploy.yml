@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       sha:
-        description: Commit to deploy; empty deploys the head of prod-main
+        description: Commit of main to deploy; empty deploys the head of main
         required: false
         type: string
 
@@ -18,11 +18,13 @@ concurrency:
 
 jobs:
   deploy:
-    if: github.ref_name == 'prod-main'
     runs-on: ubuntu-24.04
     environment: production
     timeout-minutes: 30
     steps:
+      - name: Deploy only from main
+        run: |
+          [ "$GITHUB_REF" = refs/heads/main ] || { echo "deploy runs only from main, not $GITHUB_REF"; exit 1; }
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
@@ -32,7 +34,7 @@ jobs:
           INPUT_SHA: ${{ inputs.sha }}
         run: |
           sha=$(git rev-parse --verify "${INPUT_SHA:-HEAD}^{commit}")
-          git merge-base --is-ancestor "$sha" origin/prod-main
+          git merge-base --is-ancestor "$sha" origin/main || { echo "$sha is not a commit of main"; exit 1; }
           git checkout -q "$sha"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
       - name: Wait for the CI images of the commit
