@@ -774,8 +774,6 @@ async def test_backup_excludes_fake_auth_secrets_and_browser_state_in_every_evid
         config_dir=config,
         logs_dir=logs,
         x_profile_dir=profile,
-        x_storage_state_path=storage,
-        secrets_dir=secrets,
         codex_auth_path=auth,
     )
     result = await Scheduler(repo, settings, None, None).maintenance(now, force=True, prune=False)

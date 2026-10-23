@@ -228,7 +228,9 @@ async def test_s19_and_x_share_chromium_with_isolated_storage_and_unchanged_inpu
     ).encode()
     secret.write_bytes(exported)
     secret.chmod(0o400)
-    sensor = XSensor(SimpleNamespace(x_profile_dir=profile, x_storage_state_path=secret), shared_browser=True)
+    sensor = XSensor(
+        SimpleNamespace(x_profile_dir=profile, x_session=secret.read_text()), shared_browser=True
+    )
     renderer = BrowserReader(SimpleNamespace(), shared_sensor=sensor)
     try:
         await renderer.open()
@@ -267,7 +269,7 @@ async def test_invalid_x_input_keeps_shared_public_browser_available(tmp_path):
         pytest.skip("Requires TANK_BROWSER_TESTS=1")
     secret = tmp_path / "invalid-synthetic-session.json"
     secret.write_text('{"cookies": "INVALID_SYNTHETIC_INPUT"}')
-    settings = SimpleNamespace(x_profile_dir=tmp_path / "dedicated-profile", x_storage_state_path=secret)
+    settings = SimpleNamespace(x_profile_dir=tmp_path / "dedicated-profile", x_session=secret.read_text())
     sensor = XSensor(settings, shared_browser=True)
     renderer = BrowserReader(SimpleNamespace(), shared_sensor=sensor)
     try:

@@ -268,7 +268,6 @@ def _synthetic_settings_defaults():
     from tank.settings import Settings
 
     defaults = {
-        "x_storage_state_path": lambda: _OFFLINE_HOME / "FAKE-absent-x-state.json",
         "x_profile_dir": lambda: _OFFLINE_HOME / "FAKE-browser-profile",
     }
     original = {
@@ -306,9 +305,6 @@ def offline_credentials(monkeypatch, tmp_path, _offline_settings_defaults):
     monkeypatch.setattr(sys.modules[__name__], "_OFFLINE_HOME", synthetic_home)
 
     monkeypatch.setattr(DotEnvSettingsSource, "_read_env_files", lambda self: {})
-    empty = tmp_path / "offline-empty-secrets"
-    empty.mkdir()
-    monkeypatch.setenv("TANK_SECRETS_DIR", str(empty))
     docker_endpoint = os.environ.get("OPENMA_SQL_TEST_DOCKER_HOST")
     if docker_endpoint:
         if not docker_endpoint.startswith("unix://"):

@@ -54,7 +54,7 @@ class XSensor:
                 ) from None
 
     async def _bootstrap_storage_state(self, profile):
-        """Seed a persistent profile once from an operator-supplied Docker secret.
+        """Seed a persistent profile once from the operator-supplied X_SESSION storage state.
 
         Never save storage_state(), credentials, or their hashes to ingestion/raw
         data. The nonsecret marker records only that the one-time seed completed.
@@ -62,10 +62,10 @@ class XSensor:
         itself makes no request to X or to any other external service.
         """
         marker = profile / ".tank-x-session-seeded.json"
-        secret = Path(getattr(self.settings, "x_storage_state_path", "/run/secrets/x_session"))
-        if marker.exists() or not secret.exists():
+        session = getattr(self.settings, "x_session", None)
+        if marker.exists() or not session:
             return
-        state = json.loads(secret.read_text())
+        state = json.loads(session)
         if not isinstance(state, dict) or not isinstance(state.get("cookies"), list):
             raise TypeError("Invalid storage state")
 

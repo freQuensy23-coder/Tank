@@ -65,15 +65,24 @@ def serve():
     sys.setswitchinterval(GIL_SWITCH_INTERVAL_S)
 
     async def launch(repo, settings):
+        from tank import clickhouse_market, openma_sync
         from tank.runtime import RuntimeSupervisor
 
+        await repo.migrate()
+        if getattr(repo, "clickhouse", None) is not None:
+            for statement in clickhouse_market.ddl():
+                await repo.clickhouse.execute(statement)
         stop = asyncio.Event()
         reload_requested = asyncio.Event()
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, stop.set)
         loop.add_signal_handler(signal.SIGHUP, reload_requested.set)
-        await RuntimeSupervisor(repo, settings).run(stop, reload_requested)
+        openma = asyncio.create_task(openma_sync.keep_in_sync(settings, stop))
+        try:
+            await RuntimeSupervisor(repo, settings).run(stop, reload_requested)
+        finally:
+            openma.cancel()
         return {"status": "stopped"}
 
     run_db(launch)

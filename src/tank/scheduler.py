@@ -1933,8 +1933,6 @@ def protected_evidence_paths(settings):
     paths = {}
     for field, label in [
         ("x_profile_dir", "operator browser profile"),
-        ("x_storage_state_path", "operator X storage state"),
-        ("secrets_dir", "Docker secrets directory"),
     ]:
         value = getattr(settings, field, None)
         if value is not None:
