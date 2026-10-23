@@ -17,7 +17,7 @@ defaults:
 jobs:
   go:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: ${{ github.event_name == 'pull_request' && 4 || 15 }}
     env:
       CLICKHOUSE_TEST_URL: http://tank_ci:tank-ci-disposable@127.0.0.1:8123
     services:
@@ -83,6 +83,7 @@ jobs:
 
   parity:
     runs-on: ubuntu-24.04
+    timeout-minutes: 4
     services:
       postgres:
         image: postgres:16-bookworm
