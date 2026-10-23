@@ -124,6 +124,13 @@ async def test_a_failed_or_unreadable_run_raises():
         await sensor.posts(URL, ["ethereum"], {"ethereum": "1"})
     with pytest.raises(pydantic.ValidationError):
         await sensor.posts(URL, ["ethereum"], {"ethereum": "1"})
+    degraded = Actor(
+        (201, run([], [account("ethereum")], {"ethereum": "1"}, health="degraded", error="COVERAGE"))
+    )
+    scan = await XSensor(httpx.AsyncClient(transport=httpx.MockTransport(degraded)), "FAKE-token").posts(
+        URL, ["ethereum"], {"ethereum": "1"}
+    )
+    assert scan.failures == [AccountFailure(None, "COVERAGE")]
     with pytest.raises(ValueError, match="APIFY_API_TOKEN"):
         await XSensor(httpx.AsyncClient(), None).posts(URL, ["ethereum"], {})
 

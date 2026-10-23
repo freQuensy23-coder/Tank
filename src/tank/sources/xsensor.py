@@ -62,7 +62,9 @@ class ApifyRun(ApifyModel):
 
 @dataclass(frozen=True)
 class AccountFailure:
-    account: str
+    """A failed account, or the run as a whole when account is None."""
+
+    account: str | None
     reason: str
 
 
@@ -82,7 +84,8 @@ def scan(run: ApifyRun, cursors: Mapping[str, str], raw: bytes) -> Scan:
     The actor returns every visible post each time. An account without a cursor is a
     baseline: its posts are not ingested, so there is no backfill. After that a post
     is new when its ID is above the account's cursor. A failed run raises, so the
-    cursors stay where they were.
+    cursors stay where they were; a degraded run that names no failed account or
+    gap is recorded as a run-level failure, so the pass stays DEGRADED.
     """
     if run.health == "failed":
         raise RuntimeError(f"Apify X run failed: {run.error}")
@@ -91,14 +94,11 @@ def scan(run: ApifyRun, cursors: Mapping[str, str], raw: bytes) -> Scan:
         for post in run.posts
         if post.author.lower() in cursors and int(post.id) > int(cursors[post.author.lower()])
     ]
-    return Scan(
-        rows=rows,
-        cursors={**cursors, **run.next_cursors},
-        failures=[
-            AccountFailure(a.handle, a.error or "FAILED") for a in run.accounts if a.status == "failed"
-        ],
-        gaps=[account.handle for account in run.accounts if account.history_gap],
-    )
+    failures = [AccountFailure(a.handle, a.error or "FAILED") for a in run.accounts if a.status == "failed"]
+    gaps = [account.handle for account in run.accounts if account.history_gap]
+    if run.health == "degraded" and not failures and not gaps:
+        failures.append(AccountFailure(None, run.error or "RUN_DEGRADED"))
+    return Scan(rows=rows, cursors={**cursors, **run.next_cursors}, failures=failures, gaps=gaps)
 
 
 class XSensor:
