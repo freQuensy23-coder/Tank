@@ -49,6 +49,7 @@ class ApifyPost(ApifyModel):
 class ApifyAccount(ApifyModel):
     handle: str
     status: Literal["ok", "failed"]
+    posts: int = 0
     history_gap: bool = Field(default=False, alias="historyGap")
     error: str | None = None
 
@@ -79,14 +80,15 @@ class Scan:
     gaps: list[str]
 
 
-def scan(run: ApifyRun, cursors: Mapping[str, str], raw: bytes) -> Scan:
-    """New posts and next cursors of one actor run.
+def scan(run: ApifyRun, accounts: list[str], cursors: Mapping[str, str], raw: bytes) -> Scan:
+    """New posts and next cursors of one actor run over the requested accounts.
 
     The actor returns every visible post each time. An account without a cursor is a
     baseline: its posts are not ingested, so there is no backfill. After that a post
     is new when its ID is above the account's cursor. A failed run raises, so the
-    cursors stay where they were; a degraded run that names no failed account or
-    gap is recorded as a run-level failure, so the pass stays DEGRADED.
+    cursors stay where they were. Every requested account must come back: one
+    missing from the run, or read with posts but without a next cursor, is a failure.
+    A degraded run that names no failure or gap is recorded as a run-level failure.
     """
     if run.health == "failed":
         raise RuntimeError(f"Apify X run failed: {run.error}")
@@ -96,6 +98,13 @@ def scan(run: ApifyRun, cursors: Mapping[str, str], raw: bytes) -> Scan:
         if post.author.lower() in cursors and int(post.id) > int(cursors[post.author.lower()])
     ]
     failures = [AccountFailure(a.handle, a.error or "FAILED") for a in run.accounts if a.status == "failed"]
+    reported = {account.handle.lower(): account for account in run.accounts}
+    for handle in accounts:
+        account = reported.get(handle.lower())
+        if account is None:
+            failures.append(AccountFailure(handle, "MISSING_FROM_RUN"))
+        elif account.status == "ok" and account.posts and handle.lower() not in run.next_cursors:
+            failures.append(AccountFailure(handle, "NO_CURSOR"))
     gaps = [account.handle for account in run.accounts if account.history_gap]
     if run.health == "degraded" and not failures and not gaps:
         failures.append(AccountFailure(None, run.error or "RUN_DEGRADED"))
@@ -125,4 +134,4 @@ class XSensor:
         except httpx.HTTPError as exc:
             message = redact_text(str(exc), (self.token, repr(self.token)[1:-1]))
             raise RuntimeError(f"Apify X run request failed: {message}") from None
-        return scan(ApifyRun.model_validate_json(response.content), cursors, response.content)
+        return scan(ApifyRun.model_validate_json(response.content), accounts, cursors, response.content)

@@ -131,6 +131,14 @@ async def test_a_failed_or_unreadable_run_raises():
         URL, ["ethereum"], {"ethereum": "1"}
     )
     assert scan.failures == [AccountFailure(None, "COVERAGE")]
+    partial = Actor((201, run([post("5", "kept")], [account("kept")], {})))
+    scan = await XSensor(httpx.AsyncClient(transport=httpx.MockTransport(partial)), "FAKE-token").posts(
+        URL, ["kept", "dropped"], {}
+    )
+    assert scan.failures == [
+        AccountFailure("kept", "NO_CURSOR"),
+        AccountFailure("dropped", "MISSING_FROM_RUN"),
+    ]
     token = "FAKE secret\n"
 
     def illegal_header(request):
