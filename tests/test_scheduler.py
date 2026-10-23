@@ -264,6 +264,9 @@ async def test_relocated_backup_recovers_source_web_replay_config_logs_and_both_
     (config / "sources.yaml").write_text("sources: []")
     logs.mkdir()
     (logs / "openma.log").write_text("permanent session transcript")
+    profile = data / "chrome-profile"
+    profile.mkdir()
+    (profile / "Cookies").write_text("private")
 
     async def fake_dump(*args, **kwargs):
         Path(args[args.index("--file") + 1]).write_bytes(("dump " + kwargs["env"]["PGDATABASE"]).encode())
@@ -283,6 +286,7 @@ async def test_relocated_backup_recovers_source_web_replay_config_logs_and_both_
         data_dir=data,
         config_dir=config,
         logs_dir=logs,
+        x_profile_dir=profile,
         market_retention_days=90,
         load_config=lambda name: {"instruments": []},
     )
@@ -293,6 +297,7 @@ async def test_relocated_backup_recovers_source_web_replay_config_logs_and_both_
     verify_backup(final)
     assert (final / "tank.dump").read_bytes() == b"dump tank"
     assert (final / "oma.dump").read_bytes() == b"dump oma"
+    assert not (final / "data/chrome-profile").exists()
 
     shutil.rmtree(live)
     recovery = tmp_path / "recovery"
@@ -743,6 +748,11 @@ async def test_backup_excludes_fake_auth_secrets_and_browser_state_in_every_evid
     secrets = config / "docker-secrets"
     secrets.mkdir()
     (secrets / "gateway_key").write_text("FAKE_GATEWAY_PRIVATE_KEY")
+    storage = data / "x-storage-state.json"
+    storage.write_text("FAKE_X_PRIVATE_STATE")
+    profile = logs / "browser-profile"
+    profile.mkdir()
+    (profile / "Cookies").write_text("FAKE_X_PRIVATE_COOKIES")
     now = utcnow().replace(hour=8)
 
     stale = target / f".tank-{now.date()}.partial"
@@ -763,6 +773,7 @@ async def test_backup_excludes_fake_auth_secrets_and_browser_state_in_every_evid
         data_dir=data,
         config_dir=config,
         logs_dir=logs,
+        x_profile_dir=profile,
         codex_auth_path=auth,
     )
     result = await Scheduler(repo, settings, None, None).maintenance(now, force=True, prune=False)
@@ -774,7 +785,7 @@ async def test_backup_excludes_fake_auth_secrets_and_browser_state_in_every_evid
     assert not (backup / "config").exists() and not (backup / "logs").exists()
     assert manifest["roots"] == {"bundles": str((data / "bundles").resolve())}
     assert "subscription sign-in directory" in manifest["excluded"]
-    assert all(path.exists() for path in (auth, secrets / "gateway_key"))
+    assert all(path.exists() for path in (auth, storage, profile / "Cookies", secrets / "gateway_key"))
 
 
 def test_existing_backup_with_newly_protected_credential_is_rejected_before_read(monkeypatch, tmp_path):

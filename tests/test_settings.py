@@ -59,7 +59,7 @@ def test_secrets_come_from_the_environment_names_of_the_env_file(monkeypatch):
         "CODEX_GATEWAY_KEY": "FAKE-internal-key",
         "OMA_API_KEY": "FAKE-oma-key",
         "ETHERSCAN_API_KEY": "FAKE-etherscan",
-        "APIFY_API_TOKEN": "FAKE-apify-token",
+        "X_SESSION": '{"cookies": [], "origins": []}',
         "TANK_DB_PASSWORD": "FAKE tank/pass",
         "OMA_DB_PASSWORD": "FAKE-oma-db",
     }
@@ -70,7 +70,7 @@ def test_secrets_come_from_the_environment_names_of_the_env_file(monkeypatch):
     assert settings.codex_gateway_key == "FAKE-internal-key"
     assert settings.openma_api_key == "FAKE-oma-key"
     assert settings.etherscan_api_key == "FAKE-etherscan"
-    assert settings.apify_api_token == "FAKE-apify-token"
+    assert settings.x_session == values["X_SESSION"]
     assert settings.database_url == "postgresql://tank:FAKE%20tank%2Fpass@postgres:5432/tank"
     assert settings.openma_database_url == "postgresql://oma:FAKE-oma-db@postgres:5432/oma"
     assert not any(value in repr(settings) for value in values.values())
@@ -160,14 +160,15 @@ def test_readiness_checks_opencode_key(tmp_path):
 def test_x_disabled_is_explicit_readiness_scope_not_missing_credentials(tmp_path):
     from tank.cli import readiness_checks
 
-    settings = Settings(_env_file=None, x_enabled=False)
+    settings = Settings(_env_file=None, x_enabled=False, x_profile_dir=tmp_path / "absent")
     checks = {row["check"]: row for row in readiness_checks(settings)}
     assert checks["x_disabled_by_operator"] == {
         "check": "x_disabled_by_operator",
         "ok": True,
         "enabled": False,
     }
-    assert "apify_api_token" not in checks
+    assert "s29_list_id" not in checks and "x_profile" not in checks
+    assert settings.x_profile_dir.exists() is False
 
 
 @pytest.mark.parametrize("name", ["TANK_USER_AGENT", "TANK_TELEGRAM_ALERTS_CHAT", "TANK_TELEGRAM_OPS_CHAT"])
@@ -184,14 +185,14 @@ def test_user_agent_and_chats_from_configuration(tmp_path):
     config = tmp_path / "config"
     config.mkdir()
     (config / "delivery.yaml").write_text("alerts_chat_id: '-1001'\nops_chat_id: '-1002'\n")
-    (config / "sources.yaml").write_text("contact_email: ops@example.org\nsources:\n- source_id: S29\n")
-    frozen = resolve_versions(
-        Settings(_env_file=None, config_dir=config, data_dir=tmp_path / "data", apify_api_token="FAKE-apify")
+    (config / "sources.yaml").write_text(
+        "contact_email: ops@example.org\nsources:\n- source_id: S29\n  list_id: '12345'\n"
     )
+    frozen = resolve_versions(Settings(_env_file=None, config_dir=config, data_dir=tmp_path / "data"))
     assert frozen.user_agent == "TankV0/1.0 (ops@example.org)"
     assert (frozen.telegram_alerts_chat, frozen.telegram_ops_chat) == ("-1001", "-1002")
     checks = {row["check"]: row for row in readiness_checks(frozen)}
-    assert checks["user_agent_contact"]["ok"] and checks["apify_api_token"]["ok"]
+    assert checks["user_agent_contact"]["ok"] and checks["s29_list_id"]["ok"]
     assert "x_list_id" not in checks
     legacy = frozen.model_copy(update={"user_agent": "TankV0/1.0 contact=ops@example.org"})
     assert not {row["check"]: row for row in readiness_checks(legacy)}["user_agent_contact"]["ok"]

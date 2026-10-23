@@ -49,7 +49,6 @@ def configure_logging(settings=None) -> None:
             "telegram_token",
             "etherscan_api_key",
             "codex_gateway_key",
-            "apify_api_token",
         ):
             value = getattr(settings, name, None)
             if value:

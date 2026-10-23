@@ -36,7 +36,8 @@ def test_operator_dotenv_is_never_opened(tmp_path, monkeypatch):
 def test_default_secret_and_auth_locations_are_synthetic(tmp_path):
     settings = Settings()
     assert settings.codex_auth_path.is_relative_to(tmp_path)
-    assert settings.apify_api_token is None
+    assert settings.x_profile_dir.is_relative_to(tmp_path)
+    assert settings.x_session is None
     assert settings.tank_db_password is None
     assert settings.telegram_token is None
     assert settings.openma_api_key is None

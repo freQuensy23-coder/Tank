@@ -34,7 +34,8 @@ async def probe_feeds(service, *, include_browser=False):
             if not getattr(service.settings, "x_enabled", True):
                 result.update(status="DISABLED", reason="X_DISABLED_BY_OPERATOR")
             else:
-                result["reason"] = "X runs through a paid Apify actor run; excluded from the HTTP smoke"
+                result["reason"] = "Authenticated private X list excluded from public HTTP smoke"
+            result["url"] = "https://x.com/i/lists/{operator_configured_list_id}"
             result.update(collection_clock().fields("finished_at"))
             return result
         if sid == "S19" and not include_browser:

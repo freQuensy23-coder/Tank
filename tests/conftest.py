@@ -9,6 +9,7 @@ import re
 import socket
 import sys
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -259,8 +260,41 @@ if _ORIGINAL_SENDMSG is not None:
     socket.socket.sendmsg = _sendmsg
 
 
+@contextmanager
+def _synthetic_settings_defaults():
+    """Compile dynamic X defaults once; each test still owns its synthetic home."""
+    from pydantic_core import PydanticUndefined
+
+    from tank.settings import Settings
+
+    defaults = {
+        "x_profile_dir": lambda: _OFFLINE_HOME / "FAKE-browser-profile",
+    }
+    original = {
+        name: (Settings.model_fields[name].default, Settings.model_fields[name].default_factory)
+        for name in defaults
+    }
+    try:
+        for name, factory in defaults.items():
+            Settings.model_fields[name].default = PydanticUndefined
+            Settings.model_fields[name].default_factory = factory
+        Settings.model_rebuild(force=True)
+        yield
+    finally:
+        for name, (default, factory) in original.items():
+            Settings.model_fields[name].default = default
+            Settings.model_fields[name].default_factory = factory
+        Settings.model_rebuild(force=True)
+
+
+@pytest.fixture(scope="session")
+def _offline_settings_defaults():
+    with _synthetic_settings_defaults():
+        yield
+
+
 @pytest.fixture(autouse=True)
-def offline_credentials(monkeypatch, tmp_path):
+def offline_credentials(monkeypatch, tmp_path, _offline_settings_defaults):
     """Synthetic default locations; explicit constructor/fake env values still win."""
     from pydantic_settings.sources import DotEnvSettingsSource
 

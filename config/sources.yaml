@@ -852,28 +852,28 @@ sources:
     unattended acceptance claimed.
 - source_id: S29
   name: X
-  mode: REST
-  interval_s: 120
+  mode: BROWSER
+  interval_s: 60
   feeds:
-  - url: https://api.apify.com/v2/actors/rbf5CQKQgKNVl4SfO/run-sync?build=direct&memory=256&timeout=110
+  - url: https://x.com/i/lists/{list_id}
     kind: x
-    interval_s: 120
+    interval_s: 60
   priority: SECONDARY
-  terms_notes: The Apify actor fdfsfsdfasfa/tank-x-notifier (build direct) reads the public profile
-    pages of the registry x_accounts, usually the latest five own posts each, no reposts. One run per
-    pass; Apify bills compute and storage per run.
+  terms_notes: Read-only public content; honor publisher terms and Retry-After. X
+    automated UI reading carries terms-of-service risk.
   limits:
     rate_per_min: null
     budget_fraction: 0.5
-    unknown_limit_policy: One actor run at a time; a failed run keeps the cursors.
+    unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
+      acceptance.
+  list_id: '2112597716375060985'
   bucket: HIGH_VALUE_SOCIAL
   source_class: SOCIAL_LEAD
-  cost_class: PAID
-  paid_gap_ref: docs/OPERATIONS.md (S29 through the Apify actor and its run cost)
-  auth: API_KEY
+  cost_class: FREE_ACCOUNT
+  auth: BROWSER_SESSION
   adapter_status: PARTIAL
-  adapter_status_basis: Offline parser tests and a live actor run (23 Oct 2026); no unattended acceptance
-    claimed.
+  adapter_status_basis: Offline parser tests and historical public smoke exist; no
+    unattended acceptance claimed.
 - source_id: S30
   name: BBC News
   mode: REST

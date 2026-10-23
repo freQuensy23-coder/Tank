@@ -2,6 +2,8 @@
 
 import asyncio
 import json
+import os
+import time
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +13,8 @@ import pytest
 import yaml
 
 from tank.sources import SourceService, parsers
+from tank.sources.browser import BrowserReader
+from tank.sources.xsensor import XSensor
 from tank.storage import MemoryRepository
 
 
@@ -167,3 +171,120 @@ async def test_poll_and_loop_never_reconstruct_legacy_binance_body_or_metadata(t
         assert not await repo.list("ops.jobs")
     finally:
         await service.close()
+
+
+@pytest.mark.asyncio
+async def test_x_list_comes_only_from_source_config(tmp_path, monkeypatch):
+    source = {
+        "source_id": "S29",
+        "list_id": "configured-list",
+        "feeds": [{"kind": "x", "url": "https://x.com/i/lists/{list_id}"}],
+    }
+    settings = config(tmp_path, [source])
+    settings.x_enabled = True
+    settings.x_list_id = "obsolete-env-override"
+    service = SourceService(MemoryRepository(), settings)
+    calls = []
+
+    async def posts(list_id, checkpoint, **kwargs):
+        calls.append(list_id)
+        service.xsensor.pages = [
+            {"kind": "X_LIST_HTML", "url": "https://x.com/i/lists/1", "sha256": "page-sha"}
+        ]
+        return [], None
+
+    monkeypatch.setattr(service.xsensor, "posts", posts)
+    try:
+        rows, _, _ = await service.poller._fetch_rows(source, source["feeds"][0], "S29:0", {})
+        assert not rows and calls == ["configured-list"]
+    finally:
+        await service.close()
+
+
+@pytest.mark.browser
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_s19_and_x_share_chromium_with_isolated_storage_and_unchanged_input(tmp_path):
+    if os.getenv("TANK_BROWSER_TESTS") != "1":
+        pytest.skip("Requires TANK_BROWSER_TESTS=1")
+    secret = tmp_path / "synthetic-session.json"
+    profile = tmp_path / "dedicated-profile"
+    exported = json.dumps(
+        {
+            "cookies": [
+                {
+                    "name": "auth_token",
+                    "value": "synthetic-auth-only",
+                    "domain": ".x.com",
+                    "path": "/",
+                    "expires": time.time() + 86400,
+                    "secure": True,
+                    "httpOnly": True,
+                    "sameSite": "Lax",
+                }
+            ],
+            "origins": [],
+        }
+    ).encode()
+    secret.write_bytes(exported)
+    secret.chmod(0o400)
+    sensor = XSensor(
+        SimpleNamespace(x_profile_dir=profile, x_session=secret.read_text()), shared_browser=True
+    )
+    renderer = BrowserReader(SimpleNamespace(), shared_sensor=sensor)
+    try:
+        await renderer.open()
+
+        assert not (profile / ".tank-x-session-seeded.json").exists()
+        await sensor.open()
+        assert renderer.browser is sensor.context.browser
+        assert renderer.context is not sensor.context
+        assert await renderer.context.cookies() == []
+        assert any(c["name"] == "auth_token" for c in await sensor.context.cookies())
+        await renderer.context.route(
+            "**/*",
+            lambda route: route.fulfill(
+                status=200,
+                content_type="text/html",
+                body="<article><h1>Public issuer</h1><p>Authored news.</p></article>",
+            ),
+        )
+        assert (
+            parsers.article(await renderer.html("https://public.synthetic.example/release"))["title"]
+            == "Public issuer"
+        )
+        assert secret.read_bytes() == exported and secret.stat().st_mode & 0o777 == 0o400
+        await renderer.close()
+        assert sensor.context.browser.is_connected()
+    finally:
+        await renderer.close()
+        await sensor.close()
+
+
+@pytest.mark.browser
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_invalid_x_input_keeps_shared_public_browser_available(tmp_path):
+    if os.getenv("TANK_BROWSER_TESTS") != "1":
+        pytest.skip("Requires TANK_BROWSER_TESTS=1")
+    secret = tmp_path / "invalid-synthetic-session.json"
+    secret.write_text('{"cookies": "INVALID_SYNTHETIC_INPUT"}')
+    settings = SimpleNamespace(x_profile_dir=tmp_path / "dedicated-profile", x_session=secret.read_text())
+    sensor = XSensor(settings, shared_browser=True)
+    renderer = BrowserReader(SimpleNamespace(), shared_sensor=sensor)
+    try:
+        await renderer.open()
+        browser = renderer.browser
+        with pytest.raises(ValueError, match="invalid, expired, or unreadable"):
+            await sensor.open()
+        assert browser.is_connected() and renderer.browser is sensor.context.browser
+        await renderer.context.route(
+            "**/*",
+            lambda route: route.fulfill(status=200, content_type="text/html", body="<h1>Public page</h1>"),
+        )
+        assert b"Public page" in await renderer.html("https://public.synthetic.example/release")
+        assert secret.read_text() == '{"cookies": "INVALID_SYNTHETIC_INPUT"}'
+        assert not (settings.x_profile_dir / ".tank-x-session-seeded.json").exists()
+    finally:
+        await renderer.close()
+        await sensor.close()

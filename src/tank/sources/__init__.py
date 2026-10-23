@@ -47,8 +47,10 @@ class SourceService:
             verify=tls_context(),
         )
         self.owns_http = http is None
-        self.xsensor = XSensor(self.http, getattr(settings, "apify_api_token", None))
-        self.browser = BrowserReader(settings)
+        self.xsensor = XSensor(settings, shared_browser=bool(getattr(settings, "x_enabled", False)))
+        self.browser = BrowserReader(
+            settings, shared_sensor=self.xsensor if getattr(settings, "x_enabled", False) else None
+        )
         cfg = settings.load_config("sources")
         self.sources = {s["source_id"]: s for s in cfg["sources"]}
         self.source_host_limits = {}
@@ -487,6 +489,7 @@ class SourceService:
 
     async def close(self):
         await self.browser.close()
+        await self.xsensor.close()
         if self.owns_http:
             await self.http.aclose()
 
@@ -509,6 +512,8 @@ class SourceService:
 
     async def run(self, stop):
         tasks = [asyncio.create_task(self.poller.run(stop))]
+        if "S29" in self.sources and getattr(self.settings, "x_enabled", True):
+            tasks.append(asyncio.create_task(self.xsensor.run(stop, lambda: self.control_once("S29"))))
         try:
             await asyncio.gather(*tasks)
         finally:

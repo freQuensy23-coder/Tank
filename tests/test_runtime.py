@@ -92,6 +92,7 @@ def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tm
         (config_dir / (name + ".yaml")).write_text("{}\n")
     settings = Settings(
         config_dir=config_dir,
+        x_profile_dir=tmp_path / "profile",
         openma_api_key="sensitive-secret",
         x_list_id="REPLACE_WITH_LIST",
         user_agent="Tank contact not configured",
@@ -102,7 +103,7 @@ def test_doctor_distinguishes_syntax_from_deployment_and_never_prints_secrets(tm
     assert not by_name["openma_agent_id"] and not by_name["openma_scout_agent_id"]
     assert not by_name["openma_environment_id"] and not by_name["openma_replay_environment_id"]
     assert by_name["openma_api_key"]
-    assert not by_name["user_agent_contact"] and not by_name["apify_api_token"]
+    assert not by_name["user_agent_contact"] and not by_name["x_profile"] and not by_name["s29_list_id"]
     assert "sensitive-secret" not in json.dumps(checks)
 
 
@@ -617,6 +618,7 @@ def test_doctor_only_checks_fake_subscription_auth_presence_and_internal_key(mon
     settings = SimpleNamespace(
         codex_auth_path=auth,
         codex_gateway_key="fake-internal-secret",
+        x_profile_dir=tmp_path / "profile",
         load_config=lambda name: {},
     )
     checks = readiness_checks(settings)

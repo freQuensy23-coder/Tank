@@ -30,8 +30,8 @@ RUN --mount=type=bind,from=browser-installer,target=/opt/tank/venv/lib/python3.1
 COPY --from=dependencies /opt/tank/venv /opt/tank/venv
 COPY pyproject.toml uv.lock ./
 RUN useradd --create-home --uid 1000 tank \
-    && mkdir -p /data/replay/evidence /codex-auth /backup \
-    && chown -R tank:tank /data /codex-auth /backup
+    && mkdir -p /data/replay/evidence /browser /codex-auth /backup \
+    && chown -R tank:tank /data /browser /codex-auth /backup
 COPY src ./src
 RUN --mount=type=cache,id=tank-uv,target=/root/.cache/uv \
     uv sync --frozen --no-dev
@@ -44,6 +44,7 @@ ENV TANK_BUILD_SHA=${GIT_SHA} \
     TANK_CODEX_GATEWAY_HOST=0.0.0.0 \
     TANK_CODEX_GATEWAY_PORT=8790 \
     TANK_CODEX_AUTH_PATH=/codex-auth/auth.json \
+    TANK_X_PROFILE_DIR=/browser \
     TANK_BACKUP_DIR=/backup \
     TANK_CLICKHOUSE_URL=http://tank@clickhouse:8123
 USER tank

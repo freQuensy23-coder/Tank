@@ -430,6 +430,8 @@ def readiness_checks(settings):
     """Report configuration readiness without exposing configuration/secret values."""
     import re
 
+    import yaml
+
     def configured(value):
         return bool(value) and not any(
             word in str(value).upper() for word in ("REPLACE_", "NOT CONFIGURED", "UNVERSIONED")
@@ -474,9 +476,23 @@ def readiness_checks(settings):
     except OSError as exc:
         checks.append({"check": "codex_auth_file_present", "ok": False, "reason": type(exc).__name__})
     if getattr(settings, "x_enabled", True):
-        checks.append(
-            {"check": "apify_api_token", "ok": configured(getattr(settings, "apify_api_token", None))}
-        )
+        try:
+            s29 = next(
+                (
+                    s
+                    for s in settings.load_config("sources").get("sources", [])
+                    if s.get("source_id") == "S29"
+                ),
+                {},
+            )
+            checks.append({"check": "s29_list_id", "ok": configured(s29.get("list_id"))})
+        except (OSError, ValueError, yaml.YAMLError) as exc:
+            checks.append({"check": "s29_list_id", "ok": False, "reason": type(exc).__name__})
+        profile = Path(settings.x_profile_dir)
+        try:
+            checks.append({"check": "x_profile", "ok": profile.is_dir() and any(profile.iterdir())})
+        except OSError as exc:
+            checks.append({"check": "x_profile", "ok": False, "reason": type(exc).__name__})
     else:
         checks.append({"check": "x_disabled_by_operator", "ok": True, "enabled": False})
     user_agent = getattr(settings, "user_agent", "")
