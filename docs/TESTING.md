@@ -139,9 +139,7 @@ The cleanup establishes commands and conventions. A green result from the curren
 
 The pinned CI environment uses uv 0.11.7, Python 3.13.13, Node 24.22.0 and Go 1.25.14. Ruff, mypy and test tools are pinned in pyproject.toml and uv.lock; golangci-lint 2.5.0 is verified against its release archive SHA256. The source comment scanner checks Python tokens and Go lexical comments while preserving semantic directives. It excludes immutable history, upstream/vendor trees and retained fixture assets.
 
-Only successful pushes to main or prod-main publish ghcr.io/<owner>/<repository>/tank and tank-capture, tagged by the full commit SHA and branch. deploy.yml is workflow_dispatch only and uses the production environment. It accepts a full lowercase SHA belonging to the selected main/prod-main branch. Configure PROD_SSH_USER, PROD_SSH_HOST, PROD_SSH_KEY and PROD_SSH_KNOWN_HOSTS as production environment secrets. The production checkout must already be clean and at that exact commit; the workflow never resets or updates it.
-
-The deployment helper sends structured input over SSH stdin and uses the existing production `tank` Compose project with `/srv/tank/compose.yaml`, `/etc/tank/compose.server.yaml`, the retained recovery PostgreSQL resource override, and `/etc/tank/compose.env` for every config/up/ps/rollback command. It verifies the parsed project identity and both image revision labels, updates only the existing Tank and Go capture image tags, and waits for both services. If the update fails, it restores both prior image tags and recreates those two services. CI work does not execute deployment.
+Every push to main or prod-main builds and publishes the five images ([DOCKER_BUILDS.md](DOCKER_BUILDS.md)), tagged by the full commit SHA. deploy.yml is workflow_dispatch only, runs only on prod-main and uses the production environment with the secrets PROD_SSH_HOST (user@host), PROD_SSH_KEY and PROD_SSH_KNOWN_HOSTS. It waits for the commit's CI run, then runs `scripts/deploy/deploy.sh` on the host ([OPERATIONS.md](OPERATIONS.md#deployment)). CI work does not execute deployment.
 
 ## ClickHouse integration contracts
 

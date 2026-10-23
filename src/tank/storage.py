@@ -842,6 +842,8 @@ class PostgresRepository(QueueMixin):
                         await conn.execute(
                             "INSERT INTO ops.schema_migrations(version) VALUES (%s)", (path.name,)
                         )
+            async with _stable_transaction(conn):
+                await conn.execute((Path(__file__).parent / "agent_grants.sql").read_text(), prepare=False)
 
     async def put(self, collection, key, record, *, immutable=False):
         if collection in MARKET_COLUMNS:

@@ -48,7 +48,7 @@ Pytest disables operator dotenv files, credential paths and external Python netw
 | `replay`, `calibration` | Isolated replay and reviewed threshold calibration |
 | `review` | Frozen evidence, horizon outcomes, versioned labels and S1–S9 with explicit coverage |
 
-The service and gateway use one asyncio process. PostgreSQL and OpenMA run beside it in separate containers. CPU-heavy analysis runs outside the ingestion event loop. Module interfaces and ownership are recorded in [docs/IMPLEMENTATION_CONTRACT.md](docs/IMPLEMENTATION_CONTRACT.md). Docker secrets and the subscription sign-in stay outside versioned configuration and evidence artifacts.
+The service and gateway use one asyncio process. tank-capture, PostgreSQL, ClickHouse and OpenMA run beside it in separate containers. CPU-heavy analysis runs outside the ingestion event loop. Module interfaces and ownership are recorded in [docs/IMPLEMENTATION_CONTRACT.md](docs/IMPLEMENTATION_CONTRACT.md). Secrets (the host `.env`) and the subscription sign-in stay outside versioned configuration and evidence artifacts.
 
 ## Operator commands
 

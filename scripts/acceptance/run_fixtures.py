@@ -39,11 +39,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import iso, utcnow, write_json
 
 ROOT = Path("/srv/tank")
+DEPLOYED = Path("/srv/tank-deploy/deployed")
+if DEPLOYED.is_file():
+    os.environ.setdefault("TANK_VERSION", DEPLOYED.read_text().strip())
 COMPOSE = shlex.split(
     os.environ.get(
         "TANK_COMPOSE",
-        "docker compose -p tank --project-directory /srv/tank -f /srv/tank/compose.yaml -f /etc/tank/compose.server.yaml"
-        " -f /srv/tank/docs/verification/server-recovery-bootstrap-2026-10-20/pg.resources.yaml --env-file /etc/tank/compose.env",
+        "docker compose -p tank --project-directory /srv/tank-deploy -f /srv/tank-deploy/compose.yaml",
     )
 )
 
@@ -188,9 +190,9 @@ def run_one(fid, entry, out_dir, timeout):
     packet = json.loads(raw)
     tank = container("tank")
 
-    deployed = sh(COMPOSE + ["exec", "-T", "tank", "cat", "/config/openma.yaml"]).stdout
+    deployed = sh(COMPOSE + ["exec", "-T", "tank", "cat", "/app/config/openma.yaml"]).stdout
     if (config_dir / "openma.yaml").read_text() != deployed:
-        raise SystemExit(f"{fid}: fixture config openma.yaml differs from the deployed /config/openma.yaml")
+        raise SystemExit(f"{fid}: fixture config openma.yaml differs from the deployed /app/config/openma.yaml")
     with tempfile.TemporaryDirectory() as tmp:
         p = Path(tmp) / f"{fid}.json"
         p.write_text(raw)
