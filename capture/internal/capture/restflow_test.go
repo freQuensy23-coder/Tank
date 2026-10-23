@@ -21,10 +21,11 @@ type fakeTrade struct {
 }
 
 type fakeVenue struct {
-	inst      *venue.Instrument
-	trades    []fakeTrade
-	retention time.Time
-	calls     int
+	inst       *venue.Instrument
+	trades     []fakeTrade
+	retention  time.Time
+	calls      int
+	multiplier string
 }
 
 func (f *fakeVenue) raw(t fakeTrade) any {
@@ -126,6 +127,9 @@ func (f *fakeVenue) Trades(_ context.Context, start, end *time.Time, cursor any)
 }
 
 func (f *fakeVenue) Discover(context.Context) (map[string]any, error) {
+	if f.multiplier != "" {
+		return map[string]any{"contract_multiplier": f.multiplier}, nil
+	}
 	return map[string]any{"contract_multiplier": "1"}, nil
 }
 func (f *fakeVenue) Klines(context.Context, *time.Time, *time.Time) ([]any, error) { return nil, nil }
@@ -342,5 +346,30 @@ func TestKrakenQuietWindowProvenByConsecutiveIDs(t *testing.T) {
 	r.repair(r.base, r.base.Add(10*time.Minute))
 	if bars := r.mem.bars(r.inst.ID); len(bars) != 0 {
 		t.Fatalf("a window behind an ID hole proves nothing: %d bars", len(bars))
+	}
+}
+
+func TestSweepRepairsOKXSwapWithDiscoveredContractMultiplier(t *testing.T) {
+	r := newRESTRig(t, "okx")
+	swap := &venue.Instrument{ID: "okx:perp_linear:TEST-USD-SWAP", TokenID: r.inst.TokenID, Venue: "okx", MarketType: "PERP_LINEAR", Symbol: "TEST-USD-SWAP", QuoteAsset: "USD", Active: true}
+	r.inst, r.v.inst, r.v.multiplier = swap, swap, "0.01"
+	r.s = New(Options{Instruments: map[string]*venue.Instrument{swap.ID: swap}, Order: []string{swap.ID}}, r.mem, r.mem, fakeVenues{r.v}, nil, r.clock)
+	r.s.ctx = context.Background()
+	r.prints(1, r.base.Add(-2*time.Minute), r.base.Add(12*time.Minute), time.Second)
+	r.s.repairUnrepaired(context.Background(), swap.TokenID, r.base, r.base.Add(10*time.Minute), true)
+	if err := r.mem.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if gaps := r.gaps("PRE_EVENT_FLOW"); len(gaps) != 0 {
+		t.Fatalf("the sweep normalizes swap prints with the discovered ctVal: %v", gaps)
+	}
+	for m := 0; m < 10; m++ {
+		row := r.bar(minuteOf(r.base, m))
+		if row == nil || row["complete"] != true || row["n_buy"].(int64)+row["n_sell"].(int64) != 60 {
+			t.Fatalf("swap minute %d rebuilt complete from 60 prints: %v", m, row)
+		}
+		if qty := text(row["buy_qty"]); qty != "0.80" {
+			t.Fatalf("swap minute %d sizes are contracts times ctVal: buy_qty %s", m, qty)
+		}
 	}
 }
