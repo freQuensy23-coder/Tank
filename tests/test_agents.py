@@ -42,6 +42,7 @@ def settings(**overrides):
 async def seed_session(repo, **changes):
     row = {
         "session_id": "ses_1",
+        "model_context_version": 1,
         "event_id": "evt_1",
         "item_id": "itm_1",
         "status": "OPEN",
@@ -349,7 +350,7 @@ async def test_new_scout_session_wire_protocol_and_isolation():
     assert posted[0] == {
         "agent": "agt_s",
         "environment_id": "env_1",
-        "metadata": {"tank_identity": sha256({"identity": "p", "scout": True})},
+        "metadata": {"tank_identity": sha256({"identity": "p", "scout": True, "model_context_version": 1})},
     }
     content = json.loads(posted[1]["events"][0]["content"][0]["text"])
     assert content["proposal"]["concept_name"] == "test"

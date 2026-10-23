@@ -697,7 +697,7 @@ async def test_real_session_tool_refuses_cross_event_mutation(service):
     await service.repo.put("evt.events", "A", {"event_id": "A", "lifecycle": "DETECTED"})
     original = {"event_id": "B", "lifecycle": "DETECTED", "statement": "Untouched"}
     await service.repo.put("evt.events", "B", original)
-    session = {"session_id": "scope-session", "event_id": "A", "item_id": "i"}
+    session = {"session_id": "scope-session", "model_context_version": 1, "event_id": "A", "item_id": "i"}
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
     sessions = SessionService(service.repo, service.settings, service.dispatch)
     replies = []
@@ -745,7 +745,7 @@ async def test_novel_layer_proposal_survives_real_session_transaction(service):
     extracted = await service.dispatch("record_event", x, {})
     eid = extracted["event_id"]
     proof = extracted["accepted_claims"][0]["claim_id"]
-    session = {"session_id": "novel-session", "event_id": eid, "item_id": "i"}
+    session = {"session_id": "novel-session", "model_context_version": 1, "event_id": eid, "item_id": "i"}
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
     sessions = SessionService(service.repo, service.settings, service.dispatch)
 
@@ -1803,7 +1803,12 @@ async def test_other_tank_item_quote_read_through_real_session_is_admissible(ser
             "observed_at": iso(),
         },
     )
-    session = {"session_id": "item-proof-session", "event_id": None, "item_id": "i"}
+    session = {
+        "session_id": "item-proof-session",
+        "model_context_version": 1,
+        "event_id": None,
+        "item_id": "i",
+    }
     await service.repo.put("ops.agent_sessions", session["session_id"], session)
     sessions = SessionService(service.repo, service.settings, service.dispatch)
 

@@ -35,6 +35,7 @@ async def context(tmp_path):
     }
     session = {
         "session_id": "session_private",
+        "model_context_version": 1,
         "item_id": item["item_id"],
         "event_id": None,
         "prompt_version": sha256({"prompt": "test"}),

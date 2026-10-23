@@ -23,6 +23,8 @@ from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
 from tank.delivery import DeliveryDeferred
+from tank.event_tools import validate_schema
+from tank.openma_sync import agent_tools
 from tank.ops_progress import session_progress
 from tank.telegram_inbox import DOCUMENT_LIMIT, question_message, record_answer
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
@@ -70,6 +72,12 @@ def material_event(event):
 SESSION_ADMISSION_FIELDS = ("session_id", "status", "runtime_status", "active_message_id", "followups_only")
 JOB_ADMISSION_FIELDS = ("job_id", "status", "priority", "payload", "slot_waiting_since", "slot_admitted")
 BUSY_RUNTIME_STATES = {"PENDING", "RUNNING", "REQUIRES_ACTION"}
+CONTEXT_TRANSITION = (
+    "Use the current tool definitions instead of earlier tool instructions. "
+    "The host selects the current event and triggering source. "
+    "Cite documents by their displayed URL and date, claims by their verbatim descriptions, "
+    "and projects by name and ticker."
+)
 
 
 class AdmissionDeferred(Exception):
@@ -257,6 +265,7 @@ class SessionService:
             {
                 "identity": identity,
                 "scout": scout,
+                "model_context_version": CONTEXT_VERSION,
                 **({"replay_run_id": replay_run_id} if replay_run_id else {}),
             }
         )
@@ -415,41 +424,43 @@ class SessionService:
         if retired or "retired_message_ids" in session:
             session["retired_message_ids"] = sorted(retired)
 
-    def analyst_tools(self):
+    def analyst_tools(self, *, scout=False):
         """The current analyst toolset: built-ins plus the custom tools of config/skills."""
         reader = getattr(self.settings, "read_config_json", None)
         if reader is None:
             return None
-        custom = reader("skills/tank-event-analyst/tools.json")
-        return [
-            {
-                "type": "agent_toolset_20260401",
-                "default_config": {"enabled": True},
-                "configs": [
-                    {"name": name, "enabled": False}
-                    for name in ["web_search", "web_fetch", "schedule", "cancel_schedule", "list_schedules"]
-                ]
-                + [{"name": "browser", "enabled": True}],
-            }
-        ] + [dict(type="custom", **tool) for tool in custom]
+        return agent_tools(self.settings, "tank-scout-reviewer" if scout else "tank-event-analyst")
 
-    async def sync_tools(self, sid):
-        """Before a follow-up, give an idle analyst session the current tools, so old sessions gain new ones."""
+    @staticmethod
+    def legacy_contract(session):
+        return session.get("model_context_version", 0) < CONTEXT_VERSION or session.get(
+            "active_message_id"
+        ) in session.get("legacy_model_message_ids", [])
+
+    async def sync_tools(self, sid, *, resume=False):
+        """Migrate tools at an idle input boundary without replacing the session or its history."""
         if getattr(self.settings, "replay", False):
             return
         session = await self.repo.get("ops.agent_sessions", sid)
-        if session is None or session.get("proposal_id"):
+        if session is None:
             return None
-        tools = self.analyst_tools()
-        if not tools or session.get("tools_sha256") == sha256(tools):
+        tools = self.analyst_tools(scout=bool(session.get("proposal_id")))
+        migrating = session.get("model_context_version", 0) < CONTEXT_VERSION
+        if not tools or (not migrating and session.get("tools_sha256") == sha256(tools)):
             return None
-        if session.get("active_message_id") or session.get("runtime_status") in BUSY_RUNTIME_STATES:
+        if not resume and (
+            session.get("active_message_id") or session.get("runtime_status") in BUSY_RUNTIME_STATES
+        ):
             return "BUSY"
         try:
+            if resume:
+                remote = await self.request("GET", f"sessions/{sid}")
+                if remote.get("data", remote).get("status") != "idle":
+                    raise ValueError("Wait for the native tool boundary before updating its tools")
             await self.request("POST", f"sessions/{sid}", json={"agent": {"tools": tools}})
             remote = await self.request("GET", f"sessions/{sid}")
         except httpx.HTTPStatusError as error:
-            if error.response.status_code == 429 or error.response.status_code >= 500:
+            if migrating or error.response.status_code == 429 or error.response.status_code >= 500:
                 raise
             return
         remote = remote.get("data", remote)
@@ -465,6 +476,13 @@ class SessionService:
                     }
                 )
             current["tools_sha256"] = sha256(tools)
+            if migrating:
+                current["legacy_model_message_ids"] = [
+                    row["message_id"]
+                    for row in current.get("message_log", [])
+                    if row.get("model_context_version", 0) < CONTEXT_VERSION
+                ]
+                current["model_context_version"] = CONTEXT_VERSION
             current.update(self.clock_timestamp().fields("tools_synced_at"))
             await self.repo.put("ops.agent_sessions", sid, current)
 
@@ -565,9 +583,14 @@ class SessionService:
         async with self.repo.lock("session-mapping:" + str(mapping_identity)):
             session = await self.resolve(payload)
         sid, key = session["session_id"], sha256(payload)
+        migrating = session.get("model_context_version", 0) < CONTEXT_VERSION
+        if migrating or payload.get("kind") == "USER_QUESTION":
+            if await self.sync_tools(sid) == "BUSY":
+                raise DeliveryDeferred(offset_schedule(collection_clock(), timedelta(seconds=30)))
+            session = await self.repo.get("ops.agent_sessions", sid)
         content = await ModelContext(self.repo, self.settings, session).message(payload, item)
-        if payload.get("kind") == "USER_QUESTION" and await self.sync_tools(sid) == "BUSY":
-            raise DeliveryDeferred(offset_schedule(collection_clock(), timedelta(seconds=30)))
+        if migrating:
+            content["context_update"] = CONTEXT_TRANSITION
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             async with self.repo.lock("session:" + sid):
                 session = await self.repo.get("ops.agent_sessions", sid)
@@ -590,6 +613,8 @@ class SessionService:
                         if question is None:
                             raise KeyError(payload["question_id"])
                         text = question_message(await self.prepare_attachments(session, question))
+                        if migrating:
+                            text = CONTEXT_TRANSITION + "\n\n" + text
                     body = {
                         "type": "user.message",
                         "content": [{"type": "text", "text": text}],
@@ -598,6 +623,7 @@ class SessionService:
                         "message_id": key,
                         "body": body,
                         "payload": copy.deepcopy(payload),
+                        "model_context_version": CONTEXT_VERSION,
                         **self.clock_timestamp().fields("requested_at"),
                         "turn_status": "ACCEPTING",
                         "retry_count": 0,
@@ -1254,7 +1280,15 @@ class SessionService:
             context["_decision_market_refresh_completed"] = True
             context["_decision_prepared_condition_ids"] = decision_prepared_condition_ids
         fresh = await self.repo.get("ops.agent_sessions", session["session_id"]) or session
-        arguments = await ModelContext(self.repo, self.settings, fresh).arguments(tool, arguments)
+        boundary = ModelContext(self.repo, self.settings, fresh)
+        try:
+            arguments = await boundary.arguments(tool, arguments)
+        except ValueError:
+            reader = getattr(self.settings, "read_config_json", None)
+            if not self.legacy_contract(session) or reader is None:
+                raise
+            validate_schema(arguments, reader(f"tool_contracts/{tool}.schema.json"))
+            arguments = copy.deepcopy(arguments)
         if resolved_arguments is not None:
             resolved_arguments.update(copy.deepcopy(arguments))
         return await self.tool_dispatch(tool, arguments, context)
@@ -1465,9 +1499,18 @@ class SessionService:
                 )
                 await self.repo.put("ops.tool_calls", key, stored)
         current = await self.repo.get("ops.agent_sessions", sid) or session
+        if current.get("model_context_version", 0) < CONTEXT_VERSION:
+            await self.sync_tools(sid, resume=True)
+            current = await self.repo.get("ops.agent_sessions", sid) or session
         projected = await ModelContext(self.repo, self.settings, current).result(
             stored["tool"], stored["result"]
         )
+        if self.legacy_contract(session):
+            projected = (
+                dict(projected, context_update=CONTEXT_TRANSITION)
+                if isinstance(projected, dict)
+                else {"result": projected, "context_update": CONTEXT_TRANSITION}
+            )
         body = {
             "type": "user.custom_tool_result",
             "custom_tool_use_id": call_id,

@@ -122,6 +122,7 @@ async def seed(repo, *, status="OPEN", rich_message=None):
         "ses_1",
         {
             "session_id": "ses_1",
+            "model_context_version": 1,
             "event_id": "evt_1",
             "status": status,
             "runtime_status": "IDLE",
