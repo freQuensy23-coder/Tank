@@ -18,11 +18,10 @@ def test_operator_environment_is_removed_by_name():
         "DOCKER_HOST": "FAKE-remote-daemon",
         "NETRC": "FAKE-netrc-path",
         "TANK_TEST_DATABASE_URL": "postgresql://fake:fake@localhost/test",
-        "TANK_BROWSER_TESTS": "1",
         "PATH": "/fake/bin",
     }
     policy.scrub_inherited_environment(environment)
-    assert set(environment) == {"TANK_TEST_DATABASE_URL", "TANK_BROWSER_TESTS", "PATH"}
+    assert set(environment) == {"TANK_TEST_DATABASE_URL", "PATH"}
 
 
 def test_operator_dotenv_is_never_opened(tmp_path, monkeypatch):

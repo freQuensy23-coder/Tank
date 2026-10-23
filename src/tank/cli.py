@@ -354,15 +354,14 @@ def sources():
 
 @sources.command("check")
 @click.option("--probe", is_flag=True, help="Probe configured feed endpoints without ingestion.")
-@click.option("--browser", is_flag=True, help="Include browser-required source probes.")
 @click.option("--accounts", is_flag=True, help="Check configured X account identities.")
-def sources_check(probe, browser, accounts):
+def sources_check(probe, accounts):
     async def command(repo, settings):
         from tank.sources import SourceService
 
         service = SourceService(repo, settings)
         try:
-            return await service.check(probe=probe, include_browser=browser, check_accounts=accounts)
+            return await service.check(probe=probe, check_accounts=accounts)
         finally:
             if hasattr(service, "close"):
                 await service.close()

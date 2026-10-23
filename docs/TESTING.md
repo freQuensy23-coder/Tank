@@ -47,17 +47,15 @@ For portable parallel integration, the operator first provisions distinct dispos
 
 The opt-in parallel_postgres plugin runs before conftest. The controller preserves the exact templates for worker inheritance; each gwN worker replaces exactly one literal {worker} in dbname only. Every configured route is validated before any environment update. Shared DSNs, non-test database names, nested placeholders and placeholders in host/user/password/options are refused. Missing database variables are allowed for non-PostgreSQL integrations. The plugin never connects, creates or deletes databases, or loads dotenv/credential files. Supply enough precreated worker databases for the requested count. Use the ordinary serial command without this plugin for -n 0; a shared DSN is never a parallel recipe.
 
-Prepare the full integration prerequisites in the clean checkout after installing the frozen Python environment. These commands stage the data at the paths used by the tests and install the actual gateway package and Chromium; no external capture path or pi-ai environment variable is needed. Configure only the guarded disposable PostgreSQL routes described above, then run integration with the explicit browser flag:
+Prepare the full integration prerequisites in the clean checkout after installing the frozen Python environment. These commands stage the data at the paths used by the tests and install the actual gateway package; no external capture path or pi-ai environment variable is needed. Configure only the guarded disposable PostgreSQL routes described above, then run integration:
 
     npm ci --prefix tests/node-gateway --ignore-scripts --no-audit --no-fund
-    uv run python -m playwright install --with-deps chromium
     uv run python scripts/ci/stage_retained_fixtures.py
     uv run python tests/fixtures/supplementary-sources/stage.py
-    export TANK_BROWSER_TESTS=1
 
 The exact deployment-role SQL cases additionally require Docker and the postgres:16-bookworm image. They create their own labelled, network-isolated container and literal tank database on tmpfs, then remove only their owned container. They do not use the ordinary worker databases; missing prerequisites fail the selected run.
 
-The browser marker requires TANK_BROWSER_TESTS=1 and local Chromium. The node marker may require a prepared upstream package tree. The historical marker requires retained capture inputs. The process marker identifies tests launching a local child executable. The CI integration job stages the exact retained market and supplementary source inputs, installs the locked actual pi-ai gateway package, and provisions its PostgreSQL prerequisites. It records the selected collection and requires every collected case to pass; any skip, failure, missing case or empty report fails CI. Actual integration deadline tests intentionally wait about 20 seconds per case.
+The node marker may require a prepared upstream package tree. The historical marker requires retained capture inputs. The process marker identifies tests launching a local child executable. The CI integration job stages the exact retained market and supplementary source inputs, installs the locked actual pi-ai gateway package, and provisions its PostgreSQL prerequisites. It records the selected collection and requires every collected case to pass; any skip, failure, missing case or empty report fails CI. Actual integration deadline tests intentionally wait about 20 seconds per case.
 
 ## JavaScript and TypeScript
 
