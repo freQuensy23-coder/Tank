@@ -1,255 +1,109 @@
-name: tank-v0
-x-logging: &id001
+name: tank
+x-logging: &logging
   driver: json-file
   options:
     max-size: 20m
     max-file: '5'
 services:
-  tank:
-    image: tank-v0:persistent-no-x
-    build:
-      context: .
-      dockerfile: Dockerfile
+  postgres:
+    image: ghcr.io/frequensy23-coder/tank/tank-postgres:${TANK_VERSION:?}
+    restart: unless-stopped
+    shm_size: 512m
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
+      TANK_DB_PASSWORD: ${TANK_DB_PASSWORD:?}
+      OMA_DB_PASSWORD: ${OMA_DB_PASSWORD:?}
+      TANK_AGENT_DB_PASSWORD: ${TANK_AGENT_DB_PASSWORD:?}
+      TANK_REPLAY_AGENT_DB_PASSWORD: ${TANK_REPLAY_AGENT_DB_PASSWORD:?}
+    volumes:
+    - pg-data:/var/lib/postgresql/data
+    mem_limit: 3g
+    cpus: 8.0
+    logging: *logging
+    networks: [tank-net]
+  clickhouse:
+    image: ghcr.io/frequensy23-coder/tank/tank-clickhouse:${TANK_VERSION:?}
+    restart: unless-stopped
+    environment:
+      TANK_DB_PASSWORD: ${TANK_DB_PASSWORD:?}
+      TANK_AGENT_DB_PASSWORD: ${TANK_AGENT_DB_PASSWORD:?}
+    volumes:
+    - clickhouse-data:/var/lib/clickhouse
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    mem_limit: 3g
+    cpus: 3.0
+    logging: *logging
+    networks: [tank-net]
+  openma:
+    image: ghcr.io/frequensy23-coder/tank/tank-openma:${TANK_VERSION:?}
+    restart: unless-stopped
+    environment:
+      OMA_DB_PASSWORD: ${OMA_DB_PASSWORD:?}
+      OMA_API_KEY: ${OMA_API_KEY:?}
+      OMA_ROOT_SECRET: ${OMA_ROOT_SECRET:?}
+      OMA_AUTH_SECRET: ${OMA_AUTH_SECRET:?}
+      TANK_AGENT_DB_PASSWORD: ${TANK_AGENT_DB_PASSWORD:?}
+      TANK_REPLAY_AGENT_DB_PASSWORD: ${TANK_REPLAY_AGENT_DB_PASSWORD:?}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?}
+      ETHERSCAN_API_KEY: ${ETHERSCAN_API_KEY:?}
+      LITEBOX_CPUS: ${TANK_SANDBOX_CPUS:?}
+      LITEBOX_MEMORY_MIB: ${TANK_SANDBOX_MEMORY_MIB:?}
+    devices:
+    - /dev/kvm:/dev/kvm
+    group_add:
+    - ${KVM_GID:?}
+    volumes:
+    - openma-data:/app/data
+    - sealed-replay-evidence:/app/replay-evidence:ro
+    depends_on:
+      postgres: {condition: service_healthy}
+    logging: *logging
+    networks:
+      tank-net:
+        ipv4_address: 172.30.60.10
+  tank-capture:
+    image: ghcr.io/frequensy23-coder/tank/tank-capture:${TANK_VERSION:?}
     restart: unless-stopped
     init: true
-    command:
-    - tank
-    - serve
     environment:
-      TANK_DATA_DIR: /data
-      TANK_CONFIG_DIR: /config
-      TANK_OPENMA_URL: http://openma:8787
-      TANK_OPENMA_API_KEY_FILE: /run/secrets/oma_api_key
-      TANK_TELEGRAM_TOKEN_FILE: /run/secrets/telegram_bot_token
-      TANK_ETHERSCAN_API_KEY_FILE: /run/secrets/etherscan_api_key
-      TANK_CODEX_GATEWAY_KEY_FILE: /run/secrets/codex_gateway_key
-      TANK_CODEX_GATEWAY_HOST: 0.0.0.0
-      TANK_CODEX_GATEWAY_PORT: '8790'
-      TANK_CODEX_AUTH_PATH: /codex-auth/auth.json
-      TANK_X_PROFILE_DIR: /browser
-      TANK_X_STORAGE_STATE_PATH: /run/secrets/x_session
-      TANK_BACKUP_DIR: /backup
+      TANK_DB_PASSWORD: ${TANK_DB_PASSWORD:?}
+    depends_on:
+      postgres: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+    mem_limit: 1536m
+    mem_reservation: 256m
+    cpus: 3.0
+    logging: *logging
+    networks: [tank-net]
+  tank:
+    image: ghcr.io/frequensy23-coder/tank/tank:${TANK_VERSION:?}
+    restart: unless-stopped
+    init: true
+    environment:
+      TANK_DB_PASSWORD: ${TANK_DB_PASSWORD:?}
+      OMA_DB_PASSWORD: ${OMA_DB_PASSWORD:?}
+      OMA_API_KEY: ${OMA_API_KEY:?}
+      OPENCODE_API_KEY: ${OPENCODE_API_KEY:?}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?}
+      ETHERSCAN_API_KEY: ${ETHERSCAN_API_KEY:?}
+      CODEX_GATEWAY_KEY: ${CODEX_GATEWAY_KEY:?}
+      X_SESSION: ${X_SESSION:-}
       TANK_X_ENABLED: ${TANK_X_ENABLED:-false}
-      # Exchange market series (HLD §7.1); password: secret tank_db_password.
-      TANK_CLICKHOUSE_URL: http://tank@clickhouse:8123
-    secrets:
-    - oma_api_key
-    - opencode_api_key
-    - telegram_bot_token
-    - etherscan_api_key
-    - codex_gateway_key
-    - tank_db_password
-    - oma_db_password
     volumes:
     - tank-data:/data
     - sealed-replay-evidence:/data/replay/evidence
     - tank-browser:/browser
     - codex-auth:/codex-auth
     - backup:/backup
-    - type: bind
-      source: ${TANK_CONFIG_PATH:-./config}
-      target: /config
-      read_only: true
     depends_on:
-      postgres:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-      openma:
-        condition: service_healthy
-    logging: *id001
-    networks:
-    - tank-net
-  clickhouse:
-    # Exchange market series and per-trade prints (HLD §7.1): written by tank-capture, read by
-    # core (user tank) and by agent sandboxes (read-only user tank_agent, initdb).
-    image: clickhouse/clickhouse-server:25.8
-    restart: unless-stopped
-    environment:
-      CLICKHOUSE_USER: tank
-      CLICKHOUSE_PASSWORD_FILE: /run/secrets/tank_db_password
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: '1'
-    secrets:
-    - tank_db_password
-    - tank_agent_db_password
-    volumes:
-    - clickhouse-data:/var/lib/clickhouse
-    - ./deploy/clickhouse/tank.xml:/etc/clickhouse-server/config.d/tank.xml:ro
-    - ./deploy/clickhouse/initdb:/docker-entrypoint-initdb.d:ro
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
-    healthcheck:
-      test:
-      - CMD-SHELL
-      - clickhouse-client --user tank --password "$$(cat /run/secrets/tank_db_password)" -q "SELECT 1"
-      interval: 10s
-      timeout: 5s
-      retries: 6
-      start_period: 30s
-    deploy:
-      resources:
-        limits:
-          cpus: '3.0'
-          memory: 3G
-    logging: *id001
-    networks:
-    - tank-net
-  tank-capture:
-    image: tank-capture:local
-    build:
-      context: ./capture
-      dockerfile: Dockerfile
-      args:
-        GIT_SHA: ${TANK_CAPTURE_GIT_SHA:-dev}
-    restart: unless-stopped
-    init: true
-    environment:
-      TANK_CONFIG_DIR: /config
-      TANK_CAPTURE_HEALTH_ADDR: ':8791'
-      TANK_CLICKHOUSE_URL: http://tank@clickhouse:8123
-      GOMEMLIMIT: 1400MiB
-    secrets:
-    - tank_db_password
-    volumes:
-    - type: bind
-      source: ${TANK_CONFIG_PATH:-./config}
-      target: /config
-      read_only: true
-    depends_on:
-      postgres:
-        condition: service_healthy
-      clickhouse:
-        condition: service_healthy
-    healthcheck:
-      test:
-      - CMD
-      - /tank-capture
-      - healthcheck
-      interval: 15s
-      timeout: 5s
-      retries: 4
-      start_period: 60s
-    deploy:
-      resources:
-        limits:
-          cpus: '3.0'
-          memory: 1536M
-        reservations:
-          memory: 256M
-    logging: *id001
-    networks:
-    - tank-net
-  openma:
-    image: tank-openma:local
-    build:
-      context: ./vendor/openma
-      dockerfile: Dockerfile
-      args:
-        SKIP_CONSOLE: '1'
-    restart: unless-stopped
-    entrypoint:
-    - node
-    - /app/tank-deploy/openma_entrypoint.mjs
-    environment:
-      HOST: 0.0.0.0
-      PORT: '8787'
-      BOXLITE_HOME: /app/data/boxlite
-      TANK_REPLAY_EVIDENCE_ROOT: /app/replay-evidence
-      LITEBOX_CPUS: ${TANK_SANDBOX_CPUS:-2}
-      LITEBOX_MEMORY_MIB: ${TANK_SANDBOX_MEMORY_MIB:-2048}
-      SANDBOX_PROVIDER: litebox
-      SANDBOX_IMAGE: ${TANK_SANDBOX_IMAGE:-tank-analysis:python3.12-local}
-      SANDBOX_ROOTFS_PATH: /opt/tank-sandbox-oci
-      SANDBOX_WORKDIR: /app/data/sandboxes
-      MEMORY_BLOB_DIR: /app/data/memory-blobs
-      SESSION_OUTPUTS_DIR: /app/data/session-outputs
-      FILES_BLOB_DIR: /app/data/files
-      AUTH_DISABLED: '0'
-    devices:
-    - /dev/kvm:/dev/kvm
-    group_add:
-    - ${KVM_GID:?Set host KVM group id}
-    secrets:
-    - oma_api_key
-    - oma_root_secret
-    - oma_auth_secret
-    - oma_db_password
-    - tank_agent_db_password
-    - tank_replay_agent_db_password
-    - openrouter_api_key
-    - etherscan_api_key
-    volumes:
-    - openma-data:/app/data
-    - sealed-replay-evidence:/app/replay-evidence:ro
-    - ${TANK_SANDBOX_OCI_PATH:?Set verified local OCI layout directory}:/opt/tank-sandbox-oci:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    healthcheck:
-      test:
-      - CMD
-      - node
-      - -e
-      - fetch('http://localhost:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
-    logging: *id001
-    networks:
-    - tank-net
-  postgres:
-    image: postgres:16-bookworm
-    shm_size: 512m
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
-      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
-    command:
-    - postgres
-    - -c
-    - password_encryption=scram-sha-256
-    - -c
-    - hba_file=/etc/postgresql/tank-pg_hba.conf
-    - -c
-    - max_locks_per_transaction=256
-    - -c
-    - shared_buffers=384MB
-    - -c
-    - work_mem=16MB
-    - -c
-    - hash_mem_multiplier=1.5
-    - -c
-    - maintenance_work_mem=128MB
-    - -c
-    - autovacuum_work_mem=64MB
-    - -c
-    - effective_cache_size=1GB
-    - -c
-    - max_parallel_workers_per_gather=0
-    secrets:
-    - postgres_password
-    - tank_db_password
-    - oma_db_password
-    - tank_agent_db_password
-    - tank_replay_agent_db_password
-    volumes:
-    - pg-data:/var/lib/postgresql/data
-    - ${TANK_PG_HBA_PATH:?Generate explicit network HBA file}:/etc/postgresql/tank-pg_hba.conf:ro
-    - ./deploy/postgres-init.sh:/docker-entrypoint-initdb.d/10-tank.sh:ro
-    healthcheck:
-      test:
-      - CMD-SHELL
-      - gosu postgres pg_isready -U postgres -d postgres
-      interval: 5s
-      timeout: 3s
-      retries: 10
-    logging: *id001
-    networks:
-    - tank-net
+      postgres: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+      openma: {condition: service_healthy}
+    mem_limit: 7g
+    memswap_limit: 7g
+    logging: *logging
+    networks: [tank-net]
 volumes:
   tank-data: {}
   tank-browser: {}
@@ -263,37 +117,10 @@ volumes:
     driver_opts:
       type: none
       o: bind
-      device: ${TANK_BACKUP_PATH:?Set existing external disk backup path}
+      device: ${TANK_BACKUP_PATH:?}
 networks:
   tank-net:
     driver: bridge
     ipam:
       config:
-      - subnet: ${TANK_COMPOSE_CIDR:?Set explicitly selected nonoverlapping Compose CIDR}
-secrets:
-  postgres_password:
-    file: ${TANK_SECRETS_DIR:?Set secret directory outside repository}/postgres_password
-  tank_db_password:
-    file: ${TANK_SECRETS_DIR}/tank_db_password
-  oma_db_password:
-    file: ${TANK_SECRETS_DIR}/oma_db_password
-  oma_api_key:
-    file: ${TANK_SECRETS_DIR}/oma_api_key
-  oma_root_secret:
-    file: ${TANK_SECRETS_DIR}/oma_root_secret
-  oma_auth_secret:
-    file: ${TANK_SECRETS_DIR}/oma_auth_secret
-  openrouter_api_key:
-    file: ${TANK_SECRETS_DIR}/openrouter_api_key
-  opencode_api_key:
-    file: ${TANK_SECRETS_DIR}/opencode_api_key
-  telegram_bot_token:
-    file: ${TANK_SECRETS_DIR}/telegram_bot_token
-  etherscan_api_key:
-    file: ${TANK_SECRETS_DIR}/etherscan_api_key
-  tank_replay_agent_db_password:
-    file: ${TANK_SECRETS_DIR}/tank_replay_agent_db_password
-  tank_agent_db_password:
-    file: ${TANK_SECRETS_DIR}/tank_agent_db_password
-  codex_gateway_key:
-    file: ${TANK_SECRETS_DIR}/codex_gateway_key
+      - subnet: 172.30.60.0/24
