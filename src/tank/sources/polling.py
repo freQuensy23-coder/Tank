@@ -154,7 +154,7 @@ class SourcePoller:
     @staticmethod
     def needs_detail(sid, kind):
         """The item's raw payload is its article/detail page, fetched in the backlog."""
-        return kind in ARTICLE_KINDS or sid in {"S01", "S09", "S19"}
+        return kind in ARTICLE_KINDS or sid in {"S01", "S09"}
 
     async def queue_rows(self, current, key, source, feed, rows, kind, coverage, token, acquired_at):
         """Queue only items not yet captured; write raw now unless a detail page is still due."""
@@ -234,11 +234,7 @@ class SourcePoller:
                 history_gap=result.gaps,
             )
             return result.rows, state, kind
-        if sid == "S19":
-            payload = await svc.browser.html(feed["url"])
-            fetched = dict(state, payload_sha256=sha256(payload), fetched_at=self.stamp())
-        else:
-            payload, fetched = await svc.fetch(feed, key, on_start=lambda: self.mark_request_start(key))
+        payload, fetched = await svc.fetch(feed, key, on_start=lambda: self.mark_request_start(key))
         state.update(fetched)
         if payload is None:
             return None, state, kind
@@ -292,7 +288,7 @@ class SourcePoller:
             ]
             for row in rows:
                 row["_payload"] = payload
-        elif kind in ARTICLE_KINDS or sid == "S19":
+        elif kind in ARTICLE_KINDS:
             rows = await asyncio.to_thread(parsers.article_links, payload, feed)
         else:
             rows, state = await self._json_history(source, feed, key, payload, state)
@@ -655,11 +651,7 @@ class SourcePoller:
                 if not item["text"].strip():
                     return self._empty_body(item["url"], detail_state)
             else:
-                if sid == "S19":
-                    payload = await svc.browser.html(item["url"])
-                    detail_state = {"payload_sha256": sha256(payload), "http_status": 200}
-                else:
-                    payload, detail_state = await self._article(source, feed, key, item)
+                payload, detail_state = await self._article(source, feed, key, item)
                 if payload is None:
                     raise ValueError("Article returned 304 without a durable source item")
                 detail = await asyncio.to_thread(parsers.article, payload, source_id=sid)

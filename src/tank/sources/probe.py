@@ -11,7 +11,7 @@ from tank.time_precision import collection_clock
 from tank.util import iso, sha256
 
 
-async def probe_feeds(service, *, include_browser=False):
+async def probe_feeds(service):
     host_locks = {}
     semaphore = asyncio.Semaphore(4)
 
@@ -34,39 +34,33 @@ async def probe_feeds(service, *, include_browser=False):
             result["reason"] = "X runs through a paid Apify actor run; excluded from the HTTP smoke"
             result.update(collection_clock().fields("finished_at"))
             return result
-        if sid == "S19" and not include_browser:
-            result["reason"] = "Rendered-browser probe not enabled"
-            result.update(collection_clock().fields("finished_at"))
-            return result
         host = urlsplit(feed["url"]).netloc
         lock = host_locks.setdefault(host, asyncio.Lock())
         async with semaphore, lock:
             try:
-                if sid == "S19":
-                    payload = await service.browser.html(feed["url"])
+                await service.acquire_budget(dict(feed, source_limits=source.get("limits", {})))
+                post = feed.get("method", "GET").upper() == "POST"
+                if is_exchange_url(feed["url"]):
+                    response = await capture_fetch(
+                        service.repo,
+                        feed.get("method", "GET"),
+                        feed["url"],
+                        body=feed.get("body") if post else None,
+                        source_id=sid,
+                    )
                 else:
-                    await service.acquire_budget(dict(feed, source_limits=source.get("limits", {})))
-                    if is_exchange_url(feed["url"]):
-                        response = await capture_fetch(
-                            service.repo,
-                            feed.get("method", "GET"),
-                            feed["url"],
-                            body=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
-                            source_id=sid,
-                        )
-                    else:
-                        response = await service.http.request(
-                            feed.get("method", "GET"),
-                            feed["url"],
-                            json=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
-                            timeout=20,
-                        )
-                    result["http_status"] = response.status_code
-                    result["response_content_type"] = response.headers.get("content-type")
-                    payload = response.content
-                    result.update(payload_sha256=sha256(payload), response_bytes=len(payload))
-                    response.raise_for_status()
+                    response = await service.http.request(
+                        feed.get("method", "GET"),
+                        feed["url"],
+                        json=feed.get("body") if post else None,
+                        data=feed.get("form") if post else None,
+                        timeout=20,
+                    )
+                result["http_status"] = response.status_code
+                result["response_content_type"] = response.headers.get("content-type")
+                payload = response.content
                 result.update(payload_sha256=sha256(payload), response_bytes=len(payload))
+                response.raise_for_status()
                 kind = feed["kind"]
                 if kind in {"rss", "atom"}:
                     items = parsers.feeds(payload, sid, feed)
@@ -91,10 +85,7 @@ async def probe_feeds(service, *, include_browser=False):
             except httpx.RequestError as exc:
                 result.update(status="NETWORK_ERROR", reason=f"{type(exc).__name__}: {exc}")
             except Exception as exc:
-                result.update(
-                    status="UNAVAILABLE" if sid == "S19" else "PARSE_ERROR",
-                    reason=f"{type(exc).__name__}: {exc}",
-                )
+                result.update(status="PARSE_ERROR", reason=f"{type(exc).__name__}: {exc}")
             finally:
                 result.update(collection_clock().fields("finished_at"))
                 await asyncio.sleep(0.5)

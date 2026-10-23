@@ -18,7 +18,6 @@ import httpx
 
 from tank.ops_progress import item_progress
 from tank.sources import parsers
-from tank.sources.browser import BrowserReader
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.sources.rate_limits import shared_request_budgets
 from tank.sources.xsensor import XSensor
@@ -48,7 +47,6 @@ class SourceService:
         )
         self.owns_http = http is None
         self.xsensor = XSensor(self.http, getattr(settings, "apify_api_token", None))
-        self.browser = BrowserReader(settings)
         cfg = settings.load_config("sources")
         self.sources = {s["source_id"]: s for s in cfg["sources"]}
         self.source_host_limits = {}
@@ -141,6 +139,7 @@ class SourceService:
                         feed["url"],
                         headers=headers,
                         json=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
+                        data=feed.get("form") if feed.get("method", "GET").upper() == "POST" else None,
                     )
                 if response.status_code == 304:
                     return None, state
@@ -421,11 +420,11 @@ class SourceService:
         )
         return bool(re.search(r"\b(?:trust|etf)\b", value)) and bool(crypto_context)
 
-    async def check(self, *, probe=False, include_browser=False, check_accounts=False):
+    async def check(self, *, probe=False, check_accounts=False):
         if probe:
             from tank.sources.probe import probe_feeds
 
-            results = await probe_feeds(self, include_browser=include_browser)
+            results = await probe_feeds(self)
         else:
             results = await self._saved_health()
         if check_accounts:
@@ -473,7 +472,6 @@ class SourceService:
         return results
 
     async def close(self):
-        await self.browser.close()
         if self.owns_http:
             await self.http.aclose()
 

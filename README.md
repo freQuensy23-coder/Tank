@@ -33,13 +33,13 @@ For parallel integration, precreate separate worker databases and use the opt-in
 
 The end-to-end tests use the real repository, job workers, source parser, session/tool bridge, market calculations, agent-authored event persistence, card composition, and delivery ledger. External source, model and Telegram responses are explicitly mocked. Public adapter smoke checks, live source latency, model quality, and unattended acceptance are recorded separately.
 
-Pytest disables operator dotenv files, credential paths and external Python network access. [The offline test policy](docs/verification/offline-policy.md) explains its boundaries and the explicit opt-ins for disposable databases, Chromium and upstream OpenMA probes. Static checks use `uv run ruff check --select E4,E7,E9,F,I src tests deploy` and `uv run ruff format --check src tests deploy`.
+Pytest disables operator dotenv files, credential paths and external Python network access. [The offline test policy](docs/verification/offline-policy.md) explains its boundaries and the explicit opt-ins for disposable databases and upstream OpenMA probes. Static checks use `uv run ruff check --select E4,E7,E9,F,I src tests deploy` and `uv run ruff format --check src tests deploy`.
 
 ## Service modules
 
 | Module | Responsibility |
 |---|---|
-| `sources` | RSS/Atom/REST/GraphQL/HTML and Playwright ingestion; raw evidence and source checkpoints |
+| `sources` | RSS/Atom/REST/GraphQL/HTML ingestion and the Apify X actor; raw evidence and source checkpoints |
 | `agents` | Jev filtering/routing and durable OpenMA sessions with tool-result recovery |
 | `codex_gateway` | Internal Responses endpoint, subscription authentication, atomic OAuth refresh and streaming |
 | `event_tools` | Persistence of agent claims and judgments, registry identity resolution, beneficiary records and publication gate |
@@ -62,4 +62,4 @@ Replay requires a fresh, isolated database. Calibration produces a report and pr
 
 The specifications require more than local tests: 72 hours of source operation, labeled routing/calibration evidence, complete fixture packets, a live source-to-Telegram run, and 14 days of shadow review. These gates remain visible in the implementation ledger. Current F-16 expects STRESS, matching Technical Design §5.7; the rule was not adjusted to fit a test. The removed daily-budget policy is absent from runtime behavior, while historical records remain readable.
 
-Development verification uses synthetic credentials, mock provider responses, real local HTTP listeners, PostgreSQL, Chromium and isolated containers. It does not read the operator's sign-in or make authenticated external calls. [The requirements delta](docs/verification/requirements-delta.json) maps the revised specifications to implementation and tests; [the gateway notes](docs/CODEX_GATEWAY.md) record the verified protocol and integration limits.
+Development verification uses synthetic credentials, mock provider responses, real local HTTP listeners, PostgreSQL and isolated containers. It does not read the operator's sign-in or make authenticated external calls. [The requirements delta](docs/verification/requirements-delta.json) maps the revised specifications to implementation and tests; [the gateway notes](docs/CODEX_GATEWAY.md) record the verified protocol and integration limits.
