@@ -379,7 +379,13 @@ async def test_diagnostics_map_each_registry_kind_without_rewriting_source_quote
     text = "Use registry token_id uniswap:UNI, entity_id bitcoin, instrument_id binance:spot:BTCUSDT and source_id S01."
     url = "https://example.org/uniswap:UNI?source_id=S01"
     public = await boundary.result(
-        "test", {"error": {"reason": text, "details": [text, url]}, "quote": text, "text": text, "url": url}
+        "test",
+        {
+            "error": {"reason": text, "details": [text, url], "quote": text},
+            "quote": text,
+            "text": text,
+            "url": url,
+        },
     )
     reason = public["error"]["reason"]
     for key in ("uniswap:UNI", "entity_id", "instrument_id", "source_id", "token_id", "S01"):
@@ -392,6 +398,7 @@ async def test_diagnostics_map_each_registry_kind_without_rewriting_source_quote
     ):
         assert label in reason
     assert public["error"]["details"] == [reason, url]
+    assert public["error"]["quote"] == text
     assert public["quote"] == public["text"] == text and public["url"] == url
 
 

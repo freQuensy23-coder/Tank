@@ -358,7 +358,9 @@ class ModelContext:
                 if not OPAQUE.search(str(named)):
                     result[named] = (
                         item
-                        if key in LITERAL_FIELDS and isinstance(item, str) and not diagnostic
+                        if key in LITERAL_FIELDS
+                        and isinstance(item, str)
+                        and (not diagnostic or key in {"quote", "quoted", "url", "query"})
                         else await self.project(item, diagnostic=diagnostic or key in DIAGNOSTIC_FIELDS)
                     )
         return clean_value(result)
