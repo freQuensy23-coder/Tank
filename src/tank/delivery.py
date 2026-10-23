@@ -8,6 +8,7 @@ from datetime import timedelta
 import httpx
 
 from tank.analysis.cards import telegram_card_html
+from tank.ops_progress import event_progress
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import new_id, parse_time, utcnow
 
@@ -58,14 +59,13 @@ class DeliveryService:
             ledger = await self._all("out.deliveries", filters=filters)
             if any(row["status"] == "SENT" for row in ledger):
                 return
+            source = payload
+            if not payload.get("notice_id"):
+                alerts = await self._all(
+                    "out.alerts", filters={"alert_id": payload["alert_id"], "version": payload["version"]}
+                )
+                source = alerts[0] if alerts else payload
             if not any(row.get("terminal") for row in ledger):
-                source = payload
-                if not payload.get("notice_id"):
-                    alerts = await self._all(
-                        "out.alerts",
-                        filters={"alert_id": payload["alert_id"], "version": payload["version"]},
-                    )
-                    source = alerts[0] if alerts else payload
                 source_times = {
                     key: value
                     for field in ("generated_at", "delivery_not_before")
@@ -92,6 +92,14 @@ class DeliveryService:
                 )
             if payload.get("notice_id"):
                 return
+            await event_progress(
+                self.repo,
+                self.settings,
+                source.get("event_id"),
+                "ALERT_FAILED",
+                f"Не доставлена карточка {subject}",
+                key=subject,
+            )
             notice_id = "delivery_failed_" + subject.replace(":", "_")
             if not await self.repo.get("out.ops_notices", notice_id):
                 await self.repo.put(
@@ -172,6 +180,15 @@ class DeliveryService:
                 record = rows[0] if rows else None
             if record is None:
                 raise ValueError("Delivery subject does not exist")
+            if notice and record.get("kind") == "ITEM_PROGRESS":
+                await self._enter_delivery_lock(locks, "telegram-ops-progress")
+                latest = await self.repo.list_latest(
+                    "out.deliveries", "at", filters={"channel": "telegram:ops", "status": "SENT"}, limit=1
+                )
+                if latest:
+                    next_send = offset_schedule(propagate_timestamp(latest[0], "at"), timedelta(seconds=3.1))
+                    if utcnow() < parse_time(next_send.value):
+                        raise DeliveryDeferred(next_send)
             if not notice:
                 prior = await self._all("out.alerts", filters={"event_id": record["event_id"]})
                 if record.get("kind") == "UPDATE" and any(
@@ -297,6 +314,14 @@ class DeliveryService:
                     immutable=True,
                 )
                 if not notice:
+                    await event_progress(
+                        self.repo,
+                        self.settings,
+                        record["event_id"],
+                        "ALERT_SENT",
+                        f"Карточка {subject}; Telegram message_id={message_ref}",
+                        key=subject,
+                    )
                     await self._activate_calls(record, sent_at)
                     event = await self.repo.get("evt.events", record["event_id"])
                     if event and not event.get("first_card_delivered_at"):

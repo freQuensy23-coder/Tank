@@ -136,7 +136,12 @@ async def test_normal_dtcc_poll_uses_actual_retained_release_bodies(tmp_path):
                 assert row["observed_at"] != original["observed_at"]
             jobs, items = await repo.list("ops.jobs"), await repo.list("ingest.source_items")
 
-            assert {j["idem_key"] for j in jobs} == {x["item_id"] for x in items}
-            assert {j["type"] for j in jobs} == {"ROUTE_ITEM"}
+            assert {j["idem_key"] for j in jobs if j["type"] in {"FILTER_ITEM", "ROUTE_ITEM"}} == {
+                x["item_id"] for x in items
+            }
+            progress = await repo.list("out.ops_notices", filters={"kind": "ITEM_PROGRESS"})
+            assert {row["subject_id"] for row in progress} == {x["item_id"] for x in items}
+            assert all(row["stage"] == "RECEIVED" for row in progress)
+            assert {j["type"] for j in jobs} == {"ROUTE_ITEM", "DELIVER"}
         finally:
             await service.close()

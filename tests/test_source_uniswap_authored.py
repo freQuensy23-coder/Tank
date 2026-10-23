@@ -164,7 +164,12 @@ async def test_normal_uniswap_poll_uses_retained_authored_body_and_never_fetches
             assert all("latest-updates" not in url for url in seen)
             jobs, items = await repo.list("ops.jobs"), await repo.list("ingest.source_items")
 
-            assert {j["idem_key"] for j in jobs} == {x["item_id"] for x in items}
-            assert {j["type"] for j in jobs} == {"ROUTE_ITEM"}
+            assert {j["idem_key"] for j in jobs if j["type"] in {"FILTER_ITEM", "ROUTE_ITEM"}} == {
+                x["item_id"] for x in items
+            }
+            progress = await repo.list("out.ops_notices", filters={"kind": "ITEM_PROGRESS"})
+            assert {row["subject_id"] for row in progress} == {x["item_id"] for x in items}
+            assert all(row["stage"] == "RECEIVED" for row in progress)
+            assert {j["type"] for j in jobs} == {"ROUTE_ITEM", "DELIVER"}
         finally:
             await service.close()

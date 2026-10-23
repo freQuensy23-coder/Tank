@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 import certifi
 import httpx
 
+from tank.ops_progress import item_progress
 from tank.sources import parsers
 from tank.sources.browser import BrowserReader
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
@@ -340,6 +341,13 @@ class SourceService:
 
             record.update(collection_clock(record["observed_at"]).fields("observed_at"))
             await self.repo.put("ingest.source_items", item_id, record)
+            await item_progress(
+                self.repo,
+                self.settings,
+                item_id,
+                "RECEIVED",
+                "Ожидает проверки Jev" if filtered else "Jev не требуется; ожидает маршрутизации к агенту",
+            )
             await self.repo.enqueue(
                 "FILTER_ITEM" if filtered else "ROUTE_ITEM",
                 {"item_id": item_id},

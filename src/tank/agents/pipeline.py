@@ -8,6 +8,7 @@ from decimal import Decimal
 import httpx
 
 from tank.agents.jev import MODEL, binding, classify
+from tank.ops_progress import item_progress
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, sha256, utcnow
 
@@ -245,6 +246,15 @@ class Pipeline:
                         status="RELEVANT" if score >= cutoff else "SKIPPED",
                     )
                     await self.repo.put("ingest.source_items", item["item_id"], item)
+                await item_progress(
+                    self.repo,
+                    self.settings,
+                    item["item_id"],
+                    "JEV_BYPASSED" if promoted else "JEV_PASSED" if score >= cutoff else "JEV_REJECTED",
+                    "Источник проходит напрямую к агенту"
+                    if promoted
+                    else f"score={score:.4f}; порог={cutoff:.4f}",
+                )
                 if promoted or score >= cutoff:
                     await self.repo.enqueue(
                         "ROUTE_ITEM",
@@ -429,6 +439,14 @@ class Pipeline:
                     status="ROUTED",
                 )
                 await self.repo.put("ingest.source_items", item["item_id"], item)
+                await item_progress(
+                    self.repo,
+                    self.settings,
+                    item["item_id"],
+                    "AGENT_QUEUED",
+                    "Маршрутизация: существующее событие" if added else "Маршрутизация: новая сессия",
+                    event_id=route["event_id"],
+                )
                 await self.repo.enqueue(
                     "AGENT_MESSAGE", message, item["item_id"] + ":" + message["kind"], priority=priority(item)
                 )

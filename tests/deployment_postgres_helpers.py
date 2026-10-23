@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import os
 import re
 import secrets
 import shutil
@@ -80,7 +81,9 @@ async def deployment_repository():
     owner = uuid.uuid4().hex
     container_id = None
     repo = None
-    with tempfile.TemporaryDirectory(prefix="tank-deployment-pg-", dir="/tmp") as directory:
+    with tempfile.TemporaryDirectory(
+        prefix="tank-deployment-pg-", dir=os.environ.get("TMPDIR", "/tmp")
+    ) as directory:
         temporary = Path(directory)
         socket = temporary / "socket"
         socket.mkdir()
