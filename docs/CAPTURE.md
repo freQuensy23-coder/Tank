@@ -1,6 +1,6 @@
 # Collection and startup
 
-Run `tank calibrate` offline before the first Tank service startup, review its evidence and apply both measured Jev cutoffs. Then deploy ([OPERATIONS.md](OPERATIONS.md#deployment)). Local development may run without X with `TANK_X_ENABLED=false`.
+Run `tank calibrate` offline before the first Tank service startup, review its evidence and apply both measured Jev cutoffs. Then deploy ([OPERATIONS.md](OPERATIONS.md#deployment)).
 
 Source and BASE market collection are part of the normal service. Historical acquisition libraries remain available to prepare calibration evidence; they do not expose a second service mode or bypass calibration. There is no public `tank capture` command. Market collection is the separate Go capture service `tank-capture` ([capture/README.md](../capture/README.md)).
 

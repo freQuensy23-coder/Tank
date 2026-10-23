@@ -1935,16 +1935,10 @@ def resolve_backup_reference(directory, reference, *, manifest=None):
 
 
 def protected_evidence_paths(settings):
-    """Credentials and browser state are never ordinary evidence/retention inputs."""
+    """Credentials are never ordinary evidence/retention inputs."""
     from pathlib import Path
 
     paths = {}
-    for field, label in [
-        ("x_profile_dir", "operator browser profile"),
-    ]:
-        value = getattr(settings, field, None)
-        if value is not None:
-            paths[label] = Path(value).resolve()
     auth = getattr(settings, "codex_auth_path", None)
     if auth is not None:
         paths["subscription sign-in directory"] = Path(auth).resolve().parent

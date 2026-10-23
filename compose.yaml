@@ -90,12 +90,10 @@ services:
       TANK_OPS_PROGRESS_DELAY_S: ${TANK_OPS_PROGRESS_DELAY_S:-15}
       ETHERSCAN_API_KEY: ${ETHERSCAN_API_KEY:?}
       CODEX_GATEWAY_KEY: ${CODEX_GATEWAY_KEY:?}
-      X_SESSION: ${X_SESSION:-}
-      TANK_X_ENABLED: ${TANK_X_ENABLED:-false}
+      APIFY_API_TOKEN: ${APIFY_API_TOKEN:?}
     volumes:
     - tank-data:/data
     - sealed-replay-evidence:/data/replay/evidence
-    - tank-browser:/browser
     - codex-auth:/codex-auth
     - backup:/backup
     depends_on:
@@ -108,7 +106,6 @@ services:
     networks: [tank-net]
 volumes:
   tank-data: {}
-  tank-browser: {}
   codex-auth: {}
   pg-data: {}
   clickhouse-data: {}
