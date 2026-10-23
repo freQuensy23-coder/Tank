@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const lanes = {
   "local-unit": [
+    "vendor/openma/packages/control-plane-node/src/lib/tank-tools/tank-tools.test.mjs",
     "deploy/openma-entrypoint.test.mjs",
     "deploy/openma_lifecycle/retained-session.test.mjs",
     "deploy/openma_lifecycle/boxlite-provider.test.mjs",

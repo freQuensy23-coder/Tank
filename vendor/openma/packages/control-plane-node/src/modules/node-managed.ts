@@ -82,6 +82,7 @@ import { readHarnessAgentModelSettings } from "@open-managed-agents/agent/harnes
 import { createPiModelRuntime } from "@open-managed-agents/agent/harness/pi-provider";
 import { resolveHarness } from "@open-managed-agents/agent/harness/registry";
 import { allowAllLegacyHarnessTools, toLegacyHarnessAgentConfig, toLegacyHarnessEnvironmentConfig, resolveNodeManagedAuxiliaryToolModel } from "../lib/node-managed-agent-codec.js";
+import { withTankAnalystTools } from "../lib/tank-tools/tank-tools.js";
 import { NodeManagedConfirmedToolExecutor } from "../lib/node-managed-confirmed-tool-executor.js";
 import { NodeManagedOutcomeEvaluator } from "../lib/node-managed-outcome-evaluator.js";
 import { ApplicationBackedNodeManagedSessionRuntimeEngine, DefaultNodeManagedSessionRuntimeDriver, NodeManagedSessionRuntimeAdapter } from "../lib/node-managed-session-runtime.js";
@@ -558,7 +559,7 @@ export async function createManagedNodeRuntime(foundation: NodeFoundation, compo
     }),
     buildModel: ({ workspaceId, session }) => buildNodeLanguageModel(workspaceId, session.agent.model),
     buildTools: async ({ workspaceId, session, environment, sandbox, subagents, delegateToAgent }) => {
-      const agent = toLegacyHarnessAgentConfig(session);
+      const agent = withTankAnalystTools(toLegacyHarnessAgentConfig(session));
       const creds = await resolveNodeModelCreds(workspaceId, agent.model);
       const auxiliary = await resolveNodeManagedAuxiliaryToolModel(session, (model) => buildNodeLanguageModel(workspaceId, model));
       const tools = await buildTools(agent, sandbox, {

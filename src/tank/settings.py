@@ -21,7 +21,12 @@ _CONFIG_SUFFIXES = {".yaml", ".yml", ".json", ".md"}
 _YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
 
-CONFIG_OWNED_FIELDS = ("user_agent", "telegram_alerts_chat", "telegram_ops_chat")
+CONFIG_OWNED_FIELDS = (
+    "user_agent",
+    "telegram_alerts_chat",
+    "telegram_ops_chat",
+    "telegram_legacy_cards_chat",
+)
 
 
 def _capture_tree(root: Path, suffixes: set[str]) -> dict[str, bytes]:
@@ -150,6 +155,7 @@ class Settings(BaseSettings):
     telegram_token: str | None = None
     telegram_alerts_chat: str | None = None
     telegram_ops_chat: str | None = None
+    telegram_legacy_cards_chat: str | None = None
     etherscan_api_key: str | None = None
     user_agent: str = "TankV0/1.0 (operator contact not configured)"
     x_enabled: bool = True
@@ -281,7 +287,11 @@ def configured_values(settings: Settings) -> dict[str, str]:
     values = {}
     if settings.has_config("delivery.yaml"):
         delivery = settings.load_config("delivery")
-        for field, key in (("telegram_alerts_chat", "alerts_chat_id"), ("telegram_ops_chat", "ops_chat_id")):
+        for field, key in (
+            ("telegram_alerts_chat", "alerts_chat_id"),
+            ("telegram_ops_chat", "ops_chat_id"),
+            ("telegram_legacy_cards_chat", "legacy_cards_chat_id"),
+        ):
             if delivery.get(key) is not None:
                 values[field] = str(delivery[key])
     if settings.has_config("sources.yaml"):

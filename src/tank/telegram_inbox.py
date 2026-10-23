@@ -26,7 +26,6 @@ from tank.util import new_id, parse_time, sha256, utcnow
 log = logging.getLogger(__name__)
 
 CURSOR_KEY = "telegram:bot-updates"
-LEGACY_CHAT_KEY = "telegram:legacy-alerts-chat"
 FILE_RETENTION = timedelta(days=30)
 MAX_MESSAGE_ATTEMPTS = 5
 RETRY_BASE_S = 15
@@ -231,7 +230,6 @@ class TelegramInbox:
         if not self.enabled:
             await stop.wait()
             return
-        await self.legacy_chat()
         while not stop.is_set():
             try:
                 waiting = [
@@ -281,17 +279,10 @@ class TelegramInbox:
         if self.owns_http:
             await self.http.aclose()
 
-    async def legacy_chat(self):
-        """The alerts chat at upgrade time; card deliveries recorded before chat_id belong to it."""
-        state = await self.repo.get("ops.source_checkpoints", LEGACY_CHAT_KEY)
-        if state is None:
-            state = {
-                "source_id": LEGACY_CHAT_KEY,
-                "cursor": str(self.settings.telegram_alerts_chat),
-                **collection_clock(utcnow()).fields("updated_at"),
-            }
-            await self.repo.put("ops.source_checkpoints", LEGACY_CHAT_KEY, state)
-        return state["cursor"]
+    def legacy_chat(self):
+        """The chat that card deliveries recorded before chat_id was stored went to (delivery.yaml)."""
+        chat = getattr(self.settings, "telegram_legacy_cards_chat", None)
+        return str(chat) if chat else None
 
     async def bot(self):
         if self.bot_id is None:
@@ -588,7 +579,7 @@ class TelegramInbox:
     async def reply_target(self, chat_id, reply):
         ref = str(reply["message_id"])
         if str(chat_id) == str(self.settings.telegram_alerts_chat):
-            legacy = await self.legacy_chat()
+            legacy = self.legacy_chat()
             for delivery in await self.sent(CARD_CHANNEL, message_ref=ref):
                 scope = delivery.get("chat_id") or legacy
                 if scope != str(chat_id):

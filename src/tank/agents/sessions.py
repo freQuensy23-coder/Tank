@@ -20,7 +20,6 @@ from tank.agents import workflow
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
-from tank.delivery import DeliveryDeferred
 from tank.telegram_inbox import DOCUMENT_LIMIT, question_message, record_answer
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import canonical_json, iso, sha256
@@ -411,59 +410,6 @@ class SessionService:
         if retired or "retired_message_ids" in session:
             session["retired_message_ids"] = sorted(retired)
 
-    def analyst_tools(self):
-        """The current analyst toolset: built-ins plus the custom tools of config/skills."""
-        reader = getattr(self.settings, "read_config_json", None)
-        if reader is None:
-            return None
-        custom = reader("skills/tank-event-analyst/tools.json")
-        return [
-            {
-                "type": "agent_toolset_20260401",
-                "default_config": {"enabled": True},
-                "configs": [
-                    {"name": name, "enabled": False}
-                    for name in ["web_search", "web_fetch", "schedule", "cancel_schedule", "list_schedules"]
-                ]
-                + [{"name": "browser", "enabled": True}],
-            }
-        ] + [dict(type="custom", **tool) for tool in custom]
-
-    async def sync_tools(self, sid):
-        """Before a follow-up, give an idle analyst session the current tools, so old sessions gain new ones."""
-        if getattr(self.settings, "replay", False):
-            return
-        session = await self.repo.get("ops.agent_sessions", sid)
-        if session is None or session.get("proposal_id"):
-            return None
-        tools = self.analyst_tools()
-        if not tools or session.get("tools_sha256") == sha256(tools):
-            return None
-        if session.get("active_message_id") or session.get("runtime_status") in BUSY_RUNTIME_STATES:
-            return "BUSY"
-        try:
-            await self.request("POST", f"sessions/{sid}", json={"agent": {"tools": tools}})
-            remote = await self.request("GET", f"sessions/{sid}")
-        except httpx.HTTPStatusError as error:
-            if error.response.status_code == 429 or error.response.status_code >= 500:
-                raise
-            return
-        remote = remote.get("data", remote)
-        descriptor = self.agent_provenance(remote, {}, session.get("agent_id"))
-        async with self.repo.lock("session:" + sid):
-            current = await self.repo.get("ops.agent_sessions", sid)
-            if descriptor.get("prompt_version"):
-                current.update(
-                    {
-                        key: value
-                        for key, value in descriptor.items()
-                        if key not in ("agent_id", "prompt_label")
-                    }
-                )
-            current["tools_sha256"] = sha256(tools)
-            current.update(self.clock_timestamp().fields("tools_synced_at"))
-            await self.repo.put("ops.agent_sessions", sid, current)
-
     async def send_file(self, session, arguments, call_id):
         """send_telegram_file: read an output of this session and reply with it to the active follow-up."""
         active = next(
@@ -523,8 +469,6 @@ class SessionService:
         async with self.repo.lock("session-mapping:" + str(mapping_identity)):
             session = await self.resolve(payload)
         sid, key = session["session_id"], sha256(payload)
-        if payload.get("kind") == "USER_QUESTION" and await self.sync_tools(sid) == "BUSY":
-            raise DeliveryDeferred(offset_schedule(collection_clock(), timedelta(seconds=30)))
         async with self.send_locks.setdefault(sid, asyncio.Lock()):
             async with self.repo.lock("session:" + sid):
                 session = await self.repo.get("ops.agent_sessions", sid)
