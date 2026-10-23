@@ -24,7 +24,6 @@ pytest_plugins = (
 TEST_DATABASE_VARIABLES = frozenset(
     {"TANK_TEST_DATABASE_URL", "TANK_E2E_DATABASE_URL", "TANK_SOURCE_TEST_DATABASE_URL"}
 )
-TEST_FLAGS = frozenset({"TANK_BROWSER_TESTS"})
 TEST_CLICKHOUSE = "CLICKHOUSE_TEST_URL"
 
 
@@ -32,7 +31,7 @@ def scrub_inherited_environment(environment):
     """Inspect names only; discard operator configuration without reading values."""
     for name in tuple(environment):
         upper = name.upper()
-        if name in TEST_DATABASE_VARIABLES | TEST_FLAGS | {TEST_CLICKHOUSE}:
+        if name in TEST_DATABASE_VARIABLES | {TEST_CLICKHOUSE}:
             continue
         if (
             upper in {"NETRC", "DBUS_SESSION_BUS_ADDRESS", "NPM_CONFIG_USERCONFIG", "CURL_HOME"}
@@ -105,11 +104,6 @@ scrub_inherited_environment(os.environ)
 
 
 _operator_home = Path.home()
-_browser_cache = (
-    _operator_home / "Library" / "Caches" / "ms-playwright"
-    if sys.platform == "darwin"
-    else _operator_home / ".cache" / "ms-playwright"
-)
 _OFFLINE_HOME = Path(tempfile.mkdtemp(prefix="tank-pytest-offline-home-"))
 os.environ.update(
     HOME=str(_OFFLINE_HOME),
@@ -120,8 +114,6 @@ os.environ.update(
     GIT_CONFIG_GLOBAL=os.devnull,
     GIT_CONFIG_NOSYSTEM="1",
 )
-if "PLAYWRIGHT_BROWSERS_PATH" not in os.environ and _browser_cache.is_dir():
-    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(_browser_cache)
 
 
 def _cleanup_home():

@@ -358,7 +358,7 @@ def test_all_34_source_configurations():
             if feed["kind"] == "instruments":
                 assert feed["venue"] in {"binance", "coinbase", "kraken", "okx", "bybit", "hyperliquid"}
             if feed.get("method") == "POST":
-                assert feed["body"]
+                assert feed.get("body") or feed.get("form")
 
 
 def test_binance_rich_document():
@@ -559,11 +559,24 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path, pos
 @pytest.mark.asyncio
 async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path):
     calls = []
+    release = {
+        "url": "https://press.example.org/press-releases/news-room/2026/launch",
+        "title": "Fund launch",
+        "contentString": "Fund launch null null en-US null New York – Fund launched today.",
+        "referenceDate": "2026-09-08",
+    }
 
     def handle(request):
         calls.append(request)
         if request.url.host == "blocked.example.org":
             return httpx.Response(403, content=b"Forbidden")
+        if request.url.host == "press.example.org":
+            assert request.method == "POST" and dict(httpx.QueryParams(request.content.decode())) == {
+                "articleType": "press-release",
+                "start": "0",
+            }
+            body = {"results": {"response": {"hits": {"hits": [{"_source": release}]}}}}
+            return httpx.Response(200, json=body)
         return httpx.Response(200, content=RSS, headers={"content-type": "application/rss+xml"})
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
@@ -579,9 +592,10 @@ async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path):
                     "source_id": "S19",
                     "feeds": [
                         {
-                            "url": "https://rendered.example.org/press",
-                            "kind": "html",
-                            "article_pattern": "/press/[a-z]+",
+                            "url": "https://press.example.org/api/articleApi",
+                            "kind": "json",
+                            "method": "POST",
+                            "form": {"articleType": "press-release", "start": "0"},
                         }
                     ],
                 },
@@ -591,14 +605,21 @@ async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path):
         http=http,
     )
     results = await svc.check(probe=True)
-    assert [r["status"] for r in results] == ["PASS", "HTTP_ERROR", "UNAVAILABLE", "UNAVAILABLE"]
-    assert results[0]["item_count"] == 1 and results[1]["http_status"] == 403
-    assert len(calls) == 2 and not repo.jobs and not repo.rows
+    assert [r["status"] for r in results] == ["PASS", "HTTP_ERROR", "PASS", "UNAVAILABLE"]
+    assert (
+        results[0]["item_count"] == 1 and results[1]["http_status"] == 403 and results[2]["item_count"] == 1
+    )
+    assert len(calls) == 3 and not repo.jobs and not repo.rows
+    [item] = parsers.json_items(
+        json.dumps({"results": {"response": {"hits": {"hits": [{"_source": release}]}}}}), "S19"
+    )
+    assert item["text"] == "Fund launch en-US New York – Fund launched today."
+    assert item["external_id"] == release["url"] and item["published_at_precision"] == "BUCKET(1d)"
     assert results[3]["reason"] == "X runs through a paid Apify actor run; excluded from the HTTP smoke"
     assert results[0]["payload_sha256"] == sha256(RSS) and not list(tmp_path.rglob("*.zst"))
 
     await svc.check()
-    assert len(calls) == 2
+    assert len(calls) == 3
     await http.aclose()
 
 
@@ -1000,38 +1021,6 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(tmp_path, m
         assert ("www.sec.gov", 25, 60, 1) in calls
     finally:
         await service.close()
-
-
-@pytest.mark.browser
-@pytest.mark.integration
-@pytest.mark.asyncio
-async def test_public_renderer_is_isolated_from_x_settings(tmp_path):
-    import os
-
-    if os.getenv("TANK_BROWSER_TESTS") != "1":
-        pytest.skip("Requires TANK_BROWSER_TESTS=1")
-    from tank.sources.browser import BrowserReader
-
-    class ForbiddenXSettings:
-        def __getattr__(self, name):
-            raise AssertionError("Public renderer must never access X settings: " + name)
-
-    renderer = BrowserReader(ForbiddenXSettings())
-    try:
-        await renderer.open()
-        await renderer.context.route(
-            "**/*",
-            lambda route: route.fulfill(
-                status=200,
-                content_type="text/html",
-                body="<html><article><h1>Public issuer release</h1><p>Actual public text</p></article></html>",
-            ),
-        )
-        payload = await renderer.html("https://public.synthetic.example/release")
-        assert parsers.article(payload)["title"] == "Public issuer release"
-        assert not await renderer.context.cookies()
-    finally:
-        await renderer.close()
 
 
 @pytest.mark.asyncio
@@ -2653,3 +2642,58 @@ async def test_instrument_snapshot_written_only_when_it_changes(tmp_path, collec
         status[0] = "BREAK"
         assert (await svc.poll_once("S14"))["items"] == 1
         assert repo.snapshot_writes == 2
+
+
+def test_one_poll_of_a_venue_list_groups_symbols_that_made_the_same_move():
+    from tank.sources.polling import instrument_changes
+
+    feed = {"url": "https://api.kraken.com/0/public/AssetPairs", "venue": "kraken", "market_type": "SPOT"}
+    pages = [(b"page", "2026-10-23T14:00:00Z")]
+    online = {"status": "online"}
+    cancel = {"status": "cancel_only"}
+    previous = {"ABCUSD": online, "ABCEUR": online, "DEFUSD": online, "GHIUSD": online}
+    snapshot = {
+        "ABCUSD": cancel,
+        "ABCEUR": cancel,
+        "DEFUSD": cancel,
+        "GHIUSD": online,
+        "NEWUSD": {"base": "NEW", "status": "online"},
+        "NEWEUR": {"base": "NEW", "status": "online"},
+        "OTHUSD": {"base": "OTH", "status": "online"},
+    }
+    rows, _ = instrument_changes(
+        snapshot, previous, feed, pages, dict.fromkeys(snapshot, 0), "2026-10-23T14:00:05Z"
+    )
+    by_title = {row["title"]: row for row in rows}
+    assert sorted(by_title) == [
+        "OTHUSD instrument change",
+        "kraken SPOT: 2 NEW instruments ADDED",
+        "kraken SPOT: 3 instruments STATE_UPDATE online → cancel_only",
+    ]
+    delisting = by_title["kraken SPOT: 3 instruments STATE_UPDATE online → cancel_only"]
+    assert delisting["change"] == "STATE_UPDATE"
+    assert delisting["observed_at"] == "2026-10-23T14:00:00Z" and delisting["_payload"] == b"page"
+    assert [c["symbol"] for c in json.loads(delisting["text"])["changes"]] == ["ABCEUR", "ABCUSD", "DEFUSD"]
+    assert by_title["kraken SPOT: 2 NEW instruments ADDED"]["change"] == "ADDED"
+    assert json.loads(by_title["OTHUSD instrument change"]["text"])["before"] is None
+
+
+def test_a_grouped_change_keeps_its_own_identity_when_the_list_returns_to_an_earlier_snapshot():
+    from tank.sources.polling import instrument_changes
+
+    feed = {"url": "https://api.kraken.com/0/public/AssetPairs", "venue": "kraken", "market_type": "SPOT"}
+    pages = [(b"page", "2026-10-23T14:00:00Z")]
+    online, cancel = {"status": "online"}, {"status": "cancel_only"}
+    first = {"A": online, "B": online, "C": online, "D": online}
+    second = {"A": cancel, "B": cancel, "C": online, "D": online}
+    third = {"A": cancel, "B": cancel, "C": cancel, "D": cancel}
+
+    def ids(snapshot, previous):
+        rows, digest = instrument_changes(snapshot, previous, feed, pages, dict.fromkeys(snapshot, 0), "x")
+        return [row["external_id"] for row in rows], digest
+
+    forward, at_second = ids(second, first)
+    other, _ = ids(third, second)
+    back, back_digest = ids(second, third)
+    assert back_digest == at_second
+    assert len({*forward, *other, *back}) == 3

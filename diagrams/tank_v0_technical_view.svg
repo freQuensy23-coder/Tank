@@ -37,7 +37,7 @@
 <rect x="410.0" y="250.0" width="404.0" height="124.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
 <text x="421.0" y="273.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="382.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">sources</tspan></text>
 <text x="422.0" y="295.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="295.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">One polling loop per source: S01–S18, S20–S28, S30–S34 over plain</text>
+<text x="433.0" y="295.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">One polling loop per source: S01–S28, S30–S34 over plain</text>
 <text x="433.0" y="310.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">HTTP (conditional GET, 20 s timeout, 3 retries)</text>
 <text x="422.0" y="328.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="433.0" y="328.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Raw payload + SHA-256 → <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">raw/items</tspan>; new item → <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">source_items</tspan></text>
@@ -47,11 +47,11 @@
 <rect x="410.0" y="388.0" width="404.0" height="124.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
 <text x="421.0" y="411.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="382.0"><tspan font-weight="700" font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">xsensor</tspan></text>
 <text x="422.0" y="433.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="433.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">One loop: Playwright (async API), headless Chromium; X profile in the</text>
-<text x="433.0" y="448.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">volume <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank-browser</tspan>, signed in from the secret <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">x_session</tspan></text>
+<text x="433.0" y="433.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">One Apify actor run per pass over HTTPS; no X account, session</text>
+<text x="433.0" y="448.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">or browser; token <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">APIFY_API_TOKEN</tspan> from <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">.env</tspan></text>
 <text x="422.0" y="466.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="433.0" y="466.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">X list (S29) read every 60 s; Franklin Templeton page (S19) rendered</text>
-<text x="433.0" y="481.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">every 600 s</text>
+<text x="433.0" y="466.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">86 X accounts (S29), one run every 120 s; first run per account</text>
+<text x="433.0" y="481.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">only records its cursor</text>
 <text x="422.0" y="499.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="433.0" y="499.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="370.0">Raw capture → <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">source_items</tspan> + FILTER_ITEM or ROUTE_ITEM job</text>
 <rect x="410.0" y="526.0" width="404.0" height="202.0" rx="8" fill="#FFFFFF" stroke="#334E68" stroke-width="1.3"/>
@@ -255,14 +255,14 @@
 <text x="55.0" y="409.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0"><tspan font-weight="700">HTML + article pattern:</tspan> Treasury, DTCC, Robinhood,</text>
 <text x="55.0" y="424.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Uniswap, Ondo, LayerZero, BlackRock, Circle, Paxos,</text>
 <text x="55.0" y="439.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">BNY, The Clearing House, Anchorage; Franklin</text>
-<text x="55.0" y="454.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Templeton (S19) needs a browser</text>
+<text x="55.0" y="454.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Templeton (S19) via its JSON search API</text>
 <text x="44.0" y="472.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="55.0" y="472.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">Every 30–600 s; 15 s while escalated</text>
 <rect x="32.0" y="499.0" width="318.0" height="73.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
-<text x="43.0" y="522.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="296.0"><tspan font-weight="700">x.com — private list «tank-v0» (S29)</tspan></text>
+<text x="43.0" y="522.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="296.0"><tspan font-weight="700">Apify actor tank-x-notifier (S29)</tspan></text>
 <text x="44.0" y="544.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
-<text x="55.0" y="544.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">86 accounts; the operator's X session; page read every</text>
-<text x="55.0" y="559.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">60 s</text>
+<text x="55.0" y="544.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">86 public X profiles; one run-sync call every</text>
+<text x="55.0" y="559.0" font-size="11.5" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="284.0">120 s; no X account or session</text>
 <rect x="32.0" y="586.0" width="318.0" height="73.0" rx="8" fill="#F5F7FA" stroke="#9AA5B1" stroke-width="1.0"/>
 <text x="43.0" y="609.0" font-size="13" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="296.0"><tspan font-weight="700">Venue WebSockets — hot tier</tspan></text>
 <text x="44.0" y="631.5" font-size="11.5" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
@@ -321,7 +321,7 @@
 <text x="1164.5" y="1895.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">telegram_bot_token</tspan> ·</text>
 <text x="1164.5" y="1909.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">etherscan_api_key</tspan> ·</text>
 <text x="1164.5" y="1923.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank_agent_db_password</tspan> ·</text>
-<text x="1164.5" y="1937.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">x_session</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">codex_gateway_key</tspan></text>
+<text x="1164.5" y="1937.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">apify_api_token</tspan> · <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">codex_gateway_key</tspan></text>
 <text x="1153.5" y="1954.5" font-size="11" fill="#7B8794" text-anchor="start" xml:space="preserve">•</text>
 <text x="1164.5" y="1954.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5">The ChatGPT sign-in (<tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">auth.json</tspan> from</text>
 <text x="1164.5" y="1968.0" font-size="11" fill="#1F2933" text-anchor="start" xml:space="preserve" data-maxw="203.5"><tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">codex</tspan> <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">login</tspan>) sits in the <tspan font-family="Menlo, Consolas, 'DejaVu Sans Mono', monospace">tank</tspan> volume</text>
@@ -385,9 +385,6 @@
 <path d="M 350.0 505.5 L 410.0 505.5" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
 <path d="M 350.0 622.5 L 410.0 622.5" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
 <path d="M 350.0 700.5 L 410.0 700.5" fill="none" stroke="#334E68" stroke-width="1.5" marker-end="url(#ah-s)" stroke-linejoin="round"/>
-<path d="M 350.0 418.0 L 410.0 418.0" fill="none" stroke="#334E68" stroke-width="1.2" stroke-dasharray="4 3" marker-end="url(#ah-s)" stroke-linejoin="round"/>
-<rect x="353.0" y="402.0" width="23.6" height="14.0" fill="#FFFFFF" opacity="0.92"/>
-<text x="356.0" y="411.0" font-size="10" fill="#52606D" text-anchor="start" xml:space="preserve">S19</text>
 <path d="M 1595.0 713.0 L 1595.0 743.0" fill="none" stroke="#2F855A" stroke-width="1.5" marker-end="url(#ah-gr)" stroke-linejoin="round"/>
 <path d="M 1362.0 472.0 L 1422.0 472.0" fill="none" stroke="#2B6CB0" stroke-width="1.5" marker-end="url(#ah-b)" marker-start="url(#as-b)" stroke-linejoin="round"/>
 <path d="M 1362.0 658.5 L 1422.0 658.5" fill="none" stroke="#2F855A" stroke-width="1.5" marker-end="url(#ah-gr)" stroke-linejoin="round"/>

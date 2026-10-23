@@ -128,12 +128,9 @@ def test_source_check_network_probes_are_explicit(monkeypatch):
     monkeypatch.setattr(tank.sources, "SourceService", Source)
     monkeypatch.setattr(cli, "run_db", lambda fn: asyncio.run(fn(None, None)))
     assert CliRunner().invoke(cli.main, ["sources", "check"]).exit_code == 0
-    assert calls[-1] == {"probe": False, "include_browser": False, "check_accounts": False}
-    assert (
-        CliRunner().invoke(cli.main, ["sources", "check", "--probe", "--browser", "--accounts"]).exit_code
-        == 0
-    )
-    assert calls[-1] == {"probe": True, "include_browser": True, "check_accounts": True}
+    assert calls[-1] == {"probe": False, "check_accounts": False}
+    assert CliRunner().invoke(cli.main, ["sources", "check", "--probe", "--accounts"]).exit_code == 0
+    assert calls[-1] == {"probe": True, "check_accounts": True}
 
 
 def test_manual_backup_defaults_to_no_retention_and_forwards_force(monkeypatch):

@@ -10,7 +10,7 @@ GitHub-hosted runners do not guarantee scheduling latency. If the budget job its
 
 In MR #22, run [39973960566](https://github.com/freQuensy23-coder/Tank/actions/runs/39973960566), `playwright install --with-deps chromium` took 758 seconds. Its log shows slow package transfers and retries from `azure.archive.ubuntu.com`. The 352 integration tests themselves took 132.77 seconds. The workflow had a 20-minute integration timeout and no wall-clock MR gate.
 
-The Ubuntu 24.04 hosted image already provides the browser runtime libraries. CI installs the Chromium version pinned by `uv.lock` without reinstalling/upgrading its system packages and immediately smoke-tests an actual browser launch. Missing libraries are a failure, never a skipped browser test. Browser preparation is capped at one minute. Python is provisioned by setup-uv once instead of also running setup-python.
+Main now reads S19 through the Franklin Templeton JSON endpoint and removes Playwright, Chromium installation and the browser test from Tank. This workflow preserves that removal: the Python integration jobs have no browser installation, browser smoke test or browser opt-in flag. The OpenMA sandbox browser remains as defined by main. Python is provisioned by setup-uv once instead of also running setup-python.
 
 Integration runs as three independent shards, each with its own PostgreSQL and ClickHouse services. A stable hash of the repository-relative test file selects its shard. Existing `-n auto --dist loadfile` behavior is preserved inside each shard, so tests that reset shared tables in one file remain together. Production 20-second timeout tests retain their real duration and all four parameter combinations.
 
