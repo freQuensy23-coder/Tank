@@ -1,12 +1,11 @@
-"""Public renderer with an isolated context in the service Chromium process."""
+"""Public renderer for pages that need a browser (S19), in its own Chromium process."""
 
 import asyncio
 
 
 class BrowserReader:
-    def __init__(self, settings, *, shared_sensor=None):
+    def __init__(self, settings):
         self.settings = settings
-        self.shared_sensor = shared_sensor
         self.driver = None
         self.browser = None
         self.context = None
@@ -15,14 +14,10 @@ class BrowserReader:
     async def open(self):
         if self.context is not None:
             return
-        if self.shared_sensor is not None:
-            authenticated = await self.shared_sensor.browser_context()
-            self.browser = authenticated.browser
-        else:
-            from playwright.async_api import async_playwright
+        from playwright.async_api import async_playwright
 
-            self.driver = await async_playwright().start()
-            self.browser = await self.driver.chromium.launch(headless=True, args=["--headless=new"])
+        self.driver = await async_playwright().start()
+        self.browser = await self.driver.chromium.launch(headless=True, args=["--headless=new"])
         self.context = await self.browser.new_context()
 
     async def html(self, url):
@@ -39,7 +34,7 @@ class BrowserReader:
     async def close(self):
         if self.context:
             await self.context.close()
-        if self.browser and self.shared_sensor is None:
+        if self.browser:
             await self.browser.close()
         if self.driver:
             await self.driver.stop()
