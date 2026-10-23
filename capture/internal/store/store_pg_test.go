@@ -59,15 +59,23 @@ func with(m map[string]any, kv ...any) map[string]any {
 	return out
 }
 
+func databaseLockTiming(t *testing.T) {
+	t.Helper()
+	poll, ping, retry, max := lockPoll, lockPing, lockRetry, lockRetryMax
+	lockPoll, lockPing, lockRetry, lockRetryMax = 100*time.Millisecond, time.Second, 50*time.Millisecond, 500*time.Millisecond
+	t.Cleanup(func() { lockPoll, lockPing, lockRetry, lockRetryMax = poll, ping, retry, max })
+}
+
 func TestLockExclusion(t *testing.T) {
 	a, b := open(t), open(t)
 	ctx := context.Background()
 	key := "tank:capture:test:" + suffix()
-	fastLock(t)
+	databaseLockTiming(t)
 	first, err := a.Lock(ctx, key)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer first.Release()
 	waiting, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
 	defer cancel()
 	if _, err := b.Lock(waiting, key); !errors.Is(err, context.DeadlineExceeded) {
@@ -78,6 +86,7 @@ func TestLockExclusion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer second.Release()
 
 	var pid int
 	if err := b.Pool.QueryRow(ctx, "SELECT pid FROM pg_locks WHERE locktype='advisory' AND ((classid::bigint<<32)|objid::bigint)=$1 AND granted", LockID(key)).Scan(&pid); err != nil {
@@ -242,7 +251,7 @@ func TestLedger(t *testing.T) {
 }
 
 func TestLockSurvivesTerminatedBackend(t *testing.T) {
-	fastLock(t)
+	databaseLockTiming(t)
 	s := open(t)
 	ctx := context.Background()
 	l, err := s.Lock(ctx, "tank:capture:test:"+suffix())

@@ -152,7 +152,7 @@ ENV BOXLITE_RUNTIME_DIR=/opt/tank-boxlite-runtime LD_LIBRARY_PATH=/opt/tank-boxl
 COPY --chown=node:node tank-overlay.json /app/tank-overlay.json
 USER root
 RUN install -d -o node -g node /app/replay-evidence
-COPY --from=sandbox / /opt/tank-sandbox-oci/
+COPY --link --from=sandbox / /opt/tank-sandbox-oci/
 USER node
 ENV BOXLITE_HOME=/app/data/boxlite \
     TANK_REPLAY_EVIDENCE_ROOT=/app/replay-evidence \

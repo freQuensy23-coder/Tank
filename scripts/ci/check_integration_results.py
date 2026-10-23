@@ -6,25 +6,43 @@ import xml.etree.ElementTree as ET
 from collections import Counter
 from pathlib import Path
 
+from integration_shard import parse_shard, shard_for
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("report", type=Path)
-    parser.add_argument("--collection", type=Path, required=True)
-    args = parser.parse_args()
-    expected = json.loads(args.collection.read_text())
+
+def verify(reports: list[Path], collections: list[Path], shard: str | None = None) -> dict:
+    expected = json.loads(collections[0].read_text())
     if not expected:
-        parser.error("the expected integration collection is empty")
-    cases = ET.parse(args.report).getroot().findall(".//testcase")
-    if not cases:
-        parser.error("the integration report contains no cases")
+        raise ValueError("the expected integration collection is empty")
+    if any(json.loads(path.read_text()) != expected for path in collections[1:]):
+        raise ValueError("integration shards collected different full case sets")
+    if shard is not None:
+        if len(reports) != 1 or len(collections) != 1:
+            raise ValueError("a shard check requires exactly one report and collection")
+        index, count = parse_shard(shard)
+        expected = [case for case in expected if shard_for(case["file"], count) == index]
+    cases = [case for report in reports for case in ET.parse(report).getroot().findall(".//testcase")]
+    if not cases or not expected:
+        raise ValueError("the integration report or selected collection contains no cases")
     if any(case.find(tag) is not None for case in cases for tag in ("failure", "error", "skipped")):
-        parser.error("integration requires zero failures, errors and skips")
+        raise ValueError("integration requires zero failures, errors and skips")
     expected_ids = Counter((case["classname"], case["name"]) for case in expected)
     actual_ids = Counter((case.get("classname"), case.get("name")) for case in cases)
     if expected_ids != actual_ids:
-        parser.error("integration report does not match the full collected case set")
-    print(json.dumps({"cases": len(cases), "passed": len(cases), "skipped": 0}))
+        raise ValueError("integration report does not match the full collected case set")
+    return {"cases": len(cases), "passed": len(cases), "skipped": 0}
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("report", type=Path, nargs="+")
+    parser.add_argument("--collection", type=Path, required=True, nargs="+")
+    parser.add_argument("--shard")
+    args = parser.parse_args()
+    try:
+        result = verify(args.report, args.collection, args.shard)
+    except (ValueError, KeyError, OSError, ET.ParseError) as error:
+        parser.error(str(error))
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":

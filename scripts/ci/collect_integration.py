@@ -12,7 +12,13 @@ def pytest_collection_finish(session) -> None:
     cases = []
     for item in session.items:
         parts = mangle_test_address(item.nodeid)
-        cases.append({"classname": ".".join(parts[:-1]), "name": bin_xml_escape(parts[-1])})
+        cases.append(
+            {
+                "classname": ".".join(parts[:-1]),
+                "name": bin_xml_escape(parts[-1]),
+                "file": item.nodeid.split("::", 1)[0],
+            }
+        )
     target = Path(".test-results/integration-collection.json")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(cases, indent=2) + "\n")
