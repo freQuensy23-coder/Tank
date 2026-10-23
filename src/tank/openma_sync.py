@@ -9,10 +9,8 @@ Never starts a model session and never writes to the configuration.
 
 import asyncio
 import hashlib
-import io
 import json
 import logging
-import zipfile
 
 import httpx
 
@@ -59,14 +57,6 @@ def skill_digest(settings, name):
     for path, data in skill_files(settings, name):
         digest.update(path.encode() + b"\0" + hashlib.sha256(data).digest())
     return digest.hexdigest()
-
-
-def skill_zip(settings, name):
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for path, data in skill_files(settings, name):
-            archive.writestr(path, data)
-    return buffer.getvalue()
 
 
 def model_card(model_id):
@@ -182,18 +172,17 @@ async def sync(settings, client):
         if current and current.get("sha256") == digest:
             report["skills"][name] = "CURRENT"
             continue
+        files = [
+            ("files[]", (path, data, "application/octet-stream"))
+            for path, data in skill_files(settings, name)
+        ]
         if current:
-            archive = {"file": (name + ".zip", skill_zip(settings, name), "application/zip")}
             version = _data(
-                await client.post("/v1/skills/" + current["skill_id"] + "/versions/upload", files=archive)
+                await client.post("/v1/skills/" + current["skill_id"] + "/versions", files=files)
             )["version"]
             skills[name] = {"skill_id": current["skill_id"], "version": str(version), "sha256": digest}
             report["skills"][name] = "NEW_VERSION"
         else:
-            files = [
-                ("files[]", (path, data, "application/octet-stream"))
-                for path, data in skill_files(settings, name)
-            ]
             created = _data(await client.post("/v1/skills", files=files))
             skills[name] = {
                 "skill_id": created["id"],
