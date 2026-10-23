@@ -865,12 +865,18 @@ class SessionService:
                     texts[current] = text
             elif kind == "session.status_idle" and event.get("execution_id"):
                 ends[event["execution_id"]] = (event.get("stop_reason") or {}).get("type") == "end_turn"
-        answers = {}
+        answers, attempts = {}, {}
         for execution_id in order:
             owner = await self.native_input_owner(session, execution_id)
             if not owner:
                 continue
-            answer = answers.setdefault(owner[0], {"text": None, "ended": False})
+            message_id, attempt = owner
+            if attempt < attempts.get(message_id, attempt):
+                continue
+            if attempt > attempts.get(message_id, attempt):
+                answers.pop(message_id, None)
+            attempts[message_id] = attempt
+            answer = answers.setdefault(message_id, {"text": None, "ended": False})
             answer["ended"] = ends.get(execution_id, False)
             if execution_id in texts:
                 answer["text"] = texts[execution_id]

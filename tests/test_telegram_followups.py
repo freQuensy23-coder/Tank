@@ -2091,3 +2091,55 @@ async def test_agent_rules_are_coalesced_and_capped_per_event():
         await tools.set_watch_condition(arm(value), {})
     with pytest.raises(ValueError, match="DISARM one first"):
         await tools.set_watch_condition(arm(99), {})
+
+
+@pytest.mark.asyncio
+async def test_text_of_a_failed_attempt_is_never_the_answer():
+    repo = MemoryRepository()
+    await seed(repo)
+    session = await repo.get("ops.agent_sessions", "ses_1")
+    session["message_log"].append(
+        {
+            "message_id": "mq",
+            "payload": {"kind": "USER_QUESTION", "question_id": "q"},
+            "remote_event_id": "in_retry",
+            "retry_count": 1,
+            "superseded_native_input_ids": ["in_first"],
+            "native_input_attempts": {"in_first": 0, "in_retry": 1},
+        }
+    )
+    history = [
+        {"id": "in_first", "type": "user.message"},
+        {"id": "r1", "type": "session.status_running", "execution_id": "in_first"},
+        {"id": "x1", "type": "agent.message", "content": [{"type": "text", "text": "Половина отв"}]},
+        {"id": "e1", "type": "session.error"},
+        {"id": "in_retry", "type": "user.message"},
+        {"id": "r2", "type": "session.status_running", "execution_id": "in_retry"},
+        {
+            "id": "i2",
+            "type": "session.status_idle",
+            "execution_id": "in_retry",
+            "stop_reason": {"type": "end_turn"},
+        },
+    ]
+    async with httpx.AsyncClient(transport=httpx.MockTransport(openma([], history))) as http:
+        service = SessionService(repo, session_settings(), None, http=http)
+        answers = await service.turn_answers(session, ["in_first"])
+    assert answers["mq"] == {"text": None, "ended": True}
+
+
+@pytest.mark.asyncio
+async def test_reused_attachment_keeps_its_recorded_size():
+    repo = MemoryRepository()
+    await seed(repo)
+    telegram = FakeTelegram()
+    telegram.files["doc_a"] = b"12345"
+    async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:
+        inbox = TelegramInbox(repo, inbox_settings(), http=http)
+        body = {
+            "message_id": 1,
+            "document": {"file_id": "doc_a", "file_unique_id": "ua", "file_name": "a.txt"},
+        }
+        first = await inbox.attachments(None, "q_r", "ses_1", body)
+        again = await inbox.attachments(None, "q_r", "ses_1", body)
+    assert first[0]["size"] == 5 and again[0]["size"] == 5

@@ -933,7 +933,10 @@ class TelegramInbox:
             if item is None:
                 continue
             key = "tgf_" + sha256({"question_id": question_id, "file": item["file_unique_id"]})[:32]
-            if not await self.repo.get("ops.telegram_files", key):
+            existing = await self.repo.get("ops.telegram_files", key)
+            if existing:
+                item.update(filename=existing["filename"], mime=existing["mime"], size=existing["size"])
+            else:
                 content = await self.download(item["file_id"])
                 await self.repo.put(
                     "ops.telegram_file_payloads",
