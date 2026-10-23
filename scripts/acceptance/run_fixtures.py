@@ -192,7 +192,9 @@ def run_one(fid, entry, out_dir, timeout):
 
     deployed = sh(COMPOSE + ["exec", "-T", "tank", "cat", "/app/config/openma.yaml"]).stdout
     if (config_dir / "openma.yaml").read_text() != deployed:
-        raise SystemExit(f"{fid}: fixture config openma.yaml differs from the deployed /app/config/openma.yaml")
+        raise SystemExit(
+            f"{fid}: fixture config openma.yaml differs from the deployed /app/config/openma.yaml"
+        )
     with tempfile.TemporaryDirectory() as tmp:
         p = Path(tmp) / f"{fid}.json"
         p.write_text(raw)
