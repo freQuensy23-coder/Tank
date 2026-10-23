@@ -20,7 +20,6 @@ from tank.agents import workflow
 from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
-from tank.delivery import DeliveryDeferred
 from tank.ops_progress import session_progress
 from tank.telegram_inbox import DOCUMENT_LIMIT, question_message, record_answer
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp

@@ -472,8 +472,38 @@
             "LOW"
           ],
           "description": "Agent-supplied confidence in the event timing: HIGH for an exact primary timestamp, MEDIUM for bucket precision, LOW for collection time only. Optional; omission leaves declared timestamp precision as the timing-confidence basis."
+        },
+        "no_event_reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "When is_event is false, explain in one concrete sentence why this material is not an actionable event. This is the rejection decision, separate from certainty_reason about source reliability.",
+          "pattern": "\\S"
         }
-      }
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "is_event": {
+              "enum": [
+                true
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "is_event": {
+              "enum": [
+                false
+              ]
+            }
+          },
+          "required": [
+            "no_event_reason"
+          ]
+        }
+      ]
     }
   },
   {
@@ -2173,7 +2203,7 @@
   },
   {
     "name": "publish_card",
-    "description": "Request publication using the canonical template. Supply only a neutral factual headline verdict and 2–3 WHY bullets, following skill wording rules L1–L12. Tank applies lifecycle, alert eligibility and update policy, composes structured values from authoritative MarketTruth/Decision outputs, stores immutable evidence and queues delivery. Tank does not lint or repair prose and does not require a fixed tool-call order. Returns alert ID/version or refusal for the deterministic publication gate. An accepted ordinary UPDATE during cooldown is persisted and queued until delivery_not_before; published=true with delivery_status=QUEUED is not a transport acknowledgment. STALE state-change updates are not published. Delivery sends the accepted immutable payload without a second semantic eligibility judgment.",
+    "description": "Request publication using the canonical template. Supply a plain-language WHAT explanation, a neutral factual headline verdict and 2–3 WHY bullets, following skill wording rules L1–L12. Tank applies lifecycle, alert eligibility and update policy, composes structured values from authoritative MarketTruth/Decision outputs, stores immutable evidence and queues delivery. Tank does not lint or repair prose and does not require a fixed tool-call order. Returns alert ID/version or refusal for the deterministic publication gate. An accepted ordinary UPDATE during cooldown is persisted and queued until delivery_not_before; published=true with delivery_status=QUEUED is not a transport acknowledgment. STALE state-change updates are not published. Delivery sends the accepted immutable payload without a second semantic eligibility judgment.",
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
@@ -2187,6 +2217,13 @@
             "FULL",
             "UPDATE"
           ]
+        },
+        "what": {
+          "type": "string",
+          "description": "WHAT exactly happened, in 1–3 short plain-language sentences. Explain the concrete change, what the named protocol/product/token does and what it enables for users; unpack jargon. For a token integration, explain the token's purpose and relevant distinctive feature. Ground the explanation in evidence, preserve stage and uncertainty, and state unknowns. Displayed unchanged below the final card headline. At most 500 characters.",
+          "minLength": 1,
+          "maxLength": 500,
+          "pattern": "\\S"
         },
         "verdict": {
           "type": "string",
@@ -2206,6 +2243,7 @@
       "required": [
         "event_id",
         "kind",
+        "what",
         "verdict",
         "why"
       ]
