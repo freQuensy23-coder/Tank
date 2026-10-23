@@ -2588,6 +2588,7 @@ class EventToolService:
             compose_card,
             publication_immediate,
         )
+        from tank.telegram_rich import CARD_TEXT_LIMIT, card_rich_message
 
         eid = a["event_id"]
         event = await self.require("evt.events", eid)
@@ -2888,6 +2889,9 @@ class EventToolService:
         text = compose_card(
             event, assessment, beneficiaries, decisions, truths, kind=kind, verdict=verdict, why=why
         )
+        rich_message = card_rich_message(
+            text, assessment, max_chars=event["thresholds"].get("card_max_chars", CARD_TEXT_LIMIT)
+        )
         previous_failed = previous and bool(
             await self.repo.list_latest(
                 "out.deliveries",
@@ -2959,6 +2963,7 @@ class EventToolService:
             ),
             "code_version": self.settings.code_version,
             "model_ids": [],
+            "rich_message": rich_message,
             "producing_session_provenance": self.provenance(c),
             "agent_version": c.get("agent_version"),
             "skill_version": c.get("skill_version"),
@@ -3074,6 +3079,7 @@ class EventToolService:
             event_id=eid,
             **generated.fields("generated_at"),
             card_text=text,
+            rich_message=rich_message,
             card_struct=ctx,
             decisions=[
                 d["dec_id"]

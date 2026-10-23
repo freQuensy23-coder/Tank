@@ -5,6 +5,7 @@ import pytest
 from tank.event_tools import EventToolService, freshness, validate_schema
 from tank.settings import Settings
 from tank.storage import MemoryRepository
+from tank.telegram_rich import score_summary
 from tank.util import iso, utcnow
 
 
@@ -162,7 +163,7 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(service, 
     from tank.util import sha256
 
     monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card")
+    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
     x = await seed(service)
     result = await service.dispatch("record_event", x, {})
     eid = result["event_id"]
@@ -661,6 +662,9 @@ async def test_structural_assessment_requires_agent_partial_without_parallel_pub
     alert = await service.repo.get("out.alerts", result["alert_id"] + ":1")
     assert alert["kind"] == "PARTIAL"
     assert not alert["decisions"]
+    assert alert["rich_message"]["blocks"][1]["type"] == "table"
+    bundle = await service.repo.get("out.evidence_bundles", alert["evidence_bundle_id"])
+    assert bundle["payload"]["rich_message"] == alert["rich_message"]
     assert (
         await service.dispatch("publish_card", args, {"event_id": extraction["event_id"], "role": "analyst"})
     )["reason"] == "FIRST_CARD_ALREADY_GENERATED"
@@ -827,7 +831,9 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(serv
     import tank.analysis.cards as cards
 
     monkeypatch.setattr(cards, "alert_gate", lambda *a, **kw: (True, "TEST"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **kw: "Validated full card")
+    monkeypatch.setattr(
+        cards, "compose_card", lambda *a, **kw: "Validated full card" + "\n" + score_summary(a[1])
+    )
     x = await seed(service)
     result = await service.dispatch("record_event", x, {})
     eid = result["event_id"]
@@ -2402,7 +2408,11 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(servi
     import tank.analysis.cards as cards
     from tank.delivery import DeliveryService
 
-    monkeypatch.setattr(cards, "compose_card", lambda *args, **kwargs: "Synthetic safety update")
+    monkeypatch.setattr(
+        cards,
+        "compose_card",
+        lambda *args, **kwargs: "Synthetic safety update" + "\n" + score_summary(args[1]),
+    )
     eid = "repeat-safety"
     await service.repo.put(
         "evt.events",
@@ -3295,7 +3305,7 @@ async def test_full_card_blocks_only_analysis_tokens_with_decisions(service, mon
     def compose(event, assessment, beneficiaries, *args, **kwargs):
         captured["blocks"] = [edge["token_id"] for edge in beneficiaries]
         captured["who"] = [edge["token_id"] for edge in event["beneficiary_edges"]]
-        return "Isolated token selection fixture"
+        return "Isolated token selection fixture\n" + score_summary(assessment)
 
     monkeypatch.setattr(cards, "compose_card", compose)
     result = await service.dispatch(
@@ -3349,7 +3359,9 @@ async def test_bundle_directory_sync_failure_never_creates_database_reference(se
     from tank.analysis import cards
 
     monkeypatch.setattr(cards, "alert_gate", lambda *args, **kwargs: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *args, **kwargs: "Durability fixture")
+    monkeypatch.setattr(
+        cards, "compose_card", lambda *args, **kwargs: "Durability fixture" + "\n" + score_summary(args[1])
+    )
     extraction_args = await seed(service)
     made = await service.dispatch("record_event", extraction_args, {})
     eid = made["event_id"]
@@ -4590,7 +4602,9 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
 async def test_old_trigger_updates_stage_but_does_not_publish_or_resurface_on_timer(service, monkeypatch):
     import tank.analysis.cards as cards
 
-    monkeypatch.setattr(cards, "compose_card", lambda *args, **kwargs: "Stored stage update")
+    monkeypatch.setattr(
+        cards, "compose_card", lambda *args, **kwargs: "Stored stage update" + "\n" + score_summary(args[1])
+    )
     extracted = await seed(service)
     extracted["claims"][0]["state_claim"] = "APPROVED"
     created = await service.dispatch("record_event", extracted, {})
@@ -5109,7 +5123,7 @@ async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_th
     from tank.util import parse_time
 
     monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card")
+    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
     written = {}
     original = event_tools.write_evidence_bundle
 
@@ -5222,7 +5236,7 @@ async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_
     assert deduped[1] == calls[1] and calls[0]["result"]["market_truth"][0] is truth
 
     monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
-    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card")
+    monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
     x = await seed(service)
     eid = (await service.dispatch("record_event", x, {}))["event_id"]
     event = await service.repo.get("evt.events", eid)

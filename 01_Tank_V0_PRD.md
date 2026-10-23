@@ -269,7 +269,7 @@ Each requirement describes behavior the operator can observe or a test can check
 |---|---|
 | FR-E-01 | Every fact Tank states MUST be traceable to a verbatim quote of its source; a fact without a quote is dropped. |
 | FR-E-02 | News that repeats or develops an event Tank received news about in the last 3 days MUST join that event's analysis — at once, even while the analysis is still running — and never start a second one; the time Tank first knew about the event never moves later. |
-| FR-E-03 | For every new item Tank MUST determine when the event really became public — from the text and its sources, not from the time of the post — and grade freshness by the time from then until Tank saw it: FRESH ≤ 1 h, NORMAL ≤ 4 h, MEDIUM ≤ 8 h, POOR ≤ 24 h, OLD ≤ 48 h, STALE beyond. |
+| FR-E-03 | For every new item Tank MUST determine when the specific fact or stage became public by checking both stored Tank history and the public internet, including for HIGH-certainty sources. It MUST distinguish an earlier plan from a newly confirmed launch or expansion, record the earlier sources and dates, and grade freshness by the time from that public appearance until Tank saw it: FRESH ≤ 1 h, NORMAL ≤ 4 h, MEDIUM ≤ 8 h, POOR ≤ 24 h, OLD ≤ 48 h, STALE beyond. |
 | FR-E-04 | Each event MUST report its stage and whether that stage is verified: rumor → proposed → approved → signed → deployed → live → money flowing; for an integration between two parties: compatible → in development → built → submitted → approved → live → material usage → economic flow. Code or documentation published by one side alone never counts as more than "built". An official announcement that something will be done counts as approved; it is not deployed or live until that is shown. |
 | FR-E-05 | For every new fact Tank MUST judge its certainty as defined in §1.1: HIGH (an official source, or a fact Tank observes itself), MEDIUM (likely true, not proven) or LOW (implausible, or an unknown author). A MEDIUM fact gets one immediate check of the official sources and Tank never waits for confirmation: found → HIGH; not found → it goes on as MEDIUM. An official denial cancels the event. |
 | FR-E-06 | When analyzing an item, an event or its beneficiaries, Tank MUST check what it has already collected and, when the item alone does not settle a fact, look it up: search the web and read official pages. (How: 03 §3.2.) |
@@ -334,7 +334,7 @@ Each requirement describes behavior the operator can observe or a test can check
 | FR-A-02 | A perp-led move MUST lead to DON'T CHASE or WAIT; unconfirmed passive absorption to WATCH-TO-START or WAIT; a liquidity vacuum to DON'T CHASE, or WAIT when the thesis is weak; fragmentation and unknown to WAIT. A token already heavily priced gets DON'T CHASE when its thesis is strong. DON'T CHASE never means EXIT. |
 | FR-A-03 | Tank MUST send a new card only for MAJOR or STRUCTURAL SHOCK events of HIGH or MEDIUM certainty that are not STALE and not cancelled; a card about a MEDIUM fact MUST say in words what is verified and what is not. LOW-certainty facts never produce cards. A STRUCTURAL SHOCK MUST produce a first card within 3 min of Tank learning about it, completed by a full card in the same thread. |
 | FR-A-04 | Updates MUST be replies in the card's thread, sent only when an action, the event grade, the stage or its verification, or a decisive condition changes, when the event is denied, or when Tank stops following a call, at most one per event per 15 min — START, EXIT and broken theses go immediately. LOW and MATERIAL events, STALE facts and repeated coverage of a known event never produce cards. |
-| FR-A-05 | A card MUST follow §7.1, be at most 3,500 characters and cover at most 3 tokens: the tradable primary, the least-repriced credible secondary, then the next most relevant secondary or loser; updates follow these tokens. |
+| FR-A-05 | A card MUST follow §7.1, be at most 5,000 characters and cover at most 3 tokens: the tradable primary, the least-repriced credible secondary, then the next most relevant secondary or loser; updates follow these tokens. |
 | FR-A-06 | Every card MUST follow the hard rules in §8: the agent writes its verdict and WHY lines by them, and the card template's own text never breaks them. Tank does not check the wording before sending; a broken rule is found in the daily review. |
 | FR-A-07 | Every card version MUST be kept unchanged with the evidence it was based on and its delivery status. |
 
@@ -366,9 +366,12 @@ Each requirement describes behavior the operator can observe or a test can check
 
 One card per event; up to 3 token blocks.
 
+Telegram uses a native Rich Message table for the seven scores: full dimension name, score out of 10 or Not assessed, and the saved explanation for every row. The renderer prints the existing assessment; it does not ask the agent to reassess or translate it. The compact Scores line remains only in the internal legacy text representation. The 5,000-character cap includes the rendered table.
+
 ```
 <STRUCTURAL SHOCK | MAJOR> (<matched criterion>) — <one neutral sentence>
-Scores D<n> M<n> P<n> X<n> F<n> S<n> I<n> · Stage: <state> · Certainty: <HIGH | MEDIUM> · Fresh: <FRESH | NORMAL | MEDIUM | POOR | OLD> (public <hh:mmZ>, known <hh:mmZ>) · Data <HIGH | MEDIUM | LOW>
+[Native score table: Dimension | Score / 10 | Reason; seven rows with full names]
+Stage: <state> · Certainty: <HIGH | MEDIUM> · Fresh: <FRESH | NORMAL | MEDIUM | POOR | OLD> (public <hh:mmZ>, known <hh:mmZ>) · Data <HIGH | MEDIUM | LOW>
 VERIFIED: <what is confirmed, and by which source> · NOT VERIFIED: <what is not, or "—">
 WHY IT MATTERS
 • What changed: …

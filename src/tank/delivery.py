@@ -225,12 +225,17 @@ class DeliveryService:
             chat = self.settings.telegram_ops_chat if notice else self.settings.telegram_alerts_chat
             if not self.settings.telegram_token or not chat:
                 raise ValueError("Telegram token and destination must be configured")
-            body = {
-                "chat_id": chat,
-                "text": html.escape(record["text"]) if notice else telegram_card_html(record["card_text"]),
-                "parse_mode": "HTML",
-                "link_preview_options": {"is_disabled": True},
-            }
+            rich_message = record.get("rich_message") if not notice else None
+            method = "sendRichMessage" if rich_message else "sendMessage"
+            body = {"chat_id": chat}
+            if rich_message:
+                body["rich_message"] = rich_message
+            else:
+                body.update(
+                    text=html.escape(record["text"]) if notice else telegram_card_html(record["card_text"]),
+                    parse_mode="HTML",
+                    link_preview_options={"is_disabled": True},
+                )
             if not notice:
                 sent = sorted(sent, key=lambda r: r["at"])
                 if sent:
@@ -256,7 +261,7 @@ class DeliveryService:
             await self.repo.put("out.deliveries", new_id("delivery"), transition, immutable=True)
             try:
                 response = await self.http.post(
-                    f"https://api.telegram.org/bot{self.settings.telegram_token}/sendMessage", json=body
+                    f"https://api.telegram.org/bot{self.settings.telegram_token}/{method}", json=body
                 )
                 data = response.json()
                 if response.status_code != 200 or not data.get("ok"):
