@@ -21,16 +21,12 @@ docker buildx build --load -f capture/Dockerfile -t tank-capture:local .
 
 ## Tank and capture
 
-The main image installs frozen Python dependencies in a separate stage. A
-scratch stage selects only its locked Playwright package; the runtime mounts
-that installer temporarily at its final package path to install Chromium and
-system dependencies. The full venv and project metadata are copied afterwards.
-This makes browser installation depend on the selected installer bytes rather
-than unrelated project metadata, with no second version pin or duplicate
-Playwright/Node payload in the runtime image.
+The main image installs frozen Python dependencies in a separate stage; the
+full venv and project metadata are copied into the runtime afterwards. The Tank
+image contains no browser.
 
 Source edits rerun the project installation; deployment-only edits rerun the
-deployment copy. Neither should reinstall dependencies or Chromium. The uv cache
+deployment copy. Neither should reinstall dependencies. The uv cache
 mount retains downloaded wheels and build backends without baking that cache
 into the runtime image. Installed files use copy mode and do not depend on that
 mount at runtime.

@@ -20,7 +20,6 @@ dependencies = [
   "numpy>=2,<3",
   "pandas>=2.2,<3",
   "websockets>=14,<17",
-  "playwright>=1.49,<2",
   "zstandard>=0.23,<1",
   "aiohttp>=3.11,<4",
   "ddgs==9.16.0",
@@ -40,9 +39,8 @@ timeout = 10
 timeout_method = "signal"
 junit_duration_report = "total"
 markers = [
-  "integration: composed services or real process, database, browser, HTTP-listener, or retained-capture contracts",
+  "integration: composed services or real process, database, HTTP-listener, or retained-capture contracts",
   "postgres: requires an explicitly configured, disposable PostgreSQL test database",
-  "browser: requires the opt-in local Chromium fixture",
   "node: requires a local Node runtime or explicitly prepared upstream Node dependencies",
   "process: executes a local Git, Python, or Node child process",
   "historical: requires retained historical capture fixtures outside small unit inputs",

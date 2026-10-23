@@ -11,7 +11,6 @@ WORKDIR /app
 ENV UV_PROJECT_ENVIRONMENT=/opt/tank/venv \
     UV_LINK_MODE=copy \
     PATH=/opt/tank/venv/bin:$PATH \
-    PLAYWRIGHT_BROWSERS_PATH=/opt/playwright \
     PYTHONUNBUFFERED=1
 
 FROM runtime-base AS dependencies
@@ -19,14 +18,7 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,id=tank-uv,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
-FROM scratch AS browser-installer
-COPY --from=dependencies /opt/tank/venv/lib/python3.13/site-packages/playwright /playwright
-
 FROM runtime-base AS runtime
-RUN --mount=type=bind,from=browser-installer,target=/opt/tank/venv/lib/python3.13/site-packages \
-    PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/opt/tank/venv/lib/python3.13/site-packages \
-    /usr/local/bin/python -m playwright install --with-deps chromium \
-    && rm -rf /var/lib/apt/lists/*
 COPY --from=dependencies /opt/tank/venv /opt/tank/venv
 COPY pyproject.toml uv.lock ./
 RUN useradd --create-home --uid 1000 tank \

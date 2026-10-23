@@ -658,7 +658,7 @@ Seed for the beneficiary walk (§4.7). An edge supported only by this map starts
 
 Common to all HTTP sources: header `User-Agent: TankV0/1.0 (<operator contact e-mail>)`; conditional GET (`If-None-Match` / `If-Modified-Since`) where the server returns `ETag` / `Last-Modified`; timeout 20 s; 3 retries with 2/4/8 s backoff; escalated interval 15 s (01 FR-D-02). Each payload is stored raw with SHA-256 before parsing; items are deduplicated by the item key in the tables below.
 
-HTML page sources: Tank collects every link on the page that matches the source's article pattern below, resolves it to an absolute URL, and treats each URL not seen before as a new item; the article page is then fetched for its full text. Zero matches on a successful fetch marks the source DEGRADED (layout change). S19 is the only page that needs rendering in headless Chromium; all others work from plain HTTP.
+HTML page sources: Tank collects every link on the page that matches the source's article pattern below, resolves it to an absolute URL, and treats each URL not seen before as a new item; the article page is then fetched for its full text. Zero matches on a successful fetch marks the source DEGRADED (layout change). Every source works from plain HTTP; Tank runs no browser. S19 reads the JSON search behind its page.
 
 ### 3.1 Regulators and market structure (CORE)
 
@@ -692,7 +692,7 @@ HTML page sources: Tank collects every link on the page that matches the source'
 | S16 | `https://ondo.finance/blog` | `^/blog/[a-z0-9-]+$` (`/blog/introducing-ondo-private-markets`) | 600 s |
 | S17 | `https://layerzero.network/blog` | `^/blog/[a-z0-9-]+$` (`/blog/introducing-atlas`) | 600 s |
 | S18 | `https://www.blackrock.com/corporate/newsroom/media/press-releases` | `/corporate/newsroom/media/press-releases/[a-z0-9-]+` (`…/blackrock-reports-third-quarter-2026`) | 600 s |
-| S19 | `https://www.franklintempleton.com/press-releases` — rendered in headless Chrome | `/press-releases/news-room/\d{4}/[a-z0-9.-]+` (`/press-releases/news-room/2026/franklin-templeton-completes-acquisition-of-250-digital`) | 600 s |
+| S19 | `POST https://www.franklintempleton.com/api/articleApi` (form: `articleType=press-release`, filter `pressReleaseCategory.exact=news-room`, `en-US`, newest 24) — the JSON search the press-releases page uses; each hit carries title, URL, reference date and full text (`contentString`) | press release URL | 600 s |
 | S20 | `https://www.circle.com/pressroom` | `^/pressroom/[a-z0-9-]+$` (`/pressroom/circle-to-announce-q3-2026-financial-results-on-november-4-2026`) | 600 s |
 | S21 | `https://tether.io/feed/` — RSS, item key `guid` | — | 300 s |
 | S22 | `https://www.paxos.com/newsroom` | `^/newsroom/[a-z0-9-]+$` (`/newsroom/paxos-joins-solana-developer-platform`) | 600 s |
@@ -1882,7 +1882,7 @@ This manifest is generated from current `sources.yaml` and takes precedence for 
 | S16 | Ondo Finance | 600 | html | GET https://ondo.finance/blog |
 | S17 | LayerZero | 600 | html | GET https://layerzero.network/blog |
 | S18 | BlackRock | 600 | html | GET https://www.blackrock.com/corporate/newsroom/media/press-releases |
-| S19 | Franklin Templeton | 600 | html | GET https://www.franklintempleton.com/press-releases |
+| S19 | Franklin Templeton | 600 | json | POST https://www.franklintempleton.com/api/articleApi |
 | S20 | Circle | 600 | html | GET https://www.circle.com/pressroom |
 | S21 | Tether | 300 | rss | GET https://tether.io/feed/ |
 | S22 | Paxos | 600 | html | GET https://www.paxos.com/newsroom |

@@ -1734,7 +1734,7 @@ Values the operator provides at installation (kept outside the repository):
 |---|---|
 | Contact e-mail for the User-Agent header | `sources.yaml` |
 | Telegram bot token; chat IDs of "Tank Alerts" and "Tank Ops" | `.env` `TELEGRAM_BOT_TOKEN`; `delivery.yaml` |
-| X List "tank-v0" with the 86 handles of 01 §4.3, and its list ID | operator's X account; `sources.yaml`; the signed-in session as `.env` `X_SESSION` (Playwright storage state) |
+| The 86 X handles of 01 §4.3 | `x_accounts` in `registry.yaml`; the Apify token as `.env` `APIFY_API_TOKEN` |
 | ChatGPT sign-in for `gpt-6.1-sol` (the operator's subscription) | `auth.json` written by `codex login` on the operator's computer, copied once into the `tank` volume `codex-auth`; `codex_gateway` keeps it refreshed |
 | Internal key between OpenMA's Model Card and `codex_gateway` | `.env` `CODEX_GATEWAY_KEY` |
 | OpenMA root and auth secrets; OpenMA API key | `.env` `OMA_ROOT_SECRET`, `OMA_AUTH_SECRET` and `OMA_API_KEY` |
