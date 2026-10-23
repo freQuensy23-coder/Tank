@@ -477,9 +477,33 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 500,
-          "description": "When is_event is false, explain in one concrete sentence why this material is not an actionable event. This is the rejection decision, separate from certainty_reason about source reliability."
+          "description": "When is_event is false, explain in one concrete sentence why this material is not an actionable event. This is the rejection decision, separate from certainty_reason about source reliability.",
+          "pattern": "\\S"
         }
-      }
+      },
+      "anyOf": [
+        {
+          "properties": {
+            "is_event": {
+              "enum": [
+                true
+              ]
+            }
+          }
+        },
+        {
+          "properties": {
+            "is_event": {
+              "enum": [
+                false
+              ]
+            }
+          },
+          "required": [
+            "no_event_reason"
+          ]
+        }
+      ]
     }
   },
   {

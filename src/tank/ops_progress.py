@@ -82,9 +82,7 @@ async def item_progress(repo, settings, item_id, stage, reason="", *, event_id=N
             {"notice_id": notice_id, "channel": "telegram:ops"},
             notice_id,
             priority=2,
-            run_after=offset_schedule(
-                stamp, timedelta(seconds=getattr(settings, "ops_progress_delay_s", 15))
-            ),
+            run_after=stamp,
             max_attempts=5,
             expires_at=offset_schedule(stamp, timedelta(days=7)),
         )

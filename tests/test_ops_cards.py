@@ -573,3 +573,116 @@ async def test_new_assessment_replaces_an_old_publication_refusal(settings):
     assert card["code"] == "ANALYZING"
     assert card["status"] == "Ожидает определения затронутых токенов"
     assert "Значимость ниже порога" not in card["text"]
+
+
+async def test_followup_job_is_ready_without_another_initial_batch_delay(settings):
+    repo = MemoryRepository()
+    settings.ops_progress_delay_s = 15
+    item = await source(repo)
+    key = sha256({"item_id": item["item_id"], "chat_id": settings.telegram_ops_chat})
+    await repo.put(
+        "out.ops_cards",
+        key,
+        {"item_id": item["item_id"], "chat_id": settings.telegram_ops_chat, "message_ref": "77"},
+    )
+    await item_progress(repo, settings, item["item_id"], "AGENT_ACCEPTED")
+    job = (await repo.list("ops.jobs", filters={"type": "DELIVER"}))[0]
+    notice = (await repo.list("out.ops_notices"))[0]
+    assert job["run_after"] == notice["created_at"]
+
+
+@pytest.mark.parametrize("update_kind", ["notice", "artifact"])
+async def test_later_analysis_clears_an_obsolete_missing_data_refusal(settings, update_kind):
+    repo = MemoryRepository()
+    item, event = await analysis(repo, settings, klass="MAJOR", completed=False)
+    await item_progress(
+        repo,
+        settings,
+        item["item_id"],
+        "PUBLICATION_BLOCKED",
+        "ANALYSIS_INCOMPLETE",
+        event_id=event["event_id"],
+        details={"missing_market_truth": ["world:WLD"], "missing_decisions": ["world:WLD"]},
+    )
+    stamp = collection_clock().fields("cutoff") if update_kind == "artifact" else {}
+    await repo.put(
+        "evt.beneficiary_maps",
+        "map",
+        {"event_id": event["event_id"], "map_version": 1, "analysis_set": ["world:WLD"], **stamp},
+    )
+    await repo.put(
+        "ana.market_truth", "truth", {"event_id": event["event_id"], "token_id": "world:WLD", **stamp}
+    )
+    await repo.put(
+        "ana.decisions", "decision", {"event_id": event["event_id"], "token_id": "world:WLD", **stamp}
+    )
+    if update_kind == "notice":
+        await item_progress(repo, settings, item["item_id"], "ANALYSIS_UPDATED", event_id=event["event_id"])
+    card = render(await snapshot(repo, item["item_id"]))
+    assert card["status"] == "Ожидает решения о публикации"
+    assert "данные: 1/1 токенов; решения: 1/1" in card["text"]
+    assert "Не завершён анализ" not in card["text"]
+
+
+@pytest.mark.parametrize("same_alert_id", [False, True])
+@pytest.mark.parametrize("failed", [False, True])
+async def test_latest_delivery_state_keeps_link_to_earlier_success(settings, same_alert_id, failed):
+    repo = MemoryRepository()
+    item, event = await analysis(repo, settings, klass="MAJOR")
+    old = utcnow() - timedelta(minutes=10)
+    await repo.put(
+        "out.alerts",
+        "a:1",
+        {
+            "alert_id": "a",
+            "version": 1,
+            "event_id": event["event_id"],
+            **collection_clock(old).fields("generated_at"),
+        },
+        immutable=True,
+    )
+    await repo.put(
+        "out.deliveries",
+        "sent",
+        {
+            "alert_id": "a",
+            "version": 1,
+            "channel": "telegram:alerts",
+            "status": "SENT",
+            "message_ref": "42",
+            "chat_id": "-100456",
+            **collection_clock(old).fields("at"),
+        },
+        immutable=True,
+    )
+    latest = "a" if same_alert_id else "b"
+    await repo.put(
+        "out.alerts",
+        latest + ":2",
+        {
+            "alert_id": latest,
+            "version": 2,
+            "event_id": event["event_id"],
+            **collection_clock().fields("generated_at"),
+        },
+        immutable=True,
+    )
+    if failed:
+        await repo.put(
+            "out.deliveries",
+            "failed",
+            {
+                "alert_id": latest,
+                "version": 2,
+                "channel": "telegram:alerts",
+                "status": "FAILED",
+                "terminal": True,
+                "attempt": 5,
+                **collection_clock().fields("at"),
+            },
+            immutable=True,
+        )
+    card = render(await snapshot(repo, item["item_id"]))
+    assert card["code"] == ("ALERT_FAILED" if failed else "ALERT_QUEUED")
+    assert "Предыдущая карточка в Alerts" in card["text"]
+    assert "https://t.me/c/456/42" in card["html"]

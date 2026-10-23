@@ -1,6 +1,6 @@
 ---
 name: tank-event-analyst
-version: baseline-3.2-what-first
+version: baseline-3.3-ops-outcomes
 description: Analyze a continuous event with Tank evidence tools.
 ---
 

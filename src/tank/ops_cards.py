@@ -164,6 +164,7 @@ async def snapshot(repo, item_id):
         else None
     )
     maps, truths, decisions, alerts, deliveries = [], [], [], [], []
+    prior_receipt = None
     if event_id:
         for collection, target in (
             ("evt.beneficiary_maps", maps),
@@ -191,6 +192,21 @@ async def snapshot(repo, item_id):
                     },
                 )
             ]
+            alert_ids = {
+                row["alert_id"]
+                async for row in repo.iter_metadata(
+                    "out.alerts", ["alert_id"], filters={"event_id": event_id}
+                )
+            }
+            for alert_id in alert_ids:
+                receipts = await repo.list_latest(
+                    "out.deliveries",
+                    "at",
+                    filters={"alert_id": alert_id, "channel": "telegram:alerts", "status": "SENT"},
+                    limit=1,
+                )
+                if receipts and time_of(receipts[0], "at") > time_of(prior_receipt, "at"):
+                    prior_receipt = receipts[0]
     return {
         "item": item,
         "history": history,
@@ -202,6 +218,7 @@ async def snapshot(repo, item_id):
         "decisions": decisions,
         "alert": alerts[0] if alerts else None,
         "deliveries": deliveries,
+        "prior_receipt": prior_receipt,
         "observations": observations,
     }
 
@@ -250,6 +267,16 @@ def outcome(data):
     blocked = stages.get("PUBLICATION_BLOCKED")
     if blocked and time_of(blocked) < time_of(assessment, "cutoff"):
         blocked = None
+    if blocked and blocked.get("reason") == "ANALYSIS_INCOMPLETE":
+        updated = max(
+            time_of(stages.get("ANALYSIS_UPDATED")),
+            max(
+                (time_of(row, "cutoff") for name in ("maps", "truths", "decisions") for row in data[name]),
+                default=EPOCH,
+            ),
+        )
+        if time_of(blocked) < updated:
+            blocked = None
     receipt = max(sent, key=lambda row: time_of(row, "at")) if sent else None
     previous_publication = bool(alert) and (
         time_of(alert, "generated_at") < time_of(item, "observed_at")
@@ -510,9 +537,8 @@ def render(data):
     link = result.get("link")
     label = "Карточка в Alerts"
     if not link:
-        prior = [row for row in data["deliveries"] if row["status"] == "SENT"]
-        if prior:
-            receipt = max(prior, key=lambda row: time_of(row, "at"))
+        receipt = data.get("prior_receipt")
+        if receipt:
             link = telegram_link(receipt.get("chat_id"), receipt["message_ref"])
             label = "Предыдущая карточка в Alerts"
     if link:
