@@ -16,8 +16,7 @@ class BrowserReader:
         if self.context is not None:
             return
         if self.shared_sensor is not None:
-            authenticated = await self.shared_sensor.browser_context()
-            self.browser = authenticated.browser
+            self.browser = await self.shared_sensor.browser()
         else:
             from playwright.async_api import async_playwright
 

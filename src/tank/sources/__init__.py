@@ -47,7 +47,7 @@ class SourceService:
             verify=tls_context(),
         )
         self.owns_http = http is None
-        self.xsensor = XSensor(settings, shared_browser=bool(getattr(settings, "x_enabled", False)))
+        self.xsensor = XSensor(headless=getattr(settings, "x_headless", True))
         self.browser = BrowserReader(
             settings, shared_sensor=self.xsensor if getattr(settings, "x_enabled", False) else None
         )

@@ -477,22 +477,10 @@ def readiness_checks(settings):
         checks.append({"check": "codex_auth_file_present", "ok": False, "reason": type(exc).__name__})
     if getattr(settings, "x_enabled", True):
         try:
-            s29 = next(
-                (
-                    s
-                    for s in settings.load_config("sources").get("sources", [])
-                    if s.get("source_id") == "S29"
-                ),
-                {},
-            )
-            checks.append({"check": "s29_list_id", "ok": configured(s29.get("list_id"))})
+            accounts = (settings.load_config("registry") or {}).get("x_accounts") or []
+            checks.append({"check": "x_accounts", "ok": bool(accounts), "count": len(accounts)})
         except (OSError, ValueError, yaml.YAMLError) as exc:
-            checks.append({"check": "s29_list_id", "ok": False, "reason": type(exc).__name__})
-        profile = Path(settings.x_profile_dir)
-        try:
-            checks.append({"check": "x_profile", "ok": profile.is_dir() and any(profile.iterdir())})
-        except OSError as exc:
-            checks.append({"check": "x_profile", "ok": False, "reason": type(exc).__name__})
+            checks.append({"check": "x_accounts", "ok": False, "reason": type(exc).__name__})
     else:
         checks.append({"check": "x_disabled_by_operator", "ok": True, "enabled": False})
     user_agent = getattr(settings, "user_agent", "")

@@ -855,25 +855,26 @@ sources:
   mode: BROWSER
   interval_s: 60
   feeds:
-  - url: https://x.com/i/lists/{list_id}
+  - url: https://x.com/{handle}
     kind: x
     interval_s: 60
+  concurrency: 6
   priority: SECONDARY
-  terms_notes: Read-only public content; honor publisher terms and Retry-After. X
-    automated UI reading carries terms-of-service risk.
+  terms_notes: Read-only public profile pages of the registry x_accounts, signed out,
+    in Chromium; each shows the latest five own posts, no reposts. X automated UI reading
+    carries terms-of-service risk.
   limits:
     rate_per_min: null
     budget_fraction: 0.5
     unknown_limit_policy: Honor Retry-After and endpoint cadence; verify before production
       acceptance.
-  list_id: '2112597716375060985'
   bucket: HIGH_VALUE_SOCIAL
   source_class: SOCIAL_LEAD
-  cost_class: FREE_ACCOUNT
-  auth: BROWSER_SESSION
+  cost_class: FREE_OPEN
+  auth: NONE
   adapter_status: PARTIAL
-  adapter_status_basis: Offline parser tests and historical public smoke exist; no
-    unattended acceptance claimed.
+  adapter_status_basis: Offline parser tests and a live signed-out read of all 86 profiles
+    (23 Oct 2026); no unattended acceptance claimed.
 - source_id: S30
   name: BBC News
   mode: REST

@@ -112,13 +112,6 @@ class Settings(BaseSettings):
     )
     user_agent: str = "TankV0/1.0 (operator contact not configured)"
     x_enabled: bool = True
-    x_profile_dir: Path = Path("data/chrome-profile")
-    x_session: str | None = Field(
-        default=None,
-        repr=False,
-        exclude=True,
-        validation_alias=AliasChoices("TANK_X_SESSION", "X_SESSION", "x_session"),
-    )
     x_headless: bool = True
     config_version: str = "unversioned"
     build_sha: str | None = None
@@ -237,12 +230,11 @@ def resolve_versions(settings: Settings) -> Settings:
     config_root = settings.config_dir.resolve()
     for sensitive in (
         settings.codex_auth_path,
-        settings.x_profile_dir,
         settings.data_dir,
     ):
         if Path(sensitive).resolve().is_relative_to(config_root):
             raise ValueError(
-                "Credentials, browser state and runtime data must be outside the versioned configuration directory"
+                "Credentials and runtime data must be outside the versioned configuration directory"
             )
     captured = _capture_tree(settings.config_dir, _CONFIG_SUFFIXES)
     digest = _digest(captured)

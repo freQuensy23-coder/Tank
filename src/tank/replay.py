@@ -655,7 +655,6 @@ async def run_captured_tools(inputs, repo):
         _env_file=None,
         tank_db_password=None,
         oma_db_password=None,
-        x_session=None,
         openma_api_key=None,
         openrouter_api_key=None,
         telegram_token=None,

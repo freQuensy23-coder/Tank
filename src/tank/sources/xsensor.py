@@ -1,349 +1,423 @@
-"""Dedicated read-only X sensor: operator session and bounded list capture (02 §3.7)."""
+"""Read-only X sensor: the registry accounts' public profile pages in Chromium (02 §3.7).
+
+No X account, session or API key. A signed-out profile page embeds the account's
+latest five own posts (a pinned post counts among them) as GraphQL JSON in the page
+document. The sensor reads them from there and keeps the document as each new
+post's raw evidence. Reposts and protected accounts are not visible signed out.
+
+X answers Chromium's headless shell, and any user agent naming HeadlessChrome,
+with HTTP 403, so the sensor runs the full Chromium build under the browser's own
+user agent without "Headless".
+"""
 
 import asyncio
+import html
 import json
 import re
+from collections import Counter
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
-from pathlib import Path
-from urllib.parse import urlsplit
+from dataclasses import dataclass
+from typing import Literal, Self
 
-from tank.util import iso, sha256, utcnow
+from playwright.async_api import Browser, BrowserContext, Playwright, Route, async_playwright
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from tank.util import iso
+
+PROFILE_URL = "https://x.com/{account}"
+EMBEDDED_RESULT = re.compile(r'kind:"Result\.Ok",value:"((?:[^"\\]|\\.)*)"')
+JS_HEX_ESCAPE = re.compile(r"\\\\|\\x([0-9a-fA-F]{2})")
+
+type ProfileRead = tuple[int, bytes] | Exception
+
+
+class ProfileError(Exception):
+    """An account's profile page could not be read; the message is the reason."""
+
+
+class XModel(BaseModel):
+    """The part of X's GraphQL JSON the sensor reads; a missing field fails validation."""
+
+    model_config = ConfigDict(frozen=True)
+
+
+class ScreenName(XModel):
+    screen_name: str
+
+
+class User(XModel):
+    core: ScreenName
+
+
+class UserResults(XModel):
+    result: User
+
+
+class Author(XModel):
+    user_results: UserResults
+
+
+class Details(XModel):
+    full_text: str
+    created_at_ms: int
+
+
+class Link(XModel):
+    url: str
+    expanded_url: str
+
+
+class Media(XModel):
+    media_url_https: str
+
+
+class NoteLinks(XModel):
+    urls: list[Link] = []
+
+
+class Note(XModel):
+    text: str | None = None
+    entity_set: NoteLinks = NoteLinks()
+
+
+class NoteResults(XModel):
+    result: Note
+
+
+class NoteTweet(XModel):
+    note_tweet_results: NoteResults
+
+
+class PostText(XModel):
+    """The text of a post. A quote inside a quote arrives without it, so every field is optional."""
+
+    details: Details | None = None
+    note_tweet: NoteTweet | None = None
+    url_entities: list[Link] = []
+
+    @model_validator(mode="before")
+    @classmethod
+    def unwrap_visibility(cls, data: object) -> object:
+        """X wraps a post with visibility limits as TweetWithVisibilityResults."""
+        if isinstance(data, dict) and data.get("__typename") == "TweetWithVisibilityResults":
+            return data.get("tweet")
+        return data
+
+    @property
+    def text(self) -> str | None:
+        """Full text, from the note of a long post, with t.co links expanded."""
+        note = self.note_tweet.note_tweet_results.result if self.note_tweet else None
+        if note and note.text:
+            text, links = note.text, [*note.entity_set.urls, *self.url_entities]
+        elif self.details:
+            text, links = self.details.full_text, self.url_entities
+        else:
+            return None
+        for link in links:
+            text = text.replace(link.url, link.expanded_url)
+        return html.unescape(text).strip()
+
+
+class QuotedResults(XModel):
+    result: PostText | None = None
+
+
+class Tweet(PostText):
+    rest_id: str
+    core: Author
+    details: Details
+    media_entities2: list[Media] = []
+    quoted_tweet_results: QuotedResults | None = None
+
+
+class Unavailable(XModel):
+    typename: Literal["TweetTombstone", "TweetUnavailable"] = Field(alias="__typename")
+
+
+class TweetResults(XModel):
+    result: Tweet | Unavailable | None = None
+
+
+class TimelineTweet(XModel):
+    tweet_results: TweetResults
+
+
+class EntryContent(XModel):
+    content: TimelineTweet | None = None
+
+
+class Entry(XModel):
+    entry_id: str
+    content: EntryContent
+
+
+class Instruction(XModel):
+    typename: str = Field(alias="__typename")
+    entries: list[Entry] = []
+    entry: Entry | None = None
+
+
+class Timeline(XModel):
+    instructions: list[Instruction]
+
+
+class OriginalsTimeline(XModel):
+    timeline: Timeline
+
+
+class ProfileUser(XModel):
+    profile_user_originals_timeline: OriginalsTimeline | None = None
+
+
+class UserByScreenName(XModel):
+    result: ProfileUser | None = None
+
+
+class EmbeddedData(XModel):
+    user_result_by_screen_name: UserByScreenName | None = None
+
+
+class Embedded(XModel):
+    data: EmbeddedData | None = None
+
+
+@dataclass(frozen=True)
+class XPost:
+    """One post on a monitored account's profile."""
+
+    status_id: int
+    account: str
+    author: str
+    text: str
+    quoted: str | None
+    media: tuple[str, ...]
+    published_at: str
+    pinned: bool
+
+    @classmethod
+    def from_tweet(cls, tweet: Tweet, account: str, *, pinned: bool) -> Self:
+        quoted = tweet.quoted_tweet_results.result if tweet.quoted_tweet_results else None
+        return cls(
+            status_id=int(tweet.rest_id),
+            account=account,
+            author=tweet.core.user_results.result.core.screen_name,
+            text=tweet.text or "",
+            quoted=quoted.text if quoted else None,
+            media=tuple(media.media_url_https for media in tweet.media_entities2),
+            published_at=iso(tweet.details.created_at_ms),
+            pinned=pinned,
+        )
+
+    def row(self, raw: bytes) -> dict[str, object]:
+        """The post as the source poller ingests it; raw is the page it was read from."""
+        return {
+            "external_id": str(self.status_id),
+            "author": self.author,
+            "monitored_author": self.account,
+            "title": "",
+            "text": self.text,
+            "quoted": self.quoted,
+            "media": list(self.media),
+            "url": f"https://x.com/{self.author}/status/{self.status_id}",
+            "published_at": self.published_at,
+            "published_at_precision": "EXACT",
+            "pinned": self.pinned,
+            "_payload": raw,
+        }
+
+
+@dataclass(frozen=True)
+class AccountFailure:
+    account: str
+    reason: str
+
+
+@dataclass(frozen=True)
+class Scan:
+    """One pass over the profiles: new post rows, next cursors and account health."""
+
+    rows: list[dict[str, object]]
+    cursors: dict[str, str]
+    failures: list[AccountFailure]
+    gaps: list[str]
+
+
+def js_string(literal: str) -> str:
+    """Decode a double-quoted JavaScript string literal; X also uses \\xHH escapes, which JSON lacks."""
+    escaped = JS_HEX_ESCAPE.sub(lambda match: "\\u00" + match[1] if match[1] else match[0], literal)
+    decoded: str = json.loads(f'"{escaped}"', strict=False)
+    return decoded
+
+
+def embedded_timeline(document: str) -> Timeline:
+    for match in EMBEDDED_RESULT.finditer(document):
+        try:
+            embedded = Embedded.model_validate_json(js_string(match.group(1)))
+        except ValueError:
+            raise ProfileError("PROFILE_DATA_INVALID") from None
+        user = embedded.data.user_result_by_screen_name if embedded.data else None
+        profile = user.result.profile_user_originals_timeline if user and user.result else None
+        if profile:
+            return profile.timeline
+    raise ProfileError("TIMELINE_MISSING")
+
+
+def profile_posts(document: str, account: str) -> list[XPost]:
+    """The posts on a signed-out profile page.
+
+    A change in X's page format fails validation or leaves a tweet entry without
+    its tweet; both raise ProfileError instead of reading as an empty profile.
+    """
+    posts: dict[int, XPost] = {}
+    for instruction in embedded_timeline(document).instructions:
+        pinned = instruction.typename == "TimelinePinEntry"
+        for entry in [*instruction.entries, *([instruction.entry] if instruction.entry else [])]:
+            if not entry.entry_id.startswith("tweet-"):
+                continue
+            if entry.content.content is None:
+                raise ProfileError("PROFILE_DATA_INVALID")
+            tweet = entry.content.content.tweet_results.result
+            if isinstance(tweet, Tweet):
+                post = XPost.from_tweet(tweet, account, pinned=pinned)
+                posts.setdefault(post.status_id, post)
+    return list(posts.values())
+
+
+def page_body(read: ProfileRead) -> bytes:
+    if isinstance(read, Exception):
+        message = str(read).splitlines()[0] if str(read) else type(read).__name__
+        raise ProfileError(f"NAVIGATION_FAILED: {message}")
+    status, body = read
+    if status != 200:
+        raise ProfileError(f"HTTP_{status}")
+    return body
+
+
+def scan(reads: Mapping[str, ProfileRead], cursors: Mapping[str, str]) -> Scan:
+    """New posts, next cursors, failed accounts and history gaps of one pass.
+
+    The first read of an account only records its newest post ID, so posts made
+    before Tank watched it are never ingested; after that a post is new when its ID
+    is above the cursor. When every visible post besides the pin is newer than the
+    cursor, the account posted more than its profile shows since the last pass: a
+    history gap. A failed account keeps its cursor; the pass fails when all failed.
+    """
+    rows: list[dict[str, object]] = []
+    failures: list[AccountFailure] = []
+    gaps: list[str] = []
+    next_cursors = dict(cursors)
+    for account, read in reads.items():
+        try:
+            body = page_body(read)
+            posts = profile_posts(body.decode(errors="replace"), account)
+        except ProfileError as exc:
+            failures.append(AccountFailure(account, str(exc)))
+            continue
+        if not posts:
+            continue
+        newest = max(post.status_id for post in posts)
+        key = account.lower()
+        cursor = int(cursors[key]) if key in cursors else None
+        next_cursors[key] = str(newest if cursor is None else max(newest, cursor))
+        if cursor is None:
+            continue
+        regular = [post.status_id for post in posts if not post.pinned]
+        if regular and min(regular) > cursor:
+            gaps.append(account)
+        rows.extend(post.row(body) for post in posts if post.status_id > cursor)
+    if reads and len(failures) == len(reads):
+        reasons = Counter(failure.reason for failure in failures)
+        raise RuntimeError(
+            "X public profiles unavailable, every account failed: "
+            + ", ".join(f"{reason} x{count}" for reason, count in reasons.most_common())
+        )
+    return Scan(rows=rows, cursors=next_cursors, failures=failures, gaps=gaps)
+
+
+async def document_only(route: Route) -> None:
+    """Only the profile document is read; its scripts, media and API calls are never fetched."""
+    if route.request.resource_type == "document":
+        await route.fallback()
+    else:
+        await route.abort()
 
 
 class XSensor:
-    def __init__(self, settings, *, shared_browser=False):
-        self.settings = settings
-        self.shared_browser = shared_browser
+    """The service Chromium process and the signed-out pass over the X profiles."""
+
+    def __init__(self, *, headless: bool = True) -> None:
+        self.headless = headless
         self.open_lock = asyncio.Lock()
-        self.context = None
-        self.driver = None
-        self.lock = asyncio.Lock()
-        self.pages = []
-        self.scan_status = "COMPLETE"
+        self.scan_lock = asyncio.Lock()
+        self.driver: Playwright | None = None
+        self.chromium: Browser | None = None
+        self.user_agent = ""
 
-    async def _open_context(self):
-        if self.context is not None:
-            return self.context
-        from playwright.async_api import async_playwright
-
-        profile = Path(self.settings.x_profile_dir)
-        profile.mkdir(parents=True, exist_ok=True, mode=0o700)
-        profile.chmod(0o700)
-        self.driver = await async_playwright().start()
-        headless = getattr(self.settings, "x_headless", True)
-        self.context = await self.driver.chromium.launch_persistent_context(
-            str(profile), headless=headless, args=["--headless=new"] if headless else []
-        )
-        return self.context
-
-    async def browser_context(self):
-        """Open the process without importing or using the operator session input."""
+    async def browser(self) -> Browser:
+        """The service Chromium; the public S19 renderer opens its own context in it."""
         async with self.open_lock:
-            return await self._open_context()
-
-    async def open(self):
-        async with self.open_lock:
-            await self._open_context()
-            try:
-                await self._bootstrap_storage_state(Path(self.settings.x_profile_dir))
-            except Exception:
-                if not self.shared_browser:
+            if self.chromium is None:
+                self.driver = await async_playwright().start()
+                try:
+                    self.chromium = await self.driver.chromium.launch(
+                        channel="chromium", headless=self.headless
+                    )
+                    page = await self.chromium.new_page()
+                    agent = await page.evaluate("navigator.userAgent")
+                    await page.close()
+                    self.user_agent = agent.replace("HeadlessChrome/", "Chrome/")
+                except Exception:
                     await self.close()
-                raise ValueError(
-                    "X session bootstrap failed: invalid, expired, or unreadable storage state"
-                ) from None
+                    raise
+            return self.chromium
 
-    async def _bootstrap_storage_state(self, profile):
-        """Seed a persistent profile once from the operator-supplied X_SESSION storage state.
-
-        Never save storage_state(), credentials, or their hashes to ingestion/raw
-        data. The nonsecret marker records only that the one-time seed completed.
-        Local storage is initialized on intercepted empty origin pages, so seeding
-        itself makes no request to X or to any other external service.
-        """
-        marker = profile / ".tank-x-session-seeded.json"
-        session = getattr(self.settings, "x_session", None)
-        if marker.exists() or not session:
-            return
-        state = json.loads(session)
-        if not isinstance(state, dict) or not isinstance(state.get("cookies"), list):
-            raise TypeError("Invalid storage state")
-
-        def x_domain(domain):
-            domain = str(domain).lstrip(".").lower()
-            return domain in {"x.com", "twitter.com"} or domain.endswith((".x.com", ".twitter.com"))
-
-        now = utcnow().timestamp()
-        cookies = []
-        for cookie in state["cookies"]:
-            if not isinstance(cookie, dict):
-                raise TypeError("Invalid cookie record")
-            if not x_domain(cookie.get("domain", "")):
-                continue
-            expiry = float(cookie.get("expires", -1))
-            if expiry != -1 and expiry <= now:
-                continue
-            if not isinstance(cookie.get("value"), str):
-                raise TypeError("Invalid cookie value")
-            cookies.append(cookie)
-        if not any(cookie.get("name") == "auth_token" and cookie["value"] for cookie in cookies):
-            raise ValueError("Missing or expired X auth cookie")
-        origins = state.get("origins", [])
-        if not isinstance(origins, list):
-            raise TypeError("Invalid origin storage")
-        validated_origins = []
-        for origin in origins:
-            if not isinstance(origin, dict):
-                raise TypeError("Invalid origin record")
-            url = origin.get("origin", "")
-            parsed = urlsplit(url)
-            if parsed.scheme != "https" or not x_domain(parsed.hostname or ""):
-                continue
-            entries = origin.get("localStorage", [])
-            if not isinstance(entries, list) or any(
-                not isinstance(entry, dict)
-                or not isinstance(entry.get("name"), str)
-                or not isinstance(entry.get("value"), str)
-                for entry in entries
-            ):
-                raise TypeError("Invalid local storage")
-            validated_origins.append((url, entries))
-
-        await self.context.add_cookies(cookies)
-        for url, entries in validated_origins:
-            page = await self.context.new_page()
-            try:
-
-                async def empty_origin(route):
-                    await route.fulfill(status=200, content_type="text/html", body="<html></html>")
-
-                await page.route("**/*", empty_origin)
-                await page.goto(url, wait_until="domcontentloaded")
-                await page.evaluate(
-                    "entries => { for (const entry of entries) localStorage.setItem(entry.name, entry.value); }",
-                    entries,
-                )
-            finally:
-                await page.close()
-        marker.write_text(json.dumps({"version": 1, "seeded_at": iso()}) + "\n")
-        marker.chmod(0o600)
-
-    async def close(self):
-        if self.context:
-            await self.context.close()
+    async def close(self) -> None:
+        if self.chromium:
+            await self.chromium.close()
         if self.driver:
             await self.driver.stop()
-        self.context = None
+        self.chromium = None
         self.driver = None
 
     @staticmethod
-    async def refuse_optional_cookies(page):
-        """The consent banner covers the bottom of the timeline; decline non-essential cookies."""
-        refuse = page.get_by_role("button", name="Refuse non-essential cookies")
-        if await refuse.count():
-            await refuse.first.click(timeout=5000)
-
-    @staticmethod
-    async def expand(button):
-        """Open a truncated post; if X does not respond, keep the visible text."""
+    async def read(context: BrowserContext, account: str) -> tuple[int, bytes]:
+        """HTTP status and document bytes of one profile page."""
+        page = await context.new_page()
         try:
-            await button.click(timeout=5000)
-            return True
-        except Exception:
-            return False
+            response = await page.goto(
+                PROFILE_URL.format(account=account), wait_until="commit", timeout=20000
+            )
+            if response is None:
+                raise RuntimeError("Profile navigation returned no response")
+            return response.status, await response.body()
+        finally:
+            await page.close()
 
-    async def capture_page(self, page, kind):
-        payload = (await page.content()).encode()
-        self.pages.append({"kind": kind, "url": page.url, "sha256": sha256(payload)})
-        return payload
+    async def posts(self, accounts: list[str], cursors: Mapping[str, str], *, concurrency: int = 6) -> Scan:
+        """Read every account's profile once in a fresh signed-out context; see `scan`."""
+        async with self.scan_lock:
+            browser = await self.browser()
+            context = await browser.new_context(
+                user_agent=self.user_agent, locale="en-US", service_workers="block"
+            )
+            semaphore = asyncio.Semaphore(concurrency)
 
-    async def posts(self, list_id, checkpoint=None, *, known_ids=None, members=None):
-        if not list_id:
-            raise ValueError("S29.list_id in sources.yaml is required")
-        async with self.lock:
-            await self.open()
-            page = await self.context.new_page()
-            result = {}
-            reached = False
-            self.pages = []
-            self.scan_status = "COMPLETE"
-            known_ids = set(known_ids or [])
-            scan_started = asyncio.get_running_loop().time()
+            async def visit(account: str) -> ProfileRead:
+                async with semaphore:
+                    try:
+                        return await self.read(context, account)
+                    except Exception as exc:
+                        return exc
+
             try:
-                response = await page.goto(
-                    f"https://x.com/i/lists/{list_id}", wait_until="domcontentloaded", timeout=20000
-                )
-                if (response is not None and response.status in {401, 403}) or re.search(
-                    r"/(?:i/flow/login|login)(?:[/?#]|$)", page.url
-                ):
-                    raise RuntimeError("X session unavailable or expired; operator session renewal required")
-                await page.wait_for_selector("article", timeout=20000)
-                await self.refuse_optional_cookies(page)
-                stalled = 0
-                for _ in range(25):
-                    await self.capture_page(page, "X_LIST_HTML")
-                    old = set(result)
-                    articles = page.locator("article")
-                    for idx in range(await articles.count()):
-                        node = articles.nth(idx)
-
-                        times = node.locator("time[datetime]")
-                        if not await times.count():
-                            continue
-                        time = times.first
-                        link = time.locator("xpath=ancestor::a[1]")
-                        if not await link.count():
-                            continue
-                        href = await link.get_attribute("href") or ""
-                        match = re.search(r"/([^/]+)/status/(\d+)", href)
-                        if not match:
-                            continue
-                        handle, status_id = match.groups()
-                        if checkpoint and (status_id == checkpoint or status_id in known_ids):
-                            reached = True
-                            break
-                        expand = node.locator('[data-testid="tweet-text-show-more-link"]')
-                        if await expand.count() and await self.expand(expand.first):
-                            await page.wait_for_timeout(250)
-                            await self.capture_page(page, "X_EXPANDED_LIST_HTML")
-                        pieces = await node.locator('[data-testid="tweetText"]').all_text_contents()
-                        own_pieces = await node.locator('[data-testid="tweetText"]').evaluate_all(
-                            '(nodes)=>nodes.filter(n=>!n.closest("[data-testid=quoteTweet], [role=link]")).map(n=>n.innerText)'
-                        )
-                        links = await node.locator('a[href*="/status/"]').evaluate_all(
-                            '(nodes)=>nodes.map(n=>n.getAttribute("href"))'
-                        )
-                        related = []
-                        for target in links:
-                            m = re.search(r"/([^/]+)/status/(\d+)", target or "")
-                            if (
-                                m
-                                and m.group(2) != status_id
-                                and m.group(2) not in [r["status_id"] for r in related]
-                            ):
-                                related.append({"author": m.group(1), "status_id": m.group(2)})
-                        social = await node.locator('[data-testid="socialContext"]').all_text_contents()
-
-                        reposter_links = await node.locator('[data-testid="socialContext"]').evaluate_all(
-                            '(nodes)=>nodes.map(n=>(n.closest("a[href]")||n.querySelector("a[href]")||{getAttribute:()=>null}).getAttribute("href"))'
-                        )
-                        reposter = next(
-                            (
-                                m.group(1)
-                                for target in reposter_links
-                                if (m := re.fullmatch(r"/([A-Za-z0-9_]+)/?", target or ""))
-                            ),
-                            None,
-                        )
-                        media = await node.locator('[data-testid="tweetPhoto"] img, video').evaluate_all(
-                            '(nodes)=>nodes.map(n=>({type:n.tagName.toLowerCase(),alt:n.getAttribute("alt")||null,src:n.getAttribute("src")||null,poster:n.getAttribute("poster")||null}))'
-                        )
-                        if members and (reposter or handle).lower() not in members:
-                            continue
-                        result[status_id] = {
-                            "external_id": status_id,
-                            "observed_at": iso(),
-                            "author": handle,
-                            "title": "",
-                            "text": own_pieces[0] if own_pieces else "",
-                            "quoted": "\n".join(pieces[1:]) or None,
-                            "quoted_status_ids": [r["status_id"] for r in related],
-                            "related_authors": related,
-                            "repost_context": " ".join(social) or None,
-                            "reposted_by": reposter,
-                            "monitored_author": reposter or handle,
-                            "media": media,
-                            "text_missing_reason": "MEDIA_ONLY_OR_EMPTY" if not own_pieces else None,
-                            "url": f"https://x.com/{handle}/status/{status_id}",
-                            "published_at": await time.get_attribute("datetime"),
-                            "published_at_precision": "EXACT",
-                            "_payload": (await node.evaluate("n => n.outerHTML")).encode(),
-                        }
-                    if reached:
-                        break
-                    stalled = stalled + 1 if set(result) == old else 0
-                    await page.mouse.wheel(0, 1200)
-                    await page.wait_for_timeout(1200)
-                    if stalled > 5:
-                        if checkpoint and not reached:
-                            self.scan_status = "GAP_LIMIT"
-                        break
-                    if asyncio.get_running_loop().time() - scan_started >= 30:
-                        if checkpoint:
-                            self.scan_status = "GAP_LIMIT"
-                        break
-                else:
-                    if checkpoint:
-                        self.scan_status = "GAP_LIMIT"
-
-                detail = await self.context.new_page()
-                try:
-                    for item in result.values():
-                        full_quotes = []
-                        for related in item["related_authors"]:
-                            try:
-                                await detail.goto(
-                                    f"https://x.com/{related['author']}/status/{related['status_id']}",
-                                    wait_until="domcontentloaded",
-                                    timeout=5000,
-                                )
-                                await self.capture_page(detail, "X_QUOTED_STATUS_HTML")
-                                await detail.wait_for_selector("article", timeout=5000)
-                            except Exception:
-                                item.setdefault("quoted_unavailable", []).append(
-                                    {"status_id": related["status_id"], "reason": "QUOTE_UNAVAILABLE"}
-                                )
-                                continue
-                            candidates = detail.locator("article")
-                            found = False
-                            for index in range(await candidates.count()):
-                                candidate = candidates.nth(index)
-
-                                permalink = candidate.locator("time").first.locator("xpath=ancestor::a[1]")
-                                if not await permalink.count():
-                                    continue
-                                if related["status_id"] not in (await permalink.get_attribute("href") or ""):
-                                    continue
-                                expansion = candidate.locator('[data-testid="tweet-text-show-more-link"]')
-                                if await expansion.count() and await self.expand(expansion.first):
-                                    await self.capture_page(detail, "X_EXPANDED_QUOTED_STATUS_HTML")
-                                quote_text = await candidate.locator(
-                                    '[data-testid="tweetText"]'
-                                ).evaluate_all(
-                                    '(nodes)=>nodes.filter(n=>!n.closest("[data-testid=quoteTweet], [role=link]")).map(n=>n.innerText)'
-                                )
-                                if quote_text:
-                                    full_quotes.append(quote_text[0])
-                                    item.setdefault("quoted_posts", []).append(
-                                        {
-                                            "status_id": related["status_id"],
-                                            "author": related["author"],
-                                            "text": quote_text[0],
-                                        }
-                                    )
-                                else:
-                                    item.setdefault("quoted_unavailable", []).append(
-                                        {"status_id": related["status_id"], "reason": "MEDIA_ONLY_OR_EMPTY"}
-                                    )
-                                found = True
-                                break
-                            if not found:
-                                item.setdefault("quoted_unavailable", []).append(
-                                    {"status_id": related["status_id"], "reason": "QUOTE_NOT_IN_PAGE"}
-                                )
-                        if item["related_authors"]:
-                            item["quoted_excerpt"] = item["quoted"]
-                            item["quoted"] = "\n".join(full_quotes) or None
-                            item["quoted_text_status"] = (
-                                "PARTIAL_OR_UNAVAILABLE" if item.get("quoted_unavailable") else "FULL"
-                            )
-                finally:
-                    await detail.close()
-                return list(result.values()), reached
+                await context.route("**/*", document_only)
+                reads = await asyncio.gather(*(visit(account) for account in accounts))
             finally:
-                await page.close()
+                await context.close()
+        return scan(dict(zip(accounts, reads, strict=True)), cursors)
 
-    async def run(self, stop, poll):
+    async def run(self, stop: asyncio.Event, poll: Callable[[], Awaitable[object]]) -> None:
         """Own the X feed control loop; polling deadlines remain durable in the service."""
         while not stop.is_set():
             started = asyncio.get_running_loop().time()
