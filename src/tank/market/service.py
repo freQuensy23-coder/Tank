@@ -291,7 +291,6 @@ class MarketService:
         self._last_request = {}
         self._request_locks = {}
         self._request_pace_locks = {}
-        self._last_hot_expiry_refresh = 0
         self.thresholds = settings.load_config("thresholds")
         self._capture = build_capture_lifecycle(repo, settings, frozenset(self.tokens), _MarketCaptureClock())
         self.http = (
@@ -337,25 +336,14 @@ class MarketService:
     async def _put(self, collection, key, row, *, immutable=False):
         if collection == "qa.reviews" and row.get("at") is not None:
             row = dict(row, **collection_clock(row["at"]).fields("at"))
-        if collection == "mkt.backfill_runs":
-            row = dict(row)
-            for field in ("started_at", "finished_at"):
-                row.update(
-                    norm.timestamp_fields(field, row[field], "COLLECTION_ONLY")
-                    if row.get(field)
-                    else Timestamp(
-                        None, None, "PENDING" if row.get("status") in ("PENDING", "RUNNING") else "INCOMPLETE"
-                    ).fields(field)
-                )
+        if collection in {"mkt.hot_tokens", "mkt.backfill_runs", "mkt.capture_requests"}:
+            raise ValueError("Capture control records require the validated capture repository")
         if collection.startswith("mkt."):
             if collection in TANK_CAPTURE_TABLES:
                 raise ValueError(collection + " is written by tank-capture only")
             row = self.provenance(jsonable(row))
             row.setdefault("recorded_at", iso())
             row.update(collection_clock(row["recorded_at"]).fields("recorded_at"))
-            if collection in ("mkt.hot_tokens", "mkt.backfill_runs", "mkt.capture_requests"):
-                changed = await self.repo.put_market_batch(collection, [row], keys=[str(key)])
-                return changed[0] if changed else row
             self._pending_market.setdefault(collection, {})[str(key)] = row
             return row
         if collection == "qa.reviews" and await self.repo.get(collection, str(key)) is not None:
@@ -694,16 +682,8 @@ class MarketService:
     async def _record_capture_tier(self, token_id: str, tier: CaptureTier, reason: str) -> None:
         await self._capture.record_tier(token_id, tier, reason)
 
-    async def _sync_hot_set(self):
-        """Hot expiry and the hot set this process scales supply by; tank-capture subscribes
-        the same set from mkt.hot_tokens."""
-        if time.monotonic() - self._last_hot_expiry_refresh >= 60:
-            await self.refresh_hot_expiry()
-            self._last_hot_expiry_refresh = time.monotonic()
-        self._hot_since = {}
-        for r in await self.repo.list("mkt.hot_tokens", limit=10000):
-            if r["token_id"] not in self._hot_since or r["since"] < self._hot_since[r["token_id"]]:
-                self._hot_since[r["token_id"]] = r["since"]
+    async def _sync_hot_set(self) -> None:
+        self._hot_since = await self._capture.sync_hot_set()
 
     def _instrument_semantics(self, instruments):
         """The versioned field registry is authoritative, without runtime promotion."""
@@ -3092,13 +3072,8 @@ class MarketService:
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(self._stop.wait(), SUPPLY_LOOP_SLEEP_S)
 
-    async def _record_started_tiers(self):
-        async with self.repo.lock("market-hot-set"), self.repo.transaction():
-            active_tokens = {row["token_id"] for row in await self.repo.list("mkt.hot_tokens", limit=10000)}
-            for token_id in self.tokens:
-                await self._record_capture_tier(
-                    token_id, "HOT" if token_id in active_tokens else "BASE", "CAPTURE_POLICY_STARTED"
-                )
+    async def _record_started_tiers(self) -> None:
+        await self._capture.record_started_tiers()
 
     async def _schedule_hot_backfills(self) -> None:
         await self._capture.schedule_hot_backfills()

@@ -1220,3 +1220,13 @@ def test_window_cache_is_bounded_by_age_and_rows(monkeypatch: pytest.MonkeyPatch
     assert ("old",) not in windows
 
     assert [w["used"] for w in windows[("a",)]] == [995.0] and windows[("b",)][0]["size"] == 40
+
+
+@pytest.mark.asyncio
+async def test_generic_market_write_cannot_bypass_capture_control_contract(setup) -> None:
+    repo, settings, _inst = setup
+    async with httpx.AsyncClient() as http:
+        service = MarketService(repo, settings, http=http)
+        with pytest.raises(ValueError, match="validated capture repository"):
+            await service._put("mkt.backfill_runs", "BF-invalid", {})
+    assert await repo.get("mkt.backfill_runs", "BF-invalid") is None
