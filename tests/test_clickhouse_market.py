@@ -222,3 +222,27 @@ async def test_replacing_write_reads_as_the_last_one(both):
     await put("mkt.flow_bars_1m", [bar(IIDS[0], 0, complete=True)])
     rows = await collect(routed.iter_all("mkt.flow_bars_1m"))
     assert len(rows) == 1 and rows[0]["complete"] is True
+
+
+async def test_latest_per_instrument_reaches_past_the_recent_day(both):
+    memory, routed, put = both
+    cutoff = T0 + timedelta(days=3)
+    await put(
+        "mkt.klines_1m",
+        [
+            kline(IIDS[0], 0, "1"),
+            kline(IIDS[0], 3 * 24 * 60 - 5, "2"),
+            kline(IIDS[1], 0, "3"),
+            kline(IIDS[1], 24 * 60, "4"),
+        ],
+    )
+    options = {
+        "time_field": "open_time",
+        "cutoff": cutoff,
+        "start": cutoff - timedelta(days=90),
+        "instrument_ids": IIDS,
+    }
+    expected = await memory.latest_market_records("mkt.klines_1m", **options)
+    got = await routed.latest_market_records("mkt.klines_1m", **options)
+    assert got == expected
+    assert [(r["instrument_id"], r["c"]) for r in got] == [(IIDS[0], "2"), (IIDS[1], "4")]
