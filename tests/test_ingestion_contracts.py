@@ -130,3 +130,24 @@ def test_source_configuration_requires_adapter_inputs_and_unique_identities() ->
         SourceFeed(url="https://example.org/graphql", kind="graphql", interval_s=60)
     with pytest.raises(ValidationError):
         SourceFeed.model_validate({"url": "https://example.org/feed", "kind": "rss"})
+
+
+def test_entry_error_variants_preserve_run_identity_and_validate_evidence() -> None:
+    from tank.ops_entry_errors import error_key
+    from tank.sources.errors import AccountEntryError, parse_entry_error
+
+    run_error = parse_entry_error({"reason": "RUN_DEGRADED", "account": None})
+    assert isinstance(run_error, AccountEntryError)
+    assert run_error.identity().account == ""
+    repeated = parse_entry_error({"reason": "RUN_DEGRADED", "account": None, "error": "retry 2"})
+    assert error_key("S29", "https://api.apify.com/run", run_error) == error_key(
+        "S29", "https://api.apify.com/run", repeated
+    )
+    account_error = parse_entry_error({"reason": "RUN_DEGRADED", "account": "alice"})
+    assert error_key("S29", "https://api.apify.com/run", run_error) != error_key(
+        "S29", "https://api.apify.com/run", account_error
+    )
+    with pytest.raises(ValidationError):
+        parse_entry_error({"account": "alice"})
+    with pytest.raises(ValidationError):
+        parse_entry_error({"reason": "INVALID_PUBLISHER_ENTRY", "entry_index": -1})

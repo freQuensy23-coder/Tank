@@ -1,23 +1,29 @@
-"""Tank Ops reports of source entries that a poll could not turn into items.
-
-A poll that leaves entry errors in the feed checkpoint reports the errors not seen
-before in one ``ENTRY_ERRORS`` notice for that source poll. Each reported error is
-remembered by an ``ENTRY_ERROR`` marker whose id is derived from the source, the
-feed URL, the reason and the entry identity (the digest of the wire entry when the
-parser had one), never from the poll time. Feeds that keep returning the same broken
-entry therefore produce no further messages. Markers, the notice and its ``DELIVER``
-job are written in one transaction.
-"""
+"""Durable idempotent operator reports of malformed publisher entries."""
 
 import html
 import re
+from collections.abc import Mapping, Sequence
+from contextlib import AbstractAsyncContextManager
 from datetime import timedelta
+from typing import Protocol
+
+from pydantic import JsonValue
 
 from tank.ops_cards import plain
 from tank.ops_progress import enabled
+from tank.settings import Settings
 from tank.sources.configuration import SourceDefinition, SourceFeed
-from tank.time_precision import collection_clock, offset_schedule
-from tank.util import parse_time, sha256
+from tank.sources.errors import (
+    AccountEntryError,
+    EntryErrorMarker,
+    EntryErrorNotice,
+    EntryIdentity,
+    SourceEntryError,
+    SourceErrorIdentity,
+    parse_entry_error,
+)
+from tank.time_precision import Timestamp, collection_clock, offset_schedule
+from tank.util import TimeInput, iso, parse_time, sha256
 
 REASONS = {
     "ENTRY_WITHOUT_ID_OR_URL": "Запись без идентификатора и ссылки",
@@ -30,148 +36,167 @@ REASONS = {
 MESSAGE_LIMIT = 3900
 
 
-def identity(error):
-    if error.get("entry_sha256"):
-        return {"entry_sha256": error["entry_sha256"]}
-    if error.get("proposal_id"):
-        return {"proposal_id": error["proposal_id"]}
-    if "account" in error:
-        return {"account": str(error.get("account") or "").lower()}
-    return {"error": re.sub(r"\d+", "#", str(error.get("error") or ""))}
+class EntryNoticeRepository(Protocol):
+    async def get(self, collection: str, key: str) -> dict[str, JsonValue] | None: ...
+    async def put(
+        self, collection: str, key: str, record: dict[str, JsonValue], *, immutable: bool = False
+    ) -> dict[str, JsonValue]: ...
+    def lock(self, key: str) -> AbstractAsyncContextManager[None]: ...
+    def transaction(self) -> AbstractAsyncContextManager[None]: ...
+    async def enqueue(
+        self,
+        kind: str,
+        payload: dict[str, JsonValue],
+        idem_key: str,
+        *,
+        priority: int,
+        run_after: Timestamp,
+        max_attempts: int,
+        expires_at: Timestamp,
+    ) -> JsonValue: ...
 
 
-def error_key(source_id, feed_url, error):
-    return sha256(
-        {
-            "source_id": source_id,
-            "feed": feed_url,
-            "reason": re.sub(r"\d+", "#", str(error.get("reason") or "")),
-            **identity(error),
-        }
-    )
+def identity(error: SourceEntryError) -> SourceErrorIdentity:
+    return error.identity()
 
 
-def units(text):
+def error_key(source_id: str, feed_url: str, error: SourceEntryError) -> str:
+    """Preserve the existing flat canonical hash document for already-issued markers."""
+    record: dict[str, JsonValue] = {
+        "source_id": source_id,
+        "feed": feed_url,
+        "reason": re.sub(r"\d+", "#", error.reason),
+        **identity(error).model_dump(mode="json"),
+    }
+    return sha256(record)
+
+
+def units(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
-def seen_label(value):
+def seen_label(value: TimeInput) -> str:
     return parse_time(value).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
-def entry_block(number, error, payload_shown):
-    reason = str(error.get("reason") or "UNKNOWN")
+def entry_block(number: int, error: SourceEntryError, payload_shown: bool) -> str:
+    reason = error.reason
     label = REASONS.get(reason)
     lines = [f"{number}. {label} ({reason})" if label else f"{number}. {plain(reason, 200)}"]
-    entry = error.get("entry") or {}
-    parts = []
-    if error.get("entry_index") is not None:
-        parts.append(f"№{error['entry_index']} в ответе")
-    if entry.get("title"):
-        parts.append("«" + plain(entry["title"], 160) + "»")
-    for name in ("id", "link"):
-        if entry.get(name):
-            parts.append(plain(entry[name], 200))
-    if error.get("proposal_id"):
-        parts.append("предложение " + plain(error["proposal_id"], 120))
-    if error.get("account"):
-        parts.append("аккаунт @" + plain(error["account"], 60))
-    elif "account" in error:
-        parts.append("весь запуск сбора X")
+    entry = error.entry if error.entry is not None else EntryIdentity()
+    parts: list[str] = []
+    if error.entry_index is not None:
+        parts.append(f"№{error.entry_index} в ответе")
+    if entry.title:
+        parts.append("«" + plain(entry.title, 160) + "»")
+    for value in (entry.id, entry.link):
+        if value:
+            parts.append(plain(value, 200))
+    error_identity = error.identity()
+    from tank.sources.errors import ProposalIdentity
+
+    if isinstance(error_identity, ProposalIdentity):
+        parts.append("предложение " + plain(error_identity.proposal_id, 120))
+    if isinstance(error, AccountEntryError):
+        parts.append("аккаунт @" + plain(error.account, 60) if error.account else "весь запуск сбора X")
     if parts:
         lines.append("Запись: " + " · ".join(parts))
-    if entry.get("excerpt"):
-        lines.append("Фрагмент: " + plain(entry["excerpt"], 200))
-    if error.get("error"):
-        lines.append("Ошибка: " + plain(error["error"], 300))
-    if error.get("entry_sha256"):
-        lines.append("sha256 записи: " + error["entry_sha256"])
-    if error.get("payload_sha256") and not payload_shown:
-        lines.append("sha256 ответа: " + error["payload_sha256"])
+    if entry.excerpt:
+        lines.append("Фрагмент: " + plain(entry.excerpt, 200))
+    if error.error:
+        lines.append("Ошибка: " + plain(error.error, 300))
+    from tank.sources.errors import DigestIdentity
+
+    if isinstance(error_identity, DigestIdentity):
+        lines.append("sha256 записи: " + error_identity.entry_sha256)
+    if error.payload_sha256 is not None and not payload_shown:
+        lines.append("sha256 ответа: " + error.payload_sha256)
     return "\n".join(lines)
 
 
-def render(notice):
-    source = notice["source_id"] + (f" · {notice['source_name']}" if notice.get("source_name") else "")
-    errors = notice["entry_errors"]
-    payloads = {error.get("payload_sha256") for error in errors}
-    shared = len(payloads) == 1 and None not in payloads
+def render(notice: EntryErrorNotice) -> str:
+    source = notice.source_id + (f" · {notice.source_name}" if notice.source_name else "")
+    errors = notice.entry_errors
+    shared_payload = errors[0].payload_sha256 if errors else None
+    shared = shared_payload is not None and all(error.payload_sha256 == shared_payload for error in errors)
     head = [
         "TANK OPS · Записи источника не разобраны",
         "Источник: " + plain(source, 200),
-        "Лента: " + notice["feed_url"],
-        "Обнаружено: " + seen_label(notice["seen_at"]),
+        "Лента: " + notice.feed_url,
+        "Обнаружено: " + seen_label(notice.seen_at),
         f"Новых записей с ошибкой: {len(errors)}",
     ]
-    if shared:
-        head.append("sha256 ответа: " + payloads.pop())
+    if shared and shared_payload is not None:
+        head.append("sha256 ответа: " + shared_payload)
     text = "\n".join(head)
     for index, error in enumerate(errors):
         block = entry_block(index + 1, error, shared)
         rest = len(errors) - index - 1
-        tail = f"\n\n… и ещё {rest}; полный список: out.ops_notices {notice['notice_id']}" if rest else ""
+        tail = f"\n\n… и ещё {rest}; полный список: out.ops_notices {notice.notice_id}" if rest else ""
         candidate = text + "\n\n" + block
         if units(html.escape(candidate + tail)) > MESSAGE_LIMIT:
             return (
-                text
-                + f"\n\n… и ещё {len(errors) - index}; полный список: out.ops_notices {notice['notice_id']}"
+                text + f"\n\n… и ещё {len(errors) - index}; полный список: out.ops_notices {notice.notice_id}"
             )
         text = candidate
     return text
 
 
-async def report_entry_errors(repo, settings, source: SourceDefinition, feed: SourceFeed, errors, seen_at):
+async def report_entry_errors(
+    repo: EntryNoticeRepository,
+    settings: Settings,
+    source: SourceDefinition,
+    feed: SourceFeed,
+    errors: Sequence[SourceEntryError | Mapping[str, JsonValue]],
+    seen_at: str,
+) -> str | None:
     if not enabled(settings) or not errors:
         return None
-    source_id = source.source_id
-    feed_url = feed.url
-    pending = {}
+    source_id, feed_url = source.source_id, feed.url
+    pending: dict[str, SourceEntryError] = {}
     for error in errors:
-        pending.setdefault(error_key(source_id, feed_url, error), error)
+        parsed = parse_entry_error(error)
+        pending.setdefault(error_key(source_id, feed_url, parsed), parsed)
     async with repo.lock(f"ops-entry-errors:{source_id}:{sha256(feed_url)}"), repo.transaction():
-        fresh = {
-            key: error
-            for key, error in pending.items()
-            if not await repo.get("out.ops_notices", "entry_error_" + key)
-        }
+        fresh: dict[str, SourceEntryError] = {}
+        for key, error in pending.items():
+            if await repo.get("out.ops_notices", "entry_error_" + key) is None:
+                fresh[key] = error
         if not fresh:
             return None
-        notice_id = "entry_errors_" + sha256(
-            {"source_id": source_id, "feed": feed_url, "keys": sorted(fresh)}
-        )
-        stamp = collection_clock()
-        for key, error in fresh.items():
-            await repo.put(
-                "out.ops_notices",
-                "entry_error_" + key,
-                {
-                    "notice_id": "entry_error_" + key,
-                    "kind": "ENTRY_ERROR",
-                    "subject_id": source_id,
-                    "text": str(error.get("reason") or "UNKNOWN"),
-                    "group_notice_id": notice_id,
-                    "feed_url": feed_url,
-                    "entry_error": error,
-                    **stamp.fields("created_at"),
-                    "created_by": "source-poller",
-                },
-                immutable=True,
-            )
-        notice = {
-            "notice_id": notice_id,
-            "kind": "ENTRY_ERRORS",
-            "subject_id": source_id,
+        poll_identity: dict[str, JsonValue] = {
             "source_id": source_id,
-            "source_name": source.name,
-            "feed_url": feed_url,
-            "seen_at": seen_at,
-            "entry_error_keys": sorted(fresh),
-            "entry_errors": list(fresh.values()),
-            **stamp.fields("created_at"),
-            "created_by": "source-poller",
+            "feed": feed_url,
+            "keys": [key for key in sorted(fresh)],
         }
-        notice["text"] = render(notice)
-        await repo.put("out.ops_notices", notice_id, notice, immutable=True)
+        notice_id = "entry_errors_" + sha256(poll_identity)
+        created_at = iso()
+        stamp = collection_clock(created_at)
+        for key, error in fresh.items():
+            marker = EntryErrorMarker(
+                notice_id="entry_error_" + key,
+                subject_id=source_id,
+                text=error.reason,
+                group_notice_id=notice_id,
+                feed_url=feed_url,
+                entry_error=error,
+                created_at=created_at,
+            )
+            await repo.put("out.ops_notices", marker.notice_id, marker.storage_record(), immutable=True)
+        notice = EntryErrorNotice(
+            notice_id=notice_id,
+            subject_id=source_id,
+            source_id=source_id,
+            source_name=source.name,
+            feed_url=feed_url,
+            seen_at=seen_at,
+            entry_error_keys=sorted(fresh),
+            entry_errors=list(fresh.values()),
+            created_at=created_at,
+            text="",
+        )
+        notice = notice.model_copy(update={"text": render(notice)})
+        await repo.put("out.ops_notices", notice_id, notice.storage_record(), immutable=True)
         await repo.enqueue(
             "DELIVER",
             {"notice_id": notice_id, "channel": "telegram:ops"},

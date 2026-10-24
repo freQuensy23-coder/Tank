@@ -117,7 +117,7 @@ async def test_restart_and_concurrent_reports_are_idempotent(tmp_path: Path) -> 
     await poll(repo, tmp_path, [broken("Bad")])
     assert len(await entry_notices(repo)) == 1
     settings = SimpleNamespace(ops_progress_enabled=True)
-    errors = [{"reason": "PENDING_PROPOSAL_UNAVAILABLE", "proposal_id": "0xabc", "payload_sha256": "p"}]
+    errors = [{"reason": "PENDING_PROPOSAL_UNAVAILABLE", "proposal_id": "0xabc", "payload_sha256": "a" * 64}]
     source = {"source_id": "S24", "name": "Snapshot"}
     feed = {"url": "https://hub.snapshot.org/graphql"}
     with pytest.raises(ValueError, match="rollback"):
@@ -246,7 +246,9 @@ async def test_entry_error_notices_persist_and_deduplicate_in_storage(backend, p
     async with fixture_repo(backend, postgres_template) as repo:
         settings = SimpleNamespace(ops_progress_enabled=True)
         source = {"source_id": "S30", "name": "Fixture blog"}
-        errors = [{"reason": "ENTRY_WITHOUT_ID_OR_URL", "entry_sha256": "e" * 64, "payload_sha256": "p" * 64}]
+        errors = [
+            {"reason": "ENTRY_WITHOUT_ID_OR_URL", "entry_sha256": "e" * 64, "payload_sha256": "a" * 64}
+        ]
         ids = await asyncio.gather(
             *(
                 report_entry_errors(
