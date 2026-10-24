@@ -7,7 +7,7 @@ import pytest
 import yaml
 from direct_fetch import fetch_snapshot
 
-REGISTRY = Path(__file__).resolve().parents[4] / "config" / "registry.yaml"
+REGISTRY = Path(__file__).resolve().parents[3] / "config" / "registry.yaml"
 
 
 @pytest.mark.integration
