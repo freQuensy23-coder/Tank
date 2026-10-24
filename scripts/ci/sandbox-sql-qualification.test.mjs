@@ -3,6 +3,9 @@ import { test } from 'node:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { PostgresSqlClient } from '../../vendor/openma/packages/sql-client/src/adapters/postgres.ts';
 import { createBetterSqlite3SqlClient } from '../../vendor/openma/packages/sql-client/src/index.ts';
 import { ensureSessionExecutionCoordinatorSchema, SqlSessionExecutionCoordinator } from '../../vendor/openma/packages/session-runtime-sql/src/coordination.ts';
 import { loadSessionContinuationSnapshot } from '../../vendor/openma/packages/session-runtime-sql/src/continuation.ts';
@@ -22,7 +25,27 @@ async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), 'tank-sql-qualification-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, 'coordinator.sqlite');
-  const sql = await createBetterSqlite3SqlClient(path);
+  let open = () => createBetterSqlite3SqlClient(path);
+  if (process.env.TANK_QUALIFICATION_PG_URL) {
+    assert.equal(process.env.GITHUB_ACTIONS, 'true');
+    const url = new URL(process.env.TANK_QUALIFICATION_PG_URL);
+    assert.equal(url.hostname, '127.0.0.1');
+    assert.equal(url.pathname, '/tank_test_qualification');
+    const postgres = createRequire(new URL('../../vendor/openma/packages/node-database-postgres/package.json', import.meta.url))('postgres');
+    const admin = postgres(url.toString());
+    const database = 'tank_test_' + randomBytes(12).toString('hex');
+    await admin.unsafe('CREATE DATABASE ' + database);
+    await admin.end();
+    url.pathname = '/' + database;
+    const connections = [];
+    t.after(async () => { await Promise.all(connections.map(connection => connection.end())); });
+    open = async () => {
+      const connection = postgres(url.toString(), { types: { bigint: { to: 20, from: [20], serialize: value => value.toString(), parse: value => Number(value) } } });
+      connections.push(connection);
+      return new PostgresSqlClient(connection);
+    };
+  }
+  const sql = await open();
   await sql.exec(`
     CREATE TABLE managed_sessions (workspace_id TEXT NOT NULL, id TEXT NOT NULL, document TEXT NOT NULL, revision BIGINT NOT NULL, agent_id TEXT, agent_version BIGINT, environment_id TEXT, deployment_id TEXT, status TEXT, created_at BIGINT, updated_at BIGINT, archived_at BIGINT, PRIMARY KEY (workspace_id,id));
     CREATE TABLE managed_session_initial_events (workspace_id TEXT, session_id TEXT, sequence BIGINT, document TEXT);
@@ -36,7 +59,7 @@ async function fixture(t) {
   const store = coordinator(sql);
   const owned = await claim(store, 'first', 2);
   assert.equal(owned.type, 'claimed');
-  return { sql, path, store, events, owned, writer: new SqlSessionRuntimeProjectionPersistence(sql, { now: () => new Date(at(3)) }) };
+  return { sql, open, store, events, owned, writer: new SqlSessionRuntimeProjectionPersistence(sql, { now: () => new Date(at(3)) }) };
 }
 async function failBeforeEffects(f, message = 'retained_configuration_changed', extraEvents = []) {
   const failureEvents = [
@@ -48,11 +71,11 @@ async function failBeforeEffects(f, message = 'retained_configuration_changed', 
   assert.equal((await f.store.settle({ fence: f.owned.fence, settledAt: at(4), outcome: 'failed', failure: message })).type, 'settled');
 }
 
-test('actual SQLite coordinator recovers once, fences a concurrent owner and preserves FIFO after durable reopen', async t => {
+test(`actual ${process.env.TANK_QUALIFICATION_PG_URL ? 'PostgreSQL' : 'SQLite'} coordinator recovers once, fences a concurrent owner and preserves FIFO after durable reopen`, async t => {
   const f = await fixture(t);
   await failBeforeEffects(f);
   assert.equal((await f.events.append({ ...scope, expectedRevision: 3, events: [{ id: 'later', type: 'user.message', content: [{ type: 'text', text: 'later' }], processedAt: at(4) }], nextSession: session })).type, 'appended');
-  const reopened = await createBetterSqlite3SqlClient(f.path);
+  const reopened = await f.open();
   const store = coordinator(reopened);
   const results = await Promise.all([claim(store, 'second'), claim(coordinator(f.sql), 'competitor')]);
   const winners = results.filter(result => result.type === 'claimed');
@@ -90,7 +113,7 @@ for (const reason of ['unrelated', 'effects', 'archived', 'interrupted', 'deadli
     if (reason === 'deadline') await f.sql.prepare('UPDATE managed_session_executions SET deadline_at_ms = ? WHERE id = ?').bind(Date.parse(at(4)), 'original').run();
     if (reason === 'attempt-limit') await f.sql.prepare('UPDATE managed_session_executions SET max_attempts = attempt_count WHERE id = ?').bind('original').run();
     const before = await loadSessionContinuationSnapshot(f.sql, scope);
-    assert.equal((await claim(coordinator(await createBetterSqlite3SqlClient(f.path)), 'replacement')).type, 'empty');
+    assert.equal((await claim(coordinator(await f.open()), 'replacement')).type, 'empty');
     const after = await loadSessionContinuationSnapshot(f.sql, scope);
     assert.deepEqual(after.orderedEvents, before.orderedEvents);
     assert.equal(after.executions[0].state, 'failed');

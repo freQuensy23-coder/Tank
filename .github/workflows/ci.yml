@@ -245,9 +245,9 @@ jobs:
           TANK_QUALIFICATION_EVIDENCE: ${{ runner.temp }}/sandbox-qualification
       - name: Actual SQL coordinator upgrade recovery integration
         if: ${{ !cancelled() }}
-        run: |
-          mkdir -p "$RUNNER_TEMP/sandbox-qualification"
-          node --import ./vendor/openma/apps/main-node/node_modules/tsx/dist/loader.mjs --test --test-reporter=junit scripts/ci/sandbox-sql-qualification.test.mjs > "$RUNNER_TEMP/sandbox-qualification/sql-qualification.xml"
+        run: node scripts/ci/qualify-sandbox-sql.mjs
+        env:
+          TANK_QUALIFICATION_EVIDENCE: ${{ runner.temp }}/sandbox-qualification
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
@@ -298,6 +298,8 @@ jobs:
             tar -xf "$RUNNER_TEMP/sandbox-$version.tar" -C "$RUNNER_TEMP/sandbox-$version"
             rm "$RUNNER_TEMP/sandbox-$version.tar"
           done
+          cp -al "$RUNNER_TEMP/sandbox-B" "$RUNNER_TEMP/sandbox-metadata"
+          node --input-type=module -e 'import {readFileSync,unlinkSync,writeFileSync} from "node:fs"; const p=process.env.RUNNER_TEMP+"/sandbox-metadata/index.json"; const index=JSON.parse(readFileSync(p,"utf8")); index.annotations={...index.annotations,"org.tank.qualification.metadata":"export-only"}; unlinkSync(p); writeFileSync(p,JSON.stringify(index,null,2)+"\n");'
       - name: Build and load the exact candidate OpenMA service
         id: candidate
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8

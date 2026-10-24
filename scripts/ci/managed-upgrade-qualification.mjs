@@ -16,6 +16,7 @@ assert.match(image ?? '', /^sha256:[a-f0-9]{64}$/);
 const rootfs = version => resolve(process.env.RUNNER_TEMP, 'sandbox-' + version);
 const kvmGroup = String((await stat('/dev/kvm')).gid);
 const observations = [];
+const additionalCases = [];
 const secretValues = [];
 const sanitized = value => secretValues.reduce((text, secret) => text.replaceAll(secret, '[TEST_SECRET]'), String(value));
 function docker(args, options = {}) {
@@ -159,6 +160,8 @@ for (let round = 1; round <= 2; round++) {
     await start('B');
     receipt.upgradeInput = await send('B-first');
     receipt.queuedInput = await send('B-second');
+    receipt.queueObserved = JSON.parse(docker(['exec', names.postgres, 'psql', '-U', 'postgres', '-d', 'oma', '-At', '-c', "SELECT COALESCE(json_agg(json_build_object('id',id,'state',state)), '[]'::json) FROM managed_session_executions"]));
+    assert.ok(receipt.queueObserved.some(row => row.state === 'queued'), 'No actual durably queued input was observed during replacement');
     const history = await waitFor('same-session B upgrade and queued-input completion', async () => { const rows = await events(session.id); return receipts(rows).length >= 3 && rows.filter(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn').length >= 2 ? rows : null; }, 600);
     receipt.after = publication();
     assert.notEqual(receipt.before.handle.runtimeId, receipt.after.handle.runtimeId, 'image B did not replace A');
@@ -175,8 +178,42 @@ for (let round = 1; round <= 2; round++) {
     }
     assert.deepEqual(receipts(history).at(-1).effects, ['A', 'B-first', 'B-second']);
     receipt.guestReceipts = receipts(history);
+    receipt.providerObservations = JSON.parse(docker(['exec', names.provider, 'node', '-e', "fetch('http://127.0.0.1:9000/observations',{headers:{'x-api-key':process.env.QUALIFICATION_PROVIDER_KEY}}).then(r=>r.json()).then(v=>console.log(JSON.stringify(v)))"]));
+    assert.ok(receipt.providerObservations.some(row => row.upgradedNoticePresent), 'Continuing agent did not actually receive the runtime upgrade notice');
     receipt.guestReceiptCount = receipts(history).length;
     receipt.status = 'PASS';
+    if (round === 1) {
+      const metadata = { case: 'metadata-only-native-rebuild', sourceSha, sessionId: session.id, status: 'FAIL' };
+      try {
+        await stop();
+        await start('metadata');
+        await send('metadata');
+        const unchangedHistory = await waitFor('metadata-only retained VM continuation', async () => { const rows = await events(session.id); return receipts(rows).length >= 4 && rows.filter(row => row.type === 'session.status_idle' && row.stop_reason?.type === 'end_turn').length >= 3 ? rows : null; }, 600);
+        metadata.publication = publication();
+        assert.deepEqual(metadata.publication.handle, receipt.after.handle, 'metadata-only OCI export replaced the VM');
+        assert.equal(metadata.publication.imageIdentity, receipt.after.imageIdentity);
+        for (let index = 0; index < history.length; index++) assert.deepEqual(unchangedHistory[index], history[index]);
+        assert.deepEqual(receipts(unchangedHistory).map(row => row.phase), ['A', 'B-first', 'B-second', 'metadata']);
+        metadata.status = 'PASS';
+      } catch (error) { metadata.error = sanitized(error.stack ?? error); process.exitCode = 1; }
+      additionalCases.push(metadata);
+      if (metadata.status === 'PASS') {
+        const policy = { case: 'security-mismatch-native-refusal', sourceSha, sessionId: session.id, status: 'FAIL' };
+        try {
+          const priorCalls = JSON.parse(docker(['exec', names.provider, 'node', '-e', "fetch('http://127.0.0.1:9000/observations',{headers:{'x-api-key':process.env.QUALIFICATION_PROVIDER_KEY}}).then(r=>r.json()).then(v=>console.log(JSON.stringify(v)))"]));
+          await api('/v1/sessions/' + session.id + '/resources', { type: 'file', file_id: file.id, mount_path: '/workspace/second-upload.bin' });
+          await send('policy-probe');
+          const refusal = await waitFor('protected resources mismatch refusal', async () => (await events(session.id)).find(row => row.type === 'session.error' && JSON.stringify(row).includes('retained_configuration_changed:resources')), 180);
+          policy.errorEventId = refusal.id;
+          policy.publication = publication();
+          assert.deepEqual(policy.publication.handle, metadata.publication.handle, 'policy refusal changed the authoritative VM');
+          const afterCalls = JSON.parse(docker(['exec', names.provider, 'node', '-e', "fetch('http://127.0.0.1:9000/observations',{headers:{'x-api-key':process.env.QUALIFICATION_PROVIDER_KEY}}).then(r=>r.json()).then(v=>console.log(JSON.stringify(v)))"]));
+          assert.deepEqual(afterCalls, priorCalls, 'refused policy change reached the model');
+          policy.status = 'PASS';
+        } catch (error) { policy.error = sanitized(error.stack ?? error); process.exitCode = 1; }
+        additionalCases.push(policy);
+      }
+    }
   } catch (error) {
     receipt.error = sanitized(error.stack ?? error);
     process.exitCode = 1;
@@ -200,5 +237,6 @@ for (let round = 1; round <= 2; round++) {
   }
 }
 await rm(privateDirectory, { recursive: true, force: true });
-await writeFile(join(evidence, 'native-summary.json'), JSON.stringify({ schema: 'tank.native-managed-upgrade.v1', sourceSha, runId: process.env.GITHUB_RUN_ID, cases: observations.map(row => ({ case: row.case, status: row.status })), fullyQualified: false, unproved: ['legacy-native-publication', 'metadata-only-native-rebuild', 'interrupted-transfer-publication', 'lease-loss-concurrent-resume-archive', 'security-mismatch-native-refusal'] }, null, 2) + '\n');
+for (const row of additionalCases) await writeFile(join(evidence, row.case + '.json'), JSON.stringify(row, null, 2) + '\n');
+await writeFile(join(evidence, 'native-summary.json'), JSON.stringify({ schema: 'tank.native-managed-upgrade.v1', sourceSha, runId: process.env.GITHUB_RUN_ID, cases: [...observations, ...additionalCases].map(row => ({ case: row.case, status: row.status })), fullyQualified: false, unproved: ['legacy-native-publication', 'interrupted-transfer-publication', 'lease-loss-concurrent-resume-archive'] }, null, 2) + '\n');
 assert.equal(observations.filter(row => row.status === 'PASS').length, 2, 'Two actually completed Managed API A-to-B native runs are required');
