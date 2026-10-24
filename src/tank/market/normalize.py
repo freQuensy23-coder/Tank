@@ -2,12 +2,10 @@
 
 from bisect import bisect_right
 from datetime import datetime, timedelta
-from decimal import Decimal, InvalidOperation
-
-from pydantic import JsonValue
 
 from tank.market.errors import SemanticError
 from tank.market.funding import FundingObservation
+from tank.market.numbers import decimal
 from tank.market.precision import precise
 from tank.time_precision import collection_clock, propagate_timestamp
 from tank.util import canonical_json, iso, jsonable, parse_time
@@ -56,21 +54,6 @@ def quote_usd_rate(instrument, at):
     if rate is None or as_of and parse_time(as_of) > at:
         return None, None
     return rate, as_of
-
-
-D = Decimal
-
-
-def decimal(value: JsonValue | Decimal) -> Decimal:
-    if isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal)):
-        raise SemanticError("missing or invalid decimal")
-    try:
-        result = D(str(value))
-    except InvalidOperation as exc:
-        raise SemanticError("missing or invalid decimal") from exc
-    if not result.is_finite():
-        raise SemanticError("nonfinite decimal")
-    return result
 
 
 def venue_key(instrument):

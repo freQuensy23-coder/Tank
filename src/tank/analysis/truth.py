@@ -15,7 +15,7 @@ import threading
 from array import array
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextvars import ContextVar
 from copy import deepcopy
 from datetime import timedelta
@@ -24,6 +24,9 @@ from functools import wraps
 from math import log
 from statistics import mean, median, stdev
 
+from pydantic import JsonValue
+
+from tank.analysis.execution import ExecutionLevelWire, ExecutionSide, execute_book_walk, execution_request
 from tank.analysis.positioning import (
     MissingOIDecomposition,
 )
@@ -1897,25 +1900,13 @@ def relative_truth(snapshot, start, end, *, include_outcome=True):
     )
 
 
-@precise
-def walk_book(levels, notional, mid, side="ask"):
-    remaining = decimal(notional)
-    mid = decimal(mid)
-    native = Decimal(0)
-    spent = Decimal(0)
-    for level in levels:
-        p, q = (
-            (decimal(level[k]) for k in ("price", "qty"))
-            if isinstance(level, dict)
-            else map(decimal, level[:2])
-        )
-        take = min(remaining, p * q)
-        native += take / p
-        spent += take
-        remaining -= take
-        if remaining <= 1e-8:
-            break
-    return float(((spent / native / mid) - 1) * 10000) if native and remaining <= 1e-8 else None
+def walk_book(
+    levels: Sequence[ExecutionLevelWire],
+    notional: JsonValue | Decimal,
+    mid: JsonValue | Decimal,
+    side: ExecutionSide = "ask",
+) -> float | None:
+    return execute_book_walk(execution_request(levels, notional, mid, side)).slippage_bps
 
 
 def depth_at_band(book, side, unit="usd"):
