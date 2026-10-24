@@ -6,7 +6,7 @@ Use the existing `ci.yml` workflow on the exact candidate branch with `sandbox-q
 gh workflow run ci.yml --repo freQuensy23-coder/Tank --ref <candidate-branch> -f sandbox-qualification=true
 ```
 
-The jobs install the frozen Node24/pnpm11 workspace, typecheck every touched runtime package, run seven real coordinator integration cases independently against SQLite and fresh PostgreSQL16, and attempt native Managed API upgrades on a GitHub-hosted amd64 KVM executor. Every SQL lane requires its exact seven-case nonempty zero-skip JUnit inventory. Typecheck failures remain failures even when independent SQL execution succeeds.
+The jobs install the frozen Node24/pnpm11 workspace, typecheck every touched runtime package, run the named coordinator integration inventory independently against SQLite and fresh PostgreSQL16, and attempt native Managed API upgrades on a GitHub-hosted amd64 KVM executor. Every SQL lane requires exact equality to `sql-qualification-cases.mjs`, nonempty zero-skip JUnit and successful exit. Typecheck failures remain failures even when independent SQL execution succeeds.
 
 KVM preflight executes the real API-version and VM-create ioctls. On an ephemeral GitHub-hosted dispatch runner only, EACCES permits a per-runner-UID ACL on `/dev/kvm`; it never changes world permissions, uses emulation, or changes the local development host. Native containers keep the normal non-root user, KVM device/group and shipping native bundle, without privileged mode or relaxed sandbox security.
 

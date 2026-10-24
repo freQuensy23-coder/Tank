@@ -129,6 +129,7 @@ for (let round = 1; round <= 2; round++) {
     });
   };
   const stop = () => { docker(['stop', '--time', '45', names.service], { timeout: 60000 }); docker(['rm', names.service]); };
+  let latestHistory = [];
   const events = async id => {
     const collected = [];
     const pages = new Set();
@@ -140,6 +141,7 @@ for (let round = 1; round <= 2; round++) {
       assert.ok(!page || !pages.has(page), 'repeated event cursor'); if (page) pages.add(page);
     } while (page);
     assert.equal(new Set(collected.map(row => row.id)).size, collected.length, 'duplicate public event IDs');
+    latestHistory = collected;
     return collected;
   };
   const strings = value => typeof value === 'string' ? [value] : Array.isArray(value) ? value.flatMap(strings) : value && typeof value === 'object' ? Object.values(value).flatMap(strings) : [];
@@ -154,7 +156,7 @@ for (let round = 1; round <= 2; round++) {
     await waitFor('isolated PostgreSQL bootstrap', () => { const child = spawnSync('docker', ['exec', names.postgres, 'pg_isready', '-h', '127.0.0.1', '-U', 'oma', '-d', 'oma'], { encoding: 'utf8', timeout: 5000 }); return child.status === 0; });
     docker(['run', '-d', '--name', names.provider, '--label', 'tank.qualification=' + prefix, '--network', names.network, '--network-alias', 'provider', '--env', 'QUALIFICATION_PROVIDER_KEY', '--mount', `type=bind,src=${resolve('scripts/ci/qualification-provider.mjs')},dst=/qualification-provider.mjs,readonly`, '--entrypoint', 'node', image, '/qualification-provider.mjs'], { env });
     await start('A');
-    const agent = await api('/v1/agents', { name: 'Isolated native upgrade qualification', model: 'claude-sonnet-4-6', system: 'Execute the supplied qualification command exactly once. Report tool output. No external requests.', tools: [{ type: 'agent_toolset_20260401', default_config: { enabled: false }, configs: [{ name: 'bash', enabled: true }] }] });
+    const agent = await api('/v1/agents', { name: 'Isolated native upgrade qualification', model: 'claude-sonnet-4-6', system: 'Execute the supplied qualification command exactly once. Report tool output. No external requests.', tools: [{ type: 'agent_toolset_20260401', default_config: { enabled: false }, configs: [{ name: 'bash', type: 'bash', enabled: true, permission_policy: { type: 'always_allow' } }] }] });
     const memoryStore = await api('/v1/memory_stores', { name: 'qualification', metadata: { qualification: prefix } });
     const memory = await api('/v1/memory_stores/' + memoryStore.id + '/memories', { path: '/note.txt', content: 'seed:' + nonce });
     const memoryContent = () => api('/v1/memory_stores/' + memoryStore.id + '/memories/' + memory.id + '?view=full');
@@ -242,6 +244,7 @@ for (let round = 1; round <= 2; round++) {
     receipt.error = sanitized(error.stack ?? error);
     process.exitCode = 1;
   } finally {
+    await writeFile(join(evidence, 'public-history-' + round + '.json'), sanitized(JSON.stringify({ sourceSha, runId: process.env.GITHUB_RUN_ID, sessionId: receipt.sessionId ?? null, events: latestHistory }, null, 2)) + '\n');
     for (const name of [names.service, names.provider, names.postgres]) {
       const inspect = spawnSync('docker', ['inspect', '--format', '{{index .Config.Labels "tank.qualification"}}', name], { encoding: 'utf8', timeout: 10000 });
       if (inspect.status !== 0) continue;
