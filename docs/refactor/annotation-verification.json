@@ -1,0 +1,10 @@
+{
+  "commit": "2c5bea6",
+  "files": 138,
+  "added": {
+    "return_annotations": 1584,
+    "parameter_annotations": 651
+  },
+  "non_annotation_non_import_AST_changes": [],
+  "known_correction": "HTTP callback request parameters wrongly typed pytest.FixtureRequest; exact sites assigned to domain owners in fixture-shadowing.json"
+}
