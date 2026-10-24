@@ -193,7 +193,7 @@ async def test_builtin_toolset_drift_in_openma_is_corrected(tmp_path):
     report = await run(settings, fake)
     assert report["agents"]["tank-event-analyst"].startswith("VERSION")
     assert analyst["tools"][0]["default_config"] == {"enabled": True}
-    assert analyst["tools"][0]["configs"] == []
+    assert [(r["name"], r["enabled"]) for r in analyst["tools"][0]["configs"]] == [("browser", True)]
 
 
 async def test_a_skill_missing_from_its_agent_is_created(tmp_path):

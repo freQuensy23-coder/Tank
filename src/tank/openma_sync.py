@@ -81,11 +81,18 @@ def model_card(model_id):
 
 
 def agent_tools(settings, name):
-    """Every agent gets OpenMA's full built-in toolset next to its own Tank tools."""
+    """Every agent gets OpenMA's full built-in toolset next to its own Tank tools.
+
+    default_config enables OpenMA's default tools; browser is opt-in there and is enabled explicitly.
+    """
     tools = settings.read_config_json(f"skills/{name}/tools.json")
-    return [{"type": "agent_toolset_20260401", "default_config": {"enabled": True}, "configs": []}] + [
-        dict(type="custom", **tool) for tool in tools
-    ]
+    return [
+        {
+            "type": "agent_toolset_20260401",
+            "default_config": {"enabled": True},
+            "configs": [{"name": "browser", "enabled": True}],
+        }
+    ] + [dict(type="custom", **tool) for tool in tools]
 
 
 def agent_payload(settings, config, name, skills):

@@ -135,7 +135,7 @@ async def test_legacy_callbacks_upgrade_before_delivery_and_new_turns_reject_ids
     assert event["event_id"] not in text and item["item_id"] not in text
     assert native.tools == agent_tools(settings, "tank-scout-reviewer" if scout else "tank-event-analyst")
     assert native.tools[0]["default_config"]["enabled"] is True
-    assert native.tools[0]["configs"] == []
+    assert native.tools[0]["configs"] == [{"name": "browser", "enabled": True}]
 
 
 async def test_old_description_call_in_a_legacy_turn_is_refused_once_and_the_id_call_runs(legacy):
