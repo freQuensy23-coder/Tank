@@ -9,7 +9,6 @@ import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 
 import yaml
@@ -258,21 +257,6 @@ class Settings(BaseSettings):
             cache[relative] = value
             return copy.deepcopy(value)
         return value
-
-
-def threshold(settings: Any, name: str, fixture_default: Any) -> Any:
-    """A value of config/thresholds.yaml; the production settings must define it.
-
-    Only test settings without a configuration loader fall back to the fixture default.
-    """
-    if not hasattr(settings, "load_config"):
-        return fixture_default
-    thresholds = settings.load_config("thresholds")
-    if name not in thresholds:
-        if isinstance(settings, Settings):
-            raise ValueError("Missing threshold: " + name)
-        return fixture_default
-    return thresholds[name]
 
 
 def configured_values(settings: Settings) -> dict[str, str]:
