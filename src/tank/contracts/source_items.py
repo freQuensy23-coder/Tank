@@ -1,7 +1,7 @@
 """Canonical source discovery and immutable capture evidence contracts."""
 
 from collections.abc import Mapping
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import (
     ConfigDict,
@@ -16,9 +16,11 @@ from pydantic import (
 from tank.contracts import DomainModel
 from tank.contracts.provenance import GenerationProvenance
 from tank.contracts.repository import Collection
+from tank.contracts.sources import SourceAuthorRole
 from tank.time_precision import Timestamp, collection_clock, propagate_timestamp
 
 type BucketAnchor = Literal["START", "END", "UNSPECIFIED"]
+type SourceContextId = Annotated[str, Field(min_length=1, pattern=r"^\S+$")]
 
 
 class PublisherCMSIdentity(DomainModel):
@@ -368,14 +370,14 @@ type SourceRelevance = PendingRelevance | AlwaysRelevance | ClassifiedRelevance
 
 class SourceRoutingMessage(DomainModel):
     kind: Literal["NEW_ITEM", "ITEM_ADDED"]
-    item_id: str = Field(min_length=1)
-    event_id: str | None = None
-    session_id: str | None = None
+    item_id: SourceContextId
+    event_id: SourceContextId | None = None
+    session_id: SourceContextId | None = None
 
 
 class SourceRoute(DomainModel):
     decision: Literal["ADDED", "NEW_SESSION"]
-    event_id: str | None
+    event_id: SourceContextId | None
     p_same: float | None = Field(ge=0, le=1, allow_inf_nan=False)
 
     @model_validator(mode="after")
@@ -432,24 +434,52 @@ type ExtractionStatus = Literal["PENDING", "RUNNING", "DONE", "SKIPPED", "FAILED
 type SourceClass = Literal["PRIMARY", "SECONDARY", "SOCIAL_LEAD", "TECHNICAL_EVIDENCE"]
 
 
+class PendingExtraction(DomainModel):
+    status: Literal["PENDING"]
+
+
+class RunningExtraction(DomainModel):
+    status: Literal["RUNNING"]
+
+
+class CompletedExtraction(DomainModel):
+    status: Literal["DONE"]
+
+
+class SkippedExtraction(DomainModel):
+    status: Literal["SKIPPED"]
+    decision: Literal["NO_EVENT"] | None
+    reason: str | None
+
+
+class FailedExtraction(DomainModel):
+    status: Literal["FAILED"]
+    reason: str | None
+
+
+type SourceExtractionOutcome = (
+    PendingExtraction | RunningExtraction | CompletedExtraction | SkippedExtraction | FailedExtraction
+)
+
+
 class SourceExtractionFields(DomainModel):
     extraction_status: ExtractionStatus
     extraction_decision: Literal["NO_EVENT"] | None = None
     extraction_reason: str | None = None
 
-    def with_extraction(
-        self,
-        status: ExtractionStatus,
-        *,
-        decision: Literal["NO_EVENT"] | None = None,
-        reason: str | None = None,
-    ) -> Self:
-        changes: dict[str, str] = {"extraction_status": status}
-        if decision is not None:
-            changes["extraction_decision"] = decision
-        if reason is not None:
-            changes["extraction_reason"] = reason
-        return type(self).model_validate(self.model_copy(update=changes))
+    def with_extraction(self, outcome: SourceExtractionOutcome) -> Self:
+        """Replace the current outcome; retry and success explicitly clear prior rejection/failure metadata."""
+        decision = outcome.decision if isinstance(outcome, SkippedExtraction) else None
+        reason = outcome.reason if isinstance(outcome, (SkippedExtraction, FailedExtraction)) else None
+        return type(self).model_validate(
+            self.model_copy(
+                update={
+                    "extraction_status": outcome.status,
+                    "extraction_decision": decision,
+                    "extraction_reason": reason,
+                }
+            )
+        )
 
 
 class SourceEntityHint(DomainModel):
@@ -468,8 +498,8 @@ class SourceLifecycle(SourceExtractionFields):
     source: str = Field(min_length=1)
     source_name: str = Field(min_length=1)
     author: str = Field(min_length=1)
-    author_role: Literal["ORGANIZATION", "PERSON", "OTHER"] | None
-    original_author_role: Literal["ORGANIZATION", "PERSON", "OTHER"] | None
+    author_role: SourceAuthorRole | None
+    original_author_role: SourceAuthorRole | None
     author_organization: str | None
     monitored_accounts: list[str]
     deferrable: bool
