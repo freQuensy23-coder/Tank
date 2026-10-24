@@ -10,7 +10,6 @@ import logging
 import re
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from dataclasses import asdict
 from datetime import datetime, timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -308,7 +307,7 @@ class SourcePoller:
             state.update(
                 fetched_at=self.stamp(),
                 account_cursors=result.cursors,
-                entry_errors=[asdict(failure) for failure in result.failures],
+                entry_errors=[failure.model_dump(mode="json") for failure in result.failures],
                 history_gap=result.gaps,
             )
             return result.rows, state, kind
