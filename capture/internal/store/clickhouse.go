@@ -66,6 +66,7 @@ func (c *ClickHouse) post(ctx context.Context, query string, params map[string]s
 	q.Set("output_format_json_quote_decimals", "0")
 	q.Set("max_partitions_per_insert_block", "1000")
 	q.Set("do_not_merge_across_partitions_select_final", "1")
+	q.Set("use_skip_indexes_if_final", "0")
 	q.Set("max_query_size", "268435456")
 	for k, v := range params {
 		q.Set("param_"+k, v)
@@ -313,7 +314,7 @@ func (s *Store) chSelect(ctx context.Context, collection, where string, params m
 	quoted, ids := chArray(order), chArray(instruments)
 	rows, err := s.CH.rows(ctx, "SELECT * FROM "+collection+" FINAL WHERE instrument_id IN ("+ids[1:len(ids)-1]+") AND "+
 		day+" >= toDateTime64('"+low+"', 6, 'UTC') AND "+day+" <= toDateTime64('"+high+"', 6, 'UTC') AND storage_key IN ("+
-		quoted[1:len(quoted)-1]+") SETTINGS use_skip_indexes_if_final = 0", nil)
+		quoted[1:len(quoted)-1]+")", nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("%s: %w", collection, err)
 	}
