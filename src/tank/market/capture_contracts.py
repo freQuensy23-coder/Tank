@@ -9,6 +9,7 @@ from tank.contracts import DomainModel
 from tank.contracts.configuration import Thresholds
 from tank.market.capture import EventAnchor
 from tank.time_precision import Timestamp
+from tank.util import parse_time
 
 type BackfillStatus = Literal["PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"]
 type RepairStatus = Literal["PENDING", "RUNNING", "COMPLETE", "FAILED", "EXPIRED"]
@@ -156,7 +157,7 @@ class BackfillRecord(CapturePointMetadata):
             self.started_at,
             self.started_at_prec,
             self.started_at_prec_reason,
-            absent=self.status in {"FAILED", "EXPIRED"},
+            absent=self.status == "FAILED",
         )
         _clock(self.finished_at, self.finished_at_prec, self.finished_at_prec_reason)
         if self.status in {"PENDING", "RUNNING"} and self.finished_at is not None:
@@ -252,25 +253,26 @@ class RepairRecord(CaptureMetadata):
 
     @model_validator(mode="after")
     def lifecycle_clocks(self) -> Self:
-        if self.status not in {"FAILED", "EXPIRED"}:
+        if self.status == "COMPLETE":
             if self.token_id is None or self.token_id == "":
-                raise ValueError("Repair requests require a token identity")
+                raise ValueError("Completed repair requests require a token identity")
             for value, precision, reason in (
                 (self.start, self.start_prec, self.start_prec_reason),
                 (self.end, self.end_prec, self.end_prec_reason),
-                (self.requested_at, self.requested_at_prec, self.requested_at_prec_reason),
                 (self.deadline, self.deadline_prec, self.deadline_prec_reason),
             ):
                 if value is None:
-                    raise ValueError("Bounded repair requests require their declared clock values")
-                _clock(value, precision, reason)
+                    raise ValueError("Completed repairs require their declared bounds and deadline")
+                parse_time(value)
+                if precision is not None or reason is not None:
+                    _clock(value, precision, reason)
+        _clock(self.started_at, self.started_at_prec, self.started_at_prec_reason, absent=True)
         _clock(
-            self.started_at,
-            self.started_at_prec,
-            self.started_at_prec_reason,
-            absent=self.status in {"FAILED", "EXPIRED"},
+            self.finished_at,
+            self.finished_at_prec,
+            self.finished_at_prec_reason,
+            absent=self.status in {"PENDING", "RUNNING"},
         )
-        _clock(self.finished_at, self.finished_at_prec, self.finished_at_prec_reason)
         if self.status in {"PENDING", "RUNNING"} and self.finished_at is not None:
             raise ValueError("An unfinished repair cannot claim its finish time")
         if self.status in {"COMPLETE", "FAILED", "EXPIRED"} and self.finished_at is None:
@@ -282,22 +284,27 @@ class ExecutableRepair(RepairRecord):
     token_id: str
     start: str
     end: str
-    requested_at: str
     deadline: str
     budget_s: Decimal | None = Field(gt=0)
 
 
-class RepairPending(ExecutableRepair):
+class RepairPending(RepairRecord):
+    """Queued input has not yet passed the worker's business validation."""
+
     finished_at: None
     status: Literal["PENDING"]
     reason: None
+    budget_s: str | None
     result: None
 
 
-class RepairRunning(ExecutableRepair):
+class RepairRunning(RepairRecord):
+    """RUNNING records a claimed lease; invalid legacy input may still await rejection."""
+
     finished_at: None
     status: Literal["RUNNING"]
     reason: None
+    budget_s: str | None
     result: None
 
 
@@ -431,3 +438,59 @@ class CapturePolicy(DomainModel):
     hot_ttl_hours: int = Field(gt=0)
     config_version: str
     code_version: str
+
+
+def capture_time_value(timestamp: Timestamp) -> str:
+    if timestamp.value is None:
+        raise ValueError("Capture application clocks require an observed or declared value")
+    return timestamp.value
+
+
+class NewRepairRequest(DomainModel):
+    request_id: str = Field(min_length=1)
+    token_id: str = Field(min_length=1)
+    start: Timestamp
+    end: Timestamp
+    requested_at: Timestamp
+    deadline: Timestamp
+    budget_s: Decimal = Field(gt=0)
+
+    @model_validator(mode="after")
+    def bounded_request(self) -> Self:
+        start, end = parse_time(capture_time_value(self.start)), parse_time(capture_time_value(self.end))
+        requested = parse_time(capture_time_value(self.requested_at))
+        deadline = parse_time(capture_time_value(self.deadline))
+        if start >= end:
+            raise ValueError("Repair request start must precede its end")
+        if deadline <= requested:
+            raise ValueError("Repair deadline must follow its request observation")
+        return self
+
+
+class HotTokenIntent(DomainModel):
+    event_id: str = Field(min_length=1)
+    token_id: str = Field(min_length=1)
+    priority: int
+    since: Timestamp
+    expires_at: Timestamp | None
+
+    @model_validator(mode="after")
+    def lifetime_values(self) -> Self:
+        capture_time_value(self.since)
+        if self.expires_at is not None:
+            capture_time_value(self.expires_at)
+        return self
+
+
+class NewBackfillRequest(DomainModel):
+    backfill_id: str = Field(min_length=1)
+    event_id: str = Field(min_length=1)
+    token_id: str = Field(min_length=1)
+    anchor: Timestamp
+    requested_at: Timestamp
+
+    @model_validator(mode="after")
+    def declared_values(self) -> Self:
+        capture_time_value(self.anchor)
+        capture_time_value(self.requested_at)
+        return self
