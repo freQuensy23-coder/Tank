@@ -19,7 +19,9 @@ from difflib import SequenceMatcher
 
 import httpx
 
+from tank import ops_cards
 from tank.analysis.cards import telegram_card_html
+from tank.ops_progress import STAGES
 from tank.telegram_rich import message_text, rich_message_text
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import new_id, parse_time, sha256, utcnow
@@ -49,6 +51,23 @@ PROMPT_TEXT = "Какой вопрос по этой карточке? Отве�
 FAILED_TEXT = "Не удалось получить ответ агента на этот вопрос."
 ARCHIVED_TEXT = "Сессия этой карточки уже закрыта и архивирована, продолжить её нельзя."
 EMPTY_TEXT = "Агент завершил ход без текстового ответа."
+OPS_CHANNEL = "telegram:ops"
+OPS_KIND = "OPS_CARD"
+OPS_UNMATCHED_TEXT = (
+    "Не нашёл материал для этого сообщения. Ответьте на сообщение Tank Ops о конкретном материале."
+)
+OPS_NO_SESSION_TEXT = (
+    "Материал не дошёл до агента-аналитика, поэтому сессии, в которой можно задать вопрос, нет. "
+    "Ниже только записанные факты обработки; новый анализ по вопросу не запускается."
+)
+OPS_ENDED_TEXT = (
+    "Сессия аналитика по этому материалу уже закрыта и архивирована, продолжить её нельзя. "
+    "Ниже только записанные факты обработки."
+)
+OPS_PUBLISHED_TEXT = (
+    "По этому материалу опубликована карточка в Tank Alerts: {link}\n"
+    "Фоллоуапы по ней продолжаются в Alerts: ответьте на карточку там, и вопрос уйдёт в ту же сессию аналитика."
+)
 
 
 def plain(text):
@@ -97,11 +116,15 @@ NOT_SENT = (RuntimeError, httpx.ConnectError, httpx.ConnectTimeout)
 
 def question_message(question):
     """The follow-up as the agent reads it: the referenced Telegram text, the reader's words and files."""
-    reference = ((question.get("reference") or {}).get("text") or "")[:REFERENCE_LIMIT]
-    lines = [
-        f"Пришёл фоллоуап через Telegram на сообщение с текстом:\n{reference}",
-        question.get("text") or "(без текста)",
-    ]
+    target = question.get("reference") or {}
+    reference = (target.get("text") or "")[:REFERENCE_LIMIT]
+    lines = [f"Пришёл фоллоуап через Telegram на сообщение с текстом:\n{reference}"]
+    if target.get("kind") == OPS_KIND:
+        lines.append(
+            f"Вопрос задан в чате Tank Ops о материале {target.get('item_id')}; "
+            "карточка по нему в Tank Alerts не публиковалась."
+        )
+    lines.append(question.get("text") or "(без текста)")
     for item in question.get("attachments") or []:
         lines.append(
             f"Пользователь приложил файл {item['filename']} ({item['size']} байт): {item.get('path', 'файл недоступен')}."
@@ -144,6 +167,10 @@ def media(message):
             "size": int(item.get("file_size") or 0),
         }
     return None
+
+
+def stamp(value):
+    return parse_time(value).strftime("%Y-%m-%d %H:%M:%S UTC") if value else "время не записано"
 
 
 def question_id_for(chat_id, message_id):
@@ -384,9 +411,16 @@ class TelegramInbox:
             current["retry_at"] = now + min(300, RETRY_BASE_S * 2 ** (attempts - 1))
         await self.repo.put("ops.telegram_messages", key, current)
 
+    def ops_chat(self, chat_id):
+        """Whether a chat is the configured Tank Ops chat (and not also the Alerts chat)."""
+        ops = getattr(self.settings, "telegram_ops_chat", None)
+        return (
+            bool(ops) and str(chat_id) == str(ops) and str(chat_id) != str(self.settings.telegram_alerts_chat)
+        )
+
     async def authorized(self, message):
         chat = message["chat"]
-        if str(chat["id"]) == str(self.settings.telegram_alerts_chat):
+        if str(chat["id"]) == str(self.settings.telegram_alerts_chat) or self.ops_chat(chat["id"]):
             return True
         if chat.get("type") != "private":
             return False
@@ -480,11 +514,18 @@ class TelegramInbox:
             return
         if reply and (text or attachment):
             target = await self.reply_target(message["chat"]["id"], reply)
+            if target is not None and target["kind"] == "OPS_ITEM":
+                await self.ops_question(row, target)
+                return
             if target is not None:
                 await self.question(row, target)
                 return
             if (reply.get("from") or {}).get("id") == bot:
-                await self.notice(row, NO_SESSION_TEXT, "UNMATCHED")
+                await self.notice(
+                    row,
+                    OPS_UNMATCHED_TEXT if self.ops_chat(message["chat"]["id"]) else NO_SESSION_TEXT,
+                    "UNMATCHED",
+                )
                 return
         if message["chat"].get("type") != "private" or not (text or attachment):
             await self.mark(row, "IGNORED", reason="NOT_A_QUESTION")
@@ -596,7 +637,13 @@ class TelegramInbox:
                 if scope != str(chat_id):
                     continue
                 return await self.card_target(delivery)
+        if self.ops_chat(chat_id):
+            target = await self.ops_message_target(str(chat_id), ref)
+            if target is not None:
+                return target
         for delivery in await self.sent(ANSWER_CHANNEL, message_ref=ref, chat_id=str(chat_id)):
+            if delivery.get("purpose") == "NOTICE" and delivery.get("item_id"):
+                return {"kind": "OPS_ITEM", "item_id": delivery["item_id"], "text": delivery.get("text")}
             return await self.answer_target(delivery)
         own = await self.repo.get("ops.telegram_messages", f"{chat_id}:{ref}")
         return self.message_target(own)
@@ -614,6 +661,136 @@ class TelegramInbox:
             "question_id": row.get("question_id"),
             "text": message_text(body) or (media(body) or {}).get("filename"),
         }
+
+    async def ops_message_target(self, chat_id, ref):
+        """The material a Tank Ops message is about: its outcome card, or the progress notice it carried."""
+        async for card in self.repo.iter_all(
+            "out.ops_cards", filters={"chat_id": chat_id, "message_ref": ref}
+        ):
+            return {
+                "kind": "OPS_ITEM",
+                "item_id": card["item_id"],
+                "text": ops_cards.plain(card.get("rendered_html"), REFERENCE_LIMIT) or None,
+            }
+        for delivery in await self.sent(OPS_CHANNEL, message_ref=ref, chat_id=chat_id):
+            notice = await self.repo.get("out.ops_notices", delivery.get("notice_id") or "")
+            if notice and notice.get("kind") == "ITEM_PROGRESS" and notice.get("subject_id"):
+                return {"kind": "OPS_ITEM", "item_id": notice["subject_id"], "text": notice.get("text")}
+        return None
+
+    async def item_session(self, item_id, events):
+        """The live analyst session that took this material as NEW_ITEM or ITEM_ADDED, if any."""
+        for field, value in [("item_id", item_id)] + [("event_id", event) for event in sorted(events)]:
+            async for session in self.repo.iter_all("ops.agent_sessions", filters={field: value}):
+                if session.get("replay_run_id"):
+                    continue
+                for entry in session.get("message_log", []):
+                    payload = entry.get("payload") or {}
+                    if (
+                        payload.get("kind") in {"NEW_ITEM", "ITEM_ADDED"}
+                        and payload.get("item_id") == item_id
+                    ):
+                        return session
+        return None
+
+    async def item_events(self, item_id):
+        events = {
+            row["event_id"]
+            async for row in self.repo.iter_metadata(
+                "evt.event_observations", ["event_id"], filters={"item_id": item_id}
+            )
+            if row.get("event_id")
+        }
+        events |= {
+            row["event_id"]
+            async for row in self.repo.iter_metadata(
+                "out.ops_notices", ["event_id"], filters={"kind": "ITEM_PROGRESS", "subject_id": item_id}
+            )
+            if row.get("event_id")
+        }
+        item = await self.repo.get("ingest.source_items", item_id)
+        if item and item.get("route_event_id"):
+            events.add(item["route_event_id"])
+        return item, events
+
+    async def published_card(self, events):
+        """The latest Alerts card delivered for any of these events into the current Alerts chat."""
+        legacy = await self.legacy_chat()
+        latest = None
+        for event_id in sorted(events):
+            async for alert in self.repo.iter_metadata(
+                "out.alerts", ["alert_id", "version"], filters={"event_id": event_id}
+            ):
+                for delivery in await self.sent(
+                    CARD_CHANNEL, alert_id=alert["alert_id"], version=alert["version"]
+                ):
+                    if (delivery.get("chat_id") or legacy) != str(self.settings.telegram_alerts_chat):
+                        continue
+                    if latest is None or ops_cards.time_of(delivery, "at") > ops_cards.time_of(latest, "at"):
+                        latest = delivery
+        return latest
+
+    async def ops_facts(self, item_id, preface):
+        """What Tank recorded about a material, from the same snapshot its Ops card is rendered from."""
+        data = await ops_cards.snapshot(self.repo, item_id)
+        if data is None:
+            return None
+        lines = [preface, "", ops_cards.render(data)["text"], "", f"Материал: {item_id}"]
+        item = data["item"]
+        for field, label in (("published_at", "Опубликован источником"), ("observed_at", "Получен Tank")):
+            if item.get(field):
+                lines.append(f"{label}: {stamp(item[field])}")
+        if data["history"]:
+            lines.append("Ход обработки:")
+        for notice in data["history"]:
+            line = f"{stamp(notice.get('created_at'))} — {STAGES.get(notice['stage'], notice['stage'])}"
+            if notice.get("reason"):
+                line += f": {ops_cards.reason_text(notice['reason'])}"
+            lines.append(line)
+        return utf16_prefix("\n".join(lines), MESSAGE_LIMIT)
+
+    async def ops_question(self, row, target):
+        """A reply in Tank Ops: point to the published card, ask the analyst session, or state the facts."""
+        item_id = target["item_id"]
+        item, events = await self.item_events(item_id)
+        if item is None:
+            await self.notice(row, OPS_UNMATCHED_TEXT, "UNMATCHED", item_id=item_id)
+            return
+        session = await self.item_session(item_id, events)
+        if session and session.get("event_id"):
+            events.add(session["event_id"])
+        card = await self.published_card(events)
+        subject = {"item_id": item_id}
+        if card is not None:
+            chat = card.get("chat_id") or await self.legacy_chat()
+            link = ops_cards.telegram_link(chat, card["message_ref"]) or f"сообщение {card['message_ref']}"
+            await self.notice(
+                row,
+                OPS_PUBLISHED_TEXT.format(link=link),
+                "REDIRECTED",
+                subject=subject,
+                reason="PUBLISHED_IN_ALERTS",
+                item_id=item_id,
+                alert_id=card["alert_id"],
+            )
+            return
+        if session and session.get("status") != "ENDED" and not session.get("termination_receipt"):
+            await self.question(
+                row,
+                {
+                    "kind": OPS_KIND,
+                    "session_id": session["session_id"],
+                    "event_id": session.get("event_id"),
+                    "item_id": item_id,
+                    "text": target.get("text"),
+                },
+            )
+            return
+        reason = "SESSION_ENDED" if session else "NO_ANALYST_SESSION"
+        text = await self.ops_facts(item_id, OPS_ENDED_TEXT if session else OPS_NO_SESSION_TEXT)
+        await self.notice(
+            row, text or OPS_UNMATCHED_TEXT, "FACTS", subject=subject, reason=reason, item_id=item_id
+        )
 
     async def forwarded_target(self, message, bot):
         origin = message["forward_origin"]
@@ -791,7 +968,7 @@ class TelegramInbox:
             "bytes": len(content),
         }
 
-    async def notice(self, row, text, status, *, also=(), **extra):
+    async def notice(self, row, text, status, *, also=(), subject=None, **extra):
         """Reply with a notice at most once, then settle the input (and any paired rows) together.
 
         A rejected send leaves every row retryable.
@@ -814,6 +991,7 @@ class TelegramInbox:
                 "chat_id": row["chat_id"],
                 "attempt": 1,
                 "text": text,
+                **(subject or {}),
             }
             await self.repo.put(
                 "out.deliveries",
