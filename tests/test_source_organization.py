@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from source_support import source_configuration
 
 from tank.agents.pipeline import Pipeline
 from tank.settings import Settings
@@ -78,12 +79,16 @@ async def test_normal_poll_preserves_actual_author_and_exposes_exact_pruner_orga
         code_version="test",
         x_list_id=None,
         load_config=lambda name: (
-            {"sources": [src]} if name == "sources" else registry if name == "registry" else {}
+            source_configuration({"sources": [src]})
+            if name == "sources"
+            else registry
+            if name == "registry"
+            else {}
         ),
     )
     requests = []
 
-    def response(request: pytest.FixtureRequest):
+    def response(request: httpx.Request):
         requests.append(str(request.url))
         assert str(request.url) == src["feeds"][0]["url"]
         return httpx.Response(200, content=payload)

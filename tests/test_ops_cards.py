@@ -274,7 +274,7 @@ async def test_burst_is_one_message_and_later_change_edits_it_across_restart(
         clock = utcnow() + timedelta(minutes=1)
         monkeypatch.setattr("tank.delivery.utcnow", lambda: clock)
 
-        def respond(request: pytest.FixtureRequest):
+        def respond(request: httpx.Request):
             requests.append((request.url.path.rsplit("/", 1)[-1], json.loads(request.content)))
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 77}})
 
@@ -337,7 +337,7 @@ async def test_legacy_backlog_updates_existing_message_instead_of_replaying_stag
     requests = []
     monkeypatch.setattr("tank.delivery.utcnow", lambda: utcnow() + timedelta(minutes=1))
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request):
         requests.append((request.url.path, json.loads(request.content)))
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 66}})
 
@@ -387,7 +387,7 @@ async def test_missing_legacy_message_does_not_create_a_new_spam_message(
     requests = []
     monkeypatch.setattr("tank.delivery.utcnow", lambda: utcnow() + timedelta(minutes=1))
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request):
         requests.append(request.url.path)
         return httpx.Response(
             400, json={"ok": False, "description": "Bad Request: message to edit not found"}
@@ -483,7 +483,7 @@ async def test_rate_limit_defers_other_items_without_extra_http_attempts(setting
     notices = await repo.list("out.ops_notices")
     requests = []
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request):
         requests.append(request)
         return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 30}})
 
@@ -510,7 +510,7 @@ async def test_edit_not_modified_is_successful_recovery_without_another_message(
     )
     requests = []
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request):
         requests.append(request.url.path)
         return httpx.Response(400, json={"ok": False, "description": "Bad Request: message is not modified"})
 

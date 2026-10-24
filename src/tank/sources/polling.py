@@ -17,6 +17,7 @@ import httpx
 
 import tank.sources.parsers as parsers
 from tank.ops_entry_errors import report_entry_errors
+from tank.sources.configuration import HttpFetchPlan, SourceDefinition, SourceFeed
 from tank.util import TimeInput, new_id, parse_time, sha256
 
 log = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
     transition (a venue-wide delisting reaches routing and the analyst once, not once per pair)
     or one newly listed base asset. Independent moves stay separate items.
     """
-    if previous is not None and str(feed.get("venue", "")).lower() == "coinbase":
+    if previous is not None and feed.venue == "coinbase":
         previous = deepcopy(previous)
         for symbol, old in previous.items():
             if symbol in snapshot and "status_flags" not in old:
@@ -64,7 +65,7 @@ def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
             return ("ADDED", (current or {}).get("base"))
         return (kind(current, old), status(old), status(current))
 
-    venue, market_type = feed.get("venue"), feed.get("market_type")
+    venue, market_type = feed.venue, feed.market_type
     groups = {}
     for change in changed:
         groups.setdefault(action(change), []).append(change)
@@ -76,7 +77,7 @@ def instrument_changes(snapshot, previous, feed, pages, found_on, completed_at):
         else:
             payload, observed_at = b"\n".join(p for p, _ in pages), completed_at
         row = {
-            "url": feed["url"],
+            "url": feed.url,
             "published_at": None,
             "observed_at": observed_at,
             "_payload": payload,
@@ -137,15 +138,11 @@ class SourcePoller:
     def lock(self, mapping, key):
         return mapping.setdefault(key, asyncio.Lock())
 
-    def feed(self, source, index):
-        return dict(source["feeds"][index], source_limits=source.get("limits", {}))
+    def feed(self, source: SourceDefinition, index: int) -> SourceFeed:
+        return source.feeds[index]
 
-    def interval(self, source, feed, escalated):
-        return (
-            self.service.escalated_interval_s
-            if escalated
-            else feed.get("interval_s", source.get("interval_s", 60))
-        )
+    def interval(self, source: SourceDefinition, feed: SourceFeed, escalated: bool) -> float:
+        return self.service.escalated_interval_s if escalated else feed.interval_s
 
     async def state(self, key):
 
@@ -204,7 +201,7 @@ class SourcePoller:
 
     async def queue_rows(self, current, key, source, feed, rows, kind, coverage, token, acquired_at):
         """Queue only items not yet captured; write raw now unless a detail page is still due."""
-        svc, sid = self.service, source["source_id"]
+        svc, sid = self.service, source.source_id
         pending = {
             str(row["external_id"]) for batch in current.get("pending_batches", []) for row in batch["rows"]
         }
@@ -213,7 +210,7 @@ class SourcePoller:
             row = dict(original)
             payload = row.pop("_payload", None)
             external = str(row["external_id"])
-            row.setdefault("feed", feed["url"])
+            row.setdefault("feed", feed.url)
             row.setdefault("observed_at", acquired_at)
             if (
                 external in pending
@@ -268,11 +265,11 @@ class SourcePoller:
 
     async def _fetch_rows(self, source, feed, key, state):
         svc = self.service
-        sid = source["source_id"]
-        kind = str(feed.get("kind", feed.get("format", source.get("mode", "rss")))).lower()
+        sid = source.source_id
+        kind = feed.kind
         if sid == "S29":
             accounts = [account["handle"].lstrip("@") for account in svc.accounts.values()]
-            result = await svc.xsensor.posts(feed["url"], accounts, state.get("account_cursors", {}))
+            result = await svc.xsensor.posts(feed.url, accounts, state.get("account_cursors", {}))
             state.update(
                 fetched_at=self.stamp(),
                 account_cursors=result.cursors,
@@ -280,7 +277,9 @@ class SourcePoller:
                 history_gap=result.gaps,
             )
             return result.rows, state, kind
-        payload, fetched = await svc.fetch(feed, key, on_start=lambda: self.mark_request_start(key))
+        payload, fetched = await svc.fetch(
+            feed.request_plan(source.limits), key, on_start=lambda: self.mark_request_start(key)
+        )
         state.update(fetched)
         if payload is None:
             return None, state, kind
@@ -289,22 +288,25 @@ class SourcePoller:
             snapshot = await asyncio.to_thread(parsers.instruments, payload, feed)
             pages = [(payload, state.get("fetched_at") or self.stamp())]
             found_on = dict.fromkeys(snapshot, 0)
-            if str(feed.get("venue", "")).lower() == "bybit":
+            if feed.venue == "bybit":
                 cursor = json.loads(payload).get("result", {}).get("nextPageCursor")
                 cursors = set()
                 while cursor:
                     if cursor in cursors:
                         raise ValueError("Repeated Bybit instrument cursor")
                     cursors.add(cursor)
-                    parts = urlsplit(feed["url"])
+                    parts = urlsplit(feed.url)
                     params = dict(parse_qsl(parts.query), cursor=cursor)
-                    next_feed = dict(
-                        feed,
-                        url=urlunsplit(
-                            (parts.scheme, parts.netloc, parts.path, urlencode(params), parts.fragment)
-                        ),
+                    next_feed = feed.model_copy(
+                        update={
+                            "url": urlunsplit(
+                                (parts.scheme, parts.netloc, parts.path, urlencode(params), parts.fragment)
+                            ),
+                        }
                     )
-                    page, page_state = await svc.fetch(next_feed, key + ":cursor:" + sha256(cursor))
+                    page, page_state = await svc.fetch(
+                        next_feed.request_plan(source.limits), key + ":cursor:" + sha256(cursor)
+                    )
                     if page is None:
                         raise ValueError("Unexpected conditional paginated response")
                     page_snapshot = await asyncio.to_thread(parsers.instruments, page, feed)
@@ -347,7 +349,7 @@ class SourcePoller:
         traverse available history without an invented page cap. Schema stalls and
         exhaustion before a formerly known boundary are explicit gaps.
         """
-        svc, sid = self.service, source["source_id"]
+        svc, sid = self.service, source.source_id
         rows = []
         checkpoint = state.get("discovery_checkpoint")
         page_feed = deepcopy(feed)
@@ -358,7 +360,7 @@ class SourcePoller:
         offset = 0
         found = False
         exhausted = False
-        page_number = int(dict(parse_qsl(urlsplit(feed["url"]).query)).get("pageNo", 1))
+        page_number = int(dict(parse_qsl(urlsplit(feed.url).query)).get("pageNo", 1))
         last_head_check = parse_time(state.get("fetched_at") or self.stamp())
         while True:
             parsed = await asyncio.to_thread(parsers.json_items, page, sid)
@@ -395,11 +397,11 @@ class SourcePoller:
                 if not next_url:
                     exhausted = True
                     break
-                if urlsplit(next_url).hostname != urlsplit(feed["url"]).hostname:
+                if urlsplit(next_url).hostname != urlsplit(feed.url).hostname:
                     raise ValueError("Federal Register next_page_url changed publisher")
-                page_feed = dict(feed, url=next_url)
+                page_feed = feed.model_copy(update={"url": next_url})
             elif sid == "S09":
-                params = dict(parse_qsl(urlsplit(feed["url"]).query))
+                params = dict(parse_qsl(urlsplit(feed.url).query))
                 size = int(params.get("pageSize", 20))
                 root = data.get("data", {})
                 catalogs = root.get("catalogs", [])
@@ -415,15 +417,18 @@ class SourcePoller:
                     break
                 page_number += 1
                 params["pageNo"] = str(page_number)
-                parts = urlsplit(feed["url"])
-                page_feed = dict(
-                    feed,
-                    url=urlunsplit(
-                        (parts.scheme, parts.netloc, parts.path, urlencode(params), parts.fragment)
-                    ),
+                parts = urlsplit(feed.url)
+                page_feed = feed.model_copy(
+                    update={
+                        "url": urlunsplit(
+                            (parts.scheme, parts.netloc, parts.path, urlencode(params), parts.fragment)
+                        ),
+                    }
                 )
             else:
-                query = feed.get("body", {}).get("query", "")
+                if feed.body is None or not isinstance(feed.body["query"], str):
+                    raise ValueError("Snapshot configured query must be text")
+                query = feed.body["query"]
                 match = re.search(r"\bfirst\s*:\s*(\d+)", query)
                 if not match:
                     raise ValueError("Snapshot configured query needs explicit first window")
@@ -434,11 +439,13 @@ class SourcePoller:
                 offset += parsed.wire_count
                 query = re.sub(r"\bskip\s*:\s*\d+\s*,?", "", query)
                 query = re.sub(r"proposals\s*\(", f"proposals(skip: {offset}, ", query, count=1)
-                page_feed = dict(feed, body=dict(feed["body"], query=query))
+                page_feed = feed.model_copy(update={"body": {**feed.body, "query": query}})
 
             escalated = await svc.is_escalated(sid)
             if (self.now() - last_head_check).total_seconds() >= self.interval(source, feed, escalated):
-                head, head_state = await svc.fetch(feed, key, on_start=lambda: self.mark_request_start(key))
+                head, head_state = await svc.fetch(
+                    feed.request_plan(source.limits), key, on_start=lambda: self.mark_request_start(key)
+                )
                 last_head_check = self.now()
                 if head is not None:
                     head_rows = await asyncio.to_thread(parsers.json_items, head, sid)
@@ -450,10 +457,10 @@ class SourcePoller:
                         row.update(observed_at=head_state.get("fetched_at") or self.stamp(), _payload=head)
                     await self.retain_page(key, source, feed, head_rows, head_state)
             page, page_state = await svc.fetch(
-                page_feed,
+                page_feed.request_plan(source.limits),
                 key
                 + ":history:"
-                + str(page_number if sid == "S09" else offset if sid == "S24" else sha256(page_feed["url"])),
+                + str(page_number if sid == "S09" else offset if sid == "S24" else sha256(page_feed.url)),
             )
             if page is None:
                 raise ValueError(f"{sid} history returned 304 without retained page replay")
@@ -484,7 +491,8 @@ class SourcePoller:
                     + "}) { id title body state start end created scores scores_total space { id } } }"
                 )
                 extra, extra_state = await svc.fetch(
-                    dict(feed, body={"query": query}), key + ":pending:" + str(start)
+                    feed.model_copy(update={"body": {"query": query}}).request_plan(source.limits),
+                    key + ":pending:" + str(start),
                 )
                 for proposal_id in ids:
                     pending_evidence[proposal_id] = extra_state
@@ -517,7 +525,7 @@ class SourcePoller:
         return rows, state
 
     async def acquire(self, source, index, *, due_only=False, escalated=False):
-        sid = source["source_id"]
+        sid = source.source_id
         key, feed = f"{sid}:{index}", self.feed(source, index)
         async with self.lock(self.acquisition_locks, key):
             state = await self.state(key)
@@ -658,16 +666,16 @@ class SourcePoller:
 
     async def _article(self, source, feed, key, item):
         """Fetch the article page; S13 may fall back to the publisher's own CMS slug URL."""
-        svc, sid = self.service, source["source_id"]
+        svc, sid = self.service, source.source_id
         try:
             return await svc.fetch(
-                {"url": item["url"], "source_limits": source.get("limits", {})},
+                HttpFetchPlan(url=item["url"], source_limits=source.limits),
                 key + ":" + sha256(item["url"]),
             )
         except httpx.HTTPStatusError as exc:
             binding = item.get("publisher_cms_identity")
             fallback = item.get("publisher_cms_slug_url")
-            origin = urlsplit(feed["url"])
+            origin = urlsplit(feed.url)
             candidate = urlsplit(fallback or "")
             if not (
                 sid == "S13"
@@ -683,7 +691,7 @@ class SourcePoller:
             ):
                 raise
             article, detail_state = await svc.fetch(
-                {"url": fallback, "source_limits": source.get("limits", {})},
+                HttpFetchPlan(url=fallback, source_limits=source.limits),
                 key + ":" + sha256(fallback),
             )
             if article is None or binding not in parsers.publisher_cms_entries(article):
@@ -705,15 +713,16 @@ class SourcePoller:
             return article, detail_state
 
     async def _item(self, source, feed, key, batch, original):
-        svc, sid = self.service, source["source_id"]
+        svc, sid = self.service, source.source_id
         item = deepcopy(original)
         if self.needs_detail(sid, batch["kind"]):
             if sid == "S09":
                 payload, detail_state = await svc.fetch(
-                    {
-                        "url": "https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode="
-                        + item["external_id"]
-                    },
+                    HttpFetchPlan(
+                        url="https://www.binance.com/bapi/composite/v1/public/cms/article/detail/query?articleCode="
+                        + item["external_id"],
+                        source_limits=source.limits,
+                    ),
                     key + ":detail:" + item["external_id"],
                 )
                 if payload is None:
@@ -755,7 +764,7 @@ class SourcePoller:
         return "DUPLICATE" if stored["item_id"] != item["item_id"] else None
 
     async def drain(self, source, index, *, force=False, escalated=False):
-        sid = source["source_id"]
+        sid = source.source_id
         key, feed = f"{sid}:{index}", self.feed(source, index)
         async with self.lock(self.processing_locks, key):
             state = await self.state(key)
@@ -882,9 +891,9 @@ class SourcePoller:
             processed = await self.drain(source, index, force=not due_only, escalated=escalated)
             return {"items": processed["items"], "errors": acquired["errors"] + processed["errors"]}
 
-        processed = await asyncio.gather(*(one_feed(i) for i in range(len(source.get("feeds", [])))))
+        processed = await asyncio.gather(*(one_feed(i) for i in range(len(source.feeds))))
         errors = [e for result in processed for e in result["errors"]]
-        states = [await self.state(f"{source_id}:{i}") for i in range(len(source.get("feeds", [])))]
+        states = [await self.state(f"{source_id}:{i}") for i in range(len(source.feeds))]
         return {
             "source_id": source_id,
             "items": sum(result["items"] for result in processed),
@@ -895,11 +904,11 @@ class SourcePoller:
         }
 
     async def loop(self, source, stop):
-        sid = source["source_id"]
+        sid = source.source_id
         while not stop.is_set():
             escalated = await self.service.is_escalated(sid)
             next_wake = 15.0
-            for index in range(len(source.get("feeds", []))):
+            for index in range(len(source.feeds)):
                 key, feed = f"{sid}:{index}", self.feed(source, index)
                 state = await self.state(key)
                 last = state.get("last_attempt_at") or state.get("last_success_at")

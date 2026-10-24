@@ -17,15 +17,15 @@ async def probe_feeds(service):
 
     async def probe(source, index, feed):
         started = iso()
-        sid = source["source_id"]
+        sid = source.source_id
         result = {
             "source_id": sid,
             "feed_index": index,
-            "url": feed["url"],
-            "kind": feed["kind"],
+            "url": feed.url,
+            "kind": feed.kind,
             **collection_clock(started).fields("started_at"),
             "status": "UNAVAILABLE",
-            "method": feed.get("method", "GET"),
+            "method": feed.method,
             "item_count": None,
             "config_version": service.settings.config_version,
             "code_version": service.settings.code_version,
@@ -34,26 +34,26 @@ async def probe_feeds(service):
             result["reason"] = "X runs through a paid Apify actor run; excluded from the HTTP smoke"
             result.update(collection_clock().fields("finished_at"))
             return result
-        host = urlsplit(feed["url"]).netloc
+        host = urlsplit(feed.url).netloc
         lock = host_locks.setdefault(host, asyncio.Lock())
         async with semaphore, lock:
             try:
-                await service.acquire_budget(dict(feed, source_limits=source.get("limits", {})))
-                post = feed.get("method", "GET").upper() == "POST"
-                if is_exchange_url(feed["url"]):
+                await service.acquire_budget(feed.request_plan(source.limits))
+                post = feed.method.upper() == "POST"
+                if is_exchange_url(feed.url):
                     response = await capture_fetch(
                         service.repo,
-                        feed.get("method", "GET"),
-                        feed["url"],
-                        body=feed.get("body") if post else None,
+                        feed.method,
+                        feed.url,
+                        body=feed.body if post else None,
                         source_id=sid,
                     )
                 else:
                     response = await service.http.request(
-                        feed.get("method", "GET"),
-                        feed["url"],
-                        json=feed.get("body") if post else None,
-                        data=feed.get("form") if post else None,
+                        feed.method,
+                        feed.url,
+                        json=feed.body if post else None,
+                        data=feed.form if post else None,
                         timeout=20,
                     )
                 result["http_status"] = response.status_code
@@ -61,7 +61,7 @@ async def probe_feeds(service):
                 payload = response.content
                 result.update(payload_sha256=sha256(payload), response_bytes=len(payload))
                 response.raise_for_status()
-                kind = feed["kind"]
+                kind = feed.kind
                 if kind in {"rss", "atom"}:
                     items = parsers.feeds(payload, sid, feed)
                 elif kind in {"html", "rendered_html", "rendered"}:
@@ -95,6 +95,6 @@ async def probe_feeds(service):
         *(
             probe(source, i, feed)
             for source in service.sources.values()
-            for i, feed in enumerate(source.get("feeds", []))
+            for i, feed in enumerate(source.feeds)
         )
     )

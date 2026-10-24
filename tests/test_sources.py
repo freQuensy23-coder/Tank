@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import zstandard
+from source_support import fetch_plan, source_configuration, source_definition, source_feed
 
 from tank.sources import SourceService, parsers
 from tank.util import new_id, sha256
@@ -93,7 +94,9 @@ def settings(tmp_path: Path, sources):
         code_version="test",
         x_list_id=None,
         load_config=lambda name: (
-            {"sources": sources} if name == "sources" else {"x_accounts": [], "tokens": [], "entities": []}
+            source_configuration({"sources": sources})
+            if name == "sources"
+            else {"x_accounts": [], "tokens": [], "entities": []}
         ),
     )
 
@@ -221,14 +224,16 @@ def test_json_contracts() -> None:
     ],
 )
 def test_instrument_adapters(venue, payload, symbol) -> None:
-    assert parsers.instruments(payload, {"venue": venue})[symbol]["status"]
+    assert parsers.instruments(
+        payload, {"url": "https://example.org/instruments", "venue": venue, "market_type": "SPOT"}
+    )[symbol]["status"]
 
 
 @pytest.mark.asyncio
 async def test_raw_first_dedup_and_conditional_get(tmp_path: Path) -> None:
     calls = []
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         calls.append(request)
         return (
             httpx.Response(304)
@@ -268,7 +273,7 @@ async def test_raw_stored_only_for_captured_items_across_repeated_polls(
     """02 §7.2: an unchanged feed or instrument snapshot leaves no raw file behind."""
     phase = [0]
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         if request.url.host == "api.binance.com":
             status = "TRADING" if phase[0] < 2 else "BREAK"
             return httpx.Response(
@@ -381,7 +386,7 @@ async def test_instrument_baseline_diff_and_bybit_cursor(tmp_path: Path, collect
     phase = [0]
     calls = []
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         calls.append(str(request.url))
         cursor = request.url.params.get("cursor")
         if cursor:
@@ -442,7 +447,7 @@ async def test_snapshot_closed_proposal_checked_after_leaving_latest(tmp_path: P
             "space": {"id": "cow.eth"},
         }
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         query = json.loads(request.content)["query"]
         rows = [proposal("active")] if phase[0] == 0 else [proposal("closed")] if "id_in:" in query else []
         return httpx.Response(200, json={"data": {"proposals": rows}})
@@ -523,9 +528,9 @@ async def test_source_ingest_postgres_projection_and_durable_queue(tmp_path: Pat
                     "published_at": "2026-10-16T12:00:00Z",
                     "published_at_precision": "EXACT",
                 }
-                record = await svc.ingest(source, item)
+                record = await svc.ingest(source_definition(source), item)
                 assert record["relevance"]["decision"] == expected
-                await svc.ingest(source, item)
+                await svc.ingest(source_definition(source), item)
                 async with repo.transaction():
                     row = await (
                         await repo._conn().execute(
@@ -569,7 +574,7 @@ async def test_probe_reads_current_payload_without_ingestion_jobs(tmp_path: Path
         "referenceDate": "2026-09-08",
     }
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         calls.append(request)
         if request.url.host == "blocked.example.org":
             return httpx.Response(403, content=b"Forbidden")
@@ -710,11 +715,11 @@ async def test_milestone_producer_drives_source_cadence_and_cancellation(
         x_list_id = None
 
         def load_config(self, name):
-            return {"sources": [source]} if name == "sources" else original_load(name)
+            return source_configuration({"sources": [source]}) if name == "sources" else original_load(name)
 
     calls = []
 
-    def response(request: pytest.FixtureRequest):
+    def response(request: httpx.Request):
         calls.append(clock[0])
         return httpx.Response(200, content=RSS)
 
@@ -976,7 +981,7 @@ def test_sec_filing_identity_boundaries_and_date_only_precision(tmp_path: Path) 
 async def test_s09_seen_articles_do_not_refetch_detail(tmp_path: Path, collector_http) -> None:
     calls = []
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         calls.append(str(request.url))
         if "detail/query" in str(request.url):
             return httpx.Response(
@@ -1026,9 +1031,11 @@ async def test_sec_provider_and_source_configured_budgets_are_shared(
     monkeypatch.setattr(module.shared_request_budgets, "acquire", acquire)
     service = SourceService(Repo(), Settings(data_dir=tmp_path))
     try:
-        await service.acquire_budget({"url": "https://www.sec.gov/news/pressreleases.rss"})
+        await service.acquire_budget(fetch_plan({"url": "https://www.sec.gov/news/pressreleases.rss"}))
         await service.acquire_budget(
-            {"url": "https://www.sec.gov/cgi-bin/browse-edgar", "source_limits": {"rate_per_min": 25}}
+            fetch_plan(
+                {"url": "https://www.sec.gov/cgi-bin/browse-edgar", "source_limits": {"rate_per_min": 25}}
+            )
         )
         assert [row for row in calls if row[0] == "sec.gov"] == [("sec.gov", 5, 1, 1), ("sec.gov", 5, 1, 1)]
         assert ("www.sec.gov", 25, 60, 1) in calls
@@ -1056,7 +1063,7 @@ async def test_binance_source_discovery_leaves_shared_market_weights_to_capture(
             "https://fapi.binance.com/fapi/v1/exchangeInfo",
             "https://api.binance.com/unconfigured-api-path",
         ):
-            await service.acquire_budget({"url": url})
+            await service.acquire_budget(fetch_plan({"url": url}))
         assert acquired == []
     finally:
         await service.close()
@@ -1110,7 +1117,7 @@ async def test_missing_publisher_article_keeps_raw_error_and_continues_valid_ent
 
     calls = []
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         calls.append(request)
         if request.url.path == "/newsroom/":
             if request.headers.get("If-None-Match"):
@@ -1177,7 +1184,7 @@ async def test_empty_200_article_isolated_without_suppressing_valid_sibling(
 ) -> None:
     from pathlib import Path
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         if request.url.path == "/newsroom/":
             return httpx.Response(
                 200, text='<a href="/newsroom/empty">Empty entry</a><a href="/newsroom/valid">Valid entry</a>'
@@ -1231,7 +1238,7 @@ async def test_seen_full_article_empty_index_deduplicates_before_new_content_gua
     phase = [0]
     calls = []
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         calls.append(request.url.path)
         if request.url.path == "/newsroom/":
             sibling = "" if phase[0] == 0 else '<a href="/newsroom/later">Later entry</a>'
@@ -1272,10 +1279,11 @@ async def test_seen_full_article_empty_index_deduplicates_before_new_content_gua
         assert len([r for (table, _), r in repo.rows.items() if table == "ingest.source_items"]) == 2
         with pytest.raises(ValueError, match="no normalized content"):
             await service.ingest(
-                source, captured(service, "S20", {"external_id": "new-empty", "title": "", "text": ""})
+                source_definition(source),
+                captured(service, "S20", {"external_id": "new-empty", "title": "", "text": ""}),
             )
         changed = await service.ingest(
-            source,
+            source_definition(source),
             captured(
                 service,
                 "S20",
@@ -1320,12 +1328,12 @@ async def test_declared_author_organization_precedence_and_identity_without_body
                 "text": "Custody standards updated",
                 "author_organization": item_org,
             }
-            record = await service.ingest(source, captured(service, "S01", item, payload))
+            record = await service.ingest(source_definition(source), captured(service, "S01", item, payload))
             assert record["author_organization"] == expected
             if external == "source":
                 assert "sec" in Pipeline(repo, config, http=object()).identities(record)
         news = await service.ingest(
-            {"source_id": "S30", "name": "BBC News"},
+            source_definition({"source_id": "S30", "name": "BBC News"}),
             captured(
                 service,
                 "S30",
@@ -1358,7 +1366,7 @@ async def test_failed_instrument_write_retries_unadvanced_snapshot(tmp_path: Pat
     phase = ["Trading"]
     requests = []
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         requests.append(request)
         return httpx.Response(
             200,
@@ -1415,10 +1423,12 @@ async def test_content_duplicate_counts_once_and_is_remembered_by_the_feed(tmp_p
     repo = Repo()
     svc = SourceService(repo, settings(tmp_path, []))
     first = await svc.ingest(
-        {"source_id": "S01"}, captured(svc, "S01", {"external_id": "a", "title": "Same", "text": "Release"})
+        source_definition({"source_id": "S01"}),
+        captured(svc, "S01", {"external_id": "a", "title": "Same", "text": "Release"}),
     )
     duplicate = await svc.ingest(
-        {"source_id": "S04"}, captured(svc, "S04", {"external_id": "b", "title": "Same", "text": "Release"})
+        source_definition({"source_id": "S04"}),
+        captured(svc, "S04", {"external_id": "b", "title": "Same", "text": "Release"}),
     )
     assert first["item_id"] == duplicate["item_id"] and duplicate["observation_count"] == 2
     assert len([key for key in repo.rows if key[0] == "ingest.source_items"]) == 1
@@ -1453,7 +1463,7 @@ async def test_slow_feed_does_not_block_fast_sibling_ingestion(tmp_path: Path) -
     blocked = asyncio.Event()
     release = asyncio.Event()
 
-    async def handle(request: pytest.FixtureRequest):
+    async def handle(request: httpx.Request):
         if request.url.path == "/slow":
             blocked.set()
             await release.wait()
@@ -1496,7 +1506,7 @@ async def test_slow_detail_does_not_block_index_cadence_and_restart_preserves_fi
     detail_started = asyncio.Event()
     release = asyncio.Event()
 
-    async def handle(request: pytest.FixtureRequest):
+    async def handle(request: httpx.Request):
         if request.url.path == "/index":
             calls.append(iso())
             return httpx.Response(200, text='<a href="/article/one">Release</a>')
@@ -1553,7 +1563,7 @@ async def test_json_discovery_burst_reads_every_page_until_durable_boundary(
     phase = [0]
     pages = []
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         if "detail/query" in request.url.path:
             code = request.url.params["articleCode"]
             return httpx.Response(
@@ -1659,7 +1669,7 @@ async def test_failed_later_history_page_retains_earlier_items_without_advancing
 ) -> None:
     phase = [0]
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         if phase[0] == 1 and request.url.params.get("page") == "2":
             return httpx.Response(404, text="Publisher page unavailable")
         ids = [1] if phase[0] == 0 else [3, 2] if request.url.params.get("page") != "2" else [1]
@@ -1752,7 +1762,7 @@ async def test_completed_later_batch_cannot_erase_failed_earlier_coverage(tmp_pa
     phase = [0]
     fail = [False]
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         ids = [1] if phase[0] == 0 else [2, 1] if phase[0] == 1 else [3, 2, 1]
         return httpx.Response(
             200,
@@ -1792,7 +1802,7 @@ async def test_completed_later_batch_cannot_erase_failed_earlier_coverage(tmp_pa
         assert {row["external_id"] for row in rows} == {"1", "3"}
         assert (await repo.get("ops.source_checkpoints", "S03:0"))["discovery_checkpoint"] == "1"
         fail[0] = False
-        await svc.poller.drain(source, 0, force=True)
+        await svc.poller.drain(source_definition(source), 0, force=True)
         state = await repo.get("ops.source_checkpoints", "S03:0")
         assert state["discovery_checkpoint"] == "3" and not state["pending_batches"]
         assert len(repo.jobs) == 3
@@ -1821,8 +1831,8 @@ async def test_conditional_304_does_not_starve_durable_pending_detail(tmp_path: 
         await svc.poller.queue_rows(
             state,
             "S20:0",
-            source,
-            source["feeds"][0],
+            source_definition(source),
+            source_feed(source["feeds"][0]),
             [
                 {
                     "external_id": "https://example.org/article/one",
@@ -1974,7 +1984,7 @@ async def test_malformed_index_entry_does_not_starve_valid_sibling_or_advance_va
         "next_page_url": None,
     }
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         calls.append(request)
         return (
             httpx.Response(200, headers={"ETag": "partial-response"}, json=data)
@@ -2015,7 +2025,7 @@ async def test_paginated_instrument_change_uses_actual_page_time_and_raw_evidenc
     monkeypatch.setattr(source_module, "iso", lambda value=None: iso(clock[0] if value is None else value))
     phase = [0]
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         clock[0] += timedelta(seconds=5)
         cursor = request.url.params.get("cursor")
         symbol = "DEFUSDT" if cursor else "ABCUSDT"
@@ -2084,7 +2094,7 @@ async def test_long_history_catchup_refreshes_current_head_at_feed_cadence(
     phase = [0]
     calls = []
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         page = int(request.url.params.get("page", 1))
         calls.append((phase[0], page, clock[0]))
         clock[0] += timedelta(seconds=2)
@@ -2145,7 +2155,7 @@ async def test_coinbase_trading_restriction_change_emits_item_without_status_enu
     }
     repo = Repo()
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         return httpx.Response(
             200,
             json=[
@@ -2425,7 +2435,7 @@ async def test_binance_empty_body_pending_recovers_after_restart(
     detail = json.dumps({"data": {"publishDate": 1791948608368, "body": json.dumps(body)}}).encode()
     calls = []
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         calls.append(str(request.url))
         if request.url.path.endswith("/query"):
             return httpx.Response(200, content=detail)
@@ -2463,7 +2473,9 @@ async def test_binance_empty_body_pending_recovers_after_restart(
         await first.close()
         monkeypatch.setattr(parsers, "binance_body", parser)
         resumed = SourceService(repo, cfg, http=http)
-        result = await resumed.poller.drain(cfg.load_config("sources")["sources"][0], 0, force=True)
+        result = await resumed.poller.drain(
+            source_definition(cfg.load_config("sources")["sources"][0]), 0, force=True
+        )
         assert result["items"] == 1 and not result["errors"]
         after = await repo.get("ops.source_checkpoints", "S09:0")
         assert not after["pending_batches"] and after["discovery_checkpoint"] == "actual-code"
@@ -2483,7 +2495,7 @@ async def test_read_counters_and_failed_read_rate_report(tmp_path: Path) -> None
 
     fail = [False]
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         if request.url.path == "/bad" or fail[0]:
             return httpx.Response(500, content=b"down")
         return httpx.Response(200, content=RSS)
@@ -2607,7 +2619,7 @@ async def test_pending_rows_without_item_id_are_dropped_and_rediscovered(tmp_pat
         transport=httpx.MockTransport(lambda r: httpx.Response(200, content=RSS))
     ) as http:
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
-        await svc.poller.drain(source, 0, force=True)
+        await svc.poller.drain(source_definition(source), 0, force=True)
         assert not (await repo.get("ops.source_checkpoints", "S30:0"))["pending_batches"]
         assert (await svc.poll_once("S30"))["items"] == 1
 
@@ -2623,7 +2635,7 @@ async def test_stale_article_errors_clear_when_nothing_is_pending(tmp_path: Path
         {"source_id": "S30", "status": "DEGRADED", "article_errors": stale, "pending_batches": []},
     )
     svc = SourceService(repo, settings(tmp_path, [source]))
-    await svc.poller.drain(source, 0, force=True)
+    await svc.poller.drain(source_definition(source), 0, force=True)
     state = await repo.get("ops.source_checkpoints", "S30:0")
     assert state["article_errors"] == {} and state["status"] == "HEALTHY"
 
@@ -2644,7 +2656,7 @@ async def test_poll_clears_stale_article_errors(tmp_path: Path) -> None:
     )
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(304))) as http:
         svc = SourceService(repo, settings(tmp_path, [source]), http=http)
-        await svc.poller.acquire(source, 0)
+        await svc.poller.acquire(source_definition(source), 0)
         assert (await repo.get("ops.source_checkpoints", "S30:0"))["article_errors"] == {}
 
 
@@ -2652,7 +2664,7 @@ async def test_poll_clears_stale_article_errors(tmp_path: Path) -> None:
 async def test_instrument_snapshot_written_only_when_it_changes(tmp_path: Path, collector_http) -> None:
     status = ["TRADING"]
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         rows = [{"symbol": "ABCUSDT", "baseAsset": "ABC", "quoteAsset": "USDT", "status": status[0]}]
         return httpx.Response(200, json={"symbols": rows})
 
@@ -2707,7 +2719,7 @@ def test_one_poll_of_a_venue_list_groups_symbols_that_made_the_same_move() -> No
         "OTHUSD": {"base": "OTH", "status": "online"},
     }
     rows, _ = instrument_changes(
-        snapshot, previous, feed, pages, dict.fromkeys(snapshot, 0), "2026-10-23T14:00:05Z"
+        snapshot, previous, source_feed(feed), pages, dict.fromkeys(snapshot, 0), "2026-10-23T14:00:05Z"
     )
     by_title = {row["title"]: row for row in rows}
     assert sorted(by_title) == [
@@ -2734,7 +2746,9 @@ def test_a_grouped_change_keeps_its_own_identity_when_the_list_returns_to_an_ear
     third = {"A": cancel, "B": cancel, "C": cancel, "D": cancel}
 
     def ids(snapshot, previous):
-        rows, digest = instrument_changes(snapshot, previous, feed, pages, dict.fromkeys(snapshot, 0), "x")
+        rows, digest = instrument_changes(
+            snapshot, previous, source_feed(feed), pages, dict.fromkeys(snapshot, 0), "x"
+        )
         return [row["external_id"] for row in rows], digest
 
     forward, at_second = ids(second, first)

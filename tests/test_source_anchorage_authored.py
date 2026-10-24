@@ -109,7 +109,7 @@ async def test_normal_anchorage_poll_uses_actual_retained_bodies_and_source_inge
     pages = {item["url"]: payload for item, payload, _ in fixtures}
     requested = []
 
-    def transport(request: pytest.FixtureRequest):
+    def transport(request: httpx.Request):
         requested.append(str(request.url))
         return httpx.Response(
             200, content=index_html.encode() if str(request.url) == index_url else pages[str(request.url)]

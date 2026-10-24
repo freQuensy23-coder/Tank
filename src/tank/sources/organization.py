@@ -2,17 +2,19 @@
 
 from urllib.parse import urlparse
 
+from tank.sources.configuration import SourceDefinition, SourceFeed
 
-def _retained_publisher_organization(source, item, feeds):
+
+def _retained_publisher_organization(source: SourceDefinition, item, feeds: list[SourceFeed]) -> str | None:
     """Issuing agency or repository publisher; never a contributor's employer."""
     if len(feeds) != 1:
         return None
     feed = feeds[0]
-    endpoint = urlparse(str(feed.get("url") or ""))
+    endpoint = urlparse(feed.url)
     page = urlparse(str(item.get("url") or ""))
-    if source.get("source_id") == "S03":
+    if source.source_id == "S03":
         if (
-            feed.get("kind") != "json"
+            feed.kind != "json"
             or endpoint.scheme != "https"
             or endpoint.netloc not in {"www.federalregister.gov", "federalregister.gov"}
             or endpoint.path != "/api/v1/documents.json"
@@ -23,7 +25,7 @@ def _retained_publisher_organization(source, item, feeds):
         agencies = item.get("agencies")
         if not isinstance(agencies, list) or not agencies:
             return None
-        names = []
+        names: list[str] = []
         for agency in agencies:
             if not isinstance(agency, dict):
                 return None
@@ -33,12 +35,12 @@ def _retained_publisher_organization(source, item, feeds):
             if name.strip().casefold() not in {value.casefold() for value in names}:
                 names.append(name.strip())
         return "; ".join(names)
-    if source.get("source_id") == "S25":
+    if source.source_id == "S25":
         parts = endpoint.path.strip("/").split("/")
         target = page.path.strip("/").split("/")
         if (
-            feed.get("kind") != "atom"
-            or feed.get("subtype") not in {"releases", "commits"}
+            feed.kind != "atom"
+            or feed.subtype not in {"releases", "commits"}
             or endpoint.scheme != "https"
             or endpoint.netloc != "github.com"
             or endpoint.query
@@ -57,20 +59,20 @@ def _retained_publisher_organization(source, item, feeds):
     return None
 
 
-def resolve_author_organization(source, item, accounts=None):
+def resolve_author_organization(source: SourceDefinition, item, accounts=None) -> str | None:
     """The ingestion precedence; never infer authority from a display name."""
     if item.get("author_organization"):
         return item["author_organization"]
-    feeds = [f for f in source.get("feeds", []) if f.get("url") == item.get("feed")]
+    feeds = [f for f in source.feeds if f.url == item.get("feed")]
     if len(feeds) > 1:
         raise ValueError("Ambiguous configured publisher feed")
-    configured = (feeds[0].get("author_organization") if feeds else None) or source.get("author_organization")
+    configured = (feeds[0].author_organization if feeds else None) or source.author_organization
     if configured:
         return configured
     publisher = _retained_publisher_organization(source, item, feeds)
     if publisher:
         return publisher
-    if source.get("source_id") == "S29":
+    if source.source_id == "S29":
         account = (
             (item.get("monitored_author") or item.get("reposted_by") or item.get("author", ""))
             .lower()

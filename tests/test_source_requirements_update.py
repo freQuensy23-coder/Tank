@@ -9,6 +9,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import yaml
+from source_support import source_configuration, source_definition
 
 from tank.sources import SourceService, parsers
 from tank.storage import MemoryRepository
@@ -20,7 +21,7 @@ def config(tmp_path: Path, sources):
         user_agent="Tank source regression",
         config_version="test",
         code_version="test",
-        load_config=lambda name: {"sources": sources} if name == "sources" else {},
+        load_config=lambda name: source_configuration({"sources": sources}) if name == "sources" else {},
     )
 
 
@@ -38,7 +39,7 @@ async def test_dtcc_official_html_only_and_zero_links_stays_degraded(tmp_path: P
     mode = ["release"]
     calls = []
 
-    def transport(request: pytest.FixtureRequest):
+    def transport(request: httpx.Request):
         calls.append((request.method, str(request.url)))
         assert request.url.host == "www.dtcc.com"
         assert not request.headers.get("authorization")
@@ -89,7 +90,11 @@ async def test_duplicate_preserves_capture_and_counts_one_observation(tmp_path: 
         "published_at_precision": "EXACT",
         "observed_at": first_time,
     }
-    first = deepcopy(await service.ingest(source, captured("first", b"Original publication bytes", incoming)))
+    first = deepcopy(
+        await service.ingest(
+            source_definition(source), captured("first", b"Original publication bytes", incoming)
+        )
+    )
     changed = captured(
         "second",
         b"Observed edited publication bytes",
@@ -102,8 +107,10 @@ async def test_duplicate_preserves_capture_and_counts_one_observation(tmp_path: 
             "observed_at": later,
         },
     )
-    duplicate = await service.ingest({**source, "name": "New config name"}, changed)
-    replay = await service.ingest(source, captured("first", b"Original publication bytes", incoming))
+    duplicate = await service.ingest(source_definition({**source, "name": "New config name"}), changed)
+    replay = await service.ingest(
+        source_definition(source), captured("first", b"Original publication bytes", incoming)
+    )
     try:
         assert {k: v for k, v in duplicate.items() if k not in {"observation_count", "observed_feeds"}} == {
             k: v for k, v in first.items() if k not in {"observation_count", "observed_feeds"}
@@ -162,7 +169,7 @@ async def test_poll_and_loop_never_reconstruct_legacy_binance_body_or_metadata(
             assert (await service.poll_once("S09"))["status"] == "HEALTHY"
         stop = asyncio.Event()
         stop.set()
-        await service.poller.loop(source, stop)
+        await service.poller.loop(source_definition(source), stop)
         assert await repo.get("ingest.source_items", "legacy") == original
         assert not await repo.list("ops.source_checkpoints")
         assert not await repo.list("ops.jobs")

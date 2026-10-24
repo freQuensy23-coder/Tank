@@ -6,6 +6,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from source_support import source_configuration, source_definition
 
 from tank.agents.pipeline import Pipeline
 from tank.agents.sessions import SessionService
@@ -98,7 +99,7 @@ def _fake_gateway_settings(tmp_path: Path):
 
 async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path) -> None:
     config = {
-        "sources": {"sources": [{"source_id": "S30", "feeds": []}]},
+        "sources": source_configuration({"sources": [{"source_id": "S30", "feeds": []}]}),
         "api_limits": _fixture_api_limits(),
         "exchange_addresses": {"version": "synthetic-fixture", "wallet_lists": []},
         "registry": {"tokens": [{"token_id": "T", "symbol": "T"}], "entities": []},
@@ -182,7 +183,7 @@ async def test_source_jev_sse_validated_read_restart_and_delivery(tmp_path: Path
             b"Synthetic integration item", source_id="S30", item_id=item_id, observed_at=seen
         )
         item = await source.ingest(
-            {"source_id": "S30"},
+            source_definition({"source_id": "S30"}),
             {
                 "item_id": item_id,
                 "raw_ref": raw,
@@ -302,16 +303,18 @@ async def test_full_sse_pipeline_postgres(
             monkeypatch.setattr(module, "utcnow", lambda: clock)
 
     config = {
-        "sources": {
-            "sources": [
-                {
-                    "source_id": "S30",
-                    "source_class": "PRIMARY",
-                    "mode": "rss",
-                    "feeds": [{"url": "https://synthetic.invalid/feed"}],
-                }
-            ]
-        },
+        "sources": source_configuration(
+            {
+                "sources": [
+                    {
+                        "source_id": "S30",
+                        "source_class": "PRIMARY",
+                        "mode": "REST",
+                        "feeds": [{"url": "https://synthetic.invalid/feed"}],
+                    }
+                ]
+            }
+        ),
         "api_limits": _fixture_api_limits(),
         "exchange_addresses": {"version": "synthetic-fixture", "wallet_lists": []},
         "registry": {
@@ -861,17 +864,19 @@ async def test_runtime_autonomous_source_to_telegram(
         if hasattr(module, "utcnow"):
             monkeypatch.setattr(module, "utcnow", lambda: clock)
     config = {
-        "sources": {
-            "sources": [
-                {
-                    "source_id": "S30",
-                    "source_class": "PRIMARY",
-                    "mode": "rss",
-                    "interval_s": 60,
-                    "feeds": [{"url": "https://synthetic.invalid/autonomous-feed"}],
-                }
-            ]
-        },
+        "sources": source_configuration(
+            {
+                "sources": [
+                    {
+                        "source_id": "S30",
+                        "source_class": "PRIMARY",
+                        "mode": "REST",
+                        "interval_s": 60,
+                        "feeds": [{"url": "https://synthetic.invalid/autonomous-feed"}],
+                    }
+                ]
+            }
+        ),
         "api_limits": _fixture_api_limits(),
         "exchange_addresses": {"version": "synthetic-fixture", "wallet_lists": []},
         "registry": {

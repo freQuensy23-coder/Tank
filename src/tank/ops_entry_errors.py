@@ -15,6 +15,7 @@ from datetime import timedelta
 
 from tank.ops_cards import plain
 from tank.ops_progress import enabled
+from tank.sources.configuration import SourceDefinition, SourceFeed
 from tank.time_precision import collection_clock, offset_schedule
 from tank.util import parse_time, sha256
 
@@ -119,11 +120,11 @@ def render(notice):
     return text
 
 
-async def report_entry_errors(repo, settings, source, feed, errors, seen_at):
+async def report_entry_errors(repo, settings, source: SourceDefinition, feed: SourceFeed, errors, seen_at):
     if not enabled(settings) or not errors:
         return None
-    source_id = source["source_id"]
-    feed_url = feed["url"]
+    source_id = source.source_id
+    feed_url = feed.url
     pending = {}
     for error in errors:
         pending.setdefault(error_key(source_id, feed_url, error), error)
@@ -161,7 +162,7 @@ async def report_entry_errors(repo, settings, source, feed, errors, seen_at):
             "kind": "ENTRY_ERRORS",
             "subject_id": source_id,
             "source_id": source_id,
-            "source_name": source.get("name"),
+            "source_name": source.name,
             "feed_url": feed_url,
             "seen_at": seen_at,
             "entry_error_keys": sorted(fresh),

@@ -28,7 +28,7 @@ async def test_requested_and_returned_reply_targets_are_separate(returned_target
         )
     count = 0
 
-    def send(request: pytest.FixtureRequest):
+    def send(request: httpx.Request):
         nonlocal count
         count += 1
         result = {"message_id": 40 + count}

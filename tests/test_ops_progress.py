@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from source_support import source_definition
 from test_agents_pipeline_audit import options
 from test_event_tools import seed
 from test_session_binding_concurrency import fixture_repo
@@ -21,7 +22,7 @@ from tank.runtime import Runtime
 from tank.settings import Settings
 from tank.sources import SourceService
 from tank.storage import MemoryRepository
-from tank.telegram_rich import score_summary
+from tank.telegram_rich import SCORE_DIMENSIONS, score_summary
 from tank.util import iso, utcnow
 
 
@@ -59,10 +60,10 @@ async def test_every_ingested_material_reaches_ops_before_filtering_and_duplicat
                 "url": "https://example.test/item",
             },
         )
-        result = await service.ingest(source, item)
-        await service.ingest(source, item)
+        result = await service.ingest(source_definition(source), item)
+        await service.ingest(source_definition(source), item)
         await service.ingest(
-            source,
+            source_definition(source),
             captured(
                 service, source_id, {"external_id": "duplicate", "title": "A new item", "text": "All input"}
             ),
@@ -178,7 +179,14 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(
     event = await repo.get("evt.events", eid)
     await repo.put("evt.events", eid, {**event, "current_ems_id": "ems"})
     await repo.put(
-        "evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": eid, "class": "STRUCTURAL_SHOCK"}
+        "evt.ems_assessments",
+        "ems",
+        {
+            "ems_id": "ems",
+            "event_id": eid,
+            "class": "STRUCTURAL_SHOCK",
+            "dims": {name: {"value": None, "reason": "NOT_ESTIMABLE"} for _, name in SCORE_DIMENSIONS},
+        },
     )
     monkeypatch.setattr(cards, "alert_gate", lambda *a, **k: (True, "INITIAL"))
     monkeypatch.setattr(cards, "compose_card", lambda *a, **k: "Frozen card" + "\n" + score_summary(a[1]))
@@ -198,7 +206,7 @@ async def test_generated_card_only_becomes_sent_after_telegram_receipt(
     payload = {"alert_id": result["alert_id"], "version": result["version"]}
     requests = []
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request):
         requests.append(json.loads(request.content))
         return (
             httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})

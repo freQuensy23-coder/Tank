@@ -53,7 +53,7 @@ class FakeTelegram:
         self.files = {}
         self.next_id = 1000
 
-    def __call__(self, request: pytest.FixtureRequest):
+    def __call__(self, request: httpx.Request):
         if request.url.path.startswith("/file/"):
             return httpx.Response(200, content=self.files[request.url.path.rsplit("/", 1)[-1]])
         method = request.url.path.rsplit("/", 1)[-1]
@@ -286,7 +286,7 @@ async def ask(repo, session_status="OPEN"):
 
 
 def openma(posts, history):
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         if request.method == "POST":
             body = json.loads(request.content)
             posts.append((request.url.path, body))
@@ -426,7 +426,7 @@ async def test_retried_question_is_never_retired_by_a_concurrent_failure() -> No
     healthy = openma(posts, [])
     outage = {"left": 1}
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         if request.method == "POST" and outage["left"]:
             outage["left"] -= 1
             return httpx.Response(503, json={})
@@ -550,7 +550,7 @@ async def test_first_question_is_answered_while_a_second_is_still_running() -> N
         {"id": "r2", "type": "session.status_running", "execution_id": "in_q2"},
     ]
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         if request.method == "POST":
             posts.append(json.loads(request.content))
             return httpx.Response(200, json={"data": [{"id": next(ids)}]})
@@ -675,7 +675,7 @@ async def test_send_telegram_file_replies_with_the_session_output_once() -> None
     await repo.put("ops.agent_sessions", "ses_1", session)
     documents = []
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         if request.url.host == "oma":
             assert request.url.path == "/v1/sessions/ses_1/outputs/report.pdf"
             return httpx.Response(200, content=b"%PDF-1.7 tank")
@@ -715,7 +715,7 @@ async def test_idle_session_receives_the_current_tools_once() -> None:
     settings.read_config_json = lambda relative: custom
     requests = []
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         requests.append((request.method, request.url.path, json.loads(request.content or b"{}")))
         if request.method == "GET":
             return httpx.Response(200, json={"id": "ses_1", "agent": {"id": "agt_1"}})
@@ -877,7 +877,7 @@ async def test_reader_file_is_stored_for_the_session_and_named_in_the_agent_mess
     mounts = []
     uploads = []
 
-    def openma(request: pytest.FixtureRequest):
+    def openma(request: httpx.Request):
         if request.url.path == "/v1/files":
             uploads.append(request.content)
             return httpx.Response(200, json={"id": "file_private"})
@@ -1017,7 +1017,7 @@ async def test_output_filename_is_one_encoded_path_segment() -> None:
     session["active_message_id"] = "mq"
     paths = []
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         if request.url.host == "oma":
             paths.append(request.url.raw_path)
             return httpx.Response(200, content=b"x")
@@ -1264,7 +1264,7 @@ async def test_prompt_is_resent_after_a_definite_telegram_rejection() -> None:
     outage = {"left": 1}
     original = telegram.__call__
 
-    def flaky(request: pytest.FixtureRequest):
+    def flaky(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
             return httpx.Response(429, json={"ok": False, "parameters": {"retry_after": 1}})
@@ -1484,7 +1484,7 @@ async def test_answer_lookup_reads_history_only_back_to_the_question() -> None:
     ]
     pages = []
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         page = int(request.url.params.get("page") or 0)
         pages.append(page)
         newest = history[::-1]
@@ -1519,7 +1519,7 @@ async def test_oversized_session_output_is_refused_while_streaming(monkeypatch: 
     session["active_message_id"] = "mq"
     sent = []
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         if request.url.host == "oma":
             return httpx.Response(200, content=b"x" * 100)
         sent.append(request)
@@ -1615,7 +1615,7 @@ async def test_notice_is_retried_after_a_transient_failure_and_sent_once() -> No
     outage = {"left": 1}
     original = telegram.__call__
 
-    def flaky(request: pytest.FixtureRequest):
+    def flaky(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
             return httpx.Response(503, json={"ok": False})
@@ -1643,7 +1643,7 @@ async def test_watch_mutation_hydrates_prompt_provenance_first() -> None:
     await repo.put("evt.events", session["event_id"], {"event_id": session["event_id"]})
     calls = []
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         calls.append(request.url.path)
         return httpx.Response(
             200,
@@ -1678,7 +1678,7 @@ async def test_one_permanently_failing_message_never_blocks_the_others() -> None
     telegram = FakeTelegram([{"update_id": 1, "message": lonely}, {"update_id": 2, "message": reply}])
     original = telegram.__call__
 
-    def blocked(request: pytest.FixtureRequest):
+    def blocked(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and json.loads(request.content)["chat_id"] == str(USER):
             return httpx.Response(
                 403, json={"ok": False, "description": "Forbidden: bot was blocked by the user"}
@@ -1727,7 +1727,7 @@ async def test_question_to_a_remotely_terminated_session_answers_terminated() ->
     repo = MemoryRepository()
     question_id = await ask(repo)
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         return httpx.Response(200, json={"id": "ses_1", "status": "terminated"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
@@ -1801,7 +1801,7 @@ async def test_paired_size_notice_failure_keeps_both_messages_retryable() -> Non
     outage = {"left": 1}
     original = telegram.__call__
 
-    def flaky(request: pytest.FixtureRequest):
+    def flaky(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
             return httpx.Response(502, json={"ok": False})
@@ -1935,7 +1935,7 @@ async def test_connection_failure_before_sending_keeps_the_notice_retryable() ->
     outage = {"left": 1}
     original = telegram.__call__
 
-    def flaky(request: pytest.FixtureRequest):
+    def flaky(request: httpx.Request):
         if request.url.path.endswith("/sendMessage") and outage["left"]:
             outage["left"] -= 1
             raise httpx.ConnectError("connection refused", request=request)

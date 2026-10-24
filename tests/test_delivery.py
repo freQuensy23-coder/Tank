@@ -35,7 +35,7 @@ async def test_delivery_sent_opens_once_and_escapes_html() -> None:
     repo = await setup_repo()
     requests = []
 
-    def send(request: pytest.FixtureRequest):
+    def send(request: httpx.Request):
         requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
 
@@ -77,7 +77,7 @@ async def test_receipt_beyond_first_ledger_page_prevents_duplicate_delivery() ->
     assert len(ledger) == 1001
     requests = []
 
-    def send(request: pytest.FixtureRequest):
+    def send(request: httpx.Request):
         requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 99}})
 
@@ -119,7 +119,7 @@ async def test_update_replies_to_first_event_card() -> None:
     repo = await setup_repo()
     requests = []
 
-    def send(request: pytest.FixtureRequest):
+    def send(request: httpx.Request):
         requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(requests) + 40}})
 
@@ -408,7 +408,7 @@ async def test_held_update_is_never_sent_after_a_newer_immediate_exit(
     settings = SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
     requests = []
 
-    def send(request: pytest.FixtureRequest):
+    def send(request: httpx.Request):
         requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 43}})
 
@@ -510,7 +510,7 @@ async def test_normal_update_sends_at_fifteen_minutes_and_is_idempotent(
     settings = SimpleNamespace(telegram_token="test", telegram_alerts_chat="1", telegram_ops_chat="2")
     requests = []
 
-    def send(request: pytest.FixtureRequest):
+    def send(request: httpx.Request):
         requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 43}})
 
@@ -854,7 +854,7 @@ async def test_historical_suppression_is_preserved_without_censoring_explicit_re
     await repo.put("out.deliveries", "old-suppression", suppressed, immutable=True)
     requests = []
 
-    def send(request: pytest.FixtureRequest):
+    def send(request: httpx.Request):
         requests.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 42}})
 
@@ -905,7 +905,7 @@ async def test_newer_held_update_supersedes_older_and_keeps_spacing_through_rest
         settings = SimpleNamespace(telegram_token="fixture", telegram_alerts_chat="1", telegram_ops_chat="2")
         requests = []
 
-        def send(request: pytest.FixtureRequest):
+        def send(request: httpx.Request):
             requests.append(json.loads(request.content))
             return httpx.Response(200, json={"ok": True, "result": {"message_id": 42 + len(requests)}})
 

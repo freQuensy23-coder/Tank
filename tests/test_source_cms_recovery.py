@@ -4,6 +4,7 @@ from pathlib import Path
 import httpx
 import pytest
 import zstandard
+from source_support import source_definition, source_feed
 from test_sources import Repo, settings
 
 from tank.sources import SourceService, parsers
@@ -69,7 +70,7 @@ async def test_retained_canonical_404_recovers_only_exact_same_cms_entry(tmp_pat
         detail = tree.html.encode()
     calls = []
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         calls.append(str(request.url))
         if str(request.url) == OLD:
             return httpx.Response(404, content=retained("not-found"))
@@ -85,10 +86,10 @@ async def test_retained_canonical_404_recovers_only_exact_same_cms_entry(tmp_pat
         batch = {"kind": "html"}
         if mismatch:
             with pytest.raises(ValueError, match="identity/content mismatch"):
-                await svc.poller._item(source, FEED, "S13:0", batch, row)
+                await svc.poller._item(source_definition(source), source_feed(FEED), "S13:0", batch, row)
             assert not any(c == "ingest.source_items" for c, _ in repo.rows)
         else:
-            await svc.poller._item(source, FEED, "S13:0", batch, row)
+            await svc.poller._item(source_definition(source), source_feed(FEED), "S13:0", batch, row)
             item = next(v for (c, _), v in repo.rows.items() if c == "ingest.source_items")
             assert item["external_id"] == OLD
             assert item["url"] == NEW
@@ -127,7 +128,7 @@ async def test_cms_fallback_is_not_used_for_non404_failure(
 
     monkeypatch.setattr(source_module, "asyncio", SimpleNamespace(sleep=record_retry))
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         calls.append(str(request.url))
         return httpx.Response(403, text="Forbidden")
 
@@ -137,7 +138,9 @@ async def test_cms_fallback_is_not_used_for_non404_failure(
         row = original()
         row["observed_at"] = "2026-10-19T07:59:02.218121Z"
         with pytest.raises(httpx.HTTPStatusError) as error:
-            await svc.poller._item(source, FEED, "S13:0", {"kind": "html"}, row)
+            await svc.poller._item(
+                source_definition(source), source_feed(FEED), "S13:0", {"kind": "html"}, row
+            )
         assert error.value.response.status_code == 403
     assert calls == [OLD] * 4
     assert retry_delays == [2, 4, 8]
@@ -152,7 +155,7 @@ async def test_cms_fallback_is_not_used_for_non404_failure(
 async def test_checkpoint_fallback_must_match_same_host_and_declared_slug(tmp_path: Path, fallback) -> None:
     calls = []
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         calls.append(str(request.url))
         return httpx.Response(404, content=retained("not-found"))
 
@@ -162,5 +165,7 @@ async def test_checkpoint_fallback_must_match_same_host_and_declared_slug(tmp_pa
         row = original()
         row.update(observed_at="2026-10-19T07:59:02.218121Z", publisher_cms_slug_url=fallback)
         with pytest.raises(httpx.HTTPStatusError):
-            await svc.poller._item(source, FEED, "S13:0", {"kind": "html"}, row)
+            await svc.poller._item(
+                source_definition(source), source_feed(FEED), "S13:0", {"kind": "html"}, row
+            )
     assert calls == [OLD]

@@ -25,8 +25,27 @@ class EndpointVerification(DomainModel):
     baseline_discrepancy: str | None = None
 
 
-class SourceFeed(DomainModel):
+class FeedParsingSpec(DomainModel):
     url: str = Field(min_length=1)
+    subtype: Literal["releases", "commits"] | None = None
+    article_pattern: str | None = None
+    embedded_json_fields: list[str] = Field(default_factory=list)
+    venue: Literal["binance", "coinbase", "kraken", "okx", "bybit", "hyperliquid"] | None = None
+    market_type: Literal["SPOT", "PERP_LINEAR"] | None = None
+
+
+class HttpFetchPlan(DomainModel):
+    url: str = Field(min_length=1)
+    method: Literal["GET", "POST"] = "GET"
+    headers: dict[str, str] = Field(default_factory=dict)
+    body: dict[str, JsonValue] | None = None
+    form: dict[str, str] | None = None
+    source_limits: SourceLimits | None = None
+    request_weight: float = Field(default=1, gt=0, allow_inf_nan=False)
+    requests_per_minute: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+
+class SourceFeed(FeedParsingSpec):
     kind: Literal[
         "rss",
         "atom",
@@ -40,16 +59,27 @@ class SourceFeed(DomainModel):
         "instruments",
         "x",
     ]
-    interval_s: int = Field(gt=0)
+    interval_s: float = Field(gt=0, allow_inf_nan=False)
     method: Literal["GET", "POST"] = "GET"
-    subtype: Literal["releases", "commits"] | None = None
     author_organization: str | None = None
-    article_pattern: str | None = None
-    embedded_json_fields: list[str] = Field(default_factory=list)
+    headers: dict[str, str] = Field(default_factory=dict)
     body: dict[str, JsonValue] | None = None
     form: dict[str, str] | None = None
-    venue: Literal["binance", "coinbase", "kraken", "okx", "bybit", "hyperliquid"] | None = None
-    market_type: Literal["SPOT", "PERP_LINEAR"] | None = None
+    official_index_url: str | None = None
+    request_weight: float = Field(default=1, gt=0, allow_inf_nan=False)
+    requests_per_minute: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+
+    def request_plan(self, limits: SourceLimits) -> HttpFetchPlan:
+        return HttpFetchPlan(
+            url=self.url,
+            method=self.method,
+            headers=self.headers,
+            body=self.body,
+            form=self.form,
+            source_limits=limits,
+            request_weight=self.request_weight,
+            requests_per_minute=self.requests_per_minute,
+        )
 
     @model_validator(mode="after")
     def adapter_requirements(self) -> Self:
@@ -76,7 +106,7 @@ class SourceDefinition(DomainModel):
     name: str = Field(min_length=1)
     author_organization: str | None = None
     mode: Literal["REST"]
-    interval_s: int = Field(gt=0)
+    interval_s: float = Field(gt=0, allow_inf_nan=False)
     feeds: list[SourceFeed]
     priority: Literal["CORE", "SECONDARY"]
     terms_notes: str = Field(min_length=1)
@@ -104,7 +134,7 @@ class SourceDefinition(DomainModel):
 class SourceConfiguration(DomainModel):
     version: str = Field(min_length=1)
     contact_email: str = Field(min_length=1)
-    sources: list[SourceDefinition] = Field(min_length=1)
+    sources: list[SourceDefinition]
 
     @model_validator(mode="after")
     def unique_sources(self) -> Self:

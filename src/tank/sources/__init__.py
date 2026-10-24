@@ -20,6 +20,7 @@ import httpx
 import tank.sources.parsers as parsers
 from tank.ops_progress import item_progress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
+from tank.sources.configuration import HttpFetchPlan, SourceConfiguration, SourceDefinition
 from tank.sources.rate_limits import shared_request_budgets
 from tank.sources.xsensor import XSensor
 from tank.util import TimeInput, iso, parse_time, sha256, utcnow
@@ -38,26 +39,31 @@ def tls_context():
 
 class SourceService:
     def __init__(self, repo, settings, *, http=None):
+        cfg = SourceConfiguration.model_validate(settings.load_config("sources"))
         self.repo = repo
         self.settings = settings
-        self.http = http or httpx.AsyncClient(
-            timeout=20,
-            follow_redirects=True,
-            headers={"User-Agent": settings.user_agent},
-            verify=tls_context(),
+        self.http = (
+            http
+            if http is not None
+            else httpx.AsyncClient(
+                timeout=20,
+                follow_redirects=True,
+                headers={"User-Agent": settings.user_agent},
+                verify=tls_context(),
+            )
         )
         self.owns_http = http is None
         self.xsensor = XSensor(self.http, getattr(settings, "apify_api_token", None))
-        cfg = settings.load_config("sources")
-        self.sources = {s["source_id"]: s for s in cfg["sources"]}
+        self.configuration = cfg
+        self.sources = {source.source_id: source for source in cfg.sources}
         self.source_host_limits = {}
-        for source in cfg["sources"]:
-            per_min = source.get("limits", {}).get("rate_per_min")
+        for source in cfg.sources:
+            per_min = source.limits.rate_per_min
             if per_min is None:
                 continue
-            for feed in source.get("feeds", []):
-                for url in [feed["url"], feed.get("official_index_url", "")]:
-                    host = urlsplit(url).hostname
+            for feed in source.feeds:
+                for url in [feed.url, feed.official_index_url]:
+                    host = urlsplit(url).hostname if url is not None else None
                     if host:
                         self.source_host_limits[host] = min(
                             per_min, self.source_host_limits.get(host, per_min)
@@ -91,13 +97,13 @@ class SourceService:
 
         return write_raw_item(self.settings.data_dir, source_id, item_id, observed_at, payload)
 
-    async def acquire_budget(self, feed):
-        host = urlsplit(feed["url"]).hostname or ""
+    async def acquire_budget(self, feed: HttpFetchPlan) -> None:
+        host = urlsplit(feed.url).hostname or ""
 
         provider = "sec.gov" if host == "sec.gov" or host.endswith(".sec.gov") else host
-        weight = feed.get("request_weight", 1)
+        weight = feed.request_weight
         for rule in self.api_limits:
-            if rule.get("provider") != provider or is_exchange_url(feed["url"]):
+            if rule.get("provider") != provider or is_exchange_url(feed.url):
                 continue
             if rule.get("tank_max_requests_per_s") is not None:
                 await shared_request_budgets.acquire(provider, rule["tank_max_requests_per_s"], 1, host=host)
@@ -108,8 +114,8 @@ class SourceService:
         capacities = [
             value
             for value in [
-                feed.get("requests_per_minute"),
-                feed.get("source_limits", {}).get("rate_per_min"),
+                feed.requests_per_minute,
+                feed.source_limits.rate_per_min if feed.source_limits is not None else None,
                 self.source_host_limits.get(host),
             ]
             if value is not None
@@ -118,9 +124,9 @@ class SourceService:
         if per_min is not None:
             await shared_request_budgets.acquire(host, per_min, 60, host=host)
 
-    async def fetch(self, feed, key, *, on_start=None):
+    async def fetch(self, feed: HttpFetchPlan, key, *, on_start=None):
         state = deepcopy(await self.repo.get("ops.source_checkpoints", key) or {})
-        headers = dict(feed.get("headers", {}))
+        headers = dict(feed.headers)
         if state.get("etag") and not state.get("article_errors") and not state.get("entry_errors"):
             headers["If-None-Match"] = state["etag"]
         if state.get("last_modified") and not state.get("article_errors") and not state.get("entry_errors"):
@@ -131,22 +137,22 @@ class SourceService:
                 await self.acquire_budget(feed)
                 if on_start is not None:
                     await on_start()
-                if is_exchange_url(feed["url"]):
+                if is_exchange_url(feed.url):
                     response = await capture_fetch(
                         self.repo,
-                        feed.get("method", "GET"),
-                        feed["url"],
+                        feed.method,
+                        feed.url,
                         headers=headers,
-                        body=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
+                        body=feed.body if feed.method.upper() == "POST" else None,
                         source_id=key.split(":", 1)[0],
                     )
                 else:
                     response = await self.http.request(
-                        feed.get("method", "GET"),
-                        feed["url"],
+                        feed.method,
+                        feed.url,
                         headers=headers,
-                        json=feed.get("body") if feed.get("method", "GET").upper() == "POST" else None,
-                        data=feed.get("form") if feed.get("method", "GET").upper() == "POST" else None,
+                        json=feed.body if feed.method.upper() == "POST" else None,
+                        data=feed.form if feed.method.upper() == "POST" else None,
                     )
                 if response.status_code == 304:
                     return None, state
@@ -192,6 +198,8 @@ class SourceService:
                                         (parse_time(parsers.published(retry)) - utcnow()).total_seconds(),
                                     )
                     await asyncio.sleep(delay)
+        if error is None:
+            raise RuntimeError("Source fetch exhausted retries without a recorded failure")
         raise error
 
     async def captured(self, **filters):
@@ -216,9 +224,9 @@ class SourceService:
         await self.repo.put("ingest.source_items", item_id, old)
         return old
 
-    async def ingest(self, source, item):
+    async def ingest(self, source: SourceDefinition, item):
         """Store one captured item whose raw payload is already at item["raw_ref"]."""
-        sid = source["source_id"]
+        sid = source.source_id
         identity = item.get("external_id")
         if isinstance(identity, bool) or not isinstance(identity, (str, int)) or not str(identity).strip():
             raise ValueError("Source entry has no valid external identity")
@@ -234,7 +242,7 @@ class SourceService:
             )
         )
         external = str(item["external_id"])
-        feed = item.get("feed") or source.get("feed") or sid
+        feed = item.get("feed") or sid
         item_id = item["item_id"]
         async with self.repo.lock("ingest-dedup"), self.repo.transaction():
             existing = await self.captured(source_id=sid, external_id=external) or await self.captured(
@@ -277,9 +285,9 @@ class SourceService:
                 item_id=item_id,
                 source_id=sid,
                 feed=feed,
-                source=source.get("name", sid),
-                source_name=source.get("name", sid),
-                author=item.get("author") or source.get("name", sid),
+                source=source.name,
+                source_name=source.name,
+                author=item.get("author") or source.name,
                 author_role=role,
                 monitored_accounts=[
                     item.get("monitored_author") or item.get("reposted_by") or item.get("author")
@@ -320,19 +328,7 @@ class SourceService:
                 published_at_reason=None
                 if item.get("published_at")
                 else item.get("published_at_reason") or item.get("published_prec_reason") or "INCOMPLETE",
-                source_class=source.get(
-                    "source_class",
-                    source.get(
-                        "class",
-                        "TECHNICAL_EVIDENCE"
-                        if sid == "S25"
-                        else "SOCIAL_LEAD"
-                        if sid == "S29"
-                        else "SECONDARY"
-                        if int(sid[1:]) >= 30
-                        else "PRIMARY",
-                    ),
-                ),
+                source_class=source.source_class,
                 relevance={"decision": None, "pending_reason": "AWAITING_FILTER"}
                 if filtered
                 else {"decision": "ALWAYS"},
@@ -443,12 +439,12 @@ class SourceService:
         for sid, source in self.sources.items():
             states = [
                 await self.repo.get("ops.source_checkpoints", f"{sid}:{i}")
-                for i, _ in enumerate(source.get("feeds", []))
+                for i, _ in enumerate(source.feeds)
             ]
             results.append(
                 {
                     "source_id": sid,
-                    "configured": bool(source.get("feeds")),
+                    "configured": bool(source.feeds),
                     "states": states,
                     "status": "DEGRADED"
                     if any(s and s.get("status") == "DEGRADED" for s in states)

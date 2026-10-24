@@ -109,3 +109,24 @@ def test_read_window_rejects_counter_resets_and_aggregates_details() -> None:
     assert observed.all_pass is False
     with pytest.raises(ValueError, match="counter reset"):
         report(window(9, 1), window(10, 1))
+
+
+def test_source_configuration_requires_adapter_inputs_and_unique_identities() -> None:
+    from tank.settings import Settings
+    from tank.sources.configuration import SourceConfiguration, SourceFeed
+
+    configuration = SourceConfiguration.model_validate(Settings().load_config("sources"))
+    with pytest.raises(ValidationError, match="duplicate source IDs"):
+        SourceConfiguration(
+            version=configuration.version,
+            contact_email=configuration.contact_email,
+            sources=[configuration.sources[0], configuration.sources[0]],
+        )
+    with pytest.raises(ValidationError, match="article pattern"):
+        SourceFeed(url="https://example.org/news", kind="html", interval_s=60)
+    with pytest.raises(ValidationError, match="venue and market_type"):
+        SourceFeed(url="https://example.org/instruments", kind="instruments", interval_s=60)
+    with pytest.raises(ValidationError, match="POST and its request body"):
+        SourceFeed(url="https://example.org/graphql", kind="graphql", interval_s=60)
+    with pytest.raises(ValidationError):
+        SourceFeed.model_validate({"url": "https://example.org/feed", "kind": "rss"})

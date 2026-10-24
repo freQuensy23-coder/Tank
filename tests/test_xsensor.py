@@ -62,7 +62,7 @@ class Actor:
         self.requests = []
         self.sent = []
 
-    def __call__(self, request: pytest.FixtureRequest):
+    def __call__(self, request: httpx.Request):
         self.requests.append(request)
         status, body = self.responses.pop(0)
         self.sent.append(json.dumps(body).encode())
@@ -141,7 +141,7 @@ async def test_a_failed_or_unreadable_run_raises() -> None:
     ]
     token = "FAKE secret\n"
 
-    def illegal_header(request: pytest.FixtureRequest) -> None:
+    def illegal_header(request: httpx.Request) -> None:
         raise httpx.LocalProtocolError("Illegal header value " + repr(("Bearer " + token).encode()))
 
     with pytest.raises(RuntimeError) as leaked:

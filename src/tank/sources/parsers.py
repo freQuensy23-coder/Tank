@@ -2,13 +2,16 @@
 
 import json
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from urllib.parse import urljoin, urlsplit
 
 import feedparser
+from pydantic import JsonValue
 from selectolax.parser import HTMLParser
 
+from tank.sources.configuration import FeedParsingSpec
 from tank.time_precision import Timestamp
 from tank.util import iso, sha256
 
@@ -95,7 +98,17 @@ def entry_identity(entry):
     return {"entry_sha256": sha256(fields), "entry": identity}
 
 
+def _feed_spec(feed: FeedParsingSpec | Mapping[str, JsonValue]) -> FeedParsingSpec:
+    """Project parser configuration at its external mapping boundary."""
+    if isinstance(feed, FeedParsingSpec):
+        return feed
+    return FeedParsingSpec.model_validate(
+        {field: feed[field] for field in FeedParsingSpec.model_fields if field in feed}
+    )
+
+
 def feeds(payload, source_id, feed):
+    feed = _feed_spec(feed)
     parsed = feedparser.parse(payload)
     if not parsed.version:
         raise ValueError("Invalid feed: no RSS or Atom document")
@@ -126,7 +139,7 @@ def feeds(payload, source_id, feed):
                     else {}
                 ),
                 "categories": [t.get("term") for t in e.get("tags", [])],
-                "subtype": feed.get("subtype") or ("commits" if "/commits/" in feed["url"] else "releases"),
+                "subtype": feed.subtype or ("commits" if "/commits/" in feed.url else "releases"),
             }
         )
     return result
@@ -184,22 +197,23 @@ def _dtcc_release_url(url):
 
 
 def article_links(payload, feed):
-    pattern = feed.get("article_pattern") or feed.get("pattern")
+    feed = _feed_spec(feed)
+    pattern = feed.article_pattern
     if not pattern:
         raise ValueError("HTML feed needs article_pattern")
     result = {}
     tree = HTMLParser(payload)
     for a in tree.css("a[href]"):
-        url = urljoin(feed["url"], a.attributes["href"])
-        if urlsplit(url).netloc != urlsplit(feed["url"]).netloc:
+        url = urljoin(feed.url, a.attributes["href"])
+        if urlsplit(url).netloc != urlsplit(feed.url).netloc:
             continue
-        if urlsplit(feed["url"]).netloc == "www.dtcc.com" and not _dtcc_release_url(url):
+        if urlsplit(feed.url).netloc == "www.dtcc.com" and not _dtcc_release_url(url):
             continue
         target = url if pattern.startswith("http") else urlsplit(url).path
         if re.search(pattern, target):
             result[url] = text(a.text())
 
-    fields = feed.get("embedded_json_fields", [])
+    fields = feed.embedded_json_fields
     if fields:
         script = tree.css_first('script#__NEXT_DATA__[type="application/json"]')
         if script is None:
@@ -209,8 +223,8 @@ def article_links(payload, feed):
             if isinstance(value, dict):
                 for key, child in value.items():
                     if key in fields and isinstance(child, str):
-                        url = urljoin(feed["url"], child)
-                        if urlsplit(url).netloc == urlsplit(feed["url"]).netloc:
+                        url = urljoin(feed.url, child)
+                        if urlsplit(url).netloc == urlsplit(feed.url).netloc:
                             target = url if pattern.startswith("http") else urlsplit(url).path
                             if re.search(pattern, target):
                                 result[url] = text(value.get("title", ""))
@@ -251,7 +265,7 @@ def article_links(payload, feed):
             if len(candidates) == 1:
                 row["publisher_cms_identity"] = candidates[0]
                 row["publisher_cms_slug_url"] = urljoin(
-                    feed["url"].rstrip("/") + "/", candidates[0]["slug"] + "/"
+                    feed.url.rstrip("/") + "/", candidates[0]["slug"] + "/"
                 )
     return rows
 
@@ -565,9 +579,10 @@ def _json_items(payload, source_id):
 
 
 def instruments(payload, feed):
+    feed = _feed_spec(feed)
     data = json.loads(payload) if isinstance(payload, (str, bytes)) else payload
-    venue = str(feed.get("venue", "")).lower()
-    kind = feed.get("market_type", "")
+    venue = feed.venue
+    kind = feed.market_type
     if venue == "binance":
         rows = data["symbols"]
         fields = ("symbol", "baseAsset", "quoteAsset", "status")

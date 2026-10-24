@@ -8,6 +8,7 @@ import httpx
 import pytest
 import zstandard
 from selectolax.parser import HTMLParser
+from source_support import source_configuration
 
 from tank.settings import Settings
 from tank.sources import SourceService, parsers
@@ -108,7 +109,7 @@ async def test_normal_dtcc_poll_uses_actual_retained_release_bodies(tmp_path: Pa
         ],
     }
 
-    def transport(request: pytest.FixtureRequest):
+    def transport(request: httpx.Request):
         if str(request.url) == index_url:
             return httpx.Response(200, text=index_html)
         assert request.method == "GET" and not request.headers.get("Authorization")
@@ -118,7 +119,11 @@ async def test_normal_dtcc_poll_uses_actual_retained_release_bodies(tmp_path: Pa
     object.__setattr__(
         settings,
         "load_config",
-        lambda name: {"sources": [source]} if name == "sources" else Settings.load_config(settings, name),
+        lambda name: (
+            source_configuration({"sources": [source]})
+            if name == "sources"
+            else Settings.load_config(settings, name)
+        ),
     )
     repo = MemoryRepository()
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:

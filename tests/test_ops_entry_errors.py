@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from source_support import source_definition, source_feed
 from test_session_binding_concurrency import fixture_repo
 from test_sources import RSS
 from test_sources import settings as source_settings
@@ -50,7 +51,7 @@ async def poll(repo, tmp_path: Path, payloads, *, enabled=True, replay=False, so
     settings.replay = replay
     feed = iter(payloads)
 
-    def handle(request: pytest.FixtureRequest):
+    def handle(request: httpx.Request):
         return httpx.Response(200, content=next(feed))
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
@@ -121,11 +122,18 @@ async def test_restart_and_concurrent_reports_are_idempotent(tmp_path: Path) -> 
     feed = {"url": "https://hub.snapshot.org/graphql"}
     with pytest.raises(ValueError, match="rollback"):
         async with repo.transaction():
-            await report_entry_errors(repo, settings, source, feed, errors, "2026-10-24T12:00:00Z")
+            await report_entry_errors(
+                repo, settings, source_definition(source), source_feed(feed), errors, "2026-10-24T12:00:00Z"
+            )
             raise ValueError("rollback")
     assert len(await entry_notices(repo)) == 1
     ids = await asyncio.gather(
-        *(report_entry_errors(repo, settings, source, feed, errors, "2026-10-24T12:00:00Z") for _ in range(4))
+        *(
+            report_entry_errors(
+                repo, settings, source_definition(source), source_feed(feed), errors, "2026-10-24T12:00:00Z"
+            )
+            for _ in range(4)
+        )
     )
     assert len([notice_id for notice_id in ids if notice_id]) == 1
     assert len(await entry_notices(repo)) == 2 and len(await entry_jobs(repo)) == 2
@@ -161,7 +169,7 @@ async def test_publisher_json_entry_error_is_reported_and_delivered_to_ops(tmp_p
     assert "«Malformed original without identifier»" in notice["text"]
     requests = []
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request):
         requests.append(json.loads(request.content))
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 7, "date": 1}})
 
@@ -184,19 +192,23 @@ async def test_x_account_failures_are_keyed_by_account() -> None:
     repo = MemoryRepository()
     settings = SimpleNamespace(ops_progress_enabled=True)
     source = {"source_id": "S29", "name": "X"}
-    feed = {"url": "apify://x"}
+    feed = {"url": "https://api.apify.com/v2/actors/test/run-sync", "kind": "x"}
     first = [
         {"account": "alice", "reason": "MISSING_FROM_RUN"},
         {"account": "bob", "reason": "MISSING_FROM_RUN"},
         {"account": None, "reason": "RUN_DEGRADED"},
     ]
-    await report_entry_errors(repo, settings, source, feed, first, "2026-10-24T12:00:00Z")
+    await report_entry_errors(
+        repo, settings, source_definition(source), source_feed(feed), first, "2026-10-24T12:00:00Z"
+    )
     [notice] = await entry_notices(repo)
     assert len(notice["entry_errors"]) == 3
     assert "аккаунт @alice" in notice["text"] and "аккаунт @bob" in notice["text"]
     assert "весь запуск сбора X" in notice["text"]
     again = first + [{"account": "carol", "reason": "MISSING_FROM_RUN"}]
-    await report_entry_errors(repo, settings, source, feed, again, "2026-10-24T12:05:00Z")
+    await report_entry_errors(
+        repo, settings, source_definition(source), source_feed(feed), again, "2026-10-24T12:05:00Z"
+    )
     latest = [row for row in await entry_notices(repo) if row["notice_id"] != notice["notice_id"]]
     assert [row["entry_errors"] for row in latest] == [[{"account": "carol", "reason": "MISSING_FROM_RUN"}]]
 
@@ -237,7 +249,14 @@ async def test_entry_error_notices_persist_and_deduplicate_in_storage(backend, p
         errors = [{"reason": "ENTRY_WITHOUT_ID_OR_URL", "entry_sha256": "e" * 64, "payload_sha256": "p" * 64}]
         ids = await asyncio.gather(
             *(
-                report_entry_errors(repo, settings, source, {"url": FEED_URL}, errors, "2026-10-24T12:00:00Z")
+                report_entry_errors(
+                    repo,
+                    settings,
+                    source_definition(source),
+                    source_feed({"url": FEED_URL}),
+                    errors,
+                    "2026-10-24T12:00:00Z",
+                )
                 for _ in range(3)
             )
         )
