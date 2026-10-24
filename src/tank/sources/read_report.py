@@ -11,7 +11,7 @@ from pydantic import Field, JsonValue
 
 from tank.contracts import DomainModel
 from tank.contracts.sources import SourceConfiguration, SourceDefinition
-from tank.util import iso
+from tank.util import clock_iso
 
 LIMIT = 0.01
 COUNTERS = ("reads", "detail_reads")
@@ -98,7 +98,7 @@ async def snapshot(
                 {name: row.get(name, {"ok": 0, "failed": 0}) for name in COUNTERS}
                 | {"status": row.get("status"), "error": row.get("error")}
             )
-    return ReadSnapshot(taken_at=iso(), feeds=feeds).model_dump(mode="json")
+    return ReadSnapshot(taken_at=clock_iso(), feeds=feeds).model_dump(mode="json")
 
 
 def report(

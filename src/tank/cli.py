@@ -7,7 +7,11 @@ import sys
 from pathlib import Path
 
 import click
+from pydantic import Field
 
+from tank.contracts import DomainModel
+from tank.contracts.configuration import DeliveryConfiguration, Thresholds
+from tank.contracts.sources import SourceConfiguration
 from tank.logging import configure_logging
 from tank.settings import Settings, configured_values, resolve_versions
 from tank.time_precision import collection_clock
@@ -425,73 +429,102 @@ def bundle_reproduce(sha, database_url, mode):
     run_db(command, database_url=database_url, replay=True)
 
 
-def readiness_checks(settings):
-    """Report configuration readiness without exposing configuration/secret values."""
+class ReadinessCheck(DomainModel):
+    check: str = Field(min_length=1)
+    ok: bool
+    reason: str | None = None
+
+
+class ReadinessReport(DomainModel):
+    ready: bool
+    checks: list[ReadinessCheck]
+
+
+class ReadinessOpenmaIds(DomainModel):
+    agent_id: str | None
+    scout_agent_id: str | None
+    environment_id: str | None
+    replay_environment_id: str | None
+
+
+def configured(value: str | Path | None) -> bool:
+    if value is None:
+        return False
+    text = str(value)
+    return bool(text) and not any(
+        word in text.upper() for word in ("REPLACE_", "NOT CONFIGURED", "UNVERSIONED")
+    )
+
+
+def readiness_checks(settings: Settings) -> list[ReadinessCheck]:
+    """Validate readiness and return only names, booleans and exception classes."""
     import re
 
-    def configured(value):
-        return bool(value) and not any(
-            word in str(value).upper() for word in ("REPLACE_", "NOT CONFIGURED", "UNVERSIONED")
-        )
-
-    checks = []
+    checks: list[ReadinessCheck] = []
     for name in ("sources", "delivery", "registry", "semantics", "dependency_map", "thresholds", "openma"):
         try:
             config = settings.load_config(name)
-            checks.append({"check": name + "_syntax", "ok": True})
-            if name == "thresholds":
-                checks.append(
+            if name == "sources":
+                SourceConfiguration.model_validate(config)
+            elif name == "delivery":
+                DeliveryConfiguration.model_validate(config)
+            elif name == "thresholds":
+                Thresholds.model_validate(config)
+                checks.append(ReadinessCheck(check="calibration", ok=True))
+            elif name == "openma":
+                identifiers = ReadinessOpenmaIds.model_validate(
                     {
-                        "check": "calibration",
-                        "ok": config.get("filter_cutoff") is not None
-                        and config.get("routing_cutoff") is not None,
+                        field: config[field]
+                        for field in ("agent_id", "scout_agent_id", "environment_id", "replay_environment_id")
+                        if field in config
                     }
                 )
-            if name == "openma":
-                for key in ("agent_id", "scout_agent_id", "environment_id", "replay_environment_id"):
-                    checks.append({"check": "openma_" + key, "ok": configured(config.get(key))})
+                for key, value in (
+                    ("agent_id", identifiers.agent_id),
+                    ("scout_agent_id", identifiers.scout_agent_id),
+                    ("environment_id", identifiers.environment_id),
+                    ("replay_environment_id", identifiers.replay_environment_id),
+                ):
+                    checks.append(ReadinessCheck(check="openma_" + key, ok=configured(value)))
+            checks.append(ReadinessCheck(check=name + "_syntax", ok=True))
         except Exception as exc:
-            checks.append({"check": name + "_syntax", "ok": False, "reason": type(exc).__name__})
-    checks.append(
-        {"check": "opencode_api_key", "ok": configured(getattr(settings, "opencode_api_key", None))}
-    )
-    for name in (
-        "openma_api_key",
-        "codex_gateway_key",
-        "etherscan_api_key",
-        "telegram_token",
-        "telegram_alerts_chat",
-        "telegram_ops_chat",
-        "backup_dir",
+            checks.append(ReadinessCheck(check=name + "_syntax", ok=False, reason=type(exc).__name__))
+            if name == "thresholds":
+                checks.append(ReadinessCheck(check="calibration", ok=False, reason=type(exc).__name__))
+    for name, setting_value in (
+        ("opencode_api_key", settings.opencode_api_key),
+        ("openma_api_key", settings.openma_api_key),
+        ("codex_gateway_key", settings.codex_gateway_key),
+        ("etherscan_api_key", settings.etherscan_api_key),
+        ("telegram_token", settings.telegram_token),
+        ("telegram_alerts_chat", settings.telegram_alerts_chat),
+        ("telegram_ops_chat", settings.telegram_ops_chat),
+        ("backup_dir", settings.backup_dir),
+        ("apify_api_token", settings.apify_api_token),
     ):
-        checks.append({"check": name, "ok": configured(getattr(settings, name, None))})
-    auth_path = getattr(settings, "codex_auth_path", None)
+        checks.append(ReadinessCheck(check=name, ok=configured(setting_value)))
     try:
-        checks.append(
-            {"check": "codex_auth_file_present", "ok": bool(auth_path) and Path(auth_path).is_file()}
-        )
+        checks.append(ReadinessCheck(check="codex_auth_file_present", ok=settings.codex_auth_path.is_file()))
     except OSError as exc:
-        checks.append({"check": "codex_auth_file_present", "ok": False, "reason": type(exc).__name__})
-    checks.append({"check": "apify_api_token", "ok": configured(getattr(settings, "apify_api_token", None))})
-    user_agent = getattr(settings, "user_agent", "")
+        checks.append(ReadinessCheck(check="codex_auth_file_present", ok=False, reason=type(exc).__name__))
     checks.append(
-        {
-            "check": "user_agent_contact",
-            "ok": bool(
-                re.fullmatch(
-                    r"TankV0/1\.0 \([A-Za-z0-9_.+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\)", user_agent or ""
-                )
-            ),
-        }
+        ReadinessCheck(
+            check="user_agent_contact",
+            ok=re.fullmatch(
+                r"TankV0/1\.0 \([A-Za-z0-9_.+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\)",
+                settings.user_agent,
+            )
+            is not None,
+        )
     )
     return checks
 
 
 @main.command()
-def doctor():
+def doctor() -> None:
     """Read-only configuration and bounded service readiness diagnosis."""
 
-    async def diagnose():
+    async def diagnose() -> ReadinessReport:
 
         settings = Settings()
         configure_logging(settings)
@@ -510,18 +543,18 @@ def doctor():
                 connection = await AsyncConnection.connect(settings.database_url, connect_timeout=2)
                 cursor = await connection.execute("SELECT to_regclass('ops.jobs')")
                 row = await cursor.fetchone()
-                checks.append({"check": "database", "ok": True})
-                checks.append({"check": "schema", "ok": bool(row and row[0])})
+                checks.append(ReadinessCheck(check="database", ok=True))
+                checks.append(ReadinessCheck(check="schema", ok=row is not None and row[0] is not None))
         except Exception as exc:
-            checks.append({"check": "database", "ok": False, "reason": type(exc).__name__})
+            checks.append(ReadinessCheck(check="database", ok=False, reason=type(exc).__name__))
         finally:
             if connection is not None:
                 await connection.close()
-        return {"ready": all(r["ok"] for r in checks), "checks": checks}
+        return ReadinessReport(ready=all(check.ok for check in checks), checks=checks)
 
     result = asyncio.run(diagnose())
-    output(result)
-    if not result["ready"]:
+    output(result.model_dump(mode="json", exclude_none=True))
+    if not result.ready:
         raise click.exceptions.Exit(1)
 
 
