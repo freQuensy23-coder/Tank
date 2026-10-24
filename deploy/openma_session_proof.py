@@ -35,7 +35,7 @@ client = httpx.Client(
 )
 
 
-def save(name, value):
+def save(name, value) -> None:
     (out / name).write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
 
 

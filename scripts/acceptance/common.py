@@ -120,7 +120,7 @@ def iso(ts):
     return parse(ts).astimezone(UTC).isoformat().replace("+00:00", "Z") if ts else None
 
 
-def write_json(path, value):
+def write_json(path, value) -> None:
     os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with open(path, "w") as fh:
         json.dump(value, fh, indent=2, sort_keys=True, default=str)

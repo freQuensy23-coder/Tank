@@ -18,7 +18,7 @@ from tank.util import iso, parse_time
 OUT = Path(__file__).resolve().parents[2] / "capture" / "testdata" / "pyvectors"
 
 
-def write(name, payload):
+def write(name, payload) -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     text = json.dumps(payload, separators=(",", ":"), ensure_ascii=False) + "\n"
     (OUT / name).write_bytes(gzip.compress(text.encode(), mtime=0))
@@ -60,7 +60,7 @@ def run(op, a, b, prec):
         return [str(value), value.as_tuple().exponent]
 
 
-def decimals(rng):
+def decimals(rng) -> None:
     literals = sorted({literal(rng) for _ in range(700)}) + [
         "1e-05",
         "1.0E+2",
@@ -111,7 +111,7 @@ def value(rng, depth=0):
     return {text(rng): value(rng, depth + 1) for _ in range(rng.randint(0, 5))}
 
 
-def jsons(rng):
+def jsons(rng) -> None:
     cases = []
     for _ in range(600):
         item = value(rng)
@@ -127,7 +127,7 @@ def jsons(rng):
     write("json.json.gz", {"values": cases, "floats": [[f, repr(f)] for f in floats]})
 
 
-def times(rng):
+def times(rng) -> None:
     inputs = [
         "2026-10-21T09:00:00Z",
         "2026-10-21T09:00:00.123456Z",
@@ -180,7 +180,7 @@ def times(rng):
     write("time.json.gz", {"times": cases, "precisions": precisions, "parse_check": iso(parse_time(0))})
 
 
-def main():
+def main() -> None:
     rng = random.Random(20261021)
     decimals(rng)
     jsons(rng)

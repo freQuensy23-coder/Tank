@@ -48,7 +48,7 @@ class AssemblyError(Exception):
     pass
 
 
-def safe_remove(path):
+def safe_remove(path) -> None:
     """Delete only strictly inside one data/replay/acceptance-<generation>/F-xx/ dir or LOG_SCRATCH.
 
     Never the generation root, never a fixture dir itself, never anything reached through a symlink."""
@@ -164,7 +164,7 @@ def leak_scan(masked, replacements, venues=frozenset(), exceptions=None):
     loose = re.compile("|".join(map(re.escape, names)), re.I)
     hits, warnings = {}, set()
 
-    def walk(value, path):
+    def walk(value, path) -> None:
         if isinstance(value, dict):
             for k, v in value.items():
                 walk(k, path)
@@ -293,7 +293,7 @@ def source_spec(fixture, args):
     return spec
 
 
-def apply_slugs(parent_value, masked_value, slugs, fwd_text):
+def apply_slugs(parent_value, masked_value, slugs, fwd_text) -> None:
     """Declared identifier slugs (identity fields holding exactly the slug) -> declared masked slug."""
     if isinstance(parent_value, dict):
         for key, value in parent_value.items():
@@ -413,7 +413,7 @@ def entity_families(registry, replacements, sensitive, parent_text, host_mask, v
             continue
         changes = {}
 
-        def put(key, value):
+        def put(key, value) -> None:
             old = repl.get(key)
             if value is None:
                 if key in repl:
@@ -502,7 +502,7 @@ def entity_families(registry, replacements, sensitive, parent_text, host_mask, v
     return repl, sens, families, log
 
 
-def registry_family_pass(parent_registry, masked_registry, families):
+def registry_family_pass(parent_registry, masked_registry, families) -> None:
     """Registry names/aliases equal to an entity's primary name carry its root placeholder (not the slug)."""
     pents, ments = parent_registry.get("entities", []), masked_registry.get("entities", [])
     for fam in families:
@@ -811,7 +811,7 @@ def assemble(fixture, args, sections, code_version, out_root):
         def restore(value):
             value = copy.deepcopy(value)
 
-            def walk(node):
+            def walk(node) -> None:
                 if isinstance(node, dict):
                     for key, entry in node.items():
                         if key in SLUG_FIELDS and isinstance(entry, str) and entry in inverse_slugs:
@@ -1282,7 +1282,7 @@ def verify(fixture, rel, out, reused):
     return result
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--fixtures", required=True)
     parser.add_argument("--generation", required=True)

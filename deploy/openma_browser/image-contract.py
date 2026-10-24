@@ -18,7 +18,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
-def main():
+def main() -> None:
     assert sys.version_info[:2] == (3, 12), sys.version
     cache = json.loads(Path("/opt/tank/browser-font-cache.json").read_text())
     assert cache["engine"] == "Playwright default bundled Chromium headless shell"

@@ -77,7 +77,7 @@ def host():
 samples, stop = [], threading.Event()
 
 
-def sample():
+def sample() -> None:
     t0 = time.monotonic()
     while not stop.is_set():
         samples.append(

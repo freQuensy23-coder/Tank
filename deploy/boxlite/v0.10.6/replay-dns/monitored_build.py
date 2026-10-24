@@ -33,7 +33,7 @@ def command(args):
 
 def run(
     root, assets, phase, network, seconds, attempt, scope=None, builder_image=IMAGE, architecture="arm64"
-):
+) -> None:
     root = root.resolve(strict=True)
     assets = assets.resolve(strict=True)
     scope = scope or root.name

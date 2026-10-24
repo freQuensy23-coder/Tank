@@ -45,7 +45,7 @@ SELECT e.event_id, e.statement, e.known_to_us_at, e.public_at, e.event_state, e.
 """
 
 
-def main(run, week_start, with_outcomes):
+def main(run, week_start, with_outcomes) -> None:
     since, until = (
         week_start.isoformat() + "T00:00:00Z",
         (week_start + timedelta(days=7)).isoformat() + "T00:00:00Z",

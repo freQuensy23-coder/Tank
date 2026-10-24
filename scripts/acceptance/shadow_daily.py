@@ -79,7 +79,7 @@ def day_dir(run, d):
     return path
 
 
-def prepare(run, day):
+def prepare(run, day) -> None:
     reviewed = day - timedelta(days=1)
     since, until = reviewed.isoformat() + "T00:00:00Z", day.isoformat() + "T00:00:00Z"
     rows = query(ALERTS, {"since": since, "until": until})
@@ -166,7 +166,7 @@ def prepare(run, day):
     print(json.dumps(receipt, indent=2))
 
 
-def merge(run, day):
+def merge(run, day) -> None:
     reviewed = day - timedelta(days=1)
     d = day_dir(run, reviewed)
     filled = json.load(open(os.path.join(d, "checks-template.json")))
@@ -215,7 +215,7 @@ def tank_container():
     return out[0]
 
 
-def metrics(run, start, until):
+def metrics(run, start, until) -> None:
     c = tank_container()
     checks = os.path.join(run, "checks.json")
     args = ["docker", "exec", c, "tank", "review", "metrics", "--since", start, "--until", until]

@@ -42,7 +42,7 @@ def paths(state):
     return root / "rpc.sock", root / "start.lock"
 
 
-def supervise_descendants():
+def supervise_descendants() -> None:
 
     if sys.platform == "linux":
         libc = ctypes.CDLL(None, use_errno=True)
@@ -56,7 +56,7 @@ def supervise_descendants():
             os.close(handle)
 
 
-def terminate_owned_descendants(startup_pid=None):
+def terminate_owned_descendants(startup_pid=None) -> None:
     """Freeze/kill/reap only this Linux worker's supervised descendant tree.
 
     Stable pidfds avoid signaling a reused PID. Freeze parents before walking
@@ -65,7 +65,7 @@ def terminate_owned_descendants(startup_pid=None):
     """
     handles = []
 
-    def stop_children(parent):
+    def stop_children(parent) -> None:
         try:
             children = Path(f"/proc/{parent}/task/{parent}/children").read_text().split()
         except FileNotFoundError:
@@ -129,7 +129,7 @@ def request_deadline(request):
     return deadline
 
 
-async def serve(state):
+async def serve(state) -> None:
     from playwright.async_api import async_playwright
 
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -206,7 +206,7 @@ async def serve(state):
                 return await locator.press(args["key"], timeout=timeout)
             return await locator.inner_text(timeout=timeout)
 
-        async def handle(reader, writer):
+        async def handle(reader, writer) -> None:
             fatal = acquired = False
             task = None
             try:
@@ -291,7 +291,7 @@ def connect(sock_path, deadline):
     return client
 
 
-def request(state, encoded):
+def request(state, encoded) -> None:
 
     deadline = time.monotonic() + REQUEST_TIMEOUT
     data = base64.b64decode(encoded, validate=True)
@@ -372,7 +372,7 @@ def request(state, encoded):
         sys.stdout.write(REPLY_PREFIX + result.decode())
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--state-dir", required=True)
     mode = parser.add_mutually_exclusive_group(required=True)

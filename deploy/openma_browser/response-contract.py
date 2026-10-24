@@ -29,7 +29,7 @@ def exercise(delays, chunks):
     observed = {}
     failures = []
 
-    def serve():
+    def serve() -> None:
         try:
             with server.accept()[0] as peer:
                 request = json.loads(peer.recv(4096))

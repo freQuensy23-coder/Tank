@@ -114,7 +114,7 @@ def trace(event_id):
 
     timeline = []
 
-    def at(ts, step, detail=""):
+    def at(ts, step, detail="") -> None:
         if ts:
             timeline.append({"at": ts, "step": step, "detail": detail})
 

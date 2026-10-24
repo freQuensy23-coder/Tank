@@ -45,7 +45,7 @@ def apply(source):
         if path.exists() or path.is_symlink():
             raise ValueError("Unexpected existing DNS policy asset")
 
-    def edit(path, old, new):
+    def edit(path, old, new) -> None:
         text = path.read_text()
         if text.count(old) != 1:
             raise ValueError("Native DNS patch anchor changed: " + str(path))

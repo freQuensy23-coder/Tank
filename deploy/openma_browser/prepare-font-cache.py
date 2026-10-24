@@ -16,7 +16,7 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def prepare(manifest_path):
+def prepare(manifest_path) -> None:
     assert importlib.metadata.version("playwright") == "1.64.0"
     cache_root = Path("/var/cache/fontconfig")
     original8 = {p.name: digest(p) for p in cache_root.glob("*-le64.cache-8") if p.is_file()}

@@ -54,7 +54,7 @@ def active(pid):
         return False
 
 
-def send(connection, operation, deadline, **args):
+def send(connection, operation, deadline, **args) -> None:
     request = {"version": 1, "op": operation, "args": args, "deadline": deadline}
     connection.sendall((json.dumps(request) + "\n").encode())
 
@@ -67,7 +67,7 @@ def reply(connection):
     return json.loads(raw) if raw else None
 
 
-def run(state, other_state, evidence):
+def run(state, other_state, evidence) -> None:
     started = time.monotonic()
     evidence.parent.mkdir(parents=True, exist_ok=True)
     path = endpoint(state)
@@ -78,7 +78,7 @@ def run(state, other_state, evidence):
     unrelated = subprocess.Popen(["sleep", "120"])
     baseline = {int(p.name) for p in Path("/proc").iterdir() if p.name.isdigit()}
 
-    def mark(phase, **extra):
+    def mark(phase, **extra) -> None:
         record = {"phase": phase, "elapsed": time.monotonic() - started, **extra}
         temporary = evidence.with_suffix(".new")
         temporary.write_text(json.dumps(record))

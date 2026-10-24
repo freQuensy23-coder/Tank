@@ -69,12 +69,12 @@ def active(pid):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
+    def do_GET(self) -> None:
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"<html><body>Persistent profile deadline contract</body></html>")
 
-    def log_message(self, *args):
+    def log_message(self, *args) -> None:
         pass
 
 

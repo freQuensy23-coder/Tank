@@ -101,7 +101,7 @@ def container(service):
     return out
 
 
-def reset_replay_db():
+def reset_replay_db() -> None:
     out = sh([RESET], check=False, timeout=600)
     if out.returncode != 0:
         raise SystemExit("tank_replay reset failed: " + str(out.stderr)[-500:])
@@ -130,7 +130,7 @@ def wait_for_idle_live(max_wait_s):
         time.sleep(60)
 
 
-def mark_window(record):
+def mark_window(record) -> None:
     WINDOWS.parent.mkdir(parents=True, exist_ok=True)
     with open(WINDOWS, "a") as fh:
         fh.write(json.dumps(record) + "\n")
@@ -143,7 +143,7 @@ REPLAY_DB_EVIDENCE = {
 }
 
 
-def dump_replay_db(d):
+def dump_replay_db(d) -> None:
     evidence = {}
     for name, sql in REPLAY_DB_EVIDENCE.items():
         out = sh(

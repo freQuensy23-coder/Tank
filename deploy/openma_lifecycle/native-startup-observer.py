@@ -75,7 +75,7 @@ def stat_path(path):
         return {"exists": False}
 
 
-def run(args):
+def run(args) -> None:
     root = Path("/proc")
     assert hashlib.sha256(args.worker.read_bytes()).hexdigest() == args.worker_sha
     resolved_state = args.state.resolve()

@@ -29,13 +29,13 @@ import rest_parity
 GOLDENS = HERE / "goldens"
 
 
-def write(name, out):
+def write(name, out) -> None:
     GOLDENS.mkdir(parents=True, exist_ok=True)
     text = json.dumps(json.loads(json.dumps(out)), sort_keys=True, separators=(",", ":")) + "\n"
     (GOLDENS / name).write_bytes(gzip.compress(text.encode(), mtime=0))
 
 
-def main():
+def main() -> None:
     for fixture in parity.fixtures():
         write(fixture.name.removesuffix(".jsonl.gz") + ".json.gz", asyncio.run(parity.run(fixture)))
         print(fixture.name)
