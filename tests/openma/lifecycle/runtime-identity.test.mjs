@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import { executableImageIdentity, assertCompatible } from '../../../vendor/openma/packages/control-plane-node/src/lib/tank-retained/runtime-identity.ts';
 
 async function layout(fn) {
@@ -15,10 +16,14 @@ async function layout(fn) {
     await writeFile(join(root, 'blobs', 'sha256', digest), bytes);
     return { digest: 'sha256:' + digest, size: bytes.length, mediaType };
   };
-  const publish = async ({ created = 'old', env = ['MARKER=A'], architecture = 'amd64', annotation = 'old', layer = 'base-A' } = {}) => {
-    const data = await blob(Buffer.from(layer), 'application/vnd.oci.image.layer.v1.tar');
+  const publish = async ({ created = 'old', env = ['MARKER=A'], architecture = 'amd64', annotation = 'old', layer = 'base-A', compression = null, mtime = 0 } = {}) => {
+    const uncompressed = Buffer.from(layer);
+    const bytes = compression === null ? uncompressed : gzipSync(uncompressed, { level: compression });
+    if (compression !== null) bytes.writeUInt32LE(mtime, 4);
+    const data = await blob(bytes, 'application/vnd.oci.image.layer.v1.tar' + (compression === null ? '' : '+gzip'));
+    const diffId = 'sha256:' + createHash('sha256').update(uncompressed).digest('hex');
     const config = await blob({ architecture, os: 'linux', created, history: [{ created, created_by: 'builder-' + annotation }],
-      rootfs: { type: 'layers', diff_ids: [data.digest] }, config: { Env: env, Cmd: ['/bin/sh'] } }, 'application/vnd.oci.image.config.v1+json');
+      rootfs: { type: 'layers', diff_ids: [diffId] }, config: { Env: env, Cmd: ['/bin/sh'] } }, 'application/vnd.oci.image.config.v1+json');
     const manifest = await blob({ schemaVersion: 2, config, layers: [data], annotations: { export: annotation } });
     await writeFile(join(root, 'index.json'), JSON.stringify({ schemaVersion: 2, manifests: [{ ...manifest, platform: { architecture, os: 'linux' } }], annotations: { exported: annotation } }, null, annotation === 'old' ? 0 : 2));
     return { data, config, manifest };
@@ -35,6 +40,26 @@ test('OCI timestamps, history, index formatting and export annotations do not re
     assert.notEqual(await executableImageIdentity(root, 'x64'), before);
     await publish({ layer: 'base-B' });
     assert.notEqual(await executableImageIdentity(root, 'x64'), before);
+  });
+});
+
+test('OCI recompression and gzip metadata preserve executable identity while compressed blob integrity remains mandatory', async () => {
+  await layout(async ({ root, publish }) => {
+    const plain = await publish();
+    const expected = await executableImageIdentity(root, 'x64');
+    const compressed = await publish({ compression: 1 });
+    assert.notEqual(compressed.data.digest, plain.data.digest);
+    assert.equal(compressed.config.digest, plain.config.digest);
+    assert.equal(await executableImageIdentity(root, 'x64'), expected);
+    const reexported = await publish({ compression: 9, mtime: 12345 });
+    assert.notEqual(reexported.data.digest, compressed.data.digest);
+    assert.equal(reexported.config.digest, compressed.config.digest);
+    assert.equal(await executableImageIdentity(root, 'x64'), expected);
+    await publish({ compression: 9, layer: 'base-B' });
+    assert.notEqual(await executableImageIdentity(root, 'x64'), expected);
+    await publish({ compression: 9, mtime: 12345 });
+    await writeFile(join(root, 'blobs', 'sha256', reexported.data.digest.slice(7)), 'corrupt gzip');
+    await assert.rejects(executableImageIdentity(root, 'x64'), /retained_image_blob_invalid/);
   });
 });
 

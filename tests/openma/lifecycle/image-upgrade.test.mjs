@@ -195,8 +195,8 @@ function historicalFingerprint(inputs, runtimeIdentity = trustedLegacyBuild.runt
   return stableDigest({ ...inputs, runtimeIdentity, rootfsIndex: stableDigest(trustedLegacyBuild.rawIndex) });
 }
 
-test('the reviewed legacy build reconstructs the complete fingerprint and adopts the old image before fenced replacement', async () => {
-  const inputs = legacyInputs(), fingerprint = historicalFingerprint(inputs);
+for (const runtimeIdentity of [trustedLegacyBuild.runtimeIdentity, 'c4afefbdddba3e6f05634a3bb5a46db20d5636413f4f24909b2abcdfa8fa8654']) test(`reviewed legacy fingerprint ${runtimeIdentity} adopts the old image before fenced replacement`, async () => {
+  const inputs = legacyInputs(), fingerprint = historicalFingerprint(inputs, runtimeIdentity);
   const resolved = resolveLegacyProvenance(inputs, fingerprint);
   assert.equal(resolved.identity.image, 'sha256:5069a7cd9fe3f987d7839d839ab3a9448ca8c9e5321b4d9a69c533ae887c7f90');
   assert.equal(resolved.provenance.build, '5dd1d3495f79bc203f9d0ea5a2320e148cf7a963b4709fe06dad0ac62430d296');
@@ -222,8 +222,8 @@ test('the reviewed legacy build reconstructs the complete fingerprint and adopts
   await controller.idle(permitted);
 });
 
-test('unknown historical runtime identities and every altered protected fingerprint component refuse adoption', () => {
-  const inputs = legacyInputs(), original = historicalFingerprint(inputs);
+for (const runtimeIdentity of [trustedLegacyBuild.runtimeIdentity, trustedLegacyBuild.runtimeAbi]) test(`altered protected inputs refuse legacy adoption for ${runtimeIdentity}`, () => {
+  const inputs = legacyInputs(), original = historicalFingerprint(inputs, runtimeIdentity);
   assert.equal(resolveLegacyProvenance(inputs, historicalFingerprint(inputs, 'f'.repeat(64))), null);
   const mutations = [
     value => value.scope.push('foreign'), value => value.resources.push({ id: 'new-resource' }),

@@ -104,6 +104,28 @@ test('temporary no-effects upgrade failures have durable retry boundaries withou
   assert.equal(planSessionContinuation(restarted, 'input-old').mode, 'finalize');
 });
 
+for (const sessionThreadId of [undefined, 'sthr_primary', 'sthr_other']) test(`journal interrupt ${sessionThreadId ?? 'session-wide'} between recovery refund and reclaim cannot revive cancelled input`, () => {
+  const snapshot = recover(fixture());
+  snapshot.executions[0].state = 'failed';
+  snapshot.executions[0].imageRecoveryRetryAfterEventId = 'retry-idle';
+  snapshot.orderedEvents.push(
+    { event: { id: 'retry-error', type: 'session.error', error: { message: 'retained_upgrade_transfer_failed:temporary' } }, executionId: 'input-old', position: { revision: 3, index: 0 } },
+    { event: { id: 'retry-idle', type: 'session.status_idle', stopReason: { type: 'retries_exhausted' } }, executionId: 'input-old', position: { revision: 4, index: 0 } },
+    { event: { id: 'between-attempts-interrupt', type: 'user.interrupt', ...(sessionThreadId === undefined ? {} : { sessionThreadId }) }, position: { revision: 5, index: 0 } },
+  );
+  const restarted = structuredClone(snapshot);
+  const pending = pendingImageRecoveries(restarted, ['input-old']);
+  assert.equal(pending.executions[0].interruptRequestedAt, null);
+  assert.equal(pending.executions[0].state, sessionThreadId === 'sthr_other' ? 'queued' : 'failed');
+  assert.equal(planSessionContinuation(pending, 'input-old').mode, sessionThreadId === 'sthr_other' ? 'model' : 'blocked');
+  pending.executions.push({ id: 'fresh', laneId: 'sthr_primary', state: 'running', revision: 1, attemptCount: 1, interruptRequestedAt: null,
+    events: [{ id: 'fresh', type: 'user.message', content: [{ type: 'text', text: 'fresh after cancellation' }] }] });
+  const plan = planSessionContinuation(pending, 'fresh');
+  assert.equal(plan.mode, sessionThreadId === 'sthr_other' ? 'blocked' : 'model');
+  if (plan.mode === 'model') assert.deepEqual(plan.phaseInputIds, ['fresh']);
+  assert.equal(snapshot.executions[0].state, 'failed');
+});
+
 test('missing retained memory binding remains a retryable no-effects preflight refusal without hiding the diagnostic', () => {
   const snapshot = recover(fixture());
   snapshot.orderedEvents.push(
