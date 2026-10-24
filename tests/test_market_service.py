@@ -137,7 +137,7 @@ async def test_fundamentals_use_registered_slugs_only_and_partial_holders_revenu
     }
     paths = []
 
-    def handler(request: pytest.FixtureRequest):
+    def handler(request: httpx.Request):
         path = request.url.path
         paths.append(path)
 
@@ -176,7 +176,7 @@ async def test_market_transport_and_recursive_metadata_never_persist_api_key(set
     secret = "secret-test-provider-key"
     setattr(settings, secret_name, secret)
 
-    def handler(request: pytest.FixtureRequest) -> None:
+    def handler(request: httpx.Request) -> None:
         raise httpx.ConnectError("Connection failed: " + str(request.url), request=request)
 
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
@@ -528,7 +528,7 @@ async def test_exchange_rest_is_rejected_before_python_http(setup, method, url, 
     repo, settings, _ = setup
     requests = []
 
-    def record(request: pytest.FixtureRequest):
+    def record(request: httpx.Request):
         requests.append(request)
         return httpx.Response(200, json=[])
 

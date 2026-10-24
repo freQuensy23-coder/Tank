@@ -60,7 +60,7 @@ async def test_lending_runtime_uses_only_free_endpoint_and_exact_registered_iden
 ) -> None:
     calls = []
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request):
         calls.append(str(request.url))
         assert str(request.url) == "https://yields.llama.fi/lendBorrow"
         return httpx.Response(
@@ -110,7 +110,7 @@ async def test_lending_unknown_identity_remains_explicitly_unavailable_without_c
 ) -> None:
     calls = []
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request):
         calls.append(str(request.url))
         return httpx.Response(
             200,
@@ -170,7 +170,7 @@ async def test_lending_collect_flush_typed_storage_and_22_token_cache(
 ) -> None:
     calls = []
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request):
         calls.append(str(request.url))
         assert str(request.url) == "https://yields.llama.fi/lendBorrow"
         return httpx.Response(
@@ -251,7 +251,7 @@ async def test_contract_failure_preserves_other_chains_and_uses_registry_chain_i
     )
     calls = []
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request):
         chain, action = int(request.url.params["chainid"]), request.url.params["action"]
         calls.append((chain, action))
         if chain == 8453:
@@ -307,7 +307,7 @@ async def test_failed_transfer_reads_do_not_become_observed_zero_flows(tmp_path:
         _env_file=None, config_dir=config, data_dir=tmp_path / "data", etherscan_api_key="FAKE-only"
     )
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request):
         if request.url.params["action"] == "tokenbalance":
             return httpx.Response(200, json={"status": "1", "result": "0"})
         return httpx.Response(200, json={"status": "0", "message": "NOTOK", "result": "Query unavailable"})
@@ -326,7 +326,7 @@ async def test_failed_transfer_reads_do_not_become_observed_zero_flows(tmp_path:
 async def test_chain_liquidity_maps_defillama_chain_names_and_isolates_chain_gaps(tmp_path: Path) -> None:
     paths = []
 
-    def transport(request: pytest.FixtureRequest):
+    def transport(request: httpx.Request):
         paths.append(request.url.path)
         if request.url.path.endswith("/Polygon"):
             return httpx.Response(404, json={"error": "not found"})
@@ -356,7 +356,7 @@ async def test_restart_resumes_supply_cadences_from_stored_observations(tmp_path
     """A restart must not restart the 22-token cycle (03 §5.6 refresh periods)."""
     calls = []
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request):
         calls.append(str(request.url))
         return httpx.Response(200, json=[])
 
@@ -398,7 +398,7 @@ async def test_poll_refreshes_a_kind_before_its_cadence_elapses(tmp_path: Path) 
 
     calls = []
 
-    def respond(request: pytest.FixtureRequest):
+    def respond(request: httpx.Request):
         calls.append(str(request.url))
         return httpx.Response(200, json=[])
 

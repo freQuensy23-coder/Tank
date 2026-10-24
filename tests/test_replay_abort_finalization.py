@@ -138,7 +138,7 @@ async def test_actual_replay_abort_finalizes_owned_turn_after_stopping_follower(
                 assert current["status"] == "OPEN"
             retired.set()
 
-    async def transport(request: pytest.FixtureRequest):
+    async def transport(request: httpx.Request):
         path = request.url.path
         if path.endswith("/archive"):
             if failure_kind != "lost_acceptance":

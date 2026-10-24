@@ -114,7 +114,7 @@ async def test_acquire_scores_the_service_inputs_at_the_historical_clock(tmp_pat
     path.write_text(json.dumps(packet(items, ["old", "e1"])))
     calls = []
 
-    def jev(request: pytest.FixtureRequest):
+    def jev(request: httpx.Request):
         body = json.loads(request.content)
         calls.append(body)
         assert str(request.url) == "https://opencode.ai/inference/systemone/v1/systemone"

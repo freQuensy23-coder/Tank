@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+import httpx
 import pytest
 from model_fixture import audited_result, model_arguments
 
@@ -282,8 +283,6 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
     import asyncio
     import copy
 
-    import httpx
-
     from tank.analysis.decisions import DecisionEngine
     from tank.analysis.truth import MarketTruthService
     from tank.event_tools import EventToolService
@@ -490,7 +489,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
     accepted_inputs = []
     decision_ack_bodies = []
 
-    async def transport(request: pytest.FixtureRequest):
+    async def transport(request: httpx.Request):
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
             ids = request.url.params.get_list("ids[]")
@@ -1077,8 +1076,6 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
     import asyncio
     import copy
 
-    import httpx
-
     from tank.analysis.decisions import DecisionEngine
     from tank.analysis.truth import MarketTruthService
     from tank.event_tools import EventToolService
@@ -1224,7 +1221,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
     actor_item = None
     fresh_event_id = None
 
-    async def transport(request: pytest.FixtureRequest):
+    async def transport(request: httpx.Request):
         nonlocal actor_stage, actor_item, fresh_event_id
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
@@ -1677,7 +1674,6 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
     import asyncio
     import copy
 
-    import httpx
     from test_event_tools import (
         complete_assessment_fixture,
         complete_decision_fixture,
@@ -1883,7 +1879,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
     accepted_inputs = []
     actor_stage = None
 
-    async def control(request: pytest.FixtureRequest):
+    async def control(request: httpx.Request):
         nonlocal actor_stage
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
@@ -2053,7 +2049,6 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
     import asyncio
     import copy
 
-    import httpx
     from test_event_tools import (
         complete_assessment_fixture,
         complete_decision_fixture,
@@ -2214,7 +2209,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
     settled_inputs = set()
     actor_stage = None
 
-    async def control(request: pytest.FixtureRequest):
+    async def control(request: httpx.Request):
         nonlocal actor_stage
         if request.url.path.endswith("/executions"):
             assert request.method == "GET"
@@ -2563,7 +2558,6 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
     import asyncio
     import copy
 
-    import httpx
     from test_event_tools import unknown_assessment
     from test_fixture_reference import reference_packet as make_reference_packet
 
@@ -2678,7 +2672,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
             }
         )
 
-    async def transport(request: pytest.FixtureRequest):
+    async def transport(request: httpx.Request):
         nonlocal stage, event_id, publication, partial_card, partial_intent
         endpoint = request.url.path
         if endpoint.endswith("/executions"):

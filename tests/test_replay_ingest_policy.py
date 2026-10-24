@@ -107,7 +107,7 @@ async def test_fresh_import_rederives_policy_without_old_classifier_outputs(
 
         requests = []
 
-        def stop(request: pytest.FixtureRequest) -> None:
+        def stop(request: httpx.Request) -> None:
             requests.append(request.method)
             raise StopBeforeNative()
 

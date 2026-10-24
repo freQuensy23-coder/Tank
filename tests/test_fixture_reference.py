@@ -3,6 +3,7 @@ import json
 from datetime import UTC
 from pathlib import Path
 
+import httpx
 import pytest
 from model_fixture import audited_result, model_arguments
 
@@ -841,7 +842,6 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
     """Actual source/observation producers; MATERIAL stop isolates timeline mechanics from economic fixtures."""
     import asyncio
 
-    import httpx
     from test_event_tools import unknown_assessment
 
     from tank.analysis.decisions import DecisionEngine
@@ -940,7 +940,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
             }
         )
 
-    async def transport_body(request: pytest.FixtureRequest):
+    async def transport_body(request: httpx.Request):
         nonlocal stage, item, eid, claim_id
         route = request.url.path
         if route.endswith("/executions"):
@@ -1235,7 +1235,7 @@ async def test_actual_f24_phased_producers_keep_session_and_immutable_checkpoint
             return httpx.Response(200, json={"data": [{"id": identity}]})
         raise AssertionError(route)
 
-    async def transport(request: pytest.FixtureRequest):
+    async def transport(request: httpx.Request):
         return await transport_body(request)
 
     reader = ReplayMarketReader(inputs)

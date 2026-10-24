@@ -35,7 +35,7 @@ async def test_concurrent_requests_overlap_but_start_one_interval_apart(setup) -
     starts, active, peak = [], [0], [0]
     release = asyncio.Event()
 
-    async def handler(request: pytest.FixtureRequest):
+    async def handler(request: httpx.Request):
         starts.append(time.monotonic())
         active[0] += 1
         peak[0] = max(peak[0], active[0])
@@ -122,7 +122,7 @@ async def test_overdue_request_starts_are_spaced_from_actual_admission(
     starts, active, peak = [], 0, 0
     entered, release = asyncio.Queue(), asyncio.Event()
 
-    async def handler(request: pytest.FixtureRequest):
+    async def handler(request: httpx.Request):
         nonlocal active, peak
         starts.append(clock.monotonic())
         active += 1
@@ -165,7 +165,7 @@ async def test_cancelled_pacing_wait_does_not_reserve_a_future_start(
     clock = control_request_clock(monkeypatch)
     starts, entered, release = [], asyncio.Queue(), asyncio.Event()
 
-    async def handler(request: pytest.FixtureRequest):
+    async def handler(request: httpx.Request):
         starts.append(clock.monotonic())
         entered.put_nowait(None)
         await release.wait()
@@ -207,7 +207,7 @@ async def test_delayed_response_frees_saturated_slot_without_restarting_pacer(
     starts, entered = [], asyncio.Queue()
     releases = [asyncio.Event() for _ in range(4)]
 
-    async def handler(request: pytest.FixtureRequest):
+    async def handler(request: httpx.Request):
         index = len(starts)
         starts.append(clock.monotonic())
         entered.put_nowait(index)

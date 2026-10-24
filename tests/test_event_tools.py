@@ -1,6 +1,7 @@
 from datetime import timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 
 from tank.agents.context import CONTEXT_VERSION
@@ -210,14 +211,13 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(
 async def test_fetched_page_retains_original_bytes_before_parse(service) -> None:
     from pathlib import Path
 
-    import httpx
     import zstandard
 
     from tank.util import sha256
 
     original = b"<html><script>hidden code</script><body>Official   evidence</body></html>"
 
-    async def respond(request: pytest.FixtureRequest):
+    async def respond(request: httpx.Request):
         return httpx.Response(200, content=original, headers={"content-type": "text/html"})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
@@ -989,7 +989,6 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(
 async def test_real_expiry_to_update_delivery_never_reopens_call(
     service, monkeypatch: pytest.MonkeyPatch, freshness
 ) -> None:
-    import httpx
 
     from tank.analysis.decisions import DecisionEngine
     from tank.delivery import DeliveryService
@@ -1081,7 +1080,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(
     service.settings.telegram_ops_chat = "2"
     sent = []
 
-    async def telegram(request: pytest.FixtureRequest):
+    async def telegram(request: httpx.Request):
         sent.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
 
@@ -1141,7 +1140,6 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(
 async def test_material_update_is_queued_once_and_delivered_after_window(
     service, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import httpx
 
     from tank.analysis.decisions import DecisionEngine
     from tank.delivery import DeliveryService
@@ -1248,7 +1246,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(
     service.settings.telegram_ops_chat = "2"
     sent = []
 
-    async def telegram(request: pytest.FixtureRequest):
+    async def telegram(request: httpx.Request):
         sent.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
 
@@ -1959,13 +1957,12 @@ async def test_terminal_event_cannot_publish_new_card(service, lifecycle) -> Non
 
 
 async def test_credential_evidence_rejected_before_network_or_raw_persistence(service) -> None:
-    import httpx
 
     sentinel = "AUDIT_FAKE_QUERY_KEY"
     service.settings.etherscan_api_key = sentinel
     calls = []
 
-    async def respond(request: pytest.FixtureRequest):
+    async def respond(request: httpx.Request):
         calls.append(request)
         return httpx.Response(200, text="Public response")
 
@@ -2202,7 +2199,6 @@ async def test_real_event_tool_producers_satisfy_postgres_typed_contract(
 
 @pytest.mark.parametrize("media_type", ["text/html", "application/json"])
 async def test_search_and_fetched_evidence_keep_agent_certainty(service, media_type) -> None:
-    import httpx
 
     from tank.search import SearchHit, SearchResponse
     from tank.util import canonical_json
@@ -2246,7 +2242,7 @@ async def test_search_and_fetched_evidence_keep_agent_certainty(service, media_t
     assert event["certainty"] == x["certainty"] and event["certainty_reason"] == x["certainty_reason"]
     assert created["accepted_claims"][0]["verified"] is x["claims"][0]["verified"]
 
-    async def page(request: pytest.FixtureRequest):
+    async def page(request: httpx.Request):
         text = (
             canonical_json(
                 {"title": "SEC release", "href": "https://www.sec.gov/news/release", "body": quote}
@@ -2491,7 +2487,6 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
     service, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Use real publication gate, frozen snapshots and delivery; isolate card layout."""
-    import httpx
 
     import tank.analysis.cards as cards
     from tank.delivery import DeliveryService
@@ -2569,7 +2564,7 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
     service.settings.telegram_ops_chat = "2"
     sent = []
 
-    def telegram(request: pytest.FixtureRequest):
+    def telegram(request: httpx.Request):
         sent.append(request)
         return httpx.Response(200, json={"ok": True, "result": {"message_id": len(sent)}})
 
@@ -3420,7 +3415,6 @@ async def test_web_raw_canonical_file_exists_even_when_parser_fails(
 ) -> None:
     from pathlib import Path
 
-    import httpx
     import selectolax.parser
     import zstandard
 
@@ -3508,8 +3502,6 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
 ) -> None:
     import os
 
-    import httpx
-
     from tank.agents import SessionService
     from tank.util import new_id
 
@@ -3535,7 +3527,7 @@ async def test_native_prompt_snapshot_producer_reaches_versioned_event_tools(
     requested = []
     dispatched = []
 
-    def control(request: pytest.FixtureRequest):
+    def control(request: httpx.Request):
         requested.append((request.method, request.url.path))
         if request.url.host == "www.sec.gov":
             return httpx.Response(
@@ -3653,8 +3645,6 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
     import asyncio
     import json
 
-    import httpx
-
     from tank.agents import SessionService
     from tank.analysis.decisions import DecisionEngine
     from tank.analysis.truth import compute_market_truth
@@ -3685,7 +3675,7 @@ async def test_actual_fetch_http_error_returns_durably_then_card_or_native_faile
     replay_posts = []
     lose_reply = True
 
-    def control(request: pytest.FixtureRequest):
+    def control(request: httpx.Request):
         nonlocal lose_reply
         if request.url.host == "evidence.invalid":
             fetched.append(str(request.url))
@@ -4571,8 +4561,6 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
     import copy
     import json
 
-    import httpx
-
     from tank.delivery import DeliveryError, DeliveryService
     from tank.storage import PostgresRepository
     from tank.util import new_id, parse_time
@@ -4630,7 +4618,7 @@ async def test_live_update_survives_restart_and_delivers_at_boundary_with_retry(
     requests = []
     reject_next = [False]
 
-    def telegram(request: pytest.FixtureRequest):
+    def telegram(request: httpx.Request):
         requests.append(json.loads(request.content))
         if reject_next[0]:
             reject_next[0] = False

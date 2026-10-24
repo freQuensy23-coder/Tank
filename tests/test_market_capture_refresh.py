@@ -219,7 +219,7 @@ async def test_wait_data_watch_refreshes_truth_before_decision_and_replays_lost_
         sent = []
         native_messages = []
 
-        def transport(request: pytest.FixtureRequest):
+        def transport(request: httpx.Request):
             body = json.loads(request.content)
             if body["events"][0]["type"] == "user.message":
                 native_messages.append(json.loads(body["events"][0]["content"][0]["text"]))
@@ -331,7 +331,7 @@ async def test_cancelled_preflight_reuses_job_before_any_decision_ledger(
         }
         acks = []
 
-        def accepted(request: pytest.FixtureRequest):
+        def accepted(request: httpx.Request):
             acks.append(json.loads(request.content))
             return httpx.Response(200, json={})
 

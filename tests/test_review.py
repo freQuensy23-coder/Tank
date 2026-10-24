@@ -1,6 +1,7 @@
 from datetime import timedelta
 from pathlib import Path
 
+import httpx
 import pytest
 from review_typed_fixtures import put_boundary, put_flow
 
@@ -296,14 +297,13 @@ async def test_real_truth_decision_publication_bundle_to_completed_review(tmp_pa
     assert report["metrics"]["S3"]["status"] == "PASS"
     assert report["metrics"]["S3"]["denominator"] == 1
     assert report["metrics"]["S9"]["status"] == "PASS"
-    import httpx
 
     from tank.delivery import DeliveryService
 
     settings.telegram_token = "offline"
     settings.telegram_alerts_chat = "1"
 
-    async def telegram(request: pytest.FixtureRequest):
+    async def telegram(request: httpx.Request):
         return httpx.Response(200, json={"ok": True, "result": {"message_id": 123}})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(telegram)) as http:

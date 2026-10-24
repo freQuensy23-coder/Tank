@@ -61,7 +61,7 @@ async def test_real_twenty_second_total_deadline(
     body = Body([b"x"] * 40, delay=1)
     cancelled = asyncio.Event()
 
-    async def handler(request: pytest.FixtureRequest):
+    async def handler(request: httpx.Request):
         if kind == "delayed_headers":
             try:
                 await asyncio.sleep(40)
@@ -177,7 +177,7 @@ def test_existing_session_error_protocol_accepts_wall_timeout() -> None:
 async def test_exchange_page_is_fetched_by_tank_capture(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def handler(request: pytest.FixtureRequest) -> None:
+    def handler(request: httpx.Request) -> None:
         raise AssertionError("core reached an exchange host: " + request.url.host)
 
     service, client = await setup(tmp_path, handler, False, monkeypatch)
