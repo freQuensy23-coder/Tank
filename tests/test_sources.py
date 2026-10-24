@@ -99,6 +99,8 @@ def settings(tmp_path: Path, sources):
             if name == "sources"
             else {"x_accounts": [], "tokens": [], "entities": []}
         ),
+        ops_progress_enabled=False,
+        replay=False,
     )
 
 
