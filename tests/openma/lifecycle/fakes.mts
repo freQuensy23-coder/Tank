@@ -25,12 +25,12 @@ interface Disk {
   profile: Record<string, string>;
   running: boolean;
 }
-interface NativeRuntime {
+export interface NativeRuntime {
   runtimeHandle(): Handle;
   suspend(): Promise<void>;
   exec(command: string, env?: Record<string, string>): Promise<{ disk: Disk; env: Record<string, string> }>;
 }
-type Call = ["stop" | "fresh-get" | "create" | "remove-owned", string] | ["exec", string, string];
+export type Call = ["stop" | "fresh-get" | "create" | "remove-owned", string] | ["exec", string, string];
 interface FakeProvider extends Provider<NativeRuntime> {
   allocationIntent(scope: Scope): Promise<Handle>;
   resolveIntent(handle: Handle, scope: Scope): Promise<Handle | null>;
