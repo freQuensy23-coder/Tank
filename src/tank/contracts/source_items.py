@@ -834,7 +834,12 @@ class SourceItemDocument(RootModel[SourceItem]):
     """Closed source-item wire codec for the shared typed repository port."""
 
     model_config = ConfigDict(
-        strict=True, frozen=True, validate_default=True, allow_inf_nan=False, revalidate_instances="always"
+        strict=True,
+        frozen=True,
+        validate_default=True,
+        allow_inf_nan=False,
+        revalidate_instances="always",
+        hide_input_in_errors=True,
     )
 
     @model_validator(mode="before")

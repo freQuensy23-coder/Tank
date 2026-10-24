@@ -61,7 +61,7 @@ class SourceFeed(FeedParsingSpec):
         "instruments",
         "x",
     ]
-    interval_s: float = Field(gt=0, allow_inf_nan=False)
+    interval_s: int | float = Field(gt=0, allow_inf_nan=False)
     method: Literal["GET", "POST"] = "GET"
     author_organization: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)
@@ -108,7 +108,7 @@ class SourceDefinition(DomainModel):
     name: str = Field(min_length=1)
     author_organization: str | None = None
     mode: Literal["REST"]
-    interval_s: float = Field(gt=0, allow_inf_nan=False)
+    interval_s: int | float = Field(gt=0, allow_inf_nan=False)
     feeds: list[SourceFeed]
     priority: Literal["CORE", "SECONDARY"]
     terms_notes: str = Field(min_length=1)
