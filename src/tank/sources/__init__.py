@@ -10,18 +10,19 @@ import re
 import ssl
 from contextlib import suppress
 from copy import deepcopy
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
 import certifi
 import httpx
 
+import tank.sources.parsers as parsers
 from tank.ops_progress import item_progress
-from tank.sources import parsers
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.sources.rate_limits import shared_request_budgets
 from tank.sources.xsensor import XSensor
-from tank.util import iso, parse_time, sha256, utcnow
+from tank.util import TimeInput, iso, parse_time, sha256, utcnow
 
 
 def tls_context():
@@ -77,6 +78,12 @@ class SourceService:
         from tank.sources.polling import SourcePoller
 
         self.poller = SourcePoller(self)
+
+    def now(self) -> datetime:
+        return utcnow()
+
+    def stamp(self, value: TimeInput | None = None) -> str:
+        return iso(self.now() if value is None else value)
 
     def raw(self, payload, *, source_id, item_id, observed_at):
         """Store the raw payload of one captured item (02 §7.2); nothing else is stored raw."""

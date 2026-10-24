@@ -10,14 +10,14 @@ import logging
 import re
 from copy import deepcopy
 from dataclasses import asdict
-from datetime import timedelta
+from datetime import datetime, timedelta
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
+import tank.sources.parsers as parsers
 from tank.ops_entry_errors import report_entry_errors
-from tank.sources import parsers
-from tank.util import new_id, parse_time, sha256
+from tank.util import TimeInput, new_id, parse_time, sha256
 
 log = logging.getLogger(__name__)
 ARTICLE_KINDS = {"html", "rendered", "rendered_html", "html_diff"}
@@ -128,15 +128,11 @@ class SourcePoller:
         self.active_acquisitions = {}
         self.active_details = {}
 
-    def now(self):
-        from tank import sources
+    def now(self) -> datetime:
+        return self.service.now()
 
-        return sources.utcnow()
-
-    def stamp(self, value=None):
-        from tank import sources
-
-        return sources.iso(self.now() if value is None else value)
+    def stamp(self, value: TimeInput | None = None) -> str:
+        return self.service.stamp(value)
 
     def lock(self, mapping, key):
         return mapping.setdefault(key, asyncio.Lock())

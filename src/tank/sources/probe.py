@@ -5,7 +5,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from tank.sources import parsers
+import tank.sources.parsers as parsers
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
 from tank.time_precision import collection_clock
 from tank.util import iso, sha256
