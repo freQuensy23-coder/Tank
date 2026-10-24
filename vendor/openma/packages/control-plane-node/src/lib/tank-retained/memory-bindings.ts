@@ -5,7 +5,7 @@ import { readNativeLegacyConfiguration, type NativeLegacyConfiguration } from '.
 import { stableDigest, validateRuntimeIdentity } from './runtime-identity.js';
 import type { Candidate, Handle, Scope } from './retained-session.js';
 
-type MemoryResource = { type: string; memoryStoreId?: string; name?: string | null; access?: string };
+type MemoryResource = { type: string; memoryStoreId?: string; name?: string | null; access?: 'read_only' | 'read_write' | null };
 type MemoryBindingInput = {
   scope: Scope;
   candidate: Candidate | null;

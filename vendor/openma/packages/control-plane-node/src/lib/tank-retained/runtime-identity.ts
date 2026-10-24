@@ -57,10 +57,10 @@ export async function executableImageIdentity(root: string, architecture = proce
     for (const descriptor of index.manifests as Descriptor[]) {
       if (descriptor.platform && (descriptor.platform.os !== 'linux' || descriptor.platform.architecture !== arch
           || (descriptor.platform.variant && descriptor.platform.variant !== 'v8'))) continue;
-      const document = JSON.parse((await blob(descriptor)).toString('utf8'));
+      const document = JSON.parse(Buffer.from(await blob(descriptor)).toString('utf8'));
       if (document.manifests) { await visit(document, depth + 1); continue; }
       if (document.schemaVersion !== 2 || !document.config || !Array.isArray(document.layers)) throw Error('retained_image_manifest_invalid');
-      const config = JSON.parse((await blob(document.config)).toString('utf8'));
+      const config = JSON.parse(Buffer.from(await blob(document.config)).toString('utf8'));
       if (config.architecture !== arch || config.os !== 'linux') continue;
       if (!config.rootfs || !Array.isArray(config.rootfs.diff_ids) || config.rootfs.diff_ids.length !== document.layers.length
           || config.rootfs.diff_ids.some((hash: unknown) => !validDigest(hash))) throw Error('retained_image_config_invalid');

@@ -229,6 +229,7 @@ export function pinnedBoxLiteProvider(input: {
           }
           await Promise.allSettled([source?.suspend({ kind: 'filesystem' }), replacement?.suspend({ kind: 'filesystem' })]);
         }
+        if (error instanceof Error && error.message === 'retained_exec_timeout') throw Error('retained_upgrade_transfer_failed:guest_timeout');
         if (error instanceof Error && /retained_|lease|abort/i.test(error.message)) throw error;
         throw Error('retained_upgrade_transfer_failed:provider_io');
       } finally {

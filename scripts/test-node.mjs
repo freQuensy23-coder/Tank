@@ -6,6 +6,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const lanes = {
   "local-unit": [
     "deploy/openma-entrypoint.test.mjs",
+    "tests/openma/agents/tool-config.test.mjs",
     "tests/openma/lifecycle/retained-session.test.mjs",
     "tests/openma/lifecycle/boxlite-provider.test.mjs",
     "tests/openma/lifecycle/node-lifecycle.test.mjs",

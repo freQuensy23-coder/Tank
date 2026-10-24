@@ -14,7 +14,7 @@ import { stableDigest } from '../../../vendor/openma/packages/control-plane-node
 import { ManagedMemorySnapshotMaterializer, ManagedMemoryBlobWorkspaceSynchronizer, ManagedMemoryWorkspaceReconciler } from '../../../vendor/openma/packages/managed-agents-adapters-runtime/src/managed-memory-snapshot.ts';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
-async function fixture() {
+async function fixture(access = 'read_write') {
   const directory = await mkdtemp(join(tmpdir(), 'tank-memory-bindings-'));
   const memoryRoot = join(directory, 'memory'), keys = new Set();
   await mkdir(memoryRoot);
@@ -38,7 +38,7 @@ async function fixture() {
     },
   };
   const s = setup(), scope = { ...s.options.scope, workId: 'tank-retained-session-v1' };
-  const resources = [{ type: 'memory_store', id: 'resource-A', memoryStoreId: 'store-A', name: 'notes', access: 'read_write' }];
+  const resources = [{ type: 'memory_store', id: 'resource-A', memoryStoreId: 'store-A', name: 'notes', access }];
   const materialize = new ManagedMemorySnapshotMaterializer(memories, blobs);
   const mount = await materialize.materialize({ ...scope, memoryStoreId: 'store-A', access: 'read_write', runtimeGeneration: 'runtime-original' });
   const allocation = { image: 'image-A', volumes: [{ hostPath: join(memoryRoot, mount.mountStoreId), guestPath: '/mnt/memory/notes', readOnly: false }] };
@@ -101,6 +101,18 @@ test('fresh process recovers native writable-memory generation and image upgrade
     assert.equal((await synchronizer.synchronize(syncInput)).type, 'fence_lost');
     assert.equal(s.mutations.length, 1);
     await restarted.idle(async () => {});
+  } finally { await s.cleanup(); }
+});
+
+test('nullable memory access retains writable generation without normalizing the protected resource', async () => {
+  const s = await fixture(null);
+  try {
+    await s.blobs.put(`${s.mount.mountStoreId}/note.txt`, 'retained nullable-access edit');
+    assert.equal(await retainedMemoryGeneration(s.input), 'runtime-original');
+    assert.equal(s.input.resources[0].access, null);
+    assert.equal(await s.blobs.getText(`${s.mount.mountStoreId}/note.txt`), 'retained nullable-access edit');
+    s.input.resources[0].access = 'read_write';
+    await assert.rejects(retainedMemoryGeneration(s.input), /retained_configuration_changed:resources/);
   } finally { await s.cleanup(); }
 });
 

@@ -4,8 +4,8 @@ import type {
   BetaManagedAgentsURLMCPServerParams,
 } from "@anthropic-ai/sdk/resources/beta/agents/agents";
 import { z } from "zod";
+import type { OpenMaAgentToolInput } from "./agent-tools";
 
-type AgentToolInput = NonNullable<AgentCreateParams["tools"]>[number];
 type AgentMultiagentInput = Exclude<
   AgentCreateParams["multiagent"],
   null | undefined
@@ -130,7 +130,7 @@ export const agentToolInputSchema = z.discriminatedUnion("type", [
   agentToolsetInputSchema,
   mcpToolsetInputSchema,
   customToolSchema,
-]) satisfies z.ZodType<AgentToolInput>;
+]) satisfies z.ZodType<OpenMaAgentToolInput>;
 
 export const agentMcpServerInputSchema = z
   .discriminatedUnion("type", [

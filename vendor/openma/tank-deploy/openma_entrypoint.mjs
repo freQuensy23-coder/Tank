@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 
@@ -83,7 +83,7 @@ export async function main() {
   for (const [name, key] of Object.entries({ openrouter_api_key: 'TANK_SANDBOX_OPENROUTER_API_KEY', etherscan_api_key: 'TANK_SANDBOX_ETHERSCAN_API_KEY' })) process.env[key] = secret(name);
   process.env.TANK_SANDBOX_JEV_PROVIDER = 'openrouter';
   for (const variable of SECRETS) delete process.env[variable];
-  const child = spawn('pnpm', ['start'], { stdio: 'inherit', env: process.env });
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../apps/main-node/node_modules/tsx/dist/cli.mjs', import.meta.url)), 'src/index.ts'], { stdio: 'inherit', env: process.env });
   for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => child.kill(signal));
   child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));
 }

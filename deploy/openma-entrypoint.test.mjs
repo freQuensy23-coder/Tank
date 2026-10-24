@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 let fixtureNumber = 0;
 const initialEnv = { ...process.env };
@@ -128,6 +129,7 @@ async function entrypointFixture(t, options = {}) {
           command,
           args,
           stdio: spawnOptions.stdio,
+          cwd: spawnOptions.cwd,
           env: { ...spawnOptions.env },
         });
         return child;
@@ -142,7 +144,8 @@ async function entrypointFixture(t, options = {}) {
   return { main, reads, resolutions, spawns, kills, exits, child, secrets };
 }
 
-test("main selects service and sandbox credentials and starts the child", async (t) => {
+test("main starts the installed application without package-manager installs and preserves credentials and cwd", async (t) => {
+  const cwd = process.cwd();
   const f = await entrypointFixture(t, {
     env: {
       TANK_SANDBOX_DATABASE_NAME: "tank_check",
@@ -159,8 +162,14 @@ test("main selects service and sandbox credentials and starts the child", async 
   const child = f.spawns[0];
   assert.deepEqual(
     { command: child.command, args: child.args, stdio: child.stdio },
-    { command: "pnpm", args: ["start"], stdio: "inherit" },
+    {
+      command: process.execPath,
+      args: [fileURLToPath(new URL("../vendor/openma/apps/main-node/node_modules/tsx/dist/cli.mjs", import.meta.url)), "src/index.ts"],
+      stdio: "inherit",
+    },
   );
+  assert.equal(child.cwd, undefined);
+  assert.equal(process.cwd(), cwd);
   assert.equal(
     child.env.DATABASE_URL,
     "postgresql://oma:synthetic%20oma%20password@postgres:5432/oma",

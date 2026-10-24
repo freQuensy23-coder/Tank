@@ -359,6 +359,7 @@ export interface SqlSessionExecutionStoreOptions {
 export class SqlSessionExecutionStore
   implements SessionExecutionStorePort {
   #nextSweepAt = Number.NEGATIVE_INFINITY;
+  #imageRecoverySweepCursor: { workspaceId: string; executionId: string } | null = null;
 
   constructor(private readonly sql: SqlClient, private readonly options: SqlSessionExecutionStoreOptions = {}) { }
 
@@ -1140,18 +1141,38 @@ export class SqlSessionExecutionStore
           "state IN ('queued', 'running') AND deadline_at_ms <= ?",
           [now],
         );
-        const recoveries = await this.sql.prepare(`SELECT ${columns()} FROM managed_session_executions
-          WHERE state = 'running' AND lease_expires_at_ms <= ? AND deadline_at_ms > ? AND interrupt_requested_at_ms IS NULL
-            AND EXISTS (SELECT 1 FROM managed_session_image_recoveries AS recovery
-              WHERE recovery.workspace_id = managed_session_executions.workspace_id AND recovery.execution_id = managed_session_executions.id)
-          LIMIT 100`).bind(now, now).all<ExecutionRow>();
-        for (const row of recoveries.results ?? []) {
-          await this.retryImagePreflight({ fence: toFence(row) }, now, true);
+        for (let batch = 0; batch < 20; batch++) {
+          const cursor = this.#imageRecoverySweepCursor;
+          const recoveries = await this.sql.prepare(`SELECT ${columns()} FROM managed_session_executions
+            WHERE state = 'running' AND lease_expires_at_ms <= ? AND deadline_at_ms > ? AND interrupt_requested_at_ms IS NULL
+              AND EXISTS (SELECT 1 FROM managed_session_image_recoveries AS recovery
+                WHERE recovery.workspace_id = managed_session_executions.workspace_id AND recovery.execution_id = managed_session_executions.id)
+              ${cursor ? 'AND (workspace_id > ? OR (workspace_id = ? AND id > ?))' : ''}
+            ORDER BY workspace_id, id LIMIT 100`).bind(now, now,
+              ...(cursor ? [cursor.workspaceId, cursor.workspaceId, cursor.executionId] : [])).all<ExecutionRow>();
+          const rows = recoveries.results ?? [];
+          for (const row of rows) {
+            const recovery = await this.retryImagePreflight({ fence: toFence(row) }, now, true);
+            if (recovery === null) await this.terminalizeMatching(now, 'execution attempt limit exhausted',
+              "workspace_id = ? AND id = ? AND revision = ? AND state = 'running' AND lease_expires_at_ms <= ? AND attempt_count >= max_attempts",
+              [row.workspace_id, row.id, safeInteger(row.revision, 'execution revision'), now]);
+            this.#imageRecoverySweepCursor = { workspaceId: row.workspace_id, executionId: row.id };
+          }
+          if (rows.length < 100) {
+            this.#imageRecoverySweepCursor = null;
+            break;
+          }
         }
         await this.terminalizeMatching(
           now,
           "execution attempt limit exhausted",
-          "state = 'running' AND lease_expires_at_ms <= ? AND attempt_count >= max_attempts",
+          `state = 'running' AND lease_expires_at_ms <= ? AND attempt_count >= max_attempts
+            AND (interrupt_requested_at_ms IS NOT NULL OR NOT EXISTS (
+              SELECT 1 FROM managed_session_image_recoveries AS recovery
+              WHERE recovery.workspace_id = managed_session_executions.workspace_id AND recovery.execution_id = managed_session_executions.id)
+              OR EXISTS (SELECT 1 FROM managed_sessions AS session
+                WHERE session.workspace_id = managed_session_executions.workspace_id AND session.id = managed_session_executions.session_id
+                  AND session.archived_at IS NOT NULL))`,
           [now],
         );
       });
