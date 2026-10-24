@@ -72,7 +72,7 @@ async def test_a_negative_priority_request_takes_a_full_budget_first() -> None:
     ticker = asyncio.create_task(request("ticker", -1))
     await asyncio.wait_for(asyncio.gather(ticker, *repairs), 5)
     assert order[0] == "ticker" and sorted(order[1:]) == ["repair0", "repair1", "repair2"]
-    assert budgets.urgent[("host", 0.2, 1.0)] == 0
+    assert list(budgets.urgent.values()) == [0]
 
 
 class ControlledClock:

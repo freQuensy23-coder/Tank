@@ -11,6 +11,7 @@ import zstandard
 import tank.event_tools as CANDIDATE
 from tank.settings import Settings
 from tank.storage import MemoryRepository
+from tank.util import iso, sha256
 
 CLIENT = httpx.AsyncClient
 
@@ -200,7 +201,15 @@ async def test_exchange_page_is_fetched_by_tank_capture(
         assert row["kind"] == "HTTP_FETCH" and row["request"]["url"] == url
         row.update(
             status="COMPLETE",
-            result={"status_code": 200, "content_type": "text/html", "body": "<p>listed</p>"},
+            result={
+                "status_code": 200,
+                "content_type": "text/html",
+                "body": "<p>listed</p>",
+                "sha256": sha256(b"<p>listed</p>"),
+                "fetched_at": iso(),
+                "bytes": len(b"<p>listed</p>"),
+                "source_id": row["request"]["source_id"],
+            },
         )
         await service.repo.put("mkt.capture_requests", row["request_id"], row)
 
@@ -214,4 +223,6 @@ async def test_exchange_page_is_fetched_by_tank_capture(
             if not worker.done():
                 worker.cancel()
             await asyncio.gather(worker, return_exceptions=True)
-    assert "listed" in str(item)
+    assert "listed" in item["text"]
+    assert item["raw_sha256"] == sha256(b"<p>listed</p>")
+    assert zstandard.ZstdDecompressor().decompress(Path(item["raw_ref"]).read_bytes()) == b"<p>listed</p>"
