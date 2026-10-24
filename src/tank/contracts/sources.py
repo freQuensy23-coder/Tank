@@ -7,13 +7,14 @@ from urllib.parse import urlsplit
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
+from tank.time_precision import propagate_timestamp
 
 type SourceAuthorRole = Literal["ORGANIZATION", "FOUNDER_C_LEVEL", "PERSON", "OTHER"]
 
 
 class SourceLimits(DomainModel):
     rate_per_min: int | None = Field(gt=0)
-    budget_fraction: float = Field(gt=0, le=1, allow_inf_nan=False)
+    budget_fraction: int | float = Field(gt=0, le=1, allow_inf_nan=False)
     unknown_limit_policy: str = Field(min_length=1)
     documented_rate_per_s: int | None = Field(default=None, gt=0)
     shared_host: str | None = None
@@ -25,6 +26,19 @@ class EndpointVerification(DomainModel):
     status: str
     basis: str = Field(min_length=1)
     baseline_discrepancy: str | None = None
+    checked_at_prec: str | None = None
+    checked_at_precision: str | None = None
+    checked_at_prec_reason: str | None = None
+    checked_at_precision_reason: str | None = None
+    checked_at_reason: str | None = None
+    checked_at_bucket_size_s: int | float | str | None = None
+    checked_at_bucket_anchor: Literal["START", "END", "UNSPECIFIED"] | None = None
+
+    @model_validator(mode="after")
+    def declared_clock_facets(self) -> Self:
+        if any(name.startswith("checked_at_") for name in self.model_fields_set):
+            propagate_timestamp(self.model_dump(mode="json", exclude_unset=True), "checked_at")
+        return self
 
 
 class FeedParsingSpec(DomainModel):
@@ -43,8 +57,8 @@ class HttpFetchPlan(DomainModel):
     body: dict[str, JsonValue] | None = None
     form: dict[str, str] | None = None
     source_limits: SourceLimits | None = None
-    request_weight: float = Field(default=1, gt=0, allow_inf_nan=False)
-    requests_per_minute: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    request_weight: int | float = Field(default=1, gt=0, allow_inf_nan=False)
+    requests_per_minute: int | float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
 
 class SourceFeed(FeedParsingSpec):
@@ -68,8 +82,8 @@ class SourceFeed(FeedParsingSpec):
     body: dict[str, JsonValue] | None = None
     form: dict[str, str] | None = None
     official_index_url: str | None = None
-    request_weight: float = Field(default=1, gt=0, allow_inf_nan=False)
-    requests_per_minute: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    request_weight: int | float = Field(default=1, gt=0, allow_inf_nan=False)
+    requests_per_minute: int | float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
     def request_plan(self, limits: SourceLimits) -> HttpFetchPlan:
         return HttpFetchPlan(
@@ -186,7 +200,7 @@ class SourceProviderBudget(DomainModel):
     documented_requests_per_s: int | None = Field(default=None, gt=0)
     documented_requests_per_day: int | None = Field(default=None, gt=0)
     documented_weight_per_min: int | None = Field(default=None, gt=0)
-    tank_max_requests_per_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    tank_max_requests_per_s: int | float | None = Field(default=None, gt=0, allow_inf_nan=False)
     tank_max_requests_per_day: int | None = Field(default=None, gt=0)
     tank_max_weight_per_min: int | None = Field(default=None, gt=0)
     documented_requests: int | None = Field(default=None, gt=0)
