@@ -7,8 +7,10 @@ import pytest
 import pytest_asyncio
 from deployment_postgres_helpers import deployment_repository
 
-from tank.storage import ImmutableRecordError, MemoryRepository, PostgresRepository
-from tank.util import iso, new_id, parse_time, utcnow
+from tank.contracts.job_repository import JobRepository
+from tank.contracts.jobs import InvalidJobClaim
+from tank.storage import ImmutableRecordError, MemoryRepository, PostgresRepository, StorageBackend
+from tank.util import iso, new_id, parse_time, sha256, utcnow
 
 
 def complete_fixture_record(collection, record):
@@ -984,3 +986,139 @@ async def test_memory_cancelled_reader_keeps_writer_exclusive_and_releases_waite
             if not task.done():
                 task.cancel()
         await asyncio.gather(owner, *readers, return_exceptions=True)
+
+
+@pytest.mark.parametrize("grade", ["MAJOR", "STRUCTURAL", "STRUCTURAL_SHOCK", "LOW"])
+async def test_retention_policy_preserves_exact_windows_days_and_bundle_references(
+    repo: StorageBackend, grade: str
+) -> None:
+    anchor = (utcnow() - timedelta(days=120)).replace(hour=12, minute=0, second=0, microsecond=0)
+    known = anchor + timedelta(hours=6)
+    event_id, ems_id = new_id("evt"), new_id("ems")
+    await repo.put(
+        "evt.events",
+        event_id,
+        {
+            "event_id": event_id,
+            "event_time": iso(anchor),
+            "public_at": iso(anchor),
+            "known_to_us_at": iso(known),
+            "tokens_mentioned": ["retained:T"],
+        },
+    )
+    await repo.put(
+        "evt.ems_assessments",
+        ems_id,
+        {"ems_id": ems_id, "event_id": event_id, "class": grade},
+    )
+    start, end = anchor - timedelta(hours=24), known + timedelta(hours=72)
+    protected = grade != "LOW"
+    windows = [window for window in await repo.preserved_market_windows() if window[0] == "retained:T"]
+    assert windows == ([("retained:T", start, end)] if protected else [])
+    start_day = start.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_day = end.replace(hour=0, minute=0, second=0, microsecond=0)
+    timestamps = (
+        start_day - timedelta(microseconds=1),
+        start_day,
+        end_day + timedelta(days=1) - timedelta(microseconds=1),
+        end_day + timedelta(days=1),
+    )
+    keys = [new_id("tier") for _ in timestamps]
+    for key, at in zip(keys, timestamps, strict=True):
+        await repo.put(
+            "ops.capture_tier_transitions",
+            key,
+            {
+                "transition_id": key,
+                "token_id": "retained:T",
+                "effective_at": iso(at),
+                "effective_at_prec": "COLLECTION_ONLY",
+                "reason": "retention boundary fixture",
+                "config_version": "test",
+                "code_version": "test",
+                "tier": "BASE",
+            },
+        )
+    bundle_id = sha256(event_id)
+    bundle = {
+        "bundle_id": bundle_id,
+        "cutoff": iso(anchor),
+        "cutoff_prec": "EXACT",
+        "event_id": event_id,
+        "capture_transition_refs": keys,
+    }
+    await repo.put("out.evidence_bundles", bundle_id, bundle)
+    counts = await repo.prune_market(utcnow() - timedelta(days=90))
+    assert counts["ops.capture_tier_transitions"] == (2 if protected else 4)
+    assert await repo.get("ops.capture_tier_transitions", keys[0]) is None
+    assert await repo.get("ops.capture_tier_transitions", keys[3]) is None
+    assert (await repo.get("ops.capture_tier_transitions", keys[1]) is not None) is protected
+    assert (await repo.get("ops.capture_tier_transitions", keys[2]) is not None) is protected
+    assert await repo.get("out.evidence_bundles", bundle_id) == bundle
+
+
+async def test_legacy_wire_job_lifecycle_does_not_fabricate_provenance(repo: StorageBackend) -> None:
+    job_id = new_id("job")
+    idem_key = new_id("legacy")
+    await repo.put(
+        "ops.jobs",
+        job_id,
+        {
+            "job_id": job_id,
+            "type": "LEGACY",
+            "priority": 1,
+            "idem_key": idem_key,
+            "payload": {},
+            "status": "QUEUED",
+            "attempts": 0,
+            "max_attempts": 3,
+            "run_after": iso(utcnow() - timedelta(seconds=1)),
+            "expires_at": None,
+        },
+    )
+    snapshot = await repo.get("ops.jobs", job_id)
+    assert snapshot is not None
+    assert "run_after_prec" not in snapshot
+    assert await repo.enqueue("LEGACY", {"ignored": True}, idem_key) == snapshot
+    claimed = await repo.claim_job()
+    assert claimed is not None
+    assert claimed["job_id"] == job_id
+    assert "run_after_prec" not in claimed
+    await repo.fail_job(job_id, "retry", retry_after=0)
+    retried = await repo.get("ops.jobs", job_id)
+    assert retried is not None
+    assert retried["status"] == "QUEUED"
+    assert retried["run_after_prec"] == "COLLECTION_ONLY"
+
+
+async def test_invalid_claim_rejection_is_atomic_and_sparse_on_real_backend(repo: StorageBackend) -> None:
+    job_id, idem_key = new_id("job"), new_id("invalid")
+    await repo.put(
+        "ops.jobs",
+        job_id,
+        {
+            "job_id": job_id,
+            "type": "LEGACY",
+            "priority": 1,
+            "idem_key": idem_key,
+            "payload": {"retained": "wire"},
+            "status": "QUEUED",
+            "attempts": 0,
+            "max_attempts": 3,
+            "run_after": iso(utcnow() - timedelta(seconds=1)),
+            "expires_at": None,
+        },
+    )
+    jobs = JobRepository(repo)
+    invalid = await jobs.claim()
+    assert isinstance(invalid, InvalidJobClaim)
+    assert await jobs.reject_invalid(invalid)
+    assert not await jobs.reject_invalid(invalid)
+    stored = await repo.get("ops.jobs", job_id)
+    assert stored is not None
+    assert stored["payload"] == {"retained": "wire"}
+    assert stored["status"] == "FAILED"
+    assert stored["last_error"] == "INVALID_QUEUE_ENVELOPE"
+    assert stored["finished_at_prec"] == "COLLECTION_ONLY"
+    assert "run_after_prec" not in stored
+    assert await jobs.claim() is None

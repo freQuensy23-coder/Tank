@@ -92,7 +92,7 @@ async def both():
 
     async def put(collection, records) -> None:
         await memory.put_market_batch(collection, records)
-        prepared = ms._prepare_records(collection, records, None, MARKET_COLUMNS[collection], False)
+        prepared = ms._prepare_records(collection, records, None)
         body = "\n".join(json.dumps(ch_row(collection, r, k)) for k, r in prepared.items())
         response = await ch.http.post(
             ch.base,
@@ -127,7 +127,7 @@ async def test_routed_reads_match_memory(both) -> None:
         assert a == b, (a, b)
         return a
 
-    key = ms._prepare_records("mkt.klines_1m", [klines[0]], None, MARKET_COLUMNS["mkt.klines_1m"], False)
+    key = ms._prepare_records("mkt.klines_1m", [klines[0]], None)
     (storage_key,) = key
     assert (await same(lambda r: r.get("mkt.klines_1m", storage_key)))["c"] == "100"
     page = await same(

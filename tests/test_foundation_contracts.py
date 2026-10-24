@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -8,10 +8,12 @@ from pydantic import BaseModel, ValidationError
 from tank.clickhouse_market import ClickHouse
 from tank.contracts import DomainModel
 from tank.contracts.job_repository import JobRepository
+from tank.contracts.jobs import InvalidJobClaim, JobEnvelope
 from tank.contracts.repository import Collection, Repository
 from tank.contracts.score import ScoreAssessment, ScoreAssessmentView, ScoreDimension, ScoreDimensions
 from tank.market_codec import _prepare_records, encode, merge_point
-from tank.market_schema import MARKET_COLUMNS
+from tank.market_storage import market_range_by_instrument, market_rows_recorded_since
+from tank.retention import BenchmarkToken, RetentionEvidence, benchmark_token_ids, protected_windows
 from tank.settings import Settings
 from tank.storage import ImmutableRecordError, MemoryRepository
 from tank.time_precision import Timestamp, propagate_timestamp
@@ -98,13 +100,7 @@ def test_market_codec_rejects_coerced_scalars(field: str, value: str | bool) -> 
 
 def test_market_codec_requires_real_identity_instead_of_empty_key_parts() -> None:
     with pytest.raises(ValueError, match="Missing typed market identity"):
-        _prepare_records(
-            "mkt.oi_obs",
-            [{"instrument_id": "btc", "ts": "2026-10-24T00:00:00Z"}],
-            None,
-            MARKET_COLUMNS["mkt.oi_obs"],
-            False,
-        )
+        _prepare_records("mkt.oi_obs", [{"instrument_id": "btc", "ts": "2026-10-24T00:00:00Z"}], None)
 
 
 def test_market_codec_does_not_treat_invalid_source_metadata_as_absent() -> None:
@@ -168,7 +164,7 @@ async def test_typed_job_lifecycle_preserves_absent_metadata_and_real_clocks() -
     assert queued.status == "QUEUED"
     assert queued.finished_at is None
     claimed = await jobs.claim()
-    assert claimed is not None
+    assert isinstance(claimed, JobEnvelope)
     assert claimed.status == "RUNNING"
     await jobs.put(claimed.model_copy(update={"slot_admitted": True}))
     stored = await store.get("ops.jobs", claimed.job_id)
@@ -233,3 +229,156 @@ def test_json_codec_errors_omit_raw_invalid_document() -> None:
         decode_json('{"token":"' + secret + '", broken}')
     assert secret not in str(failure.value)
     assert "Invalid JSON" in str(failure.value)
+
+
+async def test_memory_market_reads_return_real_persisted_keys() -> None:
+    store = MemoryRepository()
+    row = {
+        "instrument_id": "A",
+        "open_time": "2026-10-24T00:00:00Z",
+        "open_time_prec": "EXACT",
+        "recorded_at": "2026-10-24T00:01:00Z",
+        "recorded_at_prec": "COLLECTION_ONLY",
+        "o": "1",
+        "h": "1",
+        "l": "1",
+        "c": "1",
+        "volume_native": "1",
+        "interval_s": 60,
+        "complete": True,
+    }
+    await store.put_market_batch("mkt.klines_1m", [row], keys=["physical-key"])
+    keys: dict[str, list[str]] = {}
+    result = await market_range_by_instrument(
+        store,
+        "mkt.klines_1m",
+        "open_time",
+        ["A"],
+        "2026-10-24T00:00:00Z",
+        "2026-10-24T01:00:00Z",
+        keys_out=keys,
+    )
+    assert len(result["A"]) == 1
+    assert keys == {"A": ["physical-key"]}
+    changed = await market_rows_recorded_since(
+        store,
+        "mkt.klines_1m",
+        "open_time",
+        ["A"],
+        "2026-10-24T00:00:00Z",
+        "2026-10-24T00:00:00Z",
+        "2026-10-24T01:00:00Z",
+    )
+    assert [entry[2] for entry in changed] == ["physical-key"]
+
+
+def test_retention_policy_uses_exact_declared_utc_anchor_window() -> None:
+    evidence = RetentionEvidence(
+        event_id="major",
+        anchors=(
+            datetime(2026, 10, 20, 12, tzinfo=timezone(timedelta(hours=2))),
+            datetime(2026, 10, 21, 18, tzinfo=UTC),
+        ),
+        token_ids=frozenset({"token:T"}),
+    )
+    unknown = RetentionEvidence(event_id="unknown", anchors=(), token_ids=frozenset({"unknown:T"}))
+    windows = protected_windows([evidence, unknown])
+    assert len(windows) == 1
+    assert windows[0].event_id == "major"
+    assert windows[0].token_id == "token:T"
+    assert windows[0].start == datetime(2026, 10, 19, 10, tzinfo=UTC)
+    assert windows[0].end == datetime(2026, 10, 24, 18, tzinfo=UTC)
+
+
+def test_retention_benchmarks_include_registered_ids_and_retained_aliases() -> None:
+    selected = benchmark_token_ids(
+        [
+            BenchmarkToken(token_id="registered:BTC", symbol="BTC"),
+            BenchmarkToken(token_id="registered:ETH", symbol="ETH"),
+            BenchmarkToken(token_id="unrelated:T", symbol="T"),
+        ]
+    )
+    assert selected == frozenset(
+        {"bitcoin:BTC", "ethereum:ETH", "BTC", "ETH", "registered:BTC", "registered:ETH"}
+    )
+
+
+async def test_invalid_claim_rejection_preserves_unknown_provenance_and_is_once_only() -> None:
+    store = MemoryRepository()
+    await store.put(
+        "ops.jobs",
+        "legacy",
+        {
+            "job_id": "legacy",
+            "type": "TEST",
+            "status": "QUEUED",
+            "priority": 1,
+            "idem_key": "legacy",
+            "payload": {},
+            "attempts": 0,
+            "max_attempts": 3,
+            "run_after": "2026-10-24T00:00:00Z",
+            "expires_at": None,
+            "fake-private-field-key": "fake-private-value",
+        },
+    )
+    jobs = JobRepository(store)
+    invalid = await jobs.claim()
+    assert isinstance(invalid, InvalidJobClaim)
+    assert "fake-private-field-key" not in invalid.model_dump_json()
+    assert "fake-private-value" not in invalid.model_dump_json()
+    assert "extra_field" in invalid.error_fields
+    assert await jobs.reject_invalid(invalid)
+    assert not await jobs.reject_invalid(invalid)
+    stored = await store.get("ops.jobs", "legacy")
+    assert stored is not None
+    assert stored["status"] == "FAILED"
+    assert stored["last_error"] == "INVALID_QUEUE_ENVELOPE"
+    assert stored["finished_at_prec"] == "COLLECTION_ONLY"
+    assert "run_after_prec" not in stored
+    assert stored["fake-private-field-key"] == "fake-private-value"
+    assert await jobs.claim() is None
+
+
+async def test_invalid_claim_rejection_refuses_a_changed_revision() -> None:
+    store = MemoryRepository()
+    await store.put(
+        "ops.jobs",
+        "legacy",
+        {
+            "job_id": "legacy",
+            "type": "TEST",
+            "status": "QUEUED",
+            "priority": 1,
+            "idem_key": "legacy",
+            "payload": {},
+            "attempts": 0,
+            "max_attempts": 3,
+            "run_after": "2026-10-24T00:00:00Z",
+            "expires_at": None,
+        },
+    )
+    jobs = JobRepository(store)
+    invalid = await jobs.claim()
+    assert isinstance(invalid, InvalidJobClaim)
+    current = await store.get("ops.jobs", "legacy")
+    assert current is not None
+    current["payload"] = {"operator_revision": True}
+    await store.put("ops.jobs", "legacy", current)
+    assert not await jobs.reject_invalid(invalid)
+    assert await store.get("ops.jobs", "legacy") == current
+
+
+async def test_raw_document_store_rejects_nonfinite_json_before_write() -> None:
+    store = MemoryRepository()
+    with pytest.raises(ValueError, match="finite"):
+        await store.put("qa.fixtures", "invalid", {"value": float("nan")})
+    assert await store.get("qa.fixtures", "invalid") is None
+
+
+def test_timestamp_validation_reason_does_not_echo_raw_source_value() -> None:
+    secret = "fake-unconfigured-timestamp-secret"
+    with pytest.raises(ValueError) as failure:
+        Timestamp(secret, "EXACT")
+    assert secret not in str(failure.value)
+    assert "Invalid ISO timestamp" in str(failure.value)

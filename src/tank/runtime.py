@@ -98,8 +98,8 @@ class Runtime:
         self._bootstrap, self._validate = bootstrap, validate
         self.active_jobs: set[str] = set()
         self.handlers = {
-            "FILTER_ITEM": pipeline.filter_item,
-            "ROUTE_ITEM": pipeline.route_item,
+            "FILTER_ITEM": pipeline.filter_item_wire,
+            "ROUTE_ITEM": pipeline.route_item_wire,
             "AGENT_MESSAGE": sessions.send_message,
             "ESCALATE_TOKENS": self.escalate_wire,
             "RUN_MARKET_TRUTH": self.assess_wire,
@@ -137,11 +137,11 @@ class Runtime:
             raise ValueError("Market truth event does not exist")
         anchor = event_anchor(event)
         prerequisite = await self.market.capture_readiness(
-            payload.event_id, payload.token_id, anchor=anchor.value
+            payload.event_id, payload.token_id, anchor=anchor.timestamp
         )
-        if prerequisite["status"] not in {"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"}:
+        if prerequisite.status not in {"PENDING", "RUNNING", "COMPLETE", "PARTIAL", "FAILED"}:
             raise RuntimeError("Required durable event capture was not scheduled")
-        if prerequisite["status"] in {"PENDING", "RUNNING"}:
+        if prerequisite.status in {"PENDING", "RUNNING"}:
             await self.market.wait_capture(payload.event_id, payload.token_id, timeout_s=CAPTURE_WAIT_S)
         cutoff = (
             Timestamp(
@@ -279,7 +279,7 @@ class Runtime:
                 self.active_jobs.discard(job["job_id"])
 
     async def terminal_delivery_failure(self, job, reason):
-        await job_failure_progress(self.repo, getattr(self, "settings", None), job, reason)
+        await job_failure_progress(self.repo, self.settings, job, reason)
         if job["type"] == "DELIVER":
             await self.delivery.terminal_failure(job["payload"], reason, job.get("attempts"))
         if job["type"] == "AGENT_MESSAGE" and job["payload"].get("kind") == "USER_QUESTION":
@@ -306,7 +306,7 @@ class Runtime:
                 async for job in self.repo.iter_all("ops.jobs", filters={"type": kind, "status": status}):
                     if not job.get("ops_progress_recorded_at"):
                         await job_failure_progress(
-                            self.repo, getattr(self, "settings", None), job, job.get("last_error") or status
+                            self.repo, self.settings, job, job.get("last_error") or status
                         )
                         await self.repo.put(
                             "ops.jobs",
@@ -404,7 +404,8 @@ class Runtime:
                         end=now + timedelta(microseconds=1),
                         filters={"status": "QUEUED"},
                     ):
-                        if not job.get("expires_at") or parse_time(job["expires_at"]) > now:
+                        drain_state = JobRetryState.from_document(job)
+                        if drain_state.expires_at is None or parse_time(drain_state.expires_at) > now:
                             due = True
                             break
                     busy = False
@@ -439,9 +440,17 @@ class Runtime:
                 for job_id in interrupted:
                     try:
                         async with self.repo.lock("job:" + job_id):
-                            job = await self.repo.get("ops.jobs", job_id)
-                            state = JobRetryState.from_document(job) if job is not None else None
-                            if job is not None and state is not None and state.status == "RUNNING":
+                            interrupted_job = await self.repo.get("ops.jobs", job_id)
+                            state = (
+                                JobRetryState.from_document(interrupted_job)
+                                if interrupted_job is not None
+                                else None
+                            )
+                            if (
+                                interrupted_job is not None
+                                and state is not None
+                                and state.status == "RUNNING"
+                            ):
                                 if state.attempts == 0:
                                     raise RuntimeError("Running job has no consumed attempt to refund")
                                 interrupted_at = collection_clock(utcnow())
@@ -449,7 +458,7 @@ class Runtime:
                                     "ops.jobs",
                                     job_id,
                                     {
-                                        **job,
+                                        **interrupted_job,
                                         "status": "QUEUED",
                                         "attempts": state.attempts - 1,
                                         **interrupted_at.fields("run_after"),

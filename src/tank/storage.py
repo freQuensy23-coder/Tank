@@ -8,7 +8,7 @@ import random
 import time
 import weakref
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Awaitable, Mapping
+from collections.abc import AsyncIterator, Awaitable, Collection, Iterable, Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from contextvars import ContextVar
 from datetime import datetime, timedelta
@@ -16,18 +16,20 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Literal, Protocol, Self
 
-from psycopg import AsyncConnection
+from psycopg import AsyncConnection, sql
 from psycopg.abc import PQGen
 from psycopg_pool import AsyncConnectionPool
 from pydantic import JsonValue
 
 from tank.clickhouse_market import ClickHouse
 from tank.contracts import DomainModel
-from tank.contracts.jobs import JobEnvelope, JobRetryState
+from tank.contracts.jobs import JobClaimState, JobEnvelope, JobIdentity, JobRetryState
+from tank.contracts.json import JsonDocument
 from tank.market_codec import StoredRow, StoredValue
 from tank.market_codec import decode as decode_market
-from tank.market_schema import MARKET_COLUMNS
+from tank.market_schema import MARKET_ALIASES, MARKET_COLUMNS
 from tank.market_storage import (
+    SQLParameter,
     iter_market_projection,
     latest_market_records,
     market_dependency_head,
@@ -40,6 +42,14 @@ from tank.models import (
     TABLE_COLUMNS,
     TIMESTAMP_PRECISION_FIELDS,
     Record,
+)
+from tank.retention import (
+    BENCHMARK_SYMBOLS,
+    PROTECTED_EMS_CLASSES,
+    BenchmarkToken,
+    RetentionEvidence,
+    benchmark_token_ids,
+    protected_windows,
 )
 from tank.time_precision import Timestamp, collection_clock, offset_schedule, propagate_timestamp
 from tank.util import JsonInput, TimeInput, iso, jsonable, new_id, parse_time, utcnow
@@ -77,88 +87,167 @@ class ImmutableRecordError(ValueError):
     pass
 
 
+type Records = list[Record]
+type RangePage = list[tuple[Record, tuple[str, str]]]
+type RetainedWindow = tuple[str, datetime, datetime]
+type RetainedWindows = list[RetainedWindow]
+type HeadMap = dict[str, Record | None]
+type MarketPruneCounts = dict[str, int | dict[str, int]]
+type Predicate = tuple[list[sql.Composable], list[SQLParameter]]
+type StorageBackend = MemoryRepository | PostgresRepository
+
+
 class Repository(Protocol):
-    async def open(self): ...
-    async def close(self): ...
-    async def migrate(self): ...
-    async def put(self, collection: str, key: str, record: Record, *, immutable: bool = False) -> Record: ...
-    async def put_market_batch(self, collection: str, records, *, keys=None) -> list[Record]: ...
+    async def open(self) -> Self: ...
+    async def close(self) -> None: ...
+    async def migrate(self) -> None: ...
+    async def put(
+        self, collection: str, key: str, record: Mapping[str, JsonInput], *, immutable: bool = False
+    ) -> Record: ...
+    async def put_market_batch(
+        self,
+        collection: str,
+        records: Iterable[Mapping[str, JsonInput]],
+        *,
+        keys: Iterable[str] | None = None,
+    ) -> Records: ...
     async def latest_market_records(
         self,
         collection: str,
         *,
-        group_by=("instrument_id",),
-        time_field="ts",
-        filters=None,
-        cutoff=None,
-        assembled_at=None,
-        start=None,
-    ) -> list[Record]: ...
+        group_by: Sequence[str] = ("instrument_id",),
+        time_field: str = "ts",
+        filters: Record | None = None,
+        cutoff: TimeInput | None = None,
+        assembled_at: TimeInput | None = None,
+        start: TimeInput | None = None,
+        instrument_ids: Collection[str] | None = None,
+    ) -> Records: ...
     async def market_dependency_head(
         self,
-        collection,
-        semantic_field,
-        cutoff,
+        collection: str,
+        semantic_field: str,
+        cutoff: TimeInput,
         *,
-        start=None,
-        filters=None,
-        instrument_ids=None,
-        assembled_at=None,
-        order="availability",
-    ) -> Record | None: ...
+        start: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        order: str = "availability",
+        orders: Collection[str] | None = None,
+    ) -> Record | HeadMap | None: ...
     def iter_market_projection(
         self,
-        collection,
-        fields,
-        time_field,
+        collection: str,
+        fields: Sequence[str],
+        time_field: str,
         *,
-        start=None,
-        end=None,
-        filters=None,
-        instrument_ids=None,
-        assembled_at=None,
-        batch_size=1000,
-    ): ...
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[Record]: ...
     async def market_series_counts(
-        self, instrument_ids, start, cutoff, assembled_at=None
+        self,
+        instrument_ids: Collection[str],
+        start: TimeInput,
+        cutoff: TimeInput,
+        assembled_at: TimeInput | None = None,
     ) -> dict[str, int]: ...
     async def get(self, collection: str, key: str) -> Record | None: ...
-    async def list(
-        self, collection: str, *, filters: dict | None = None, limit: int = 1000
-    ) -> list[Record]: ...
-    async def delete(self, collection: str, key: str): ...
-    def transaction(self): ...
-    def lock(self, key: str): ...
+    async def list(self, collection: str, *, filters: Record | None = None, limit: int = 1000) -> Records: ...
+    async def delete(self, collection: str, key: str) -> None: ...
+    def transaction(self) -> AbstractAsyncContextManager[Self]: ...
+    def lock(self, key: str) -> AbstractAsyncContextManager[Self]: ...
     async def enqueue(
-        self, kind, payload, idem_key, *, priority=1, run_after=None, expires_at=None, max_attempts=3
-    ): ...
-    async def claim_job(self): ...
-    async def finish_job(self, job_id): ...
-    async def fail_job(self, job_id, error, *, retry_after=1): ...
-    async def recover_jobs(self): ...
-    async def prune_market(self, before, *, book_before=None, trades_before=None): ...
-    async def prune_jobs(self, before): ...
-    async def preserved_market_windows(self): ...
-    async def latest_before(self, collection, time_field, cutoff, *, filters=None): ...
-    def iter_all(self, collection, *, filters=None, batch_size=1000): ...
-    def iter_metadata(self, collection, fields, *, filters=None, batch_size=1000): ...
+        self,
+        kind: str,
+        payload: Mapping[str, JsonInput],
+        idem_key: str,
+        *,
+        priority: int = 1,
+        run_after: TimeInput | Timestamp | None = None,
+        expires_at: TimeInput | Timestamp | None = None,
+        max_attempts: int = 3,
+    ) -> Record: ...
+    async def claim_job(self) -> Record | None: ...
+    async def finish_job(self, job_id: str) -> None: ...
+    async def fail_job(self, job_id: str, error: str | Exception, *, retry_after: float = 1) -> None: ...
+    async def recover_jobs(self) -> int: ...
+    async def prune_market(
+        self,
+        before: TimeInput,
+        *,
+        book_before: TimeInput | None = None,
+        trades_before: TimeInput | None = None,
+    ) -> MarketPruneCounts: ...
+    async def prune_jobs(self, before: TimeInput) -> int: ...
+    async def preserved_market_windows(self) -> RetainedWindows: ...
+    async def latest_before(
+        self, collection: str, time_field: str, cutoff: TimeInput, *, filters: Record | None = None
+    ) -> Record | None: ...
+    def iter_all(
+        self, collection: str, *, filters: Record | None = None, batch_size: int = 1000
+    ) -> AsyncIterator[Record]: ...
+    def iter_metadata(
+        self, collection: str, fields: Sequence[str], *, filters: Record | None = None, batch_size: int = 1000
+    ) -> AsyncIterator[Record]: ...
     def iter_late_arrivals(
         self,
-        collection,
-        arrival_field,
-        market_field,
+        collection: str,
+        arrival_field: str,
+        market_field: str,
         *,
-        since=None,
-        end=None,
-        market_end,
-        filters=None,
-        batch_size=1000,
-    ): ...
-    async def list_latest(self, collection, time_field, *, filters=None, limit=100, start=None, end=None): ...
+        since: TimeInput | None = None,
+        end: TimeInput | None = None,
+        market_end: TimeInput,
+        filters: Record | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[Record]: ...
+    async def list_latest(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        filters: Record | None = None,
+        limit: int = 100,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+    ) -> Records: ...
     async def list_range(
-        self, collection, time_field, *, start=None, end=None, filters=None, limit=1000, after=None
-    ): ...
-    def iter_range(self, collection, time_field, *, start=None, end=None, filters=None, batch_size=10000): ...
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        limit: int = 1000,
+        after: tuple[TimeInput, str] | None = None,
+    ) -> Records: ...
+    async def page_range(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        limit: int = 1000,
+        after: tuple[TimeInput, str] | None = None,
+    ) -> RangePage: ...
+    def iter_range(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        batch_size: int = 10000,
+    ) -> AsyncIterator[Record]: ...
 
 
 log = logging.getLogger(__name__)
@@ -192,9 +281,16 @@ def _text_field(record: Mapping[str, StoredValue], field: str) -> str:
     return value
 
 
+def _document_field(record: Mapping[str, StoredValue], field: str) -> Record:
+    value = record[field]
+    if not isinstance(value, dict):
+        raise ValueError(f"{field} requires an object")
+    return value
+
+
 def _analysis_gate_memory(data: dict[str, dict[str, Record]], now: datetime) -> tuple[bool, bool]:
     """Return whether captures yield to pending analysis or fresh uncarded events."""
-    jobs = (JobEnvelope.model_validate(row) for row in data.get("ops.jobs", {}).values())
+    jobs = (JobClaimState.from_document(row) for row in data.get("ops.jobs", {}).values())
     busy = any(
         job.type in ANALYSIS_TYPES
         and (
@@ -219,7 +315,7 @@ def _analysis_gate_memory(data: dict[str, dict[str, Record]], now: datetime) -> 
     return busy, fresh
 
 
-def _table(collection):
+def _table(collection: str) -> str:
     if collection not in TABLE_COLUMNS:
         raise ValueError(f"Unknown collection: {collection}")
     return collection
@@ -303,64 +399,131 @@ def _job(
     return JobEnvelope.model_validate(result).model_dump(mode="json", exclude_unset=True)
 
 
-class RepositoryQueries:
-    async def prune_market(self, before, *, book_before=None, trades_before=None):
-        return await _prune_market(self, before, book_before=book_before, trades_before=trades_before)
+class RepositoryQueries(ABC):
+    @abstractmethod
+    def _backend(self) -> StorageBackend: ...
+
+    async def prune_market(
+        self,
+        before: TimeInput,
+        *,
+        book_before: TimeInput | None = None,
+        trades_before: TimeInput | None = None,
+    ) -> MarketPruneCounts:
+        return await _prune_market(
+            self._backend(), before, book_before=book_before, trades_before=trades_before
+        )
 
     async def list_range(
-        self, collection, time_field, *, start=None, end=None, filters=None, limit=1000, after=None
-    ):
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        limit: int = 1000,
+        after: tuple[TimeInput, str] | None = None,
+    ) -> Records:
         return await _list_range(
-            self, collection, time_field, start=start, end=end, filters=filters, limit=limit, after=after
+            self._backend(),
+            collection,
+            time_field,
+            start=start,
+            end=end,
+            filters=filters,
+            limit=limit,
+            after=after,
         )
 
     async def page_range(
-        self, collection, time_field, *, start=None, end=None, filters=None, limit=1000, after=None
-    ):
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        limit: int = 1000,
+        after: tuple[TimeInput, str] | None = None,
+    ) -> RangePage:
         return await _range_page(
-            self, collection, time_field, start=start, end=end, filters=filters, limit=limit, after=after
+            self._backend(),
+            collection,
+            time_field,
+            start=start,
+            end=end,
+            filters=filters,
+            limit=limit,
+            after=after,
         )
 
     async def iter_range(
-        self, collection, time_field, *, start=None, end=None, filters=None, batch_size=10000
-    ):
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        batch_size: int = 10000,
+    ) -> AsyncIterator[Record]:
         async for row in _iter_range(
-            self, collection, time_field, start=start, end=end, filters=filters, batch_size=batch_size
+            self._backend(),
+            collection,
+            time_field,
+            start=start,
+            end=end,
+            filters=filters,
+            batch_size=batch_size,
         ):
             yield row
 
-    async def prune_jobs(self, before):
-        return await _prune_jobs(self, before)
+    async def prune_jobs(self, before: TimeInput) -> int:
+        return await _prune_jobs(self._backend(), before)
 
-    async def preserved_market_windows(self):
-        return await _preserved_windows(self)
+    async def preserved_market_windows(self) -> RetainedWindows:
+        return await _preserved_windows(self._backend())
 
-    async def latest_before(self, collection, time_field, cutoff, *, filters=None):
-        return await _latest_before(self, collection, time_field, cutoff, filters=filters)
+    async def latest_before(
+        self, collection: str, time_field: str, cutoff: TimeInput, *, filters: Record | None = None
+    ) -> Record | None:
+        return await _latest_before(self._backend(), collection, time_field, cutoff, filters=filters)
 
-    async def iter_all(self, collection, *, filters=None, batch_size=1000):
-        async for row in _iter_all(self, collection, filters=filters, batch_size=batch_size):
+    async def iter_all(
+        self, collection: str, *, filters: Record | None = None, batch_size: int = 1000
+    ) -> AsyncIterator[Record]:
+        async for row in _iter_all(self._backend(), collection, filters=filters, batch_size=batch_size):
             yield row
 
-    async def list_latest(self, collection, time_field, *, filters=None, limit=100, start=None, end=None):
+    async def list_latest(
+        self,
+        collection: str,
+        time_field: str,
+        *,
+        filters: Record | None = None,
+        limit: int = 100,
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+    ) -> Records:
         return await _list_latest(
-            self, collection, time_field, filters=filters, limit=limit, start=start, end=end
+            self._backend(), collection, time_field, filters=filters, limit=limit, start=start, end=end
         )
 
     async def iter_late_arrivals(
         self,
-        collection,
-        arrival_field,
-        market_field,
+        collection: str,
+        arrival_field: str,
+        market_field: str,
         *,
-        since=None,
-        end=None,
-        market_end,
-        filters=None,
-        batch_size=1000,
-    ):
+        since: TimeInput | None = None,
+        end: TimeInput | None = None,
+        market_end: TimeInput,
+        filters: Record | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[Record]:
         async for row in _iter_late_arrivals(
-            self,
+            self._backend(),
             collection,
             arrival_field,
             market_field,
@@ -372,27 +535,37 @@ class RepositoryQueries:
         ):
             yield row
 
-    async def iter_metadata(self, collection, fields, *, filters=None, batch_size=1000):
-        async for row in _iter_metadata(self, collection, fields, filters=filters, batch_size=batch_size):
+    async def iter_metadata(
+        self, collection: str, fields: Sequence[str], *, filters: Record | None = None, batch_size: int = 1000
+    ) -> AsyncIterator[Record]:
+        async for row in _iter_metadata(
+            self._backend(), collection, fields, filters=filters, batch_size=batch_size
+        ):
             yield row
 
-    async def put_market_batch(self, collection, records, *, keys=None):
-        return await put_market_batch(self, collection, records, keys=keys)
+    async def put_market_batch(
+        self,
+        collection: str,
+        records: Iterable[Mapping[str, JsonInput]],
+        *,
+        keys: Iterable[str] | None = None,
+    ) -> Records:
+        return await put_market_batch(self._backend(), collection, records, keys=keys)
 
     async def latest_market_records(
         self,
-        collection,
+        collection: str,
         *,
-        group_by=("instrument_id",),
-        time_field="ts",
-        filters=None,
-        cutoff=None,
-        assembled_at=None,
-        start=None,
-        instrument_ids=None,
-    ):
+        group_by: Sequence[str] = ("instrument_id",),
+        time_field: str = "ts",
+        filters: Record | None = None,
+        cutoff: TimeInput | None = None,
+        assembled_at: TimeInput | None = None,
+        start: TimeInput | None = None,
+        instrument_ids: Collection[str] | None = None,
+    ) -> Records:
         return await latest_market_records(
-            self,
+            self._backend(),
             collection,
             group_by=group_by,
             time_field=time_field,
@@ -405,19 +578,32 @@ class RepositoryQueries:
 
     async def market_dependency_head(
         self,
-        collection,
-        semantic_field,
-        cutoff,
+        collection: str,
+        semantic_field: str,
+        cutoff: TimeInput,
         *,
-        start=None,
-        filters=None,
-        instrument_ids=None,
-        assembled_at=None,
-        order="availability",
-        orders=None,
-    ):
+        start: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        order: str = "availability",
+        orders: Collection[str] | None = None,
+    ) -> Record | HeadMap | None:
+        backend = self._backend()
+        if orders is None:
+            return await market_dependency_head(
+                backend,
+                collection,
+                semantic_field,
+                cutoff,
+                start=start,
+                filters=filters,
+                instrument_ids=instrument_ids,
+                assembled_at=assembled_at,
+                order=order,
+            )
         return await market_dependency_head(
-            self,
+            backend,
             collection,
             semantic_field,
             cutoff,
@@ -431,19 +617,19 @@ class RepositoryQueries:
 
     async def iter_market_projection(
         self,
-        collection,
-        fields,
-        time_field,
+        collection: str,
+        fields: Sequence[str],
+        time_field: str,
         *,
-        start=None,
-        end=None,
-        filters=None,
-        instrument_ids=None,
-        assembled_at=None,
-        batch_size=1000,
-    ):
+        start: TimeInput | None = None,
+        end: TimeInput | None = None,
+        filters: Record | None = None,
+        instrument_ids: Collection[str] | None = None,
+        assembled_at: TimeInput | None = None,
+        batch_size: int = 1000,
+    ) -> AsyncIterator[Record]:
         async for row in iter_market_projection(
-            self,
+            self._backend(),
             collection,
             fields,
             time_field,
@@ -456,11 +642,17 @@ class RepositoryQueries:
         ):
             yield row
 
-    async def market_series_counts(self, instrument_ids, start, cutoff, assembled_at=None):
-        return await market_series_counts(self, instrument_ids, start, cutoff, assembled_at)
+    async def market_series_counts(
+        self,
+        instrument_ids: Collection[str],
+        start: TimeInput,
+        cutoff: TimeInput,
+        assembled_at: TimeInput | None = None,
+    ) -> dict[str, int]:
+        return await market_series_counts(self._backend(), instrument_ids, start, cutoff, assembled_at)
 
 
-class QueueMixin(RepositoryQueries, ABC):
+class QueueMixin(RepositoryQueries):
     @abstractmethod
     def lock(self, key: str) -> AbstractAsyncContextManager[Self]: ...
 
@@ -477,7 +669,7 @@ class QueueMixin(RepositoryQueries, ABC):
         self, collection: str, *, filters: Record | None = None, limit: int = 1000
     ) -> list[Record]: ...
 
-    def _exact_predicate(self, collection, filters):
+    def _exact_predicate(self, collection: str, filters: Record | None) -> Predicate:
         return _exact_predicate(collection, filters)
 
     async def enqueue(
@@ -494,7 +686,7 @@ class QueueMixin(RepositoryQueries, ABC):
         async with self.lock(f"queue:{kind}:{idem_key}"):
             old = await self.list("ops.jobs", filters={"type": kind, "idem_key": idem_key}, limit=1)
             if old:
-                JobEnvelope.model_validate(old[0])
+                JobIdentity.from_document(old[0])
                 return old[0]
             job = _job(kind, payload, idem_key, priority, run_after, expires_at, max_attempts)
             return await self.put("ops.jobs", _text_field(job, "job_id"), job)
@@ -551,8 +743,12 @@ class MemoryRepository(QueueMixin):
     backend: Literal["memory"] = "memory"
     clickhouse: ClickHouse | None = None
 
+    def _backend(self) -> Self:
+        return self
+
     def __init__(self) -> None:
         self._data: dict[str, dict[str, Record]] = {}
+        self._market_write_clock: dict[tuple[str, str | None, str | None], datetime] = {}
         self._immutable: set[tuple[str, str]] = set()
         self._mutex = asyncio.Lock()
         self._owner: TaskOwner | None = None
@@ -647,6 +843,7 @@ class MemoryRepository(QueueMixin):
         _table(collection)
         key = str(key)
         document = jsonable(dict(record))
+        JsonDocument.validate_value(document)
         async with self.transaction():
             old = self._data.get(collection, {}).get(key)
             if old is not None and (
@@ -699,10 +896,10 @@ class MemoryRepository(QueueMixin):
     async def claim_job(self) -> Record | None:
         async with self.transaction():
             now = utcnow()
-            candidates: list[tuple[JobEnvelope, Record]] = []
+            candidates: list[tuple[JobClaimState, Record]] = []
             rows = self._data.get("ops.jobs", {})
             for document in rows.values():
-                job = JobEnvelope.model_validate(document)
+                job = JobClaimState.from_document(document)
                 if job.status != "QUEUED":
                     continue
                 if job.expires_at is not None and parse_time(job.expires_at) <= now:
@@ -715,7 +912,7 @@ class MemoryRepository(QueueMixin):
                     candidates.append((job, document))
             running: dict[str, int] = {}
             for document in rows.values():
-                job = JobEnvelope.model_validate(document)
+                job = JobClaimState.from_document(document)
                 if job.status == "RUNNING":
                     running[job.type] = running.get(job.type, 0) + 1
             candidates = [
@@ -736,7 +933,7 @@ class MemoryRepository(QueueMixin):
             if not candidates:
                 return None
 
-            def order(pair: tuple[JobEnvelope, Record]) -> tuple[int, bool, datetime, str, str]:
+            def order(pair: tuple[JobClaimState, Record]) -> tuple[int, bool, datetime, str, str]:
                 job = pair[0]
                 deadline = job.expires_at if job.type in EARLIEST_EXPIRY_FIRST else None
                 return (
@@ -758,7 +955,7 @@ class MemoryRepository(QueueMixin):
         async with self.transaction():
             count = 0
             for document in self._data.get("ops.jobs", {}).values():
-                job = JobEnvelope.model_validate(document)
+                job = JobClaimState.from_document(document)
                 if job.status != "RUNNING":
                     continue
                 expired = job.expires_at is not None and parse_time(job.expires_at) <= utcnow()
@@ -971,11 +1168,12 @@ class PostgresRepository(QueueMixin):
     backend: Literal["postgres"] = "postgres"
     clickhouse: ClickHouse | None = None
 
-    def _exact_predicate(self, collection, filters):
-        return _exact_predicate(collection, filters)
+    def _backend(self) -> Self:
+        return self
 
     def __init__(self, database_url: str) -> None:
         self.database_url = database_url
+        self._market_write_clock: dict[tuple[str, str | None, str | None], datetime] = {}
         self._last_deferral: tuple[float, int, tuple[str, ...]] | None = None
         self._pool: AsyncConnectionPool[AsyncConnection[StoredRow]] | None = None
         self._connection: ContextVar[
@@ -1163,6 +1361,7 @@ class PostgresRepository(QueueMixin):
 
         _table(collection)
         key, document = str(key), jsonable(dict(record))
+        JsonDocument.validate_value(document)
         async with self.lock(f"record:{collection}:{key}"):
             conn = self._conn()
             table = sql.Identifier(*collection.split("."))
@@ -1421,48 +1620,64 @@ class PostgresRepository(QueueMixin):
             return cursor.rowcount
 
 
-async def _preserved_windows(repo):
-    """Permanent MAJOR+ windows, including pre-truth beneficiaries and benchmarks."""
-    major_ids = set()
-    for grade in ("MAJOR", "STRUCTURAL", "STRUCTURAL_SHOCK"):
+def _retention_token_ids(value: JsonValue) -> set[str]:
+    if value is None:
+        return set()
+    if not isinstance(value, list):
+        raise ValueError("Retention token references require an array")
+    tokens: set[str] = set()
+    for item in value:
+        token = _text_field(item, "token_id") if isinstance(item, dict) else item
+        if not isinstance(token, str):
+            raise ValueError("Retention token references require text identifiers")
+        tokens.add(token)
+    return tokens
+
+
+async def _preserved_windows(repo: StorageBackend) -> RetainedWindows:
+    """Read retention evidence; pure policy chooses permanent windows and benchmarks."""
+    major_ids: set[str] = set()
+    for grade in PROTECTED_EMS_CLASSES:
         async for row in repo.iter_all("evt.ems_assessments", filters={"class": grade}):
-            major_ids.add(row["event_id"])
-    benchmarks = {"bitcoin:BTC", "ethereum:ETH", "BTC", "ETH"}
-    for symbol in ("BTC", "ETH"):
+            major_ids.add(_text_field(row, "event_id"))
+    registry: list[BenchmarkToken] = []
+    for symbol in BENCHMARK_SYMBOLS:
         async for row in repo.iter_all("reg.tokens", filters={"symbol": symbol}):
-            benchmarks.add(row["token_id"])
-    windows = []
+            registry.append(
+                BenchmarkToken.model_validate({"token_id": row["token_id"], "symbol": row["symbol"]})
+            )
+    benchmarks = benchmark_token_ids(registry)
+    evidence: list[RetentionEvidence] = []
     for eid in major_ids:
         event = await repo.get("evt.events", eid)
         if event is None:
             continue
         projected = _projection("evt.events", event)
-        anchors = [
-            parse_time(projected[k])
-            for k in ("event_time", "public_at", "known_to_us_at")
-            if projected.get(k)
-        ]
-        if not anchors:
-            continue
+        anchors = tuple(
+            _time_field(projected, field)
+            for field in ("event_time", "public_at", "known_to_us_at")
+            if projected.get(field) is not None
+        )
         tokens = set(benchmarks)
-        for item in event.get("tokens_mentioned", event.get("tokens", [])):
-            token = item.get("token_id") if isinstance(item, dict) else item
-            if token:
-                tokens.add(token)
+        mentioned = event["tokens_mentioned"] if "tokens_mentioned" in event else event.get("tokens")
+        tokens.update(_retention_token_ids(mentioned))
         for collection in ("ana.market_truth", "evt.beneficiary_edges", "evt.capture_chains"):
             async for row in repo.iter_all(collection, filters={"event_id": eid}):
-                if row.get("token_id"):
-                    tokens.add(row["token_id"])
+                if row.get("token_id") is not None:
+                    tokens.add(_text_field(row, "token_id"))
         async for row in repo.iter_all("evt.beneficiary_maps", filters={"event_id": eid}):
-            tokens.update(row.get("analysis_set") or [])
-        windows.extend(
-            (token, min(anchors) - timedelta(hours=24), max(anchors) + timedelta(hours=72))
-            for token in tokens
-        )
-    return windows
+            tokens.update(_retention_token_ids(row.get("analysis_set")))
+        evidence.append(RetentionEvidence(event_id=eid, anchors=anchors, token_ids=frozenset(tokens)))
+    return [(window.token_id, window.start, window.end) for window in protected_windows(evidence)]
 
 
-async def _prune_market(self, before, *, book_before=None, trades_before=None):
+async def _prune_market(
+    self: StorageBackend,
+    before: TimeInput,
+    *,
+    book_before: TimeInput | None = None,
+    trades_before: TimeInput | None = None,
+) -> MarketPruneCounts:
     """Prune capture after backup, preserving whole UTC days overlapping MAJOR+ windows.
 
     ClickHouse drops whole daily partitions of the exchange series: the caller's cutoff
@@ -1488,7 +1703,7 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
                 "mkt.tickers_24h": "ts",
             }
         )
-    counts = {}
+    counts: MarketPruneCounts = {}
     async with self.lock("tank:market_retention"):
         days = set()
         for _, start, end in await _preserved_windows(self):
@@ -1497,7 +1712,7 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
             while day <= last:
                 days.add(day)
                 day += timedelta(days=1)
-        spans = []
+        spans: list[tuple[datetime, datetime]] = []
         for day in sorted(days):
             if spans and spans[-1][1] == day:
                 spans[-1] = (spans[-1][0], day + timedelta(days=1))
@@ -1526,7 +1741,7 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
             if book_before is not None:
                 book_cutoff = parse_time(book_before)
                 for key, row in list(self._data.get("mkt.book_summaries", {}).items()):
-                    if row.get("exchange_ts") and parse_time(row["exchange_ts"]) < book_cutoff:
+                    if row.get("exchange_ts") and _time_field(row, "exchange_ts") < book_cutoff:
                         del self._data["mkt.book_summaries"][key]
                         self._immutable.discard(("mkt.book_summaries", key))
             for collection, ts in temporal.items():
@@ -1534,14 +1749,14 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
                 for key, row in list(self._data.get(collection, {}).items()):
                     if not row.get(ts):
                         continue
-                    at = parse_time(row[ts])
+                    at = _time_field(row, ts)
                     protected = any(start <= at < end for start, end in spans)
                     if at < cutoff and not protected and (collection, key) not in self._immutable:
                         del self._data[collection][key]
                         self._immutable.discard((collection, key))
                         deleted += 1
                 counts[collection] = deleted
-    ch = getattr(self, "clickhouse", None)
+    ch = self.clickhouse
     if ch is not None:
         from tank import clickhouse_market as chm
 
@@ -1562,15 +1777,24 @@ async def _prune_market(self, before, *, book_before=None, trades_before=None):
 
 
 async def _range_page(
-    self, collection, time_field, *, start=None, end=None, filters=None, limit=1000, after=None
-):
+    self: StorageBackend,
+    collection: str,
+    time_field: str,
+    *,
+    start: TimeInput | None = None,
+    end: TimeInput | None = None,
+    filters: Record | None = None,
+    limit: int = 1000,
+    after: tuple[TimeInput, str] | None = None,
+) -> RangePage:
     """Return (document, (timestamp, storage key)) pairs for deterministic keyset pagination."""
     _table(collection)
     if TABLE_COLUMNS[collection].get(time_field) != "timestamptz":
         raise ValueError(f"{collection}.{time_field} is not a typed timestamp column")
     if limit < 1:
         raise ValueError("limit must be positive")
-    start_dt, end_dt = parse_time(start) if start else None, parse_time(end) if end else None
+    start_dt = parse_time(start) if start is not None else None
+    end_dt = parse_time(end) if end is not None else None
     from tank import clickhouse_market as chm
 
     if (ch := chm.client(self, collection)) is not None:
@@ -1581,7 +1805,8 @@ async def _range_page(
         from psycopg import sql
         from psycopg.types.json import Jsonb
 
-        clauses, args = [sql.SQL("{} IS NOT NULL").format(sql.Identifier(time_field))], []
+        clauses: list[sql.Composable] = [sql.SQL("{} IS NOT NULL").format(sql.Identifier(time_field))]
+        args: list[SQLParameter] = []
         for op, bound in [(">=", start_dt), ("<", end_dt)]:
             if bound is not None:
                 clauses.append(sql.SQL("{} " + op + " %s").format(sql.Identifier(time_field)))
@@ -1612,14 +1837,20 @@ async def _range_page(
                 sql.Identifier(time_field),
             )
             rows = await (await self._conn().execute(query, [*args, limit])).fetchall()
-            return [(_read_record(collection, r), (iso(r[time_field]), r["storage_key"])) for r in rows]
+            return [
+                (
+                    _read_record(collection, r),
+                    (iso(_time_field(r, time_field)), _text_field(r, "storage_key")),
+                )
+                for r in rows
+            ]
     async with self.transaction():
         matches = []
         for key, document in self._data.get(collection, {}).items():
-            timestamp = _projection(collection, document).get(time_field)
-            if timestamp is None:
+            projected = _projection(collection, document)
+            if projected.get(time_field) is None:
                 continue
-            timestamp = parse_time(timestamp)
+            timestamp = _time_field(projected, time_field)
             if start_dt and timestamp < start_dt or end_dt and timestamp >= end_dt:
                 continue
             if after and (timestamp, key) <= (parse_time(after[0]), str(after[1])):
@@ -1631,8 +1862,16 @@ async def _range_page(
 
 
 async def _list_range(
-    self, collection, time_field, *, start=None, end=None, filters=None, limit=1000, after=None
-):
+    self: StorageBackend,
+    collection: str,
+    time_field: str,
+    *,
+    start: TimeInput | None = None,
+    end: TimeInput | None = None,
+    filters: Record | None = None,
+    limit: int = 1000,
+    after: tuple[TimeInput, str] | None = None,
+) -> Records:
     return [
         r[0]
         for r in await _range_page(
@@ -1641,7 +1880,16 @@ async def _list_range(
     ]
 
 
-async def _iter_range(self, collection, time_field, *, start=None, end=None, filters=None, batch_size=10000):
+async def _iter_range(
+    self: StorageBackend,
+    collection: str,
+    time_field: str,
+    *,
+    start: TimeInput | None = None,
+    end: TimeInput | None = None,
+    filters: Record | None = None,
+    batch_size: int = 10000,
+) -> AsyncIterator[Record]:
     after = None
     while True:
         page = await _range_page(
@@ -1654,7 +1902,7 @@ async def _iter_range(self, collection, time_field, *, start=None, end=None, fil
         after = page[-1][1]
 
 
-async def _prune_jobs(self, before):
+async def _prune_jobs(self: StorageBackend, before: TimeInput) -> int:
     """Prune aged terminal jobs; retain references needed by jobs, sessions or tool recovery.
 
     Missing terminal timestamps are preserved. Queue payloads and persisted session/tool state
@@ -1662,7 +1910,7 @@ async def _prune_jobs(self, before):
     """
     cutoff = parse_time(before)
 
-    def strings(value):
+    def strings(value: JsonValue) -> Iterator[str]:
         if isinstance(value, str):
             yield value
         elif isinstance(value, dict):
@@ -1674,15 +1922,15 @@ async def _prune_jobs(self, before):
 
     async with self.lock("tank:job_retention"):
         await _prune_expired_escalations(self, cutoff)
-        candidates_by_id = set()
+        candidates_by_id: set[str] = set()
         for status in ("DONE", "FAILED", "EXPIRED"):
             async for job in self.iter_range(
                 "ops.jobs", "finished_at", end=cutoff, filters={"status": status}
             ):
-                candidates_by_id.add(job["job_id"])
+                candidates_by_id.add(_text_field(job, "job_id"))
         if not candidates_by_id:
             return 0
-        references = set()
+        references: set[str] = set()
         async for job in self.iter_all("ops.jobs"):
             references.update(value for value in strings(job.get("payload")) if value in candidates_by_id)
             for key in ("depends_on", "dependencies", "parent_job_id", "job_ids"):
@@ -1708,24 +1956,32 @@ async def _prune_jobs(self, before):
         return count
 
 
-async def _prune_expired_escalations(self, cutoff):
+async def _prune_expired_escalations(self: StorageBackend, cutoff: TimeInput) -> None:
     """Source escalations are control records like jobs (HLD §7.1 ops: 30 days after expiry)."""
+    cutoff_dt = parse_time(cutoff)
     if isinstance(self, PostgresRepository):
         await self._conn().execute(
-            "DELETE FROM ops.source_escalations WHERE expires_at<%s AND NOT immutable", (cutoff,)
+            "DELETE FROM ops.source_escalations WHERE expires_at<%s AND NOT immutable", (cutoff_dt,)
         )
         return
     rows = self._data.get("ops.source_escalations", {})
     for key, row in list(rows.items()):
         if (
             row.get("expires_at")
-            and parse_time(row["expires_at"]) < cutoff
+            and _time_field(row, "expires_at") < cutoff_dt
             and ("ops.source_escalations", key) not in self._immutable
         ):
             rows.pop(key)
 
 
-async def _latest_before(self, collection, time_field, cutoff, *, filters=None):
+async def _latest_before(
+    self: StorageBackend,
+    collection: str,
+    time_field: str,
+    cutoff: TimeInput,
+    *,
+    filters: Record | None = None,
+) -> Record | None:
     """Last actual observation strictly before cutoff, using typed time and stable key indexes."""
     _table(collection)
     if TABLE_COLUMNS[collection].get(time_field) != "timestamptz":
@@ -1739,7 +1995,8 @@ async def _latest_before(self, collection, time_field, cutoff, *, filters=None):
         from psycopg import sql
         from psycopg.types.json import Jsonb
 
-        clauses, args = [sql.SQL("{} < %s").format(sql.Identifier(time_field))], [cutoff]
+        clauses: list[sql.Composable] = [sql.SQL("{} < %s").format(sql.Identifier(time_field))]
+        args: list[SQLParameter] = [cutoff]
         if filters and collection in MARKET_COLUMNS:
             extra, values = _exact_predicate(collection, filters)
             clauses.extend(extra)
@@ -1754,7 +2011,7 @@ async def _latest_before(self, collection, time_field, cutoff, *, filters=None):
                     clauses.append(sql.SQL("{}=%s").format(sql.Identifier(key)))
                     args.append(value)
         async with self.transaction():
-            row = await (
+            sql_row = await (
                 await self._conn().execute(
                     sql.SQL("SELECT * FROM {} WHERE {} ORDER BY {} DESC,storage_key DESC LIMIT 1").format(
                         sql.Identifier(*collection.split(".")),
@@ -1764,31 +2021,28 @@ async def _latest_before(self, collection, time_field, cutoff, *, filters=None):
                     args,
                 )
             ).fetchone()
-            return _read_record(collection, row) if row else None
+            return _read_record(collection, sql_row) if sql_row is not None else None
     async with self.transaction():
-        candidates = []
+        candidates: list[tuple[datetime, str, Record]] = []
         for key, row in self._data.get(collection, {}).items():
-            at = _projection(collection, row).get(time_field)
-            if at is None:
+            projected = _projection(collection, row)
+            if projected.get(time_field) is None:
                 continue
-            at = parse_time(at)
+            at = _time_field(projected, time_field)
             if at < cutoff and all(k in row and row[k] == v for k, v in (filters or {}).items()):
                 candidates.append((at, key, row))
         return copy.deepcopy(max(candidates, key=lambda item: (item[0], item[1]))[2]) if candidates else None
 
 
-def _exact_predicate(collection, filters):
+def _exact_predicate(collection: str, filters: Record | None) -> Predicate:
     from psycopg import sql
     from psycopg.types.json import Jsonb
 
-    clauses, args = [], []
+    clauses: list[sql.Composable] = []
+    args: list[SQLParameter] = []
     if collection in MARKET_COLUMNS:
         for key, value in (filters or {}).items():
-            key = (
-                __import__("tank.market_schema", fromlist=["MARKET_ALIASES"])
-                .MARKET_ALIASES.get(collection, {})
-                .get(key, key)
-            )
+            key = MARKET_ALIASES.get(collection, {}).get(key, key)
             kind = MARKET_COLUMNS[collection].get(key)
             if kind is None:
                 raise ValueError(f"Unknown typed market filter {collection}.{key}")
@@ -1800,7 +2054,7 @@ def _exact_predicate(collection, filters):
             args.append(
                 Jsonb(jsonable(value))
                 if kind == "jsonb" and value is not None
-                else parse_time(value)
+                else _time_field({key: value}, key)
                 if kind == "timestamptz" and value is not None
                 else value
             )
@@ -1818,7 +2072,9 @@ def _exact_predicate(collection, filters):
     return clauses, args
 
 
-async def _iter_all(self, collection, *, filters=None, batch_size=1000):
+async def _iter_all(
+    self: StorageBackend, collection: str, *, filters: Record | None = None, batch_size: int = 1000
+) -> AsyncIterator[Record]:
     """Read all matching documents without a cap, using stable storage-key pages.
 
     Each page observes committed state. Call inside transaction when atomicity with writes is
@@ -1847,7 +2103,7 @@ async def _iter_all(self, collection, *, filters=None, batch_size=1000):
                     sql.Identifier(*collection.split(".")), predicate
                 )
                 rows = await (await self._conn().execute(query, [*args, batch_size])).fetchall()
-            page = [(r["storage_key"], _read_record(collection, r)) for r in rows]
+            page = [(_text_field(row, "storage_key"), _read_record(collection, row)) for row in rows]
         else:
             async with self._read():
                 page = []
@@ -1865,7 +2121,16 @@ async def _iter_all(self, collection, *, filters=None, batch_size=1000):
         after = page[-1][0]
 
 
-async def _list_latest(self, collection, time_field, *, filters=None, limit=100, start=None, end=None):
+async def _list_latest(
+    self: StorageBackend,
+    collection: str,
+    time_field: str,
+    *,
+    filters: Record | None = None,
+    limit: int = 100,
+    start: TimeInput | None = None,
+    end: TimeInput | None = None,
+) -> Records:
     """Latest typed timestamp records, ordered by timestamp then stable key descending.
 
     Optional bounds are start-inclusive/end-exclusive. Null timestamps cannot represent a
@@ -1904,10 +2169,12 @@ async def _list_latest(self, collection, time_field, *, filters=None, limit=100,
     async with self.transaction():
         candidates = []
         for key, row in self._data.get(collection, {}).items():
-            timestamp = _projection(collection, row).get(time_field)
-            if timestamp is None or not all(k in row and row[k] == v for k, v in (filters or {}).items()):
+            projected = _projection(collection, row)
+            if projected.get(time_field) is None or not all(
+                key in row and row[key] == value for key, value in (filters or {}).items()
+            ):
                 continue
-            timestamp = parse_time(timestamp)
+            timestamp = _time_field(projected, time_field)
             if (
                 start is not None
                 and timestamp < parse_time(start)
@@ -1922,17 +2189,17 @@ async def _list_latest(self, collection, time_field, *, filters=None, limit=100,
 
 
 async def _iter_late_arrivals(
-    self,
-    collection,
-    arrival_field,
-    market_field,
+    self: StorageBackend,
+    collection: str,
+    arrival_field: str,
+    market_field: str,
     *,
-    since=None,
-    end=None,
-    market_end,
-    filters=None,
-    batch_size=1000,
-):
+    since: TimeInput | None = None,
+    end: TimeInput | None = None,
+    market_end: TimeInput,
+    filters: Record | None = None,
+    batch_size: int = 1000,
+) -> AsyncIterator[Record]:
     """Arrival pages bounded independently from the inclusive frozen semantic market cutoff.
 
     Unknown legacy availability is excluded rather than backdated. Consumers normally pass a
@@ -1995,17 +2262,21 @@ async def _iter_late_arrivals(
                 )
                 rows = await (await self._conn().execute(query, [*args, batch_size])).fetchall()
                 page = [
-                    (_read_record(collection, row), (row[arrival_field], row["storage_key"])) for row in rows
+                    (
+                        _read_record(collection, row),
+                        (_time_field(row, arrival_field), _text_field(row, "storage_key")),
+                    )
+                    for row in rows
                 ]
         else:
             async with self.transaction():
                 page = []
                 for key, row in self._data.get(collection, {}).items():
                     projected = _projection(collection, row)
-                    arrival, market = projected.get(arrival_field), projected.get(market_field)
-                    if arrival is None or market is None:
+                    if projected.get(arrival_field) is None or projected.get(market_field) is None:
                         continue
-                    arrival, market = parse_time(arrival), parse_time(market)
+                    arrival = _time_field(projected, arrival_field)
+                    market = _time_field(projected, market_field)
                     if (
                         market > market_end
                         or since is not None
@@ -2027,7 +2298,14 @@ async def _iter_late_arrivals(
         after = page[-1][1]
 
 
-async def _iter_metadata(self, collection, fields, *, filters=None, batch_size=1000):
+async def _iter_metadata(
+    self: StorageBackend,
+    collection: str,
+    fields: Sequence[str],
+    *,
+    filters: Record | None = None,
+    batch_size: int = 1000,
+) -> AsyncIterator[Record]:
     """Page selected top-level JSON fields without returning the full stored evidence payload.
 
     Keys absent from a record appear as None in the projection; exact filtering continues to
@@ -2059,8 +2337,8 @@ async def _iter_metadata(self, collection, fields, *, filters=None, batch_size=1
                 "SELECT jsonb_build_object({}) AS metadata,storage_key FROM {} WHERE {} ORDER BY storage_key LIMIT %s"
             ).format(expressions, sql.Identifier(*collection.split(".")), predicate)
             page = await (await self._conn().execute(query, [*projected_args, *args, batch_size])).fetchall()
-        for row in page:
-            yield row["metadata"]
+        for sql_row in page:
+            yield _document_field(sql_row, "metadata")
         if len(page) < batch_size:
             return
         after = page[-1]["storage_key"]
