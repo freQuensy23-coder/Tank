@@ -1,4 +1,5 @@
 {
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -8,14 +9,24 @@
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "entity": {
-            "type": "string"
+          "entity_id": {
+            "type": "string",
+            "description": "Registry entity key (reg.entities), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. uniswap in \u00abUniswap \u00b7 uniswap\u00bb."
           },
-          "token": {
+          "entity_name": {
+            "type": "string",
+            "description": "Name of an entity outside the registry, kept unresolved; Tank refuses a registered name."
+          },
+          "token_id": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Registry token key (reg.tokens), shown after \u00ab \u00b7 \u00bb next to the name in Tank's messages and results, e.g. bitcoin:BTC in \u00abBitcoin (BTC) \u00b7 bitcoin:BTC\u00bb. Null when the entity has no token or the token is outside the registry."
+          },
+          "token_name": {
+            "type": "string",
+            "description": "Ticker or name of a token outside the registry (token_id null), kept unresolved and named in WHO without a market block; Tank refuses a registry token here."
           },
           "role": {
             "enum": [
@@ -83,72 +94,9 @@
           "evidence": {
             "type": "array",
             "items": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "quote": {
-                  "type": "string"
-                },
-                "subject": {
-                  "type": "string"
-                },
-                "predicate": {
-                  "type": "string"
-                },
-                "object": {
-                  "type": "string"
-                },
-                "sources": {
-                  "type": "array",
-                  "items": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "url": {
-                        "type": "string"
-                      },
-                      "title": {
-                        "type": "string"
-                      },
-                      "observed_at": {
-                        "type": "string"
-                      },
-                      "excerpt": {
-                        "type": "string"
-                      }
-                    },
-                    "anyOf": [
-                      {
-                        "required": [
-                          "url"
-                        ]
-                      },
-                      {
-                        "required": [
-                          "title",
-                          "observed_at"
-                        ]
-                      },
-                      {
-                        "required": [
-                          "excerpt",
-                          "observed_at"
-                        ]
-                      }
-                    ]
-                  }
-                },
-                "verified": {
-                  "type": "boolean"
-                },
-                "stage": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "quote"
-              ]
-            }
+              "type": "string"
+            },
+            "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
           },
           "credibility_reasons": {
             "type": "array",
@@ -162,7 +110,7 @@
             "required": [
               "mechanism",
               "quote",
-              "claims"
+              "claim_ids"
             ],
             "properties": {
               "mechanism": {
@@ -173,83 +121,19 @@
                 "type": "string",
                 "minLength": 1
               },
-              "claims": {
+              "claim_ids": {
                 "type": "array",
                 "items": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "quote": {
-                      "type": "string"
-                    },
-                    "subject": {
-                      "type": "string"
-                    },
-                    "predicate": {
-                      "type": "string"
-                    },
-                    "object": {
-                      "type": "string"
-                    },
-                    "sources": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "properties": {
-                          "url": {
-                            "type": "string"
-                          },
-                          "title": {
-                            "type": "string"
-                          },
-                          "observed_at": {
-                            "type": "string"
-                          },
-                          "excerpt": {
-                            "type": "string"
-                          }
-                        },
-                        "anyOf": [
-                          {
-                            "required": [
-                              "url"
-                            ]
-                          },
-                          {
-                            "required": [
-                              "title",
-                              "observed_at"
-                            ]
-                          },
-                          {
-                            "required": [
-                              "excerpt",
-                              "observed_at"
-                            ]
-                          }
-                        ]
-                      }
-                    },
-                    "verified": {
-                      "type": "boolean"
-                    },
-                    "stage": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "quote"
-                  ]
-                }
+                  "type": "string"
+                },
+                "description": "Claim IDs (CLM-\u2026) of accepted claims of the current event; find them with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abClaims of an event\u00bb."
               }
             },
             "description": "Explicit negative economic thesis for a LOSER edge with NEGATIVE direction. Supply the causal mechanism, a verbatim supporting quote and accepted RELATION claim references; the agent judges the quoted causal evidence; Tank applies deterministic role and dependency rules using the structured fields."
           }
         },
         "required": [
-          "entity",
-          "token",
+          "token_id",
           "role",
           "layer",
           "direction",
@@ -258,6 +142,18 @@
           "exposure_score",
           "edge_certainty",
           "evidence"
+        ],
+        "anyOf": [
+          {
+            "required": [
+              "entity_id"
+            ]
+          },
+          {
+            "required": [
+              "entity_name"
+            ]
+          }
         ]
       }
     },
@@ -355,6 +251,5 @@
   "required": [
     "edges"
   ],
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "description": "Map positive beneficiaries, competitors and losers across the eight declared economic layers. Each edge needs accepted claim references, an explicit causal or share-loss chain, integration state/directionality and exposure 0..10. Project names and tickers must belong to the fixed registry universe; organization relevance alone does not prove token value capture. Supply reasons and NONE/UNKNOWN status for omitted layers. Negative token theses require explicit accepted causal evidence and a verbatim quote. Persists a versioned map and returns the token analysis set and per-layer reasons."
+  "description": "Map positive beneficiaries, competitors and losers across the eight declared economic layers. Each edge names its entity and token by registry key (entity_id, token_id) or, outside the registry, by name (entity_name, token_name), cites accepted claims of the current event by claim_id, and gives an explicit causal or share-loss chain, integration state/directionality and exposure 0..10. Organization relevance alone does not prove token value capture. Supply reasons and NONE/UNKNOWN status for omitted layers. Negative token theses require explicit accepted causal evidence and a verbatim quote. Persists a versioned map and returns the token analysis set and per-layer reasons."
 }

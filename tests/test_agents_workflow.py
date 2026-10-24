@@ -39,7 +39,7 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
             session.pop("prompt_version_basis", None)
         await repo.put("ops.agent_sessions", "s", session)
         args.update(
-            tokens=["world:WLD"],
+            token_ids=["world:WLD"],
             certainty="HIGH",
             claims=[
                 {
@@ -134,6 +134,7 @@ async def test_actual_producer_consumer_workflow(tmp_path, backend, case, postgr
                     {
                         "event_id": eid,
                         "assessment": unknown_assessment(
+                            claim=origin["result"]["accepted_claims"][0]["claim_id"],
                             criterion="G4" if case == "SHOCK_RESUME" else "M2",
                             klass="STRUCTURAL_SHOCK"
                             if case == "SHOCK_RESUME"

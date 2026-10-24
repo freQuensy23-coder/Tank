@@ -194,7 +194,7 @@ async def test_replays_mutation_and_remaps_captured_generated_ids(packet):
         "certainty": "HIGH",
         "certainty_reason": "Synthetic primary evidence",
         "entities": [],
-        "tokens": [],
+        "token_ids": [],
         "event_time": {"value": stamp, "precision": "EXACT", "quote": quote},
         "public_at": {"value": stamp, "precision": "EXACT", "basis": "Synthetic capture", "quote": quote},
         "freshness": "FRESH",
@@ -401,7 +401,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                 "session_id": old_sid,
                 "event_id": event_id,
                 "tool": "get_decision",
-                "arguments": {"event_id": event_id, "token": "T"},
+                "arguments": {"event_id": event_id, "token_id": "T"},
                 "status": "DONE",
                 "result": {"action": "START"},
                 "returned_at": earlier,
@@ -540,7 +540,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                                 "id": "replay-decision",
                                 "type": "agent.custom_tool_use",
                                 "name": "get_decision",
-                                "input": {"token": "T"},
+                                "input": {"token_id": "T"},
                             },
                         )
                     )
@@ -555,7 +555,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                             "id": "replay-scope",
                             "type": "agent.custom_tool_use",
                             "name": "get_decision",
-                            "input": {"event_id": new_id("EVT"), "token": "T"},
+                            "input": {"event_id": new_id("EVT"), "token_id": "T"},
                         },
                     )
                 )
@@ -596,7 +596,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                                 "id": "replay-truth",
                                 "type": "agent.custom_tool_use",
                                 "name": "get_market_truth",
-                                "input": {"tokens": ["T"]},
+                                "input": {"token_ids": ["T"]},
                             },
                         )
                     )
@@ -623,7 +623,7 @@ async def test_fresh_replay_session_reruns_market_and_decision_code(
                                 "id": "replay-decision",
                                 "type": "agent.custom_tool_use",
                                 "name": "get_decision",
-                                "input": {"token": "T"},
+                                "input": {"token_id": "T"},
                             },
                         )
                     )
@@ -1176,7 +1176,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
                         "certainty": "MEDIUM",
                         "certainty_reason": "Synthetic projection actor",
                         "entities": [],
-                        "tokens": [],
+                        "token_ids": [],
                         "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
                         "public_at": {
                             "value": first_at,
@@ -1206,7 +1206,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
 
     async def emit(event):
         if event.get("type") == "agent.custom_tool_use":
-            event = dict(event, input=await model_arguments(repo, config, event["name"], event["input"]))
+            event = dict(event, input=model_arguments(event["name"], event["input"]))
         nonlocal seq
         seq += 1
         await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
@@ -1299,7 +1299,7 @@ async def test_fresh_multi_message_replay_advances_prefix_without_future_domain_
                             "certainty": "MEDIUM",
                             "certainty_reason": "Synthetic projection actor",
                             "entities": [],
-                            "tokens": [],
+                            "token_ids": [],
                             "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
                             "public_at": {
                                 "value": first_at,
@@ -1686,7 +1686,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
     trigger = "2026-09-08T00:00:00Z" if premature_trigger else "2026-09-09T00:00:00Z"
     cutoff = "2026-09-10T00:00:00Z"
     cfg = {
-        "registry": {},
+        "registry": {"tokens": [{"token_id": "T", "symbol": "T"}]},
         "thresholds": {"call_expiry_days": 7},
         "semantics": {},
         "dependency_map": {},
@@ -1850,6 +1850,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
     data = json.loads(packet.read_text())
     data.update(
         cutoff=cutoff,
+        registry=cfg["registry"],
         config={key: value for key, value in cfg.items() if key != "registry"},
         records=[
             {"collection": collection, "key": key, "record": row, "available_at": at}
@@ -1866,7 +1867,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
 
     async def emit(event):
         if event.get("type") == "agent.custom_tool_use":
-            event = dict(event, input=await model_arguments(repo, config, event["name"], event["input"]))
+            event = dict(event, input=model_arguments(event["name"], event["input"]))
         nonlocal seq
         seq += 1
         await queue.put(f"id: {seq}\ndata: {json.dumps(event)}\n\n".encode())
@@ -1951,7 +1952,7 @@ async def test_native_replay_captured_delivery_creates_fresh_call_and_reruns_exp
                             "freshness": "FRESH",
                         }
                         if message.get("kind") in {"NEW_ITEM", "ITEM_ADDED"}
-                        else {"event_id": "event", "token": "T"},
+                        else {"event_id": "event", "token_id": "T"},
                     }
                 )
             else:
@@ -2071,7 +2072,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
         "created_by": "old-decision",
     }
     cfg = {
-        "registry": {},
+        "registry": {"tokens": [{"token_id": "T", "symbol": "T"}]},
         "thresholds": {},
         "semantics": {},
         "dependency_map": {},
@@ -2118,7 +2119,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                 "session_id": "old-session",
                 "tool": "get_decision",
                 "status": "DONE",
-                "arguments": {"event_id": "event", "token": "T"},
+                "arguments": {"event_id": "event", "token_id": "T"},
                 "result": {"dec_id": "old-decision", "event_id": "event", "conditions": [old]},
             },
             trigger,
@@ -2177,6 +2178,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
     data = json.loads(packet.read_text())
     data.update(
         cutoff=cutoff,
+        registry=cfg["registry"],
         config={key: value for key, value in cfg.items() if key != "registry"},
         records=[
             {"collection": collection, "key": key, "record": record, "available_at": at}
@@ -2193,7 +2195,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
 
     async def emit(event):
         if event.get("type") == "agent.custom_tool_use":
-            event = dict(event, input=await model_arguments(repo, config, event["name"], event["input"]))
+            event = dict(event, input=model_arguments(event["name"], event["input"]))
         nonlocal seq
         seq += 1
         if event["type"] == "session.status_idle":
@@ -2284,7 +2286,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                             "freshness": "FRESH",
                         }
                         if message.get("kind") in {"NEW_ITEM", "ITEM_ADDED"}
-                        else {"event_id": "event", "tokens": ["T"], "cutoff": trigger},
+                        else {"event_id": "event", "token_ids": ["T"], "cutoff": trigger},
                     }
                 )
             else:
@@ -2298,7 +2300,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                             "type": "agent.custom_tool_use",
                             "execution_id": accepted_id,
                             "name": "get_decision",
-                            "input": {"event_id": "event", "token": "T"},
+                            "input": {"event_id": "event", "token_id": "T"},
                         }
                     )
                 elif actor_stage == "timer-truth":
@@ -2309,7 +2311,7 @@ async def test_native_condition_replay_uses_tool_cause_and_actual_watch_predicat
                             "type": "agent.custom_tool_use",
                             "execution_id": accepted_id,
                             "name": "get_decision",
-                            "input": {"event_id": "event", "token": "T"},
+                            "input": {"event_id": "event", "token_id": "T"},
                         }
                     )
                 elif actor_stage == "timer-decision":
@@ -2650,7 +2652,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
 
     async def emit(event):
         if event.get("type") == "agent.custom_tool_use":
-            event = dict(event, input=await model_arguments(repo, config, event["name"], event["input"]))
+            event = dict(event, input=model_arguments(event["name"], event["input"]))
         nonlocal sequence
         sequence += 1
         if event["type"] == "session.status_idle":
@@ -2728,7 +2730,7 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
                         "certainty": "HIGH",
                         "certainty_reason": "Explicit synthetic primary fixture fact",
                         "entities": [],
-                        "tokens": ["world:WLD"],
+                        "token_ids": ["world:WLD"],
                         "event_time": {"value": None, "precision": "UNKNOWN", "quote": None},
                         "public_at": {
                             "value": cutoff,
@@ -2766,7 +2768,9 @@ async def test_actual_reference_publication_retains_unsent_intent_and_ordinary_r
                         {
                             "event_id": event_id,
                             "assessment": unknown_assessment(
-                                criterion="G5", klass="STRUCTURAL_SHOCK", quote=body
+                                criterion="G5",
+                                klass="STRUCTURAL_SHOCK",
+                                claim=result["accepted_claims"][0]["claim_id"],
                             ),
                         },
                         identity,
@@ -2907,7 +2911,7 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(pack
     truth = MarketTruthService(source, cfg, market)
     first = await truth.assess("e", "T", chosen_boundary(earlier, precision="BUCKET(1m)"))
     tools = EventToolService(source, cfg, truth, DecisionEngine())
-    initial = await tools.dispatch("get_decision", {"event_id": "e", "token": "T"}, {})
+    initial = await tools.dispatch("get_decision", {"event_id": "e", "token_id": "T"}, {})
     watch = next(row for row in initial["conditions"] if row["role"] == "UPGRADE")
     watch.update(status="FIRED", fired_at=data["cutoff"])
     snapshot = shifted_snapshot(end)
@@ -2920,7 +2924,7 @@ async def test_captured_tools_decision_refreshes_fired_market_watch_offline(pack
             {
                 "call_id": "decision",
                 "tool": "get_decision",
-                "arguments": {"event_id": "e", "token": "T"},
+                "arguments": {"event_id": "e", "token_id": "T"},
                 "available_at": data["cutoff"],
             }
         ],

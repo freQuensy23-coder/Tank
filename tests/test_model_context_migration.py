@@ -1,4 +1,4 @@
-"""Continue pre-deployment sessions without exposing new record identifiers."""
+"""Persistent sessions switch to the ID contract at an idle boundary, without new record IDs in context."""
 
 import copy
 import json
@@ -6,10 +6,11 @@ import json
 import httpx
 import pytest
 
-from tank.agents.context import CONTEXT_VERSION, identifier_field
+from tank.agents.context import CONTEXT_VERSION, ModelContext
 from tank.agents.sessions import SessionService
 from tank.delivery import DeliveryDeferred
 from tank.event_tools import EventToolService
+from tank.openma_sync import agent_tools
 from tank.settings import Settings
 from tank.storage import MemoryRepository
 from tank.util import iso, new_id, sha256
@@ -29,6 +30,8 @@ async def legacy(tmp_path):
     payload = {"kind": "NEW_ITEM", "item_id": item["item_id"]}
     session = {
         "session_id": "session_legacy",
+        "model_context_version": CONTEXT_VERSION - 1,
+        "model_catalog": {"events": {event["event_id"]: {"statement": "Stale description"}}},
         "event_id": event["event_id"],
         "item_id": item["item_id"],
         "status": "OPEN",
@@ -104,20 +107,29 @@ async def test_legacy_callbacks_upgrade_before_delivery_and_new_turns_reject_ids
         assert current["model_context_version"] == CONTEXT_VERSION
         assert current["message_log"][0] == original_history[0]
         assert current["message_log"][-1]["model_context_version"] == CONTEXT_VERSION
-        assert not service.legacy_contract(current)
+        assert not service.legacy_contract(current) and "model_catalog" not in current
         if kind != "SCOUT_REVIEW":
-            with pytest.raises(ValueError, match="internal fields"):
-                await service.invoke_tool(current, "get_event", {"event_id": event["event_id"]}, "new_call")
+            with pytest.raises(ValueError, match=r"\$\.event is no longer accepted: pass event_id"):
+                await service.invoke_tool(
+                    current, "get_event", {"event": {"statement": "Stale description"}}, "old"
+                )
+            resolved = {}
+            read = await service.invoke_tool(
+                current, "get_event", {"event_id": event["event_id"]}, "new_call", resolved_arguments=resolved
+            )
+            assert read["event"]["event_id"] == resolved["event_id"] == event["event_id"]
     posts = [row for row in native.requests if row[0] == "POST"]
     assert [row[1] for row in posts] == ["/v1/sessions/session_legacy", "/v1/sessions/session_legacy/events"]
     text = posts[-1][2]["events"][0]["content"][0]["text"]
-    assert "context_update" in text and event["event_id"] not in text and item["item_id"] not in text
-    assert native.tools[0]["default_config"]["enabled"] is (kind != "SCOUT_REVIEW")
-    for tool in native.tools[1:]:
-        assert not any(identifier_field(key) for key in tool["input_schema"].get("properties", {}))
+    assert "context_update" in text and "by their IDs" in text
+    assert event["event_id"] not in text and item["item_id"] not in text
+    scout = kind == "SCOUT_REVIEW"
+    assert native.tools == agent_tools(settings, "tank-scout-reviewer" if scout else "tank-event-analyst")
+    assert native.tools[0]["default_config"]["enabled"] is not scout
+    assert ({"name": "bash", "enabled": True} in native.tools[0]["configs"]) is scout
 
 
-async def test_legacy_tool_waits_for_native_idle_then_retries_without_repeating_dispatch(legacy):
+async def test_old_description_call_in_a_legacy_turn_is_refused_once_and_the_id_call_runs(legacy):
     repo, settings, session, item, event = legacy
     session.update(runtime_status="REQUIRES_ACTION", active_message_id="old_message")
     session["message_log"][0]["turn_status"] = "RUNNING"
@@ -136,74 +148,69 @@ async def test_legacy_tool_waits_for_native_idle_then_retries_without_repeating_
 
     native = NativeSession()
     native.status = "running"
-    request = {
+    claim = {
+        "type": "STATE",
+        "subject": "Protocol",
+        "predicate": "is",
+        "object": "live",
+        "state_claim": "LIVE",
+        "directionality": "BOTH",
+        "evidence_class": "PRIMARY_FACT",
+        "quote": "Live",
+        "verified": True,
+    }
+    stamp = {"value": item["observed_at"], "precision": "EXACT", "basis": "Source", "quote": None}
+    old = {
         "id": "old_call",
         "name": "add_observation",
         "input": {
-            "event_id": event["event_id"],
-            "item_id": item["item_id"],
+            "document": {"url": item["url"], "observed_at": item["observed_at"]},
             "link": "CORROBORATION",
-            "public_at": {
-                "value": item["observed_at"],
-                "precision": "EXACT",
-                "basis": "Source",
-                "quote": None,
-            },
+            "public_at": stamp,
             "freshness": "FRESH",
-            "claims": [
-                {
-                    "type": "STATE",
-                    "subject": "Protocol",
-                    "predicate": "is",
-                    "object": "live",
-                    "state_claim": "LIVE",
-                    "directionality": "BOTH",
-                    "evidence_class": "PRIMARY_FACT",
-                    "quote": "Live",
-                    "verified": True,
-                }
-            ],
+            "claims": [claim],
         },
     }
     async with httpx.AsyncClient(transport=httpx.MockTransport(native)) as http:
         service = SessionService(repo, settings, dispatch, http=http)
         with pytest.raises(ValueError, match="native tool boundary"):
-            await service.tool(session, request)
-        assert count == 1
+            await service.tool(session, old)
+        assert count == 0
         assert not any(row[0] == "POST" for row in native.requests)
         native.status = "idle"
         native.lose_result = True
         with pytest.raises(httpx.ReadError):
-            await service.tool(session, request)
-        frozen = (await repo.get("ops.tool_calls", "session_legacy:old_call"))["native_result_body"]
+            await service.tool(session, old)
+        stored = await repo.get("ops.tool_calls", "session_legacy:old_call")
+        assert stored["status"] == "REFUSED" and "pass item_id" in stored["result"]["error"]["reason"]
+        frozen = stored["native_result_body"]
         current = await repo.get("ops.agent_sessions", session["session_id"])
         assert current["model_context_version"] == CONTEXT_VERSION
         assert current["legacy_model_message_ids"] == ["old_message"]
         restarted = SessionService(repo, settings, dispatch, http=http)
-        await restarted.tool(current, request)
+        await restarted.tool(current, old)
+        assert count == 0
+        result_posts = [row[2]["events"][0] for row in native.requests if row[1].endswith("/events")]
+        assert result_posts == [frozen, frozen]
+        text = frozen["content"][0]["text"]
+        assert "context_update" in text and "pass item_id" in text and event["event_id"] not in text
+        new = {
+            "id": "new_call",
+            "name": "add_observation",
+            "input": {key: value for key, value in old["input"].items() if key != "document"},
+        }
+        await restarted.tool(current, new)
         assert count == 1
         claims = await repo.list("evt.claims")
         observations = await repo.list("evt.event_observations")
         assert len(claims) == len(observations) == 1
         assert claims[0]["evidence"] == [{"item_id": item["item_id"], "quote": "Live"}]
-        result_posts = [row[2]["events"][0] for row in native.requests if row[1].endswith("/events")]
-        assert result_posts == [frozen, frozen]
-        text = frozen["content"][0]["text"]
-        assert "Live" in text and event["event_id"] not in text and "context_update" in text
-        assert claims[0]["claim_id"] not in text and observations[0]["obs_id"] not in text
-        resolved = {}
-        await restarted.invoke_tool(
-            current,
-            "get_item",
-            {"item_id": item["item_id"]},
-            "late_parallel_call",
-            resolved_arguments=resolved,
-        )
-        assert resolved == {"item_id": item["item_id"]}
-        refusal = await restarted.invoke_tool(
-            current, "get_decision", {"event_id": "foreign", "token": "world:WLD"}, "foreign_call"
-        )
-        assert refusal["reason"] == "EVENT_SCOPE"
+        text = [row[2]["events"][0] for row in native.requests if row[1].endswith("/events")][-1]["content"][
+            0
+        ]["text"]
+        assert "Live" in text and claims[0]["claim_id"] not in text and observations[0]["obs_id"] not in text
+    bound = await ModelContext(repo, settings, current).arguments("get_decision", {"token_id": "world:WLD"})
+    assert bound == {"token_id": "world:WLD", "event_id": event["event_id"]}
 
 
 async def test_busy_legacy_session_defers_new_callbacks_without_changing_the_active_input(legacy):

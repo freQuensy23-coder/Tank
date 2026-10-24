@@ -4,44 +4,10 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "document": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "url": {
-          "type": "string"
-        },
-        "title": {
-          "type": "string"
-        },
-        "observed_at": {
-          "type": "string"
-        },
-        "excerpt": {
-          "type": "string"
-        }
-      },
-      "anyOf": [
-        {
-          "required": [
-            "url"
-          ]
-        },
-        {
-          "required": [
-            "title",
-            "observed_at"
-          ]
-        },
-        {
-          "required": [
-            "excerpt",
-            "observed_at"
-          ]
-        }
-      ]
+    "item_id": {
+      "type": "string",
+      "description": "ID of a stored source document: ITM-\u2026 for a collected item, web-\u2026 for a page read with fetch_page or a web_search result; find it with read-only SQL (tank-data data guide, \u00abFinding record IDs for tool arguments\u00bb), \u00abSource document by URL\u00bb."
     }
   },
-  "required": [],
-  "description": "Read a displayed source document by URL and observation time; omit document to read the triggering source. Returns text, author, source and dates. Cite verbatim evidence."
+  "description": "Read one stored source document in full: text, author, source and dates. Omit item_id to read the incoming source; pass item_id to read another stored document, such as a history hit or a fetched page. Cite verbatim evidence."
 }

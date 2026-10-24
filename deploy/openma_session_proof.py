@@ -93,7 +93,7 @@ save("session-created.json", session)
 READ_SKILLS = os.environ.get("TANK_PROOF_READ_SKILLS") == "1"
 prompt = (
     "Deployment check by the Tank operator, not a news item and not an event. Do exactly this: "
-    '1) call the tool get_registry once with entity_or_token set to "ETH"; '
+    '1) call the tool get_registry once with token_id set to "ethereum:ETH"; '
     + (
         "2) then read the SKILL.md files of your tank-event-analyst and tank-data skills at the paths listed in your "
         "instructions (only those files), and answer in one line from them: "

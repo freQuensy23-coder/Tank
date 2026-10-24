@@ -720,7 +720,7 @@ async def test_milestone_producer_drives_source_cadence_and_cancellation(tmp_pat
     await repo.put("evt.events", "cadence-event", {"event_id": "cadence-event"})
     due = clock[0] + timedelta(hours=1)
     await tools.schedule_milestone(
-        {"event_id": "cadence-event", "due_at": iso(due), "source": "S15", "milestone": "LAUNCH"}, {}
+        {"event_id": "cadence-event", "due_at": iso(due), "source_id": "S15", "milestone": "LAUNCH"}, {}
     )
     assert not await service.is_escalated("S15")
     await service.control_once("S15")
@@ -879,8 +879,8 @@ async def test_major_assessment_producer_activates_15s_source_reads(tmp_path, mo
             "assessment": {
                 "class": "MAJOR",
                 "criterion": "M1",
-                "criterion_venue": "binance",
-                "criterion_quote": quote,
+                "criterion_venue_id": "binance",
+                "criterion_claim_id": "major-proof",
                 "dims": dimensions,
             },
         },

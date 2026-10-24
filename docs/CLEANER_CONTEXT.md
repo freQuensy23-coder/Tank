@@ -1,41 +1,35 @@
-# Model context and host record identity
+# Model context and record IDs
 
-Tank's automatic analyst/scout messages and custom-tool contracts use source documents, quotes, project names and event descriptions. Durable identifiers, content hashes, code/prompt/config versions, storage paths and audit metadata stay on the host. Protocol correlation values used by OpenMA itself remain in the transport envelope; they are not business arguments the model must copy.
+The analyst and scout read text and write record IDs. The earlier design let the model cite records by their displayed description (URL and date, quote, statement and public time) and resolved descriptions against a per-session catalog. That broke on 2026-10-24: `merge_into` failed because the catalog held a stale event description and the exact statement no longer matched. Descriptions are not identities, so the model now names records by ID and Tank checks every ID.
 
-This change does not remove SQL, sandbox tools, database credentials, the data guide, or the agent's ability to inspect data independently when needed. Those capabilities are unchanged. It cleans the automatic context and ordinary tool arguments, rather than restricting investigation.
+## The rule
 
-## Inputs
+1. **Model context stays text.** Everything Tank pushes to the model — the automatic messages NEW_ITEM, ITEM_ADDED, CONDITION_FIRED, MILESTONE, CALL_EXPIRED, USER_QUESTION and SCOUT_REVIEW, and every custom-tool result — carries no record IDs (`EVT-`, `ITM-`/`web-`, `CLM-`, `CND-`, `PRP-` and the other ULIDs), hashes, versions or storage refs. Registry objects are shown as `Name · key`: `World (WLD) · world:WLD`, `Uniswap · uniswap`, `binance SPOT BTCUSDT · binance:spot:BTCUSDT`, `Venue instrument lists · S14`. `ModelContext.project()`, `message()` and `result()` in `src/tank/agents/context.py` do this; the OPAQUE guard strips record IDs from text and keeps registry keys.
+2. **An argument that points at a stored record takes its ID:** `event_id`, `item_id`, `claim_id`, `claim_ids`, `supersedes_claim_ids`, `criterion_claim_id`, `cond_id`, the proposal ID in `duplicate_of`, and typed pattern evidence `{claim_id}`, `{event_id}` or `{item_id}`. Registry objects take their key: `token_id`, `token_ids`, `entity_id`, `criterion_venue_id`, `instrument_id`, `source_id`, `source_ids`.
+3. **The model finds record IDs itself** with read-only SQL in its sandbox (role `tank_agent`): the tank-data data guide, «Finding record IDs for tool arguments», gives the queries keyed by what the model sees; the scout skill has its own «Finding record IDs». Registry keys come from the context. The scout's sandbox runs only `bash`, for these lookups.
+4. **Implicit records stay implicit:** the current event (every tool scoped to it), the incoming source (`record_event`, `add_observation`, `get_item`) and the current proposal (`record_review`). An explicit ID is accepted only where a different record is meant: `get_item`/`get_event` of another record, the `merge_into` target, the `add_observation` document of a callback without an incoming source, claim evidence from another document.
+5. **Content the model authors stays text:** statements, claims (quote, subject, predicate, object), verdicts, WHY bullets, queries, URLs, milestone text, condition expressions, filenames, and the names of entities and tokens outside the registry (`entities[].name`, `token_names`, `entity_name`, `token_name`). Authored text must not carry record IDs.
+6. **Tank validates every ID.** There is no description resolution and no session catalog.
 
-The host selects the current event from the session and the triggering publication from the active input. `record_event`, `add_observation`, assessments, decisions, watches, milestones and publication no longer ask the model to repeat those internal keys. `record_review` uses the current proposal. Unknown internal fields are rejected at the model boundary; the existing domain scope checks still execute after host resolution.
+## Validation
 
-For callbacks without an incoming publication, `add_observation` requires an explicit displayed `document`. Its URL and observation time select the actual source of the update, including a fetched official milestone page; the opening publication is not silently reused. An incoming publication remains bound to its callback, and claims can cite other displayed documents as supporting evidence.
+`ModelContext.arguments()` runs for every model call before the domain:
 
-A source citation is a document description with a verbatim quote:
+- **Shape:** the arguments must match the tool's public schema in `config/skills/*/tools.json`. A field of the old description contract (`document`, `event`, `condition`, `claim(s)`, `supersedes_claims`, `token(s)`, `entity`, `instrument`, `source(s)`, `entity_or_token`, `criterion_quote`, `criterion_venue`) is refused with the ID field that replaced it; a description where an ID is expected is refused with the same pointer. The one exception is a `set_beneficiaries` layer outside the eight, which the domain turns into a BENEFICIARY_LAYER proposal.
+- **Text:** record IDs in authored text are refused with their argument path. Quotes, URLs, queries and titles are literal; registry keys are not record IDs.
+- **Each ID the model supplied:** it exists (registry keys in the registry and source configuration, record IDs in their table), it has the expected kind (an event ID passed as a claim ID is named as such) and it lies in the tool's scope: claims cited by `set_assessment`, `set_beneficiaries`, `supersedes_claim_ids` and `approval_dependency` belong to the current event; a DISARMed watch belongs to it; the `merge_into` target is open and not the current event; a scout duplicate is open and not the current proposal. Pattern evidence may cite any stored record.
+- **Implicit IDs** are then bound from the session; they are host state and are not looked up again.
 
-```json
-{
-  "document": {
-    "url": "https://example.org/announcement",
-    "observed_at": "2026-10-23T10:00:00Z"
-  },
-  "quote": "The product is live."
-}
-```
+Every refusal names the argument path and the guide query to use. The domain then applies its own rules unchanged (accepted and verified claims, claim types, stages, classes, caps), plus the V3 name check: a name the registry resolves through its aliases is refused and its key asked for; any other name is kept as `UNRESOLVED:<name>`.
 
-Assessments and beneficiary edges refer to a recorded claim by its quote and, when needed, its subject, predicate and object. They do not invent short numbered aliases. Sources with the same URL must be distinguished by their displayed observation time. Ambiguous or unknown descriptions fail explicitly. The server keeps the lookup catalog in the session so replies survive retries and restarts without fuzzy matching.
+## One shape
 
-`get_event` defaults to the current event. Reading or merging another event requires its displayed statement and public time. Disarming a watch uses its displayed text, condition expression and token, with role and creation time available to distinguish re-armed watches from their predecessors. A duplicate scout proposal is selected by its subject. Tokens use project names and tickers; canonical registry token keys are rejected in current model arguments. Instruments use venue, market type and symbol.
+The domain validates the same public schema plus the records the host binds (`HOST_BOUND_FIELDS` in `src/tank/event_tools.py`: `event_id` for scoped tools and `get_event`, `item_id` for `record_event`, `add_observation` and `get_item`, `proposal_id` for `record_review`). The separate internal contracts in `config/tool_contracts` are gone. Tool logs keep the exact model input in `model_arguments` and the host-bound domain arguments in `arguments`; replay and causal receipts use the latter. `set_assessment` stores `criterion_quote`, the quote of `criterion_claim_id`, next to it.
 
-## Outputs and persistence
+## Live sessions
 
-`ModelContext` projects incoming publications and custom-tool results. It replaces useful identity-bearing references with human-readable content and drops audit-only fields recursively, including creation, re-arming, last-display and cancellation relationships and provenance objects. Search results retain their article text, URLs, source names and clocks. Literal source quotes and user-supplied questions/filenames are preserved, including hash-shaped public content; metadata redaction must not invalidate evidence or file paths. Jev does not substitute an internal source code when a human-readable publisher name is unavailable. Diagnostic text replaces embedded registry keys and obsolete registry-argument names with display names; verbatim source text and URLs are preserved. Market data retains economic values, units, windows, uncertainty and coverage. The raw results, hashes, relational links and evidence archives remain in the database. Tool logs retain the exact model input in `model_arguments` and the host-resolved domain arguments in `arguments`; replay and causal receipts keep using the latter.
-
-Frozen custom-tool response bodies contain the projected result. A delivery retry reuses that same body. Legacy frozen response bodies are retained separately when a new clean response is prepared. Existing sessions are not reset, and previously sent history is not retroactively erased. Before another callback or a pending custom-tool continuation, an idle native session receives the current analyst or scout tools and a notice to follow their current definitions. Busy sessions defer migration; a rejected update is retried without advancing the stored contract version. Pre-deployment turns retain a host-only compatibility path through the original domain schemas and scope checks, while later turns reject identifier arguments. Their replies are still projected without identifiers. Session creation identities include the model-context version, so an orphaned old remote snapshot cannot be misclassified as a new session.
-
-Telegram attachments are uploaded and mounted by the host. The model receives a readable file path instead of a SQL command containing the attachment's storage key. The file bytes and existing database copy are preserved.
-
-Public schemas live with the model skills. Internal domain validation schemas live in `config/tool_contracts`, outside the uploaded skill files. Existing domain services continue to use their internal record identifiers; changing the model interface does not change the event state machine or scoring rules.
+`CONTEXT_VERSION` is 2. An OpenMA agent gets the new tool schemas through the sync on tank start (`openma_sync`). A persistent session at an older version switches at its next idle input boundary: `sync_tools` posts the current tools to the session, drops its stored description catalog and records the version; the next message carries a `context_update` notice that tool arguments now take IDs. A call made in the old description shape after that is refused with the ID field and the lookup to use; there is no compatibility path for descriptions. A tool result returned to a turn that began before the switch carries the same notice. Busy sessions defer the switch; a rejected update is retried without advancing the stored version. Session creation identities include the version, so an orphaned old remote session is not recovered as a new one.
 
 ## Verification
 
-Boundary tests exercise actual event creation and source/claim binding, recursive metadata removal, ambiguous references, event selection, watch cancellation, scout duplicates and meaningful registry names. Lifecycle, publication, retry, replay and attachment tests cover the changed model inputs while retaining their original domain assertions. The data guide and sandbox database configuration are preserved.
+`tests/test_model_context.py` covers valid IDs, unknown, wrong-kind and out-of-scope IDs with their lookup hints, refused description fields, implicit current event, incoming item and proposal, the `Name · key` display, record IDs absent from messages and results, and the 2026-10-24 regression: `merge_into` by `event_id` succeeds when the session never displayed the target. `tests/test_model_context_migration.py` covers the switch of a persistent session: synced tools, dropped catalog, the old-shape call refused once with a frozen reply, and the ID-shaped call that follows.

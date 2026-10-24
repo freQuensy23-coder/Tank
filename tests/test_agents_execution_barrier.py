@@ -8,10 +8,13 @@ import pytest
 
 from tank.agents.sessions import SessionService
 from tank.replay import semantic_verdict_output
+from tank.settings import Settings
 from tank.storage import MemoryRepository
 
 
 def config():
+    """Protocol settings; the model boundary still reads the real registry and sources."""
+    real = Settings(_env_file=None)
     return SimpleNamespace(
         openma_url="http://native",
         openma_api_key="fake-protocol-test",
@@ -19,7 +22,7 @@ def config():
         openma_model="gpt-6.1-sol",
         config_version="test",
         code_version="test",
-        load_config=lambda name: {},
+        load_config=lambda name: real.load_config(name) if name in {"registry", "sources"} else {},
     )
 
 

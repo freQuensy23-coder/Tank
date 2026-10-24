@@ -23,7 +23,6 @@ from tank.agents.pipeline import ConfigurationError
 from tank.agents.security import redact_tool_arguments
 from tank.agents.wire import tool_wire_result
 from tank.delivery import DeliveryDeferred
-from tank.event_tools import validate_schema
 from tank.openma_sync import agent_tools
 from tank.ops_progress import session_progress
 from tank.settings import threshold
@@ -82,9 +81,10 @@ JOB_ADMISSION_FIELDS = ("job_id", "status", "priority", "payload", "slot_waiting
 BUSY_RUNTIME_STATES = {"PENDING", "RUNNING", "REQUIRES_ACTION"}
 CONTEXT_TRANSITION = (
     "Use the current tool definitions instead of earlier tool instructions. "
-    "The host selects the current event and triggering source. "
-    "Cite documents by their displayed URL and date, claims by their verbatim descriptions, "
-    "and projects by name and ticker."
+    "Tool arguments now name records only by their IDs, never by descriptions: item_id, event_id, claim_id, "
+    "cond_id and proposal_id come from read-only SQL as your skill shows; token_id, entity_id, instrument_id "
+    "and source_id are the registry keys shown after « · » next to names (Name · key). The current event, "
+    "the incoming source and the current proposal stay implicit."
 )
 
 
@@ -486,6 +486,7 @@ class SessionService:
                     if row.get("model_context_version", 0) < CONTEXT_VERSION
                 ]
                 current["model_context_version"] = CONTEXT_VERSION
+                current.pop("model_catalog", None)
             current.update(self.clock_timestamp().fields("tools_synced_at"))
             await self.repo.put("ops.agent_sessions", sid, current)
 
@@ -1283,15 +1284,7 @@ class SessionService:
             context["_decision_market_refresh_completed"] = True
             context["_decision_prepared_condition_ids"] = decision_prepared_condition_ids
         fresh = await self.repo.get("ops.agent_sessions", session["session_id"]) or session
-        boundary = ModelContext(self.repo, self.settings, fresh)
-        try:
-            arguments = await boundary.arguments(tool, arguments)
-        except ValueError:
-            reader = getattr(self.settings, "read_config_json", None)
-            if not self.legacy_contract(session) or reader is None:
-                raise
-            validate_schema(arguments, reader(f"tool_contracts/{tool}.schema.json"))
-            arguments = copy.deepcopy(arguments)
+        arguments = await ModelContext(self.repo, self.settings, fresh).arguments(tool, arguments)
         if resolved_arguments is not None:
             resolved_arguments.update(copy.deepcopy(arguments))
         return await self.tool_dispatch(tool, arguments, context)
