@@ -2,8 +2,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from tank.models import Record
 from tank.time_precision import chosen_boundary, collection_clock, offset_schedule, propagate_timestamp
-from tank.util import EpochInput, EpochUnit, clock_iso, iso, parse_epoch, parse_utc_time
+from tank.util import EpochInput, EpochUnit, clock_iso, iso, parse_epoch, parse_iso_time, parse_utc_time
 
 AT = "2026-10-18T00:00:00Z"
 
@@ -46,8 +47,8 @@ def test_legacy_unknown_never_infers_exact_from_microseconds() -> None:
 def test_explicit_boundaries_and_bucket_units() -> None:
     assert chosen_boundary(AT, precision="EXACT").precision == "EXACT"
     assert chosen_boundary(AT, precision="BUCKET", bucket_size=(300, "s")).precision == "BUCKET(300s)"
-    with pytest.raises(TypeError):
-        chosen_boundary(AT, precision="BUCKET", bucket_size=300)
+    with pytest.raises(ValueError, match="explicit unit"):
+        chosen_boundary(AT, precision="BUCKET", bucket_size="300")
     with pytest.raises(ValueError):
         chosen_boundary(AT, precision="BUCKET(1h)", bucket_size="2h")
     with pytest.raises(ValueError):
@@ -65,7 +66,7 @@ def test_conflicting_aliases_refused_and_generic_alias_explicit() -> None:
 
 
 def test_nested_event_timestamp_and_selection_keep_precision() -> None:
-    source = {"event_time": {"value": AT, "precision": "BUCKET_1D", "quote": "yesterday"}}
+    source: Record = {"event_time": {"value": AT, "precision": "BUCKET_1D", "quote": "yesterday"}}
     stamp = propagate_timestamp(source, "event_time")
     assert stamp.fields("event_time")["event_time_prec"] == "BUCKET(1d)"
     assert offset_schedule(stamp, timedelta(hours=-24)).precision == "BUCKET(1d)"
@@ -171,3 +172,15 @@ def test_explicit_processing_clock_is_separate_from_formatting(monkeypatch: pyte
     fixed = datetime(2026, 10, 24, 12, tzinfo=UTC)
     monkeypatch.setattr("tank.util.utcnow", lambda: fixed)
     assert clock_iso() == "2026-10-24T12:00:00Z"
+
+
+def test_iso_decoder_requires_a_declared_timezone() -> None:
+    expected = datetime(2026, 10, 24, 12, 3, 4, 123456, tzinfo=UTC)
+    assert parse_iso_time("2026-10-24T14:03:04.123456+02:00") == expected
+    assert parse_iso_time(expected) == expected
+    with pytest.raises(ValueError, match="explicit timezone"):
+        parse_iso_time("2026-10-24 12:03:04.123456")
+    with pytest.raises(ValueError, match="explicit timezone"):
+        parse_iso_time(datetime(2026, 10, 24, 12))
+    with pytest.raises(ValueError, match="explicit epoch unit"):
+        parse_iso_time("1700000000000")

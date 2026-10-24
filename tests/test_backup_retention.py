@@ -34,8 +34,8 @@ def test_keeps_newest_complete_snapshots_only(tmp_path: Path) -> None:
     assert prune_backup_snapshots(tmp_path, 3) == []
 
 
-@pytest.mark.parametrize("keep", [0, -1, "3", None])
-def test_keep_must_be_positive_integer(tmp_path: Path, keep: int | str | None) -> None:
+@pytest.mark.parametrize("keep", [0, -1, True, False])
+def test_keep_must_be_positive_integer(tmp_path: Path, keep: int) -> None:
     snapshot(tmp_path, "tank-2026-10-20")
     with pytest.raises(ValueError):
         prune_backup_snapshots(tmp_path, keep)
