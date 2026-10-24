@@ -78,6 +78,11 @@ async def test_external_escalation_writes_the_obligation_and_starts_nothing(sett
     repo = MemoryRepository()
     service = MarketService(repo, settings)
     service._stop = asyncio.Event()
+    await repo.put(
+        "evt.events",
+        "EVT-1",
+        {"event_id": "EVT-1", "public_at": "2026-10-18T12:00:00Z", "public_at_prec": "EXACT"},
+    )
     await service.escalate("EVT-1", [TOKEN])
     assert [row["token_id"] for row in await repo.list("mkt.hot_tokens")] == [TOKEN]
     (run,) = await repo.list("mkt.backfill_runs")
