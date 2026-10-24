@@ -324,7 +324,7 @@ class RepairFailed(RepairRecord):
     status: Literal["FAILED"]
     reason: str
     budget_s: str | None
-    result: None
+    result: RepairResult | None
 
 
 class RepairExpired(RepairRecord):
@@ -402,6 +402,7 @@ class RepairUnavailable(DomainModel):
     status: Literal["FAILED", "EXPIRED", "INCOMPLETE"]
     request_id: str
     reason: str
+    result: RepairResult | None
 
 
 class RepairNotRun(DomainModel):
