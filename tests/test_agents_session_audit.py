@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from agent_source_fixtures import source_record_fixture
 
 from tank.agents import SessionService
 from tank.agents.context import CONTEXT_VERSION
@@ -109,8 +110,8 @@ async def test_failed_turn_retries_original_message_and_new_message_cannot_reset
     await seed(repo, runtime_status="IDLE")
     await repo.put("evt.events", "e", {"event_id": "e", "lifecycle": "TRACKED"})
     posts = []
-    await repo.put("ingest.source_items", "one", {"item_id": "one", "text": "first"})
-    await repo.put("ingest.source_items", "two", {"item_id": "two", "text": "second"})
+    await repo.put("ingest.source_items", "one", source_record_fixture({"item_id": "one", "text": "first"}))
+    await repo.put("ingest.source_items", "two", source_record_fixture({"item_id": "two", "text": "second"}))
 
     def handler(request: httpx.Request):
         posts.append(json.loads(request.content))
@@ -566,7 +567,7 @@ async def test_unbound_terminal_turn_failure_retries_once_then_marks_source_fail
     await repo.put(
         "ingest.source_items",
         "one",
-        {"item_id": "one", "text": "Original item", "extraction_status": "PENDING"},
+        source_record_fixture({"item_id": "one", "text": "Original item", "extraction_status": "PENDING"}),
     )
     posts = []
 

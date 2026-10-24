@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from agent_source_fixtures import source_record_fixture
 
 from tank.agents.sessions import SessionService
 from tank.storage import MemoryRepository
@@ -55,7 +56,9 @@ async def setup():
         ],
     }
     await repo.put("ops.agent_sessions", "s", session)
-    await repo.put("ingest.source_items", "item", {"item_id": "item", "extraction_status": "DONE"})
+    await repo.put(
+        "ingest.source_items", "item", source_record_fixture({"item_id": "item", "extraction_status": "DONE"})
+    )
     await repo.put(
         "ops.tool_calls",
         "s:original-tool",
