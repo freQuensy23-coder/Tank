@@ -6,7 +6,7 @@ import { stableDigest, validateRuntimeIdentity } from './runtime-identity.js';
 import type { Candidate, Handle, Scope } from './retained-session.js';
 
 type MemoryResource = { type: string; memoryStoreId?: string; name?: string | null; access?: string };
-export async function retainedMemoryGeneration(input: {
+type MemoryBindingInput = {
   scope: Scope;
   candidate: Candidate | null;
   resources: readonly MemoryResource[];
@@ -15,7 +15,15 @@ export async function retainedMemoryGeneration(input: {
   inspect(id: string): Promise<{ id: string; name?: string } | null>;
   getText(key: string): Promise<string | null>;
   readConfiguration?(id: string): Promise<NativeLegacyConfiguration | null>;
-}): Promise<string> {
+};
+export async function retainedMemoryGeneration(input: MemoryBindingInput): Promise<string> {
+  try { return await resolveMemoryGeneration(input); }
+  catch (error) {
+    if (error instanceof Error && error.message === 'retained_session_archived') throw error;
+    throw Error('retained_memory_binding_unproven');
+  }
+}
+async function resolveMemoryGeneration(input: MemoryBindingInput): Promise<string> {
   const writable = input.resources.filter(resource => resource.type === 'memory_store' && resource.access !== 'read_only');
   if (!writable.length || !input.candidate) return input.proposed;
   const fail = (): never => { throw Error('retained_memory_binding_unproven'); };

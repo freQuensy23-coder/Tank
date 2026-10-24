@@ -249,7 +249,7 @@ function retryableImagePreflight(entries: OrderedSessionEvent[], row: Continuati
   return output.length > 0 && (allowUnfinished || output.some(entry => entry.event.type === 'session.error')) && output.every(entry => {
     if (entry.executionMetadata?.progress) return false;
     const event = entry.event;
-    if (event.type === 'session.error') return /^(?:retained_configuration_changed(?::[a-zA-Z,]+)?|retained_legacy_provenance_missing:[a-zA-Z0-9_;]+|retained_legacy_provider_provenance_missing(?::[a-z_]+)?|retained_image_provenance_missing:[a-z_]+|retained_image_(?:blob_invalid|descriptor_invalid|index_invalid|config_invalid|selection_ambiguous)|retained_upgrade_transfer_failed:[a-z_]+|retained_resource_busy|retained_runtime_missing)$/.test(event.error.message);
+    if (event.type === 'session.error') return /^(?:retained_configuration_changed(?::[a-zA-Z,]+)?|retained_legacy_provenance_missing:[a-zA-Z0-9_;]+|retained_legacy_provider_provenance_missing(?::[a-z_]+)?|retained_image_provenance_missing:[a-z_]+|retained_image_(?:blob_invalid|descriptor_invalid|index_invalid|config_invalid|selection_ambiguous)|retained_upgrade_transfer_failed:[a-z_]+|retained_resource_busy|retained_runtime_missing|retained_memory_binding_unproven)$/.test(event.error.message);
     if (event.type === 'session.status_idle') return event.stopReason.type === 'retries_exhausted';
     return ['session.status_running', 'session.status_rescheduled'].includes(event.type);
   });

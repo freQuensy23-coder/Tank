@@ -104,6 +104,18 @@ test('temporary no-effects upgrade failures have durable retry boundaries withou
   assert.equal(planSessionContinuation(restarted, 'input-old').mode, 'finalize');
 });
 
+test('missing retained memory binding remains a retryable no-effects preflight refusal without hiding the diagnostic', () => {
+  const snapshot = recover(fixture());
+  snapshot.orderedEvents.push(
+    { event: { id: 'missing-memory', type: 'session.error', error: { message: 'retained_memory_binding_unproven', retryStatus: 'exhausted' } }, executionId: 'input-old', position: { revision: 3, index: 0 } },
+    { event: { id: 'missing-memory-idle', type: 'session.status_idle', stopReason: { type: 'retries_exhausted' } }, executionId: 'input-old', position: { revision: 4, index: 0 } },
+  );
+  assert.equal(imageRecoveryRetryBoundary(snapshot, 'input-old'), 'missing-memory-idle');
+  assert.equal(planSessionContinuation(snapshot, 'input-old').mode, 'failure');
+  snapshot.executions[0].imageRecoveryRetryAfterEventId = 'missing-memory-idle';
+  assert.equal(planSessionContinuation(snapshot, 'input-old').mode, 'model');
+});
+
 for (const message of ['unrelated failure', 'permission denied']) test(`recovery does not refund or hide ${message}`, () => {
   const snapshot = recover(fixture());
   snapshot.orderedEvents.push({ event: { id: 'unrelated', type: 'session.error', error: { message } }, executionId: 'input-old', position: { revision: 3, index: 0 } });
