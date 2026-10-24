@@ -140,3 +140,35 @@ def test_book_instrument_rejects_unsupported_identity_instead_of_assuming_spot(c
             }
             | changes
         )
+
+
+def test_event_anchor_requires_verified_exact_event_time_and_preserves_public_precision():
+    from tank.market.capture import event_anchor
+
+    event = {
+        "event_time": "2026-06-17T00:00:00Z",
+        "event_time_prec": "EXACT",
+        "state_verified": False,
+        "public_at": "2026-06-17T01:00:00Z",
+        "public_at_prec": "BUCKET(1h)",
+        "known_to_us_at": "2026-06-17T02:00:00Z",
+        "known_to_us_at_prec": "COLLECTION_ONLY",
+    }
+    selected = event_anchor(event)
+    assert selected["type"] == "T1"
+    assert selected["ts"] == event["public_at"]
+    assert selected["ts_prec"] == "BUCKET(1h)"
+    assert event_anchor(event | {"state_verified": True})["type"] == "T0"
+    with pytest.raises(ValidationError):
+        event_anchor(event | {"state_verified": "true"})
+
+
+def test_capture_boundaries_require_anchor_timestamp_and_include_mirrored_window():
+    from tank.market.capture import capture_boundary_points
+    from tank.util import parse_time
+
+    points = capture_boundary_points("2026-06-17T04:00:00Z", {"ts": "2026-06-17T03:00:00Z"})
+    assert parse_time("2026-06-17T02:00:00Z") in points
+    assert parse_time("2026-06-17T03:00:00Z") in points
+    with pytest.raises(KeyError):
+        capture_boundary_points("2026-06-17T04:00:00Z", {})
