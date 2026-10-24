@@ -46,6 +46,7 @@ def settings(cap=2):
         }
     }
     return SimpleNamespace(
+        ops_progress_enabled=False,
         openma_api_key="test",
         openma_url="http://openma:8787",
         openma_model="gpt-6.1-sol",

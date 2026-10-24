@@ -385,3 +385,41 @@ def test_route_and_message_context_cannot_use_empty_or_whitespace_identities(ide
         SourceRoutingMessage(kind="ITEM_ADDED", item_id="item-1", event_id=identity)
     with pytest.raises(ValidationError):
         SourceRoutingMessage(kind="NEW_ITEM", item_id="item-1", session_id=identity)
+
+
+def test_publisher_authority_requires_declared_capture_feed() -> None:
+    from source_support import source_definition
+
+    from tank.sources.organization import resolve_author_organization
+
+    source = source_definition(
+        {
+            "source_id": "S01",
+            "name": "Declared publisher",
+            "author_organization": "Configured issuer",
+            "feeds": [],
+        }
+    )
+    with pytest.raises(ValidationError, match="feed"):
+        resolve_author_organization(source, {"url": "https://example.org/release"}, {})
+
+
+@pytest.mark.asyncio
+async def test_missing_provider_limits_prevents_source_service_start(tmp_path: Path) -> None:
+    from tank.settings import Settings
+    from tank.sources import SourceService
+
+    class MissingProviderLimits(Settings):
+        def load_config(self, name: str) -> dict[str, JsonValue]:
+            configuration = super().load_config(name)
+            if name == "api_limits":
+                del configuration["limits"]
+            return configuration
+
+    repo = MemoryRepository()
+    settings = MissingProviderLimits(data_dir=tmp_path, ops_progress_enabled=False)
+    async with httpx.AsyncClient() as http:
+        with pytest.raises(ValidationError, match="limits"):
+            SourceService(repo, settings, http=http)
+    assert await repo.list("ops.jobs") == []
+    assert await repo.list("ingest.source_items") == []

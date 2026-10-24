@@ -5,9 +5,12 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+from agent_source_fixtures import source_record_fixture
 
 from tank.agents import ConfigurationError, Pipeline, SessionService
 from tank.agents.context import CONTEXT_VERSION
+from tank.contracts.source_items import parse_feed_source_item
+from tank.ops_progress import DisabledSourceProgress
 from tank.storage import MemoryRepository
 from tank.telegram_rich import score_summary
 from tank.util import iso, sha256, utcnow
@@ -30,6 +33,9 @@ def settings(**overrides):
     }
     values = {
         "openrouter_api_key": "secret",
+        "opencode_api_key": None,
+        "replay": False,
+        "ops_progress_enabled": False,
         "openma_api_key": "secret",
         "openma_url": "http://oma",
         "openma_model": "gpt-6.1-sol",
@@ -39,7 +45,13 @@ def settings(**overrides):
     }
     from tank.settings import Settings
 
-    values["thresholds"] = Settings(_env_file=None).thresholds
+    values["thresholds"] = lambda: (
+        Settings(_env_file=None)
+        .thresholds()
+        .model_validate(
+            {**Settings(_env_file=None).thresholds().model_dump(mode="json"), **config["thresholds"]}
+        )
+    )
     values.update(overrides)
     values["configured_secrets"] = lambda: frozenset(
         value
@@ -77,7 +89,13 @@ async def seed_session(repo, **changes):
 async def test_filter_requires_calibration_and_logs_typed_usage() -> None:
     repo = MemoryRepository()
     opts, config = settings()
-    await repo.put("ingest.source_items", "i", {"item_id": "i", "text": "Aave release", "source": "issuer"})
+    await repo.put(
+        "ingest.source_items",
+        "i",
+        source_record_fixture(
+            {"item_id": "i", "source_id": "S30", "text": "Aave release", "source": "issuer"}
+        ),
+    )
     calls = []
 
     def handler(request: httpx.Request):
@@ -92,14 +110,14 @@ async def test_filter_requires_calibration_and_logs_typed_usage() -> None:
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        pipe = Pipeline(repo, opts, http=http)
+        pipe = Pipeline(repo, opts, http=http, progress=DisabledSourceProgress())
         config["thresholds"]["filter_cutoff"] = None
         with pytest.raises(ConfigurationError):
-            await pipe.filter_item({"item_id": "i"})
+            await pipe.filter_item_wire({"item_id": "i"})
         assert calls == []
         config["thresholds"]["filter_cutoff"] = 0.7
-        await pipe.filter_item({"item_id": "i"})
-        await pipe.filter_item({"item_id": "i"})
+        await pipe.filter_item_wire({"item_id": "i"})
+        await pipe.filter_item_wire({"item_id": "i"})
     assert len(calls) == 1
     assert set(calls[0]["state"]) == {"item"}
     assert set(calls[0]["state"]["item"]) <= {"source", "author", "title", "text", "quoted"}
@@ -116,16 +134,33 @@ async def test_routing_whole_word_alias_three_day_and_best_score() -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     await repo.put(
-        "ingest.source_items", "i", {"item_id": "i", "text": "Aave Labs confirms launch", "deferrable": False}
+        "ingest.source_items",
+        "i",
+        source_record_fixture({"item_id": "i", "text": "Aave Labs confirms launch", "deferrable": False}),
     )
     for name, days in [("old", 4), ("new", 1), ("best", 2)]:
         await repo.put(
-            "evt.events", name, {"event_id": name, "statement": name, "entities": ["aave"], "tokens": []}
+            "evt.events",
+            name,
+            {
+                "lifecycle": "ANALYZING",
+                "tokens_mentioned": [],
+                "event_state": "RUMOR",
+                "event_id": name,
+                "statement": name,
+                "entities": ["aave"],
+                "tokens": [],
+            },
         )
         await repo.put(
             "ops.agent_sessions",
             name,
-            {"session_id": name, "event_id": name, "last_item_at": iso(utcnow() - timedelta(days=days))},
+            {
+                "status": "OPEN",
+                "session_id": name,
+                "event_id": name,
+                "last_item_at": iso(utcnow() - timedelta(days=days)),
+            },
         )
     seen = []
 
@@ -142,10 +177,15 @@ async def test_routing_whole_word_alias_three_day_and_best_score() -> None:
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        pipe = Pipeline(repo, opts, http=http)
-        assert pipe.identities({"text": "notAave Labsx"}) == set()
-        result = await pipe.route_item({"item_id": "i"})
-        await pipe.route_item({"item_id": "i"})
+        pipe = Pipeline(repo, opts, http=http, progress=DisabledSourceProgress())
+        assert (
+            pipe.identities(
+                parse_feed_source_item(source_record_fixture({"item_id": "fixture", "text": "notAave Labsx"}))
+            )
+            == set()
+        )
+        result = await pipe.route_item_wire({"item_id": "i"})
+        await pipe.route_item_wire({"item_id": "i"})
     assert result["route_event_id"] == "best" and seen == ["best", "new"]
     job = (await repo.list("ops.jobs"))[0]
     assert job["payload"] == {"kind": "ITEM_ADDED", "item_id": "i", "event_id": "best"}
@@ -162,7 +202,18 @@ async def test_tool_result_lost_reply_restart_reuses_completed_result() -> None:
     async def dispatch(name, args, context):
         nonlocal count
         count += 1
-        await repo.put("evt.events", "evt_1", {"event_id": "evt_1", "result": args})
+        await repo.put(
+            "evt.events",
+            "evt_1",
+            {
+                "statement": "Synthetic event",
+                "lifecycle": "ANALYZING",
+                "tokens_mentioned": [],
+                "event_state": "RUMOR",
+                "event_id": "evt_1",
+                "result": args,
+            },
+        )
         return {"ok": True}
 
     def broken(req) -> None:
@@ -200,7 +251,17 @@ async def test_failed_dispatch_rolls_back_and_replays() -> None:
     await seed_session(repo)
 
     async def bad(*args) -> None:
-        await repo.put("evt.events", "oops", {"event_id": "oops"})
+        await repo.put(
+            "evt.events",
+            "oops",
+            {
+                "statement": "Synthetic event",
+                "lifecycle": "ANALYZING",
+                "tokens_mentioned": [],
+                "event_state": "RUMOR",
+                "event_id": "oops",
+            },
+        )
         raise ValueError("bad data")
 
     async with httpx.AsyncClient(
@@ -260,8 +321,20 @@ async def test_message_running_session_posted_and_retry_failure() -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     await seed_session(repo, status="RUNNING")
-    await repo.put("evt.events", "evt_1", {"event_id": "evt_1"})
-    await repo.put("ingest.source_items", "itm_2", {"item_id": "itm_2", "text": "Update"})
+    await repo.put(
+        "evt.events",
+        "evt_1",
+        {
+            "statement": "Synthetic event",
+            "lifecycle": "ANALYZING",
+            "tokens_mentioned": [],
+            "event_state": "RUMOR",
+            "event_id": "evt_1",
+        },
+    )
+    await repo.put(
+        "ingest.source_items", "itm_2", source_record_fixture({"item_id": "itm_2", "text": "Update"})
+    )
     posts = []
 
     def handler(req):
@@ -288,12 +361,15 @@ async def test_canonical_event_routing_and_added_message() -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     await repo.put(
-        "ingest.source_items", "i", {"item_id": "i", "source_id": "S30", "text": "Aave confirms launch"}
+        "ingest.source_items",
+        "i",
+        source_record_fixture({"item_id": "i", "source_id": "S01", "text": "Aave confirms launch"}),
     )
     await repo.put(
         "evt.events",
         "evt_1",
         {
+            "statement": "Synthetic event",
             "event_id": "evt_1",
             "entities": [{"entity_id": "aave", "role": "SUBJECT"}],
             "tokens_mentioned": ["AAVE"],
@@ -324,7 +400,9 @@ async def test_canonical_event_routing_and_added_message() -> None:
         return httpx.Response(200, json={})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        routed = await Pipeline(repo, opts, http=http).route_item({"item_id": "i"})
+        routed = await Pipeline(repo, opts, http=http, progress=DisabledSourceProgress()).route_item_wire(
+            {"item_id": "i"}
+        )
         service = SessionService(repo, opts, None, http=http)
         service.start_stream = lambda sid: None
         await service.send_message(routed["routing_message"])
@@ -376,7 +454,9 @@ async def test_stream_processing_preserves_concurrent_added_message() -> None:
     repo = MemoryRepository()
     opts, _ = settings()
     await seed_session(repo)
-    await repo.put("ingest.source_items", "itm_2", {"item_id": "itm_2", "text": "fresh"})
+    await repo.put(
+        "ingest.source_items", "itm_2", source_record_fixture({"item_id": "itm_2", "text": "fresh"})
+    )
     async with httpx.AsyncClient(
         transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))
     ) as http:
@@ -484,13 +564,15 @@ async def test_slow_denial_turn_remains_until_exit_update_delivered(
     await repo.put(
         "ingest.source_items",
         "denial",
-        {
-            "item_id": "denial",
-            "text": "Official cancellation",
-            "source_id": "S01",
-            "source_class": "PRIMARY",
-            "observed_at": iso(utcnow() + timedelta(seconds=1)),
-        },
+        source_record_fixture(
+            {
+                "item_id": "denial",
+                "text": "Official cancellation",
+                "source_id": "S01",
+                "source_class": "PRIMARY",
+                "observed_at": iso(utcnow() + timedelta(seconds=1)),
+            }
+        ),
     )
     await seed_session(repo, runtime_status="RUNNING")
     claim = {
@@ -663,7 +745,9 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
     opts, _ = settings()
     for iid in ("first", "second"):
         await repo.put(
-            "ingest.source_items", iid, {"item_id": iid, "source_id": "S01", "text": "Aave Labs news"}
+            "ingest.source_items",
+            iid,
+            source_record_fixture({"item_id": iid, "source_id": "S01", "text": "Aave Labs news"}),
         )
     creates, messages = [], []
 
@@ -679,9 +763,9 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
         return httpx.Response(200, json={"data": []})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        pipe = Pipeline(repo, opts, http=http)
+        pipe = Pipeline(repo, opts, http=http, progress=DisabledSourceProgress())
         first, second = await asyncio.gather(
-            pipe.route_item({"item_id": "first"}), pipe.route_item({"item_id": "second"})
+            pipe.route_item_wire({"item_id": "first"}), pipe.route_item_wire({"item_id": "second"})
         )
         assert await repo.list("evt.events") == []
         assert first["routing_message"]["kind"] == second["routing_message"]["kind"] == "NEW_ITEM"
@@ -695,7 +779,7 @@ async def test_concurrent_items_without_event_candidates_open_distinct_idempoten
         one = await service.send_message(first["routing_message"])
         two = await service.send_message(second["routing_message"])
         assert one["session_id"] != two["session_id"]
-        repeated = await pipe.route_item({"item_id": "second"})
+        repeated = await pipe.route_item_wire({"item_id": "second"})
         await service.send_message(repeated["routing_message"])
     assert len(creates) == len(messages) == 2
 
@@ -840,7 +924,14 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages() -> None
         await repo.put(
             "evt.events",
             eid,
-            {"event_id": eid, "statement": "old", "entities": [{"entity_id": "aave", "role": "SUBJECT"}]},
+            {
+                "lifecycle": "ANALYZING",
+                "tokens_mentioned": [],
+                "event_state": "RUMOR",
+                "event_id": eid,
+                "statement": "old",
+                "entities": [{"entity_id": "aave", "role": "SUBJECT"}],
+            },
         )
         await repo.put(
             "ops.agent_sessions",
@@ -856,6 +947,7 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages() -> None
         "evt.events",
         "zz_event",
         {
+            "event_state": "RUMOR",
             "event_id": "zz_event",
             "statement": "late event",
             "entities": [{"entity_id": "aave", "role": "SUBJECT"}],
@@ -869,10 +961,14 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages() -> None
         {"session_id": "zz_session", "event_id": "zz_event", "status": "OPEN", "last_item_at": iso()},
     )
     await repo.put(
-        "ingest.source_items", "pending_item", {"item_id": "pending_item", "text": "Aave pending candidate"}
+        "ingest.source_items",
+        "pending_item",
+        source_record_fixture({"item_id": "pending_item", "text": "Aave pending candidate"}),
     )
     await repo.put(
-        "ingest.source_items", "incoming", {"item_id": "incoming", "text": "Aave confirms late event"}
+        "ingest.source_items",
+        "incoming",
+        source_record_fixture({"item_id": "incoming", "text": "Aave confirms late event"}),
     )
     seen = []
 
@@ -891,7 +987,9 @@ async def test_routing_and_resume_find_late_history_with_one_row_pages() -> None
         )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
-        result = await Pipeline(repo, opts, http=http).route_item({"item_id": "incoming"})
+        result = await Pipeline(repo, opts, http=http, progress=DisabledSourceProgress()).route_item_wire(
+            {"item_id": "incoming"}
+        )
         assert result["route_event_id"] == "zz_event"
         assert len(seen) == 1
         service = SessionService(repo, opts, None, http=http)
@@ -915,12 +1013,14 @@ async def test_session_acceptance_and_tools_keep_clock_and_source_precision_sepa
     await repo.put(
         "ingest.source_items",
         "item",
-        {
-            "item_id": "item",
-            "text": "Captured source",
-            "observed_at": "2026-10-01T00:00:00Z",
-            "observed_at_prec": "BUCKET(1d)",
-        },
+        source_record_fixture(
+            {
+                "item_id": "item",
+                "text": "Captured source",
+                "observed_at": "2026-10-01T00:00:00Z",
+                "observed_at_prec": "COLLECTION_ONLY",
+            }
+        ),
     )
 
     def transport(request: httpx.Request):
@@ -959,10 +1059,10 @@ async def test_session_acceptance_and_tools_keep_clock_and_source_precision_sepa
         == "COLLECTION_ONLY"
     )
     assert session["last_item_observed_at"] == "2026-10-01T00:00:00Z"
-    assert session["last_item_observed_at_prec"] == "BUCKET(1d)"
+    assert session["last_item_observed_at_prec"] == "COLLECTION_ONLY"
     message = session["message_log"][0]
     assert message["sent_at_prec"] == "COLLECTION_ONLY"
-    assert message["item_observed_at_prec"] == "BUCKET(1d)"
+    assert message["item_observed_at_prec"] == "COLLECTION_ONLY"
     assert session["last_event_at_prec"] == "BUCKET(1s)"
     tool = await repo.get("ops.tool_calls", "fresh:call")
     for field in ("requested_at", "answered_at", "completed_at", "returned_at"):
@@ -1065,7 +1165,11 @@ async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static
         service = SessionService(repo, opts, None, http=http)
         service.start_stream = lambda sid: None
         for item_id in ("one", "two"):
-            await repo.put("ingest.source_items", item_id, {"item_id": item_id, "text": "Synthetic item"})
+            await repo.put(
+                "ingest.source_items",
+                item_id,
+                source_record_fixture({"item_id": item_id, "text": "Synthetic item"}),
+            )
         first = await service.send_message({"kind": "NEW_ITEM", "item_id": "one"})
         snapshot["system"] = "Changed actual registered instructions"
         second = await service.send_message({"kind": "NEW_ITEM", "item_id": "two"})
@@ -1083,12 +1187,16 @@ async def test_new_session_prompt_version_binds_actual_resolved_agent_not_static
 
 def test_jev_source_view_does_not_substitute_internal_source_codes() -> None:
     view = Pipeline.item_view(
-        {
-            "item_id": "internal",
-            "source_id": "S29",
-            "title": "Protocol launch",
-            "text": "New crypto protocol launches",
-        }
+        parse_feed_source_item(
+            source_record_fixture(
+                {
+                    "item_id": "internal",
+                    "source_id": "S29",
+                    "title": "Protocol launch",
+                    "text": "New crypto protocol launches",
+                }
+            )
+        )
     )
-    assert view.source == ""
+    assert view.source == "Synthetic Publisher"
     assert "S29" not in json.dumps(view.to_wire()) and "item_id" not in view.to_wire()

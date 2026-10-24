@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from source_support import source_configuration
+from source_support import operational_configuration, source_configuration
 
 from tank.agents.pipeline import Pipeline
 from tank.settings import Settings
@@ -83,7 +83,7 @@ async def test_normal_poll_preserves_actual_author_and_exposes_exact_pruner_orga
             if name == "sources"
             else registry
             if name == "registry"
-            else {}
+            else operational_configuration(name)
         ),
         ops_progress_enabled=False,
         replay=False,

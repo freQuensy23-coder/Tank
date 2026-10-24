@@ -98,6 +98,7 @@ async def setup():
         return httpx.Response(200, json={"data": history})
 
     settings = SimpleNamespace(
+        ops_progress_enabled=False,
         openma_url="http://native",
         openma_api_key="fake-test",
         configured_secrets=lambda: frozenset({"fake-test"}),

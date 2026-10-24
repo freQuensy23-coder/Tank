@@ -6,7 +6,13 @@ from types import SimpleNamespace
 import httpx
 import pytest
 import zstandard
-from source_support import fetch_plan, source_configuration, source_definition, source_feed
+from source_support import (
+    fetch_plan,
+    operational_configuration,
+    source_configuration,
+    source_definition,
+    source_feed,
+)
 
 from tank.contracts.source_items import SourceText
 from tank.sources import SourceService, parsers
@@ -40,7 +46,13 @@ def captured(svc, sid, item, payload=b"<html>source evidence</html>", observed_a
     """An item as the poller hands it to ingest: raw payload already stored under its item_id."""
     item_id = new_id("item")
     raw_ref, digest = svc.raw(payload, source_id=sid, item_id=item_id, observed_at=observed_at)
-    return dict(item, item_id=item_id, raw_ref=raw_ref, raw_sha256=digest, observed_at=observed_at)
+    return dict(
+        {"url": "https://synthetic.invalid/source-evidence", "feed": sid, **item},
+        item_id=item_id,
+        raw_ref=raw_ref,
+        raw_sha256=digest,
+        observed_at=observed_at,
+    )
 
 
 RSS = b"""<rss version="2.0"><channel><title>Official</title><item><guid>release-42</guid><title>New protocol</title><link>https://example.org/a</link><pubDate>Fri, 16 Oct 2026 12:00:00 GMT</pubDate><description>&lt;p&gt;Protocol deployment &amp;amp; vote&lt;/p&gt;</description></item></channel></rss>"""
@@ -98,6 +110,8 @@ def settings(tmp_path: Path, sources):
             source_configuration({"sources": sources})
             if name == "sources"
             else {"x_accounts": [], "tokens": [], "entities": []}
+            if name == "registry"
+            else operational_configuration(name)
         ),
         ops_progress_enabled=False,
         replay=False,

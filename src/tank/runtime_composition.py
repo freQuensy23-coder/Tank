@@ -16,6 +16,7 @@ from tank.delivery import DeliveryService
 from tank.event_tools import EventToolService
 from tank.logging import configure_logging
 from tank.market.service import MarketService
+from tank.ops_progress import RepositorySourceProgress
 from tank.runtime import Runtime
 from tank.scheduler import Scheduler
 from tank.settings import Settings, resolve_versions
@@ -68,7 +69,7 @@ def build_runtime(repo: Repository, settings: Settings) -> Runtime:
     market = MarketService(repo, settings)
     truth = MarketTruthService(repo, settings, market)
     sources = SourceService(repo, settings)
-    pipeline = Pipeline(repo, settings)
+    pipeline = Pipeline(repo, settings, progress=RepositorySourceProgress(repo, settings))
     tools = EventToolService(repo, settings, truth, DecisionEngine(settings))
     inbox = TelegramInbox(repo, settings)
     sessions = SessionService(repo, settings, tools.dispatch)
