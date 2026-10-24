@@ -2,6 +2,7 @@ import re
 from copy import deepcopy
 
 import pytest
+from score_fixtures import unassessed_score_dimensions
 
 from tank.analysis.cards import alert_gate, compose_card
 from tank.analysis.decisions import DecisionEngine
@@ -10,7 +11,12 @@ from tank.analysis.decisions import DecisionEngine
 def inputs():
     return (
         {"event_id": "e", "event_state": "APPROVED", "state_verified": True, "freshness": "FRESH"},
-        {"class": "MAJOR", "certainty": "HIGH", "impact_horizon": {"impact_start": "NOW"}},
+        {
+            "class": "MAJOR",
+            "certainty": "HIGH",
+            "impact_horizon": {"impact_start": "NOW"},
+            "dims": unassessed_score_dimensions(),
+        },
         {"token_id": "T", "role": "PRIMARY", "credible": True, "capture_class": "DIRECT"},
         {
             "token_id": "T",

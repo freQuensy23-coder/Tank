@@ -3,6 +3,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+from score_fixtures import unassessed_score_dimensions
 
 from tank.agents.context import CONTEXT_VERSION
 from tank.event_tools import EventToolService, freshness, validate_schema
@@ -176,7 +177,14 @@ async def test_publication_freezes_reproducible_bundle_and_queues_only(
     event["current_ems_id"] = "ems"
     await service.repo.put("evt.events", eid, event)
     await service.repo.put(
-        "evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": eid, "class": "STRUCTURAL_SHOCK"}
+        "evt.ems_assessments",
+        "ems",
+        {
+            "dims": unassessed_score_dimensions(),
+            "ems_id": "ems",
+            "event_id": eid,
+            "class": "STRUCTURAL_SHOCK",
+        },
     )
     result = await service.dispatch(
         "publish_card",
@@ -314,6 +322,7 @@ async def test_real_decision_condition_reuse_expiry_and_consumption(service) -> 
         "freshness": "FRESH",
     }
     assessment = {
+        "dims": unassessed_score_dimensions(),
         "ems_id": "condition-ems",
         "event_id": eid,
         "class": "MAJOR",
@@ -440,7 +449,13 @@ async def test_start_condition_is_rearmed_for_the_open_call(service) -> None:
     await service.repo.put(
         "evt.ems_assessments",
         "start-ems",
-        {"ems_id": "start-ems", "event_id": eid, "class": "MAJOR", "certainty": "HIGH"},
+        {
+            "dims": unassessed_score_dimensions(),
+            "ems_id": "start-ems",
+            "event_id": eid,
+            "class": "MAJOR",
+            "certainty": "HIGH",
+        },
     )
     await service.repo.put(
         "evt.beneficiary_maps", "start-map", {"event_id": eid, "map_version": 1, "analysis_set": [token]}
@@ -895,7 +910,9 @@ async def test_full_requires_entire_analysis_then_pins_diverse_three_tokens(
     event["current_ems_id"] = "full-ems"
     await service.repo.put("evt.events", eid, event)
     await service.repo.put(
-        "evt.ems_assessments", "full-ems", {"ems_id": "full-ems", "event_id": eid, "class": "MAJOR"}
+        "evt.ems_assessments",
+        "full-ems",
+        {"dims": unassessed_score_dimensions(), "ems_id": "full-ems", "event_id": eid, "class": "MAJOR"},
     )
     tokens = ["P1", "P2", "P3", "S1", "S2", "S3", "L1"]
     await service.repo.put(
@@ -1025,6 +1042,7 @@ async def test_real_expiry_to_update_delivery_never_reopens_call(
         "event_time": {"value": None, "precision": "UNKNOWN"},
     }
     assessment = {
+        "dims": unassessed_score_dimensions(),
         "ems_id": "expiry-ems",
         "event_id": eid,
         "class": "MAJOR",
@@ -1182,6 +1200,7 @@ async def test_material_update_is_queued_once_and_delivered_after_window(
             "evt.ems_assessments",
             "material-ems",
             {
+                "dims": unassessed_score_dimensions(),
                 "ems_id": "material-ems",
                 "event_id": eid,
                 "class": "MAJOR",
@@ -1422,7 +1441,13 @@ async def test_market_truth_domain_result_and_evidence_bundle_keep_full_metadata
     await service.repo.put(
         "evt.ems_assessments",
         "metadata-ems",
-        {"ems_id": "metadata-ems", "event_id": eid, "class": "STRUCTURAL_SHOCK", "criterion": "G5"},
+        {
+            "dims": unassessed_score_dimensions(),
+            "ems_id": "metadata-ems",
+            "event_id": eid,
+            "class": "STRUCTURAL_SHOCK",
+            "criterion": "G5",
+        },
     )
     await service.repo.put(
         "evt.beneficiary_maps", "metadata-map", {"event_id": eid, "map_version": 1, "analysis_set": ["T"]}
@@ -1959,7 +1984,12 @@ async def test_terminal_event_cannot_publish_new_card(service, lifecycle) -> Non
     await service.repo.put(
         "evt.ems_assessments",
         "terminal-ems",
-        {"ems_id": "terminal-ems", "event_id": eid, "class": "STRUCTURAL_SHOCK"},
+        {
+            "dims": unassessed_score_dimensions(),
+            "ems_id": "terminal-ems",
+            "event_id": eid,
+            "class": "STRUCTURAL_SHOCK",
+        },
     )
     result = await service.dispatch(
         "publish_card",
@@ -2528,7 +2558,13 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
     await service.repo.put(
         "evt.ems_assessments",
         "repeat-ems",
-        {"ems_id": "repeat-ems", "event_id": eid, "class": "MAJOR", "certainty": "HIGH"},
+        {
+            "dims": unassessed_score_dimensions(),
+            "ems_id": "repeat-ems",
+            "event_id": eid,
+            "class": "MAJOR",
+            "certainty": "HIGH",
+        },
     )
     await service.repo.put(
         "evt.beneficiary_maps", "repeat-map", {"event_id": eid, "map_version": 1, "analysis_set": ["T"]}
@@ -2616,7 +2652,13 @@ async def test_persistent_fatal_and_exit_publish_delivery_repeat_is_silent(
         await service.repo.put(
             "evt.ems_assessments",
             "repeat-ems",
-            {"ems_id": "repeat-ems", "event_id": eid, "class": "STRUCTURAL_SHOCK", "certainty": "HIGH"},
+            {
+                "dims": unassessed_score_dimensions(),
+                "ems_id": "repeat-ems",
+                "event_id": eid,
+                "class": "STRUCTURAL_SHOCK",
+                "certainty": "HIGH",
+            },
         )
         queued = await service.dispatch("publish_card", args, {})
         assert queued["published"] and queued["reason"] == "QUEUED_RATE_LIMIT"
@@ -3474,7 +3516,12 @@ async def test_bundle_directory_sync_failure_never_creates_database_reference(
     await service.repo.put(
         "evt.ems_assessments",
         "durability-ems",
-        {"ems_id": "durability-ems", "event_id": eid, "class": "STRUCTURAL_SHOCK"},
+        {
+            "dims": unassessed_score_dimensions(),
+            "ems_id": "durability-ems",
+            "event_id": eid,
+            "class": "STRUCTURAL_SHOCK",
+        },
     )
     original_sync = os.fsync
     seen = []
@@ -4916,7 +4963,9 @@ async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(
     eid = "least-event"
     await service.repo.put("evt.events", eid, {"event_id": eid, "current_ems_id": "least-ems"})
     await service.repo.put(
-        "evt.ems_assessments", "least-ems", {"ems_id": "least-ems", "event_id": eid, "class": "MAJOR"}
+        "evt.ems_assessments",
+        "least-ems",
+        {"dims": unassessed_score_dimensions(), "ems_id": "least-ems", "event_id": eid, "class": "MAJOR"},
     )
     await service.repo.put(
         "evt.beneficiary_maps",
@@ -5060,7 +5109,11 @@ def test_schema_refusal_names_allowed_cutoff_precisions() -> None:
 async def test_decision_for_a_token_outside_the_analysis_set_names_the_set(service) -> None:
     """E2E msg 15/16: a token_id outside the analysis set gets an error that names the set."""
     await service.repo.put("evt.events", "e", {"event_id": "e", "current_ems_id": "ems"})
-    await service.repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": "e", "class": "MAJOR"})
+    await service.repo.put(
+        "evt.ems_assessments",
+        "ems",
+        {"dims": unassessed_score_dimensions(), "ems_id": "ems", "event_id": "e", "class": "MAJOR"},
+    )
     await service.repo.put(
         "evt.beneficiary_maps", "e:1", {"event_id": "e", "map_version": 1, "analysis_set": ["bitcoin:BTC"]}
     )
@@ -5289,7 +5342,14 @@ async def test_card_generated_at_is_the_version_write_and_deliver_is_runnable_th
     event["current_ems_id"] = "ems"
     await service.repo.put("evt.events", eid, event)
     await service.repo.put(
-        "evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": eid, "class": "STRUCTURAL_SHOCK"}
+        "evt.ems_assessments",
+        "ems",
+        {
+            "dims": unassessed_score_dimensions(),
+            "ems_id": "ems",
+            "event_id": eid,
+            "class": "STRUCTURAL_SHOCK",
+        },
     )
     result = await service.dispatch(
         "publish_card",
@@ -5326,7 +5386,11 @@ async def test_named_cutoff_precisions_are_accepted_as_buckets(service, truth_jo
     await service.repo.put(
         "evt.events", eid, {"event_id": eid, "current_ems_id": "ems", "tokens_mentioned": ["T"]}
     )
-    await service.repo.put("evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": eid, "class": "MAJOR"})
+    await service.repo.put(
+        "evt.ems_assessments",
+        "ems",
+        {"dims": unassessed_score_dimensions(), "ems_id": "ems", "event_id": eid, "class": "MAJOR"},
+    )
     await service.repo.put(
         "evt.beneficiary_maps", f"{eid}:1", {"event_id": eid, "map_version": 1, "analysis_set": ["T"]}
     )
@@ -5393,7 +5457,14 @@ async def test_publish_card_keeps_market_truth_once_and_bounds_evidence_and_ops_
     event["current_ems_id"] = "ems"
     await service.repo.put("evt.events", eid, event)
     await service.repo.put(
-        "evt.ems_assessments", "ems", {"ems_id": "ems", "event_id": eid, "class": "STRUCTURAL_SHOCK"}
+        "evt.ems_assessments",
+        "ems",
+        {
+            "dims": unassessed_score_dimensions(),
+            "ems_id": "ems",
+            "event_id": eid,
+            "class": "STRUCTURAL_SHOCK",
+        },
     )
     reads = []
     original = service.repo.iter_all

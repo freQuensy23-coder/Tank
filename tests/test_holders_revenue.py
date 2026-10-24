@@ -5,6 +5,7 @@ from copy import deepcopy
 from pathlib import Path
 
 import pytest
+from score_fixtures import unassessed_score_dimensions
 
 from tank.analysis import cards as CARDS
 from tank.analysis import truth as TRUTH
@@ -59,7 +60,7 @@ def render(truths, tokens=None):
         for token in tokens
     ]
     decisions = [{"token_id": token, "action": "WAIT"} for token in tokens]
-    return CARDS.compose_card(event, {}, edges, decisions, truths)
+    return CARDS.compose_card(event, {"dims": unassessed_score_dimensions()}, edges, decisions, truths)
 
 
 @pytest.mark.parametrize("value", ["0", "3460000.123456789"])
@@ -256,7 +257,7 @@ def test_provider_revenue_with_unknown_capture_never_authorizes_token_capture_cl
         "market_truths": [truth],
     }
     before = deepcopy(context)
-    card = CARDS.compose_card(event, {}, edges, decisions, [truth])
+    card = CARDS.compose_card(event, {"dims": unassessed_score_dimensions()}, edges, decisions, [truth])
     line = next(line for line in card.splitlines() if line.startswith("• Token capture:"))
     assert "T UNKNOWN" in line
     assert "DefiLlama reports holders revenue: adapter 123.456 USD/24h" in line
@@ -280,7 +281,11 @@ def test_compact_display_prefers_24h_preserving_30d_details_and_default_limit() 
         for token in ["A", "B", "C"]
     ]
     card = CARDS.compose_card(
-        event, {}, edges, [{"token_id": token, "action": "WAIT"} for token in ["A", "B", "C"]], truths
+        event,
+        {"dims": unassessed_score_dimensions()},
+        edges,
+        [{"token_id": token, "action": "WAIT"} for token in ["A", "B", "C"]],
+        truths,
     )
     assert len(card) <= 3500
     assert card.count("123.456 USD/24h") == 3 and "8765.432" not in card
