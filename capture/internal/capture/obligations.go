@@ -197,32 +197,34 @@ func (s *Service) runRequest(ctx context.Context, row map[string]any) {
 			s.log.Warn("capture request not finished", "request_id", row["request_id"], "error", err)
 		}
 	}
-	budget := time.Duration(0)
-	if deadline, err := pytime.Parse(row["deadline"]); err == nil {
-		budget = deadline.Sub(s.clock.Now())
-		if budget <= 0 {
-			finish("EXPIRED", "REQUEST_DEADLINE_PASSED", nil)
-			return
-		}
+	limits, invalid := decodeRequestLimits(row, s.clock.Now())
+	if invalid != nil {
+		finish("FAILED", string(invalid.reason), nil)
+		return
 	}
-	if seconds, err := pyval.Decimal(row["budget_s"]); err == nil && seconds.Float64() > 0 {
-		limit := time.Duration(seconds.Float64() * float64(time.Second))
-		if budget <= 0 || limit < budget {
-			budget = limit
-		}
+	if limits.budget <= 0 || !limits.deadline.After(s.clock.Now()) {
+		finish("EXPIRED", "REQUEST_DEADLINE_PASSED", nil)
+		return
 	}
+	budget := limits.budget
+
 	switch text(row["kind"]) {
 	case "HTTP_FETCH":
 		s.runFetch(ctx, row, budget, finish)
 		return
 	}
-	start, err1 := pytime.Parse(row["start"])
-	end, err2 := pytime.Parse(row["end"])
-	if err1 != nil || err2 != nil || text(row["kind"]) != "REPAIR_WINDOWS" {
+	start, err1 := requestTimestamp(row["start"])
+	end, err2 := requestTimestamp(row["end"])
+	if err1 != nil || err2 != nil || !end.After(start) || text(row["kind"]) != "REPAIR_WINDOWS" {
 		finish("FAILED", "UNSUPPORTED_CAPTURE_REQUEST", nil)
 		return
 	}
-	results := s.repairWindows(ctx, text(row["token_id"]), start, end, budget)
+	tokenID, validToken := row["token_id"].(string)
+	if !validToken || tokenID == "" {
+		finish("FAILED", string(invalidRequestToken), nil)
+		return
+	}
+	results := s.repairWindows(ctx, tokenID, start, end, budget)
 	out := map[string]any{}
 	for iid, result := range results {
 		out[iid] = result.storageValue()
