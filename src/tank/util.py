@@ -2,6 +2,7 @@ import hashlib
 import json
 import secrets
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from enum import Enum
@@ -26,7 +27,7 @@ type JsonInput = (
     | Enum
     | Path
     | BaseModel
-    | dict[str, JsonInput]
+    | Mapping[str, JsonInput]
     | list[JsonInput]
     | tuple[JsonInput, ...]
     | set[JsonInput]
@@ -100,7 +101,7 @@ def jsonable(value: dict[str, JsonValue]) -> dict[str, JsonValue]: ...
 
 
 @overload
-def jsonable(value: dict[str, JsonInput]) -> dict[str, JsonValue]: ...
+def jsonable(value: Mapping[str, JsonInput]) -> dict[str, JsonValue]: ...
 
 
 @overload
@@ -110,7 +111,7 @@ def jsonable(value: JsonInput) -> JsonValue: ...
 def jsonable(value: JsonInput) -> JsonValue:
     if isinstance(value, BaseModel):
         return JsonDocument.validate_value(value.model_dump(mode="json", warnings="error"))
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {key: jsonable(child) for key, child in value.items()}
     if isinstance(value, (list, tuple, set)):
         return [jsonable(child) for child in value]
