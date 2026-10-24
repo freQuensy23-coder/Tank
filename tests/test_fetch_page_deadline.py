@@ -167,8 +167,13 @@ def test_existing_session_error_protocol_accepts_wall_timeout() -> None:
     service = object.__new__(SessionService)
     error, status = service.tool_failure(TimeoutError())
     assert status == "ERROR"
-    assert error["type"] == "TimeoutError"
-    assert error["category"] == "TOOL_EXECUTION"
+    assert error.type == "TimeoutError"
+    assert error.category == "TOOL_EXECUTION"
+    assert error.model_dump(mode="json") == {
+        "type": "TimeoutError",
+        "reason": "Tool execution failed; inspect the audited call and implementation",
+        "category": "TOOL_EXECUTION",
+    }
     assert isinstance(asyncio.CancelledError(), BaseException)
     assert not isinstance(asyncio.CancelledError(), Exception)
 
