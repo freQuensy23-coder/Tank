@@ -107,6 +107,16 @@ class JevClassifier:
         identity = self.score_identity(item, name, state)
         cached = await self.scores.get(identity.usage_id)
         if cached is not None:
+            if (
+                cached.usage_id != identity.usage_id
+                or cached.item_id != item.item_id
+                or cached.requested_model_id != identity.binding.request_model
+                or cached.questions != identity.questions
+                or cached.state_fingerprint != identity.state_fingerprint
+                or cached.question_fingerprint != identity.question_fingerprint
+                or cached.request_fingerprint != identity.request_fingerprint
+            ):
+                raise ValueError("Stored classification does not match its requested identity")
             return cached
         if self.settings.replay:
             raise ValueError(
