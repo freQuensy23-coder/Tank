@@ -91,17 +91,18 @@ verify() {
 previous=$(cat deployed 2>/dev/null || true)
 [[ -z "$previous" || "$previous" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid previous release SHA"; exit 1; }
 release="releases/$SHA"
-worker() { python3 "$release/apify_deploy.py" "$1" "$SHA" "$release"; }
+worker() { python3 "$release/apify_deploy.py" "$1" "${2:-$SHA}" "$release"; }
 tank_started=no
 [ ! -f apify-state/pending.json ] || tank_started=yes
 recover() {
-  local status=$?
+  local status=$? recovery_sha=$SHA
   trap - EXIT INT TERM
   if [ "$status" -ne 0 ]; then
     if [ -f apify-state/pending.json ]; then
-      previous=$(worker previous_release) || { echo "cannot resolve rollback release"; exit 1; }
+      recovery_sha=$(worker recovery_release) || { echo "cannot resolve interrupted worker release"; exit 1; }
+      previous=$(worker previous_release "$recovery_sha") || { echo "cannot resolve rollback release"; exit 1; }
     fi
-    worker rollback || { echo "worker rollback failed; Tank rollback refused"; exit 1; }
+    worker rollback "$recovery_sha" || { echo "worker rollback failed; Tank rollback refused"; exit 1; }
     if [ "$tank_started" = yes ] && [ -n "$previous" ]; then
       echo "rollback to $previous $(date -u +%T)"
       if roll "$previous"; then
@@ -112,7 +113,7 @@ recover() {
         exit 1
       fi
     fi
-    worker rollback_finish || { echo "rollback markers not verified"; exit 1; }
+    worker rollback_finish "$recovery_sha" || { echo "rollback markers not verified"; exit 1; }
   fi
   exit "$status"
 }

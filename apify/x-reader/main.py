@@ -1,5 +1,3 @@
-"""Apify adapter: read INPUT once and write one OUTPUT response."""
-
 import asyncio
 
 from direct_fetch import fetch_snapshot

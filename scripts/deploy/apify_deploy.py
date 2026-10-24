@@ -523,6 +523,14 @@ class Publisher:
     def previous_release(self):
         print(self.pending()["previous_release_sha"])
 
+    def recovery_release(self):
+        transaction = self.read("pending.json")
+        require(
+            transaction is not None and re.fullmatch(r"[0-9a-f]{40}", transaction.get("release_sha", "")),
+            "invalid interrupted worker release",
+        )
+        print(transaction["release_sha"])
+
     def rollback_finish(self):
         if self.read("pending.json") is None:
             return
@@ -551,6 +559,7 @@ def main():
             "rollback",
             "rollback_finish",
             "previous_release",
+            "recovery_release",
         ],
     )
     parser.add_argument("sha")

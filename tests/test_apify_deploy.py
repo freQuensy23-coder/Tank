@@ -594,9 +594,12 @@ def shell_host(tmp_path, stand, artifact, sha=SHA):
 @pytest.mark.integration
 @pytest.mark.process
 @pytest.mark.parametrize("journal", ["pending", "active", "cache"])
-def test_deploy_retry_recovers_process_death_before_journal_rename(apify_stand, release, tmp_path, journal):
-    host, environment = shell_host(tmp_path, apify_stand, release)
-    artifact = host / "releases" / SHA
+@pytest.mark.parametrize("retry_sha", [SHA, "c" * 40])
+def test_deploy_retry_recovers_process_death_before_journal_rename(
+    apify_stand, release, tmp_path, journal, retry_sha
+):
+    host, environment = shell_host(tmp_path, apify_stand, release, sha=retry_sha)
+    artifact = host / "releases" / retry_sha
     manifest = json.loads((artifact / "manifest.json").read_bytes())
     manifest["release_sha"] = NEXT_SHA
     (artifact / "manifest.json").write_bytes(deploy.canonical(manifest))
@@ -630,8 +633,10 @@ def test_deploy_retry_recovers_process_death_before_journal_rename(apify_stand, 
     )
     fixed_staging.write_text("abandoned old publisher staging")
     fixed_staging.chmod(0o600)
+    manifest["release_sha"] = retry_sha
+    (artifact / "manifest.json").write_bytes(deploy.canonical(manifest))
     result = subprocess.run(
-        ["bash", str(host / "deploy.sh"), SHA],
+        ["bash", str(host / "deploy.sh"), retry_sha],
         cwd=host,
         env=environment,
         text=True,

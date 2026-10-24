@@ -1,5 +1,3 @@
-"""Return public X snapshots; the caller owns deduplication and delivery state."""
-
 import re
 import time
 from datetime import UTC, datetime

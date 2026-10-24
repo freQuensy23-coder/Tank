@@ -1,5 +1,3 @@
-"""Read the public HTML X sends to logged-out visitors. Never accepts cookies."""
-
 import asyncio
 import base64
 import gzip
@@ -11,7 +9,7 @@ import re
 import time
 import urllib.parse
 import zlib
-from contextlib import suppress
+from contextlib import AsyncExitStack, suppress
 from datetime import UTC, datetime
 
 import httpx
@@ -194,7 +192,15 @@ async def fetch_profile(handle, deadline=None, evidence_limit=BODY_LIMIT):
     }
     reason = "PUBLIC_PROFILE_DEADLINE_EXHAUSTED"
     capture_limit = min(BODY_LIMIT, evidence_limit)
-    async with httpx.AsyncClient(follow_redirects=True, trust_env=False) as client:
+
+    async def trace(name, info):
+        if name == "connection.connect_tcp.complete":
+            cleanup.push_async_callback(info["return_value"].aclose)
+
+    async with (
+        AsyncExitStack() as cleanup,
+        httpx.AsyncClient(follow_redirects=True, trust_env=False) as client,
+    ):
         for index, delay in enumerate((0, 1, 5), 1):
             if deadline - time.monotonic() <= delay:
                 diagnostics["outcome"] = "deadline_exhausted"
@@ -222,6 +228,7 @@ async def fetch_profile(handle, deadline=None, evidence_limit=BODY_LIMIT):
                             "Cache-Control": "no-cache",
                         },
                         timeout=min(12, remaining),
+                        extensions={"trace": trace},
                     ) as response:
                         if response.status_code < 400 and response.url.host not in (
                             "x.com",
