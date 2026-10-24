@@ -238,7 +238,7 @@ func (c *Client) send(ctx context.Context, method string, u *url.URL, params map
 		req.Header.Set("User-Agent", c.UserAgent)
 	}
 	req.Header.Set("Accept", "application/json")
-	if body != nil {
+	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := c.HTTP.Do(req)
@@ -319,15 +319,17 @@ type Fetched struct {
 	Body        []byte
 }
 
-func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, headers map[string]string, body any, priority int) (*Fetched, error) {
+func (c *Client) Fetch(ctx context.Context, method, rawURL string, params, headers map[string]string, body json.RawMessage, priority int) (*Fetched, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
 	}
 	host := u.Hostname()
 	var payload map[string]any
-	if m, ok := body.(map[string]any); ok {
-		payload = m
+	if data := bytes.TrimSpace(body); len(data) > 0 && data[0] == '{' {
+		if err := json.Unmarshal(data, &payload); err != nil {
+			return nil, fmt.Errorf("invalid fetch JSON body: %w", err)
+		}
 	}
 	for attempt := 0; attempt < Attempts; attempt++ {
 		if err := c.Gate.AdmitBuckets(ctx, host, budget.FetchConstraints(host, u.Path, params, payload), priority); err != nil {
@@ -369,7 +371,7 @@ type rawResponse struct {
 	header http.Header
 }
 
-func (c *Client) raw(ctx context.Context, method string, u *url.URL, params, headers map[string]string, body any) (*rawResponse, error) {
+func (c *Client) raw(ctx context.Context, method string, u *url.URL, params, headers map[string]string, body json.RawMessage) (*rawResponse, error) {
 	target := *u
 	if len(params) > 0 {
 		query := target.Query()
@@ -379,12 +381,8 @@ func (c *Client) raw(ctx context.Context, method string, u *url.URL, params, hea
 		target.RawQuery = query.Encode()
 	}
 	var payload io.Reader
-	if body != nil {
-		data, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		payload = bytes.NewReader(data)
+	if len(body) > 0 && !bytes.Equal(bytes.TrimSpace(body), []byte("null")) {
+		payload = bytes.NewReader(body)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, target.String(), payload)
 	if err != nil {
@@ -393,7 +391,7 @@ func (c *Client) raw(ctx context.Context, method string, u *url.URL, params, hea
 	if c.UserAgent != "" {
 		req.Header.Set("User-Agent", c.UserAgent)
 	}
-	if body != nil {
+	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	for k, v := range headers {
