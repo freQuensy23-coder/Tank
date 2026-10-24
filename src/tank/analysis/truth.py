@@ -32,8 +32,9 @@ from tank.analysis.positioning import (
 from tank.analysis.positioning import (
     oi_class as oi_class,
 )
+from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.market.capture import event_anchor
-from tank.time_precision import chosen_boundary, offset_schedule, propagate_timestamp
+from tank.time_precision import Timestamp, chosen_boundary, offset_schedule, propagate_timestamp
 from tank.util import iso, jsonable, new_id, parse_time
 
 WINDOWS = {"W15M": 900, "W1H": 3600, "W4H": 14400, "W24H": 86400}
@@ -5686,6 +5687,12 @@ class MarketTruthService:
             cache=self._condition_cache,
             baseline_cache=self._condition_baselines,
         )
+
+    async def assess_for_job(
+        self, event_id: str, token_id: str, cutoff: Timestamp | None = None
+    ) -> MarketTruthAssessmentRef:
+        result = await self.assess(event_id, token_id, cutoff)
+        return MarketTruthAssessmentRef.from_record(result)
 
     async def assess(self, event_id, token_id, cutoff=None):
         event = await self.repo.get("evt.events", event_id) if event_id else None

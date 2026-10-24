@@ -23,6 +23,7 @@ from tank.analysis.identity import (
 from tank.analysis.identity import (
     resolve_token as resolve_token,
 )
+from tank.analysis.truth_contracts import MarketTruthAssessmentRef
 from tank.analysis.watch_contracts import WatchCondition
 from tank.ops_progress import event_progress, item_progress, tool_progress
 from tank.sources.capture_fetch import capture_fetch, is_exchange_url
@@ -2207,7 +2208,13 @@ class EventToolService:
                     result = current.get("result")
                     if result is None:
                         raise ValueError("Market truth job completed without persisted result")
-                    truths.append(result)
+                    reference = MarketTruthAssessmentRef.from_record(result)
+                    if reference.event_id != eid or reference.token_id != job["payload"]["token_id"]:
+                        raise ValueError("Market truth job reference does not match the requested assessment")
+                    stored_truth = await self.require("ana.market_truth", reference.mta_id)
+                    if MarketTruthAssessmentRef.from_record(stored_truth) != reference:
+                        raise ValueError("Market truth job reference does not match its persisted assessment")
+                    truths.append(stored_truth)
                     break
                 if current["status"] in {"FAILED", "EXPIRED"}:
                     raise ValueError(

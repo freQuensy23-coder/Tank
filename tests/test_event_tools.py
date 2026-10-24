@@ -4993,6 +4993,8 @@ async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(
             "event_id": eid,
             "token_id": token,
             "cutoff": cutoff,
+            "cutoff_prec": "EXACT",
+            "cutoff_prec_reason": None,
             "liquidity": {"liquidity_state": "NORMAL"},
             "relative": {"repricing_band": band, "windows": {"EVENT": {"pctile": pctile}}},
         }
@@ -5011,6 +5013,7 @@ async def test_least_repriced_ranks_all_credible_tokens_on_partial_refresh(
                 assert job is not None and job["type"] == kind
                 if kind == "RUN_MARKET_TRUTH":
                     stored = await service.repo.get("ops.jobs", job["job_id"])
+                    await service.repo.put("ana.market_truth", fresh["mta_id"], fresh)
                     stored["result"] = fresh
                     await service.repo.put("ops.jobs", job["job_id"], stored)
                 await service.repo.finish_job(job["job_id"])
@@ -5410,7 +5413,16 @@ async def test_named_cutoff_precisions_are_accepted_as_buckets(service, truth_jo
                 if kind == "RUN_MARKET_TRUTH":
                     assert job["payload"]["cutoff_prec"] == "BUCKET(1m)"
                     stored = await service.repo.get("ops.jobs", job["job_id"])
-                    stored["result"] = {"token_id": "T", "mta_id": "m"}
+                    persisted = complete_truth_fixture(
+                        "m",
+                        eid,
+                        "T",
+                        job["payload"]["cutoff"],
+                        cutoff_prec=job["payload"]["cutoff_prec"],
+                        cutoff_prec_reason=None,
+                    )
+                    await service.repo.put("ana.market_truth", "m", persisted)
+                    stored["result"] = persisted
                     await service.repo.put("ops.jobs", job["job_id"], stored)
                 await service.repo.finish_job(job["job_id"])
             result = await task
