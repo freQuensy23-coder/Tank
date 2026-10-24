@@ -70,9 +70,10 @@ func TestBackfillReadFailureCannotPersistCompleteOrPartialCoverage(t *testing.T)
 
 type unavailableCoverageStore struct {
 	Store
-	failAt    int32
-	reads     atomic.Int32
-	benchmark bool
+	failAt          int32
+	reads           atomic.Int32
+	benchmark       bool
+	projectionReads atomic.Int32
 }
 
 func (s *unavailableCoverageStore) Range(ctx context.Context, collection, field string, start, end time.Time, filters map[string]any) ([]map[string]any, error) {
@@ -83,6 +84,7 @@ func (s *unavailableCoverageStore) Range(ctx context.Context, collection, field 
 }
 
 func (s *unavailableCoverageStore) Projection(ctx context.Context, collection string, fields []string, field string, start, end time.Time, ids []string) ([]map[string]any, error) {
+	s.projectionReads.Add(1)
 	if s.benchmark && collection == "mkt.klines_1m" {
 		return nil, errors.New("benchmark backend unavailable")
 	}
@@ -134,5 +136,18 @@ func TestBackfillBenchmarkFailureCannotSilentlyOmitObservation(t *testing.T) {
 	stored := r.mem.rows["mkt.backfill_runs"]["BF-benchmark-failed"]
 	if stored["status"] != "FAILED" || stored["reason"] != "BENCHMARK_CAPTURE_FAILED" || stored["result"] != nil {
 		t.Fatalf("failed benchmark was silently omitted from terminal coverage: %v", stored)
+	}
+}
+
+func TestKlineInvertedIntervalRejectsBeforeStorageEffects(t *testing.T) {
+	r := newRESTRig(t, "coinbase")
+	store := &unavailableCoverageStore{Store: r.mem}
+	r.s.store = store
+	_, err := r.s.backfillKlines(context.Background(), r.inst, r.base.Add(time.Minute), r.base, false, "TEST")
+	if err == nil || !strings.Contains(err.Error(), "interval end precedes start") {
+		t.Fatalf("inverted interval was silently converted to zero expected minutes: %v", err)
+	}
+	if calls := store.projectionReads.Load(); calls != 0 {
+		t.Fatalf("invalid interval reached storage before validation: %d", calls)
 	}
 }

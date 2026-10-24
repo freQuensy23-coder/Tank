@@ -164,7 +164,7 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 		ready = ready && c["complete"] == true
 	}
 	for _, b := range benchmarks {
-		ready = ready && b["complete"] == true
+		ready = ready && b.Complete
 	}
 	row["status"], row["finished_at"], row["reason"] = "PARTIAL", pytime.ISO(s.clock.Now()), "INCOMPLETE_VENUE_WINDOWS_EXCLUDED"
 	if ready {
@@ -176,7 +176,7 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 	}
 	benchResult := make([]any, len(benchmarks))
 	for i, b := range benchmarks {
-		benchResult[i] = b
+		benchResult[i] = b.storageValue()
 	}
 	row["result"] = map[string]any{"instruments": instrumentsResult, "benchmark_klines": benchResult}
 	s.putRun(ctx, row)
@@ -478,15 +478,33 @@ func (s *Service) repairInstrument(ctx context.Context, inst *venue.Instrument, 
 	return RepairCoverage{IncompleteBefore: before, IncompleteAfter: minutesIn(runs)}, nil
 }
 
-func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, start, end time.Time, includeReference bool, kind string) (map[string]any, error) {
+type KlineCoverage struct {
+	InstrumentID        string
+	Start               string
+	End                 string
+	ExpectedMinutes     int64
+	CompleteMinutes     int64
+	Complete            bool
+	IncludesAnchorClose bool
+}
+
+func (r KlineCoverage) storageValue() map[string]any {
+	return map[string]any{
+		"instrument_id": r.InstrumentID, "start": r.Start, "end": r.End,
+		"expected_minutes": r.ExpectedMinutes, "complete_minutes": r.CompleteMinutes,
+		"complete": r.Complete, "includes_anchor_close": r.IncludesAnchorClose,
+	}
+}
+
+func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, start, end time.Time, includeReference bool, kind string) (KlineCoverage, error) {
 	first, last := start, pytime.MinuteFloor(end)
 	if includeReference {
 		first = pytime.MinuteFloor(start).Add(-time.Minute)
 	}
 	iid := inst.ID
 	expected := int(last.Sub(first) / time.Minute)
-	if expected < 0 {
-		expected = 0
+	if expected < 0 || end.Before(start) {
+		return KlineCoverage{}, errors.New("capture kline interval end precedes start")
 	}
 	observed := func() (map[int64]bool, error) {
 		rows, err := s.store.Projection(ctx, "mkt.klines_1m", []string{"open_time", "complete"}, "open_time", first, last, []string{iid})
@@ -504,7 +522,7 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 	}
 	points, err := observed()
 	if err != nil {
-		return nil, err
+		return KlineCoverage{}, err
 	}
 	v := s.venues.Venue(inst, 1)
 	for offset := 0; offset < expected; offset += 240 {
@@ -523,7 +541,7 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 		rows, err := v.Klines(ctx, &lo, &hi)
 		if err != nil {
 			if ctx.Err() != nil {
-				return nil, ErrStopped
+				return KlineCoverage{}, ErrStopped
 			}
 			s.gap(inst, kind, err.Error(), &lo, &hi)
 			continue
@@ -542,7 +560,7 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 	s.flush(ctx)
 	points, err = observed()
 	if err != nil {
-		return nil, err
+		return KlineCoverage{}, err
 	}
 	complete := 0
 	all := expected > 0
@@ -553,15 +571,15 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 			all = false
 		}
 	}
-	return map[string]any{
-		"instrument_id": iid, "start": pytime.ISO(first), "end": pytime.ISO(last),
-		"expected_minutes": int64(expected), "complete_minutes": int64(complete),
-		"complete": all, "includes_anchor_close": includeReference,
+	return KlineCoverage{
+		InstrumentID: iid, Start: pytime.ISO(first), End: pytime.ISO(last),
+		ExpectedMinutes: int64(expected), CompleteMinutes: int64(complete),
+		Complete: all, IncludesAnchorClose: includeReference,
 	}, nil
 }
 
-func (s *Service) backfillBenchmarkKlines(ctx context.Context, anchor time.Time) ([]map[string]any, error) {
-	var result []map[string]any
+func (s *Service) backfillBenchmarkKlines(ctx context.Context, anchor time.Time) ([]KlineCoverage, error) {
+	var result []KlineCoverage
 	for _, symbol := range []string{"BTC", "ETH"} {
 		tokens := map[string]bool{}
 		for id, token := range s.opt.Tokens {
