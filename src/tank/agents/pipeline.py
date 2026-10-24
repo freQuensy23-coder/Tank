@@ -7,7 +7,7 @@ from decimal import Decimal
 
 import httpx
 
-from tank.agents.jev import MODEL, binding, classify
+from tank.agents.jev import MODEL, JevQuestion, binding, classify
 from tank.ops_progress import item_progress
 from tank.time_precision import collection_clock, offset_schedule, propagate_timestamp
 from tank.util import iso, sha256, utcnow
@@ -107,16 +107,20 @@ class Pipeline:
 
     def score_identity(self, item, name, state):
         questions = {
-            name: {
-                "type": "noul",
-                "instructions": FILTER if name == "relevant" else ROUTE,
-                "criteria": FILTER_CRITERIA if name == "relevant" else ROUTE_CRITERIA,
-            }
+            name: JevQuestion(
+                instructions=FILTER if name == "relevant" else ROUTE,
+                criteria=FILTER_CRITERIA if name == "relevant" else ROUTE_CRITERIA,
+            )
         }
         pinned = binding(getattr(self.settings, "opencode_api_key", None))
         state_fingerprint = sha256(state)
-        question_fingerprint = sha256(questions)
-        request_fingerprint = sha256({"model": pinned.request_model, "state": state, "questions": questions})
+        wire_questions = {
+            name: question.model_dump(exclude_none=True) for name, question in questions.items()
+        }
+        question_fingerprint = sha256(wire_questions)
+        request_fingerprint = sha256(
+            {"model": pinned.request_model, "state": state, "questions": wire_questions}
+        )
         key = sha256(
             {
                 "item_id": item["item_id"],
@@ -124,7 +128,7 @@ class Pipeline:
                 "provider": pinned.provider,
                 "base_url": pinned.base_url,
                 "prompt_version": JEV_PROMPT_VERSION,
-                "questions": questions,
+                "questions": wire_questions,
                 "state_fingerprint": state_fingerprint,
             }
         )
@@ -141,14 +145,17 @@ class Pipeline:
             raise ValueError(
                 "Replay requires stored Jev score for the exact wire question and state; live classification is disabled"
             )
+        wire_questions = {
+            name: question.model_dump(exclude_none=True) for name, question in questions.items()
+        }
         api_key = getattr(self.settings, "opencode_api_key", None)
         data = await classify(self.http, api_key=api_key, state=state, questions=questions)
-        score = float(data["answers"][name]["noul"])
-        if not 0 <= score <= 1 or data.get("model") not in pinned.resolved_models:
+        score = data.answers[name].noul
+        if not 0 <= score <= 1 or data.model not in pinned.resolved_models:
             raise ValueError("Jev returned invalid score or unexpected resolved model")
-        usage = data.get("usage", {})
-        tokens = usage.get("input_tokens")
-        reported_cost = usage.get("cost")
+        usage = data.usage
+        tokens = usage.input_tokens
+        reported_cost = usage.cost
         amount = Decimal(str(reported_cost)) if reported_cost is not None else None
         if amount is not None and (not amount.is_finite() or amount < 0):
             raise ValueError("Invalid provider-reported Jev cost")
@@ -163,27 +170,27 @@ class Pipeline:
                 "usage_id": key,
                 "item_id": item["item_id"],
                 "call": "FILTER" if name == "relevant" else "ROUTE",
-                "model_id": data["model"],
+                "model_id": data.model,
                 "semantic_model_id": MODEL,
                 "requested_model_id": pinned.request_model,
                 "jev_provider": pinned.provider,
                 "endpoint": pinned.base_url + "/v1/systemone",
-                "resolved_model_id": data["model"],
-                "response_id": data.get("id"),
-                "upstream_provider": data.get("provider"),
+                "resolved_model_id": data.model,
+                "response_id": data.id,
+                "upstream_provider": data.provider,
                 "model_pin_evidence": "OpenCode serves Jev 1.13 under this model name; no dated snapshot or patch suffix is exposed",
                 "billing_basis": billing_basis,
                 "billing_currency": "USD",
                 "prompt_version": JEV_PROMPT_VERSION,
-                "questions": questions,
+                "questions": wire_questions,
                 "state_fingerprint": state_fingerprint,
                 "question_fingerprint": question_fingerprint,
                 "request_fingerprint": request_fingerprint,
                 "session_id": None,
                 "score": score,
-                "usage": usage,
+                "usage": usage.model_dump(),
                 "input_tokens": tokens,
-                "output_tokens": usage.get("output_tokens"),
+                "output_tokens": usage.output_tokens,
                 "effort": None,
                 "stop_reason": "NON_GENERATIVE_CLASSIFICATION",
                 "web_searches": 0,
@@ -193,7 +200,7 @@ class Pipeline:
                     **({"input_tokens": "Provider omitted input tokens"} if tokens is None else {}),
                     **(
                         {"output_tokens": "Provider omitted output tokens"}
-                        if usage.get("output_tokens") is None
+                        if usage.output_tokens is None
                         else {}
                     ),
                     "cache_read_tokens": "Not exposed by Jev API",
@@ -204,7 +211,7 @@ class Pipeline:
                 **completed_at.fields("at"),
                 **completed_at.fields("created_at"),
                 "subject_id": item["item_id"],
-                "model": data["model"],
+                "model": data.model,
                 "config_version": self.settings.config_version,
                 "code_version": self.settings.code_version,
             },

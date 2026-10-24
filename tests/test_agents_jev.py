@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from tank.agents import Pipeline
-from tank.agents.jev import classify
+from tank.agents.jev import JevQuestion, classify
 from tank.agents.pipeline import FILTER, FILTER_CRITERIA
 from tank.storage import MemoryRepository
 
@@ -132,7 +132,7 @@ async def test_provider_errors_are_not_retried_or_chat_wrapped(status, body):
     async with httpx.AsyncClient(transport=httpx.MockTransport(transport)) as http:
         with pytest.raises(httpx.HTTPStatusError):
             await classify(
-                http, state={"text": "data"}, questions={"relevant": {"type": "noul", "instructions": FILTER}}
+                http, state={"text": "data"}, questions={"relevant": JevQuestion(instructions=FILTER)}
             )
     assert len(calls) == 1
 
@@ -149,5 +149,5 @@ async def test_malformed_typed_answer_is_rejected(answer):
     ) as http:
         with pytest.raises(ValueError, match="invalid noul"):
             await classify(
-                http, state={"text": "data"}, questions={"relevant": {"type": "noul", "instructions": FILTER}}
+                http, state={"text": "data"}, questions={"relevant": JevQuestion(instructions=FILTER)}
             )

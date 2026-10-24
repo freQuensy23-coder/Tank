@@ -1,9 +1,39 @@
-"""Pinned, typed Jev classification through OpenCode's System One endpoint (03 §3.1)."""
+"""Pinned, validated Jev classification through OpenCode System One."""
 
-import math
 from dataclasses import dataclass
+from typing import Literal
+
+import httpx
+from pydantic import Field, JsonValue, ValidationError
+
+from tank.contracts import DomainModel
 
 MODEL = "jev-1.13.0"
+
+
+class JevQuestion(DomainModel):
+    type: Literal["noul"] = "noul"
+    instructions: str
+    criteria: dict[str, str] | None = None
+
+
+class JevAnswer(DomainModel):
+    type: Literal["noul"]
+    noul: float = Field(ge=0, le=1, allow_inf_nan=False)
+
+
+class JevUsage(DomainModel):
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    cost: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+
+
+class JevResponse(DomainModel):
+    model: str
+    answers: dict[str, JevAnswer]
+    usage: JevUsage
+    id: str | None = None
+    provider: str | None = None
 
 
 @dataclass(frozen=True)
@@ -19,31 +49,36 @@ FREE = JevBinding()
 KEYED = JevBinding(request_model="jev-1.13", resolved_models=("jev-1.13",))
 
 
-def binding(api_key=None):
+def binding(api_key: str | None = None) -> JevBinding:
     return KEYED if api_key else FREE
 
 
-async def classify(http, *, api_key=None, state, questions):
+async def classify(
+    http: httpx.AsyncClient,
+    *,
+    api_key: str | None = None,
+    state: JsonValue,
+    questions: dict[str, JevQuestion],
+) -> JevResponse:
     pinned = binding(api_key)
     response = await http.post(
         pinned.base_url + "/v1/systemone",
         headers={"Authorization": "Bearer " + api_key} if api_key else {},
-        json={"model": pinned.request_model, "state": state, "questions": questions},
+        json={
+            "model": pinned.request_model,
+            "state": state,
+            "questions": {
+                name: question.model_dump(exclude_none=True) for name, question in questions.items()
+            },
+        },
     )
     response.raise_for_status()
-    data = response.json()
-    if not isinstance(data, dict) or data.get("model") not in pinned.resolved_models:
+    try:
+        data = JevResponse.model_validate_json(response.content)
+    except ValidationError as exc:
+        raise ValueError("Jev returned an invalid noul decision response") from exc
+    if data.model not in pinned.resolved_models:
         raise ValueError("Jev returned an unexpected resolved model for the pinned provider binding")
-    if not isinstance(data.get("answers"), dict) or not isinstance(data.get("usage"), dict):
-        raise TypeError("Jev returned an invalid decision response")
-    for name in questions:
-        answer = data["answers"].get(name)
-        if (
-            not isinstance(answer, dict)
-            or answer.get("type") != "noul"
-            or type(answer.get("noul")) not in (int, float)
-            or not math.isfinite(answer["noul"])
-            or not 0 <= answer["noul"] <= 1
-        ):
-            raise ValueError("Jev returned an invalid noul answer")
+    if set(data.answers) != set(questions):
+        raise ValueError("Jev returned invalid noul answer names")
     return data
