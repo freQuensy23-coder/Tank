@@ -296,8 +296,10 @@ export function pendingImageRecoveries(snapshot: ContinuationSnapshot, eligibleE
     if (row.imageRecoveryAfterEventId && row.imageRecoveryInterruptRequestedAt !== null) return row;
     const boundary = row.imageRecoveryAfterEventId ?? imageMismatchRecoveryBoundary(snapshot, row.id);
     if (!boundary) return row;
+    const retryBoundary = imageRecoveryRetryBoundary(snapshot, row.id);
+    if (row.imageRecoveryAfterEventId && !retryBoundary) return row;
     const pending = { ...row, state: 'queued' as const, imageRecoveryAfterEventId: boundary,
-      imageRecoveryInterruptRequestedAt: null, imageRecoveryRetryAfterEventId: imageRecoveryRetryBoundary(snapshot, row.id) ?? row.imageRecoveryRetryAfterEventId };
+      imageRecoveryInterruptRequestedAt: null, imageRecoveryRetryAfterEventId: retryBoundary ?? row.imageRecoveryRetryAfterEventId };
     const proof = planSessionContinuation({ ...snapshot, executions: snapshot.executions.map(other => other.id === row.id ? pending : other) }, row.id);
     return proof.mode === 'failure' ? row : pending;
   }) };

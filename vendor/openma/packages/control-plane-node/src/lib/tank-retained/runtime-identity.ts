@@ -70,8 +70,8 @@ export async function executableImageIdentity(root: string, architecture = proce
   };
   await visit(JSON.parse(await readFile(join(root, 'index.json'), 'utf8')), 0);
   if (selected.length !== 1) throw Error('retained_image_selection_ambiguous');
-  const { manifest, config } = selected[0]!;
+  const { config } = selected[0]!;
   const { created, history, ...executableConfig } = config;
   return stableDigest({ version: 1, config: executableConfig,
-    layers: manifest.layers.map((layer: Descriptor) => ({ mediaType: layer.mediaType, digest: layer.digest, size: layer.size })) });
+    layers: config.rootfs.diff_ids });
 }

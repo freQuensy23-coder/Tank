@@ -35,8 +35,9 @@ export function resolveLegacyProvenance(inputs: LegacyFingerprintInputs, fingerp
   const build = trustedLegacyBuild;
   if ('sha256:' + createHash('sha256').update(build.rawIndex).digest('hex') !== build.indexRawSha256
       || stableDigest(build.rawIndex) !== build.indexLegacyDigest) throw Error('retained_legacy_trusted_provenance_invalid');
-  const original = stableDigest({ ...inputs, runtimeIdentity: build.runtimeIdentity, rootfsIndex: stableDigest(build.rawIndex) });
-  if (original !== fingerprint) return null;
+  const verified = [build.runtimeIdentity, build.runtimeAbi].some(runtimeIdentity =>
+    stableDigest({ ...inputs, runtimeIdentity, rootfsIndex: stableDigest(build.rawIndex) }) === fingerprint);
+  if (!verified) return null;
   return {
     identity: { version: 2, image: build.image, compatibility: retainedCompatibility(inputs) },
     provenance: { build: build.runtimeIdentity, canonicalAbi: build.runtimeAbi, image: build.image, digest: stableDigest(build) },
