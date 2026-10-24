@@ -30,8 +30,6 @@ EXCLUDED = frozenset(
         "vendor",
         "upstream",
         "history",
-        "testdata",
-        "goldens",
         "__pycache__",
         ".mypy_cache",
         ".ruff_cache",

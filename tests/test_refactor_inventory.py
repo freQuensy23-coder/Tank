@@ -42,17 +42,27 @@ def test_inventory_tracks_nested_symbols_and_real_boundaries(
 def test_inventory_preserves_fixture_and_third_party_exclusions(
     inventory_module: ModuleType, tmp_path: Path
 ) -> None:
-    for directory in ("tests/goldens", "capture/testdata", "deploy/upstream", "src/vendor"):
+    for directory in ("deploy/upstream", "src/vendor"):
         path = tmp_path / directory
         path.mkdir(parents=True)
         (path / "retained.py").write_text("this deliberately is not Python syntax")
+    for directory in ("tests/goldens", "capture/testdata"):
+        path = tmp_path / directory
+        path.mkdir(parents=True)
+        (path / "retained.json").write_text("immutable payload")
+        (path / "generator.py").write_text("def generate():\n    return 1\n")
     path = tmp_path / "capture/internal"
     path.mkdir()
     (path / "boundary.go").write_text("package capture\nfunc decode(v map[string]any) {}\n")
     report = inventory_module.inventory(tmp_path)
-    assert report.files == 1
-    assert report.counts == {"dynamic_go": 1}
-    assert report.findings[0].path == "capture/internal/boundary.go"
+    assert report.files == 3
+    assert report.counts == {"dynamic_go": 1, "untyped_return": 2}
+    paths = {finding.path for finding in report.findings}
+    assert paths == {
+        "capture/internal/boundary.go",
+        "capture/testdata/generator.py",
+        "tests/goldens/generator.py",
+    }
 
 
 def test_inventory_rejects_unparseable_active_source(inventory_module: ModuleType, tmp_path: Path) -> None:

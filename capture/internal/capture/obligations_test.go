@@ -18,7 +18,8 @@ func TestObligationRunsCoreRowToTerminalResult(t *testing.T) {
 	r.clock.set(anchor.Add(10 * time.Minute))
 	r.mem.runs = []map[string]any{{
 		"backfill_id": "BF-test", "event_id": "EVT-1", "token_id": r.inst.TokenID,
-		"anchor": pytime.ISO(anchor), "started_at": pytime.ISO(anchor), "status": "PENDING",
+		"anchor": pytime.ISO(anchor), "started_at": nil, "started_at_prec": nil,
+		"started_at_prec_reason": "PENDING", "status": "PENDING",
 		"reason": "PRE_EVENT_CAPTURE_PENDING",
 	}}
 	r.s.obligations(context.Background())
@@ -29,6 +30,9 @@ func TestObligationRunsCoreRowToTerminalResult(t *testing.T) {
 	row := r.mem.rows["mkt.backfill_runs"]["BF-test"]
 	if row == nil || (row["status"] != "COMPLETE" && row["status"] != "PARTIAL") || row["finished_at"] == nil {
 		t.Fatalf("the obligation ends COMPLETE or PARTIAL with its finish time: %v", row)
+	}
+	if row["started_at"] != pytime.ISO(r.clock.Now()) || row["started_at_prec"] != "COLLECTION_ONLY" {
+		t.Fatalf("worker must stamp actual start rather than preserve missing queued clock: %v", row)
 	}
 	result := pyval.Map(row["result"])
 	if len(pyval.List(result["instruments"])) != 1 {
