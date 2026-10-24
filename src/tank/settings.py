@@ -18,6 +18,12 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 
 from tank.contracts.configuration import DeliveryConfiguration, Thresholds
 from tank.contracts.json import JsonDocument, decode_json
+from tank.contracts.registry import (
+    DependencyConfiguration,
+    ExchangeAddressesConfiguration,
+    RegistryConfiguration,
+    SemanticsConfiguration,
+)
 from tank.contracts.sources import SourceConfiguration
 from tank.util import JsonInput
 
@@ -246,6 +252,18 @@ class Settings(BaseSettings):
         relative = name if name.endswith((".yaml", ".yml")) else name + ".yaml"
         payload = yaml.load(self.read_config_bytes(relative), Loader=_YAML_LOADER)
         return schema.model_validate(payload, strict=True)
+
+    def registry(self) -> RegistryConfiguration:
+        return self.load_config_as("registry", RegistryConfiguration)
+
+    def semantics(self) -> SemanticsConfiguration:
+        return self.load_config_as("semantics", SemanticsConfiguration)
+
+    def dependencies(self) -> DependencyConfiguration:
+        return self.load_config_as("dependency_map", DependencyConfiguration)
+
+    def exchange_addresses(self) -> ExchangeAddressesConfiguration:
+        return self.load_config_as("exchange_addresses", ExchangeAddressesConfiguration)
 
     def load_config(self, name: str) -> dict[str, JsonValue]:
         relative = name if name.endswith((".yaml", ".yml")) else name + ".yaml"
