@@ -1,6 +1,34 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { requiredNativeCases, verifyAcceptance } from './check-sandbox-acceptance.mjs';
+import { completedInputExecutions } from './qualification-execution-state.mjs';
+import { validateQualificationExecutor } from './qualification-executor.mjs';
+
+test('native executor requires the exact hosted owner branch dispatch', () => {
+  const env = { GITHUB_ACTIONS: 'true', RUNNER_ENVIRONMENT: 'github-hosted', GITHUB_EVENT_NAME: 'workflow_dispatch', GITHUB_REPOSITORY: 'freQuensy23-coder/Tank', GITHUB_ACTOR: 'freQuensy23-coder', GITHUB_SHA: 'a'.repeat(40), GITHUB_REF: 'refs/heads/qualification' };
+  assert.equal(validateQualificationExecutor(env), 'github-hosted');
+  for (const changes of [{ GITHUB_EVENT_NAME: 'pull_request' }, { GITHUB_ACTOR: 'another-user' }, { GITHUB_REPOSITORY: 'fork/Tank' }, { RUNNER_ENVIRONMENT: 'self-hosted' }, { GITHUB_REF: 'refs/tags/untrusted' }, { GITHUB_SHA: 'invalid' }]) assert.throws(() => validateQualificationExecutor({ ...env, ...changes }));
+});
+
+test('native restart waits for exact durable inputs rather than public idle events', () => {
+  const row = { id: 'input-a', session_id: 'session-a', state: 'running', settled_at_ms: null, failure: null };
+  assert.equal(completedInputExecutions([row], ['input-a'], 'session-a'), false);
+  assert.equal(completedInputExecutions([], ['input-a'], 'session-a'), false);
+  assert.equal(completedInputExecutions([{ ...row, id: 'unrelated', state: 'completed', settled_at_ms: 123 }], ['input-a'], 'session-a'), false);
+  const completed = { ...row, state: 'completed', settled_at_ms: 123 };
+  assert.equal(completedInputExecutions([completed], ['input-a'], 'session-a'), true);
+  assert.equal(completedInputExecutions([completed, { ...row, id: 'input-b', state: 'queued' }], ['input-a', 'input-b'], 'session-a'), false);
+  for (const rows of [
+    [{ ...completed, session_id: 'another-session' }],
+    [{ ...completed, settled_at_ms: null }],
+    [{ ...completed, failure: 'unexpected failure' }],
+    [completed, completed],
+    [{ ...row, state: 'failed' }],
+    [{ ...row, state: 'cancelled' }],
+  ]) assert.throws(() => completedInputExecutions(rows, ['input-a'], 'session-a'));
+  assert.throws(() => completedInputExecutions([completed], [], 'session-a'));
+  assert.throws(() => completedInputExecutions([completed], ['input-a', 'input-a'], 'session-a'));
+});
 
 const expected = { sourceSha: 'a'.repeat(40), runId: '123' };
 const fixture = () => ({ schema: 'tank.native-managed-upgrade.v1', ...expected, cases: requiredNativeCases.map(name => ({ case: name, status: 'PASS', receipt: name + '.json', receiptSha256: 'c'.repeat(64) })), unproved: [], fullyQualified: true });

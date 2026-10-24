@@ -6,6 +6,8 @@ const token = process.env.QUALIFICATION_PROVIDER_KEY;
 if (!token) throw Error('Fresh owned control credential required');
 let armed = null;
 let barrier = null;
+let partitioned = false;
+const connections = new Set();
 const observations = [];
 const pending = [];
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -31,7 +33,10 @@ function publication(frame) {
   return null;
 }
 createTcpServer(client => {
+  if (partitioned) { client.destroy(); return; }
   const upstream = connect(5432, 'database');
+  const connection = { client, upstream };
+  connections.add(connection);
   let initial = true;
   let buffered = Buffer.alloc(0);
   let holdBefore = false;
@@ -67,7 +72,7 @@ createTcpServer(client => {
   upstream.on('data', bytes => { if (holdAck) heldServer.push(bytes); else client.write(bytes); });
   client.on('error', () => upstream.destroy());
   upstream.on('error', () => client.destroy());
-  client.on('close', () => { upstream.destroy(); const index = pending.indexOf(release); if (index >= 0) pending.splice(index, 1); });
+  client.on('close', () => { connections.delete(connection); upstream.destroy(); const index = pending.indexOf(release); if (index >= 0) pending.splice(index, 1); });
   upstream.on('close', () => client.destroy());
 }).listen(5432, '0.0.0.0');
 createHttpServer(async (request, response) => {
@@ -79,11 +84,18 @@ createHttpServer(async (request, response) => {
       const value = JSON.parse(bytes);
       if (!['publication-before', 'publication-ack'].includes(value.mode) || typeof value.sessionId !== 'string' || armed || barrier) throw Error('invalid barrier');
       armed = value;
+    } else if (request.url === '/partition' && request.method === 'POST') {
+      if (armed || barrier || partitioned) throw Error('partition conflicts with an active barrier');
+      partitioned = true;
+      observations.push({ phase: 'partitioned', connections: connections.size, at: new Date().toISOString() });
+      for (const { client, upstream } of connections) { client.destroy(); upstream.destroy(); }
     } else if (request.url === '/release' && request.method === 'POST') {
+      if (partitioned) observations.push({ phase: 'reconnected', at: new Date().toISOString() });
+      partitioned = false;
       for (const release of pending) release();
       if (barrier) observations.push({ ...barrier, phase: 'released' });
       barrier = null; armed = null;
     } else if (request.url !== '/state') { response.writeHead(404).end(); return; }
-    response.end(JSON.stringify({ armed, barrier, observations }));
+    response.end(JSON.stringify({ armed, barrier, partitioned, observations }));
   } catch (error) { response.writeHead(400).end(JSON.stringify({ error: error.message })); }
 }).listen(9001, '0.0.0.0');
