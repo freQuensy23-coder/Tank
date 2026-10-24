@@ -113,7 +113,15 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 		s.registerBoundaries(ids, cutoff, &begin)
 	}
 
-	benchmarks := s.backfillBenchmarkKlines(ctx, anchor)
+	benchmarks, err := s.backfillBenchmarkKlines(ctx, anchor)
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		s.log.Warn("benchmark capture unavailable", "backfill_id", row["backfill_id"], "error", err)
+		fail("BENCHMARK_CAPTURE_FAILED")
+		return
+	}
 	var wg sync.WaitGroup
 	for _, inst := range instruments {
 		wg.Add(1)
@@ -141,7 +149,15 @@ func (s *Service) runObligation(ctx context.Context, row map[string]any) {
 	}
 	coverage := make([]map[string]any, len(instruments))
 	for i, inst := range instruments {
-		coverage[i] = s.captureWindowCoverage(ctx, inst, anchor)
+		coverage[i], err = s.captureWindowCoverage(ctx, inst, anchor)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			s.log.Warn("capture coverage unavailable", "backfill_id", row["backfill_id"], "instrument", inst.ID, "error", err)
+			fail("COVERAGE_READ_FAILED")
+			return
+		}
 	}
 	ready := len(coverage) > 0
 	for _, c := range coverage {
@@ -544,7 +560,7 @@ func (s *Service) backfillKlines(ctx context.Context, inst *venue.Instrument, st
 	}, nil
 }
 
-func (s *Service) backfillBenchmarkKlines(ctx context.Context, anchor time.Time) []map[string]any {
+func (s *Service) backfillBenchmarkKlines(ctx context.Context, anchor time.Time) ([]map[string]any, error) {
 	var result []map[string]any
 	for _, symbol := range []string{"BTC", "ETH"} {
 		tokens := map[string]bool{}
@@ -570,11 +586,11 @@ func (s *Service) backfillBenchmarkKlines(ctx context.Context, anchor time.Time)
 		row, err := s.backfillKlines(ctx, best, anchor.Add(-24*time.Hour), anchor, true, "PRE_EVENT_KLINES")
 		unlock()
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("%s benchmark capture unavailable: %w", symbol, err)
 		}
 		result = append(result, row)
 	}
-	return result
+	return result, nil
 }
 
 func benchmarkLess(a, b *venue.Instrument) bool {
@@ -585,7 +601,7 @@ func benchmarkLess(a, b *venue.Instrument) bool {
 	return a.ID < b.ID
 }
 
-func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrument, anchor time.Time) map[string]any {
+func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrument, anchor time.Time) (map[string]any, error) {
 	end := anchor
 	windows := map[string]any{}
 	allComplete := true
@@ -604,12 +620,13 @@ func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrum
 		windowComplete := true
 		for _, spec := range [][3]string{{"flow", "mkt.flow_bars_1m", "minute_start"}, {"klines", "mkt.klines_1m", "open_time"}} {
 			rows, err := s.store.Range(ctx, spec[1], spec[2], lo, hi, map[string]any{"instrument_id": inst.ID})
+			if err != nil {
+				return nil, fmt.Errorf("%s %s coverage unavailable: %w", inst.ID, spec[0], err)
+			}
 			var complete int64
-			if err == nil {
-				for _, r := range rows {
-					if pyval.Truthy(r["complete"]) {
-						complete++
-					}
+			for _, r := range rows {
+				if pyval.Truthy(r["complete"]) {
+					complete++
 				}
 			}
 			ok := complete == expected && expected > 0
@@ -634,7 +651,10 @@ func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrum
 	result := map[string]any{"instrument_id": inst.ID, "windows": windows, "complete": allComplete}
 	if inst.Spot() {
 		boundary := end.Add(-24 * time.Hour)
-		bars, _ := s.store.Range(ctx, "mkt.flow_bars_1m", "minute_start", pytime.MinuteFloor(boundary).Add(-time.Minute), pytime.MinuteFloor(boundary).Add(time.Minute), map[string]any{"instrument_id": inst.ID})
+		bars, err := s.store.Range(ctx, "mkt.flow_bars_1m", "minute_start", pytime.MinuteFloor(boundary).Add(-time.Minute), pytime.MinuteFloor(boundary).Add(time.Minute), map[string]any{"instrument_id": inst.ID})
+		if err != nil {
+			return nil, fmt.Errorf("%s pre24 reference unavailable: %w", inst.ID, err)
+		}
 		var reference map[string]any
 		var referenceTS time.Time
 		for _, bar := range bars {
@@ -658,7 +678,7 @@ func (s *Service) captureWindowCoverage(ctx context.Context, inst *venue.Instrum
 		result["pre24_reference"] = pre
 		result["complete"] = allComplete && reference != nil
 	}
-	return result
+	return result, nil
 }
 
 func (s *Service) startupRepairs(ctx context.Context, hot []map[string]any, started time.Time) {
