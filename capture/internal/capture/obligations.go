@@ -224,13 +224,25 @@ func (s *Service) runRequest(ctx context.Context, row map[string]any) {
 	}
 	results := s.repairWindows(ctx, text(row["token_id"]), start, end, budget)
 	out := map[string]any{}
-	for iid, r := range results {
-		out[iid] = r
+	for iid, result := range results {
+		out[iid] = result.storageValue()
 	}
 	finish("COMPLETE", nil, map[string]any{"instruments": out})
 }
 
-func (s *Service) repairWindows(ctx context.Context, token string, start, end time.Time, budget time.Duration) map[string]map[string]any {
+type RepairCoverage struct {
+	IncompleteBefore int64 `json:"incomplete_before"`
+	IncompleteAfter  int64 `json:"incomplete_after"`
+}
+
+func (r RepairCoverage) storageValue() map[string]any {
+	return map[string]any{
+		"incomplete_before": r.IncompleteBefore,
+		"incomplete_after":  r.IncompleteAfter,
+	}
+}
+
+func (s *Service) repairWindows(ctx context.Context, token string, start, end time.Time, budget time.Duration) map[string]RepairCoverage {
 	if budget > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, budget)
@@ -275,7 +287,7 @@ func (s *Service) repairWindows(ctx context.Context, token string, start, end ti
 		reserved bool
 	}
 	phases := []phase{{reference, recent, hi, true}, {othersSpot, recent, hi, false}, {perp, recent, hi, false}, {instruments, lo, recent, false}}
-	results := map[string]map[string]any{}
+	results := map[string]RepairCoverage{}
 	var mu sync.Mutex
 	for _, ph := range phases {
 		var wg sync.WaitGroup
@@ -286,12 +298,9 @@ func (s *Service) repairWindows(ctx context.Context, token string, start, end ti
 				before, after := s.repairInstrument(ctx, inst, ph.a, ph.b, ph.reserved)
 				mu.Lock()
 				total := results[inst.ID]
-				if total == nil {
-					total = map[string]any{"incomplete_before": int64(0), "incomplete_after": int64(0)}
-					results[inst.ID] = total
-				}
-				total["incomplete_before"] = total["incomplete_before"].(int64) + before
-				total["incomplete_after"] = total["incomplete_after"].(int64) + after
+				total.IncompleteBefore += before
+				total.IncompleteAfter += after
+				results[inst.ID] = total
 				mu.Unlock()
 			}(inst)
 		}
