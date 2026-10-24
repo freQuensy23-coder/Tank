@@ -17,7 +17,7 @@ from urllib.parse import quote
 
 import httpx
 from httpx_sse import aconnect_sse
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from tank.agents.context import CONTEXT_TRANSITION, CONTEXT_VERSION, ModelContext
 from tank.agents.pipeline import ConfigurationError
@@ -1271,6 +1271,12 @@ class SessionService:
                 type="ConfigurationError",
                 reason="Resolved session prompt provenance unavailable; versioned outputs refused",
                 category="PROVENANCE",
+            ), "REFUSED"
+        if isinstance(error, ValidationError):
+            return ToolFailure(
+                type="ValidationError",
+                reason="Tool data violates its declared schema; inspect the tool definitions.",
+                category="VALIDATION",
             ), "REFUSED"
         if isinstance(error, (ValueError, KeyError)):
             safe, rejected = redact_tool_arguments({"reason": str(error)}, self.settings.configured_secrets())

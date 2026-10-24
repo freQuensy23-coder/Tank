@@ -264,3 +264,25 @@ explicit return annotations on all gateway constructors.101 focused context,
 migration, session-security and wire cases pass, zero skips,2.00 seconds.
 Generic JSON maps/containers here are necessary external serialization inputs;
 they are not substitutes for application domain records.
+
+
+## Validation diagnostic privacy
+
+SessionService.tool_failure handles Pydantic ValidationError separately from
+ordinary domain ValueError. It returns a bounded schema diagnostic and never
+forwards the raw exception string, input values, error context or custom
+validator messages. The actual dispatch regression raises a provider schema
+error whose custom message contains an unconfigured credential, then verifies
+the durable capture, native response and logs all omit it while preserving the
+REFUSED/error outcome. This works independently of shared hide-input policy.
+Jev provider validation raises its static refusal with suppressed exception
+context so a later traceback logger cannot reveal the provider input document.
+
+Gateway _claims/_load and refresh validation already convert malformed JSON,
+claims and token fields to static GatewayError codes with suppressed context.
+Gateway responses and cleanup logs contain bounded static diagnostics; provider
+bodies and auth documents are never forwarded as validation diagnostics.
+The new tool-path privacy case and focused security/provider/gateway unit
+cases pass:33 tests,zero skips,1.52 seconds. Existing actual gateway integration
+coverage includes credential-bearing provider exceptions and malformed refresh
+responses.

@@ -113,8 +113,8 @@ async def classify(
     response.raise_for_status()
     try:
         data = JevResponse.model_validate_json(response.content)
-    except ValidationError as exc:
-        raise ValueError("Jev returned an invalid noul decision response") from exc
+    except ValidationError:
+        raise ValueError("Jev returned an invalid noul decision response") from None
     if data.model not in pinned.resolved_models:
         raise ValueError("Jev returned an unexpected resolved model for the pinned provider binding")
     if set(data.answers) != set(questions):
