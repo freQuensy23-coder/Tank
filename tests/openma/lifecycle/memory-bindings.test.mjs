@@ -121,7 +121,7 @@ for (const changed of ['owner', 'store', 'workspace', 'access', 'guest', 'host',
       const { rename } = await import('node:fs/promises');
       await rename(real, moved); await symlink(moved, real);
     }
-    await assert.rejects(retainedMemoryGeneration(s.input));
+    await assert.rejects(retainedMemoryGeneration(s.input), changed === 'store' ? /retained_configuration_changed:resources/ : /retained_memory_binding_unproven/);
     assert.equal(await s.blobs.getText(`${s.mount.mountStoreId}/note.txt`), before);
   } finally { await s.cleanup(); }
 });

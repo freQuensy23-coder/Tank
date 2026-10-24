@@ -19,7 +19,7 @@ type MemoryBindingInput = {
 export async function retainedMemoryGeneration(input: MemoryBindingInput): Promise<string> {
   try { return await resolveMemoryGeneration(input); }
   catch (error) {
-    if (error instanceof Error && error.message === 'retained_session_archived') throw error;
+    if (error instanceof Error && ['retained_session_archived', 'retained_configuration_changed:resources'].includes(error.message)) throw error;
     throw Error('retained_memory_binding_unproven');
   }
 }
@@ -35,6 +35,7 @@ async function resolveMemoryGeneration(input: MemoryBindingInput): Promise<strin
     const manifest = JSON.parse(metadata.manifest);
     validateRuntimeIdentity(manifest.identity);
     if (manifest.archived || manifest.state === 'archived') throw Error('retained_session_archived');
+    if (manifest.identity.compatibility.resources !== stableDigest(input.resources)) throw Error('retained_configuration_changed:resources');
     if (!['retained', 'upgrading', 'allocating', 'aborted'].includes(manifest.state)) return fail();
     if (manifest.state === 'aborted') return input.proposed;
     handle = manifest.handle;
