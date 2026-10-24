@@ -837,11 +837,13 @@ async def test_major_assessment_producer_activates_15s_source_reads(
         )
     )
     service = SourceService(repo, config, http=http)
-    service.sources["S15"] = {
-        "source_id": "S15",
-        "interval_s": 600,
-        "feeds": [{"kind": "rss", "url": "https://example.org/feed", "interval_s": 600}],
-    }
+    service.sources["S15"] = source_definition(
+        {
+            "source_id": "S15",
+            "interval_s": 600,
+            "feeds": [{"kind": "rss", "url": "https://example.org/feed", "interval_s": 600}],
+        }
+    )
     await service.control_once("S15")
     assert len(calls) == 1
     event = {
