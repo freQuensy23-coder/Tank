@@ -7,7 +7,7 @@ from typing import Literal, Protocol, Self
 from pydantic import Field, JsonValue, model_validator
 
 from tank.contracts import DomainModel
-from tank.contracts.source_items import SourceContextId
+from tank.contracts.source_items import SourceContextId, SourceRoutingMessage
 from tank.time_precision import Timestamp
 
 type ProgressStage = Literal[
@@ -172,3 +172,60 @@ class ProgressNotice(DomainModel):
         record: dict[str, JsonValue] = self.model_dump(mode="json")
         record["details"] = self.details.storage_fields()
         return record
+
+
+class ToolProgressContext(DomainModel):
+    event_id: SourceContextId | None = None
+    call_id: SourceContextId | None = None
+
+
+class PublicationProgressResult(DomainModel):
+    published: bool
+    reason: str = Field(min_length=1)
+    alert_id: SourceContextId | None = None
+    version: int | None = Field(default=None, ge=1)
+    delivery_not_before: str | None = None
+    details: ProgressDetails
+
+    @model_validator(mode="after")
+    def publication_identity(self) -> Self:
+        if self.published and (self.alert_id is None or self.version is None):
+            raise ValueError("Published progress requires its card identity and version")
+        return self
+
+
+class SourceMessageProgress(DomainModel):
+    message_id: SourceContextId
+    payload: SourceRoutingMessage
+    retry_count: int = Field(ge=0)
+    turn_status: Literal["ACCEPTING", "PENDING", "RUNNING", "DONE", "FAILED"]
+    sent_at: str | None = None
+
+
+class SessionProgressView(DomainModel):
+    session_id: SourceContextId
+    event_id: SourceContextId | None = None
+    source_messages: list[SourceMessageProgress]
+
+
+class ExtractionProgressView(DomainModel):
+    extraction_status: Literal["PENDING", "RUNNING", "DONE", "SKIPPED", "FAILED"]
+    extraction_reason: str | None = None
+
+
+class FailureProgressTarget(DomainModel):
+    item_id: SourceContextId | None = None
+    event_id: SourceContextId | None = None
+
+    @model_validator(mode="after")
+    def declared_subject(self) -> Self:
+        if self.item_id is None and self.event_id is None:
+            raise ValueError("A source-processing failure requires an item or event identity")
+        return self
+
+
+class JobFailureProgressView(DomainModel):
+    job_id: SourceContextId
+    type: Literal["FILTER_ITEM", "ROUTE_ITEM", "AGENT_MESSAGE", "RUN_MARKET_TRUTH", "ESCALATE_TOKENS"]
+    status: Literal["QUEUED", "RUNNING", "DONE", "FAILED", "EXPIRED"]
+    target: FailureProgressTarget

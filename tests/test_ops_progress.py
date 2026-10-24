@@ -246,6 +246,7 @@ async def test_agent_acceptance_completion_and_failure_are_not_confused_with_app
         "message_log": [
             {
                 "message_id": "m",
+                "retry_count": 0,
                 "payload": {"kind": "NEW_ITEM", "item_id": "i"},
                 "sent_at": iso(),
                 "turn_status": "PENDING",
@@ -383,3 +384,89 @@ async def test_progress_rejects_a_mismatched_subject_before_writing_notices() ->
     with pytest.raises(ValueError, match="conflicts"):
         await sink.record("subject-1", "RECEIVED")
     assert await notices(repo) == [] and await repo.list("ops.jobs") == []
+
+
+@pytest.mark.asyncio
+async def test_publication_reporting_rejects_missing_reason_before_notice() -> None:
+    from pydantic import ValidationError
+
+    from tank.contracts.progress import ProgressPreferences
+    from tank.ops_progress import tool_progress
+
+    repo = MemoryRepository()
+    await repo.put("ingest.source_items", "item", {"item_id": "item", "source_id": "S30"})
+    await repo.put("evt.event_observations", "observation", {"event_id": "event", "item_id": "item"})
+    with pytest.raises(ValidationError, match="reason"):
+        await tool_progress(
+            repo,
+            ProgressPreferences(ops_progress_enabled=True, replay=False),
+            "publish_card",
+            {"event_id": "event"},
+            {},
+            {"published": False},
+        )
+    assert await repo.list("out.ops_notices") == []
+    assert await repo.list("ops.jobs") == []
+
+
+@pytest.mark.asyncio
+async def test_source_session_reporting_requires_retry_ownership() -> None:
+    from pydantic import ValidationError
+
+    from tank.contracts.progress import ProgressPreferences
+
+    repo = MemoryRepository()
+    await repo.put("ingest.source_items", "item", {"item_id": "item", "source_id": "S30"})
+    with pytest.raises(ValidationError, match="retry_count"):
+        await session_progress(
+            repo,
+            ProgressPreferences(ops_progress_enabled=True, replay=False),
+            {
+                "session_id": "session",
+                "message_log": [
+                    {
+                        "message_id": "message",
+                        "payload": {"kind": "NEW_ITEM", "item_id": "item"},
+                        "turn_status": "DONE",
+                    }
+                ],
+            },
+        )
+    assert await repo.list("out.ops_notices") == []
+    assert await repo.list("ops.jobs") == []
+
+
+@pytest.mark.asyncio
+async def test_expired_filter_job_reports_actual_subject_once() -> None:
+    from tank.contracts.progress import ProgressPreferences
+    from tank.ops_progress import job_failure_progress
+
+    repo = MemoryRepository()
+    await repo.put("ingest.source_items", "item", {"item_id": "item", "source_id": "S30"})
+    job = await repo.enqueue("FILTER_ITEM", {"item_id": "item"}, "filter:item")
+    preferences = ProgressPreferences(ops_progress_enabled=True, replay=False)
+    await job_failure_progress(repo, preferences, job, "EXPIRED")
+    await job_failure_progress(repo, preferences, job, "EXPIRED")
+    rows = await repo.list("out.ops_notices")
+    assert len(rows) == 1
+    assert rows[0]["subject_id"] == "item"
+    assert rows[0]["stage"] == "PROCESSING_EXPIRED"
+    deliveries = await repo.list("ops.jobs", filters={"type": "DELIVER"})
+    assert len(deliveries) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_source_job_requires_its_reporting_subject() -> None:
+    from pydantic import ValidationError
+
+    from tank.contracts.progress import ProgressPreferences
+    from tank.ops_progress import job_failure_progress
+
+    repo = MemoryRepository()
+    job = await repo.enqueue("FILTER_ITEM", {}, "malformed-filter")
+    with pytest.raises(ValidationError, match="item or event"):
+        await job_failure_progress(
+            repo, ProgressPreferences(ops_progress_enabled=True, replay=False), job, "FAILED"
+        )
+    assert await repo.list("out.ops_notices") == []
+    assert await repo.list("ops.jobs", filters={"type": "DELIVER"}) == []

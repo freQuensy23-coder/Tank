@@ -404,7 +404,8 @@ class Runtime:
                         end=now + timedelta(microseconds=1),
                         filters={"status": "QUEUED"},
                     ):
-                        if not job.get("expires_at") or parse_time(job["expires_at"]) > now:
+                        drain_state = JobRetryState.from_document(job)
+                        if drain_state.expires_at is None or parse_time(drain_state.expires_at) > now:
                             due = True
                             break
                     busy = False
@@ -439,9 +440,17 @@ class Runtime:
                 for job_id in interrupted:
                     try:
                         async with self.repo.lock("job:" + job_id):
-                            job = await self.repo.get("ops.jobs", job_id)
-                            state = JobRetryState.from_document(job) if job is not None else None
-                            if job is not None and state is not None and state.status == "RUNNING":
+                            interrupted_job = await self.repo.get("ops.jobs", job_id)
+                            state = (
+                                JobRetryState.from_document(interrupted_job)
+                                if interrupted_job is not None
+                                else None
+                            )
+                            if (
+                                interrupted_job is not None
+                                and state is not None
+                                and state.status == "RUNNING"
+                            ):
                                 if state.attempts == 0:
                                     raise RuntimeError("Running job has no consumed attempt to refund")
                                 interrupted_at = collection_clock(utcnow())
@@ -449,7 +458,7 @@ class Runtime:
                                     "ops.jobs",
                                     job_id,
                                     {
-                                        **job,
+                                        **interrupted_job,
                                         "status": "QUEUED",
                                         "attempts": state.attempts - 1,
                                         **interrupted_at.fields("run_after"),

@@ -15,7 +15,10 @@ from tank.storage import MemoryRepository
 
 
 @pytest.mark.asyncio
-async def test_classifier_validates_durable_scores_and_reuses_exact_request() -> None:
+@pytest.mark.parametrize("contradictory_subject", [True, False])
+async def test_classifier_validates_durable_scores_and_reuses_exact_request(
+    contradictory_subject: bool,
+) -> None:
     store = MemoryRepository()
     scores = Repository(store, Collection("ops.llm_usage", JevScoreRecord))
     calls: list[httpx.Request] = []
@@ -45,10 +48,15 @@ async def test_classifier_validates_durable_scores_and_reuses_exact_request() ->
         row = await store.get("ops.llm_usage", record.usage_id)
         assert row is not None
         damaged = MemoryRepository()
-        await damaged.put("ops.llm_usage", record.usage_id, {**row, "item_id": "different"})
+        changes = (
+            {"item_id": "different"}
+            if contradictory_subject
+            else {"item_id": "different", "subject_id": "different"}
+        )
+        await damaged.put("ops.llm_usage", record.usage_id, {**row, **changes})
         classifier = JevClassifier(
             Repository(damaged, Collection("ops.llm_usage", JevScoreRecord)), settings, http
         )
-        with pytest.raises(ValidationError):
+        with pytest.raises(ValidationError if contradictory_subject else ValueError):
             await classifier._score_record(item, "relevant", state)
         assert len(calls) == 1
