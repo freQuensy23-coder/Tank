@@ -43,7 +43,7 @@ def collector_http(monkeypatch: pytest.MonkeyPatch):
 
 
 def captured(svc, sid, item, payload=b"<html>source evidence</html>", observed_at="2026-10-16T12:00:00Z"):
-    """An item as the poller hands it to ingest: raw payload already stored under its item_id."""
+    """Synthetic capture with explicit fixture provenance and durable raw bytes."""
     item_id = new_id("item")
     raw_ref, digest = svc.raw(payload, source_id=sid, item_id=item_id, observed_at=observed_at)
     return dict(
@@ -1900,7 +1900,7 @@ def test_source_timestamp_canonical_bucket_and_timezone_uncertainty() -> None:
     known_instant = parsers.timestamp_fields("2026-10-18T12:00:00+02:00")
     assert known_instant["published_at"] == "2026-10-18T10:00:00Z"
     assert known_instant["published_prec"] == "EXACT"
-    end = parsers.timestamp_fields(1792238400, "end")
+    end = parsers.timestamp_fields(1792238400, "end", epoch_unit="s")
     assert end["end_prec"] == end["end_precision"] == "EXACT"
     assert (
         parsers.timestamp_fields(None, "business_published_at")["business_published_at_prec_reason"]
@@ -2791,3 +2791,34 @@ def test_a_grouped_change_keeps_its_own_identity_when_the_list_returns_to_an_ear
     back, back_digest = ids(second, third)
     assert back_digest == at_second
     assert len({*forward, *other, *back}) == 3
+
+
+def test_publication_epoch_units_are_declared_instead_of_guessed() -> None:
+    expected = "1970-01-01T00:00:01Z"
+    assert parsers.published(1, epoch_unit="s") == expected
+    assert parsers.published("1000", epoch_unit="ms") == expected
+    assert parsers.published(1_000_000, epoch_unit="us") == expected
+    unknown = parsers.timestamp_fields(1792238400000)
+    assert unknown["published_at"] is None
+    assert unknown["published_prec_reason"] == "UNVERIFIED_SEMANTICS"
+    assert parsers.published("2026-10-18T12:00:00") is None
+
+
+def test_binance_zero_epoch_precedes_alternate_publication_field() -> None:
+    payload = json.dumps(
+        {
+            "data": {
+                "articles": [
+                    {
+                        "code": "epoch-zero",
+                        "title": "Declared source publication",
+                        "releaseDate": 0,
+                        "publishDate": 1792238400000,
+                    }
+                ]
+            },
+        }
+    ).encode()
+    [record] = parsers.json_items(payload, "S09")
+    assert record["published_at"] == "1970-01-01T00:00:00Z"
+    assert record["published_prec"] == "EXACT"
