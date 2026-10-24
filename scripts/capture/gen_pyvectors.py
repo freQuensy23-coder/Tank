@@ -1,7 +1,7 @@
 """Reference vectors for tank-capture's Python-compatible primitives.
 
 CPython and Tank's own helpers are the reference: decimal arithmetic and rendering,
-json.dumps as Tank hashes it, tank.util.parse_time/iso and tank.time_precision.
+json.dumps as Tank hashes it, declared-unit tank.util.parse_epoch/iso and tank.time_precision.
 Writes capture/testdata/pyvectors/{decimal,json,time}.json.gz.
 Run: uv run python scripts/capture/gen_pyvectors.py
 """
@@ -15,12 +15,23 @@ from typing import Literal
 
 from pydantic import JsonValue
 
+from tank.contracts import DomainModel
 from tank.time_precision import propagate_timestamp
-from tank.util import iso, parse_epoch
+from tank.util import EpochUnit, iso, parse_epoch, parse_utc_time
 
 type Operation = Literal["add", "sub", "mul", "div"]
 
 OUT = Path(__file__).resolve().parents[2] / "capture" / "testdata" / "pyvectors"
+
+
+class PrecisionFixture(DomainModel):
+    record: dict[str, JsonValue]
+    field: str
+    aliases: list[str]
+
+
+class EpochPrecisionFixture(PrecisionFixture):
+    unit: EpochUnit
 
 
 def write(name: str, payload: JsonValue) -> None:
@@ -144,46 +155,93 @@ def times(rng: random.Random) -> None:
         "2026-10-21T09:00:00",
         "2026-10-21 09:00:00.5",
         "2026-10-21",
-        "1781654400123",
-        "1790249583.872436",
-        "1781654400",
     ]
-    numbers = [1781654400123, 1781654400123456, 1790249583, 1792574749213]
-    numbers += [rng.randint(1_600_000_000_000, 1_900_000_000_000) for _ in range(200)]
-    numbers += [rng.randint(1_600_000_000_000_000, 1_900_000_000_000_000) for _ in range(100)]
+    epoch_strings: list[tuple[str, EpochUnit]] = [
+        ("1781654400123", "ms"),
+        ("1790249583.872436", "s"),
+        ("1781654400", "s"),
+    ]
+    numbers: list[tuple[int, EpochUnit]] = [
+        (1781654400123, "ms"),
+        (1781654400123456, "us"),
+        (1790249583, "s"),
+        (1792574749213, "ms"),
+    ]
+    numbers += [(rng.randint(1_600_000_000_000, 1_900_000_000_000), "ms") for _ in range(200)]
+    numbers += [(rng.randint(1_600_000_000_000_000, 1_900_000_000_000_000), "us") for _ in range(100)]
     decimals_ = ["1790249583.872436", "1790249585.0128748", "1688669448.3138"]
     decimals_ += [
         f"{rng.randint(1_600_000_000, 1_900_000_000)}.{rng.randint(0, 9999999):07d}" for _ in range(200)
     ]
     floats = [1781654400.1234567] + [rng.uniform(1.6e9, 1.9e9) for _ in range(100)]
-    cases: list[JsonValue] = [{"kind": "str", "input": s, "iso": iso(s)} for s in inputs]
-    cases += [{"kind": "int", "input": n, "iso": iso(n)} for n in numbers]
-    cases += [{"kind": "decimal", "input": d, "iso": iso(Decimal(d))} for d in decimals_]
-    cases += [{"kind": "float", "input": f, "iso": iso(f)} for f in floats]
-    precisions: list[JsonValue] = []
-    precision_inputs: list[tuple[dict[str, JsonValue], str, list[str]]] = [
-        ({"ts": "2026-10-21T09:00:00Z", "ts_prec": "EXACT"}, "ts", []),
-        ({"ts": None, "ts_prec": None}, "ts", []),
-        ({"ts": None, "ts_prec": "COLLECTION_ONLY"}, "ts", []),
-        ({"ts": 1781654400123, "ts_prec": None}, "ts", []),
-        ({"ts": "2026-10-21T09:00:00Z", "ts_prec": "BUCKET(300s)", "ts_bucket_size_s": 300}, "ts", []),
-        (
-            {"ts": "2026-10-21T09:00:00Z", "ts_prec": "BUCKET(300s)", "timestamp_precision": "BUCKET(300s)"},
-            "ts",
-            ["timestamp_precision"],
-        ),
-        ({"ts": "2026-10-21T09:00:00Z", "ts_prec": "BUCKET(300s)", "ts_bucket_anchor": "END"}, "ts", []),
-        ({"ts": "2026-10-21T09:00:00Z", "ts_prec": "BUCKET(5m)", "ts_bucket_anchor": None}, "ts", []),
-        ({"minute_start": "2026-10-21T09:00:00Z", "minute_start_prec": "BUCKET(60s)"}, "minute_start", []),
-        ({"as_of": None, "as_of_prec": None, "as_of_prec_reason": "SOURCE_CLOCK_UNAVAILABLE"}, "as_of", []),
-        ({"x": "2026-10-21T09:00:00Z", "x_prec": "HOUR"}, "x", []),
-        ({"x": "2026-10-21T09:00:00Z", "x_precision": "EXACT"}, "x", []),
+    cases: list[JsonValue] = [{"kind": "str", "input": s, "iso": iso(parse_utc_time(s))} for s in inputs]
+    cases += [{"kind": "str", "input": s, "iso": iso(parse_epoch(s, unit=unit))} for s, unit in epoch_strings]
+    cases += [{"kind": "int", "input": n, "iso": iso(parse_epoch(n, unit=unit))} for n, unit in numbers]
+    cases += [
+        {"kind": "decimal", "input": d, "iso": iso(parse_epoch(Decimal(d), unit="s"))} for d in decimals_
     ]
-    for record, field, aliases in precision_inputs:
-        stamp = propagate_timestamp(record, field, precision_aliases=aliases)
-        fields: dict[str, JsonValue] = {name: value for name, value in stamp.fields(field).items()}
+    cases += [{"kind": "float", "input": f, "iso": iso(parse_epoch(f, unit="s"))} for f in floats]
+    precisions: list[JsonValue] = []
+    precision_inputs: list[PrecisionFixture] = [
+        PrecisionFixture(record={"ts": "2026-10-21T09:00:00Z", "ts_prec": "EXACT"}, field="ts", aliases=[]),
+        PrecisionFixture(record={"ts": None, "ts_prec": None}, field="ts", aliases=[]),
+        PrecisionFixture(record={"ts": None, "ts_prec": "COLLECTION_ONLY"}, field="ts", aliases=[]),
+        EpochPrecisionFixture(
+            record={"ts": 1781654400123, "ts_prec": None}, field="ts", aliases=[], unit="ms"
+        ),
+        PrecisionFixture(
+            record={"ts": "2026-10-21T09:00:00Z", "ts_prec": "BUCKET(300s)", "ts_bucket_size_s": 300},
+            field="ts",
+            aliases=[],
+        ),
+        PrecisionFixture(
+            record={
+                "ts": "2026-10-21T09:00:00Z",
+                "ts_prec": "BUCKET(300s)",
+                "timestamp_precision": "BUCKET(300s)",
+            },
+            field="ts",
+            aliases=["timestamp_precision"],
+        ),
+        PrecisionFixture(
+            record={"ts": "2026-10-21T09:00:00Z", "ts_prec": "BUCKET(300s)", "ts_bucket_anchor": "END"},
+            field="ts",
+            aliases=[],
+        ),
+        PrecisionFixture(
+            record={"ts": "2026-10-21T09:00:00Z", "ts_prec": "BUCKET(5m)", "ts_bucket_anchor": None},
+            field="ts",
+            aliases=[],
+        ),
+        PrecisionFixture(
+            record={"minute_start": "2026-10-21T09:00:00Z", "minute_start_prec": "BUCKET(60s)"},
+            field="minute_start",
+            aliases=[],
+        ),
+        PrecisionFixture(
+            record={"as_of": None, "as_of_prec": None, "as_of_prec_reason": "SOURCE_CLOCK_UNAVAILABLE"},
+            field="as_of",
+            aliases=[],
+        ),
+        PrecisionFixture(record={"x": "2026-10-21T09:00:00Z", "x_prec": "HOUR"}, field="x", aliases=[]),
+        PrecisionFixture(record={"x": "2026-10-21T09:00:00Z", "x_precision": "EXACT"}, field="x", aliases=[]),
+    ]
+    for case in precision_inputs:
+        normalized = dict(case.record)
+        if isinstance(case, EpochPrecisionFixture):
+            raw = normalized[case.field]
+            if isinstance(raw, bool) or not isinstance(raw, (str, int, float)):
+                raise ValueError("Epoch precision fixture requires a numeric scalar")
+            normalized[case.field] = iso(parse_epoch(raw, unit=case.unit))
+        stamp = propagate_timestamp(normalized, case.field, precision_aliases=case.aliases)
+        fields: dict[str, JsonValue] = {name: value for name, value in stamp.fields(case.field).items()}
         precisions.append(
-            {"record": record, "field": field, "aliases": [alias for alias in aliases], "fields": fields}
+            {
+                "record": case.record,
+                "field": case.field,
+                "aliases": [alias for alias in case.aliases],
+                "fields": fields,
+            }
         )
     write(
         "time.json.gz",
